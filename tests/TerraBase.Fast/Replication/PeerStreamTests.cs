@@ -710,6 +710,120 @@ public sealed class PeerStreamTests
         await Assert.That(most).IsLessThanOrEqualTo(8).Because($"at most {most} ranges over 60 passes");
     }
 
+    // PROBE (review round 3, E): remembered quiet ranges that a local group separates never merge across it, and a range is
+    // only followed from inside it. Two raises over sjc's joined writes remember (low, q1] and (top, q2], with gru's local
+    // groups held1 and held2 between them. Reads from below the lower range (low) and from between them (mid, held1's
+    // commit) must return the local groups after them, also on a second pass, after the reads remembered their own ranges.
+    [Test]
+    public async Task Probe_r3_quiet_ranges_never_bridge_a_local_group()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (first, joined1, held1, held2, joined2) =
+            (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        var sjcNode = sjc.Node;
+        var low = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, low)).IsTrue();
+        await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined1, Json("""{"j":1}"""), CancellationToken.None));
+        await Assert.That(await gru.UntilAsync(joined1, """{"j":1}""")).IsTrue();
+        await gru.TrimAsync();
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", held1, Json("""{"h":1}"""), CancellationToken.None));
+        var mid = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", held2, Json("""{"h":2}"""), CancellationToken.None));
+        var top = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, top)).IsTrue();
+        await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined2, Json("""{"j":2}"""), CancellationToken.None));
+        await Assert.That(await gru.UntilAsync(joined2, """{"j":2}""")).IsTrue();
+        await gru.TrimAsync();
+        await Assert.That(await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None)).IsGreaterThan(top);
+
+        for (var pass = 1; pass <= 2; pass++)
+        {
+            var fromLow = (await gru.Groups.ReadAsync(cluster.Database, low, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None))
+                .SelectMany(group => group.Deltas).Select(delta => delta.Id).ToList();
+            await Assert.That(fromLow.Contains(held1) && fromLow.Contains(held2)).IsTrue()
+                .Because($"pass {pass}: a read from {low} (ranges {gru.CdcSource.QuietRanges(await gru.IncarnationAsync())}) returns both local groups, got [{string.Join(", ", fromLow)}]");
+            var fromMid = (await gru.Groups.ReadAsync(cluster.Database, mid, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None))
+                .SelectMany(group => group.Deltas).Select(delta => delta.Id).ToList();
+            await Assert.That(fromMid.Contains(held2)).IsTrue()
+                .Because($"pass {pass}: a read from {mid}, below the upper range, returns held2, got [{string.Join(", ", fromMid)}]");
+        }
+    }
+
+    // Reviewer-only probe F: fill the production cap with disjoint subranges of a real remote-only CDC transaction.
+    // Losing a needed lower range must request refill, preserve another file's ranges, and never hide a local group.
+    [Test]
+    public async Task Probe_r3_cap_eviction_refills_without_skipping_local_groups()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru");
+        var gru = cluster["gru"];
+        var peer = ReplicaId.Of(2, 7, 0);
+        var (first, joined, held) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        var engine = gru.Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+        var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+        // An unstarted source avoids unrelated stream reads merging the intentionally sparse subranges.
+        using var source = new TerraBase.Engine.Sqlite.TursoChangeGroupSource(engine,
+            gru.Api.Server.Services.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(),
+            gru.Api.Server.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<TerraBase.Engine.Sqlite.TursoChangeGroupSource>>());
+        var low = await source.HeadAsync(cluster.Database, CancellationToken.None);
+        await source.AckAsync(cluster.Database, peer, low, default, CancellationToken.None);
+        var remote = Put(peer, Stamp(), joined, """{"j":1}""");
+        await gru.WriteAsync(async transaction => _ = await transaction.JoinAsync(remote.Collection, remote.Id, remote.State,
+            new EntryVersion(remote.Stamp, peer), CancellationToken.None));
+        await source.TrimAsync(store, CancellationToken.None);
+        var quiet = await source.AckedAsync(cluster.Database, peer, CancellationToken.None);
+        await Assert.That(quiet).IsGreaterThan(low);
+        await gru.WriteAsync(async transaction => _ = await transaction.PutAsync("items", held, Json("""{"h":1}"""), CancellationToken.None));
+        var heldEnd = await source.HeadAsync(cluster.Database, CancellationToken.None);
+
+        var stamp = Stamp();
+        await gru.WriteAsync(async transaction =>
+        {
+            for (var row = 0; row < 5000; row++)
+            {
+                var delta = Put(peer, stamp, EntityIds.New().ToString(), """{"remote":true}""");
+                _ = await transaction.JoinAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, peer), CancellationToken.None);
+            }
+        });
+        long newest;
+        await using (var transaction = (TerraBase.Engine.Sqlite.SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            var (groups, end, _) = await transaction.ReadChangeGroupsAsync(heldEnd, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, gru.Node, CancellationToken.None);
+            await Assert.That(groups.Count).IsEqualTo(0).Because("every seeded subrange is inside proven remote-only CDC rows");
+            newest = end;
+        }
+
+        await Assert.That(newest - heldEnd).IsGreaterThan(8194);
+        clock.Offset = TimeSpan.FromMinutes(2);
+        await source.TrimAsync(store, CancellationToken.None);
+        await Assert.That(await source.RetainsAsync(cluster.Database, low, CancellationToken.None)).IsTrue().Because("the lowest remembered range still spares a refill before eviction");
+        var other = EntityIds.New();
+        source.Remember(other, 0, 1);
+        for (var range = 0; range < 4097; range++)
+        {
+            var from = heldEnd + range * 2;
+            source.Remember(store.Incarnation, from, from + 1);
+        }
+
+        await Assert.That(source.QuietRanges(store.Incarnation)).IsEqualTo(4096).Because("the cap bounds one file without clearing all ranges");
+        await Assert.That(source.QuietRanges(other)).IsEqualTo(1).Because("another file is unaffected by the cap");
+        await Assert.That(await source.RetainsAsync(cluster.Database, low, CancellationToken.None)).IsFalse().Because("evicting a still-needed low range requests refill");
+        var remaining = await source.ReadAsync(cluster.Database, low, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+        await Assert.That(remaining.SelectMany(group => group.Deltas).Any(delta => delta.Id == held)).IsTrue().Because("cap eviction cannot skip the local group between the quiet ranges");
+        await Assert.That(await source.RetainsAsync(cluster.Database, low, CancellationToken.None)).IsFalse().Because("a read below the cut cannot recreate proof for evicted rows");
+    }
+
     // A copy (and so a restore, which copies) must not inherit the source's _tb_peers.acked, an id of the source's
     // turso_cdc: once the copy's own ids passed it, it would be taken as the peer's ack and the copy's groups at or below it
     // never streamed (review of #106, M2). A copy's peer has acknowledged nothing of the copy.
@@ -1516,6 +1630,231 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.UntilNoStateAsync("items", id)).IsTrue();
     }
 
+    [Test]
+    public async Task Review176_equal_stamp_node_tie_converges_in_opposite_arrival_orders()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var stamp = Stamp();
+        var low = ReplicaId.Of(1, 7, 0);
+        var high = ReplicaId.Of(2, 7, 0);
+        var older = Review176Metadata(low, stamp, DocumentDelta.Indexes, "by_key", """{"collection":"items","fields":["n"]}""");
+        var winner = Review176Metadata(high, stamp, DocumentDelta.Indexes, "by_key", """{"collection":"others","fields":["m","n"]}""");
+        await Review176PushAsync(cluster, cluster["gru"], low, older);
+        await Review176PushAsync(cluster, cluster["gru"], high, winner);
+        await Review176PushAsync(cluster, cluster["sjc"], high, winner);
+        await Review176PushAsync(cluster, cluster["sjc"], low, older);
+        foreach (var machine in cluster.Machines)
+        {
+            var store = await machine.StoreAsync();
+            await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+            var index = (await read.ListIndexesAsync(CancellationToken.None)).Single();
+            await Assert.That(index.Collection).IsEqualTo("others");
+            await Assert.That(index.Fields.Select(field => field.Path).ToArray()).IsEquivalentTo(["m", "n"]);
+        }
+    }
+
+    [Test]
+    public async Task Review176_definition_changes_the_digest_and_repairs_the_physical_index()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var origin = ReplicaId.Of(1, 7, 0);
+        var stamp = Stamp();
+        var before = Review176Metadata(origin, stamp, DocumentDelta.Indexes, "by_key", """{"collection":"items","fields":["n"]}""");
+        var after = Review176Metadata(origin, stamp + 1, DocumentDelta.Indexes, "by_key", """{"collection":"items","fields":["m"]}""");
+        foreach (var machine in cluster.Machines)
+        {
+            await Review176PushAsync(cluster, machine, origin, before);
+        }
+
+        // Same version with different payloads isolates whether the digest actually hashes the definition bytes.
+        await Review176PushAsync(cluster, cluster["gru"], origin,
+            Review176Metadata(origin, stamp, DocumentDelta.Indexes, "payload_key", """{"collection":"items","fields":["n"]}"""));
+        await Review176PushAsync(cluster, cluster["sjc"], origin,
+            Review176Metadata(origin, stamp, DocumentDelta.Indexes, "payload_key", """{"collection":"items","fields":["m"]}"""));
+        var payloadGru = await Review176DigestAsync(cluster, cluster["gru"]);
+        var payloadSjc = await Review176DigestAsync(cluster, cluster["sjc"]);
+        await Assert.That(payloadGru.SequenceEqual(payloadSjc)).IsFalse();
+
+        var oldDigest = await Review176DigestAsync(cluster, cluster["gru"]);
+        await Review176PushAsync(cluster, cluster["gru"], origin, after);
+        var newDigest = await Review176DigestAsync(cluster, cluster["gru"]);
+        await Assert.That(oldDigest.SequenceEqual(newDigest)).IsFalse();
+        await cluster["sjc"].AntiEntropy.RunRoundAsync(CancellationToken.None);
+        await cluster["sjc"].AntiEntropy.RunRoundAsync(CancellationToken.None);
+        var store = await cluster["sjc"].StoreAsync();
+        await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        var index = (await read.ListIndexesAsync(CancellationToken.None)).Single(index => index.Name == "by_key");
+        await Assert.That(index.Fields.Single().Path).IsEqualTo("m");
+        await Assert.That((await Review176DigestAsync(cluster, cluster["sjc"])).SequenceEqual(newDigest)).IsTrue();
+    }
+
+    [Test]
+    public async Task Review176_rebuild_and_unique_reprojection_preserve_documents_and_reader_snapshots()
+    {
+        await using var cluster = await Cluster.StartAsync("gru");
+        var machine = cluster["gru"];
+        var origin = ReplicaId.Of(1, 7, 0);
+        var stamp = Stamp();
+        var ids = Enumerable.Range(0, 3).Select(_ => EntityIds.New().ToString()).Order(StringComparer.Ordinal).ToArray();
+        string[] bodies = ["""{"m":10,"n":1}""", """{"m":20,"n":1}""", """{"m":20,"n":2}"""];
+        await Review176PushAsync(cluster, machine, origin,
+            Review176Metadata(origin, stamp, DocumentDelta.Indexes, "by_key", """{"collection":"items","fields":["n"]}"""),
+            Put(origin, stamp, ids[0], bodies[0]), Put(origin, stamp, ids[1], bodies[1]), Put(origin, stamp, ids[2], bodies[2]),
+            Review176Metadata(origin, stamp, DocumentDelta.Unique, "items", """{"constraints":[{"name":"key","fields":["n"],"normalization":"none"}]}"""));
+        var store = await machine.StoreAsync();
+        await using (var initial = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            await Assert.That((await initial.GetAsync("items", ids[1], CancellationToken.None))!.UniqueConflict).IsTrue();
+        }
+
+        _ = DocumentField.TryParse("n", out var n);
+        var readers = Enumerable.Range(0, 8).Select(async _ =>
+        {
+            for (var attempt = 0; attempt < 12; attempt++)
+            {
+                await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+                var index = (await read.ListIndexesAsync(CancellationToken.None)).Single();
+                var rows = new List<string>();
+                await foreach (var document in read.QuerySqlAsync(new SqlQuery("items", null, [new SqlOrder(n, false)], 10), CancellationToken.None))
+                {
+                    rows.Add(document.Id);
+                }
+
+                string[] expected = index.Fields.Single().Path == "n" ? [ids[0], ids[2]] : [ids[0], ids[1]];
+                await Assert.That(rows).IsEquivalentTo(expected);
+            }
+        }).ToArray();
+        await Review176PushAsync(cluster, machine, origin,
+            Review176Metadata(origin, stamp + 1, DocumentDelta.Indexes, "by_key", """{"collection":"items","fields":["m"]}"""),
+            Review176Metadata(origin, stamp + 1, DocumentDelta.Unique, "items", """{"constraints":[{"name":"key","fields":["m"],"normalization":"none"}]}"""));
+        await Task.WhenAll(readers);
+        await using (var read = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            var index = (await read.ListIndexesAsync(CancellationToken.None)).Single();
+            await Assert.That(index.Fields.Single().Path).IsEqualTo("m");
+            for (var i = 0; i < ids.Length; i++)
+            {
+                var document = await read.GetAsync("items", ids[i], CancellationToken.None);
+                await Assert.That(Encoding.UTF8.GetString(document!.Json.Span)).IsEqualTo(bodies[i]);
+                await Assert.That(document.UniqueConflict).IsEqualTo(i == 2);
+            }
+        }
+
+        await using (var write = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            _ = await Assert.ThrowsAsync<UniqueConstraintException>(async () =>
+                _ = await write.PutAsync("items", EntityIds.New().ToString(), Json("""{"m":20,"n":9}"""), CancellationToken.None));
+        }
+
+        await Review176PushAsync(cluster, machine, origin,
+            Review176Metadata(origin, stamp + 2, DocumentDelta.Unique, "items", """{"constraints":[]}"""));
+        await using (var restored = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            foreach (var id in ids)
+            {
+                await Assert.That((await restored.GetAsync("items", id, CancellationToken.None))!.UniqueConflict).IsFalse();
+            }
+        }
+
+        await machine.StopAsync();
+        await machine.StartAsync();
+        var reopened = await machine.StoreAsync();
+        await using var persisted = await reopened.BeginTransactionAsync(write: false, CancellationToken.None);
+        await Assert.That((await persisted.ListIndexesAsync(CancellationToken.None)).Single().Fields.Single().Path).IsEqualTo("m");
+        for (var i = 0; i < ids.Length; i++)
+        {
+            await Assert.That(Encoding.UTF8.GetString((await persisted.GetAsync("items", ids[i], CancellationToken.None))!.Json.Span)).IsEqualTo(bodies[i]);
+        }
+    }
+
+    private static ChangeDelta Review176Metadata(ReplicaId node, ulong stamp, string collection, string id, string json)
+    {
+        var at = new EntryVersion(new Hlc(stamp), node);
+        using var body = JsonDocument.Parse(json);
+        return new ChangeDelta(collection, id, at.Stamp, DocumentState.Bottom.Put(at, body.RootElement).DeltaAt(at.Stamp));
+    }
+
+    private static async Task Review176PushAsync(Cluster cluster, Machine machine, ReplicaId origin, params ChangeDelta[] deltas)
+    {
+        using var channel = PeerChannel.Create(machine.Api.Server.BaseAddress);
+        var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
+        using var timeout = new CancellationTokenSource(Deadline);
+        using var call = client.Push(cancellationToken: timeout.Token);
+        await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = origin.Value, Region = "fra" } });
+        _ = await call.ResponseStream.MoveNext(timeout.Token);
+        await call.RequestStream.WriteAsync(new PushFrame
+        {
+            Batch = new Batch { Database = ChangeGroups.Wire(cluster.Database), LastChangeId = 1, Groups = ChangeGroups.Encode([new OriginGroup(1, deltas)]) },
+        });
+        await Assert.That(await call.ResponseStream.MoveNext(timeout.Token)).IsTrue();
+        await Assert.That(call.ResponseStream.Current.Ack.Refused).IsFalse();
+        await call.RequestStream.CompleteAsync();
+    }
+
+    private static async Task<byte[]> Review176DigestAsync(Cluster cluster, Machine machine)
+    {
+        using var channel = PeerChannel.Create(machine.Api.Server.BaseAddress);
+        var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
+        var digest = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(cluster.Database) });
+        return digest.Buckets.ToByteArray();
+    }
+
+
+    // Retention raises a connected peer's stored ack over joined rows, past the stream's own ack (review of #169): the stream
+    // goes on from the raised ack, and the peer is never told to refill. gru's and sjc's writes interleave, with a retention
+    // pass each round. sjc lost gru's first document behind the streams' back: only a refill (a forced compare) brings it
+    // back that soon, since anti-entropy repairs a bucket after two differing rounds 60 s apart.
+    [Test]
+    public async Task A_connected_peer_streams_on_without_a_refill_while_retention_raises_its_ack_over_joined_rows()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var first = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":0}"""), CancellationToken.None);
+        });
+        var sjcNode = sjc.Node;
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+        await sjc.LoseAsync("items", first);
+
+        for (var round = 1; round <= 3; round++)
+        {
+            // sjc's writes, joined on gru, with one of gru's own in the middle: the stream's ack ends at gru's group.
+            var (local, remote, localHead) = (EntityIds.New().ToString(), string.Empty, 0L);
+            for (var write = 1; write <= 20; write++)
+            {
+                remote = EntityIds.New().ToString();
+                var id = remote;
+                await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", id, Json($$"""{"r":{{round}}}"""), CancellationToken.None));
+                if (write == 10)
+                {
+                    await gru.WriteAsync(async transaction => await transaction.PutAsync("items", local, Json($$"""{"l":{{round}}}"""), CancellationToken.None));
+                    localHead = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+                }
+            }
+
+            await Assert.That(await gru.UntilAsync(remote, $$"""{"r":{{round}}}""")).IsTrue();
+            await Assert.That(await sjc.UntilAsync(local, $$"""{"l":{{round}}}""")).IsTrue();
+
+            // After the hold, retention cuts past gru's group (so past the stream's ack) and keeps every row after the stored ack.
+            clock.Offset += TimeSpan.FromMinutes(2);
+            await gru.TrimAsync();
+            var stored = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+            await Assert.That(await gru.RowsRetainedAsync(localHead)).IsFalse().Because($"round {round}: the cut passes the stream's ack");
+            await Assert.That(await gru.RowsRetainedAsync(stored)).IsTrue().Because($"round {round}: rows after the stored ack stay");
+
+            // gru's next write ships from the raised ack, and no refill brought the lost document back meanwhile.
+            var next = EntityIds.New().ToString();
+            await gru.WriteAsync(async transaction => await transaction.PutAsync("items", next, Json($$"""{"next":{{round}}}"""), CancellationToken.None));
+            await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+            await Assert.That(await sjc.ReadAsync(next)).IsEqualTo($$"""{"next":{{round}}}""");
+            await Assert.That(await sjc.ReadAsync(first)).IsNull().Because($"round {round}: a refill brought back the document sjc lost");
+        }
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
@@ -1840,6 +2179,18 @@ public sealed class PeerStreamTests
         }
 
         // The rows of the database's turso_cdc.
+        // Whether every CDC row after `after` is still in the file: the rows themselves, no quiet range skipped.
+        public async Task<bool> RowsRetainedAsync(long after)
+        {
+            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+            var store = (await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+            var transaction = (TerraBase.Engine.Sqlite.SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None);
+            await using (transaction)
+            {
+                return await transaction.RetainsAsync(after, CancellationToken.None);
+            }
+        }
+
         public async Task<long> CdcRowsAsync()
         {
             var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();

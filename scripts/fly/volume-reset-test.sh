@@ -87,4 +87,8 @@ run planned guard "started" --image registry.fly.io/ts-terrabase:new || fail "pl
   || fail "planned reset ran: $(changes planned)"
 grep -q "machine m1 -> m2, volume vol_old (deleted) -> vol_new (1 GB), snapshot vs_new" "$tmp/reset/out" \
   || fail "reset recorded: $(cat "$tmp/reset/out")"
+# The output states what the reset deleted, platform data included, and where it still is.
+grep -q "^Data lost: everything stored in gru's TerraBase" "$tmp/dry-run/out" || fail "dry run did not state the data lost"
+grep -q "platform-auth (ts-auth's signing keys" "$tmp/reset/out" || fail "reset did not name the platform data: $(cat "$tmp/reset/out")"
+grep -q "Recoverable only from snapshot of vol_old vs_new." "$tmp/reset/out" || fail "reset did not name the snapshot: $(cat "$tmp/reset/out")"
 echo "volume-reset: all checks passed"

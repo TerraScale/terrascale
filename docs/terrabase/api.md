@@ -141,6 +141,22 @@ prove that their contents pass the integrity checks performed during restore. Se
 
 TS-588 adds `GET D/backups/{backup}/download` (`downloadBackup`, `databases:read`) here.
 
+### Imports
+
+One-time PostgreSQL (pg_dump plain) and Turso/SQLite (database file) imports into a new, empty database: contract,
+states, error codes and limits in [import.md](import.md). Project access tokens only; served by the destination's home
+region (`421 wrong_region` elsewhere).
+
+| Method | Route | operationId | Scope | Old route |
+| --- | --- | --- | --- | --- |
+| POST | `D/import` | `createImport` | `databases:write`, `documents:write` | - |
+| GET | `D/import` | `getImport` | `databases:read` | - |
+| PUT | `D/import/source?offset={n}` | `uploadImportSource` | `databases:write`, `documents:write` | - |
+| PATCH | `D/import` | `updateImport` | `databases:write`, `documents:write` | - |
+| POST | `D/import/start` | `startImport` | `databases:write`, `documents:write` | - |
+| POST | `D/import/cancel` | `cancelImport` | `databases:write` | - |
+| POST | `D/import/resume` | `resumeImport` | `databases:write`, `documents:write` | - |
+
 ### Indexes
 
 | Method | Route | operationId | Scope | Old route |

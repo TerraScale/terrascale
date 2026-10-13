@@ -8,6 +8,7 @@ using Turso.Data.Sqlite;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Replication;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -377,6 +378,144 @@ public sealed class DatabaseChangesTests
 
             return timer;
         }
+    }
+
+    // REVIEW PROBE (not committed): sjc's origin o writes e then p. fra's stream from o lost e (retention cut) and fra
+    // refilled e through RepairAsync (origin 0) before p arrived; gru received e and p on o's stream. A reader on fra
+    // gets p, then leaves before fra's repair row of e, and resumes on gru. Expected: e is delivered on gru, or 410.
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Review_probe_a_cursor_taken_on_a_refilled_machine_never_skips_the_repaired_event_on_another_region(bool repairAfterReaderPassedP)
+    {
+        await using var fra = await DocumentApi.StartAsync(values => values["region"] = "fra");
+        await using var gru = await DocumentApi.StartAsync(values => values["region"] = "gru");
+        var (fraRegion, _) = await IdentityAsync(fra);
+        var (gruRegion, _) = await IdentityAsync(gru);
+        await Assert.That((fraRegion, gruRegion)).IsEqualTo(("fra", "gru"));
+        var o = ReplicaId.Of(4518, 20, 1);
+        var hex = o.Value.ToString("x16", System.Globalization.CultureInfo.InvariantCulture);
+        var now = DateTimeOffset.UtcNow;
+        var (e, eStamp) = (DocumentApi.NewId(), Stamp(now - TimeSpan.FromMinutes(2)));
+        var (p, pStamp) = (DocumentApi.NewId(), Stamp(now - TimeSpan.FromMinutes(1)));
+        var sink = (IChangeGroupSink)fra.Server.Services.GetRequiredService<IChangeGroupSink>();
+        // gru: o's stream, e then p.
+        _ = await gru.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await gru.TenantOfAsync(), o, [Group(1, e, eStamp, o), Group(2, p, pStamp, o)], CancellationToken.None);
+        // Refill order: fra repairs e (origin 0, R6's RepairAsync), then o's stream resumes past the cut with p. Lost-apply
+        // order (anti-entropy): fra applied p without e, a reader on fra took the cursor after p, then fra repairs e.
+        var issued = new List<(string Id, string After, HashSet<string> Got)>();
+        if (repairAfterReaderPassedP)
+        {
+            _ = await sink.ApplyAsync(await fra.TenantOfAsync(), o, [Group(3, p, pStamp, o)], CancellationToken.None);
+            using var early = await Sse.OpenAsync(fra.Client, $"{fra.DatabasePath()}/changes");
+            issued.Add(((await early.NextAsync()).Id, "start(before repair)", []));
+            var first = (await early.ChangesAsync(1))[0];
+            await Assert.That(first.Data.GetProperty("id").GetString()).IsEqualTo(p);
+            issued.Add((first.Id, "p(before repair)", [p]));
+        }
+
+        await Assert.That(await sink.RepairAsync(await fra.TenantOfAsync(), [new RepairState(DocumentApi.Collection, e, Full(eStamp, o))], CancellationToken.None)).IsEqualTo(1);
+        if (!repairAfterReaderPassedP)
+        {
+            _ = await sink.ApplyAsync(await fra.TenantOfAsync(), o, [Group(3, p, pStamp, o)], CancellationToken.None);
+        }
+
+        // Each machine's own write last: it bounds every resumed read there.
+        var (fraSentinel, gruSentinel) = (DocumentApi.NewId(), DocumentApi.NewId());
+        (await fra.PutAsync(fraSentinel, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        (await gru.PutAsync(gruSentinel, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        string Name(string? id)
+        {
+            return id == e ? "e" : id == p ? "p" : id == fraSentinel ? "fra-sentinel" : id == gruSentinel ? "gru-sentinel" : id ?? "?";
+        }
+
+        string Origin(string? origin)
+        {
+            return origin == hex ? "o" : "own";
+        }
+
+        // A reader on fra from the start of retention: every id fra issues, with what the reader holds when it gets it.
+        var sequence = new List<string>();
+        using (var stream = await Sse.OpenAsync(fra.Client, $"{fra.DatabasePath()}/changes"))
+        {
+            var got = new HashSet<string>(StringComparer.Ordinal);
+            issued.Add(((await stream.NextAsync()).Id, "start", [.. got]));
+            while (true)
+            {
+                var change = (await stream.ChangesAsync(1))[0];
+                var id = change.Data.GetProperty("id").GetString()!;
+                sequence.Add($"{Name(id)}({Origin(change.Data.GetProperty("origin").GetString())})");
+                if (id == fraSentinel)
+                {
+                    break;
+                }
+
+                _ = got.Add(id);
+                if (change.Id.Length > 0)
+                {
+                    issued.Add((change.Id, Name(id), [.. got]));
+                }
+            }
+        }
+
+        Console.WriteLine($"REVIEW-PROBE lost-apply={repairAfterReaderPassedP} o={hex} fra-feed=[{string.Join(", ", sequence)}]");
+        var failures = new List<string>();
+        foreach (var (cursor, after, got) in issued)
+        {
+            foreach (var (region, api, sentinel) in new[] { ("fra", fra, fraSentinel), ("gru", gru, gruSentinel) })
+            {
+                var uri = $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(cursor)}";
+                using (var probe = await api.Client.GetAsync(new Uri(uri, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead))
+                {
+                    if (probe.StatusCode != HttpStatusCode.OK)
+                    {
+                        Console.WriteLine($"REVIEW-PROBE lost-apply={repairAfterReaderPassedP} cursor-after={after} resumed-on={region} -> {(int)probe.StatusCode}");
+                        if (probe.StatusCode != HttpStatusCode.Gone)
+                        {
+                            failures.Add($"after {after} on {region}: {(int)probe.StatusCode}");
+                        }
+
+                        continue;
+                    }
+                }
+
+                using var resumed = await Sse.OpenAsync(api.Client, uri);
+                _ = await resumed.NextAsync();
+                var seen = new List<string>();
+                while (seen.LastOrDefault() != sentinel)
+                {
+                    seen.Add((await resumed.ChangesAsync(1))[0].Data.GetProperty("id").GetString()!);
+                }
+
+                var missing = new[] { e, p }.Where(id => !got.Contains(id) && !seen.Contains(id)).Select(Name).ToList();
+                Console.WriteLine($"REVIEW-PROBE lost-apply={repairAfterReaderPassedP} cursor-after={after} resumed-on={region} -> 200 [{string.Join(", ", seen.Select(Name))}] missing=[{string.Join(", ", missing)}]");
+                if (missing.Count > 0)
+                {
+                    failures.Add($"after {after} on {region}: 200 without {string.Join(", ", missing)}");
+                }
+            }
+        }
+
+        await Assert.That(failures).IsEmpty();
+    }
+
+    private static Hlc Stamp(DateTimeOffset at) => new((ulong)at.ToUnixTimeMilliseconds() << 16);
+
+    private static DocumentState Full(Hlc stamp, ReplicaId origin)
+    {
+        using var body = JsonDocument.Parse("""{"joined":true}""");
+        return DocumentState.Bottom.Put(new EntryVersion(stamp, origin), body.RootElement);
+    }
+
+    private static OriginGroup Group(long changeId, string id, Hlc stamp, ReplicaId origin) =>
+        new(changeId, [new ChangeDelta(DocumentApi.Collection, id, stamp, Full(stamp, origin).DeltaAt(stamp))]);
+
+    private static async Task<(string? Region, string? Machine)> IdentityAsync(DocumentApi api)
+    {
+        using var health = await api.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
+        using var body = JsonDocument.Parse(await health.Content.ReadAsStringAsync());
+        return (body.RootElement.TryGetProperty("region", out var region) ? region.GetString() : null,
+            body.RootElement.TryGetProperty("machine", out var machine) ? machine.GetString() : null);
     }
 
     // Joins one document written by `origin` at `at` into the store, as a peer stream does; returns its stamp.
