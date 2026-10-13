@@ -15,7 +15,7 @@ for region in gru sjc fra; do
   fi
   flyctl deploy --app ts-dashboard --config fly.toml --image "$image" --regions "$region" --ha=false
   response=$(curl --fail --silent --show-error --max-time 30 \
-    --header "fly-prefer-region: $region" https://dashboard.terrascale.tech/health/ready)
+    --header "fly-prefer-region: $region" https://dash.terrascale.tech/health/ready)
   python3 - "$sha" "$region" "$response" <<'PY'
 import json, sys
 sha, region, response = sys.argv[1:]

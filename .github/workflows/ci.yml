@@ -1,5 +1,5 @@
 # Required formatting, build, security, contract/Fast and actual-application packaging.
-# Slow runs independently in slow.yml. This workflow pushes no image and deploys nothing.
+# Slow runs independently in slow.yml. Main images are published once; Deploy waits for both suites.
 name: CI
 
 on:
