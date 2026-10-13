@@ -63,10 +63,11 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
     internal static readonly NotFound UnknownImport = new("the database has no import", "unknown_import");
 
     private static readonly Validation BadFormat = new("format must be postgres_plain or sqlite");
-    private readonly SemaphoreSlim[] _locks = [.. Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1))];
+    // One lock per destination that ever had an import on this node.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.Ordinal);
 
     /// <summary>The per-destination lock every change of an import takes on this node.</summary>
-    public SemaphoreSlim Lock(TenantContext database) => _locks[(int)((uint)StringComparer.Ordinal.GetHashCode(database.DatabaseId!) % 64)];
+    public SemaphoreSlim Lock(TenantContext database) => _locks.GetOrAdd(database.DatabaseId!, _ => new SemaphoreSlim(1, 1));
 
     public async ValueTask<CreateImportResult> CreateAsync(TenantContext database, string name, CreateImportRequest request, CancellationToken cancellationToken)
     {
@@ -118,22 +119,25 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
                     return error;
             }
 
-            switch (await documents.ListCollectionsAsync(database, null, 1, cancellationToken).ConfigureAwait(false))
+            // Empty, or holding only the record collection of a create that failed before its first write.
+            switch (await documents.ListCollectionsAsync(database, null, 2, cancellationToken).ConfigureAwait(false))
             {
                 case NotFound:
                     return DocumentRoute.UnknownDatabase;
+                case CollectionPage { Collections: [{ Name: ImportNames.Collection }] }:
+                    break;
                 case CollectionPage { Collections.Count: > 0 }:
                     return new Conflict("an import needs a new, empty database; create one with createDatabase", "destination_not_empty");
-            }
+                default:
+                    switch (await documents.CreateCollectionAsync(database, ImportNames.Collection, cancellationToken).ConfigureAwait(false))
+                    {
+                        case NotFound:
+                            return DocumentRoute.UnknownDatabase;
+                        case Unavailable error:
+                            return error;
+                    }
 
-            switch (await documents.CreateCollectionAsync(database, ImportNames.Collection, cancellationToken).ConfigureAwait(false))
-            {
-                case NotFound:
-                    return DocumentRoute.UnknownDatabase;
-                case Conflict:
-                    return new Conflict("an import needs a new, empty database; create one with createDatabase", "destination_not_empty");
-                case Unavailable error:
-                    return error;
+                    break;
             }
 
             var now = time.GetUtcNow();
@@ -163,7 +167,8 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
     public async ValueTask<ImportResult> GetAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
         var read = await ReadAsync(database, cancellationToken).ConfigureAwait(false);
-        if (read is ImportRecords records && records.State.State is ImportStates.Analyzing or ImportStates.Queued or ImportStates.Running or ImportStates.Validating)
+        if (read is ImportRecords records && records.State.State is ImportStates.Analyzing or ImportStates.Queued or ImportStates.Running or ImportStates.Validating
+            && staging.Has(records.Job.DatabaseId))
         {
             // A job whose runner is gone (another machine, a lost volume) gets picked up again here.
             queue.Ensure(database, name, records.State.State == ImportStates.Analyzing);
@@ -210,7 +215,10 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
 
             if (offset + length <= received)
             {
-                return Body(records);
+                // A replay of the completing part also completes the transition a failed write left undone.
+                return received == job.SourceBytes && state.State == ImportStates.AwaitingSource
+                    ? await CompleteAsync(database, name, records, cancellationToken).ConfigureAwait(false)
+                    : Body(records);
             }
 
             if (offset != received)
@@ -229,23 +237,22 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
             }
 
             _ = await staging.AppendAsync(job.DatabaseId, body, length, cancellationToken).ConfigureAwait(false);
-            if (staging.Received(job.DatabaseId) < job.SourceBytes || state.State != ImportStates.AwaitingSource)
-            {
-                return Body(records);
-            }
-
-            var analyzing = state with { State = ImportStates.Analyzing, Error = null, UpdatedAt = time.GetUtcNow() };
-            return await WriteStateAsync(database, records, analyzing, cancellationToken).ConfigureAwait(false) switch
-            {
-                ImportRecords written => Queued(written, database, name, analyze: true),
-                DocumentRejected rejected => Failure(rejected),
-            };
+            return staging.Received(job.DatabaseId) < job.SourceBytes || state.State != ImportStates.AwaitingSource
+                ? Body(records)
+                : await CompleteAsync(database, name, records, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             gate.Release();
         }
     }
+
+    private async ValueTask<ImportResult> CompleteAsync(TenantContext database, string name, ImportRecords records, CancellationToken cancellationToken) =>
+        await WriteStateAsync(database, records, records.State with { State = ImportStates.Analyzing, Error = null }, cancellationToken).ConfigureAwait(false) switch
+        {
+            ImportRecords written => Queued(written, database, name, analyze: true),
+            DocumentRejected rejected => Failure(rejected),
+        };
 
     public async ValueTask<ImportResult> UpdateAsync(TenantContext database, string name, UpdateImportRequest request, CancellationToken cancellationToken)
     {
@@ -298,6 +305,8 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
         {
             var state = records.State;
             var now = time.GetUtcNow();
+            // Running work stops promptly; the runner records the cancellation.
+            queue.Interrupt(database);
             return state.State switch
             {
                 ImportStates.Cancelled => Unchanged.Value,
@@ -337,7 +346,8 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
     /// <summary>Reads both records of the destination's import in one query, so they come from one snapshot.</summary>
     internal async ValueTask<ReadImportResult> ReadAsync(TenantContext database, CancellationToken cancellationToken)
     {
-        var page = await documents.QueryAsync(database, new DocumentQuery(ImportNames.Collection, null, [], null, 8, DocumentRoute.MaxPageBytes), null, cancellationToken)
+        var both = new InFilter(DocumentPath.Id, [new ScalarValue(ScalarKind.Text, "job"), new ScalarValue(ScalarKind.Text, "state")]);
+        var page = await documents.QueryAsync(database, new DocumentQuery(ImportNames.Collection, both, [], null, 2, DocumentRoute.MaxPageBytes), null, cancellationToken)
             .ConfigureAwait(false);
         if (page is not QueryOutcome outcome)
         {
@@ -357,15 +367,19 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
 
         try
         {
-            var jobRecord = JsonSerializer.Deserialize(jobDocument.Json.Span, TerraBaseJsonContext.Default.ImportJobRecord);
-            var stateRecord = JsonSerializer.Deserialize(stateDocument.Json.Span, TerraBaseJsonContext.Default.ImportStateRecord);
+            var jobStored = JsonSerializer.Deserialize(jobDocument.Json.Span, TerraBaseJsonContext.Default.ImportStored);
+            var stateStored = JsonSerializer.Deserialize(stateDocument.Json.Span, TerraBaseJsonContext.Default.ImportStored);
+            var jobRecord = jobStored is { V: 1 } ? JsonSerializer.Deserialize(jobStored.Record, TerraBaseJsonContext.Default.ImportJobRecord) : null;
+            var stateRecord = stateStored is { V: 1, Rev: { } rev } && JsonSerializer.Deserialize(stateStored.Record, TerraBaseJsonContext.Default.ImportStateRecord) is { } state
+                ? state with { Rev = rev }
+                : null;
             return jobRecord is { V: 1 } && stateRecord is { V: 1 } && jobRecord.DatabaseId == database.DatabaseId
                 ? new ImportRecords(jobRecord, stateRecord)
-                : new Unavailable("the import's record was changed outside the import and cannot be read", "destination_modified");
+                : Modified;
         }
         catch (JsonException)
         {
-            return new Unavailable("the import's record was changed outside the import and cannot be read", "destination_modified");
+            return Modified;
         }
     }
 
@@ -380,10 +394,10 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
         all.Add(previous is null
             ? new AssertOperation(ImportNames.Collection, "state", null)
             : new AssertOperation(ImportNames.Collection, "state", new CompareFilter(new DocumentPath(["rev"]), Comparison.Equal, new ScalarValue(ScalarKind.Text, previous.State.Rev))));
-        all.Add(new PutOperation(ImportNames.Collection, "state", JsonSerializer.SerializeToUtf8Bytes(next, TerraBaseJsonContext.Default.ImportStateRecord), Unconditional));
+        all.Add(new PutOperation(ImportNames.Collection, "state", Stored(next.Rev, JsonSerializer.Serialize(next, TerraBaseJsonContext.Default.ImportStateRecord)), Unconditional));
         if (job is not null && !ReferenceEquals(job, previous?.Job))
         {
-            all.Add(new PutOperation(ImportNames.Collection, "job", JsonSerializer.SerializeToUtf8Bytes(job, TerraBaseJsonContext.Default.ImportJobRecord), Unconditional));
+            all.Add(new PutOperation(ImportNames.Collection, "job", Stored(null, JsonSerializer.Serialize(job, TerraBaseJsonContext.Default.ImportJobRecord)), Unconditional));
         }
 
         return await documents.WriteAsync(database, all, indexErrors: true, cancellationToken).ConfigureAwait(false) switch
@@ -392,6 +406,11 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
             DocumentRejected rejected => rejected,
         };
     }
+
+    private static readonly Unavailable Modified = new("the import's record was changed outside the import and cannot be read", "destination_modified");
+
+    private static byte[] Stored(string? rev, string record) =>
+        JsonSerializer.SerializeToUtf8Bytes(new ImportStored(1, rev, record), TerraBaseJsonContext.Default.ImportStored);
 
     internal ValueTask<WriteImportResult> WriteStateAsync(TenantContext database, ImportRecords previous, ImportStateRecord state, CancellationToken cancellationToken) =>
         WriteAsync(database, previous, previous.Job, state, [], cancellationToken);
@@ -478,9 +497,9 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
         }
 
         var exclude = requested?.Exclude ?? [];
-        if (exclude.Count > 1000)
+        if (exclude.Count > 1000 || exclude.Sum(entry => entry?.Length ?? 0) > 64 * 1024)
         {
-            return new Validation("options.exclude holds at most 1000 entries");
+            return new Validation("options.exclude holds at most 1000 entries and 64 KiB");
         }
 
         var canonical = new SortedSet<string>(StringComparer.Ordinal);

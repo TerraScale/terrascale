@@ -43,6 +43,9 @@ internal sealed class TablePlan
 
     public int IssueTotal { get; private set; }
 
+    /// <summary>Blocking issues found, including those beyond the 50 kept.</summary>
+    public int BlockingTotal { get; private set; }
+
     public long Rows { get; set; }
 
     public ulong[] Sum { get; } = new ulong[4];
@@ -55,6 +58,7 @@ internal sealed class TablePlan
     public void Issue(string severity, string code, string? column, long? row, string message)
     {
         IssueTotal++;
+        BlockingTotal += severity == "blocking" ? 1 : 0;
         if (Issues.Count < MaxIssues)
         {
             Issues.Add(new(severity, code, column, row, message));
@@ -251,9 +255,9 @@ internal static class ImportPlanner
         {
             source = Open(path, format, cancellationToken);
         }
-        catch (SourceFormatException error)
+        catch (Exception error) when (error is not OperationCanceledException)
         {
-            return new(null, new ImportError(error.Code, error.Message, Retryable: false), new Dictionary<string, TableChecksum>(), null);
+            return new(null, Unreadable(error), new Dictionary<string, TableChecksum>(), null);
         }
 
         using (source)
@@ -278,8 +282,8 @@ internal static class ImportPlanner
                     }
 
                     var ordinal = ++plan.Rows;
-                    // Excluded tables, tables blocked as declared and tables with 50 issues are only counted.
-                    if (plan.Excluded || plan.IssueTotal >= TablePlan.MaxIssues || plan.Issues.Any(issue => issue.Severity == "blocking" && issue.Row is null))
+                    // Excluded tables, tables blocked as declared and tables with 50 blocking issues are only counted.
+                    if (plan.Excluded || plan.BlockingTotal >= TablePlan.MaxIssues || plan.Issues.Any(issue => issue.Severity == "blocking" && issue.Row is null))
                     {
                         continue;
                     }
@@ -295,9 +299,9 @@ internal static class ImportPlanner
                     }
                 }
             }
-            catch (SourceFormatException unreadable)
+            catch (Exception unreadable) when (unreadable is not OperationCanceledException)
             {
-                fatal = new ImportError(unreadable.Code, unreadable.Message, Retryable: false);
+                fatal = Unreadable(unreadable);
             }
 
             var tables = plans.Select(plan => Body(plan, sqlite)).ToList();
@@ -315,6 +319,11 @@ internal static class ImportPlanner
             return new(preview, error, checksums, Digest(plans, sqlite));
         }
     }
+
+    // Whatever a source does to the readers ends as a refusal of that source, never as a failure of the runner.
+    private static ImportError Unreadable(Exception error) => error is SourceFormatException format
+        ? new ImportError(format.Code, format.Message, Retryable: false)
+        : new ImportError("malformed_source", "the source cannot be read: it is damaged or uses a structure the reader does not support", Retryable: false);
 
     /// <summary>Opens a staged source of <paramref name="format"/> and reads its schema.</summary>
     public static IImportSource Open(string path, string format, CancellationToken cancellationToken) => format == ImportFormats.Sqlite

@@ -15,10 +15,12 @@ internal sealed class ImportStaging
 {
     public const long MaxSourceBytes = 1L << 30;
     public const long MaxStagedBytes = 2L << 30;
+    public const long MaxOrganizationBytes = 1L << 30;
+    public static readonly TimeSpan IdleUpload = TimeSpan.FromDays(1);
     public static readonly TimeSpan Retention = TimeSpan.FromDays(7);
 
     private readonly Lock _lock = new();
-    private readonly Dictionary<string, long> _reserved = [with(StringComparer.Ordinal)];
+    private readonly Dictionary<string, (string Organization, long Bytes)> _reserved = [with(StringComparer.Ordinal)];
 
     public ImportStaging(TerraBaseOptions options)
     {
@@ -26,13 +28,28 @@ internal sealed class ImportStaging
         System.IO.Directory.CreateDirectory(Root);
         foreach (var manifest in Manifests())
         {
-            _reserved[manifest.DatabaseId] = manifest.Bytes;
+            _reserved[manifest.DatabaseId] = (manifest.OrganizationId, manifest.Bytes);
         }
     }
 
     public string Root { get; }
 
     public string Source(string databaseId) => Path.Combine(Directory(databaseId), "source");
+
+    /// <summary>Whether this node staged (part of) the destination's source.</summary>
+    public bool Has(string databaseId)
+    {
+        lock (_lock)
+        {
+            return _reserved.ContainsKey(databaseId);
+        }
+    }
+
+    /// <summary>When the staged source (or, before its first byte, its reservation) last changed; null without either.</summary>
+    public DateTimeOffset? LastWrite(string databaseId) =>
+        File.Exists(Source(databaseId)) ? File.GetLastWriteTimeUtc(Source(databaseId))
+        : File.Exists(Path.Combine(Directory(databaseId), "manifest.json")) ? File.GetLastWriteTimeUtc(Path.Combine(Directory(databaseId), "manifest.json"))
+        : null;
 
     /// <summary>Bytes staged so far.</summary>
     public long Received(string databaseId) => File.Exists(Source(databaseId)) ? new FileInfo(Source(databaseId)).Length : 0;
@@ -47,8 +64,11 @@ internal sealed class ImportStaging
                 return true;
             }
 
+            // No organization holds more than half of the node's staging budget.
             var free = new DriveInfo(Root).AvailableFreeSpace;
-            if (_reserved.Values.Sum() + manifest.Bytes > MaxStagedBytes || free < (2 * manifest.Bytes) + (1L << 30))
+            if (_reserved.Values.Sum(entry => entry.Bytes) + manifest.Bytes > MaxStagedBytes
+                || _reserved.Values.Where(entry => entry.Organization == manifest.OrganizationId).Sum(entry => entry.Bytes) + manifest.Bytes > MaxOrganizationBytes
+                || free < (2 * manifest.Bytes) + (1L << 30))
             {
                 return false;
             }
@@ -56,7 +76,7 @@ internal sealed class ImportStaging
             System.IO.Directory.CreateDirectory(Directory(manifest.DatabaseId));
             File.WriteAllBytes(Path.Combine(Directory(manifest.DatabaseId), "manifest.json"),
                 JsonSerializer.SerializeToUtf8Bytes(manifest, TerraBaseJsonContext.Default.ImportManifest));
-            _reserved[manifest.DatabaseId] = manifest.Bytes;
+            _reserved[manifest.DatabaseId] = (manifest.OrganizationId, manifest.Bytes);
             return true;
         }
     }

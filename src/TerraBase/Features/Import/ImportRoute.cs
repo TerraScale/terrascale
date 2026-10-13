@@ -10,7 +10,8 @@ namespace TerraBase.Features.Import;
 /// <summary>The destination an import route addresses, resolved for its project token and served here as its home.</summary>
 /// <param name="Database">The destination.</param>
 /// <param name="Name">Its name.</param>
-public sealed record ImportDestination(TenantContext Database, string Name);
+/// <param name="Replicated">Whether other regions hold copies of it.</param>
+public sealed record ImportDestination(TenantContext Database, string Name, bool Replicated = false);
 
 /// <summary>A <c>421 wrong_region</c> answer naming the destination's home.</summary>
 /// <param name="Result">The answer.</param>
@@ -62,7 +63,7 @@ public static class ImportRoute
             TenantDatabaseRecord record when record.Placement.Home != options.Region =>
                 new ImportElsewhere(DatabaseRegions.WrongRegion(record.Placement.Home, record.Placement.Regions)),
             // Usage metering attributes the request (and an upload's bytes) to the destination, as for document routes.
-            TenantDatabaseRecord => Attribute(context, new ImportDestination(database, name.Value)),
+            TenantDatabaseRecord record => Attribute(context, new ImportDestination(database, name.Value, record.Placement.Replicas.Count > 0)),
             NotFound => UnknownDatabase,
             Unavailable error => error,
         };

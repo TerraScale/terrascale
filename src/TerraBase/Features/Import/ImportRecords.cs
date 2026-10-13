@@ -50,6 +50,15 @@ internal sealed record ImportStateRecord(
     DateTimeOffset? RetainedUntil);
 
 /// <summary>
+/// The stored form of a record: TerraBase limits a document to 4096 JSON values, which a large preview or validation
+/// exceeds, so the record travels as one string member. <c>Rev</c> stays a member of its own for the write assertion.
+/// </summary>
+/// <param name="V">Format; only 1 is read.</param>
+/// <param name="Rev">The state's revision; null for the job.</param>
+/// <param name="Record">The record's JSON.</param>
+internal sealed record ImportStored(int V, string? Rev, string Record);
+
+/// <summary>
 /// The node-local pointer next to a staged source (<c>&lt;data&gt;/.import/&lt;database id&gt;/manifest.json</c>), so the runner can
 /// find its job after a restart. Identifiers only.
 /// </summary>

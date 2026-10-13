@@ -24,10 +24,14 @@ internal sealed class ByteLines : IDisposable
     /// <summary>The offset of the next line.</summary>
     public long Position => _bufferOffset + _start;
 
+    /// <summary>The offset of the line the last <see cref="TryRead"/> returned.</summary>
+    public long LineStart { get; private set; }
+
     /// <summary>The next line without its terminator; valid until the next call. False at the end of the file.</summary>
     public bool TryRead(out ReadOnlySpan<byte> line)
     {
         var scanned = 0;
+        LineStart = Position;
         while (true)
         {
             var newline = _buffer.AsSpan(_start + scanned, _end - _start - scanned).IndexOf((byte)'\n');

@@ -38,6 +38,9 @@ public sealed class CreateImportEndpoint(IImportJobs jobs, ITenantDirectory tena
         ArgumentNullException.ThrowIfNull(request);
         return await ImportRoute.ResolveAsync(HttpContext, tenants, options, cancellationToken) switch
         {
+            // Create-only writes and the record's revision protect a destination served by this region alone.
+            ImportDestination { Replicated: true } => ErrorResponse.From(new Conflict(
+                "an import needs a database without replica regions; add replicas after it completes", "destination_replicated")),
             ImportDestination destination => await jobs.CreateAsync(destination.Database, destination.Name, request, cancellationToken) switch
             {
                 ImportCreated created => TypedResults.Created(HttpContext.Request.Path.Value, created.Job),

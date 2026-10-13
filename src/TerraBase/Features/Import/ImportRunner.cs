@@ -16,6 +16,9 @@ internal interface IImportQueue
 {
     /// <summary>Queues analysis (<paramref name="analyze"/>) or a copy of the destination's import, unless one is queued or running.</summary>
     void Ensure(TenantContext database, string name, bool analyze);
+
+    /// <summary>Stops the destination's running analysis or copy at its next step.</summary>
+    void Interrupt(TenantContext database);
 }
 
 /// <summary>One unit of runner work.</summary>
@@ -27,6 +30,7 @@ internal sealed record ImportWork(TenantContext Database, string Name);
 internal sealed class ImportQueue : IImportQueue
 {
     private readonly ConcurrentDictionary<string, byte> _pending = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _running = new(StringComparer.Ordinal);
 
     public Channel<ImportWork> Analyses { get; } = Channel.CreateUnbounded<ImportWork>();
 
@@ -40,7 +44,34 @@ internal sealed class ImportQueue : IImportQueue
         }
     }
 
-    public void Done(TenantContext database, bool analyze) => _pending.TryRemove(Key(database, analyze), out _);
+    public void Interrupt(TenantContext database)
+    {
+        foreach (var analyze in new[] { true, false })
+        {
+            if (_running.TryGetValue(Key(database, analyze), out var running))
+            {
+                running.Cancel();
+            }
+        }
+    }
+
+    /// <summary>The token of one unit of work: cancelled by <paramref name="stop"/> or by <see cref="Interrupt"/>.</summary>
+    public CancellationTokenSource Begin(TenantContext database, bool analyze, CancellationToken stop)
+    {
+        var running = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        _running[Key(database, analyze)] = running;
+        return running;
+    }
+
+    public void Done(TenantContext database, bool analyze)
+    {
+        if (_running.TryRemove(Key(database, analyze), out var running))
+        {
+            running.Dispose();
+        }
+
+        _pending.TryRemove(Key(database, analyze), out _);
+    }
 
     private static string Key(TenantContext database, bool analyze) => database.DatabaseId + (analyze ? "/analyze" : "/copy");
 }
@@ -52,7 +83,10 @@ internal sealed class ImportQueue : IImportQueue
 internal sealed class ImportRunner : BackgroundService
 {
     private const int MaxBatchDocuments = 500;
-    private const int MaxBatchBytes = 1024 * 1024;
+
+    // A transaction captures at most 2 MiB of names, ids, field states and bodies; each field's stored state costs about
+    // its name plus 40 bytes, so a batch stops at 768 KiB by this estimate.
+    private const int MaxBatchBytes = 768 * 1024;
     private const int MaxAttempts = 8;
 
     private readonly ImportQueue _queue;
@@ -88,18 +122,23 @@ internal sealed class ImportRunner : BackgroundService
         {
             await foreach (var work in reader.ReadAllAsync(stop).ConfigureAwait(false))
             {
+                var running = _queue.Begin(work.Database, analyze, stop);
                 try
                 {
-                    await (analyze ? AnalyzeAsync(work, stop) : CopyAsync(work, stop)).ConfigureAwait(false);
+                    // Only the node that staged the source works on it.
+                    if (_staging.Has(work.Database.DatabaseId!))
+                    {
+                        await (analyze ? AnalyzeAsync(work, running.Token) : CopyAsync(work, running.Token)).ConfigureAwait(false);
+                    }
                 }
                 catch (OperationCanceledException) when (stop.IsCancellationRequested)
                 {
                     return;
                 }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or SourceFormatException)
+                catch (Exception error)
                 {
-                    _logger.ZLogWarning(error, $"An import step failed; the job is marked failed and can be resumed");
-                    await FailAsync(work.Database, new ImportError("write_failed", "the import stopped on an unexpected error; resume it", Retryable: true), stop).ConfigureAwait(false);
+                    // Nothing a source or a job record holds may stop the runner: the job fails (or is cancelled) and the loop goes on.
+                    await EndAsync(work.Database, error, stop).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -109,6 +148,28 @@ internal sealed class ImportRunner : BackgroundService
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
+        }
+    }
+
+    private async Task EndAsync(TenantContext database, Exception error, CancellationToken stop)
+    {
+        try
+        {
+            if (error is OperationCanceledException)
+            {
+                Finished(await UpdateAsync(database, current => current.State.CancelRequested
+                    ? (current.Job, ImportJobs.Cancelled(current.State, _time.GetUtcNow()))
+                    : null, null, stop).ConfigureAwait(false));
+                return;
+            }
+
+            _logger.ZLogWarning(error, $"An import step stopped; the job is marked failed and can be resumed");
+            await FailAsync(database, new ImportError("write_failed", "the import stopped on an unexpected error; resume it", Retryable: true), stop).ConfigureAwait(false);
+        }
+        catch (Exception recording) when (recording is not OperationCanceledException)
+        {
+            // The job stays in its state; GET or the next sweep queues it again.
+            _logger.ZLogWarning(recording, $"An import's failure could not be recorded");
         }
     }
 
@@ -133,22 +194,31 @@ internal sealed class ImportRunner : BackgroundService
 
         var analysis = await Task.Run(() => ImportPlanner.Analyze(_staging.Source(job.DatabaseId), job.Format, job.Options, job.Id, job.CreatedAt, _time, stop), stop)
             .ConfigureAwait(false);
-        await UpdateAsync(database, current =>
+        (ImportJobRecord Job, ImportStateRecord State)? Analyzed(ImportRecords current, ImportPreview? preview, ImportError? error)
         {
             if (current.State.State != ImportStates.Analyzing || current.Job.Id != job.Id)
             {
                 return null;
             }
 
-            var analyzed = current.Job with { Preview = analysis.Preview, PlanDigest = analysis.PlanDigest, Checksums = analysis.Checksums };
+            var analyzed = current.Job with { Preview = preview, PlanDigest = preview is null ? null : analysis.PlanDigest, Checksums = preview is null ? null : analysis.Checksums };
             return current.State.CancelRequested
                 ? (analyzed, ImportJobs.Cancelled(current.State, _time.GetUtcNow()))
                 : (analyzed, current.State with
                 {
-                    State = analysis.Error is null && analysis.Preview is { Blocking: 0 } ? ImportStates.Ready : ImportStates.Rejected,
-                    Error = analysis.Error,
+                    State = error is null && preview is { Blocking: 0 } ? ImportStates.Ready : ImportStates.Rejected,
+                    Error = error,
                 });
-        }, null, stop).ConfigureAwait(false);
+        }
+
+        if (await UpdateAsync(database, current => Analyzed(current, analysis.Preview, analysis.Error), null, stop).ConfigureAwait(false) is null
+            && await ReadAsync(database, stop).ConfigureAwait(false) is { State.State: ImportStates.Analyzing })
+        {
+            // TerraBase refused the record (too large for one document): the job is rejected instead of analyzing forever.
+            _ = await UpdateAsync(database, current => Analyzed(current, null,
+                new ImportError("preview_too_large", "the preview cannot be stored; exclude tables or import them separately", Retryable: false)), null, stop)
+                .ConfigureAwait(false);
+        }
     }
 
     private async Task CopyAsync(ImportWork work, CancellationToken stop)
@@ -169,6 +239,15 @@ internal sealed class ImportRunner : BackgroundService
         }
 
         var job = records.Job;
+        // The records live in a collection the tenant can write: copy only under a confirmed, unblocked preview and a sane checkpoint.
+        if (job.Preview is not { Blocking: 0 } preview || records.State.ConfirmedPreviewId != preview.Id || job.Checksums is null || job.PlanDigest is null
+            || records.State.Checkpoint is { } mark && (mark.Position.Offset < 0 || mark.Position.Offset > job.SourceBytes || mark.Position.Table is < 0 or > ImportPlanner.MaxTables
+                || mark.Position.Row < 0 || (mark.Position.CopyTable is not null && mark.Position.CopyColumns is null) || mark.Rows is null || mark.Written is null))
+        {
+            await FailAsync(database, new ImportError("destination_modified", "the import's record was changed outside the import", Retryable: false), stop).ConfigureAwait(false);
+            return;
+        }
+
         if (!await _staging.VerifyAsync(job.DatabaseId, job.SourceBytes, job.SourceSha256, stop).ConfigureAwait(false))
         {
             var lost = _staging.Received(job.DatabaseId) != job.SourceBytes;
@@ -185,10 +264,20 @@ internal sealed class ImportRunner : BackgroundService
         using var source = ImportPlanner.Open(_staging.Source(job.DatabaseId), job.Format, stop);
         var sqlite = job.Format == ImportFormats.Sqlite;
         var plans = ImportPlanner.Plan(source, job.Options, sqlite);
-        if (ImportPlanner.Digest(plans, sqlite) != job.PlanDigest || job.Checksums is null)
+        if (ImportPlanner.Digest(plans, sqlite) != job.PlanDigest)
         {
-            await FailAsync(database, new ImportError("preview_changed",
-                "the import's plan differs from the confirmed preview (TerraBase changed in between); update the import to get a new preview", Retryable: false), stop).ConfigureAwait(false);
+            // TerraBase changed between preview and copy: analyze again, and the user confirms the new preview.
+            var again = await UpdateAsync(database, current => (current.Job with { Preview = null, PlanDigest = null, Checksums = null }, current.State with
+            {
+                State = ImportStates.Analyzing,
+                ConfirmedPreviewId = null,
+                Error = new ImportError("preview_changed", "the plan differs from the confirmed preview; confirm the new preview", Retryable: true),
+            }), null, stop).ConfigureAwait(false);
+            if (again is not null)
+            {
+                _queue.Ensure(database, work.Name, analyze: true);
+            }
+
             return;
         }
 
@@ -242,47 +331,50 @@ internal sealed class ImportRunner : BackgroundService
             }
 
             var table = plan.Source.Display;
-            var ordinal = rows[table] = rows.GetValueOrDefault(table) + 1;
-            position = row.Resume;
-            if (plan.Excluded)
+            var ordinal = rows.GetValueOrDefault(table) + 1;
+            if (!plan.Excluded)
             {
-                continue;
-            }
-
-            string id;
-            byte[] json;
-            try
-            {
-                (id, json) = plan.Map(row, ordinal, job.Id, job.CreatedAt, buffer);
-            }
-            catch (ImportValueException error)
-            {
-                await FailAsync(database, new ImportError(error.Code, error.Message, Retryable: false, table, ordinal, error.Column), stop).ConfigureAwait(false);
-                return null;
-            }
-
-            if (!targets.Add((plan.Collection, id)))
-            {
-                await FailAsync(database, new ImportError("duplicate_document_id", $"two rows map to document id {id}", Retryable: false, table, ordinal), stop)
-                    .ConfigureAwait(false);
-                return null;
-            }
-
-            batch.Add(new PutOperation(plan.Collection, id, json, Precondition.Absent));
-            written[table] = written.GetValueOrDefault(table) + 1;
-            bytes += json.Length;
-            current = table;
-            if (batch.Count >= MaxBatchDocuments || bytes >= MaxBatchBytes)
-            {
-                if (await FlushAsync(database, records, batch, position, rows, written, totals, current, stop).ConfigureAwait(false) is not { } next)
+                string id;
+                byte[] json;
+                try
                 {
+                    (id, json) = plan.Map(row, ordinal, job.Id, job.CreatedAt, buffer);
+                }
+                catch (ImportValueException error)
+                {
+                    await FailAsync(database, new ImportError(error.Code, error.Message, Retryable: false, table, ordinal, error.Column), stop).ConfigureAwait(false);
                     return null;
                 }
 
-                (records, bytes) = (next, 0);
-                batch.Clear();
-                targets.Clear();
+                // Flush before a row that would overflow the batch: the checkpoint then ends exactly before it.
+                var cost = json.Length + (id.Length * 2) + plan.Collection.Length + (row.Columns.Count * 64);
+                if (batch.Count > 0 && (batch.Count >= MaxBatchDocuments || bytes + cost > MaxBatchBytes))
+                {
+                    if (await FlushAsync(database, records, batch, position, rows, written, totals, current, stop).ConfigureAwait(false) is not { } next)
+                    {
+                        return null;
+                    }
+
+                    (records, bytes) = (next, 0);
+                    batch.Clear();
+                    targets.Clear();
+                }
+
+                if (!targets.Add((plan.Collection, id)))
+                {
+                    await FailAsync(database, new ImportError("duplicate_document_id", $"two rows map to document id {id}", Retryable: false, table, ordinal), stop)
+                        .ConfigureAwait(false);
+                    return null;
+                }
+
+                batch.Add(new PutOperation(plan.Collection, id, json, Precondition.Absent));
+                written[table] = written.GetValueOrDefault(table) + 1;
+                bytes += cost;
+                current = table;
             }
+
+            rows[table] = ordinal;
+            position = row.Resume;
         }
 
         return await FlushAsync(database, records, batch, position, rows, written, totals, null, stop, validating: true).ConfigureAwait(false);
@@ -303,19 +395,29 @@ internal sealed class ImportRunner : BackgroundService
         };
         for (var attempt = 0; ; attempt++)
         {
-            WriteImportResult result;
+            WriteImportResult? result = null;
             var gate = _jobs.Lock(database);
             await gate.WaitAsync(stop).ConfigureAwait(false);
             try
             {
                 result = await _jobs.WriteAsync(database, records, records.Job, state, batch, stop).ConfigureAwait(false);
             }
+            catch (StorageBusyException) when (attempt + 1 < MaxAttempts)
+            {
+                // Storage pressure (a long writer wait, a full mailbox): retried like a capacity refusal.
+            }
             finally
             {
                 gate.Release();
             }
 
-            switch (result)
+            if (result is not { } outcome)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(Math.Min(30, 1 << attempt)), _time, stop).ConfigureAwait(false);
+                continue;
+            }
+
+            switch (outcome)
             {
                 case ImportRecords next:
                     _written.Add(batch.Count);
@@ -449,11 +551,18 @@ internal sealed class ImportRunner : BackgroundService
                 continue;
             }
 
+            var now = _time.GetUtcNow();
+            var touched = _staging.LastWrite(manifest.DatabaseId);
             switch (await _jobs.ReadAsync(database, stop).ConfigureAwait(false))
             {
+                // Staged bytes are kept only while a job can use them: an upload idle for a day, a preview or a failure
+                // left alone for the retention period, and a finished or forgotten import release their room.
                 case NotFound:
                 case ImportRecords { State.State: ImportStates.Completed }:
-                case ImportRecords { State: { State: ImportStates.Failed or ImportStates.Cancelled, RetainedUntil: { } until } } when until <= _time.GetUtcNow():
+                case ImportRecords { State.State: ImportStates.AwaitingSource } when touched is null || touched + ImportStaging.IdleUpload <= now:
+                case ImportRecords { State: { State: ImportStates.Ready or ImportStates.Rejected, UpdatedAt: var updated } } when updated + ImportStaging.Retention <= now:
+                case ImportRecords { State: { State: ImportStates.Failed or ImportStates.Cancelled, RetainedUntil: { } until } }
+                    when until <= now && (touched is null || touched + ImportStaging.Retention <= now):
                     _staging.Delete(manifest.DatabaseId);
                     break;
                 case ImportRecords { State.State: ImportStates.Analyzing }:

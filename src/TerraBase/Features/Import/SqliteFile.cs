@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System.Collections;
+using System.Globalization;
 using System.Text;
 
 namespace TerraBase.Features.Import;
@@ -14,6 +16,19 @@ internal sealed class SqliteFile : IImportSource
     private const int MaxDepth = 32;
     private const int MaxPayload = ByteLines.MaxLine;
     private const int MaxColumns = 2000;
+    private const int MaxSchemaEntries = 20_000;
+    private const long MaxSchemaBytes = 16 * 1024 * 1024;
+
+    // Shadow tables of the virtual table modules SQLite ships, by module; any other table is imported.
+    private static readonly Dictionary<string, string[]> ShadowSuffixes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["fts3"] = ["content", "segments", "segdir", "docsize", "stat"],
+        ["fts4"] = ["content", "segments", "segdir", "docsize", "stat"],
+        ["fts5"] = ["data", "idx", "content", "docsize", "config"],
+        ["rtree"] = ["node", "parent", "rowid"],
+        ["rtree_i32"] = ["node", "parent", "rowid"],
+        ["geopoly"] = ["node", "parent", "rowid"],
+    };
 
     private readonly FileStream _file;
     private readonly int _pageSize;
@@ -93,6 +108,8 @@ internal sealed class SqliteFile : IImportSource
 
     public IEnumerable<SourceRow> Rows(ImportPosition? from, CancellationToken cancellationToken)
     {
+        // One page belongs to one table: a page reached twice in a pass, by any table, is malformed.
+        var visited = new BitArray(checked((int)_pages + 1));
         for (var index = from?.Table ?? 0; index < Schema.Tables.Count; index++)
         {
             var table = Schema.Tables[index];
@@ -105,7 +122,7 @@ internal sealed class SqliteFile : IImportSource
             var order = RecordOrder(table, stored);
             var skip = from is not null && index == from.Table ? from.Row : 0;
             var row = 0L;
-            foreach (var (rowId, record) in Walk(table.RootPage, table.WithoutRowid, cancellationToken))
+            foreach (var (rowId, record) in Walk(table.RootPage, table.WithoutRowid, 0, visited, cancellationToken))
             {
                 if (++row <= skip)
                 {
@@ -163,7 +180,8 @@ internal sealed class SqliteFile : IImportSource
     private void ReadSchema(CancellationToken cancellationToken)
     {
         var entries = new List<(string Type, string Name, long Root, string Sql)>();
-        foreach (var (_, record) in Walk(1, index: false, cancellationToken))
+        long sqlBytes = 0;
+        foreach (var (_, record) in Walk(1, index: false, 0, new BitArray(checked((int)_pages + 1)), cancellationToken))
         {
             var values = Decode(record);
             if (values.Count < 5)
@@ -171,11 +189,36 @@ internal sealed class SqliteFile : IImportSource
                 throw Malformed("the schema table holds a malformed row");
             }
 
-            entries.Add((values[0].Text ?? "", values[1].Text ?? "", values[3].Kind == SourceKind.Integer ? values[3].Integer : 0, values[4].Text ?? ""));
+            var sql = values[4].Text ?? "";
+            sqlBytes += sql.Length;
+            if (entries.Count >= MaxSchemaEntries || sqlBytes > MaxSchemaBytes)
+            {
+                throw new SourceFormatException("too_many_tables", "the schema holds more than 20000 objects or 16 MiB of SQL");
+            }
+
+            entries.Add((values[0].Text ?? "", values[1].Text ?? "", values[3].Kind == SourceKind.Integer ? values[3].Integer : 0, sql));
         }
 
+        var tableNames = entries.Where(entry => entry.Type == "table").Select(entry => entry.Name).ToList();
+        if (tableNames.Distinct(StringComparer.OrdinalIgnoreCase).Count() != tableNames.Count)
+        {
+            throw Malformed("the schema names one table twice");
+        }
+
+        // Virtual tables and the shadow-table names their module creates.
         var virtualTables = entries.Where(entry => entry.Type == "table" && entry.Sql.TrimStart().StartsWith("CREATE VIRTUAL", StringComparison.OrdinalIgnoreCase))
             .Select(entry => entry.Name).ToList();
+        var shadows = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries.Where(entry => virtualTables.Contains(entry.Name)))
+        {
+            var tokens = SqlTokens.Read(entry.Sql, sqlite: true);
+            var module = tokens.FindIndex(token => token.Is("USING")) is var at and >= 0 && at + 1 < tokens.Count ? tokens[at + 1].Text : "";
+            foreach (var suffix in ShadowSuffixes.GetValueOrDefault(module) ?? [])
+            {
+                shadows.Add(entry.Name + "_" + suffix);
+            }
+        }
+
         foreach (var entry in entries)
         {
             var display = ImportNames.Table("main", entry.Name);
@@ -189,16 +232,19 @@ internal sealed class SqliteFile : IImportSource
             else if (virtualTables.Contains(entry.Name))
             {
                 Schema.Skip("virtual_table", display);
-                Schema.Warnings.Add(new("warning", "not_imported", null, null,
-                    $"virtual table {display} is not imported; an index such as FTS or R-tree is rebuilt from its source table, but content held only in the virtual table is lost"));
+                Schema.Warn($"virtual table {display} is not imported; an index such as FTS or R-tree is rebuilt from its source table, but content held only in the virtual table is lost");
             }
-            else if (virtualTables.Any(name => entry.Name.StartsWith(name + "_", StringComparison.OrdinalIgnoreCase)))
+            else if (shadows.Contains(entry.Name))
             {
                 Schema.Skip("shadow_table", display);
             }
             else if (entry.Name.StartsWith("sqlite_", StringComparison.OrdinalIgnoreCase))
             {
                 Schema.Skip("internal_table", display);
+            }
+            else if (Schema.Tables.Count >= ImportPlanner.MaxTables)
+            {
+                throw new SourceFormatException("too_many_tables", "an import holds at most 1000 tables");
             }
             else
             {
@@ -231,6 +277,11 @@ internal sealed class SqliteFile : IImportSource
             Schema.Skip("check_constraint", table.Display + "." + ImportNames.Quote(check));
         }
 
+        foreach (var column in table.Columns)
+        {
+            column.Default = Affinity(column.Type, column.Default);
+        }
+
         // A rowid table's single INTEGER PRIMARY KEY column is stored as the rowid (its record value is NULL).
         if (!withoutRowid && table.PrimaryKey is [var key] && table.Column(key, ignoreCase: true) is { Type: "integer" } alias)
         {
@@ -245,11 +296,12 @@ internal sealed class SqliteFile : IImportSource
         return table;
     }
 
-    /// <summary>The cells of a b-tree in key order: (rowid, payload) for table trees, (null, payload) for index trees.</summary>
-    private IEnumerable<(long? RowId, byte[] Payload)> Walk(uint root, bool index, CancellationToken cancellationToken) =>
-        Walk(root, index, 0, [], cancellationToken);
-
-    private IEnumerable<(long? RowId, byte[] Payload)> Walk(uint number, bool index, int depth, HashSet<uint> visited, CancellationToken cancellationToken)
+    /// <summary>
+    /// The cells of a b-tree in key order: (rowid, payload) for table trees, (null, payload) for index trees. Every page is
+    /// read at most once per <paramref name="visited"/>, and the cells of a page may not overlap, so a pass reads at most
+    /// the file's own bytes.
+    /// </summary>
+    private IEnumerable<(long? RowId, byte[] Payload)> Walk(uint number, bool index, int depth, BitArray visited, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (depth > MaxDepth)
@@ -257,11 +309,7 @@ internal sealed class SqliteFile : IImportSource
             throw Malformed("a b-tree is deeper than 32 levels");
         }
 
-        if (number == 0 || number > _pages || !visited.Add(number))
-        {
-            throw Malformed("a b-tree page is out of range or reached twice");
-        }
-
+        Visit(number, visited);
         var page = ReadPage(number);
         var at = number == 1 ? 100 : 0;
         var type = page[at];
@@ -278,21 +326,18 @@ internal sealed class SqliteFile : IImportSource
             throw Malformed("a b-tree page holds more cells than fit");
         }
 
+        var offsets = new int[cells];
         for (var i = 0; i < cells; i++)
         {
-            var offset = (int)BinaryPrimitives.ReadUInt16BigEndian(page.AsSpan(pointers + (i * 2)));
-            if (offset < pointers + (cells * 2) || offset >= _usable)
-            {
-                throw Malformed("a cell lies outside its page");
-            }
+            offsets[i] = BinaryPrimitives.ReadUInt16BigEndian(page.AsSpan(pointers + (i * 2)));
+        }
 
+        CheckCells(page, offsets, pointers + (cells * 2), leaf, index);
+        for (var i = 0; i < cells; i++)
+        {
+            var offset = offsets[i];
             if (!leaf)
             {
-                if (offset + 4 > _usable)
-                {
-                    throw Malformed("a cell lies outside its page");
-                }
-
                 foreach (var entry in Walk(BinaryPrimitives.ReadUInt32BigEndian(page.AsSpan(offset)), index, depth + 1, visited, cancellationToken))
                 {
                     yield return entry;
@@ -321,7 +366,65 @@ internal sealed class SqliteFile : IImportSource
         }
     }
 
-    private byte[] Payload(byte[] page, int offset, long size, bool index, HashSet<uint> visited)
+    // Cells lie between the cell pointer array and the usable end, and no two overlap.
+    private void CheckCells(byte[] page, int[] offsets, int contentStart, bool leaf, bool index)
+    {
+        var extents = new (int Start, int End)[offsets.Length];
+        for (var i = 0; i < offsets.Length; i++)
+        {
+            var offset = offsets[i];
+            if (offset < contentStart || offset >= _usable)
+            {
+                throw Malformed("a cell lies outside its page");
+            }
+
+            var cursor = offset + (leaf ? 0 : 4);
+            if (!leaf && !index)
+            {
+                _ = Varint(page, ref cursor, _usable);
+            }
+            else
+            {
+                var size = Varint(page, ref cursor, _usable);
+                if (!index)
+                {
+                    _ = Varint(page, ref cursor, _usable);
+                }
+
+                var local = Local(size, index);
+                cursor += local + (local < size ? 4 : 0);
+            }
+
+            if (cursor > _usable)
+            {
+                throw Malformed("a cell lies outside its page");
+            }
+
+            extents[i] = (offset, cursor);
+        }
+
+        Array.Sort(extents);
+        for (var i = 1; i < extents.Length; i++)
+        {
+            if (extents[i].Start < extents[i - 1].End)
+            {
+                throw Malformed("two cells of a page overlap");
+            }
+        }
+    }
+
+    private void Visit(uint number, BitArray visited)
+    {
+        if (number == 0 || number > _pages || visited[(int)number])
+        {
+            throw Malformed("a page is out of range or reached twice");
+        }
+
+        visited[(int)number] = true;
+    }
+
+    // The bytes of a payload of <paramref name="size"/> stored on its b-tree page (https://www.sqlite.org/fileformat2.html).
+    private int Local(long size, bool index)
     {
         if (size is < 0 or > MaxPayload)
         {
@@ -331,16 +434,19 @@ internal sealed class SqliteFile : IImportSource
         var u = _usable;
         var x = index ? ((u - 12) * 64 / 255) - 23 : u - 35;
         var m = ((u - 12) * 32 / 255) - 23;
-        int local;
         if (size <= x)
         {
-            local = (int)size;
+            return (int)size;
         }
-        else
-        {
-            var k = m + (int)((size - m) % (u - 4));
-            local = k <= x ? k : m;
-        }
+
+        var k = m + (int)((size - m) % (u - 4));
+        return k <= x ? k : m;
+    }
+
+    private byte[] Payload(byte[] page, int offset, long size, bool index, BitArray visited)
+    {
+        var u = _usable;
+        var local = Local(size, index);
 
         if (offset + local + (local < size ? 4 : 0) > u)
         {
@@ -353,10 +459,7 @@ internal sealed class SqliteFile : IImportSource
         var next = local < size ? BinaryPrimitives.ReadUInt32BigEndian(page.AsSpan(offset + local)) : 0;
         while (written < size)
         {
-            if (next == 0 || next > _pages || !visited.Add(next))
-            {
-                throw Malformed("an overflow chain is broken");
-            }
+            Visit(next, visited);
 
             var overflow = ReadPage(next);
             var chunk = (int)Math.Min(u - 4, size - written);
@@ -394,19 +497,19 @@ internal sealed class SqliteFile : IImportSource
         {
             var length = type switch
             {
-                0 or 8 or 9 => 0,
-                >= 1 and <= 4 => (int)type,
-                5 => 6,
-                6 or 7 => 8,
-                >= 12 => (int)((type - (type % 2 == 0 ? 12 : 13)) / 2),
+                0 or 8 or 9 => 0L,
+                >= 1 and <= 4 => type,
+                5 => 6L,
+                6 or 7 => 8L,
+                >= 12 => (type - (type % 2 == 0 ? 12 : 13)) / 2,
                 _ => throw Malformed("a record uses a reserved serial type"),
             };
-            if (length < 0 || body + length > record.Length)
+            if (length < 0 || length > record.Length - body)
             {
                 throw Malformed("a record value lies outside its record");
             }
 
-            var bytes = record.AsSpan(body, length);
+            var bytes = record.AsSpan(body, (int)length);
             values.Add(type switch
             {
                 0 => SourceValue.Null,
@@ -417,7 +520,7 @@ internal sealed class SqliteFile : IImportSource
                 _ when type % 2 == 0 => new SourceValue(SourceKind.Blob, Blob: bytes.ToArray()),
                 _ => new SourceValue(SourceKind.Text, Text: DecodeText(bytes)),
             });
-            body += length;
+            body += (int)length;
         }
 
         return values;
@@ -433,6 +536,27 @@ internal sealed class SqliteFile : IImportSource
         {
             return null;
         }
+    }
+
+    // SQLite applies a column's affinity to a literal default: '5' in an INTEGER column is the integer 5.
+    private static SourceValue Affinity(string type, SourceValue value)
+    {
+        var upper = type.ToUpperInvariant();
+        var numeric = upper.Contains("INT", StringComparison.Ordinal) || upper.Contains("REAL", StringComparison.Ordinal)
+            || upper.Contains("FLOA", StringComparison.Ordinal) || upper.Contains("DOUB", StringComparison.Ordinal)
+            || !(upper.Length == 0 || upper.Contains("CHAR", StringComparison.Ordinal) || upper.Contains("CLOB", StringComparison.Ordinal)
+                || upper.Contains("TEXT", StringComparison.Ordinal) || upper.Contains("BLOB", StringComparison.Ordinal));
+        var real = upper.Contains("REAL", StringComparison.Ordinal) || upper.Contains("FLOA", StringComparison.Ordinal) || upper.Contains("DOUB", StringComparison.Ordinal);
+        if (!numeric || value.Kind != SourceKind.Text || value.Text is not { } text)
+        {
+            return value is { Kind: SourceKind.Integer } && real ? new SourceValue(SourceKind.Real, Real: value.Integer) : value;
+        }
+
+        return !real && long.TryParse(text.Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var integer)
+            ? new SourceValue(SourceKind.Integer, Integer: integer)
+            : double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
+                ? new SourceValue(SourceKind.Real, Real: number)
+                : value;
     }
 
     private static long SignedBigEndian(ReadOnlySpan<byte> bytes)

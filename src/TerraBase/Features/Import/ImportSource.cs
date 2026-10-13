@@ -109,6 +109,21 @@ internal sealed class SourceSchema
         {
             Skipped.Add(new(kind, name));
         }
+        else if (kind is "materialized_view" or "foreign_table" or "virtual_table" && Skipped.FindLastIndex(entry => entry.Kind is not ("materialized_view" or "foreign_table" or "virtual_table")) is var evict and >= 0)
+        {
+            // Objects that may hold data not imported stay visible when the list is full.
+            Skipped.RemoveAt(evict);
+            Skipped.Add(new(kind, name));
+        }
+    }
+
+    /// <summary>A warning that belongs to no table; at most 50 are kept.</summary>
+    public void Warn(string message)
+    {
+        if (Warnings.Count < 50)
+        {
+            Warnings.Add(new("warning", "not_imported", null, null, message));
+        }
     }
 
     public void Block(string code, string message)

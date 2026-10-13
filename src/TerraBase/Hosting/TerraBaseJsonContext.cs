@@ -33,6 +33,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(ImportJobRecord))]
 [JsonSerializable(typeof(ImportStateRecord))]
 [JsonSerializable(typeof(ImportManifest))]
+[JsonSerializable(typeof(ImportStored))]
 [JsonSerializable(typeof(ImportPreview))]
 [JsonSerializable(typeof(AddMemberRequest))]
 [JsonSerializable(typeof(ApiKey))]

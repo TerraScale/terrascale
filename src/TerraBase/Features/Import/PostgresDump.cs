@@ -67,7 +67,7 @@ internal sealed class PostgresDump : IImportSource
                 continue;
             }
 
-            foreach (var statement in scanner.Feed(Decode(line, lines.Position)))
+            foreach (var statement in scanner.Feed(Decode(line, lines.LineStart == 0)))
             {
                 if (statement.Text.StartsWith('\\'))
                 {
@@ -114,11 +114,11 @@ internal sealed class PostgresDump : IImportSource
         }
     }
 
-    private static string Decode(ReadOnlySpan<byte> line, long position)
+    private static string Decode(ReadOnlySpan<byte> line, bool first)
     {
         try
         {
-            return Utf8.GetString(line is [0xef, 0xbb, 0xbf, ..] && position <= line.Length + 1 ? line[3..] : line);
+            return Utf8.GetString(first && line is [0xef, 0xbb, 0xbf, ..] ? line[3..] : line);
         }
         catch (DecoderFallbackException)
         {
@@ -148,7 +148,7 @@ internal sealed class PostgresDump : IImportSource
                 continue;
             }
 
-            foreach (var statement in scanner.Feed(Decode(line, lines.Position)))
+            foreach (var statement in scanner.Feed(Decode(line, lines.LineStart == 0)))
             {
                 if (Classify(statement) is { } started)
                 {
@@ -364,12 +364,16 @@ internal sealed class PostgresDump : IImportSource
                 CreateTable(tokens, name, i);
                 return;
             case "type" when name is not null && i + 1 < tokens.Count && tokens[i].Is("AS") && tokens[i + 1].Is("ENUM"):
+                if (_enums.Count >= 100_000)
+                {
+                    throw new SourceFormatException("too_many_tables", "the dump declares more than 100000 enum types");
+                }
+
                 _enums.Add(Key(name));
                 return;
             case "foreign_table" or "materialized_view":
                 Schema.Skip(kind, Display(name));
-                Schema.Warnings.Add(new("warning", "not_imported", null, null,
-                    $"{kind.Replace('_', ' ')} {Display(name)} is not imported: its rows are not part of the dump's table data"));
+                Schema.Warn($"{kind.Replace('_', ' ')} {Display(name)} is not imported: its rows are not part of the dump's table data");
                 return;
             case "":
                 Schema.Block("unsupported_statement", $"a statement that may hold data is not imported: {Excerpt(text)}");
@@ -387,6 +391,11 @@ internal sealed class PostgresDump : IImportSource
     private void CreateTable(List<SqlToken> tokens, List<string> name, int i)
     {
         var table = new SourceTable { Schema = name.Count > 1 ? name[^2] : "public", Name = name[^1] };
+        if (Schema.Tables.Count >= ImportPlanner.MaxTables)
+        {
+            throw new SourceFormatException("too_many_tables", "an import holds at most 1000 tables");
+        }
+
         if (_tables.ContainsKey(table.Display))
         {
             table.Issues.Add(new("blocking", "malformed_source", null, null, "the dump defines this table twice"));
@@ -455,6 +464,9 @@ internal sealed class PostgresDump : IImportSource
                 table.Partitioned = true;
             }
         }
+
+        // pg_dump defines parents first, so their columns are known for the child's COPY list.
+        InheritColumns(table, 0);
     }
 
     /// <summary>Reads one element of a table definition: a column or a table constraint.</summary>
@@ -473,10 +485,21 @@ internal sealed class PostgresDump : IImportSource
             i = 2;
         }
 
+        // EXCLUDE is not reserved in PostgreSQL: a column may be named exclude, but the constraint continues with USING or "(".
         if (i < element.Count && (element[i].Is("PRIMARY") || element[i].Is("UNIQUE") || element[i].Is("FOREIGN") || element[i].Is("CHECK")
-            || element[i].Is("EXCLUDE") || element[i].Is("LIKE")))
+            || (element[i].Is("EXCLUDE") && i + 1 < element.Count && (element[i + 1].Is("USING") || element[i + 1].IsSymbol("(")))))
         {
             TableConstraint(table, element, i, constraintName);
+            return;
+        }
+
+        if (table.Columns.Count >= TablePlan.MaxColumns)
+        {
+            if (!table.Issues.Any(issue => issue.Code == "too_many_columns"))
+            {
+                table.Issues.Add(new("blocking", "too_many_columns", null, null, "a table has at most 1600 columns"));
+            }
+
             return;
         }
 
@@ -602,6 +625,9 @@ internal sealed class PostgresDump : IImportSource
         var token = tokens[i];
         return token.Kind switch
         {
+            SqlTokenKind.Number when token.Text.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                && long.TryParse(token.Text.AsSpan(2), System.Globalization.NumberStyles.AllowHexSpecifier, System.Globalization.CultureInfo.InvariantCulture, out var hex) =>
+                (new SourceValue(SourceKind.Integer, Integer: negative ? -hex : hex), false),
             SqlTokenKind.Number when long.TryParse(token.Text, System.Globalization.CultureInfo.InvariantCulture, out var integer) =>
                 (new SourceValue(SourceKind.Integer, Integer: negative ? -integer : integer), false),
             SqlTokenKind.Number when double.TryParse(token.Text, System.Globalization.CultureInfo.InvariantCulture, out var real) =>
@@ -610,8 +636,9 @@ internal sealed class PostgresDump : IImportSource
             SqlTokenKind.Word when token.Is("NULL") => (SourceValue.Null, false),
             SqlTokenKind.Word when token.Is("TRUE") => (new SourceValue(SourceKind.Integer, Integer: 1), false),
             SqlTokenKind.Word when token.Is("FALSE") => (new SourceValue(SourceKind.Integer, Integer: 0), false),
-            SqlTokenKind.Word when (token.Text is ['x' or 'X']) && i + 1 < tokens.Count && tokens[i + 1].Kind == SqlTokenKind.String =>
-                Convert.FromHexString(tokens[i + 1].Text) is var blob ? (new SourceValue(SourceKind.Blob, Blob: blob), false) : (SourceValue.Null, true),
+            SqlTokenKind.Word when (token.Text is ['x' or 'X']) && i + 1 < tokens.Count && tokens[i + 1].Kind == SqlTokenKind.String
+                && tokens[i + 1].Text.Length % 2 == 0 && tokens[i + 1].Text.All(char.IsAsciiHexDigit) =>
+                (new SourceValue(SourceKind.Blob, Blob: Convert.FromHexString(tokens[i + 1].Text)), false),
             _ => (SourceValue.Null, true),
         };
     }
@@ -866,11 +893,12 @@ internal sealed class PostgresDump : IImportSource
             Block,
         }
 
-        public bool Pending => _text.ToString().Trim().Length > 0;
+        /// <summary>Whether text other than whitespace is waiting for its statement's end.</summary>
+        public bool Pending { get; private set; }
 
         public IEnumerable<Statement> Feed(string line)
         {
-            if (_mode == Mode.Normal && line.StartsWith('\\') && _text.ToString().Trim().Length == 0)
+            if (_mode == Mode.Normal && line.StartsWith('\\') && !Pending)
             {
                 _text.Clear();
                 yield return new Statement(line, false);
@@ -965,6 +993,7 @@ internal sealed class PostgresDump : IImportSource
                 return;
             }
 
+            Pending |= line.AsSpan(start, end - start).ContainsAnyExcept(" \t\r\n");
             var room = MaxStatement - _text.Length;
             if (end - start > room)
             {
@@ -980,6 +1009,7 @@ internal sealed class PostgresDump : IImportSource
             var statement = new Statement(_text.ToString().Trim(), _truncated);
             _text.Clear();
             _truncated = false;
+            Pending = false;
             return statement;
         }
     }

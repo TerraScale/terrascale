@@ -118,5 +118,34 @@ SQL
 sqlite3 "$work/live.db" "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1200) INSERT INTO notes (title, body, score) SELECT 'row ' || i, CASE WHEN i % 300 = 0 THEN printf('%.*c', 9000, 'x') ELSE 'b' || i END, i / 4.0 FROM n;"
 sqlite3 "$work/live.db" "VACUUM INTO '$out/sqlite-notes.db'"
 sqlite3 "$work/live.db" ".backup '$out/sqlite-wal.db'"
+# Crafted SQLite files for the reader's refusals and edge cases (sqlite3 itself writes them).
+rm -f "$out"/sqlite-crafted-*.db
+sqlite3 "$out/sqlite-crafted-neighbors.db" <<'SQL'
+CREATE VIRTUAL TABLE notes USING fts5(body);
+INSERT INTO notes VALUES ('indexed text');
+CREATE TABLE notes_tags (id INTEGER PRIMARY KEY, tag TEXT);
+INSERT INTO notes_tags VALUES (1, 'kept');
+CREATE TABLE typed (id INTEGER PRIMARY KEY, a TEXT);
+INSERT INTO typed VALUES (1, 'old');
+ALTER TABLE typed ADD COLUMN n INTEGER DEFAULT '5';
+ALTER TABLE typed ADD COLUMN h INTEGER DEFAULT 0x10;
+ALTER TABLE typed ADD COLUMN r REAL DEFAULT 2;
+INSERT INTO typed VALUES (2, 'new', 7, 8, 9.5);
+SQL
+sqlite3 "$out/sqlite-crafted-shared-root.db" <<'SQL'
+CREATE TABLE a (id INTEGER PRIMARY KEY, v TEXT);
+CREATE TABLE b (id INTEGER PRIMARY KEY, v TEXT);
+INSERT INTO a VALUES (1, 'x');
+.dbconfig defensive off
+PRAGMA writable_schema = ON;
+UPDATE sqlite_schema SET rootpage = (SELECT rootpage FROM sqlite_schema WHERE name = 'a') WHERE name = 'b';
+SQL
+sqlite3 "$out/sqlite-crafted-duplicate.db" <<'SQL'
+CREATE TABLE a (id INTEGER PRIMARY KEY);
+CREATE TABLE b (id INTEGER PRIMARY KEY);
+.dbconfig defensive off
+PRAGMA writable_schema = ON;
+UPDATE sqlite_schema SET name = 'a', tbl_name = 'a' WHERE name = 'b';
+SQL
 pg_ctl -D "$work/pg" -m fast stop >/dev/null
 echo "pg_dump: $(pg_dump --version); sqlite3: $(sqlite3 --version | cut -d' ' -f1)" > "$out/VERSIONS"

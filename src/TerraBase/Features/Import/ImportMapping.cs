@@ -44,6 +44,9 @@ internal static partial class ImportMapping
     private static readonly JsonWriterOptions WriterOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, MaxDepth = 64 };
     private static readonly JsonDocumentOptions JsonOptions = new() { MaxDepth = 64 };
 
+    // A column value nests inside the row object; TerraBase stores at most 16 levels.
+    private static readonly JsonDocumentOptions ValueOptions = new() { MaxDepth = 15 };
+
     /// <summary>The contract name of a mapping.</summary>
     public static string Name(ColumnMapping mapping) => mapping switch
     {
@@ -346,12 +349,12 @@ internal static partial class ImportMapping
     {
         try
         {
-            using var document = JsonDocument.Parse(text, JsonOptions);
+            using var document = JsonDocument.Parse(text, ValueOptions);
             document.RootElement.WriteTo(writer);
         }
-        catch (JsonException)
+        catch (Exception error) when (error is JsonException or InvalidOperationException)
         {
-            throw Invalid(column, "the value is not JSON TerraBase can store (at most 64 levels)");
+            throw Invalid(column, "the value is not JSON TerraBase can store (at most 16 levels in a document)");
         }
     }
 
