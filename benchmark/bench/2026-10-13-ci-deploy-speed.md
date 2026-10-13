@@ -47,3 +47,25 @@ T0 main `test` SUCCESS → T2 deploy re-enable/rebuild merged → measure their 
 ## CI storage decision (COS override, 19:01Z)
 
 Use one durable private `ts-terrabase-ci` bucket in org `terrascale`, with bucket-scoped GitHub credentials. Each run owns a unique prefix and always deletes only its own objects. Missing credentials must fail the real Tigris test. Per-run app/bucket provisioning was removed; CI receives no org-level storage-create token. Implementation and shared-bucket isolation validation follow the top-priority GC/runner PR.
+
+## Reconciled candidate after the prerequisites merged
+
+The user selected alpha only, superseding the historical runner proposal above. #212 merged with
+hosted ProcessorCount/HeapCount 8; #210 merged with the deployment re-enabled. The candidate keeps
+main's shared remote builder, runner selection, SDK pin, production deploy steps, rollout order and
+live gates. Hosted GC/job comparisons and live gru ProcessorCount 2 are recorded separately in
+`2026-10-13-test-host-gc-hosted.md` and `2026-10-13-fly-runtime-cpu-gru.md`.
+
+The durable private `ts-terrabase-ci` bucket was provisioned without a Fly app in org `terrascale`.
+Its vendor-issued credentials were stored privately and supplied as `TIGRIS_CI_CREDENTIALS` to
+GitHub. A read-only qualification returned HTTP 200 for the CI bucket and HTTP 403 for the
+production bucket, confirming these credentials cannot read production bucket metadata. Fly's
+bucket status reports `Public False`. No org-level provisioning credential is in this secret.
+The real-storage test now requires credentials, scopes every object with a fresh ULID prefix,
+joins the server's cleanup before deleting that prefix, and never deletes by modification time.
+
+Slow reporting and preview script fixtures, actionlint and ShellCheck passed after reconciliation.
+The reviewed follow-up enables same-repository PR previews after `test` success. Live preview
+creation/close cleanup, hosted full Slow, and complete production rollout timings remain pending;
+no result from them is claimed here. Pre-push validation follows the user's build-plus-targeted-tests
+CI-gate decision; the older full local results remain evidence only for their recorded trees.

@@ -224,12 +224,21 @@ jobs:
       - *checkout
       - *checkout-ts-dotnet
       - *setup-builder
+      - name: Supply bucket-scoped CI storage credentials
+        if: matrix.area == 'terrabase'
+        env:
+          TIGRIS_CI_CREDENTIALS: ${{ secrets.TIGRIS_CI_CREDENTIALS }}
+        run: |
+          [[ -n $TIGRIS_CI_CREDENTIALS ]] || { echo 'TIGRIS_CI_CREDENTIALS is required' >&2; exit 1; }
+          umask 077
+          printf '%s\n' "$TIGRIS_CI_CREDENTIALS" > "$RUNNER_TEMP/tigris-ci.env"
       - uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
           target: test-slow-${{ matrix.area }}
+          secret-files: ${{ matrix.area == 'terrabase' && format('tigris-ci={0}/tigris-ci.env', runner.temp) || '' }}
           build-args: |
             DOTNET_PROCESSOR_COUNT=8
             DOTNET_GCHeapCount=8
@@ -238,6 +247,9 @@ jobs:
           outputs: type=local,dest=slow
           cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope=slow-{0}', matrix.area) || '' }}
           cache-to: ${{ !vars.CI_RUNNER && format('type=gha,mode=max,scope=slow-{0}', matrix.area) || '' }}
+      - name: Remove the CI credential file
+        if: ${{ always() && matrix.area == 'terrabase' }}
+        run: rm -f "$RUNNER_TEMP/tigris-ci.env"
       - name: Report the Slow result
         if: ${{ !cancelled() }}
         env:
@@ -287,9 +299,8 @@ jobs:
           exit "$code"
 
   preview:
-    # OFF 2026-10-12 by the user's order: no PR preview environments until previews work again (Fly previews org
-    # hit its 20-machine limit). Re-enable by deleting `false &&` in a reviewed PR.
-    if: false && github.event_name == 'pull_request'
+    needs: test
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: alpha
     timeout-minutes: 20
     concurrency:

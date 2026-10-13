@@ -82,7 +82,10 @@ FROM scratch AS test-slow-auth
 COPY --from=slow-auth-run /slow /
 
 FROM restored AS slow-terrabase-run
-RUN mkdir /slow && { make -o restore terrabase-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi; echo $? > /slow/exit; } 2>&1 | tee /slow/log
+# BuildKit secret mounts never enter a layer or build arg. No org-level provisioning credential reaches CI.
+RUN --mount=type=secret,id=tigris-ci,required=true \
+    mkdir /slow && { set -a; . /run/secrets/tigris-ci; set +a; \
+    make -o restore terrabase-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi; echo $? > /slow/exit; } 2>&1 | tee /slow/log
 
 FROM scratch AS test-slow-terrabase
 COPY --from=slow-terrabase-run /slow /
