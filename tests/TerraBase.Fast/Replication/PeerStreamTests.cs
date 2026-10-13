@@ -748,6 +748,75 @@ public sealed class PeerStreamTests
     }
 
 
+    // An index dropped and made again with other fields while a replica is away reaches it through a refill as the final
+    // definition only: the replica ends with the new fields, not its old index of that name.
+    [Test]
+    public async Task A_refill_brings_an_index_redefined_while_away_to_its_new_fields()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        _ = DocumentField.TryParse("n", out var n);
+        _ = DocumentField.TryParse("m", out var m);
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.CreateIndexAsync(new IndexDefinition("by_key", "items", [n]), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilIndexesAsync(["by_key"])).IsTrue();
+        var sjcNode = sjc.Node;
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+        var acked = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+
+        await sjc.StopAsync();
+        await gru.WriteAsync(async transaction => await transaction.DropIndexAsync("by_key", CancellationToken.None));
+        await gru.WriteAsync(async transaction => await transaction.CreateIndexAsync(new IndexDefinition("by_key", "items", [m]), CancellationToken.None));
+        clock.Offset = TimeSpan.FromHours(25);
+        var deadline = DateTime.UtcNow + Deadline;
+        while (await gru.Groups.RetainsAsync(cluster.Database, acked, CancellationToken.None) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(200);
+        }
+
+        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, acked, CancellationToken.None)).IsFalse();
+        await sjc.StartAsync();
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+
+        var store = await sjc.StoreAsync();
+        await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        var index = (await read.ListIndexesAsync(CancellationToken.None)).Single(index => index.Name == "by_key");
+        await Assert.That(index.Fields.Select(field => field.Path).ToList()).IsEquivalentTo(["m"]);
+    }
+
+    // Two regions make an index of the same name on different collections while apart. Their metadata document joins to
+    // one winner (the later creation), and both machines end with that definition, not each with its own.
+    [Test]
+    public async Task An_index_made_under_one_name_in_two_regions_while_apart_ends_as_the_same_definition_in_both()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        _ = DocumentField.TryParse("n", out var n);
+        await gru.WriteAsync(async transaction => await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None));
+        var deadline = DateTime.UtcNow + Deadline;
+        while (await sjc.CollectionIdAsync("items") is null && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(100);
+        }
+
+        await Assert.That(await sjc.CollectionIdAsync("items")).IsNotNull();
+
+        // Each makes by_key on n while the other is down: gru on items, then sjc on others.
+        await sjc.StopAsync();
+        await gru.WriteAsync(async transaction => await transaction.CreateIndexAsync(new IndexDefinition("by_key", "items", [n]), CancellationToken.None));
+        await gru.StopAsync();
+        await sjc.StartAsync();
+        await sjc.WriteAsync(async transaction => await transaction.CreateIndexAsync(new IndexDefinition("by_key", "others", [n]), CancellationToken.None));
+        await gru.StartAsync();
+
+        await Assert.That(await gru.UntilIndexAsync("by_key", "others", ["n"])).IsTrue();
+        await Assert.That(await sjc.UntilIndexAsync("by_key", "others", ["n"])).IsTrue();
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 

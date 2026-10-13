@@ -879,7 +879,9 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   refresh (5 s), ending the open stream (`PeerStreamTests`); the peer resumes from its ack once it is listed again.
 - **Replicated DDL** (the receive side R4a left out). A joined `_indexes` document builds its index where it is missing
   (on a collection made without local metadata when absent) or drops it when deleted; a definition this build cannot
-  read changes nothing rather than stalling the stream. A joined `_unique` document re-projects its whole collection:
+  read changes nothing rather than stalling the stream. It also replaces an index of that name with other fields or on
+  another collection: a redefinition that reaches a replica only as its final state (refill, repair), or a concurrent
+  creation elsewhere that won the document's join. Every replica then builds the winning definition. A joined `_unique` document re-projects its whole collection:
   every live document and retained loser gets its keys again, then the smallest id wins, as everywhere. Before this, a
   replica that took documents in before their constraints kept serving the larger id. Schemas already replicate inside
   the `_collections` document.
