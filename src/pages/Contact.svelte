@@ -39,7 +39,7 @@
       {#each channels as c (c.label)}
         <li>
           <ExternalLink href={c.href} target={c.kind === 'external' ? '_blank' : undefined} class="contact-channel">
-            <Icon name={c.icon} className="contact-channel__icon" />
+            <span class="ts-icon-tile"><Icon name={c.icon} /></span>
             <span class="contact-channel__label">{c.label}</span>
             <span class="contact-channel__value">{c.value}</span>
             <Icon name="chevronRight" className="contact-channel__chev" />
@@ -51,10 +51,6 @@
 </section>
 
 <style>
-  .contact-hero {
-    border-bottom: 1px solid var(--ts-line);
-  }
-
   .contact-hero__inner {
     display: grid;
     gap: var(--ts-s5);
@@ -111,14 +107,8 @@
   }
 
   .contact-channels :global(.contact-channel:hover) {
-    background: var(--ts-surface-2);
+    background: var(--ts-surface);
     text-decoration: none;
-  }
-
-  .contact-channels :global(.contact-channel__icon) {
-    width: var(--ts-icon-lg);
-    height: var(--ts-icon-lg);
-    color: var(--ts-ink-2);
   }
 
   .contact-channel__label {

@@ -15,7 +15,7 @@
     <div class="triad__grid">
       {#each items as it (it.title)}
         <div class="triad__item">
-          <Icon name={it.icon} className="triad__icon" />
+          <span class="ts-icon-tile"><Icon name={it.icon} /></span>
           <div>
             <div class="triad__title">{it.title}</div>
             <div class="triad__text">{it.text}</div>
@@ -27,8 +27,9 @@
 </section>
 
 <style>
+  /* Closes the pricing section on the shared rhythm (see .ts-section in index.css). */
   .triad {
-    padding-bottom: var(--ts-s16);
+    padding-bottom: var(--ts-s12);
   }
 
   /* Stat-style row: hairlines above and below, vertical hairlines between items. */
@@ -50,14 +51,11 @@
     padding-left: 0;
   }
 
-  .triad__item :global(.triad__icon) {
-    width: var(--ts-icon-lg);
-    height: var(--ts-icon-lg);
-    margin-top: 2px;
-    color: var(--ts-accent);
-  }
-
+  /* Title centred on the 32px icon tile; the text hangs under it. */
   .triad__title {
+    display: flex;
+    align-items: center;
+    min-height: 32px;
     font-size: var(--ts-fs-md);
     font-weight: 500;
     color: var(--ts-ink);
@@ -70,6 +68,9 @@
   }
 
   @media (max-width: 860px) {
+    .triad {
+      padding-bottom: var(--ts-s8);
+    }
     .triad__grid {
       grid-template-columns: minmax(0, 1fr);
     }

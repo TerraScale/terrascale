@@ -61,13 +61,26 @@ svg {
   padding: 0 var(--ts-gutter);
 }
 
+/* Section rhythm: --ts-s24 between sections (--ts-s16 on mobile), split by one hairline in the
+   middle of the gap. The first section clears the floating nav like the home hero. */
 .ts-section {
-  padding: var(--ts-s24) 0;
+  padding: var(--ts-s12) 0;
 }
 
-@media (max-width: 640px) {
+main > * + .ts-section {
+  border-top: 1px solid var(--ts-line);
+}
+
+main > .ts-section:first-child {
+  padding-top: var(--ts-s20);
+}
+
+@media (max-width: 860px) {
   .ts-section {
-    padding: var(--ts-s16) 0;
+    padding: var(--ts-s8) 0;
+  }
+  main > .ts-section:first-child {
+    padding-top: var(--ts-s12);
   }
 }
 

@@ -129,15 +129,16 @@
 </section>
 
 <style>
+  /* The triad row below belongs to this section, so the plans keep a smaller gap to it. */
   .pricing-section {
-    padding-bottom: var(--ts-s10);
+    padding-bottom: var(--ts-s8);
   }
 
   .pricing-toggle {
     display: flex;
     align-items: center;
     gap: var(--ts-s3);
-    margin: var(--ts-s10) 0 var(--ts-s8);
+    margin: var(--ts-s8) 0 var(--ts-s6);
   }
 
   .pricing-grid {
@@ -154,10 +155,13 @@
     min-width: 0;
   }
 
+  /* Fixed header and two-line description heights keep the prices on one line across cards
+     (the Popular badge is 22px tall; descriptions run one or two lines). */
   .pricing-card__header {
     display: flex;
     align-items: center;
     gap: var(--ts-s2);
+    min-height: 22px;
   }
 
   .pricing-card :global(.pricing-card__icon) {
@@ -177,7 +181,7 @@
   .pricing-card__desc {
     font-size: var(--ts-fs-sm);
     color: var(--ts-ink-2);
-    min-height: 2.6em;
+    min-height: 2lh;
   }
 
   .pricing-card__price-row {
@@ -237,6 +241,9 @@
   @media (max-width: 640px) {
     .pricing-grid {
       grid-template-columns: minmax(0, 1fr);
+    }
+    .pricing-card__desc {
+      min-height: 0;
     }
   }
 </style>

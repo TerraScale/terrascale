@@ -51,7 +51,7 @@
     <div class="about-pillars">
       {#each pillars as pillar (pillar.title)}
         <article class="about-pillar">
-          <Icon name={pillar.icon} className="about-pillar__icon" />
+          <span class="ts-icon-tile"><Icon name={pillar.icon} /></span>
           <div>
             <h3 class="about-pillar__title">{pillar.title}</h3>
             <p class="about-pillar__text">{pillar.text}</p>
@@ -81,10 +81,6 @@
 </section>
 
 <style>
-  .about-hero {
-    border-bottom: 1px solid var(--ts-line);
-  }
-
   .about-hero__inner {
     display: grid;
     gap: var(--ts-s5);
@@ -106,10 +102,6 @@
   .about-hero :global(.about__icon) {
     width: var(--ts-icon);
     height: var(--ts-icon);
-  }
-
-  .about-band {
-    border-top: 1px solid var(--ts-line);
   }
 
   .about-section__inner {
@@ -145,14 +137,11 @@
     border-bottom: 1px solid var(--ts-line);
   }
 
-  .about-pillar :global(.about-pillar__icon) {
-    width: var(--ts-icon-lg);
-    height: var(--ts-icon-lg);
-    margin-top: 2px;
-    color: var(--ts-accent);
-  }
-
+  /* Title centred on the 32px icon tile; the text hangs under it. */
   .about-pillar__title {
+    display: flex;
+    align-items: center;
+    min-height: 32px;
     font-size: var(--ts-fs-lg);
   }
 

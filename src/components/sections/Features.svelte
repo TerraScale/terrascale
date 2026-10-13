@@ -27,7 +27,7 @@
       {#each features as feature (feature.title)}
         <article class="feature">
           <div class="feature__head">
-            <Icon name={feature.icon} className="feature__icon" />
+            <span class="ts-icon-tile"><Icon name={feature.icon} /></span>
             <h3 class="feature__title">{feature.title}</h3>
           </div>
 
@@ -47,8 +47,8 @@
   .features__grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    column-gap: var(--ts-s10);
-    margin-top: var(--ts-s12);
+    gap: var(--ts-s8) var(--ts-s10);
+    margin-top: var(--ts-s8);
   }
 
   /* Flat items split by a top hairline (no boxes). */
@@ -56,7 +56,7 @@
     display: grid;
     align-content: start;
     gap: var(--ts-s3);
-    padding: var(--ts-s6) 0 var(--ts-s8);
+    padding-top: var(--ts-s6);
     border-top: 1px solid var(--ts-line);
   }
 
@@ -64,12 +64,6 @@
     display: flex;
     align-items: center;
     gap: var(--ts-s3);
-  }
-
-  .feature :global(.feature__icon) {
-    width: var(--ts-icon-lg);
-    height: var(--ts-icon-lg);
-    color: var(--ts-accent);
   }
 
   .feature__title {
@@ -90,7 +84,6 @@
   @media (max-width: 860px) {
     .features__grid {
       grid-template-columns: minmax(0, 1fr);
-      margin-top: var(--ts-s8);
     }
   }
 </style>

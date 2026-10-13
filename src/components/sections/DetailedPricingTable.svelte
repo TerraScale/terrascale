@@ -50,10 +50,6 @@
 </section>
 
 <style>
-  .detailed {
-    border-top: 1px solid var(--ts-line);
-  }
-
   .detailed__inner {
     display: grid;
     gap: var(--ts-s8);
@@ -74,8 +70,13 @@
     font-size: var(--ts-fs-4xl);
   }
 
+  /* Narrow screens scroll the table inside its wrap instead of squeezing Details to one word a line. */
   .ts-table-wrap {
     width: 100%;
+  }
+
+  .detailed__table {
+    min-width: 560px;
   }
 
   .detailed__table td {
