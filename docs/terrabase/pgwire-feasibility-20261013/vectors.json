@@ -1,0 +1,833 @@
+{
+  "schema_version": 1,
+  "producer_head": "e30ffdc287530551b161b0130220be53d3c0475e",
+  "postgres_source": "3d6a828938a5fa0444275d3d2f67b64ec3199eb7",
+  "protocol_target": "3.0",
+  "notice": "Documentation fixtures only. No sockets, credentials, service calls, native execution or conformance claim. Flow/auth outcomes are proposed expectations, not measured behavior.",
+  "frames": [
+    {
+      "name": "ssl_request",
+      "kind": "initial",
+      "hex": "0000000804d2162f",
+      "expected": {
+        "code": 80877103,
+        "response_hex": "53",
+        "note": "R1 proposal: TLS handshake follows, no typed frame"
+      }
+    },
+    {
+      "name": "gssenc_request",
+      "kind": "initial",
+      "hex": "0000000804d21630",
+      "expected": {
+        "code": 80877104,
+        "response_hex": "4e"
+      }
+    },
+    {
+      "name": "startup_3_0",
+      "kind": "initial",
+      "hex": "00000043000300007573657200666978747572652d757365720064617461626173650066697874757265646200636c69656e745f656e636f64696e6700555446380000",
+      "expected": {
+        "code": 196608,
+        "pairs": {
+          "user": "fixture-user",
+          "database": "fixturedb",
+          "client_encoding": "UTF8"
+        },
+        "note": "framing only; fixturedb is not the proposed production selector; no auth payload"
+      }
+    },
+    {
+      "name": "startup_3_2",
+      "kind": "initial",
+      "hex": "00000043000300027573657200666978747572652d757365720064617461626173650066697874757265646200636c69656e745f656e636f64696e6700555446380000",
+      "expected": {
+        "code": 196610,
+        "pairs": {
+          "user": "fixture-user",
+          "database": "fixturedb",
+          "client_encoding": "UTF8"
+        },
+        "note": "R1 proposal: negotiate minor 0"
+      }
+    },
+    {
+      "name": "negotiate_minor_0",
+      "kind": "typed",
+      "hex": "760000000c0000000000000000",
+      "expected": {
+        "type": "v",
+        "minor": 0,
+        "unsupported_options": 0
+      }
+    },
+    {
+      "name": "cancel_3_0_inert",
+      "kind": "initial",
+      "hex": "0000001004d2162e0000000701020304",
+      "expected": {
+        "code": 80877102,
+        "pid": 7,
+        "key_hex": "01020304",
+        "note": "fixed inert specification bytes; never issued or registered; R1 closes without reply"
+      }
+    },
+    {
+      "name": "simple_select",
+      "kind": "typed",
+      "hex": "510000002153454c454354202a2046524f4d2070656f706c65204c494d4954203200",
+      "expected": {
+        "type": "Q",
+        "query": "SELECT * FROM people LIMIT 2"
+      }
+    },
+    {
+      "name": "empty_query",
+      "kind": "typed",
+      "hex": "510000000500",
+      "expected": {
+        "type": "Q",
+        "query": ""
+      }
+    },
+    {
+      "name": "empty_query_response",
+      "kind": "typed",
+      "hex": "4900000004",
+      "expected": {
+        "type": "I"
+      }
+    },
+    {
+      "name": "parse_text_parameter",
+      "kind": "typed",
+      "hex": "5000000038730053454c454354202a2046524f4d2070656f706c6520574845524520616765203d202431204c494d4954203200000100000014",
+      "expected": {
+        "type": "P",
+        "statement": "s",
+        "query": "SELECT * FROM people WHERE age = $1 LIMIT 2",
+        "parameter_oids": [
+          20
+        ],
+        "note": "wire-valid; R1 rejects extended operation with 0A000"
+      }
+    },
+    {
+      "name": "bind_int64_max",
+      "kind": "typed",
+      "hex": "420000002970007300000100000001000000133932323333373230333638353437373538303700010000",
+      "expected": {
+        "type": "B",
+        "portal": "p",
+        "statement": "s",
+        "parameter_formats": [
+          0
+        ],
+        "parameters": [
+          "9223372036854775807"
+        ],
+        "result_formats": [
+          0
+        ],
+        "note": "R1 rejects; NULL and empty are distinct wire encodings"
+      }
+    },
+    {
+      "name": "bind_null",
+      "kind": "typed",
+      "hex": "420000001670007300000100000001ffffffff00010000",
+      "expected": {
+        "type": "B",
+        "portal": "p",
+        "statement": "s",
+        "parameter_formats": [
+          0
+        ],
+        "parameters": [
+          null
+        ],
+        "result_formats": [
+          0
+        ],
+        "note": "R1 rejects; NULL and empty are distinct wire encodings"
+      }
+    },
+    {
+      "name": "bind_empty",
+      "kind": "typed",
+      "hex": "4200000016700073000001000000010000000000010000",
+      "expected": {
+        "type": "B",
+        "portal": "p",
+        "statement": "s",
+        "parameter_formats": [
+          0
+        ],
+        "parameters": [
+          ""
+        ],
+        "result_formats": [
+          0
+        ],
+        "note": "R1 rejects; NULL and empty are distinct wire encodings"
+      }
+    },
+    {
+      "name": "describe_statement",
+      "kind": "typed",
+      "hex": "4400000007537300",
+      "expected": {
+        "type": "D",
+        "target": "S",
+        "name": "s"
+      }
+    },
+    {
+      "name": "execute_one_row",
+      "kind": "typed",
+      "hex": "450000000a700000000001",
+      "expected": {
+        "type": "E",
+        "portal": "p",
+        "max_rows": 1
+      }
+    },
+    {
+      "name": "close_portal",
+      "kind": "typed",
+      "hex": "4300000007507000",
+      "expected": {
+        "type": "C",
+        "target": "P",
+        "name": "p"
+      }
+    },
+    {
+      "name": "sync",
+      "kind": "typed",
+      "hex": "5300000004",
+      "expected": {
+        "type": "S"
+      }
+    },
+    {
+      "name": "flush",
+      "kind": "typed",
+      "hex": "4800000004",
+      "expected": {
+        "type": "H"
+      }
+    },
+    {
+      "name": "terminate",
+      "kind": "typed",
+      "hex": "5800000004",
+      "expected": {
+        "type": "X"
+      }
+    },
+    {
+      "name": "parse_complete",
+      "kind": "typed",
+      "hex": "3100000004",
+      "expected": {
+        "type": "1"
+      }
+    },
+    {
+      "name": "bind_complete",
+      "kind": "typed",
+      "hex": "3200000004",
+      "expected": {
+        "type": "2"
+      }
+    },
+    {
+      "name": "close_complete",
+      "kind": "typed",
+      "hex": "3300000004",
+      "expected": {
+        "type": "3"
+      }
+    },
+    {
+      "name": "portal_suspended",
+      "kind": "typed",
+      "hex": "7300000004",
+      "expected": {
+        "type": "s"
+      }
+    },
+    {
+      "name": "authentication_ok_layout",
+      "kind": "typed",
+      "hex": "520000000800000000",
+      "expected": {
+        "type": "R",
+        "auth_code": 0,
+        "note": "specification layout only, never sent in this task"
+      }
+    },
+    {
+      "name": "ready_I",
+      "kind": "typed",
+      "hex": "5a0000000549",
+      "expected": {
+        "type": "Z",
+        "status": "I",
+        "note": "R1 only I; T/E require actual explicit transaction state"
+      }
+    },
+    {
+      "name": "ready_T",
+      "kind": "typed",
+      "hex": "5a0000000554",
+      "expected": {
+        "type": "Z",
+        "status": "T",
+        "note": "R1 only I; T/E require actual explicit transaction state"
+      }
+    },
+    {
+      "name": "ready_E",
+      "kind": "typed",
+      "hex": "5a0000000545",
+      "expected": {
+        "type": "Z",
+        "status": "E",
+        "note": "R1 only I; T/E require actual explicit transaction state"
+      }
+    },
+    {
+      "name": "r1_row_description",
+      "kind": "typed",
+      "hex": "5400000033000269640000000000000000000019ffffffffffff000076616c75650000000000000000000072ffffffffffff0000",
+      "expected": {
+        "type": "T",
+        "columns": [
+          {
+            "name": "id",
+            "table_oid": 0,
+            "attribute": 0,
+            "oid": 25,
+            "type_length": -1,
+            "typmod": -1,
+            "format": 0
+          },
+          {
+            "name": "value",
+            "table_oid": 0,
+            "attribute": 0,
+            "oid": 114,
+            "type_length": -1,
+            "typmod": -1,
+            "format": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "r1_row",
+      "kind": "typed",
+      "hex": "440000005b00020000001a303141525a334e44454b54535634525246465136394735464156000000337b226e223a393232333337323033363835343737353830372c226e616d65223a224f6cc3a120e69db1e4baac20f09f9880227d",
+      "expected": {
+        "type": "D",
+        "values": [
+          "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          "{\"n\":9223372036854775807,\"name\":\"Olá 東京 😀\"}"
+        ]
+      }
+    },
+    {
+      "name": "null_empty_json_null",
+      "kind": "typed",
+      "hex": "44000000160003ffffffff00000000000000046e756c6c",
+      "expected": {
+        "type": "D",
+        "values": [
+          null,
+          "",
+          "null"
+        ]
+      }
+    },
+    {
+      "name": "unicode_text",
+      "kind": "typed",
+      "hex": "44000000270003000000104f6cc3a120e69db1e4baac20f09f988000000002c3a90000000365cc81",
+      "expected": {
+        "type": "D",
+        "values": [
+          "Olá 東京 😀",
+          "é",
+          "é"
+        ]
+      }
+    },
+    {
+      "name": "select_two_complete",
+      "kind": "typed",
+      "hex": "430000000d53454c454354203200",
+      "expected": {
+        "type": "C",
+        "tag": "SELECT 2"
+      }
+    },
+    {
+      "name": "unsupported_error",
+      "kind": "typed",
+      "hex": "4500000031534552524f5200564552524f5200433041303030004d66656174757265206e6f7420737570706f727465640000",
+      "expected": {
+        "type": "E",
+        "fields": {
+          "S": "ERROR",
+          "V": "ERROR",
+          "C": "0A000",
+          "M": "feature not supported"
+        }
+      }
+    }
+  ],
+  "invalid_frames": [
+    {
+      "name": "typed_length_below_four",
+      "kind": "typed",
+      "hex": "5100000003",
+      "expected_sqlstate": "08P01",
+      "rule": "length minimum"
+    },
+    {
+      "name": "typed_incomplete_at_eof",
+      "kind": "typed",
+      "hex": "510000000800",
+      "expected_sqlstate": "08P01",
+      "rule": "declared length differs from bytes; before EOF wait for more bytes"
+    },
+    {
+      "name": "startup_length_below_eight",
+      "kind": "initial",
+      "hex": "0000000700030000",
+      "expected_sqlstate": "08P01",
+      "rule": "length minimum"
+    },
+    {
+      "name": "typed_oversized_header",
+      "kind": "typed",
+      "hex": "5100010001",
+      "expected_sqlstate": "08P01",
+      "rule": "normal frame length exceeds proposed 65536-byte ceiling; fatal close before allocation, no stream recovery"
+    },
+    {
+      "name": "query_invalid_utf8",
+      "kind": "typed",
+      "hex": "5100000006ff00",
+      "expected_sqlstate": "22021",
+      "rule": "strict UTF-8"
+    },
+    {
+      "name": "query_bytes_after_terminator",
+      "kind": "typed",
+      "hex": "510000001053454c454354006a756e6b00",
+      "expected_sqlstate": "08P01",
+      "rule": "one complete protocol String, no trailing bytes"
+    },
+    {
+      "name": "startup_missing_pairs_terminator",
+      "kind": "initial",
+      "hex": "0000001a000300007573657200666978747572652d7573657200",
+      "expected_sqlstate": "08P01",
+      "rule": "missing final empty-name terminator"
+    },
+    {
+      "name": "startup_duplicate_user",
+      "kind": "initial",
+      "hex": "0000002d000300007573657200666978747572652d75736572007573657200666978747572652d757365720000",
+      "expected_sqlstate": "08P01",
+      "rule": "duplicate key policy"
+    },
+    {
+      "name": "datarow_illegal_negative_length",
+      "kind": "typed",
+      "hex": "440000000a0001fffffffe",
+      "expected_sqlstate": "08P01",
+      "rule": "only -1 is NULL"
+    }
+  ],
+  "values": [
+    {
+      "name": "sql_null",
+      "domain": "wire",
+      "text": null,
+      "utf8_hex": null,
+      "expected": "length -1; no value bytes"
+    },
+    {
+      "name": "empty_text",
+      "domain": "wire",
+      "text": "",
+      "utf8_hex": "",
+      "expected": "length 0",
+      "oid": 25
+    },
+    {
+      "name": "json_null",
+      "domain": "json",
+      "text": "null",
+      "utf8_hex": "6e756c6c",
+      "expected": "four bytes, not SQL NULL",
+      "oid": 114
+    },
+    {
+      "name": "int64_min",
+      "domain": "future_scalar",
+      "text": "-9223372036854775808",
+      "utf8_hex": "2d39323233333732303336383534373735383038",
+      "expected": "R2 candidate: exact int64",
+      "oid": 20,
+      "binary_hex": "8000000000000000"
+    },
+    {
+      "name": "int64_max",
+      "domain": "future_scalar",
+      "text": "9223372036854775807",
+      "utf8_hex": "39323233333732303336383534373735383037",
+      "expected": "R2 candidate: exact int64",
+      "oid": 20,
+      "binary_hex": "7fffffffffffffff"
+    },
+    {
+      "name": "integer_beyond_exact_double",
+      "domain": "json",
+      "text": "9007199254740993",
+      "utf8_hex": "39303037313939323534373430393933",
+      "expected": "preserve raw output token; never round via double",
+      "oid": 114
+    },
+    {
+      "name": "integer_beyond_int64",
+      "domain": "json",
+      "text": "9223372036854775808",
+      "utf8_hex": "39323233333732303336383534373735383038",
+      "expected": "preserve JSON output; predicate/bind integer outside int64 gets 22003",
+      "oid": 114
+    },
+    {
+      "name": "precise_decimal",
+      "domain": "json",
+      "text": "1234567890.12345678901234567890",
+      "utf8_hex": "313233343536373839302e3132333435363738393031323334353637383930",
+      "expected": "preserve raw output token; NUMERIC binding unsupported until exact semantics exist",
+      "oid": 114
+    },
+    {
+      "name": "finite_double",
+      "domain": "future_scalar",
+      "text": "1.5",
+      "utf8_hex": "312e35",
+      "expected": "R2 candidate finite float8",
+      "oid": 701,
+      "binary_hex": "3ff8000000000000"
+    },
+    {
+      "name": "bool_true",
+      "domain": "future_scalar",
+      "text": "t",
+      "utf8_hex": "74",
+      "expected": "binary bool 01; JSON uses true",
+      "oid": 16,
+      "binary_hex": "01"
+    },
+    {
+      "name": "unicode",
+      "domain": "wire",
+      "text": "Olá 東京 😀",
+      "utf8_hex": "4f6cc3a120e69db1e4baac20f09f9880",
+      "expected": "16 UTF-8 bytes, no normalization",
+      "oid": 25
+    },
+    {
+      "name": "composed",
+      "domain": "wire",
+      "text": "é",
+      "utf8_hex": "c3a9",
+      "expected": "c3a9",
+      "oid": 25
+    },
+    {
+      "name": "decomposed",
+      "domain": "wire",
+      "text": "é",
+      "utf8_hex": "65cc81",
+      "expected": "65cc81; distinct from composed",
+      "oid": 25
+    },
+    {
+      "name": "escaped_json_nul",
+      "domain": "json",
+      "text": "\"\\u0000\"",
+      "utf8_hex": "225c753030303022",
+      "expected": "valid json escaped token; not raw text NUL or jsonb promise",
+      "oid": 114
+    },
+    {
+      "name": "json_binary_layout",
+      "domain": "spec_codec",
+      "text": "{\"x\":1}",
+      "utf8_hex": "7b2278223a317d",
+      "expected": "json binary uses UTF-8 bytes without jsonb version prefix",
+      "oid": 114,
+      "binary_hex": "7b2278223a317d"
+    }
+  ],
+  "error_mappings": [
+    {
+      "condition": "invalid_frame",
+      "sqlstate": "08P01",
+      "severity": "FATAL",
+      "recovery": "close"
+    },
+    {
+      "condition": "unsupported_sql",
+      "sqlstate": "0A000",
+      "severity": "ERROR",
+      "recovery": "simple_ready_I"
+    },
+    {
+      "condition": "extended_unsupported",
+      "sqlstate": "0A000",
+      "severity": "ERROR",
+      "recovery": "discard_until_sync"
+    },
+    {
+      "condition": "sql_syntax",
+      "sqlstate": "42601",
+      "severity": "ERROR",
+      "recovery": "simple_ready_I"
+    },
+    {
+      "condition": "bad_encoding",
+      "sqlstate": "22021",
+      "severity": "ERROR",
+      "recovery": "simple_ready_I"
+    },
+    {
+      "condition": "int64_out_of_range",
+      "sqlstate": "22003",
+      "severity": "ERROR",
+      "recovery": "simple_ready_I"
+    },
+    {
+      "condition": "invalid_scalar",
+      "sqlstate": "22P02",
+      "severity": "ERROR",
+      "recovery": "simple_ready_I"
+    },
+    {
+      "condition": "invalid_authentication",
+      "sqlstate": "28P01",
+      "severity": "FATAL",
+      "recovery": "close"
+    },
+    {
+      "condition": "missing_read_scope",
+      "sqlstate": "42501",
+      "severity": "FATAL",
+      "recovery": "close"
+    },
+    {
+      "condition": "unknown_or_unauthorized_database",
+      "sqlstate": "3D000",
+      "severity": "FATAL",
+      "recovery": "close"
+    },
+    {
+      "condition": "deadline_or_cancel",
+      "sqlstate": "57014",
+      "severity": "ERROR",
+      "recovery": "simple_ready_I"
+    },
+    {
+      "condition": "result_byte_limit",
+      "sqlstate": "54000",
+      "severity": "ERROR",
+      "recovery": "simple_ready_I"
+    },
+    {
+      "condition": "connection_admission",
+      "sqlstate": "53300",
+      "severity": "FATAL",
+      "recovery": "close"
+    },
+    {
+      "condition": "memory_admission",
+      "sqlstate": "53200",
+      "severity": "ERROR",
+      "recovery": "simple_ready_I"
+    },
+    {
+      "condition": "unavailable_local_state",
+      "sqlstate": "55000",
+      "severity": "ERROR",
+      "recovery": "simple_ready_I"
+    },
+    {
+      "condition": "unexpected_failure",
+      "sqlstate": "XX000",
+      "severity": "ERROR",
+      "recovery": "simple_ready_I"
+    }
+  ],
+  "proposed_flows": [
+    {
+      "name": "simple_success",
+      "input": [
+        "Q SELECT * FROM people LIMIT 2"
+      ],
+      "output": [
+        "T",
+        "D*",
+        "C SELECT n",
+        "Z I"
+      ],
+      "note": "proposed R1; controlled subset only"
+    },
+    {
+      "name": "simple_batch",
+      "input": [
+        "Q SELECT * FROM people LIMIT 1; DELETE FROM people"
+      ],
+      "output": [
+        "E 0A000",
+        "Z I"
+      ],
+      "note": "parse all before work; no first SELECT execution"
+    },
+    {
+      "name": "explicit_begin",
+      "input": [
+        "Q BEGIN"
+      ],
+      "output": [
+        "E 0A000",
+        "Z I"
+      ],
+      "note": "never report a transaction that was not opened"
+    },
+    {
+      "name": "extended_recovery",
+      "input": [
+        "P",
+        "B",
+        "E",
+        "H",
+        "S",
+        "Q SELECT * FROM people LIMIT 1"
+      ],
+      "output": [
+        "E 0A000",
+        "flush pending error",
+        "Z I at S",
+        "T",
+        "D*",
+        "C SELECT n",
+        "Z I"
+      ],
+      "note": "discard B/E until S; H is not Sync"
+    },
+    {
+      "name": "absent_limit",
+      "input": [
+        "Q SELECT * FROM people"
+      ],
+      "output": [
+        "E 0A000",
+        "Z I"
+      ],
+      "note": "stricter proposed R1 rule; HTTP default remains 100"
+    },
+    {
+      "name": "explicit_limit_reached",
+      "limit": 2,
+      "rows": 2,
+      "truncated": true,
+      "output": [
+        "T",
+        "D",
+        "D",
+        "C SELECT 2",
+        "Z I"
+      ],
+      "note": "normal SQL LIMIT, no error solely for lookahead finding more"
+    },
+    {
+      "name": "byte_truncation",
+      "limit": 2,
+      "rows": 1,
+      "truncated": true,
+      "output": [
+        "E 54000",
+        "Z I"
+      ],
+      "note": "error before first row; no partial successful completion"
+    },
+    {
+      "name": "wire_size_overflow",
+      "encoded_result_bytes": 8388609,
+      "output": [
+        "E 54000",
+        "Z I"
+      ],
+      "note": "independent encoded-result ceiling"
+    },
+    {
+      "name": "readonly_mutation",
+      "input": [
+        "Q UPDATE people SET age = 1"
+      ],
+      "output": [
+        "E 0A000",
+        "Z I"
+      ],
+      "note": "no writer, no CDC/ACK mutation"
+    },
+    {
+      "name": "cancel_unsupported",
+      "input": [
+        "CancelRequest fixed inert PID/key"
+      ],
+      "output": [
+        "close without reply"
+      ],
+      "note": "R1 no BackendKeyData; no target query affected"
+    },
+    {
+      "name": "plaintext_startup",
+      "input": [
+        "unencrypted StartupMessage"
+      ],
+      "output": [
+        "close before auth payload"
+      ],
+      "note": "no credential acquisition in this task"
+    },
+    {
+      "name": "legacy_key_project_route",
+      "identity_kind": "legacy_api_key",
+      "output": [
+        "E 28P01",
+        "close"
+      ],
+      "note": "read scope alone does not grant public project SQL"
+    },
+    {
+      "name": "cross_project",
+      "identity_kind": "synthetic cross-project project-token category",
+      "output": [
+        "E 3D000",
+        "close"
+      ],
+      "note": "same message as nonexistent database; no token bytes"
+    }
+  ]
+}
