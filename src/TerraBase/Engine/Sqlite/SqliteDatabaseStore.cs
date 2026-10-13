@@ -20,20 +20,19 @@ namespace TerraBase.Engine.Sqlite;
 /// <param name="pragmas">Connection pragmas applied to each session.</param>
 /// <param name="tenant">The storage identity; null for the system database.</param>
 /// <param name="time">The clock of the query deadline.</param>
-/// <param name="changesCommitted">Receives the last captured sequence after a write commits.</param>
 /// <param name="committed">Optional engine notification after a successful commit that changed this database.</param>
 /// <param name="logger">Receives the warning about a long wait for this database's writer.</param>
 /// <param name="schemaMemory">Shared process admission for schema evaluation, when hosted.</param>
 /// <param name="schemaEvaluations">Host-owned counter of collection schema keyword evaluations.</param>
 internal sealed partial class SqliteDatabaseStore(
     string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TenantContext? tenant, TimeProvider? time,
-    Action<long>? changesCommitted, Action? committed, ILogger? logger = null, IMemoryBudget? schemaMemory = null, Counter<long>? schemaEvaluations = null) : IDatabaseStore, IDisposable
+    Action? committed, ILogger? logger = null, IMemoryBudget? schemaMemory = null, Counter<long>? schemaEvaluations = null) : IDatabaseStore, IDisposable
 {
     internal IMemoryBudget? SchemaMemory { get; } = schemaMemory;
     internal Counter<long>? SchemaEvaluations { get; } = schemaEvaluations;
 
     internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TimeProvider? time = null, Action? committed = null)
-        : this(name, path, pool, io, pragmas, null, time, null, committed) { }
+        : this(name, path, pool, io, pragmas, null, time, committed) { }
 
     /// <summary>
     /// On-disk schema version of client and system databases alike, stored in <c>PRAGMA user_version</c>. It never
@@ -180,13 +179,10 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>The thread this database's write transactions run on, apart from the read pool.</summary>
     internal SqliteWriteLane WriteLane { get; } = new(name, io);
 
-    // Boxed so a catalog follower can adopt its primary's incarnation without torn reads.
+    // Boxed so a reader never sees a torn value.
     private volatile StrongBox<Ulid> _incarnation = new(Ulid.Empty);
 
     public Ulid Incarnation => _incarnation.Value;
-
-    /// <summary>Publishes the incarnation a catalog follower's committed snapshot adopted (docs/decisions/0009).</summary>
-    internal void AdoptIncarnation(Ulid incarnation) => _incarnation = new(incarnation);
 
     public TenantContext? Tenant { get; } = tenant;
 
@@ -219,33 +215,18 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>What a client database's local writes mint with; the system database writes without it.</summary>
     internal LocalReplica? Member { get; init; }
 
-    /// <summary>
-    /// Whether this is a catalog follower's system database: it refuses write transactions except
-    /// <see cref="BeginReplicaAsync"/>'s (docs/decisions/0009).
-    /// </summary>
-    internal bool Replica { get; init; }
-
-    /// <summary>
-    /// Whether every write transaction syncs the write-ahead log at its commit (<c>synchronous = FULL</c>), as a durable one
-    /// does: the system database, whose acknowledged catalog and API keys survive an OS crash (docs/terrabase/decisions/0012).
-    /// </summary>
+    /// <summary>Whether every write commit synchronizes its write-ahead log.</summary>
     internal bool SyncsEveryCommit { get; init; }
 
     public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken) =>
-        write && Replica ? throw new CatalogFollowerException() : await BeginAsync(write, capture: true, durable: false, cancellationToken).ConfigureAwait(false);
+        await BeginAsync(write, durable: false, cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) =>
-        Replica
-            ? throw new CatalogFollowerException()
-            : await BeginAsync(write: true, capture: true, durable: true, cancellationToken, "a durable write transaction").ConfigureAwait(false);
-
-    /// <summary>The write transaction of a follower's replication applier; it captures nothing.</summary>
-    internal ValueTask<SqliteStorageTransaction> BeginReplicaAsync(CancellationToken cancellationToken) =>
-        BeginAsync(write: true, capture: false, durable: false, cancellationToken, "a catalog replica transaction");
+        await BeginAsync(write: true, durable: true, cancellationToken, "a durable write transaction").ConfigureAwait(false);
 
     // writer names a write transaction in the warning about a long wait for the writer.
     private async ValueTask<SqliteStorageTransaction> BeginAsync(
-        bool write, bool capture, bool durable, CancellationToken cancellationToken, string writer = "a write transaction")
+        bool write, bool durable, CancellationToken cancellationToken, string writer = "a write transaction")
     {
         durable |= write && SyncsEveryCommit;
         var ownsAdmission = !io.HasAdmission;
@@ -291,7 +272,7 @@ internal sealed partial class SqliteDatabaseStore(
                 return connection.BeginTransaction(deferred: !write);
             }, cancellationToken).ConfigureAwait(false);
             return new SqliteStorageTransaction(
-                this, session, transaction, runner, write, durable, write ? Committed : null, write && capture ? changesCommitted : null, ownsAdmission);
+                this, session, transaction, runner, write, durable, write ? Committed : null, ownsAdmission);
         }
         catch
         {
@@ -705,7 +686,7 @@ internal sealed partial class SqliteDatabaseStore(
         SqliteStorageTransaction? transaction = null;
         try
         {
-            transaction = await BeginAsync(write: true, capture: true, durable: false, CancellationToken.None, "a group commit batch").ConfigureAwait(false);
+            transaction = await BeginAsync(write: true, durable: false, CancellationToken.None, "a group commit batch").ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
                 for (var index = 0; index < batch.Count; index++)
@@ -869,7 +850,7 @@ internal sealed partial class SqliteDatabaseStore(
 
         var version = Interlocked.Read(ref _collectionsVersion);
         var names = new HashSet<string>(StringComparer.Ordinal);
-        var transaction = await BeginAsync(write: false, capture: false, durable: false, cancellationToken).ConfigureAwait(false);
+        var transaction = await BeginAsync(write: false, durable: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             string? after = null;

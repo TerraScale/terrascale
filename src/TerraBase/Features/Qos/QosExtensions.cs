@@ -1,13 +1,11 @@
 using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
-using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
-using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -68,15 +66,12 @@ public static class QosExtensions
         var resolved = await ResolveTenantAsync(context).ConfigureAwait(false);
 
         context.Features.Get<LookupMemory>()?.Reservation.Dispose();
-        if (resolved is Unavailable error
-            && !(context.RequestServices.GetRequiredService<TerraBaseOptions>().CatalogFollower
-                && ServedByCatalogPrimary.Always(context.GetEndpoint())))
+        if (resolved is Unavailable error)
         {
             await ErrorResponse.From(error).ExecuteAsync(context).ConfigureAwait(false);
             return;
         }
 
-        // A forward-only route's primary validates identity; its follower may not interpret this snapshot.
         var tenant = resolved switch
         {
             TenantContext known => known,

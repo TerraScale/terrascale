@@ -44,7 +44,6 @@ public sealed class QueryPlanTests
         ["DeleteCollectionNames"] = "SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name>=? AND name<?)",
         ["ListIndexes"] = "SCAN sqlite_schema",
         ["IndexExists"] = "SCAN sqlite_schema",
-        ["ObserveOffset"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         // Client databases (docs/terrabase/multi-region-replication.md): states and documents by key.
         ["GetState"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_items_1 (id=?) LEFT-JOIN | SEARCH c USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) LEFT-JOIN",
         ["ClientHasCollectionState"] = "SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>=? AND collection<?) | SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name>=? AND name<?) | SCAN CONSTANT ROW",
@@ -54,20 +53,6 @@ public sealed class QueryPlanTests
         ["UpdateApplied"] = "SEARCH _tb_peers USING INTEGER PRIMARY KEY (rowid=?)",
         ["InsertApplied"] = "",
         ["UpdateCollection"] = "SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name=?)",
-        ["Origin"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
-        ["LastSequence"] = "SCALAR SUBQUERY 1 | SCAN changes USING COVERING INDEX sqlite_autoindex_changes_1 | SCAN CONSTANT ROW",
-        ["AppendReplicationChange"] = "",
-        ["GetChangeDigest"] = "SEARCH journal_prefixes USING INTEGER PRIMARY KEY (rowid=?)",
-        ["AppendChangeDigest"] = "",
-        // System database replication: snapshot pages, group pages, prefix drops, replica writes, journal tail.
-        ["SystemDocumentsFirst"] = "SCAN documents USING INDEX documents_live",
-        ["SystemDocumentsAfter"] = "COMPOUND QUERY | LEFT-MOST SUBQUERY | SCAN (subquery-0) | SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id>?) | UNION ALL | SCAN (subquery-0) | SEARCH documents USING INDEX documents_live (collection>?) | USE SORTER FOR ORDER BY",
-        ["GroupSize"] = "SEARCH changes USING COVERING INDEX sqlite_autoindex_changes_1 (sequence=?)",
-        ["ReadGroupPage"] = "SEARCH changes USING INDEX sqlite_autoindex_changes_1 (sequence=? AND ordinal>=?)",
-        ["CollectionRangeIds"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection>=? AND collection<?)",
-        ["ReplaceDocument"] = "",
-        ["SystemLastSequence"] = "SCALAR SUBQUERY 1 | SCAN journal_prefixes | SCAN CONSTANT ROW",
-        ["TruncateChanges"] = "SEARCH changes USING COVERING INDEX sqlite_autoindex_changes_1 (sequence<=?)",
         ["ClientDocumentBytes"] = "SCALAR SUBQUERY 1 | SEARCH _tb_unique_conflicts USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) | SCALAR SUBQUERY 2 | SEARCH items USING INDEX sqlite_autoindex_items_1 (id=?) | SCAN CONSTANT ROW",
         ["ClientListFirst"] = "SCAN items AS d USING INDEX sqlite_autoindex_items_1 | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
         ["ClientListAfter"] = "SEARCH d USING INDEX sqlite_autoindex_items_1 (id>?) | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
@@ -77,7 +62,6 @@ public sealed class QueryPlanTests
         ["UpdateRow"] = "SEARCH items USING COVERING INDEX sqlite_autoindex_items_1 (id=?)",
         ["InsertRow"] = "",
         ["DeleteRow"] = "SEARCH items USING COVERING INDEX sqlite_autoindex_items_1 (id=?)",
-        ["TruncatePrefixes"] = "SEARCH journal_prefixes USING INTEGER PRIMARY KEY (rowid=?)",
     };
 
     [Test]

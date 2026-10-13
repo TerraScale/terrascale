@@ -12,7 +12,6 @@ Fly sets these variables on every machine; TerraBase reads them at startup (`Con
 | `FLY_REGION` | The machine's region; `X-TerraBase-Region`, `/healthz` and placement use it |
 | `FLY_MACHINE_ID` | The machine's ID, which names it in the cell (ring, metrics, usage batches) |
 | `FLY_APP_NAME` | The app whose internal DNS lists the cell |
-| `PRIMARY_REGION` | The app's primary region (`primary_region` in `fly.toml`), home of the catalog primary; the machine's own region when unset |
 
 `FLY_REGION`, `FLY_MACHINE_ID` and `FLY_APP_NAME` are set together or not at all; a partial or malformed identity stops
 the process with exit code 2. A process with none of them (a developer machine) is region `local`, machine `local`, a
@@ -31,11 +30,11 @@ record (checked 2026-10-11), so the regions are the ones these entries name. A m
   machine Fly stops leaves the DNS; one cut off from the DNS stops acting on its lease after 10 seconds.
 - The replication sender takes its peers from the cell when it starts; anti-entropy follows the cell as it changes.
 
-## Catalog primary
+## Catalog
 
-Machines of the primary region are catalog primaries; every other machine follows the first machine (lowest ID) of the
-primary region and finds it again whenever the DNS changes. The primary region holds one TerraBase machine until
-anna-full (TS-647) removes the catalog primary.
+Every machine writes its own catalog (`_system.db`) locally. Catalogs are not replicated until R10a, which makes `_system`
+a lattice database replicated to every region ([multi-region-replication.md](multi-region-replication.md) section 15).
+TerraBase does not read `PRIMARY_REGION`. `primary_region` in `fly.toml` stays for Fly's `min_machines_running`.
 
 ## Other regions
 
@@ -72,8 +71,4 @@ A request carrying `Fly-Replay-Src` was replayed already and is answered where i
 disagreement between regions never loops. Requests on the internal listener never get `fly-replay`; Fly Proxy is not in
 front of it.
 
-Catalog primary forwarding stays on gRPC (`CatalogForwarding.Forward` on the internal listener) rather than
-`fly-replay: instance=<primary>`. A replayed request would be answered by the primary as its own region, not the region the
-client reached (the default `homeRegion` of a new database, placement checks, `X-TerraBase-Region`), and the follower
-could not wait until it applied what the request wrote, so the client's next request in its region could miss the
-database or key it just created. Fly also replays only bodies below 1 MB.
+Fly replays only bodies below 1 MB.

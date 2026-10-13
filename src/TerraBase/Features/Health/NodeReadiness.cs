@@ -1,5 +1,4 @@
 using TerraBase.Engine;
-using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Health;
 
@@ -7,18 +6,18 @@ namespace TerraBase.Features.Health;
 public interface INodeReadiness
 {
     /// <summary>
-    /// Checks storage, catalog readiness and shutdown with the readiness probe's rules. Not ts-auth's signing keys: ts-auth
+    /// Checks storage and shutdown with the readiness probe's rules. Not ts-auth's signing keys: ts-auth
     /// stores its data here, so it cannot become ready before this node does; user tokens answer 401 until the keys load.
     /// </summary>
     ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken);
 }
 
 internal sealed class NodeReadiness(
-    IStorageEngine engine, ICatalogReadiness catalog, IHostApplicationLifetime lifetime) : INodeReadiness
+    IStorageEngine engine, IHostApplicationLifetime lifetime) : INodeReadiness
 {
     public async ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken)
     {
-        if (!catalog.IsReady || lifetime.ApplicationStopping.IsCancellationRequested)
+        if (lifetime.ApplicationStopping.IsCancellationRequested)
         {
             return false;
         }

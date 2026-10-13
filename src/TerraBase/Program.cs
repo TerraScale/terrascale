@@ -9,7 +9,6 @@ using TerraBase.Features.Backup;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Health;
 using TerraBase.Features.Management;
-using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Platform;
@@ -123,8 +122,7 @@ try
     }
 
     var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
-    // Forwarded requests run through everything after it. Error bodies first, so they also cover the listener check's 404.
-    app.UseTerraBaseForwardedRequests();
+    // Error bodies first, so they also cover the listener check's 404.
     app.UseTerraBasePressure();
     app.UseTerraBaseUsage();
     app.UseTerraBaseBadRequests();
@@ -144,12 +142,10 @@ try
     });
     app.UseTerraBaseListeners();
     app.UseTerraBaseQosMemory();
-    app.UseTerraBaseQueryShapeAdmission();
     app.UseAuthentication();
     app.UseTerraBaseProjectCheck();
     app.UseAuthorization();
     app.UseTerraBaseQos();
-    app.UseTerraBaseCatalogForwarding();
     app.UseTerraBaseProjectCatalog();
     app.UseTerraBaseDatabasePlacement();
     app.UseTerraBaseManagementRouteValidation();
@@ -158,8 +154,6 @@ try
     app.MapTerraScaleOpenApi().WithMetadata(new ListenerMetadata(TerraBaseListener.Client));
     app.MapTerraBaseMetrics();
     app.MapTerraBaseReplication();
-    app.MapTerraBaseUsage();
-    app.MapTerraBaseQueryShapes();
     await ApplicationRunCompletion.RunAsync(app);
     return 0;
 }

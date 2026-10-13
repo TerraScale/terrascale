@@ -627,49 +627,6 @@ public sealed class UsageAnalyticsTests
     }
 
     [Test]
-    public async Task A_primary_refusing_measurements_still_receives_the_read_and_write_totals()
-    {
-        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
-        var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
-        using var client = ProjectClient(api, database.Project);
-        await ManagementApi.CreateCollectionAsync(client, database, "people");
-        using (var written = await client.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "one")), new { name = new Faker().Name.FullName() }))
-        {
-            written.EnsureSuccessStatusCode();
-        }
-
-        var reads = new Faker().Random.Int(1, 3);
-        for (var i = 0; i < reads; i++)
-        {
-            (await client.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "one")))).EnsureSuccessStatusCode();
-        }
-
-        // A primary that predates minute scopes and measurements refuses any batch carrying them, as the older validator did.
-        var received = new List<KeyValuePair<UsageKey, OpCounts>>();
-        var refused = 0;
-        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-        while (await meter.SendAsync((_, batch, _) =>
-        {
-            if (batch.Any(entry => entry.Key.Scope == TerraBase.Features.Management.Usage.UsageScope.Minute || entry.Value.Meters is not null))
-            {
-                refused++;
-                return Task.FromResult<AddUsageResult>(new Validation("an older primary"));
-            }
-
-            received.AddRange(batch);
-            return Task.FromResult<AddUsageResult>(new Done());
-        }, CancellationToken.None))
-        {
-        }
-
-        await Assert.That(refused).IsGreaterThan(0);
-        var owned = received.Where(entry => entry.Key.Database.DatabaseId == database.Id).ToArray();
-        await Assert.That(owned.Sum(entry => entry.Value.Reads)).IsEqualTo(reads);
-        await Assert.That(owned.Sum(entry => entry.Value.Writes)).IsGreaterThanOrEqualTo(1);
-    }
-
-    [Test]
     public async Task Explain_is_metered_and_near_limit_byte_counters_total_without_overflow()
     {
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
@@ -717,7 +674,7 @@ public sealed class UsageAnalyticsTests
 
         var minute = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 60;
         var key = new UsageKey(new(database.Organization, database.Project, database.Id), minute / 60, TerraBase.Features.Management.Usage.UsageScope.Minute, (int)(minute % 60));
-        _ = await meter.AcceptAsync("saturated", Ulid.NewUlid().ToString(), 1, [KeyValuePair.Create(key, new OpCounts(0, 0, meters))], CancellationToken.None);
+        meter.Add(key, new OpCounts(0, 0, meters));
         var saturated = (await ReadAsync(client, analytics)).GetProperty("items")[0].GetProperty("series").EnumerateArray()
             .Single(point => point.GetProperty("latency").GetProperty("p99Ms").ValueKind == JsonValueKind.Number
                 && point.GetProperty("latency").GetProperty("p50Ms").GetDouble() == UsageReading.LatencyBounds[5]);
