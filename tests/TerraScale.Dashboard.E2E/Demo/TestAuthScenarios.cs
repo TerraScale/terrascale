@@ -277,6 +277,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private int codeExchanges;
         private int signupGrantBindings;
         private int managementRequests;
+        private int managementMutations;
         private int revocations;
         private int contractFailures;
         private readonly ConcurrentQueue<string> contractFailureMessages = new();
@@ -388,6 +389,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             if (path.StartsWith("/v1/terrascale/users/", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref managementRequests);
+                if (http.Request.Method is not "GET" and not "HEAD") Interlocked.Increment(ref managementMutations);
                 return Results.NotFound();
             }
             if (path.Contains("/headless/v1/", StringComparison.Ordinal)) return await HeadlessAsync(http, path);
@@ -600,6 +602,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             if (action == "password-reset/complete")
             {
                 if (body.RootElement.GetProperty("code").GetString() != "123456") return HeadlessError("invalid_code");
+                if (fault == "reset-password-policy")
+                    return Results.Json(new { error = new { code = "invalid_password", message = "Secret vendor payload: password policy refusal." } }, statusCode: 400);
                 var nextPassword = body.RootElement.GetProperty("new_password").GetString()!;
                 enrollmentSecrets.Add(nextPassword);
                 if (email == "user@example.com") { password = nextPassword; authEpoch++; }
@@ -836,7 +840,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 projectReportReads,
                 projectRequests = projectRequests.ToArray(),
                 signupGrantBindings,
-                managementMutations = 0,
+                managementMutations,
                 managementRequests,
                 revocations,
                 contractFailures,

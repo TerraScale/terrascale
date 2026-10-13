@@ -445,7 +445,13 @@ public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
         Check(beforeCode == 0, "Local password validation never reaches the producer");
         await PasswordError(browser, csrf, true, new() { ["code"] = "000000", ["newPassword"] = "replacement-password", ["confirmPassword"] = "replacement-password" },
             "The code is incorrect or has expired.");
+        await Control(controls, new { command = "fault", value = "reset-password-policy" });
+        await PasswordError(browser, csrf, true, new() { ["code"] = "123456", ["newPassword"] = "replacement-password", ["confirmPassword"] = "replacement-password" },
+            "Choose a different password.");
+        await Control(controls, new { command = "fault", value = "" });
         var observed = await Observations(controls);
+        Check(observed.GetProperty("actions").EnumerateArray().Count(item => item.GetString() == "password-reset/complete") == 2,
+            "Both code and password-policy refusals reach the canonical reset-complete operation");
         Check(observed.GetProperty("managementRequests").GetInt32() == 0 && observed.GetProperty("managementMutations").GetInt32() == 0,
             "The canonical code flow never calls an unsupported password management route");
         Check(observed.GetProperty("revocations").GetInt32() == 2, "Foreign and admitted current-password proof families are revoked");
