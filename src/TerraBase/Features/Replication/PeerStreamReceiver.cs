@@ -7,13 +7,16 @@ using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// The receiving side of <c>Replication.Push</c>: joins each batch through the <see cref="IChangeGroupSink"/>, in stream
-/// order, and acks it after its durable commit. A newer stream from the same origin ends the older one, so one origin's
-/// groups apply in order. A malformed batch ends the stream; the sender reconnects and resumes from its last ack.
+/// order, and acks it after its durable commit. A newer stream from the same origin ends the older one and starts once
+/// it ended, so one origin's groups apply in order. A refill runs beside the stream: other databases' batches go on, while
+/// its own database's are refused until a refill of it commits, also on the origin's next stream when this one ends first.
+/// A malformed batch ends the stream; the sender reconnects and resumes from its last ack.
 /// </summary>
 internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 {
@@ -22,14 +25,19 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private readonly AntiEntropy _antiEntropy;
     private readonly LocalReplica _self;
     private readonly TimeProvider _time;
-    private readonly ConcurrentDictionary<ReplicaId, CancellationTokenSource> _streams = new();
+    private readonly ConcurrentDictionary<ReplicaId, (CancellationTokenSource Stop, Task Ended)> _streams = new();
+    // Per origin, the databases whose last refill did not commit when its stream ended.
+    private readonly ConcurrentDictionary<ReplicaId, HashSet<TenantContext>> _cut = new();
     private readonly Counter<long> _merged;
     private readonly Histogram<double> _delay;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly ILogger<PeerStreamReceiver> _logger;
 
     public PeerStreamReceiver(
-        IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime)
+        IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime,
+        ILogger<PeerStreamReceiver> logger)
     {
+        _logger = logger;
         _sink = sink;
         _states = states;
         _antiEntropy = antiEntropy;
@@ -62,19 +70,61 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         var region = TerraBaseOptions.IsRegion(hello.Region) ? hello.Region : "unknown";
         // Shutdown ends the stream; the sender resumes from its last ack elsewhere or later.
         using var stream = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, _lifetime.ApplicationStopping);
+        var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (_streams.TryGetValue(origin, out var older))
         {
-            await older.CancelAsync().ConfigureAwait(false);
+            // The older stream ends first, with its refills: none of its repairs commits after this stream joins a batch.
+            await older.Stop.CancelAsync().ConfigureAwait(false);
+            await older.Ended.WaitAsync(stream.Token).ConfigureAwait(false);
         }
 
-        _streams[origin] = stream;
+        _streams[origin] = (stream, ended.Task);
+        var last = new Dictionary<TenantContext, ulong>();
+        // The databases a refill runs for, and those whose last refill failed: their batches are refused until a refill of
+        // them commits, so none joins before the repairs it follows.
+        var refills = new Dictionary<TenantContext, (Refill Frame, Task<int?> Done)>();
+        var cut = _cut.TryRemove(origin, out var carried) ? carried : [];
+        Task<bool>? reading = null;
         try
         {
             await responseStream.WriteAsync(new AckFrame { Welcome = new Welcome { Node = _self.Id.Value } }, stream.Token).ConfigureAwait(false);
-            var last = new Dictionary<TenantContext, ulong>();
-            while (await requestStream.MoveNext(stream.Token).ConfigureAwait(false))
+            reading = requestStream.MoveNext(stream.Token);
+            while (true)
             {
+                // A refill may take minutes: it runs beside the frames, so other databases' batches are still acked in time.
+                _ = await Task.WhenAny([reading, .. refills.Values.Select(refilling => refilling.Done)]).ConfigureAwait(false);
+                foreach (var (tenant, (asked, done)) in refills.Where(entry => entry.Value.Done.IsCompleted).ToList())
+                {
+                    var refilled = await done.ConfigureAwait(false) is not null;
+                    _ = refills.Remove(tenant);
+                    if (refilled)
+                    {
+                        _ = cut.Remove(tenant);
+                        last[tenant] = asked.ChangeId;
+                    }
+                    else
+                    {
+                        _ = cut.Add(tenant);
+                    }
+
+                    await responseStream.WriteAsync(new AckFrame
+                    {
+                        Ack = new Ack { Database = asked.Database, ChangeId = refilled ? asked.ChangeId : 0, Refused = !refilled },
+                    }, stream.Token).ConfigureAwait(false);
+                }
+
+                if (!reading.IsCompleted)
+                {
+                    continue;
+                }
+
+                if (!await reading.ConfigureAwait(false))
+                {
+                    break;
+                }
+
                 var frame = requestStream.Current;
+                reading = requestStream.MoveNext(stream.Token);
                 if (frame.KindCase == PushFrame.KindOneofCase.Heartbeat)
                 {
                     continue;
@@ -83,16 +133,15 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 if (frame.Refill is { } refill)
                 {
                     // The sender no longer holds this machine's gap: join every bucket that differs from it, then go on from its head.
-                    var refilled = await _antiEntropy.RefillAsync(Tenant(refill.Database), hello.Machine, stream.Token).ConfigureAwait(false);
-                    if (refilled is not null)
+                    var tenant = Tenant(refill.Database);
+                    if (refills.ContainsKey(tenant))
                     {
-                        last[Tenant(refill.Database)] = refill.ChangeId;
+                        // One refill of a database at a time.
+                        await RefuseAsync(responseStream, refill.Database, stream.Token).ConfigureAwait(false);
+                        continue;
                     }
 
-                    await responseStream.WriteAsync(new AckFrame
-                    {
-                        Ack = new Ack { Database = refill.Database, ChangeId = refilled is null ? 0 : refill.ChangeId, Refused = refilled is null },
-                    }, stream.Token).ConfigureAwait(false);
+                    refills[tenant] = (refill, RefillAsync(tenant, hello.Machine, stream.Token));
                     continue;
                 }
 
@@ -106,6 +155,12 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 try
                 {
                     database = ChangeGroups.Tenant(batch.Database);
+                    if (refills.ContainsKey(database) || cut.Contains(database))
+                    {
+                        await RefuseAsync(responseStream, batch.Database, stream.Token).ConfigureAwait(false);
+                        continue;
+                    }
+
                     if (last.TryGetValue(database, out var previous) && batch.LastChangeId <= previous)
                     {
                         throw new InvalidDataException("a stream's batches of one database have growing change ids");
@@ -147,7 +202,21 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         }
         finally
         {
-            _ = _streams.TryRemove(new KeyValuePair<ReplicaId, CancellationTokenSource>(origin, stream));
+            // A refill ends with its stream; one not acknowledged leaves its database cut for the origin's next stream.
+            await stream.CancelAsync().ConfigureAwait(false);
+            foreach (var pending in refills.Values.Select(refilling => (Task)refilling.Done).Append(reading ?? Task.CompletedTask))
+            {
+                await pending.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
+
+            cut.UnionWith(refills.Keys);
+            if (cut.Count > 0)
+            {
+                _cut[origin] = cut;
+            }
+
+            _ = _streams.TryRemove(new KeyValuePair<ReplicaId, (CancellationTokenSource, Task)>(origin, (stream, ended.Task)));
+            ended.SetResult();
         }
     }
 
@@ -185,6 +254,23 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         }
         while (after is not null);
     }
+
+    // A refill that fails (the named machine unreachable, a deadline) refuses the database: the sender asks again later.
+    private async Task<int?> RefillAsync(TenantContext database, string machine, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _antiEntropy.RefillAsync(database, machine, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.ZLogWarning(error, $"A refill from machine {machine:@Peer} failed; the database is refused until its sender asks again");
+            return null;
+        }
+    }
+
+    private static Task RefuseAsync(IServerStreamWriter<AckFrame> responseStream, V1.Database database, CancellationToken cancellationToken) =>
+        responseStream.WriteAsync(new AckFrame { Ack = new Ack { Database = database, Refused = true } }, cancellationToken);
 
     private static TenantContext Tenant(V1.Database? database)
     {

@@ -15,6 +15,19 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
     private readonly Dictionary<(TenantContext Database, ReplicaId Peer), long> _ackedBy = [];
     private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource _acked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Action? _beforeRead;
+
+    /// <summary>
+    /// Drops the groups through <paramref name="changeId"/> as retention does, just before the next read: a trim landing
+    /// between a sender's checks. A peer acknowledged before them then has to refill.
+    /// </summary>
+    public void CutBeforeNextRead(TenantContext database, long changeId) => _beforeRead = () =>
+    {
+        lock (_gate)
+        {
+            _ = _groups[database].RemoveAll(group => group.ChangeId <= changeId);
+        }
+    };
 
     /// <summary>Appends a group of <paramref name="deltas"/> with the next change id, and returns that id.</summary>
     public long Add(TenantContext database, params ChangeDelta[] deltas)
@@ -61,6 +74,7 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
 
     public ValueTask<IReadOnlyList<OriginGroup>> ReadAsync(TenantContext database, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
     {
+        Interlocked.Exchange(ref _beforeRead, null)?.Invoke();
         lock (_gate)
         {
             List<OriginGroup> page = [];
@@ -126,7 +140,13 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
         }
     }
 
-    public ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken) => ValueTask.FromResult(true);
+    public ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            return ValueTask.FromResult(_groups.GetValueOrDefault(database) is not [var first, ..] || first.ChangeId <= after + 1);
+        }
+    }
 
     public ValueTask<long> HeadAsync(TenantContext database, CancellationToken cancellationToken)
     {

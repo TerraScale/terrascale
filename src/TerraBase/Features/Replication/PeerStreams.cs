@@ -260,6 +260,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                 continue;
             }
 
+            // Read before the retention check: retention only cuts from the oldest group on, so a trim between the two shows
+            // as a cut here and never ships a batch past a hole.
+            var groups = await _source.ReadAsync(database, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
             if (!await _source.RetainsAsync(database, acked, cancellationToken).ConfigureAwait(false))
             {
                 // Retention cut groups after the peer's ack (it was silent or far behind, or it is new): it refills from this
@@ -277,7 +280,6 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                 continue;
             }
 
-            var groups = await _source.ReadAsync(database, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
             if (groups.Count == 0)
             {
                 lock (link.Gate)

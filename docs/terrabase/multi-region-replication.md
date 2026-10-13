@@ -741,8 +741,14 @@ ts-dotnet until R12 makes ts-auth lattice-native.
   as before. A peer whose unacknowledged CDC rows pass 1 GiB (measured once it is 65,536 rows behind) gets `seen = 0` and
   stops holding rows until it is heard from again. A sender whose CDC no longer holds every row after a peer's ack
   (retention deletes a prefix, so that is `min(change_id) > acked + 1`; a new peer at 0 counts too) sends `Refill(head)`
-  instead of groups. The receiver finds the sender by the machine name in its `Hello`, joins every bucket that differs at
-  once, then acks `head`, and the stream goes on from there.
+  instead of groups. It checks this after reading the groups, so a trim between the two shows as a cut. The receiver finds
+  the sender by the machine name in its `Hello`, joins every bucket that differs at once, then acks `head`, and the stream
+  goes on from there.
+- **Per-database order across a refill** (the changes feed relies on it). The refill runs beside the stream, so other
+  databases' batches keep their 15 s ack. Until a refill of the database commits, its batches on that link are refused:
+  while the refill runs, after it fails (acked refused, the sender asks again) and on the origin's next stream when the
+  stream ends first. A newer stream of an origin starts only after the older one ended, refills included. One refill of
+  a database runs at a time.
 - **Not copy-refill.** Without garbage collection (R7) merging old state is safe, so a refill merges. Once R7 collects
   tombstones, a machine away past the horizon must delete its file and copy from a peer (section 10), or it would bring
   collected deletions back. Per-database readiness during a refill is not built either.

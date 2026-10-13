@@ -455,6 +455,172 @@ public sealed class PeerStreamTests
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
     }
 
+    // A refill runs beside the receiver's frames: a slow one (here the named machine never answers Digest; in production a
+    // large database) must not hold back another database's batch past the sender's progress timeout.
+    [Test]
+    public async Task A_slow_refill_does_not_hold_back_another_databases_batch_past_the_progress_timeout()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
+
+        var silent = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        silent.Start();
+        try
+        {
+            cluster.Members.Join(new ClusterMember("zzzz-silent", $"http://127.0.0.1:{((IPEndPoint)silent.LocalEndpoint).Port}", "gru", ""));
+            await Task.Delay(DirectoryMembership.Heartbeat + TimeSpan.FromSeconds(1));
+
+            using var push = await RawPush.StartAsync(sjc, "zzzz-silent");
+            var other = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
+            await push.RefillAsync(cluster.Database, 1);
+            await push.BatchAsync(other, 1, EntityIds.New().ToString());
+            await Assert.That((await push.AckAsync()).Database).IsEqualTo(ChangeGroups.Wire(other));
+        }
+        finally
+        {
+            silent.Stop();
+        }
+    }
+
+    // A retention trim between the sender's read and its retention check must not ship the groups after the hole as if
+    // nothing were missing: the sender sees the cut and the peer refills.
+    [Test]
+    public async Task A_trim_during_a_read_makes_the_sender_refill_rather_than_ship_past_the_hole()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var stamp = Stamp();
+        var (id, trimmed, kept) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, id, """{"n":1}"""));
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
+        using (var deadline = new CancellationTokenSource(Deadline))
+        {
+            await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, 1, deadline.Token);
+        }
+
+        // While sjc is down gru writes two groups, and retention drops the first of them during gru's next read for sjc.
+        await sjc.StopAsync();
+        await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        await gru.CommitAsync(Put(gru, stamp + 1, trimmed, """{"n":2}"""));
+        await gru.CommitAsync(Put(gru, stamp + 2, kept, """{"n":3}"""));
+        gru.Source.CutBeforeNextRead(cluster.Database, 2);
+        await sjc.StartAsync();
+
+        // sjc refills, so the trimmed group's document arrives too (anti-entropy alone would take two 60 s rounds).
+        await Assert.That(await sjc.UntilAsync(trimmed, """{"n":2}""")).IsTrue();
+        await Assert.That(await sjc.UntilAsync(kept, """{"n":3}""")).IsTrue();
+        using (var deadline = new CancellationTokenSource(Deadline))
+        {
+            await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, 3, deadline.Token);
+        }
+    }
+
+    // The changes feed relies on this order (R8): a database's later batches on a link never join before its refill's
+    // repairs commit, through a failed refill, a retry and a second refill, while other databases' batches go on.
+    [Test]
+    public async Task A_databases_later_batches_wait_for_its_refill_to_commit_through_a_failure_a_retry_and_a_second_refill()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (lost, first, second) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", lost, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+        using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
+        var database = ChangeGroups.Wire(cluster.Database);
+        var refused = new Ack { Database = database, Refused = true };
+
+        // sjc lacks a document gru holds, so a refill from gru has a repair to make, and sjc holds it before it joins. Meanwhile
+        // the database's batch and a second refill of it are refused, and another database's batch is acknowledged.
+        await sjc.LoseAsync("items", lost);
+        var held = sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var other = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
+        await push.RefillAsync(cluster.Database, 1);
+        await push.BatchAsync(cluster.Database, 2, first);
+        await push.RefillAsync(cluster.Database, 1);
+        await push.BatchAsync(other, 1, first);
+        await Assert.That(await push.AckAsync()).IsEqualTo(refused);
+        await Assert.That(await push.AckAsync()).IsEqualTo(refused);
+        await Assert.That((await push.AckAsync()).Database).IsEqualTo(ChangeGroups.Wire(other));
+
+        // The repair fails: the refill is refused, and the database's batch still waits.
+        held.SetException(new IOException("a test fails the repair"));
+        await Assert.That(await push.AckAsync()).IsEqualTo(refused);
+        await push.BatchAsync(cluster.Database, 2, first);
+        await Assert.That(await push.AckAsync()).IsEqualTo(refused);
+        await Assert.That(await sjc.ReadAsync(first)).IsNull();
+
+        // Asked again, the refill commits before its ack, and only then the database's next batch joins.
+        sjc.HeldRepairs = null;
+        await push.RefillAsync(cluster.Database, 1);
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = database, ChangeId = 1 });
+        await Assert.That(await sjc.ReadAsync(lost)).IsEqualTo("""{"n":1}""");
+        await push.BatchAsync(cluster.Database, 2, first);
+        await Assert.That((await push.AckAsync()) is { ChangeId: 2, Refused: false }).IsTrue();
+        await Assert.That(await sjc.ReadAsync(first)).IsEqualTo("""{"n":1}""");
+
+        // A second refill in a row holds the database's batches back the same way.
+        await sjc.LoseAsync("items", lost);
+        held = sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        await push.RefillAsync(cluster.Database, 3);
+        await push.BatchAsync(cluster.Database, 4, second);
+        await Assert.That(await push.AckAsync()).IsEqualTo(refused);
+        held.SetResult();
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = database, ChangeId = 3 });
+        await Assert.That(await sjc.ReadAsync(lost)).IsEqualTo("""{"n":1}""");
+        await Assert.That(await sjc.ReadAsync(second)).IsNull();
+        await push.BatchAsync(cluster.Database, 4, second);
+        await Assert.That((await push.AckAsync()) is { ChangeId: 4, Refused: false }).IsTrue();
+        await Assert.That(await sjc.ReadAsync(second)).IsEqualTo("""{"n":1}""");
+    }
+
+    // The same order across a reconnect (R8): a newer stream of the origin starts once the older one ended with its refill,
+    // and a refill that ended without committing keeps the database's batches waiting on the newer stream.
+    [Test]
+    public async Task A_refill_cut_short_by_a_reconnect_keeps_its_databases_batches_waiting_on_the_next_stream()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (lost, later) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", lost, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+        var peer = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name;
+        var database = ChangeGroups.Wire(cluster.Database);
+
+        await sjc.LoseAsync("items", lost);
+        sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var older = await RawPush.StartAsync(sjc, peer);
+        await older.RefillAsync(cluster.Database, 1);
+        await sjc.RepairWaits.Task.WaitAsync(Deadline);
+
+        using var newer = await RawPush.StartAsync(sjc, peer);
+        await newer.BatchAsync(cluster.Database, 2, later);
+        await Assert.That(await newer.AckAsync()).IsEqualTo(new Ack { Database = database, Refused = true });
+        await Assert.That(await sjc.ReadAsync(later)).IsNull();
+
+        sjc.HeldRepairs = null;
+        await newer.RefillAsync(cluster.Database, 1);
+        await Assert.That(await newer.AckAsync()).IsEqualTo(new Ack { Database = database, ChangeId = 1 });
+        await Assert.That(await sjc.ReadAsync(lost)).IsEqualTo("""{"n":1}""");
+        await newer.BatchAsync(cluster.Database, 2, later);
+        await Assert.That((await newer.AckAsync()) is { ChangeId: 2, Refused: false }).IsTrue();
+        await Assert.That(await sjc.ReadAsync(later)).IsEqualTo("""{"n":1}""");
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
@@ -551,6 +717,12 @@ public sealed class PeerStreamTests
 
         public ReplicaId Node => Api.Server.Services.GetRequiredService<LocalReplica>().Id;
 
+        // While set, this machine's repairs wait for it before they join (a faulted one fails them): a test holds a refill open.
+        public TaskCompletionSource? HeldRepairs { get; set; }
+
+        // Completes once a repair waits for HeldRepairs.
+        public TaskCompletionSource RepairWaits { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         private IStorageEngine Engine => Api.Server.Services.GetRequiredService<IStorageEngine>();
 
         public async Task StartAsync()
@@ -564,6 +736,7 @@ public sealed class PeerStreamTests
             }, services =>
             {
                 services.AddSingleton<IMemberDirectory>(cluster.Members);
+                services.AddSingleton<IChangeGroupSink>(provider => new HeldSink(ActivatorUtilities.CreateInstance<StorageChangeGroupSink>(provider), this));
                 if (!cluster.Cdc)
                 {
                     services.AddSingleton<IChangeGroupSource>(Source);
@@ -844,6 +1017,76 @@ public sealed class PeerStreamTests
             using var service = Api.Service(Api.User);
             using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
             await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+        }
+    }
+
+    /// <summary>A machine's sink whose repairs wait while the test holds them.</summary>
+    private sealed class HeldSink(IChangeGroupSink sink, Machine machine) : IChangeGroupSink
+    {
+        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken) =>
+            sink.ApplyAsync(database, origin, groups, cancellationToken);
+
+        public async ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
+        {
+            if (machine.HeldRepairs is { } held)
+            {
+                _ = machine.RepairWaits.TrySetResult();
+                await held.Task.WaitAsync(cancellationToken);
+            }
+
+            return await sink.RepairAsync(database, states, cancellationToken);
+        }
+    }
+
+    /// <summary>A push stream a test drives frame by frame, from a made-up origin that names <c>peer</c> for its refills.</summary>
+    private sealed class RawPush : IDisposable
+    {
+        private static readonly ReplicaId Origin = ReplicaId.Of(1, 7, 0);
+        private readonly Grpc.Net.Client.GrpcChannel _channel;
+        private readonly AsyncDuplexStreamingCall<PushFrame, AckFrame> _call;
+
+        private RawPush(Machine machine)
+        {
+            _channel = PeerChannel.Create(machine.Api.Server.BaseAddress);
+            _call = new Features.Replication.V1.Replication.ReplicationClient(_channel).Push();
+        }
+
+        // Says hello and waits for the welcome.
+        public static async Task<RawPush> StartAsync(Machine machine, string peer)
+        {
+            var push = new RawPush(machine);
+            await push._call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = Origin.Value, Region = "gru", Machine = peer } });
+            using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
+            await Assert.That(await push._call.ResponseStream.MoveNext(timeout.Token) && push._call.ResponseStream.Current.Welcome is not null).IsTrue();
+            return push;
+        }
+
+        public Task RefillAsync(TenantContext database, ulong changeId) =>
+            _call.RequestStream.WriteAsync(new PushFrame { Refill = new Refill { Database = ChangeGroups.Wire(database), ChangeId = changeId } });
+
+        // One group putting {"n":1} under `id`.
+        public Task BatchAsync(TenantContext database, ulong changeId, string id) =>
+            _call.RequestStream.WriteAsync(new PushFrame
+            {
+                Batch = new Batch
+                {
+                    Database = ChangeGroups.Wire(database),
+                    LastChangeId = changeId,
+                    Groups = ChangeGroups.Encode([new OriginGroup((long)changeId, [Put(Origin, Stamp(), id, """{"n":1}""")])]),
+                },
+            });
+
+        // The next ack, within the sender's progress timeout.
+        public async Task<Ack> AckAsync()
+        {
+            using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
+            return await _call.ResponseStream.MoveNext(timeout.Token) ? _call.ResponseStream.Current.Ack : throw new IOException("the stream ended");
+        }
+
+        public void Dispose()
+        {
+            _call.Dispose();
+            _channel.Dispose();
         }
     }
 
