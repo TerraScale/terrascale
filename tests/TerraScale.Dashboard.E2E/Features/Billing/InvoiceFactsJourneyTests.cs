@@ -33,6 +33,7 @@ public sealed class InvoiceFactsJourneyTests
         await Assert.That(wire.ReturnHosts).IsEquivalentTo(new[] { "dash.terrascale.tech", "dash.terrascale.tech" });
         using var portal = await client.GetAsync("/billing/portal?return=https%3A%2F%2Fattacker.invalid");
         await Assert.That(portal.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await Assert.That(wire.PortalReturn).IsEqualTo("https://dash.terrascale.tech/billing");
         await Assert.That(wire.ReturnHosts).IsEquivalentTo(new[] { "dash.terrascale.tech", "dash.terrascale.tech", "dash.terrascale.tech" });
         await Assert.That(wire.ReturnSchemes.All(scheme => scheme == "https")).IsTrue();
         var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
@@ -62,6 +63,7 @@ public sealed class InvoiceFactsJourneyTests
         public int StripeCalls => Volatile.Read(ref stripeCalls);
         public ConcurrentQueue<string> ReturnHosts { get; } = new();
         public ConcurrentQueue<string> ReturnSchemes { get; } = new();
+        public string? PortalReturn { get; private set; }
         public HttpClient CreateClient(string name) => new(this, false);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -82,6 +84,7 @@ public sealed class InvoiceFactsJourneyTests
                         var returnUri = new Uri(form[field].ToString());
                         ReturnHosts.Enqueue(returnUri.Host);
                         ReturnSchemes.Enqueue(returnUri.Scheme);
+                        if (stripe.AbsolutePath == "/v1/billing_portal/sessions") PortalReturn = returnUri.AbsoluteUri;
                     }
                 }
             }
