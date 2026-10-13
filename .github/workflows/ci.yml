@@ -144,6 +144,8 @@ jobs:
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
           target: test-${{ github.job }}
+          # TerraBase's tests check that /healthz reports the exact commit (unused by the other areas' stages).
+          build-args: TERRABASE_REVISION=${{ github.sha }}
           # The build stage is reused for identical inputs; the tests always run on the current head.
           no-cache-filters: test-${{ github.job }}
           push: false
