@@ -40,6 +40,7 @@ public sealed class ReplicaRebuildTests
         await Assert.That(await pair.Sjc.ReadAsync(only)).IsEqualTo("""{"n":2}""").Because("only the faulted copy held it; the source lacks it");
         await Assert.That(pair.Sjc.SideExists(faulted)).IsFalse();
         await Assert.That(adapter.Ledger.Get(pair.Database)).IsNull();
+        await Assert.That(adapter.Certified).IsTrue().Because("only the completion barrier may end a rebuild");
     }
 
     [Test]
