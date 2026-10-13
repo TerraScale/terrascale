@@ -325,7 +325,12 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                     return await ReportingExtension(http) ?? Results.NotFound();
                 }
                 if (Ownership is not null && await Ownership.DispatchAsync(http) is { } owned) return owned;
-                return await Billing.UsageAsync(http, Bearer(http, out var metered) ? metered.Subject : null);
+                if (http.Request.Method == "GET" && path.Split('/', StringSplitOptions.RemoveEmptyEntries) is ["v1", "projects", var usageProject, "usage"])
+                {
+                    if (!ProjectBearer(http, usageProject, out var usageGrant)) return OAuthError("unauthorized", 401);
+                    return await Billing.UsageAsync(http, usageGrant.Session.Subject, usageGrant.OrganizationId, usageProject, usageGrant.Scopes);
+                }
+                return Results.NotFound();
             }
             if (http.Request.Host.Host != "auth.terrascale.tech")
             {
