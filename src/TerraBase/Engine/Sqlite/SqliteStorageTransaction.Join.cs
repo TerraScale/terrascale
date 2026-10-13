@@ -79,7 +79,7 @@ internal sealed partial class SqliteStorageTransaction
         cancellationToken.ThrowIfCancellationRequested();
         Offset();
         PutRow(collection, id, materialized);
-        WriteState(collection, id, next, at);
+        WriteState(collection, id, next, at, repairedFrom: state);
         if (metadata)
         {
             if (collection == DocumentDelta.Collections)
