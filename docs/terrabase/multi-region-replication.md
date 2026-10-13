@@ -233,7 +233,8 @@ CREATE TABLE _tb_tail (id INTEGER PRIMARY KEY CHECK (id = 1), change_id INTEGER 
 1. The endpoint validates as today (JSON, size, collection schema, unique constraints on the local state). The
    request enters the database's write lane (`SqliteWriteLane` group commit). Unconditional `POST /transactions` stays
    atomic.
-2. In the lane's transaction (`synchronous = NORMAL`, [0003](decisions/0003-sqlite-synchronous-normal.md)), for each
+2. In the lane's transaction (`synchronous = FULL`, [0003](decisions/0003-sqlite-synchronous-normal.md) as amended by
+   #181), for each
    operation:
    1. Mint `S`.
    2. Point-read `_tb_state` and the collection row.

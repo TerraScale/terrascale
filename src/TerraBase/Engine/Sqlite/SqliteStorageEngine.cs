@@ -773,7 +773,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 {
                     Replica = _systemReplica,
                     QueryBudget = QueryBudget,
-                    SyncsEveryCommit = true,
                 };
                 try
                 {
@@ -1418,6 +1417,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         {
             QueryBudget = QueryBudget,
             Member = Member,
+            Checkpoint = _checkpoint,
         };
         var published = false;
         var admitted = false;
