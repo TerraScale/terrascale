@@ -26,10 +26,12 @@ public static class App
     public const string ApiTitle = "TerraScale Auth API";
 
     /// <summary>
-    /// The region whose TerraBase takes every ts-auth write, and every read a write depends on, from every region. TerraBase
-    /// checks a precondition only against the copy it is sent to, so single-use codes and tokens, unique claims and attempt
-    /// counters hold only while one copy orders them. When this region's TerraBase does not answer, those operations fail
-    /// closed (503) instead of moving elsewhere. Replication slice R12 (lattice-native ts-auth) removes the need.
+    /// The region whose TerraBase takes every ts-auth write and every read but discovery's and the JWKS's, from every region.
+    /// TerraBase checks a precondition only against the copy it is sent to, so single-use codes and tokens, unique claims
+    /// and attempt counters hold only while one copy orders them; reading sessions, tokens, revocations and memberships
+    /// there too makes a revocation or removal take effect everywhere at once. When this region's TerraBase does not answer,
+    /// those operations fail closed (503) instead of moving elsewhere. Replication slice R12 (lattice-native ts-auth)
+    /// removes the need.
     /// </summary>
     public const string AuthorityRegion = "gru";
 
@@ -37,8 +39,8 @@ public static class App
     public const string StorageAuthority = "terrabase-authority";
 
     /// <summary>
-    /// TerraBase's internal listener on Fly's private network in this machine's region (<c>FLY_REGION</c>), for reads of GET
-    /// and HEAD requests (<see cref="AuthStore.ReadLocally"/>): app <c>ts-terrabase</c>, which replicates the platform
+    /// TerraBase's internal listener on Fly's private network in this machine's region (<c>FLY_REGION</c>), for the reads of
+    /// discovery and the JWKS (<see cref="AuthStore.ReadLocally"/>): app <c>ts-terrabase</c>, which replicates the platform
     /// databases between regions; in a <c>ts-pr-&lt;n&gt;</c> preview, whose one machine (in another Fly org) runs TerraBase
     /// next to ts-auth, that machine. When it does not answer, <see cref="TerraBaseOtherRegions"/> do. Off Fly (local
     /// development), the TerraBase on this machine, whose internal listener is on loopback there, in Development only: a
@@ -122,17 +124,17 @@ public static class App
         }
 
         builder.Services.AddSingleton(TimeProvider.System);
-        // TerraBase machines' private listeners: no credential, they trust the private network. This region's, for reads of
-        // GET and HEAD requests, falls back to other regions; the authority, for everything else, never does.
+        // TerraBase machines' private listeners: no credential, they trust the private network. This region's, for discovery
+        // and JWKS reads, falls back to other regions; the authority, for everything else, never does.
         builder.Services.AddSingleton(services => new HttpClient(TerraBaseTransport.CreateHandler(
             TerraBaseOtherRegions(options, services.GetRequiredService<IConfiguration>()),
-            services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)))));
+            services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>())));
         builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
         {
             BaseAddress = TerraBaseOrigin(options, services.GetRequiredService<IConfiguration>()),
         }).Database(StorageProject, StorageDatabase));
         builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) => new HttpClient(TerraBaseTransport.CreateHandler(
-            [], services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)))));
+            [], services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>())));
         builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) =>
             TerraBaseAuthority(options, services.GetRequiredService<IConfiguration>()) is { } authority
                 ? new TerraBaseDocumentsClient(services.GetRequiredKeyedService<HttpClient>(StorageAuthority), new TerraBaseDocumentsClientOptions
@@ -207,10 +209,11 @@ public static class App
 
         app.UseAuthMetrics();
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
-        // No write depends on the reads of a GET or HEAD request, so they may come from this region's copy.
+        // Discovery and the JWKS decide nothing about authorization, so they may read this region's copy; every other
+        // read (sessions, tokens, revocations, memberships) and every write goes to the authority.
         app.Use(async (context, next) =>
         {
-            if (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method))
+            if ((context.Request.Path.Value ?? string.Empty).Split('/', 3) is [_, { Length: > 0 }, OidcIssuer.ConfigurationPath or OidcIssuer.JwksPath])
             {
                 AuthStore.ReadLocally();
             }

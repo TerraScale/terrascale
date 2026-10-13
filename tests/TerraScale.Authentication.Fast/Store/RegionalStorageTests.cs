@@ -4,9 +4,12 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
+using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
@@ -14,10 +17,11 @@ using TerraScale.DotNet.TerraBase;
 namespace TerraScale.Authentication.Fast.Store;
 
 /// <summary>
-/// ts-auth reads GET and HEAD requests from its own region's TerraBase (another region's when it does not answer) and
-/// sends everything else, every conditional write first, to the designated region's, which it never replaces: without it
-/// those operations fail closed. Regions are relays to the suite's TerraBase; the relays show where ts-auth connected, and
-/// two databases (<c>auth</c>, the designated copy; <c>auth-local</c>, this region's) show what each copy holds.
+/// ts-auth reads discovery and the JWKS from its own region's TerraBase (another region's when it does not answer) and
+/// sends everything else, every write and every authorization read, to the designated region's, which it never replaces:
+/// without it those operations fail closed. Regions are relays to the suite's TerraBase; the relays show where ts-auth
+/// connected, and two databases (<c>auth</c>, the designated copy; <c>auth-local</c>, this region's) show what each copy
+/// holds.
 /// </summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class RegionalStorageTests(TerraBaseFixture fixture)
@@ -26,42 +30,47 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     private const string Local = "auth-local";
 
     [Test]
-    public async Task Get_requests_read_their_own_region_and_everything_else_uses_the_designated_one()
+    public async Task Discovery_and_jwks_read_this_regions_copy_and_every_other_read_the_designated_one()
     {
         var (tenant, designated) = await fixture.CreateDatabaseAsync();
         var local = await fixture.CreateCopyAsync(tenant, Local);
         await UsersIn(local).CreateAsync(Instance, "local-only@example.test");
+        var (localProject, newProject) = (await ProjectAsync(local), await ProjectAsync(designated));
         await using var gru = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var auth = await StartAsync(tenant, own.Address, other, gru.Address);
+        var localKey = await KeyAsync(auth, local);
 
+        await Assert.That(await JwksAsync(auth)).IsEquivalentTo([localKey]);
+        await Assert.That(await DiscoveryAsync(auth, localProject)).IsEqualTo(HttpStatusCode.OK);
+        // A project this region's copy lacks (not replicated yet) is read from the designated region.
+        await Assert.That(await DiscoveryAsync(auth, newProject)).IsEqualTo(HttpStatusCode.OK);
+        // Any other read, a GET's included, comes from the designated region's copy, which lacks the local-only user.
+        await Assert.That(await UserAsync(auth, "local-only@example.test")).IsEqualTo(HttpStatusCode.NotFound);
         using var created = await auth.Client.PostAsync("/__test/users/created@example.test", null);
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(await UsersIn(designated).FindByEmailAsync(Instance, "created@example.test")).IsNotNull();
+        await Assert.That(await UserAsync(auth, "created@example.test")).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(await UsersIn(local).FindByEmailAsync(Instance, "created@example.test")).IsNull();
-
-        // This region's copy answers a GET; a document it lacks (not replicated yet) comes from the designated region.
-        await Assert.That(await StatusAsync(auth, HttpMethod.Get, "local-only@example.test")).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await StatusAsync(auth, HttpMethod.Get, "created@example.test")).IsEqualTo(HttpStatusCode.OK);
-        // Any other request reads the designated region's copy, which lacks the local-only user.
-        await Assert.That(await StatusAsync(auth, HttpMethod.Post, "local-only@example.test")).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(own.Accepted).IsGreaterThan(0);
         await Assert.That(other.Accepted).IsEqualTo(0);
     }
 
     [Test]
-    public async Task While_the_designated_region_is_down_writes_fail_closed_and_get_reads_go_on()
+    public async Task While_the_designated_region_is_down_authorization_fails_closed_and_discovery_and_jwks_go_on()
     {
         var (tenant, designated) = await fixture.CreateDatabaseAsync();
         var local = await fixture.CreateCopyAsync(tenant, Local);
         await UsersIn(local).CreateAsync(Instance, "local-only@example.test");
+        await UsersIn(designated).CreateAsync(Instance, "known@example.test");
+        var project = await ProjectAsync(local);
         await using var gru = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var auth = await StartAsync(tenant, own.Address, other, gru.Address);
-
+        var localKey = await KeyAsync(auth, local);
         await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, TimeSpan.FromSeconds(15))).IsTrue();
+
         gru.Stop();
         using var refused = await auth.Client.PostAsync("/__test/users/new@example.test", null);
 
@@ -70,7 +79,11 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         await Assert.That(error.GetProperty("code").GetString()).IsEqualTo("temporarily_unavailable");
         await Assert.That(await UsersIn(local).FindByEmailAsync(Instance, "new@example.test")).IsNull();
         await Assert.That(await UsersIn(designated).FindByEmailAsync(Instance, "new@example.test")).IsNull();
-        await Assert.That(await StatusAsync(auth, HttpMethod.Get, "local-only@example.test")).IsEqualTo(HttpStatusCode.OK);
+        // An authorization read never answers from this region's copy, which holds a user the designated one lacks.
+        await Assert.That(await UserAsync(auth, "local-only@example.test")).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await UserAsync(auth, "known@example.test")).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await JwksAsync(auth)).IsEquivalentTo([localKey]);
+        await Assert.That(await DiscoveryAsync(auth, project)).IsEqualTo(HttpStatusCode.OK);
         // Ready means the designated region takes writes.
         await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", TimeSpan.FromSeconds(15))).IsTrue();
     }
@@ -96,7 +109,7 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     [Arguments("Query")]
     [Arguments("QueryEquals")]
     [Arguments("Page")]
-    public async Task Outside_get_requests_every_storage_call_fails_closed_while_the_designated_region_is_down(string operation)
+    public async Task Outside_discovery_and_jwks_every_storage_call_fails_closed_while_the_designated_region_is_down(string operation)
     {
         var (tenant, _) = await fixture.CreateDatabaseAsync();
         var local = await fixture.CreateCopyAsync(tenant, Local);
@@ -158,36 +171,69 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Get_reads_move_to_another_region_when_their_own_stops_answering()
+    public async Task The_authority_client_the_app_builds_never_falls_back_to_another_region()
+    {
+        // On Fly, by name: gru's TerraBase refuses, and the names of every other region resolve to one that answers.
+        var (tenant, designated) = await fixture.CreateDatabaseAsync();
+        var refusing = TcpRelay.RandomLoopback();
+        await using var elsewhere = TcpRelay.Start(fixture.Server.InternalAddress, new IPEndPoint(TcpRelay.RandomLoopback(), 8081));
+        Task<IPAddress[]> Resolve(string host, CancellationToken cancellationToken) =>
+            Task.FromResult<IPAddress[]>([host == $"{App.AuthorityRegion}.ts-terrabase.internal" ? refusing : elsewhere.EndPoint.Address]);
+        await using var auth = await AuthTestServer.StartAsync(
+            settings: values => values.Remove("environment"),
+            services: services => services.AddSingleton(new TerraBaseTransport.HostResolver(Resolve)),
+            configure: builder =>
+            {
+                builder.Configuration["FLY_APP_NAME"] = "ts-auth";
+                builder.Configuration["FLY_REGION"] = "sjc";
+            });
+        var gru = new Uri($"http://{App.AuthorityRegion}.ts-terrabase.internal:8081/");
+        TerraBaseDatabase Through(HttpClient client) => new TerraBaseDocumentsClient(client, new TerraBaseDocumentsClientOptions { BaseAddress = gru }).Database(tenant.Project.Id, "auth");
+
+        // The app's local client moves to another region, so one answers here...
+        await Through(auth.App.Services.GetRequiredService<HttpClient>()).PutDocumentAsync(AuthStore.UserCollection, AuthStore.NewId(), Record, TerraBasePrecondition.Absent);
+        var moved = elsewhere.Accepted;
+        // ...and its authority client never does: the write fails closed.
+        var failure = await Assert.ThrowsAsync<ApiException>(() =>
+            Through(auth.App.Services.GetRequiredKeyedService<HttpClient>(App.StorageAuthority)).PutDocumentAsync(AuthStore.UserCollection, AuthStore.NewId(), Record, TerraBasePrecondition.Absent));
+
+        await Assert.That(moved).IsGreaterThan(0);
+        await Assert.That(failure!.Status).IsEqualTo(StatusCodes.Status503ServiceUnavailable);
+        await Assert.That(elsewhere.Accepted).IsEqualTo(moved);
+        await Assert.That((await designated.ListDocumentsAsync(AuthStore.UserCollection)).Items.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task Discovery_reads_move_to_another_region_when_their_own_stops_answering()
     {
         var (tenant, _) = await fixture.CreateDatabaseAsync();
         var local = await fixture.CreateCopyAsync(tenant, Local);
-        await UsersIn(local).CreateAsync(Instance, "local-only@example.test");
+        var project = await ProjectAsync(local);
         await using var gru = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var auth = await StartAsync(tenant, own.Address, other, gru.Address);
-        await Assert.That(await StatusAsync(auth, HttpMethod.Get, "local-only@example.test")).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await DiscoveryAsync(auth, project)).IsEqualTo(HttpStatusCode.OK);
 
         own.Stop();
 
         // A request on the dropped connection fails with it (503); the next connection goes to the other region.
-        await Assert.That(await ReadinessWait.UntilAsync(async () => await StatusAsync(auth, HttpMethod.Get, "local-only@example.test") == HttpStatusCode.OK && other.Accepted > 0,
+        await Assert.That(await ReadinessWait.UntilAsync(async () => await DiscoveryAsync(auth, project) == HttpStatusCode.OK && other.Accepted > 0,
             TimeSpan.FromSeconds(15))).IsTrue();
     }
 
     [Test]
-    public async Task Get_reads_use_another_region_when_their_own_has_no_started_machine()
+    public async Task Discovery_reads_use_another_region_when_their_own_has_no_started_machine()
     {
         // Fly lists started machines only, so a region without one does not resolve; neither does this name off Fly.
         var (tenant, _) = await fixture.CreateDatabaseAsync();
         var local = await fixture.CreateCopyAsync(tenant, Local);
-        await UsersIn(local).CreateAsync(Instance, "local-only@example.test");
+        var project = await ProjectAsync(local);
         await using var gru = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var auth = await StartAsync(tenant, new Uri($"http://sjc.ts-auth-test-{Guid.NewGuid():N}.internal:8081/"), other, gru.Address);
 
-        await Assert.That(await StatusAsync(auth, HttpMethod.Get, "local-only@example.test")).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await DiscoveryAsync(auth, project)).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(other.Accepted).IsGreaterThan(0);
     }
 
@@ -251,10 +297,34 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         return contents;
     }
 
-    private static async Task<HttpStatusCode> StatusAsync(AuthTestServer auth, HttpMethod method, string email)
+    // A project of the issuer's instance in the copy: its tenant's discovery document is served while it exists.
+    private static async Task<string> ProjectAsync(TerraBaseDatabase copy)
     {
-        using var request = new HttpRequestMessage(method, method == HttpMethod.Get ? $"/__test/users/{email}" : $"/__test/users/{email}/find");
-        using var response = await auth.Client.SendAsync(request);
+        var id = AuthStore.NewId();
+        await new AuthStore(copy, TimeProvider.System).CreateAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, id, Record);
+        return id;
+    }
+
+    // Provisions a signing key in the copy, under the server's master key; returns its key id.
+    private static async Task<string> KeyAsync(AuthTestServer auth, TerraBaseDatabase copy)
+    {
+        await new KeyRing(new AuthStore(copy, TimeProvider.System), auth.App.Services.GetRequiredService<AuthOptions>(), TimeProvider.System)
+            .ProvisionAsync(OidcIssuer.InstanceId, CancellationToken.None);
+        return (await copy.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Single().Document.GetProperty("id").GetString()!;
+    }
+
+    private static async Task<List<string>> JwksAsync(AuthTestServer auth) =>
+        [.. (await auth.Client.GetFromJsonAsync<JsonElement>($"/{OidcIssuer.Slug}/.well-known/jwks.json")).GetProperty("keys").EnumerateArray().Select(key => key.GetProperty("kid").GetString()!)];
+
+    private static async Task<HttpStatusCode> DiscoveryAsync(AuthTestServer auth, string project)
+    {
+        using var response = await auth.Client.GetAsync($"/{project}/.well-known/openid-configuration");
+        return response.StatusCode;
+    }
+
+    private static async Task<HttpStatusCode> UserAsync(AuthTestServer auth, string email)
+    {
+        using var response = await auth.Client.GetAsync($"/__test/users/{email}");
         return response.StatusCode;
     }
 
@@ -266,7 +336,6 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
             routes: app =>
             {
                 app.MapGet("/__test/users/{email}", FindAsync);
-                app.MapPost("/__test/users/{email}/find", FindAsync);
                 app.MapPost("/__test/users/{email}", async (string email, Users users) =>
                     await users.CreateAsync(Instance, email) is not null ? Results.StatusCode(StatusCodes.Status201Created) : Results.Conflict());
             });

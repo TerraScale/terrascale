@@ -51,7 +51,7 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 
     /// <summary>
     /// Points storage at the tenant's databases as ts-auth reaches them on Fly (internal listeners, no credential), through
-    /// ts-auth's own transports: reads of GET and HEAD requests at <paramref name="ownRegion"/> (database
+    /// ts-auth's own transports: discovery and JWKS reads at <paramref name="ownRegion"/> (database
     /// <paramref name="localDatabase"/>), at <paramref name="otherRegion"/> when it does not answer; everything else at
     /// <paramref name="designatedRegion"/> (database <paramref name="designatedDatabase"/>), with no fallback. Two database
     /// names stand for two regions' copies that have not replicated.

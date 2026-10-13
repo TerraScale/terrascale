@@ -148,9 +148,10 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
     }
 
     /// <summary>
-    /// Until the calling async method returns, the reads it makes (and what it awaits) come from this region's copy: those of
-    /// a GET or HEAD request, which no write depends on. A point read the copy lacks (a write it has not replicated yet)
-    /// asks the authority. Writes, and reads of read-then-write operations, always go to the authority.
+    /// Until the calling async method returns, the reads it makes (and what it awaits) come from this region's copy: only for
+    /// reads that decide nothing about authorization and that no write depends on (discovery, the JWKS). A point read the
+    /// copy lacks (a write it has not replicated yet) asks the authority. Writes, and reads of read-then-write operations,
+    /// always go to the authority.
     /// </summary>
     public static void ReadLocally() => LocalReads.Value = true;
 

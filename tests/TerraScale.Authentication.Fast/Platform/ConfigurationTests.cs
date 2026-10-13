@@ -89,7 +89,7 @@ public sealed class ConfigurationTests
     [Arguments("ts-auth", "fra", "http://fra.ts-terrabase.internal:8081", "http://gru.ts-terrabase.internal:8081")]
     [Arguments("ts-auth", "gru", "http://gru.ts-terrabase.internal:8081", "http://gru.ts-terrabase.internal:8081")]
     [Arguments("ts-pr-42", "sjc", "http://sjc.ts-pr-42.internal:8081", "http://sjc.ts-pr-42.internal:8081")]
-    public async Task On_fly_get_reads_use_the_terrabase_of_its_own_region_and_the_rest_the_designated_one(string app, string region, string local, string designated)
+    public async Task On_fly_discovery_and_jwks_read_the_terrabase_of_its_own_region_and_the_rest_the_designated_one(string app, string region, string local, string designated)
     {
         // Fly's machine environment, per server; RegionalStorageTests covers what goes where and the move to another region.
         var reads = new System.Collections.Concurrent.ConcurrentQueue<Uri>();

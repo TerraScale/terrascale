@@ -20,12 +20,16 @@ public static class TerraBaseTransport
     // Every connection is replaced after this long, so ts-auth is back in its own region that long after it answers again.
     private static readonly TimeSpan ConnectionLifetime = TimeSpan.FromSeconds(30);
 
+    /// <summary>The addresses of a host; Fly's DNS unless the host registers another (tests, to name loopback machines).</summary>
+    public delegate Task<IPAddress[]> HostResolver(string host, CancellationToken cancellationToken);
+
     /// <summary>
     /// A handler that connects to the request's host, then to <paramref name="otherRegions"/>; each machine is tried once
     /// per connection.
     /// </summary>
-    public static HttpMessageHandler CreateHandler(IReadOnlyList<DnsEndPoint> otherRegions, ILogger logger)
+    public static HttpMessageHandler CreateHandler(IReadOnlyList<DnsEndPoint> otherRegions, ILogger logger, HostResolver? resolve = null)
     {
+        resolve ??= Dns.GetHostAddressesAsync;
         ArgumentNullException.ThrowIfNull(otherRegions);
         ArgumentNullException.ThrowIfNull(logger);
         var handler = TerraBaseHttp.CreateHandler();
@@ -38,7 +42,7 @@ public static class TerraBaseTransport
             var tried = new HashSet<IPEndPoint>();
             foreach (var host in otherRegions.Prepend(context.DnsEndPoint))
             {
-                foreach (var endpoint in await EndPointsAsync(host, cancellationToken).ConfigureAwait(false))
+                foreach (var endpoint in await EndPointsAsync(resolve, host, cancellationToken).ConfigureAwait(false))
                 {
                     if (tried.Add(endpoint) && await ConnectAsync(endpoint, cancellationToken).ConfigureAwait(false) is { } stream)
                     {
@@ -75,11 +79,11 @@ public static class TerraBaseTransport
     }
 
     // Fly lists started machines only: a region without one does not resolve.
-    private static async Task<IPEndPoint[]> EndPointsAsync(DnsEndPoint host, CancellationToken cancellationToken)
+    private static async Task<IPEndPoint[]> EndPointsAsync(HostResolver resolve, DnsEndPoint host, CancellationToken cancellationToken)
     {
         try
         {
-            return [.. (await Dns.GetHostAddressesAsync(host.Host, cancellationToken).ConfigureAwait(false)).Select(address => new IPEndPoint(address, host.Port))];
+            return [.. (await resolve(host.Host, cancellationToken).ConfigureAwait(false)).Select(address => new IPEndPoint(address, host.Port))];
         }
         catch (SocketException)
         {

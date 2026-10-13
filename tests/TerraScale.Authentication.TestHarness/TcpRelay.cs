@@ -18,25 +18,32 @@ public sealed class TcpRelay : IAsyncDisposable
     private int accepted;
     private volatile bool stopped;
 
-    private TcpRelay(Uri target)
+    private TcpRelay(Uri target, IPEndPoint at)
     {
         this.target = new IPEndPoint(IPAddress.Parse(target.Host), target.Port);
-        this.listener = Listen(0);
-        this.Port = ((IPEndPoint)this.listener.LocalEndpoint).Port;
+        this.listener = Listen(at);
+        this.EndPoint = (IPEndPoint)this.listener.LocalEndpoint;
         this.accepting = this.AcceptAsync(this.listener);
     }
 
-    /// <summary>The relay's loopback port.</summary>
-    public int Port { get; }
+    /// <summary>The relay's loopback address and port.</summary>
+    public IPEndPoint EndPoint { get; }
+
+    /// <summary>The relay's port.</summary>
+    public int Port => this.EndPoint.Port;
 
     /// <summary>The relay as a TerraBase origin.</summary>
-    public Uri Address => new($"http://127.0.0.1:{this.Port}/");
+    public Uri Address => new($"http://{this.EndPoint}/");
 
     /// <summary>Connections accepted so far.</summary>
     public int Accepted => Volatile.Read(ref this.accepted);
 
-    /// <summary>Starts a relay to <paramref name="target"/>, a loopback origin.</summary>
-    public static TcpRelay Start(Uri target) => new(target);
+    /// <summary>Starts a relay to <paramref name="target"/>, a loopback origin, on <paramref name="at"/> (a free 127.0.0.1 port by default).</summary>
+    public static TcpRelay Start(Uri target, IPEndPoint? at = null) => new(target, at ?? new IPEndPoint(IPAddress.Loopback, 0));
+
+    /// <summary>A random loopback address other than 127.0.0.1, so a test can own a fixed port (Fly's 8081) on it.</summary>
+    public static IPAddress RandomLoopback() =>
+        new([127, (byte)Random.Shared.Next(1, 255), (byte)Random.Shared.Next(0, 256), (byte)Random.Shared.Next(1, 255)]);
 
     /// <summary>Refuses new connections and drops the open ones, as a machine that went away.</summary>
     public void Stop()
@@ -53,7 +60,7 @@ public sealed class TcpRelay : IAsyncDisposable
     public void Restart()
     {
         this.stopped = false;
-        this.listener = Listen(this.Port);
+        this.listener = Listen(this.EndPoint);
         this.accepting = this.AcceptAsync(this.listener);
     }
 
@@ -63,9 +70,9 @@ public sealed class TcpRelay : IAsyncDisposable
         await this.accepting;
     }
 
-    private static TcpListener Listen(int port)
+    private static TcpListener Listen(IPEndPoint at)
     {
-        var listener = new TcpListener(IPAddress.Loopback, port);
+        var listener = new TcpListener(at);
         listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
         listener.Start();
         return listener;
