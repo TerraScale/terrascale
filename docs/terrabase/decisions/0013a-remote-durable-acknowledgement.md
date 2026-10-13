@@ -1,6 +1,6 @@
 # 0013a: A write attempt answers success only after two independently durable regional copies
 
-- **Status: proposed** (2026-10-13).
+- **Status: proposed** (2026-10-13; revision 2 after round 3 at `b95f20ab`).
   - This record is split from 0013 for a narrow review. It holds the success barrier (B4) for **one write attempt**.
   - Cross-region idempotency, operation ids, lookups and replay are
     [0013b](0013b-operation-idempotency.md), revision 3 pending. This record claims none of them.
@@ -21,7 +21,16 @@
   - A transaction is one attempt, and all of its operations commit in one local transaction.
 - **Its commit marker** is `(store incarnation, the change id of its own transaction's last CDC row)`.
   - It is read on the writer right after `COMMIT` returns successfully, before the writer is released.
-  - Requests that group commit puts in one storage transaction share one marker, because they are one transaction.
+  - Requests that group commit puts in one storage transaction share one marker, because they are one transaction. A
+    request rolled back by its savepoint, or a whole batch rolled back, never inherits a sibling's marker or outcome.
+- **After COMMIT returns successfully**, B1 holds.
+  - If reading the marker then fails, the attempt's barrier cannot be checked, so the answer is outcome unknown, even if
+    an ack later arrives.
+  - If resetting the writer session fails after the marker was read (#181), that is not a barrier. The session is
+    discarded and never reused, and the attempt is decided by the wait like any other.
+- **A transaction that writes nothing** (only `assert` / `assert_count` operations) has no own change to ship and no
+  marker. It is answered without a wait, with `durability: "unchanged"`. No mutation is added to it, and it does not
+  wait for some unrelated head.
 - **Its local durable commit (B1).** Its transaction committed with `synchronous = FULL`, and `CommitAsync` returned
   without error. Evidence: #181, `83291845`.
 - **An eligible acknowledgement (B2).** An ack confirms the marker only when it is:
@@ -33,7 +42,25 @@
   - with `change_id ≥ marker`.
 
   The receiver acks only after every transaction that joined those groups committed with FULL. That includes every part
-  of a batch split into several transactions, and every repair of a completed refill. Evidence: #180, `4adf8424`.
+  of a batch split into several transactions. Evidence for that: #180.
+- **Refill certification.** A refill's ack certifies its `head` only when every one of these holds:
+  1. **Complete coverage, validated.** Every bucket that differs from the source was read and repaired. A source that
+     no longer holds the database, any refused or undecodable page, or any change of the source's or the receiver's store
+     incarnation during the refill aborts it, and it is acked refused. Finishing the control flow is not coverage.
+  2. **A successful receiver durability barrier after the last join.** Every repair transaction is FULL. When nothing
+     differed, or after an earlier uncertain commit, the receiver still makes one successful FULL commit on that
+     database before it acks. A write joined by a commit whose sync failed, and only readable since, is then synced or
+     the refill is refused. An uncertain receiver commit (an error at or after its `COMMIT`) faults that writer: it is
+     reopened, and nothing is acked before a later successful FULL commit.
+- **Incarnation scoping.** On the sender, a link's acked, in-flight and confirmed positions belong to one source store
+  incarnation. When the file is replaced, copied or restored (a new incarnation):
+  - they are discarded;
+  - the link resumes from the new file's own stored ack (a copy starts at 0);
+  - it re-sends or refills.
+
+  No change id of one incarnation is ever compared with another's. A refill captures its `head` together with the
+  source incarnation. The receiver's `Digest` and every `ReadBucket` page name that incarnation, and the source refuses
+  a mismatch. The receiver aborts a refill or a batch if its own store is replaced while it runs.
 - **What never confirms:**
   - a welcome;
   - an applied HLC;
@@ -42,7 +69,8 @@
   - a same-region ack;
   - a stored or retention-raised `_tb_peers.acked`;
   - an ack from before a restore, copy or volume replacement (another incarnation);
-  - an intermediate anti-entropy repair page.
+  - an intermediate anti-entropy repair page;
+  - a refill that finished without complete validated coverage and a successful receiver barrier.
 - **Acks are prefixes.** An ack of `N` covers every own group up to `N`, so a whole transaction is confirmed together,
   never in part. A later attempt's confirmation also covers earlier attempts on that machine.
 
@@ -71,10 +99,16 @@
   - `503 remote_region_unavailable` and `503 confirmation_busy`;
   - a connection that failed before any request byte was sent.
 - **Outcome unknown is its own typed outcome.** It is neither success nor failure, and it carries `region` and
-  `machine`. A caller reconciles by reading the state it wrote before deciding anything.
-  - Rewriting a whole document with `PUT` converges by value.
-  - `PATCH` with `inc`/`append`/`add`/`remove`, a `POST` without a client-chosen id, and a transaction must **not** be
-    resent without that check, because a second attempt can apply twice.
+  `machine`. It stays unknown.
+  - **A read does not resolve it.** Absence or an unchanged value proves nothing. The commit may be on its way, or on
+    a machine the read did not reach: gru's `inc +1` may arrive after sjc's read showed the old counter, so a resend
+    increments twice. Concurrent updates can also make a value match without identifying this attempt.
+  - Without proof specific to the application, or the separately approved 0013b protocol, the caller cannot turn
+    unknown into failed or confirmed. Any resend is a new attempt that may apply in addition.
+  - A whole-document `PUT` resent converges to the resent value, but that may overwrite writes made in between. It is
+    not exactly-once.
+  - `PATCH` with `inc`/`append`/`add`/`remove`, a `POST` without a client-chosen id, and a transaction can apply twice
+    if resent.
 - **No `Idempotency-Key` under 0013a.** It stays refused (`400`, "not supported yet"), so no client can believe it is
   protected. Operation ids and exactly-once retries come only with 0013b.
 
@@ -87,10 +121,11 @@
 - **A lost ack is re-sent, not re-applied.** If the ack itself is lost, the sender resends from its last ack. The
   receiver joins idempotently, and the next ack covers the marker.
 - **Refills.**
-  - A refill's ack certifies its `head` only after the whole refill committed. `head` is read before the receiver's
-    digest and bucket reads, joins are monotone, and every repair transaction is FULL.
+  - A refill's ack certifies its `head` only as certified above: `head` and its incarnation are read before the
+    receiver's digest and bucket reads, coverage is complete and validated, joins are monotone, and a successful FULL
+    barrier follows the last join.
   - #168's order holds: a database's later batches join only after its refill commits.
-  - A failed, carried or reconnected refill confirms nothing.
+  - A failed, aborted, carried or reconnected refill confirms nothing.
 - **The bound.** If none of these confirms the marker within 10 s, the answer is outcome unknown. The write keeps
   replicating.
 
@@ -99,13 +134,22 @@
 - **Option A.** Every database of a cell is placed in at least two regions.
   - A create without `replica_regions` places replicas in every other serving region of the membership. With none,
     it answers `503 remote_region_unavailable`.
-  - Fewer than two regions answers `400 placement_needs_two_regions`, on create and on update.
+  - Creating one with fewer than two regions answers `400 placement_needs_two_regions`.
+  - An update may still remove every replica region; that is the step before a delete, which needs none. The database
+    is then a single-region one, as below.
   - Existing single-region databases are never moved, and their data is never dropped. Their writes fail clearly
     (`503 remote_region_unavailable`) until an explicit placement update adds a region.
 - **Availability.**
   - A write needs its own region plus one other placed region reachable.
   - With three placed regions, writes go on with one region lost.
   - With exactly two, losing either stops writes clearly, and never with a false success.
+- **The surviving copy is kept.** After a region is lost, an acknowledged write may live in one remaining region only.
+  - Automatic recovery, refill and placement changes preserve the surviving acknowledged state until a replacement
+    that contains or dominates it is durable. Today's refill merges and deletes nothing. A copy-refill, which deletes a
+    file before copying (garbage-collection work, R7), must compare first, and never wipe the only copy of an
+    acknowledged write.
+  - Streams do not forward remote-origin groups. After the origin's loss, anti-entropy rounds between the remaining
+    regions copy the write on: two differing rounds, 60 s apart.
 - **A cell of one.** A machine without a member directory has no second region: off Fly, development and the
   single-machine Fast servers. It answers after B1 with `local_durable`, and never on Fly. On Fly the directory is the
   app's DNS, and a DNS failure or partition keeps it strict.
@@ -143,12 +187,37 @@
   - A transaction confirmed by one ack.
   - Grouped writes sharing a marker.
   - Receiver batch splitting: the ack comes only after every part.
-- **Refill:** held, failed and reconnected refills confirm nothing until a refill completes, while another database
-  flows.
+- **Refill certification:**
+  - Held, failed and reconnected refills confirm nothing until a refill completes, while another database flows.
+  - A failed receiver sync followed by a reconnect with equal digests: no ack before a successful FULL barrier.
+  - A source that no longer holds the database, and a refused repair page: the refill is refused, never acked.
+  - The source's file replaced between its head, its digest and its pages: aborted.
+- **Incarnations:**
+  - A file replaced while a sender link keeps its cursor: the cursor resets, and no ack of the new file confirms a
+    marker the peer never received.
+  - The receiver's file replaced during a batch: no ack.
+- **Origin errors:**
+  - `COMMIT` error, or a failed marker read after `COMMIT`: outcome unknown, even if an ack arrives later.
+  - A failed session reset after the marker (#181): decided by the wait.
+  - Savepoint and whole-batch rollback: no inherited outcome.
+- **Waiter races:** an ack that arrives before the waiter registers still confirms (the waiter checks the current
+  position first). Bookkeeping and received-apply CDC rows never replace an attempt's marker.
+- **A transaction of assertions only**, on an idle database: answered `unchanged`, at once.
+- **Recovery:**
+  - An acknowledged write survives the loss of its origin region and that region's rejoin.
+  - A refill never wipes the only surviving copy.
 - **Lost ack, reconnect, restart:** a dropped ack confirmed by the next one; the sender restarts in the middle of a wait.
 - **Cancellation:** after commit, the write still replicates.
 - **Bounds:** waiter bounds refuse before execution.
-- **The SDK contract:** the error codes and headers, and `Idempotency-Key` still refused.
+- **The SDK contract:** the error codes and headers, and `Idempotency-Key` still refused. Plus runtime tests in the
+  SDK repositories:
+  - no automatic replay on unknown, timeout, reset or a transport error after send;
+  - the stale-read / delayed-`inc` case left unknown, with no deduplication promised.
+- **Topology:**
+  - All six directions of gru, sjc and fra.
+  - A Fly DNS failure with no fallback to a cell of one.
+- **Prerequisite, not reproduced here:** delivery 3's shipped-binary evidence (database file, checkpoint/reset,
+  `EIO`/`ENOSPC`, connection reuse) is required before the guarantee is claimed.
 - **Placement:** delivery 4 (#pending), with fail-first and mutants.
 
 ## 9. Code boundary (delivery 5)
@@ -157,8 +226,9 @@
 | --- | --- | --- |
 | `Engine` (`IDatabaseStore.WriteAsync` result, `SqliteStorageTransaction.CommitAsync`) | The commit returns its marker: the store incarnation, and `max(change_id)` of `turso_cdc` read on the writer right after a successful `COMMIT`. The writer is exclusive, so that id is this transaction's own last row. An error at or after `COMMIT` returns no marker, and the request answers outcome unknown. | R6-FIX (sync settings and commit, as assigned) |
 | `Features/Replication/RemoteDurability.cs` | `IRemoteDurability` gains `CanConfirm(database, placement)` (the precheck) and `WaitAsync(database, marker, cancellationToken)`, which answers confirmed or not within the 10 s bound. | R6-FIX |
-| `Features/Replication/PeerStreams.cs` | It keeps, per link and database, the highest eligible ack with the incarnation of the batch it covers. A waiter registry is signalled on every eligible ack and on link loss. `LocalDurability` (a cell of one) confirms at once. | R6-FIX |
-| `Features/Replication/ChangeGroups.cs` / `TursoChangeGroupSource` | **Dependency:** a read of change groups must report the store incarnation it read from, so a batch's ack can be scoped to it. That is one field on the read result. | **R3** (CDC source). To be agreed before coding |
+| `Features/Replication/PeerStreams.cs` | It keeps, per link and database, the highest eligible ack with the incarnation of the batch it covers. Its cursors reset when the source incarnation changes. A waiter registry is signalled on every eligible ack and on link loss, and a waiter checks the current position when it registers. `LocalDurability` (a cell of one) confirms at once. | R6-FIX |
+| `Features/Replication/ChangeGroups.cs` / `TursoChangeGroupSource` | **Dependency:** every source read used for a prefix must report the store incarnation it read: `ReadAsync`, `HeadAsync`, `AckedAsync`, `DigestAsync` and `ReadBucketsAsync`. The digest and bucket reads must also refuse an expected incarnation that no longer matches. | **R3** (CDC source). To be agreed before coding |
+| `Features/Replication` (`AntiEntropy`, `PeerStreamReceiver`, `StorageChangeGroupSink`, `Protos/.../replication.proto`) | Refill certification: abort on a source that no longer holds the database, on a refused or undecodable page, and on an incarnation change. A FULL barrier commit after the last join, also with nothing to repair. `Refill`, `DigestRequest`/`DigestReply` and `BucketRequest` carry the source incarnation (a versioned contract change). The receiver aborts if its own store is replaced. | R6-FIX |
 | `Features/Documents` (`DocumentService`, `DocumentRoute`, `TransactionEndpoint`) | Precheck before the write; await the wait after the commit; answer `remote_durable` or `503 write_outcome_unknown`; precheck refusals. | R6-FIX (client write path, as assigned) |
 | `Errors`, OpenAPI | `write_outcome_unknown`, `remote_region_unavailable`, `confirmation_busy` typed in the source-generated schemas. | R6-FIX |
 | Tests | Fast cluster tests (`PeerStreamTests`), the E2E three-region topology (`RegionProcesses`, R3's harness: test registrations only, agreed with R3), and the mutants of section 8. | R6-FIX |
