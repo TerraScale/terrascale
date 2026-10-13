@@ -199,7 +199,7 @@ jobs:
         run: terrascale/scripts/terrabase/storage-format-check.sh "$GITHUB_REPOSITORY" "${{ github.event.pull_request.number }}"
 
   slow:
-    needs: test
+    needs: changes
     if: >-
       github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
       || contains(github.event.pull_request.labels.*.name, 'full-ci')
