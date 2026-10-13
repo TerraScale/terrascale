@@ -58,6 +58,15 @@ def main(destination):
                 shutil.copy(package, output / f"unqualified-build-{index}.zip")
             raise SystemExit("Two clean builds produced different package bytes; package is not qualified.")
         with zipfile.ZipFile(packages[0]) as package:
+            contracts = {}
+            for contract in sorted((ROOT / "contracts").rglob("*")):
+                if not contract.is_file() or contract.relative_to(ROOT / "contracts").parts[0] not in ("auth", "terrabase"):
+                    continue
+                path = contract.relative_to(ROOT).as_posix()
+                source_bytes = contract.read_bytes()
+                if package.read(path) != source_bytes:
+                    raise SystemExit(f"Packed contract bytes differ from source: {path}")
+                contracts[path] = digest(source_bytes)
             assemblies = {framework: digest(package.read(f"lib/{framework}/TerraScale.DotNet.dll"))
                           for framework in ("net10.0", "net11.0")}
             nuspec = ET.fromstring(package.read("TerraScale.DotNet.nuspec"))
@@ -94,6 +103,7 @@ def main(destination):
             "sourceTree": tree, "sourceArchiveSha256": digest(archive), "file": name,
             "sourceDateEpoch": int(timestamp),
             "sha256": digest(first), "assemblySha256ByFramework": assemblies,
+            "contractSha256ByPath": contracts,
             "sdk": json.loads((ROOT / "global.json").read_text())["sdk"]["version"],
             "qualification": "Two clean locked builds produced identical package bytes; installed-package HTTP fake consumer passed on net10.0 and net11.0. Locally built, not published or live-service qualified."
         }

@@ -28,7 +28,8 @@
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
     <None Include="../../LICENSE" Pack="true" PackagePath="\" />
     <EmbeddedResource Include="../../contracts/auth/error-codes.json" LogicalName="TerraScale.DotNet.Auth.error-codes.json" />
-    <None Include="../../contracts/auth/error-codes.json" Pack="true" PackagePath="contracts/auth" />
+    <None Include="../../contracts/auth/**/*" Pack="true" PackagePath="contracts/auth/%(RecursiveDir)" />
+    <None Include="../../contracts/terrabase/**/*" Pack="true" PackagePath="contracts/terrabase/%(RecursiveDir)" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.11" />
     <PackageReference Include="NUlid" Version="1.7.3" />
   </ItemGroup>
