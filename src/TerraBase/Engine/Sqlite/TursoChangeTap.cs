@@ -44,7 +44,8 @@ internal sealed class TursoChangeTap : IWalTap
     private readonly SqliteDatabaseStore _store;
     private readonly SqliteIoPool _io;
     private readonly TimeProvider _time;
-    private readonly TursoConnection _reader;
+    // Replaced when a snapshot's read transaction cannot be ended (EndSnapshotAsync).
+    private TursoConnection _reader;
 
     // The change_id of the last row read, kept in turso_cdc; 0 before anything was captured.
     private long _anchor;
@@ -61,6 +62,9 @@ internal sealed class TursoChangeTap : IWalTap
 
     /// <summary>Runs after a read, before its change-log cleanup on the writer; for integration tests.</summary>
     internal Func<CancellationToken, Task>? BeforeTrim { get; set; }
+
+    /// <summary>Runs as a snapshot's read transaction ends, before its rollback; for integration tests.</summary>
+    internal Func<CancellationToken, Task>? BeforeSnapshotEnd { get; set; }
 
     private TursoChangeTap(SqliteDatabaseStore store, SqliteIoPool io, TimeProvider time, TursoConnection reader)
     {
@@ -159,11 +163,37 @@ internal sealed class TursoChangeTap : IWalTap
             }
             finally
             {
-                await _io.RunAsync(() => Execute("ROLLBACK;"), CancellationToken.None).ConfigureAwait(false);
+                await EndSnapshotAsync().ConfigureAwait(false);
             }
 
             return snapshot;
         }).ConfigureAwait(false);
+    }
+
+    // Ends the snapshot's read transaction. Left open, it would serve every later read from the pinned state, and a read
+    // mark would claim commits that read cannot see: when the rollback fails, the reader is replaced by a new connection.
+    private async Task EndSnapshotAsync()
+    {
+        try
+        {
+            if (BeforeSnapshotEnd is { } ending)
+            {
+                await ending(CancellationToken.None).ConfigureAwait(false);
+            }
+
+            await _io.RunAsync(() => Execute("ROLLBACK;"), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            var stale = _reader;
+            _reader = new TursoConnection($"Data Source={_store.FilePath}");
+            await _io.RunAsync(() =>
+            {
+                stale.Dispose();
+                SqliteSession.OpenExisting(_reader, _store.FilePath);
+            }, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
     }
 
     public async ValueTask DisposeAsync()
