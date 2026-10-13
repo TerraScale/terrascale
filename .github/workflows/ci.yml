@@ -1,7 +1,7 @@
 name: CI
 
 # One required check: "test". It passes when every area job that ran passed. The area jobs run in parallel, each
-# building one Dockerfile stage on a GitHub-hosted runner (format, Release build with analyzers as errors, the area's checks and Fast
+# building one Dockerfile stage on a Blacksmith runner (format, Release build with analyzers as errors, the area's checks and Fast
 # suite): test-libs, test-auth, test-terrabase. On pull requests an area runs only when its files or the shared files
 # changed (`changes`); libs changes run every area. Pushes to main run every area. `make docker-test` runs all three.
 # Next to it, without waiting for it:
@@ -39,12 +39,10 @@ env:
   # ts-dotnet revision ts-auth builds against (TerraScale/ts-dotnet is private; read-only deploy key).
   TS_DOTNET_REV: bcd20603f11f3aa54dc54cec6e410b4fe9e24151
 
-# Repo variable CI_RUNNER=alpha selects the self-hosted alpha runners (persistent local
-# caches, so GitHub cache steps are skipped there); unset = GitHub-hosted.
 jobs:
   # Runs on every event: a skipped job would skip everything downstream of "test" (deploy, slow).
   changes:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -106,7 +104,7 @@ jobs:
   libs:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.libs == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - &checkout
@@ -134,9 +132,7 @@ jobs:
       - &setup-builder
         uses: docker/setup-buildx-action@v3
         with:
-          # On alpha, build on the shared persistent BuildKit daemon (layer + cache-mount reuse).
-          driver: ${{ vars.CI_RUNNER && 'remote' || 'docker-container' }}
-          endpoint: ${{ vars.CI_RUNNER && 'unix:///run/buildkit/buildkitd.sock' || '' }}
+          driver: docker-container
       - &build-area
         uses: docker/build-push-action@v6
         with:
@@ -150,13 +146,13 @@ jobs:
           no-cache-filters: test-${{ github.job }}
           push: false
           # Per-job layer cache: the base stage (apt, Playwright Chromium, ts-dotnet) is rebuilt only when it changes.
-          cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope={0}', github.job) || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && format('type=gha,mode=max,scope={0}', github.job) || '' }}
+          cache-from: type=gha,scope=${{ github.job }}
+          cache-to: type=gha,mode=max,scope=${{ github.job }}
 
   auth:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.auth == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - *checkout
@@ -167,7 +163,7 @@ jobs:
   terrabase:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.terrabase == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - *checkout
@@ -178,7 +174,7 @@ jobs:
   test:
     needs: [changes, libs, auth, terrabase]
     if: ${{ !cancelled() }}
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       contents: read
@@ -189,6 +185,7 @@ jobs:
       - *checkout
       - name: Fly deploy, volume reset, storage train and e2e summary self-checks
         run: |
+          python3 terrascale/scripts/ci/slow-report-test.py
           bash terrascale/scripts/fly/deploy-test.sh
           bash terrascale/scripts/fly/volume-reset-test.sh
           bash terrascale/scripts/terrabase/storage-format-check-test.sh
@@ -206,7 +203,15 @@ jobs:
       github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
       || contains(github.event.pull_request.labels.*.name, 'full-ci')
     continue-on-error: true
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - area: auth
+            runner: blacksmith-4vcpu-ubuntu-2404
+          - area: terrabase
+            runner: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -220,21 +225,22 @@ jobs:
           context: terrascale
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
-          target: test-slow
+          target: test-slow-${{ matrix.area }}
           # A rerun of the same commit runs the suites again instead of reusing the stored result.
-          no-cache-filters: slow-run
+          no-cache-filters: slow-${{ matrix.area }}-run
           outputs: type=local,dest=slow
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=slow' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=slow' || '' }}
+          cache-from: type=gha,scope=slow-${{ matrix.area }}
+          cache-to: type=gha,mode=max,scope=slow-${{ matrix.area }}
       - name: Report the Slow result
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          if [[ ! -f slow/exit ]]; then
-            echo "Slow suites did not run: $RUN_URL" | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 1
+          if [[ ! -f slow/exit || ! -f slow/log ]]; then
+            mkdir -p slow
+            echo "Slow ${{ matrix.area }} suites did not finish building: $RUN_URL" | tee -a "$GITHUB_STEP_SUMMARY" > slow/log
+            echo 1 > slow/exit
           fi
           code=$(<slow/exit)
           mapfile -t failed < <(sed -nE 's/^failed (.+) \([^)]*\)$/\1/p' slow/log | sort -u)
@@ -243,7 +249,7 @@ jobs:
             echo '```'
             grep -E '^Test run summary|^  (total|failed|succeeded|skipped|duration):' slow/log || true
             echo '```'
-            [[ ${#failed[@]} -eq 0 ]] || printf -- '- `%s`\n' "${failed[@]}"
+            [[ ${#failed[@]} -eq 0 ]] || printf -- '- %s\n' "${failed[@]}"
           } >> "$GITHUB_STEP_SUMMARY"
           (( code != 0 )) || exit 0
           # Issues track main only; a `full-ci` pull request or a dispatched branch reports in the summary.
@@ -251,21 +257,20 @@ jobs:
           [[ ${#failed[@]} -gt 0 ]] || failed=("Slow suites failed without a failed test (build or runner error)")
           gh label create slow-failure -R "$GITHUB_REPOSITORY" --color B60205 --description "A Slow test failed on main" --force
           open=$(gh issue list -R "$GITHUB_REPOSITORY" --label slow-failure --state open --limit 500 --json number,title)
-          # shortcut: at most 10 issues per run so a mass failure stays readable; the summary lists every test.
-          for test in "${failed[@]:0:10}"; do
+          for test in "${failed[@]}"; do
             title="Slow: $test"
             # The exception and stack, without the captured server output; credentials redacted.
             excerpt=$(awk -v t="failed $test " 'index($0, t) == 1 { on = 1; next } on && (/^[^ ]/ || /^  Standard output/ || ++n > 80) { exit } on' slow/log \
               | sed -E 's/(Bearer|Basic) [^ "]+/\1 [redacted]/g; s/((api[_-]?key|token|secret|password)["=: ]+)[^ ",]+/\1[redacted]/Ig')
             # The suite that reported it: its area's make target runs only that suite.
             target=$(awk -v t="failed $test " 'index($0, t) == 1 { on = 1 } on && /^Test run summary/ { print; exit }' slow/log)
-            case $target in *TerraBase.Slow*) target=terrabase-test-slow ;; *Authentication.Slow*) target=auth-test-slow ;; *) target=test-slow ;; esac
+            case $target in *TerraBase.Slow*) target="terrabase-test-slow" ;; *Authentication.Slow*) target="auth-test-slow" ;; *) target="test-slow" ;; esac
             body=$(printf '%s\n' \
               "Failed on \`$GITHUB_SHA\` in the Slow job: $RUN_URL" "" \
-              "Environment: \`slow\` job on ubuntu-latest, Dockerfile stage \`test-slow\`, Release build." \
+              "Environment: \`slow (${{ matrix.area }})\` job on ${{ matrix.runner }}, Dockerfile stage \`test-slow-${{ matrix.area }}\`, Release build." \
               "Reproduce: \`nice -n 19 make $target TEST_ARGS=\"--treenode-filter '/*/*/*/${test%%(*}'\"\`" \
               "Expected: the test passes. Actual:" "" '```' "${excerpt:-see the run log}" '```')
-            number=$(jq -r --arg t "$title" 'first(.[] | select(.title == $t) | .number) // empty' <<< "$open")
+            number=$(jq -r --arg t "$title" "first(.[] | select(.title == \$t) | .number) // empty" <<< "$open")
             if [[ -n $number ]]; then
               gh issue comment "$number" -R "$GITHUB_REPOSITORY" --body "$body"
             else
@@ -278,7 +283,7 @@ jobs:
     # OFF 2026-10-12 by the user's order: no PR preview environments until previews work again (Fly previews org
     # hit its 20-machine limit). Re-enable by deleting `false &&` in a reviewed PR.
     if: false && github.event_name == 'pull_request'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
@@ -297,9 +302,7 @@ jobs:
         run: terrascale/scripts/fly/preview.sh app ${{ github.event.pull_request.number }}
       - uses: docker/setup-buildx-action@v3
         with:
-          # On alpha, build on the shared persistent BuildKit daemon (layer + cache-mount reuse).
-          driver: ${{ vars.CI_RUNNER && 'remote' || 'docker-container' }}
-          endpoint: ${{ vars.CI_RUNNER && 'unix:///run/buildkit/buildkitd.sock' || '' }}
+          driver: docker-container
       - uses: docker/login-action@v3
         with:
           registry: registry.fly.io
@@ -311,8 +314,8 @@ jobs:
           file: terrascale/Dockerfile
           target: terrabase
           tags: registry.fly.io/${{ env.APP }}:terrabase-${{ github.sha }}
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=preview-terrabase' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=preview-terrabase' || '' }}
+          cache-from: type=gha,scope=preview-terrabase
+          cache-to: type=gha,mode=max,scope=preview-terrabase
           build-args: TERRABASE_REVISION=${{ github.sha }}
           push: true
       - uses: docker/build-push-action@v6
@@ -322,14 +325,14 @@ jobs:
           build-contexts: ts-dotnet=ts-dotnet
           target: ts-auth
           tags: registry.fly.io/${{ env.APP }}:ts-auth-${{ github.sha }}
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=preview-ts-auth' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=preview-ts-auth' || '' }}
+          cache-from: type=gha,scope=preview-ts-auth
+          cache-to: type=gha,mode=max,scope=preview-ts-auth
           build-args: TS_AUTH_REVISION=${{ github.sha }}
           push: true
       - name: Start or update the preview machine
         run: >-
           terrascale/scripts/fly/preview.sh machine ${{ github.event.pull_request.number }}
-          registry.fly.io/$APP:terrabase-${{ github.sha }} registry.fly.io/$APP:ts-auth-${{ github.sha }}
+          "registry.fly.io/$APP:terrabase-${{ github.sha }}" "registry.fly.io/$APP:ts-auth-${{ github.sha }}"
       - name: Comment the preview URL
         env:
           GH_TOKEN: ${{ github.token }}
@@ -343,7 +346,7 @@ jobs:
     # PAUSED 2026-10-12 by the user's approval (containment 1C): merges to main must not deploy until the
     # three-region storage rebuild is done. Re-enable by deleting `false &&` in a reviewed PR.
     if: false && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     concurrency:
       group: deploy
@@ -358,9 +361,7 @@ jobs:
       - *setup-flyctl
       - uses: docker/setup-buildx-action@v3
         with:
-          # On alpha, build on the shared persistent BuildKit daemon (layer + cache-mount reuse).
-          driver: ${{ vars.CI_RUNNER && 'remote' || 'docker-container' }}
-          endpoint: ${{ vars.CI_RUNNER && 'unix:///run/buildkit/buildkitd.sock' || '' }}
+          driver: docker-container
       # One deploy token per app; each can push only to its own app's repository.
       - uses: docker/login-action@v3
         with:
@@ -373,8 +374,8 @@ jobs:
           file: terrascale/Dockerfile
           target: terrabase
           tags: registry.fly.io/ts-terrabase:${{ github.sha }}
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=deploy-terrabase' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=deploy-terrabase' || '' }}
+          cache-from: type=gha,scope=deploy-terrabase
+          cache-to: type=gha,mode=max,scope=deploy-terrabase
           build-args: TERRABASE_REVISION=${{ github.sha }}
           push: true
       # Fast must cover the exact tree being deployed (AGENTS.md): instant for a rebased, squash-merged pull request.
@@ -400,8 +401,8 @@ jobs:
           build-contexts: ts-dotnet=ts-dotnet
           target: ts-auth
           tags: registry.fly.io/ts-auth:${{ github.sha }}
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=deploy-ts-auth' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=deploy-ts-auth' || '' }}
+          cache-from: type=gha,scope=deploy-ts-auth
+          cache-to: type=gha,mode=max,scope=deploy-ts-auth
           build-args: TS_AUTH_REVISION=${{ github.sha }}
           push: true
       - name: Deploy ts-auth (gru, sjc, fra)
@@ -413,7 +414,7 @@ jobs:
   e2e:
     needs: deploy
     continue-on-error: true
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     env:
       TERRABASE_E2E_FLY_URL: https://ts-terrabase.fly.dev
@@ -426,7 +427,7 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: terrascale/global.json
-          cache: ${{ !vars.CI_RUNNER }}
+          cache: true
           cache-dependency-path: terrascale/tests/TerraBase.E2E/packages.lock.json
       - name: Replication e2e against Fly
         working-directory: terrascale
