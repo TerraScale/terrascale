@@ -1417,6 +1417,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         {
             QueryBudget = QueryBudget,
             Member = Member,
+            Checkpoint = _checkpoint,
         };
         var published = false;
         var admitted = false;

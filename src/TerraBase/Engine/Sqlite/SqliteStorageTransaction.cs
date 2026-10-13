@@ -1272,6 +1272,12 @@ internal sealed partial class SqliteStorageTransaction(
                         transaction.Dispose();
                     }
 
+                    if (write && store.Tenant is { } tenant)
+                    {
+                        // Integration tests make the writer's reset fail here; production's checkpoint does nothing.
+                        store.Checkpoint?.Invoke("writer.reset", tenant);
+                    }
+
                     if (_captureSuspended)
                     {
                         // A failed reset closes the writer: the next one opens with capture on.

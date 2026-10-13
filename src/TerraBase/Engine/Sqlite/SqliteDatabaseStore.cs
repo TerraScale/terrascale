@@ -6,6 +6,7 @@ using System.Text;
 using Turso.Data.Sqlite;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
+using TerraBase.Hosting;
 using TerraBase.Features.Qos;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -406,6 +407,12 @@ internal sealed partial class SqliteDatabaseStore(
     // (docs/terrabase/turso-spike.md). The first writer opens it on the write lane, with change capture on, and the store
     // keeps it until it closes. Only the holder of _writer uses it.
     private SqliteSession? _writerSession;
+
+    /// <summary>The writer connection while one is open: which session the next write transaction uses.</summary>
+    internal SqliteSession? WriterSession => _writerSession;
+
+    /// <summary>The host's fault injection point (a no-op in production), for a tenant database's lifecycle steps.</summary>
+    internal DatabaseLifecycleCheckpoint? Checkpoint { get; init; }
 
     /// <summary>
     /// The writer connection; the caller holds the writer. Every change it commits is captured in <c>turso_cdc</c>, mode
