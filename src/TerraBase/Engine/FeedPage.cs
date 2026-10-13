@@ -22,3 +22,26 @@ public sealed record FeedEvent(ReplicaId Origin, Hlc Stamp, string Collection, s
 /// <param name="More">Whether events past <paramref name="Scanned"/> may already be waiting.</param>
 /// <param name="Expired">The cursor is below an origin's retention floor: events it has not seen are gone (410).</param>
 public sealed record FeedPage(IReadOnlyList<FeedEvent> Events, IReadOnlyDictionary<ReplicaId, Hlc> Scanned, bool More, bool Expired);
+
+/// <summary>
+/// Where a changes feed reader resumes (docs/terrabase/multi-region-replication.md section 14): per origin, the highest
+/// stamp delivered, and when the cursor was issued. An origin the cursor lacks had no event on the issuing machine, so an
+/// event of it that retention deleted and that was not yet expired when the cursor was issued is one the reader missed.
+/// </summary>
+/// <param name="Stamps">Per origin, the highest stamp delivered.</param>
+/// <param name="Issued">When the cursor was issued, as a stamp of that instant.</param>
+public sealed record FeedCursor(IReadOnlyDictionary<ReplicaId, Hlc> Stamps, Hlc Issued)
+{
+    /// <summary>How long the feed keeps an event.</summary>
+    public static readonly TimeSpan Retention = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// The floor of an origin with no event left is forgotten once it is this old, so an origin whose events all aged out
+    /// leaves the feed (and the cursors). A cursor issued longer ago than <see cref="Retention"/> could have missed such an
+    /// origin's events, so it is expired.
+    /// </summary>
+    public static readonly TimeSpan Forget = 2 * Retention;
+
+    /// <summary>The stamp of <paramref name="instant"/>: its milliseconds, logical part 0.</summary>
+    public static Hlc At(DateTimeOffset instant) => new((ulong)instant.ToUnixTimeMilliseconds() << 16);
+}

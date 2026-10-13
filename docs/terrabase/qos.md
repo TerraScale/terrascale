@@ -37,10 +37,6 @@ Authenticated management routes without a resolved organization reserve process 
 multi-organization commits attribute their organization work after validating the envelope.
 Protected routes establish process admission before authentication and catalog credential/plan reads.
 Their result owner remains active through response serialization.
-Catalog followers apply organization admission before reading or buffering forwarded uploads; the
-primary independently applies its node-local policy. Forwarding preserves the original request path.
-For a primary-only route whose follower cannot interpret its replicated catalog, the follower retains
-process/body admission and forwards identity and plan validation to the primary.
 
 ## Scheduling and query accounting
 

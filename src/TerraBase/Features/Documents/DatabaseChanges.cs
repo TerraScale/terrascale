@@ -19,12 +19,13 @@ namespace TerraBase.Features.Documents;
 public interface IDatabaseChanges
 {
     /// <summary>
-    /// Streams the feed of <paramref name="database"/> after <paramref name="cursor"/> (the feed's head when null), only
+    /// Streams the feed of <paramref name="database"/> after <paramref name="cursor"/>, or from the feed's head when
+    /// <paramref name="head"/>, or else from the start of retention, only
     /// events of <paramref name="collections"/> when given, until the client leaves, the connection's lifetime ends or the
     /// feed fails. Before the first byte, failures answer with their status.
     /// </summary>
     ValueTask<IResult> StreamAsync(
-        HttpContext context, TenantContext database, Dictionary<ReplicaId, Hlc>? cursor, IReadOnlySet<string>? collections, CancellationToken cancellationToken);
+        HttpContext context, TenantContext database, FeedCursor? cursor, bool head, IReadOnlySet<string>? collections, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -58,7 +59,7 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
         .CreateUpDownCounter<long>("terrabase.changes.streams", "{connection}", "Open changes feed streams.");
 
     public async ValueTask<IResult> StreamAsync(
-        HttpContext context, TenantContext database, Dictionary<ReplicaId, Hlc>? cursor, IReadOnlySet<string>? collections, CancellationToken cancellationToken)
+        HttpContext context, TenantContext database, FeedCursor? cursor, bool head, IReadOnlySet<string>? collections, CancellationToken cancellationToken)
     {
         var key = database.DatabaseId ?? throw new ArgumentException("a client database has an id", nameof(database));
         if (!TryOpen(key))
@@ -81,16 +82,31 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
         var results = QosContext.Enter(database, memory);
         try
         {
-            if (cursor is null)
+            // A cursor older than the retention may lack an origin whose events all aged out since and were forgotten.
+            if (cursor is not null && cursor.Issued.Value < FeedCursor.At(time.GetUtcNow() - FeedCursor.Retention).Value)
             {
-                if (await HeadAsync(database, stop.Token).ConfigureAwait(false) is not { } head)
+                return ErrorResponse.From(Expired);
+            }
+
+            // An issue instant in the future would weaken the cursor's own promise about origins it lacks: it counts as now.
+            if (cursor is not null && cursor.Issued.Value > FeedCursor.At(time.GetUtcNow()).Value)
+            {
+                cursor = cursor with { Issued = FeedCursor.At(time.GetUtcNow()) };
+            }
+
+            if (head)
+            {
+                if (await HeadAsync(database, stop.Token).ConfigureAwait(false) is not { } stamps)
                 {
                     return ErrorResponse.From(DocumentRoute.UnknownDatabase);
                 }
 
-                cursor = head;
+                cursor = new FeedCursor(stamps, FeedCursor.At(time.GetUtcNow()));
             }
 
+            // Without a cursor the first page reads from the start of retention; every later read resumes the stream's own
+            // cursor, issued when the read before it began.
+            var issued = FeedCursor.At(time.GetUtcNow());
             if (await ReadAsync(database, cursor, collections, stop.Token).ConfigureAwait(false) is not var (store, sequence, page))
             {
                 return ErrorResponse.From(DocumentRoute.UnknownDatabase);
@@ -107,27 +123,35 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers["X-Accel-Buffering"] = "no";
             context.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
-            Cursor(buffer, cursor);
+            var position = new Dictionary<ReplicaId, Hlc>(cursor?.Stamps ?? new Dictionary<ReplicaId, Hlc>());
+            Cursor(buffer, new FeedCursor(position, issued));
             await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
             var beat = time.GetUtcNow() + Heartbeat;
             while (true)
             {
-                foreach (var change in page.Events)
+                // Origins this machine forgot leave the cursor before the page's events carry it.
+                foreach (var origin in position.Keys.Where(origin => !page.Scanned.ContainsKey(origin)).ToList())
                 {
-                    cursor[change.Origin] = change.Stamp;
-                    Change(buffer, change, cursor);
+                    _ = position.Remove(origin);
+                }
+
+                for (var i = 0; i < page.Events.Count; i++)
+                {
+                    var change = page.Events[i];
+                    position[change.Origin] = change.Stamp;
+                    // Only the last event of an (origin, stamp) carries the advanced cursor: a reader that leaves inside one
+                    // resumes before it, never past events of that stamp it did not get.
+                    var last = i + 1 == page.Events.Count || (page.Events[i + 1].Origin, page.Events[i + 1].Stamp) != (change.Origin, change.Stamp);
+                    Change(buffer, change, last ? ChangeCursor.Encode(new FeedCursor(position, issued)) : null);
                     if (buffer.WrittenCount >= 64 * 1024)
                     {
                         await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
                     }
                 }
 
-                // Past events the collection filter left out: the next event or heartbeat carries it.
-                foreach (var (origin, stamp) in page.Scanned)
-                {
-                    cursor[origin] = stamp;
-                }
-
+                // Past events the collection filter left out, without origins this machine forgot: the next event or
+                // heartbeat carries it.
+                position = page.Scanned.ToDictionary();
                 await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
                 results.Dispose();
                 if (!page.More)
@@ -137,12 +161,14 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
 
                 if (time.GetUtcNow() >= beat)
                 {
-                    Cursor(buffer, cursor);
+                    Cursor(buffer, new FeedCursor(position, issued));
                     await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
                     beat = time.GetUtcNow() + Heartbeat;
                 }
 
                 results = QosContext.Enter(database, memory);
+                cursor = new FeedCursor(position, issued);
+                issued = FeedCursor.At(time.GetUtcNow());
                 if (await ReadAsync(database, cursor, collections, stop.Token).ConfigureAwait(false) is not var (nextStore, nextSequence, nextPage))
                 {
                     await FailAsync(context, buffer, DocumentRoute.UnknownDatabase.Code, DocumentRoute.UnknownDatabase.Message, stop.Token).ConfigureAwait(false);
@@ -241,7 +267,7 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
 
     // The next page, with the store and its commit sequence from before the read: a commit after it wakes the wait.
     private async ValueTask<(IDatabaseStore Store, long Sequence, FeedPage Page)?> ReadAsync(
-        TenantContext database, Dictionary<ReplicaId, Hlc> cursor, IReadOnlySet<string>? collections, CancellationToken cancellationToken)
+        TenantContext database, FeedCursor? cursor, IReadOnlySet<string>? collections, CancellationToken cancellationToken)
     {
         if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
@@ -276,9 +302,17 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
         }
     }
 
-    private static void Change(ArrayBufferWriter<byte> buffer, FeedEvent change, Dictionary<ReplicaId, Hlc> cursor)
+    private static void Change(ArrayBufferWriter<byte> buffer, FeedEvent change, string? id)
     {
-        Line(buffer, "event: change\nid: ", ChangeCursor.Encode(cursor));
+        if (id is null)
+        {
+            buffer.Write("event: change\n"u8);
+        }
+        else
+        {
+            Line(buffer, "event: change\nid: ", id);
+        }
+
         buffer.Write("data: "u8);
         using (var json = new Utf8JsonWriter(buffer))
         {
@@ -305,7 +339,7 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
         buffer.Write("\n\n"u8);
     }
 
-    private static void Cursor(ArrayBufferWriter<byte> buffer, Dictionary<ReplicaId, Hlc> cursor)
+    private static void Cursor(ArrayBufferWriter<byte> buffer, FeedCursor cursor)
     {
         var text = ChangeCursor.Encode(cursor);
         Line(buffer, "event: cursor\nid: ", text);

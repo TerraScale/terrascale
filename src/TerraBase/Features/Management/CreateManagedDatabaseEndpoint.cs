@@ -2,6 +2,7 @@ using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -9,7 +10,8 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management;
 
 /// <summary><c>POST …/projects/{project}/databases</c>: creates an empty database in a project.</summary>
-public sealed class CreateManagedDatabaseEndpoint(IManagementService management, IProjectCatalog catalog, TerraBaseOptions options) : Endpoint<DatabaseRegionsRequest, IResult>
+public sealed class CreateManagedDatabaseEndpoint(IManagementService management, IProjectCatalog catalog, TerraBaseOptions options, IRemoteDurability durability)
+    : Endpoint<DatabaseRegionsRequest, IResult>
 {
     internal const string OperationName = "createDatabase";
 
@@ -19,7 +21,7 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
         Post(ProjectApiRoute.Databases);
         Name(OperationName);
         Summary("Creates a database in a project");
-        Description("name: a lowercase letter, then lowercase letters, digits, _ or -, at most 63 characters; unique within the project. storageName addresses the database in the data API. homeRegion (optional, the called region by default) is the region the database is created and managed in: send the request to that region, any other answers 421 wrong_region with X-TerraBase-Database-Home. replicaRegions (optional) lists the other regions that hold a full copy and serve it too (docs/cross-region.md); each must register the project under the same ids." + " " + ProjectApiRoute.IdentityDescription);
+        Description("name: a lowercase letter, then lowercase letters, digits, _ or -, at most 63 characters; unique within the project. storageName addresses the database in the data API. homeRegion (optional, the called region by default) is the region the database is created and managed in: send the request to that region, any other answers 421 wrong_region with X-TerraBase-Database-Home. replicaRegions lists the other regions that hold a full copy and serve it too (docs/cross-region.md); each must register the project under the same ids. A database is placed in at least two regions (decision 0013): without replicaRegions it is placed in every other serving region (503 remote_region_unavailable when none serves), and an empty list answers 400 placement_needs_two_regions." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -46,7 +48,7 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
     private async ValueTask<IResult> CreateAsync(DatabaseRegionsRequest request, string name, CancellationToken cancellationToken)
     {
         var home = request.HomeRegion ?? options.Region;
-        var replicas = request.ReplicaRegions ?? [];
+        var replicas = request.ReplicaRegions ?? await durability.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
         if (home != options.Region)
         {
             return TerraBaseOptions.IsRegion(home)
@@ -54,7 +56,12 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
                 : ErrorResponse.From(new Validation("homeRegion must name a region"));
         }
 
-        var checkedRegions = DatabaseRegions.Check(home, replicas);
+        if (request.ReplicaRegions is null && replicas.Count == 0 && durability.Confirms)
+        {
+            return ErrorResponse.From(DatabaseRegions.NoOtherRegion);
+        }
+
+        var checkedRegions = DatabaseRegions.Check(home, replicas, durability.Confirms);
         if (checkedRegions is Validation invalid)
         {
             return ErrorResponse.From(invalid);

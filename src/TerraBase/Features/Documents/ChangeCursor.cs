@@ -1,27 +1,39 @@
 using System.Buffers.Binary;
 using System.Buffers.Text;
+using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 
 namespace TerraBase.Features.Documents;
 
 /// <summary>
-/// The changes feed cursor (docs/terrabase/multi-region-replication.md section 14): per origin node, the highest stamp
-/// delivered, valid on any machine. Opaque to clients: base64url of a format byte (1) and, per origin in ascending order,
-/// its node and stamp as 8-byte big-endian integers. Decoding is a trust boundary and accepts canonical bytes only.
+/// The changes feed cursor (docs/terrabase/multi-region-replication.md section 14): when it was issued, and per origin node
+/// the highest stamp delivered, valid on any machine. Opaque to clients: base64url of a format byte (1), the issue stamp,
+/// then per origin in ascending order its node and stamp, all as 8-byte big-endian integers. Decoding is a trust boundary
+/// and accepts canonical bytes only.
 /// </summary>
 internal static class ChangeCursor
 {
-    /// <summary>Origins one cursor holds: every node and epoch that wrote a database stays below this for years.</summary>
+    /// <summary>
+    /// Origins one cursor holds: every node and epoch that wrote a database in the last weeks (an origin whose events all aged
+    /// out leaves the cursors, <see cref="FeedCursor.Forget"/>).
+    /// </summary>
     public const int MaxOrigins = 256;
 
     private const byte Format = 1;
 
-    public static string Encode(IReadOnlyDictionary<ReplicaId, Hlc> cursor)
+    /// <exception cref="InvalidOperationException">More than <see cref="MaxOrigins"/> origins: no cursor this API would accept.</exception>
+    public static string Encode(FeedCursor cursor)
     {
-        var bytes = new byte[1 + (16 * cursor.Count)];
+        if (cursor.Stamps.Count > MaxOrigins)
+        {
+            throw new InvalidOperationException($"a changes feed cursor holds at most {MaxOrigins} origins");
+        }
+
+        var bytes = new byte[9 + (16 * cursor.Stamps.Count)];
         bytes[0] = Format;
-        var at = 1;
-        foreach (var (origin, stamp) in cursor.OrderBy(pair => pair.Key.Value))
+        BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(1), cursor.Issued.Value);
+        var at = 9;
+        foreach (var (origin, stamp) in cursor.Stamps.OrderBy(pair => pair.Key.Value))
         {
             BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(at), origin.Value);
             BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(at + 8), stamp.Value);
@@ -32,22 +44,23 @@ internal static class ChangeCursor
     }
 
     /// <summary>The cursor <paramref name="text"/> encodes, or null when it is not a canonical cursor.</summary>
-    public static Dictionary<ReplicaId, Hlc>? Decode(string text)
+    public static FeedCursor? Decode(string text)
     {
-        if (text.Length > Base64Url.GetEncodedLength(1 + (16 * MaxOrigins)) || !Base64Url.IsValid(text, out var length) || length % 16 != 1)
+        if (text.Length > Base64Url.GetEncodedLength(9 + (16 * MaxOrigins)) || !Base64Url.IsValid(text, out var length) || length % 16 != 9)
         {
             return null;
         }
 
         var bytes = Base64Url.DecodeFromChars(text);
-        if (bytes[0] != Format || Base64Url.EncodeToString(bytes) != text)
+        var issued = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(1));
+        if (bytes[0] != Format || issued is 0 or > long.MaxValue || Base64Url.EncodeToString(bytes) != text)
         {
             return null;
         }
 
-        var cursor = new Dictionary<ReplicaId, Hlc>();
+        var stamps = new Dictionary<ReplicaId, Hlc>();
         ulong previous = 0;
-        for (var at = 1; at < bytes.Length; at += 16)
+        for (var at = 9; at < bytes.Length; at += 16)
         {
             var origin = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(at));
             var stamp = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(at + 8));
@@ -58,9 +71,9 @@ internal static class ChangeCursor
             }
 
             previous = origin;
-            cursor[new ReplicaId(origin)] = new Hlc(stamp);
+            stamps[new ReplicaId(origin)] = new Hlc(stamp);
         }
 
-        return cursor;
+        return new FeedCursor(stamps, new Hlc(issued));
     }
 }

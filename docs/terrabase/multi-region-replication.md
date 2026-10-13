@@ -233,7 +233,8 @@ CREATE TABLE _tb_tail (id INTEGER PRIMARY KEY CHECK (id = 1), change_id INTEGER 
 1. The endpoint validates as today (JSON, size, collection schema, unique constraints on the local state). The
    request enters the database's write lane (`SqliteWriteLane` group commit). Unconditional `POST /transactions` stays
    atomic.
-2. In the lane's transaction (`synchronous = NORMAL`, [0003](decisions/0003-sqlite-synchronous-normal.md)), for each
+2. In the lane's transaction (`synchronous = FULL`, [0003](decisions/0003-sqlite-synchronous-normal.md) as amended by
+   #181), for each
    operation:
    1. Mint `S`.
    2. Point-read `_tb_state` and the collection row.
@@ -490,15 +491,19 @@ decision).
   materialized value on the serving machine. `event: cursor` is a heartbeat every 15 s with the current cursor.
   `Last-Event-ID` resumes.
 - **Cursor** = an opaque base64url vector `{origin → highest stamp delivered}` over the origins in the serving
-  machine's `_tb_feed`. It holds about 10 bytes per origin with LEB128 deltas. Origins whose events all aged out of
-  retention drop out of the vector.
+  machine's `_tb_feed`, plus the instant it was issued. Origins whose events all aged out of retention drop out of the
+  vector (R8 as built: after twice the retention).
 - **Valid on any machine.** Each origin's events reach every replica in stamp order, on one ordered stream (sections 3
   and 9), and the tailer indexes them in apply order. So `cursor[o] = t` means "every event of `o` up to `t` was
   delivered". Any machine can resume by emitting, for each origin, `_tb_feed` rows with `stamp > cursor[o]`, merged
   across origins by `(stamp, origin)`.
-  - An origin missing from the cursor is emitted from the start of retention. This is at-least-once delivery, with
+  - An origin missing from the cursor is emitted from its first retained event. This is at-least-once delivery, with
     the dedupe key `(origin, stamp, collection, id)`.
   - When `cursor[o] < _tb_feed_floor[o]` (retention, or a refill on this machine), the answer is 410 `cursor_expired`.
+    So is an origin missing from the cursor whose floor is at or above the cursor's issue instant minus the retention:
+    retention deleted an event of it that the cursor's reader never got and that was still retained when the cursor was
+    issued (a replaced machine or a new epoch that wrote after it). A request without a cursor promises nothing about
+    deleted events and starts at what retention still holds.
 - **Start.** `cursor=now` returns the serving machine's current vector. A client takes it, lists or queries, then
   tails. Events that overlap the list are harmless.
 - **Repairs** (origin 0) write `_tb_feed` rows in their apply transaction, one per distinct `(node, stamp)` among the
@@ -732,8 +737,10 @@ ts-dotnet until R12 makes ts-auth lattice-native.
   It heartbeats every second when idle. A batch not acked within 15 s ends the stream, and the sender reconnects with a
   backoff of 1 s, doubling to 30 s.
 - `PeerStreamReceiver` checks every batch (canonical ULIDs, growing change ids per database, at most 1024 groups and
-  1024 deltas per group, valid collections and ids, canonical states). A bad batch ends the stream with
-  `INVALID_ARGUMENT`. A newer stream from the same origin ends the older one, so one origin's groups apply in order.
+  1024 deltas per group, valid collections and ids, canonical states). A bad batch applies nothing and is refused for
+  its database alone (an error log and `terrabase.replication.undecodable_batches`): the sender holds that database and
+  sends it again 5 s later, and the stream goes on with the others. A frame that names no valid database ends the stream
+  with `INVALID_ARGUMENT`. A newer stream from the same origin ends the older one, so one origin's groups apply in order.
 - `StorageChangeGroupSink` joins whole groups, at most 1024 documents per durable transaction (`synchronous = FULL`),
   through `IStorageTransaction.JoinAsync`, and records `_tb_peers.applied`. An ack follows the last commit.
 - `JoinAsync` writes the document only when the join changed it, with `stamp = S` and `origin` = the delta's node,
@@ -770,10 +777,43 @@ ts-dotnet until R12 makes ts-auth lattice-native.
   so the check runs at the end of the range holding the ack. A new peer at 0 is refilled only when local groups it lacks
   were cut; a sender whose CDC from 0 is proven quiet does not refill it, and anti-entropy seeds it. So R7's copy-refill
   of a machine back after more than 24 h cannot count on every sender sending `refill_required`. The receiver finds the sender by the machine name in its `Hello`, joins every bucket that differs at
-  once, then acks `head`, and the stream goes on from there.
+  once, then acks `head`, and the stream goes on from there. The sender checks retention after reading groups, so a trim
+  between the two shows as a cut.
+- **Per-database order across a refill** (the changes feed relies on it). The refill runs beside the stream, so other
+  databases' batches keep their 15 s ack. Until a refill of the database commits, its batches on that link are refused:
+  while the refill runs, after it fails (acked refused, the sender asks again) and on the origin's next stream when the
+  stream ends first. A newer stream of an origin starts only after the older one ended, refills included. One refill of
+  a database runs at a time.
+- **Refill admission.** One receiver admits at most four refills across all origins. Each reserves 16 MiB plus 128 KiB
+  from the process bulk memory budget before reading digests or opening a peer channel, and keeps that reservation
+  through repair completion or cancellation. Excess work is immediately refused, without an admission queue. Its
+  database stays cut until a later refill succeeds; healthy databases keep flowing. The reservation accounts for two
+  digests and a page's wire, decompressed, parsed and decoded payloads; it is not a measured bound on total managed heap.
 - **Not copy-refill.** Without garbage collection (R7) merging old state is safe, so a refill merges. Once R7 collects
   tombstones, a machine away past the horizon must delete its file and copy from a peer (section 10), or it would bring
   collected deletions back. Per-database readiness during a refill is not built either.
+
+**R7 as built** (2026-10-12; no storage format change, it uses `_tb_peers.applied/stable` and `_tb_state_dead`):
+
+- **Frontiers.** For a database whose groups a peer has all acknowledged, the sender sends `Frontier(hlc)` (at most every
+  5 s), with hlc taken before the read that found nothing to send. The receiver raises `applied[origin]` there and answers
+  with its `StableReport`. Acks of batches carry `stable` too. Idle origins therefore advance stable stamps.
+- **Stable and horizon.** Stable = min(`applied` over origins heard from in the last 24 h, own clock). Horizon =
+  min(own stable, peers' reported stable) − 60 s, over the peers heard from in the last 24 h; a registered peer that never
+  reported holds it at 0. A peer counts as gone (24 h) only once this process has itself been up 24 h
+  (`LocalReplica.GoneBefore`), so a machine back after a long absence never mistakes its own silence for its peers'. The
+  same boundary governs CDC retention.
+- **Collection.** With retention (every 5 s per database a peer stream reached): up to 1024 `_tb_state` rows with
+  `live = 0` whose decoded entries all lie below the horizon are deleted.
+- **No resurrection.** A refill now copies: the sender's horizon travels in `Refill`, and the refilled machine forgets
+  every local state of a repaired bucket that the sender lacks and that lies wholly below that horizon (it was collected
+  there). A machine back after the horizon passed thus drops a document others deleted and collected, instead of keeping
+  it or bringing it back. Rounds need two consecutive differing rounds (60 s apart), while the refill runs at once on
+  reconnect, so peers do not pull the stale copy first. A receiver-side "drop repairs below my horizon that I lack" rule
+  was tried and removed: it cannot tell a collected state from a lost apply (the R6 repair scenario).
+- Not in R7: collection of tombstoned fields and removed set dots inside live documents (section 11), GC of databases
+  without peers (no stream reaches them, so nothing triggers collection), feed retention (R8), and re-stamping a
+  returning machine's own unsent writes from before its absence (section 10, refill step 1).
 
 **Contract for R3** (`Features/Replication/ChangeGroups.cs`). R4a registers `NoChangeGroupSource`. R3 replaces that
 registration with its tailer and implements `IChangeGroupSource`:
@@ -873,7 +913,9 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   refresh (5 s), ending the open stream (`PeerStreamTests`); the peer resumes from its ack once it is listed again.
 - **Replicated DDL** (the receive side R4a left out). A joined `_indexes` document builds its index where it is missing
   (on a collection made without local metadata when absent) or drops it when deleted; a definition this build cannot
-  read changes nothing rather than stalling the stream. A joined `_unique` document re-projects its whole collection:
+  read changes nothing rather than stalling the stream. It also replaces an index of that name with other fields or on
+  another collection: a redefinition that reaches a replica only as its final state (refill, repair), or a concurrent
+  creation elsewhere that won the document's join. Every replica then builds the winning definition. A joined `_unique` document re-projects its whole collection:
   every live document and retained loser gets its keys again, then the smallest id wins, as everywhere. Before this, a
   replica that took documents in before their constraints kept serving the larger id. Schemas already replicate inside
   the `_collections` document.
@@ -892,12 +934,20 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   document no longer exists on the serving machine (deleted since, dropped, or a hidden uniqueness loser).
 - **Reading.** Per origin listed in `_tb_feed_floor`, the rows above the cursor's stamp (index `_tb_feed_order`, at most
   512, completed to the end of the last stamp), merged by (stamp, origin) up to the lowest last stamp of an origin that
-  has more, cut only between two stamps at 256 events or 4 MiB of documents. A cursor stamp below the origin's floor is
-  410 `cursor_expired`; an origin the cursor lacks starts at its floor. Events the `collections` filter leaves out
-  still advance the cursor, which the next event or heartbeat carries, so a cursor is valid only with the same filter.
-- **Cursor.** base64url of a format byte (1) and, per origin in ascending order, node and stamp as 8-byte big-endian
-  integers (16 bytes per origin, not LEB128: simpler, and a cursor of 5 origins is still 107 characters). Decoding
-  accepts canonical bytes only (400 `invalid_cursor`), at most 256 origins.
+  has more, cut only between two stamps at 256 events or 4 MiB of documents. A resumed cursor is 410 `cursor_expired`
+  when a named origin's stamp is below its floor, when an origin it lacks has a floor at or above the cursor's issue
+  instant minus 7 days (an event retention deleted that the reader never got), or when it was issued more than 7 days
+  ago (it could lack an origin forgotten since). Without a cursor, every origin starts at its floor and nothing is
+  expired. An origin the cursor lacks starts at its first event. Events the `collections` filter leaves out still
+  advance the cursor, which the next event or heartbeat carries, so a cursor is valid only with the same filter. Only
+  the last event of an (origin, stamp) carries an `id:` (a stamp holds one document today, as stamps are minted per
+  document, but a reader that leaves inside one never skips the rest of it). These rules assume a machine receives an
+  origin's events within the retention (otherwise it refills, R6).
+- **Cursor.** base64url of a format byte (1), the issue instant as a stamp, then per origin in ascending order node and
+  stamp, all 8-byte big-endian integers (16 bytes per origin, not LEB128: simpler, and a cursor of 5 origins is still
+  119 characters). Every event and heartbeat re-issues it at the instant the read behind it began. Decoding accepts
+  canonical bytes only (400 `invalid_cursor`), at most 256 origins; encoding refuses more (it never issues a cursor the
+  API would reject). An issued cursor with no origin is not "no cursor": it is expired by the rules above.
 - **Stream.** One page at a time, no queue per connection: after a page that left nothing waiting, the stream waits for
   the database's next commit (`IDatabaseStore.WaitForCommitAsync`, joins included) or the 15 s heartbeat (`event:
   cursor`). A client that takes no bytes for 10 s is dropped. Limits: 32 streams per database and 1024 per machine
@@ -909,7 +959,15 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   details; the feed keeps it.
 - **Retention.** `FeedRetention` deletes events stamped more than 7 days ago every hour, 1024 at a time with capture
   suspended (a restore keeps more history, never less), and raises each origin's floor to the highest stamp deleted.
-  Refill floors are R6's.
+  It then forgets origins with no event left whose floor is older than 14 days (`FeedCursor.Forget`), so the per-read
+  origin list and the cursors stay bounded; a resumed cursor drops an origin this machine forgot when its stamp is older
+  than its issue instant minus 14 days. A failing pass logs a warning. Refill floors are R6's.
+- **Repairs.** An anti-entropy repair joins with origin 0 (R6), which no cursor can name. Its feed row is filed as this
+  machine's event at a fresh stamp from its clock, so this machine's events stay in commit order; repairs never ship,
+  so every machine files its own. Section 14's "one row per original (node, stamp)" is not built: a reader sees the
+  repaired document (its current value) under the repairing machine. Known gap (tracked, must close before R8 deploys): repair rows
+  never ship, so a reader that leaves a machine after getting an origin's later events but before that machine's repair
+  rows (refill or anti-entropy), and resumes on another machine, gets 200 and never sees the repaired events.
 - **Known limit: stamps more than 1 s ahead.** A request mints `max(clock, document's stamp + 1)`, and the clock moves at
   most `MaxSkew` (1 s) ahead (section 3). A document carrying a stamp further ahead therefore gets a stamp larger than
   this origin's next writes to other documents, so one origin's stamps no longer follow its commit order, and a cursor
@@ -923,6 +981,29 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
 R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
 table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables). The engine swap (1b, PR #21) lands separately: on Turso,
 174 Fast tests fail, most of them in continuous backup, which reads SQLite's WAL directly.
+
+**R10a as built** (2026-10-12), in stacked PRs:
+
+1. R10a-1 deletes the catalog primary, its followers and the forwarding (decision 0009): every machine writes its own
+   `_system.db`. Usage and query shapes flush into the local catalog; `PRIMARY_REGION` is no longer read. Format unchanged.
+2. R10a-2 makes `_system` a lattice database (format 4):
+   - **Layout.** The client layout's `_tb_state`, `_tb_peers` and engine tables, but the live documents of every
+     collection share one `documents (collection, id, body)` table: catalog collections are paths
+     (`projects/<id>/databases`), a set per tenant, so a table per collection would grow the schema with every tenant.
+     The tailer pairs a `_tb_state` row with the last `documents` row of the same (collection, id) before it.
+   - **Writes** go through `DocumentState` like a client database's: HLC stamps are the versions (ETags scoped to the one
+     `_system`, the same on every machine), PUT, PATCH and DELETE are lattice operations, and every deletion is a
+     tombstone, so a deleted id stays taken (`GetVersionAsync` answers it deleted). The catalog also stores scalars
+     (name indexes, sequences): a scalar is stored as the object `{"\u0000": value}` and read back as the value.
+   - **Group bounds.** A management operation may change more documents than a client transaction (an organization's
+     deletion, a commit of 1024 operations): a `_system` group holds up to 16,384 deltas and 3 MiB, inside one 4 MiB batch.
+   - **Streams.** The system database is one more database of the CDC source, the sink, the peer streams and
+     anti-entropy, named on the wire by the reserved ids `_system` (no client database has them: client ids are ULIDs)
+     and placed in every region: a receiver never refuses it. Its catalog paths and ids are checked by size only.
+   - **Prefix deletes** (`DeleteCollectionsAsync`, a deleted database's or project's state) purge this machine's rows and
+     states without tombstones; no live catalog document reaches that state any more, and CDC ships no deletes.
+   - Not yet: deletion and name races across regions, usage counters, per-region files of a database created elsewhere
+     (R10a-3).
 
 **Order and parallelism:**
 

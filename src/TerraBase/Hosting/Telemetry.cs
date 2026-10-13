@@ -112,8 +112,6 @@ public static class Telemetry
                         or "terrabase.storage.rejected" or "terrabase.storage.unknown_files"
                         or "terrabase.document_cache.bytes" or "terrabase.document_cache.entries"
                         or "terrabase.document_cache.promotions"
-                        or "terrabase.catalog.follower.connected" or "terrabase.catalog.follower.lag"
-                        or "terrabase.catalog.applied_sequence"
                         or "terrabase.backup.failures" or "terrabase.backup.holes" or "terrabase.backup.generations"
                         or "terrabase.backup.stored" or "terrabase.backup.files" or "terrabase.backup.lag"
                         or "terrabase.backup.last_success" or "terrabase.backup.bucket_snapshot"

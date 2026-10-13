@@ -30,7 +30,7 @@ internal sealed partial class EngineManagementService
     public async ValueTask<EnsureLocalDatabaseResult> EnsureLocalDatabaseAsync(TenantContext database, CancellationToken cancellationToken) =>
         await RegisteredAsync(database, cancellationToken).ConfigureAwait(false) switch
         {
-            true => await InitializeFollowerAsync(database, cancellationToken).ConfigureAwait(false),
+            true => await InitializeLocalAsync(database, cancellationToken).ConfigureAwait(false),
             false => ManagementErrors.NotFound,
             Unavailable error => error,
         };
@@ -132,7 +132,7 @@ internal sealed partial class EngineManagementService
             static error => error, cancellationToken).ConfigureAwait(false);
         return found switch
         {
-            TenantContext tenant => await InitializeFollowerAsync(tenant, cancellationToken).ConfigureAwait(false) switch
+            TenantContext tenant => await InitializeLocalAsync(tenant, cancellationToken).ConfigureAwait(false) switch
             {
                 Done => tenant,
                 NotFound error => error,
@@ -143,12 +143,28 @@ internal sealed partial class EngineManagementService
         };
     }
 
-    private async ValueTask<EnsureLocalDatabaseResult> InitializeFollowerAsync(TenantContext tenant, CancellationToken cancellationToken)
+    // The catalog replicates to every region (docs/terrabase/multi-region-replication.md section 15): a database created
+    // elsewhere and placed in this region gets its local file on its first request or first replicated group, and serves
+    // before its first documents arrive. A database placed elsewhere gets none (the placement check answers for it).
+    // Recheck a file created here after initialization: a concurrent deletion may have applied before the file existed.
+    private async ValueTask<EnsureLocalDatabaseResult> InitializeLocalAsync(TenantContext tenant, CancellationToken cancellationToken)
     {
-        // A follower serves a registered database before its first documents arrive. Recheck a file created here
-        // after initialization: a concurrent deletion may have applied before the file existed.
-        if (options.CatalogFollower && await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is null
-            && await engine.CreateDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false))
+        if (await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is not null)
+        {
+            return new Done();
+        }
+
+        var placed = await RegisteredAsync(tenant, cancellationToken).ConfigureAwait(false);
+        if (placed is not true)
+        {
+            return placed switch
+            {
+                Unavailable error => error,
+                _ => new Done(),
+            };
+        }
+
+        if (await engine.CreateDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false))
         {
             var registration = await RegisteredAsync(tenant, cancellationToken).ConfigureAwait(false);
             if (registration is not bool registered)
@@ -559,8 +575,7 @@ internal sealed partial class EngineManagementService
                 static error => error, cancellationToken);
     }
 
-    private Unavailable UnreadableCatalog => !options.CatalogFollower
-        ? ManagementErrors.CatalogUnsupported : ManagementErrors.ReplicatedCatalogUnsupported;
+    private static Unavailable UnreadableCatalog => ManagementErrors.CatalogUnsupported;
 
     private static readonly Conflict CatalogDatabaseDeleted = new("a database deleted here is not brought back", "database_deleted");
 

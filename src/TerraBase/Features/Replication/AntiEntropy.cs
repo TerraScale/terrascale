@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using Google.Protobuf;
-using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication.V1;
@@ -66,12 +65,16 @@ internal sealed class AntiEntropy : BackgroundService
         var peers = Peers(await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false));
         await foreach (var database in _source.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (await _tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord record)
+            // The system database is placed in every region.
+            var placement = database == ChangeGroups.System ? null
+                : await _tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord record ? record.Placement
+                : null;
+            if (placement is null && database != ChangeGroups.System)
             {
                 continue;
             }
 
-            foreach (var peer in peers.Where(peer => record.Placement.Includes(peer.Region)))
+            foreach (var peer in peers.Where(peer => placement?.Includes(peer.Region) ?? true))
             {
                 try
                 {
@@ -87,19 +90,22 @@ internal sealed class AntiEntropy : BackgroundService
 
     /// <summary>
     /// Joins every bucket of <paramref name="database"/> that differs from the machine named <paramref name="machine"/>.
-    /// Returns the documents changed, or null when that machine is not listed or this one does not hold the database.
+    /// Returns the documents changed, or null when the refill certifies nothing: that machine is not listed or no longer
+    /// holds the database, this one does not hold it, or a page was refused.
     /// </summary>
-    internal async Task<int?> RefillAsync(TenantContext database, string machine, CancellationToken cancellationToken)
+    internal async Task<int?> RefillAsync(TenantContext database, string machine, Hlc horizon, CancellationToken cancellationToken)
     {
         var peer = Peers(await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(member => member.Name == machine);
-        return peer is null ? null : await CompareAsync(database, peer, force: true, cancellationToken).ConfigureAwait(false);
+        return peer is null ? null : await CompareAsync(database, peer, force: true, cancellationToken, horizon).ConfigureAwait(false);
     }
 
     private List<ClusterMember> Peers(ClusterView view) =>
         [.. view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Where(member => member.Name != _membership.Self.Name && member.PeerAddress.Length > 0)];
 
     // Compares digests with the peer and joins the buckets to repair; null when this machine does not hold the database.
-    private async Task<int?> CompareAsync(TenantContext database, ClusterMember peer, bool force, CancellationToken cancellationToken)
+    // With a horizon (a refill), it copies: a local state of a repaired bucket that the peer lacks and that lies wholly below
+    // the peer's horizon was collected there (section 11), so it goes here too instead of coming back by a later round.
+    private async Task<int?> CompareAsync(TenantContext database, ClusterMember peer, bool force, CancellationToken cancellationToken, Hlc? horizon = null)
     {
         if (await _states.DigestAsync(database, cancellationToken).ConfigureAwait(false) is not { } ours)
         {
@@ -112,7 +118,8 @@ internal sealed class AntiEntropy : BackgroundService
             deadline: _time.GetUtcNow().UtcDateTime + DigestTimeout, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (!reply.Held)
         {
-            return 0;
+            // Nothing to compare with: a round has nothing to repair, but a refill covered nothing.
+            return force ? null : 0;
         }
 
         var theirs = ApplicationEnvelope.Decode(reply.Buckets.Span, ReplicationProtocol.MaxApplicationBytes);
@@ -134,9 +141,32 @@ internal sealed class AntiEntropy : BackgroundService
         request.Buckets.AddRange(repair.Order().Select(bucket => (uint)bucket));
         using var call = client.ReadBucket(request, deadline: _time.GetUtcNow().UtcDateTime + ReadTimeout, cancellationToken: cancellationToken);
         var changed = 0;
+        var theirKeys = new HashSet<(string Collection, string Id)>();
         while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
         {
-            changed += await _sink.RepairAsync(database, Decode(call.ResponseStream.Current), cancellationToken).ConfigureAwait(false) ?? 0;
+            var states = Decode(database, call.ResponseStream.Current);
+            theirKeys.UnionWith(states.Select(state => (state.Collection, state.Id)));
+            if (await _sink.RepairAsync(database, states, cancellationToken).ConfigureAwait(false) is not { } repaired)
+            {
+                return null;
+            }
+
+            changed += repaired;
+        }
+
+        if (horizon is { } collected)
+        {
+            // shortcut: keeps the peer's keys of every repaired bucket in memory; page the comparison per bucket for databases of millions of documents.
+            List<(string Collection, string Id)> lacking = [];
+            BucketCursor? after = null;
+            do
+            {
+                (var local, after) = await _states.ReadBucketsAsync(database, [.. repair], after, MaxPageStates, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
+                lacking.AddRange(local.Where(state => !theirKeys.Contains((state.Collection, state.Id)) && state.State.MaxStamp.Value < collected.Value)
+                    .Select(state => (state.Collection, state.Id)));
+            }
+            while (after is not null);
+            changed += await _states.ForgetAsync(database, lacking, collected, cancellationToken).ConfigureAwait(false);
         }
 
         _repairs.Add(changed, new KeyValuePair<string, object?>("peer_region", peer.Region));
@@ -157,7 +187,7 @@ internal sealed class AntiEntropy : BackgroundService
     }
 
     // A page from a peer, checked: decoding is a trust boundary, as for change groups.
-    private static List<RepairState> Decode(StatePage page)
+    private static List<RepairState> Decode(TenantContext database, StatePage page)
     {
         StateList list;
         try
@@ -175,8 +205,7 @@ internal sealed class AntiEntropy : BackgroundService
         }
 
         return [.. list.States.Select(entry =>
-            (DatabaseName.TryParse(entry.Collection, out _) || entry.Collection is DocumentDelta.Collections or DocumentDelta.Indexes or DocumentDelta.Unique)
-            && entry.Id.Length is > 0 and <= 1024 && !entry.Id.Any(char.IsControl)
+            ChangeGroups.ValidKey(database, entry.Collection, entry.Id)
                 ? new RepairState(entry.Collection, entry.Id, DocumentStateEncoding.Decode(entry.State.Span))
                 : throw new InvalidDataException("a repaired state names a valid collection and an id of 1 to 1024 characters"))];
     }

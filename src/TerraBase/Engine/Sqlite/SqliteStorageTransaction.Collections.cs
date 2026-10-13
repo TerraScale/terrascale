@@ -7,7 +7,7 @@ namespace TerraBase.Engine.Sqlite;
 /// A client database keeps each collection's materialized documents in a rowid table of its own, named after the
 /// collection (docs/terrabase/multi-region-replication.md section 5): <c>id</c> and <c>doc</c>, live documents only.
 /// Reads, queries, indexes and uniqueness see these rows; versions come from <c>_tb_state</c>. The system database keeps
-/// its <c>documents</c> table until it becomes a lattice database too.
+/// the live documents of all its collections in one <c>documents</c> table (section 15).
 /// </summary>
 internal sealed partial class SqliteStorageTransaction
 {
@@ -46,14 +46,16 @@ internal sealed partial class SqliteStorageTransaction
         return names;
     }
 
-    // Worker-only: whether a client collection's table exists. Metadata tables always do.
+    // Worker-only: whether a client collection's table exists. Metadata tables always do, and so does the system
+    // database's one documents table.
     private bool HasTable(string collection) =>
-        IsMetadata(collection) || Command(SqliteStatements.GetCollection, collection).ExecuteScalar() is not null;
+        store.IsSystem || IsMetadata(collection) || Command(SqliteStatements.GetCollection, collection).ExecuteScalar() is not null;
 
-    // Worker-only: a statement over one collection's table ({0} in sql), prepared once per transaction.
+    // Worker-only: a statement over one collection's table ({0} in sql), prepared once per transaction. The system
+    // database's statements name its documents table themselves.
     private SqliteCommand TableCommand(string sql, string collection, string? id = null)
     {
-        var text = string.Format(CultureInfo.InvariantCulture, sql, Table(collection));
+        var text = store.IsSystem ? sql : string.Format(CultureInfo.InvariantCulture, sql, Table(collection));
         if (!_bodyCommands.TryGetValue(text, out var command))
         {
             command = session.Connection.CreateCommand();
@@ -80,9 +82,9 @@ internal sealed partial class SqliteStorageTransaction
 /// <param name="Version">The expression of a row's version.</param>
 internal sealed record RowSource(string From, string Live, string Json, string Version)
 {
-    /// <summary>The system database's documents table: tombstones have a NULL body.</summary>
-    public static RowSource System { get; } =
-        new("documents INDEXED BY documents_live", "collection = $collection AND body IS NOT NULL", "body", "version");
+    /// <summary>The system database's documents table, with versions from <c>_tb_state</c>.</summary>
+    public static RowSource System { get; } = new("documents", "collection = $collection", "body",
+        "(SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = documents.id)");
 
     /// <summary>A client collection's table, with versions from <c>_tb_state</c>.</summary>
     public static RowSource Client(string collection)

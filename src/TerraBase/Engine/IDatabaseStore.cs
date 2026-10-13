@@ -29,10 +29,11 @@ public interface IDatabaseStore
 
     /// <summary>
     /// Runs <paramref name="work"/> in a write transaction it may share with other writes queued at the same time (group
-    /// commit), and answers once that transaction committed, with its commit offset. When <paramref name="keep"/>
-    /// refuses the work's result, or the work throws, only the work's own changes roll back and the offset is 0.
+    /// commit), and answers once that transaction committed, with its commit result. Kept mutations share the batch's
+    /// marker; nonmutating work has none. When <paramref name="keep"/> refuses the work, its changes roll back and its
+    /// commit result is empty. A commit or marker-read failure is not retried.
     /// </summary>
-    async ValueTask<(T Result, long Offset)> WriteAsync<T>(
+    async ValueTask<(T Result, CommitResult Commit)> WriteAsync<T>(
         Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(work);
@@ -41,7 +42,7 @@ public interface IDatabaseStore
         await using (transaction.ConfigureAwait(false))
         {
             var result = await work(transaction, cancellationToken).ConfigureAwait(false);
-            return keep(result) ? (result, await transaction.CommitAsync(cancellationToken).ConfigureAwait(false)) : (result, 0);
+            return keep(result) ? (result, await transaction.CommitAsync(cancellationToken).ConfigureAwait(false)) : (result, default);
         }
     }
 

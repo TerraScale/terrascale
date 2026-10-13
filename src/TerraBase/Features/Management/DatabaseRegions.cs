@@ -20,15 +20,28 @@ public static class DatabaseRegions
 {
     internal const int MaxReplicas = 8;
 
+    /// <summary>A placement of one region where writes are confirmed in another (decision 0013).</summary>
+    internal static readonly Validation TwoRegions =
+        new("a database is placed in at least two regions: replicaRegions names one or more regions besides the home region", "placement_needs_two_regions");
+
+    /// <summary>A new database with no replica region named, where writes are confirmed in another and no other region serves.</summary>
+    internal static readonly Unavailable NoOtherRegion =
+        new("no region besides this one serves now, and a database is placed in at least two regions; name replicaRegions or retry", "remote_region_unavailable");
+
     internal readonly union HomeRegionCheck(Done, Misdirected, NotFound, Unavailable);
 
     /// <summary>Marks an endpoint that answers for databases placed elsewhere itself: reading, updating and deleting the record.</summary>
     public sealed class PlacementAware;
 
-    /// <summary>Why <paramref name="replicas"/> cannot be the replica regions of a database at home in this region, or the accepted regions.</summary>
+    /// <summary>
+    /// Why <paramref name="replicas"/> cannot be the replica regions of a database at home in this region, or the accepted
+    /// regions. A new database of a cell (<paramref name="created"/> where writes are confirmed in another region, decision
+    /// 0013a) names one; an update may remove them all, and the database then takes no writes until one is added back.
+    /// </summary>
     // Regions come and go with their machines, so any well-formed region is accepted; one without members replicates nothing.
-    internal static Valid<IReadOnlyList<string>> Check(string home, IReadOnlyList<string> replicas) =>
-        replicas.Count > MaxReplicas ? new Validation("replicaRegions holds at most 8 regions")
+    internal static Valid<IReadOnlyList<string>> Check(string home, IReadOnlyList<string> replicas, bool created) =>
+        replicas.Count == 0 && created ? TwoRegions
+        : replicas.Count > MaxReplicas ? new Validation("replicaRegions holds at most 8 regions")
         : !replicas.All(TerraBaseOptions.IsRegion) ? new Validation("replicaRegions must name regions")
         : replicas.Distinct(StringComparer.Ordinal).Count() != replicas.Count ? new Validation("replicaRegions must not repeat a region")
         : replicas.Contains(home) ? new Validation("replicaRegions must not name the home region")

@@ -362,7 +362,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
         using var lease = admission;
         var delta = 0L;
-        var (outcome, offset) = await store.WriteAsync(
+        var (outcome, commit) = await store.WriteAsync(
             async (transaction, token) =>
             {
                 var (result, change, growthOp) = await ApplyAllAsync(store, transaction, operations, indexErrors, admission.RequiresAccounting, token).ConfigureAwait(false);
@@ -396,7 +396,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             logger.ZLogError(error, $"Accounting a committed write to database {database.DatabaseId:@Database} failed; the write is answered as committed");
         }
 
-        return written with { Offset = offset };
+        return written with { Offset = commit.Offset };
     }
 
     // Quota, usage and statistics of a committed client write.
@@ -636,15 +636,10 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
 
     // The precondition failure, or null when it holds.
-    // The ETag a read of the written document answers with: a PUT replaces the whole state, so a client database stores
-    // the canonical JSON of its body (fields in name order); the system database stores the bytes written.
+    // The ETag a read of the written document answers with: a PUT replaces the whole state, so the database stores the
+    // canonical JSON of its body (fields in name order).
     private static string StoredETag(IStorageTransaction transaction, string collection, string id, long version, ReadOnlyMemory<byte> json)
     {
-        if (!transaction.Materializes)
-        {
-            return ETags.Version(transaction.Scope, collection, id, version, json);
-        }
-
         using var parsed = JsonDocument.Parse(json, DocumentState.JsonOptions);
         return ETags.Version(transaction.Scope, collection, id, version, DocumentState.Bottom.Put(default, parsed.RootElement).Materialize());
     }

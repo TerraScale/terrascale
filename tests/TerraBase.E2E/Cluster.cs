@@ -176,7 +176,7 @@ public sealed class Cluster : IAsyncDisposable
     {
         if (_local is null)
         {
-            await Flyctl.RunAsync("machine", "start", Disposable.Machines[region], "--app", Disposable.App);
+            await Flyctl.StartStoppedAsync(Disposable.App, Disposable.Machines[region]);
             return;
         }
 
@@ -360,6 +360,11 @@ public sealed class Cluster : IAsyncDisposable
     }
 
     // Creates the collection in gru and waits until every other region serves it, so every test starts from a replicated database.
+    // Whether a commit's answer says its ids or names are already taken: a replicated catalog holds them.
+    internal static async Task<bool> TakenAsync(HttpResponseMessage response) =>
+        response.StatusCode == HttpStatusCode.Conflict && await response.Content.ReadAsStringAsync() is var body
+        && (body.Contains("\"id_taken\"", StringComparison.Ordinal) || body.Contains("\"name_taken\"", StringComparison.Ordinal));
+
     internal static async Task CreateCollectionAsync(Dictionary<string, HttpClient> clients, string path, string collection)
     {
         using var created = await clients[Gru].PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = collection });
@@ -550,16 +555,19 @@ public sealed class Cluster : IAsyncDisposable
                 await StartNodeAsync(node);
             }
 
-            // Each node keeps its own catalog until the catalog replicates (R10a): every node registers the database under
-            // the same id, placed in every region, so the peer streams find it on each of them.
+            // Registered once in the first region; every other node registers the same ids too, which a replicated catalog
+            // (R10a) answers with 409 id_taken or name_taken: it already holds them. Until then each node keeps its own catalog.
             foreach (var node in _nodes.Values)
             {
-                await CommitAsync(node.Api!, Registration(OrganizationId, _project, _database, "canary", [.. regions.Where(region => region != node.Region)]));
+                await CommitAsync(node.Api!, Registration(OrganizationId, _project, _database, "canary", [.. regions.Where(region => region != node.Region)]),
+                    alreadyHeld: node.Region != regions[0]);
             }
 
             foreach (var node in _nodes.Values)
             {
                 await AuthorizeAsync(node, restart: false);
+                _ = await Converge.UntilAsync(() => Docs.StatusAsync(node.Project!, new Uri(DatabasePath, UriKind.Relative)), status => status == HttpStatusCode.OK,
+                    $"the database on {node.Region}");
             }
         }
 
@@ -688,11 +696,15 @@ public sealed class Cluster : IAsyncDisposable
             node.Project = api.WithToken(node.Token);
         }
 
-        private static async Task CommitAsync(ManagementApi api, string commit)
+        // With alreadyHeld, a 409 naming ids or names already taken counts as done: the catalog brought them.
+        private static async Task CommitAsync(ManagementApi api, string commit, bool alreadyHeld = false)
         {
             using var service = api.Service(api.User);
             using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Docs.EnsureSuccessAsync(response);
+            if (!alreadyHeld || !await Cluster.TakenAsync(response))
+            {
+                await Docs.EnsureSuccessAsync(response);
+            }
         }
 
         // An organization, project and database with chosen ids, in one commit.

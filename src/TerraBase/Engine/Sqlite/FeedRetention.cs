@@ -1,4 +1,4 @@
-using TerraBase.Engine.Lattices;
+using ZLogger;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -6,9 +6,8 @@ namespace TerraBase.Engine.Sqlite;
 /// Changes feed retention (docs/terrabase/multi-region-replication.md section 11): every hour, each client database's feed
 /// events stamped more than 7 days ago go, in batches, and their origins' floors rise, so an older cursor gets 410.
 /// </summary>
-internal sealed class FeedRetention(SqliteStorageEngine engine) : BackgroundService
+internal sealed class FeedRetention(SqliteStorageEngine engine, ILogger<FeedRetention> logger) : BackgroundService
 {
-    public static readonly TimeSpan Retention = TimeSpan.FromDays(7);
     private static readonly TimeSpan Interval = TimeSpan.FromHours(1);
     private const int Batch = 1024;
 
@@ -25,7 +24,7 @@ internal sealed class FeedRetention(SqliteStorageEngine engine) : BackgroundServ
     // once machines hold many databases.
     internal async Task TrimAsync(CancellationToken cancellationToken)
     {
-        var before = new Hlc((ulong)(engine.HostTime.GetUtcNow() - Retention).ToUnixTimeMilliseconds() << 16);
+        var before = FeedCursor.At(engine.HostTime.GetUtcNow() - FeedCursor.Retention);
         await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
             try
@@ -47,9 +46,10 @@ internal sealed class FeedRetention(SqliteStorageEngine engine) : BackgroundServ
                 }
                 while (deleted == Batch);
             }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
-                // A deleted, busy or closing database: the next pass tries again.
+                // A deleted, busy or closing database: the next pass tries again; one that keeps failing grows its feed.
+                logger.ZLogWarning(error, $"Changes feed retention of a database failed; the next pass retries");
             }
         }
     }

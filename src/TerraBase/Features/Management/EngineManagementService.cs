@@ -43,8 +43,9 @@ namespace TerraBase.Features.Management;
 /// </remarks>
 internal sealed partial class EngineManagementService(
     IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
-    Lazy<IDocumentService> documents, Lazy<IQueryShapeTracker> shapes, IMemoryBudget memory, IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota)
-    : IManagementService, IAccessService, IManagementCommits, ITenantDirectory, IHostedService, ICatalogGuard, ICatalogApplyObserver
+    Lazy<IDocumentService> documents, Lazy<IQueryShapeTracker> shapes, IMemoryBudget memory, IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota,
+    Lazy<IRemoteDurability> durability)
+    : IManagementService, IAccessService, IManagementCommits, ITenantDirectory, IHostedService, ICatalogGuard
 {
     private const string Organizations = "organizations";
     private const string CurrentOrganizations = "current_organizations";
@@ -365,11 +366,19 @@ internal sealed partial class EngineManagementService(
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
+    // Decision 0013: a new database's replica regions when its request names none, every other serving region; null where
+    // writes are confirmed in another region and none serves, so the database cannot be created yet.
+    private async ValueTask<IReadOnlyList<string>?> DefaultReplicasAsync(CancellationToken cancellationToken)
+    {
+        var others = await durability.Value.OtherRegionsAsync(cancellationToken).ConfigureAwait(false);
+        return others.Count == 0 && durability.Value.Confirms ? null : others;
+    }
+
     public async ValueTask<CreateDatabaseResult> CreateDatabaseAsync(
         string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken, IReadOnlyList<string>? replicaRegions = null) =>
         await AddDatabaseAsync(
             transaction => MemberProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, sourceId: null, branchedFrom: null, cancellationToken,
-            placement: new DatabasePlacement(options.Region, replicaRegions ?? [], 1))
+            placement: replicaRegions is null ? null : new DatabasePlacement(options.Region, replicaRegions, 1))
             .ConfigureAwait(false) switch
         {
             AddedDatabase added => added.Database,
@@ -749,7 +758,16 @@ internal sealed partial class EngineManagementService(
         }
 
         using var admission = lease;
-        placement ??= new DatabasePlacement(options.Region, [], 1);
+        if (placement is null)
+        {
+            if (await DefaultReplicasAsync(cancellationToken).ConfigureAwait(false) is not { } replicas)
+            {
+                return DatabaseRegions.NoOtherRegion;
+            }
+
+            placement = new DatabasePlacement(options.Region, replicas, 1);
+        }
+
         var database = new ManagedDatabase(
             id ?? NewId(), tenant.ProjectId!, name, branchedFrom, createdAt ?? time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version);
         var storage = tenant with { DatabaseId = database.Id };
@@ -1133,7 +1151,7 @@ internal sealed partial class EngineManagementService(
 
     public async ValueTask<CatalogCheck> CheckReadAsync(IStorageTransaction transaction, CancellationToken cancellationToken) =>
         await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false) != CatalogVersion
-            ? !options.CatalogFollower ? ManagementErrors.CatalogUnsupported : ManagementErrors.ReplicatedCatalogUnsupported
+            ? ManagementErrors.CatalogUnsupported
             : new Done();
 
     private async ValueTask<T> ReadCatalogAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, CancellationToken cancellationToken)
@@ -1194,7 +1212,7 @@ internal sealed partial class EngineManagementService(
     // Initializes only fresh catalogs. Concurrent first calls serialize on the write transaction.
     public async ValueTask<CatalogCheck> EnsureCatalogAsync(CancellationToken cancellationToken)
     {
-        if (_catalogCurrent || options.CatalogFollower)
+        if (_catalogCurrent)
         {
             return new Done();
         }
@@ -1229,8 +1247,8 @@ internal sealed partial class EngineManagementService(
         // System puts need no collection metadata; include tombstones and retained deletions, not just live rows.
         foreach (var collection in new[] { Catalog, Organizations, CurrentOrganizations, ProjectOrganizations, PendingDatabaseCleanup,
             InvitationTokens, OrganizationVersions, AccountVersions, CommitExpiries, OwnershipTransfers, AuditRetentions,
-            AuditSequences, InvitationSequences, "organization_names", "usage-senders", "backed_up_databases", "backup_sequence", "storage_sweep",
-            "dashboard_query_shapes", "dashboard_query_shapes_flush", "query_shape_senders" })
+            AuditSequences, InvitationSequences, "organization_names", "backed_up_databases", "backup_sequence", "storage_sweep",
+            "dashboard_query_shapes", "dashboard_query_shapes_flush" })
         {
             if (await transaction.HasCollectionStateAsync(collection, prefix: false, cancellationToken).ConfigureAwait(false))
             {

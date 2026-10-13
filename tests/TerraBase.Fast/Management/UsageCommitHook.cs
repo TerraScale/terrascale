@@ -317,7 +317,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
         public Guid Scope => inner.Scope;
 
-        public bool Materializes => inner.Materializes;
         public async ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
         {
             hook.BeforeGet?.Invoke(collection);
@@ -344,7 +343,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken) =>
             inner.RecordAppliedAsync(origin, applied, cancellationToken);
         public ValueTask<FeedPage> ReadFeedAsync(
-            IReadOnlyDictionary<ReplicaId, Hlc> cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
+            FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
             inner.ReadFeedAsync(cursor, collections, maxEvents, maxBytes, cancellationToken);
         public ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken) => inner.GetFeedHeadAsync(cancellationToken);
         public ValueTask<int> TrimFeedAsync(Hlc before, int limit, CancellationToken cancellationToken) => inner.TrimFeedAsync(before, limit, cancellationToken);
@@ -379,8 +378,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken) => inner.DropIndexAsync(name, cancellationToken);
         public ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken) => inner.GetUniqueConstraintsAsync(collection, cancellationToken);
         public ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, CancellationToken cancellationToken) => inner.SetUniqueConstraintsAsync(collection, constraints, cancellationToken);
-        public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) => inner.GetOriginAsync(cancellationToken);
-        public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) => inner.GetLastChangeSequenceAsync(cancellationToken);
         public ValueTask DisposeAsync() => inner.DisposeAsync();
 
         public ValueTask<long> PatchAsync(
@@ -396,7 +393,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             return inner.PutAsync(collection, id, json, cancellationToken);
         }
 
-        public async ValueTask<long> CommitAsync(CancellationToken cancellationToken)
+        public async ValueTask<CommitResult> CommitAsync(CancellationToken cancellationToken)
         {
             if (_intercepted && hook._commits.TryDequeue(out var gate))
             {

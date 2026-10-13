@@ -11,63 +11,47 @@ public sealed class QueryPlanTests
 
     // The plans Turso reports (docs/sqlite-query-plans.md). Every statement seeks a key: a rowid, or the unique index of a
     // primary key (rowid tables only), except the first page of collections and the collection counts and sizes, which
-    // walk the collections key in order, the index catalog reads, which scan the small schema table, and the journal
-    // tails, which Turso labels SCAN although ORDER BY ... DESC LIMIT 1 reads only the last index entry.
+    // walk the collections key in order, and the index catalog reads, which scan the small schema table.
     private static readonly Dictionary<string, string> Expected = new(StringComparer.Ordinal)
     {
         ["DocumentBytes"] = "SEARCH d USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?) | SEARCH c USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) LEFT-JOIN",
         ["StoredDocumentBytes"] = "SCAN collections USING COVERING INDEX sqlite_autoindex_collections_1 | CORRELATED SCALAR SUBQUERY 1 | SEARCH d USING INDEX sqlite_autoindex_documents_1 (collection=?) | SEARCH c USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) LEFT-JOIN",
-        ["Get"] = "SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
-        ["Version"] = "SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
-        // Inserts have no plan; the upsert's conflict check is a primary-key lookup.
-        ["Put"] = "",
-        ["Delete"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
-        ["Tombstone"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
-        ["ListFirst"] = "SEARCH documents USING INDEX documents_live (collection=?)",
-        ["ListAfter"] = "SEARCH documents USING INDEX documents_live (collection=? AND id>?)",
+        ["Get"] = "SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
+        ["Version"] = "SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?) | SCAN CONSTANT ROW",
+        ["ListFirst"] = "SEARCH d USING INDEX sqlite_autoindex_documents_1 (collection=?) | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
+        ["ListAfter"] = "SEARCH d USING INDEX sqlite_autoindex_documents_1 (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
         ["NextOffset"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         ["CurrentOffset"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         ["Incarnation"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         ["RenewIncarnation"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         ["CreateCollection"] = "",
-        ["HasCollectionState"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection>=? AND collection<?) | SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name>=? AND name<?) | SEARCH changes USING COVERING INDEX changes_deleted (collection>=? AND collection<?) | SCAN CONSTANT ROW",
-        ["HasCollectionStateFrom"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection>=?) | SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name>=?) | SEARCH changes USING COVERING INDEX changes_deleted (collection>=?) | SCAN CONSTANT ROW",
+        ["HasCollectionState"] = "SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>=? AND collection<?) | SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name>=? AND name<?) | SCAN CONSTANT ROW",
+        ["HasCollectionStateFrom"] = "SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>=?) | SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name>=?) | SCAN CONSTANT ROW",
         ["GetCollection"] = "SEARCH collections USING INDEX sqlite_autoindex_collections_1 (name=?)",
         ["ListCollectionsFirst"] = "SCAN collections USING INDEX sqlite_autoindex_collections_1",
         ["ListCollectionsAfter"] = "SEARCH collections USING INDEX sqlite_autoindex_collections_1 (name>?)",
         ["DropDocuments"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=?)",
         ["DropStates"] = "SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection=?)",
         ["DropCollection"] = "SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name=?)",
-        ["CountDocuments"] = "SEARCH documents USING COVERING INDEX documents_live (collection=?)",
+        ["CountDocuments"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=?)",
         ["ListCollectionStats"] = "SCAN collections USING COVERING INDEX sqlite_autoindex_collections_1 | SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=?) LEFT-JOIN",
         ["DeleteCollectionDocuments"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection>=? AND collection<?)",
         ["DeleteCollectionNames"] = "SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name>=? AND name<?)",
+        ["DeleteCollectionStates"] = "SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>=? AND collection<?)",
+        // The system database's documents and states, by (collection, id); inserts have no plan.
+        ["SystemGetState"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?) LEFT-JOIN",
+        ["SystemUpdateRow"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
+        ["SystemInsertRow"] = "",
+        ["SystemDeleteRow"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
         ["ListIndexes"] = "SCAN sqlite_schema",
         ["IndexExists"] = "SCAN sqlite_schema",
-        ["ObserveOffset"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         // Client databases (docs/terrabase/multi-region-replication.md): states and documents by key.
         ["GetState"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_items_1 (id=?) LEFT-JOIN | SEARCH c USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) LEFT-JOIN",
-        ["ClientHasCollectionState"] = "SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>=? AND collection<?) | SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name>=? AND name<?) | SCAN CONSTANT ROW",
-        ["ClientHasCollectionStateFrom"] = "SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>=?) | SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name>=?) | SCAN CONSTANT ROW",
         ["UpdateState"] = "SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
         ["InsertState"] = "",
         ["UpdateApplied"] = "SEARCH _tb_peers USING INTEGER PRIMARY KEY (rowid=?)",
         ["InsertApplied"] = "",
         ["UpdateCollection"] = "SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name=?)",
-        ["Origin"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
-        ["LastSequence"] = "SCALAR SUBQUERY 1 | SCAN changes USING COVERING INDEX sqlite_autoindex_changes_1 | SCAN CONSTANT ROW",
-        ["AppendReplicationChange"] = "",
-        ["GetChangeDigest"] = "SEARCH journal_prefixes USING INTEGER PRIMARY KEY (rowid=?)",
-        ["AppendChangeDigest"] = "",
-        // System database replication: snapshot pages, group pages, prefix drops, replica writes, journal tail.
-        ["SystemDocumentsFirst"] = "SCAN documents USING INDEX documents_live",
-        ["SystemDocumentsAfter"] = "COMPOUND QUERY | LEFT-MOST SUBQUERY | SCAN (subquery-0) | SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id>?) | UNION ALL | SCAN (subquery-0) | SEARCH documents USING INDEX documents_live (collection>?) | USE SORTER FOR ORDER BY",
-        ["GroupSize"] = "SEARCH changes USING COVERING INDEX sqlite_autoindex_changes_1 (sequence=?)",
-        ["ReadGroupPage"] = "SEARCH changes USING INDEX sqlite_autoindex_changes_1 (sequence=? AND ordinal>=?)",
-        ["CollectionRangeIds"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection>=? AND collection<?)",
-        ["ReplaceDocument"] = "",
-        ["SystemLastSequence"] = "SCALAR SUBQUERY 1 | SCAN journal_prefixes | SCAN CONSTANT ROW",
-        ["TruncateChanges"] = "SEARCH changes USING COVERING INDEX sqlite_autoindex_changes_1 (sequence<=?)",
         ["ClientDocumentBytes"] = "SCALAR SUBQUERY 1 | SEARCH _tb_unique_conflicts USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) | SCALAR SUBQUERY 2 | SEARCH items USING INDEX sqlite_autoindex_items_1 (id=?) | SCAN CONSTANT ROW",
         ["ClientListFirst"] = "SCAN items AS d USING INDEX sqlite_autoindex_items_1 | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
         ["ClientListAfter"] = "SEARCH d USING INDEX sqlite_autoindex_items_1 (id>?) | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
@@ -77,7 +61,6 @@ public sealed class QueryPlanTests
         ["UpdateRow"] = "SEARCH items USING COVERING INDEX sqlite_autoindex_items_1 (id=?)",
         ["InsertRow"] = "",
         ["DeleteRow"] = "SEARCH items USING COVERING INDEX sqlite_autoindex_items_1 (id=?)",
-        ["TruncatePrefixes"] = "SEARCH journal_prefixes USING INTEGER PRIMARY KEY (rowid=?)",
     };
 
     [Test]

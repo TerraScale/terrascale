@@ -45,11 +45,6 @@ internal sealed partial class SqliteStorageTransaction
     private bool Join(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken)
     {
         ThrowIfReadOnly();
-        if (store.IsSystem)
-        {
-            throw new NotSupportedException("the system database does not join replicated deltas");
-        }
-
         Member.Clock.Observe(at.Stamp);
         if (!HasTable(collection))
         {
@@ -119,7 +114,7 @@ internal sealed partial class SqliteStorageTransaction
                 DropTable(name);
                 Command(SqliteStatements.DropCollection, name).ExecuteNonQuery();
                 DropUniqueCollection(name, local: false);
-                _collectionsChanged = true;
+                ChangedReaderState = true;
             }
 
             return;
@@ -140,11 +135,13 @@ internal sealed partial class SqliteStorageTransaction
         update.Parameters.AddWithValue("$created", created);
         update.Parameters.AddWithValue("$entityId", entity);
         update.ExecuteNonQuery();
-        _collectionsChanged = true;
+        ChangedReaderState = true;
     }
 
     // Worker-only: the local DDL of an index's metadata document. A live one builds the index where it is missing, on its
-    // collection (made without a metadata document of this member's own when absent); a deleted one drops it. A definition
+    // collection (made without a metadata document of this member's own when absent), and replaces an index of that name
+    // with other fields or on another collection: a redefinition seen only as its final state, or a concurrent creation
+    // elsewhere that won the join, so every replica holds the document's definition. A deleted one drops it. A definition
     // this build cannot read changes nothing here: the document still replicates, and refusing it would stall the stream.
     private void IndexDefinitionMetadata(string name, string? body, CancellationToken cancellationToken)
     {
@@ -173,6 +170,16 @@ internal sealed partial class SqliteStorageTransaction
             fields.Add(field);
         }
 
+        if (ReadIndexes(cancellationToken).Find(index => index.Name == name) is { } existing)
+        {
+            if (existing.Collection == collection && existing.Fields.SequenceEqual(fields))
+            {
+                return;
+            }
+
+            _ = DropIndex(name, cancellationToken);
+        }
+
         if (!HasTable(collection))
         {
             AddCollection(collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), EntityIds.New().ToString());
@@ -184,7 +191,8 @@ internal sealed partial class SqliteStorageTransaction
         }
         catch (ArgumentException)
         {
-            // Not an index this build can make (its name or fields): see above.
+            // Not an index this build can make (its name or fields): see above. An older one of that name is gone, as the
+            // document no longer defines it.
         }
     }
 
@@ -229,6 +237,6 @@ internal sealed partial class SqliteStorageTransaction
             table.ExecuteNonQuery();
         }
 
-        _collectionsChanged = true;
+        ChangedReaderState = true;
     }
 }

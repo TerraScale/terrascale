@@ -17,16 +17,18 @@ namespace TerraBase.Features.Replication;
 /// groups of every database the peer's region holds, at most one batch per database in flight, resumes from the peer's
 /// last ack after a reconnect, and heartbeats while idle. Its cursors and lags are the outbound replication status.
 /// </summary>
-internal sealed class PeerStreams : BackgroundService, IReplicationStatus
+internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemoteDurability
 {
     private static readonly TimeSpan Idle = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RefillTimeout = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan FrontierEvery = TimeSpan.FromSeconds(5);
     private const int MaxDetail = 128;
 
     private readonly IMembership _membership;
     private readonly IChangeGroupSource _source;
+    private readonly IReplicaStates _states;
     private readonly ITenantDirectory _tenants;
     private readonly LocalReplica _self;
     private readonly TerraBaseOptions _options;
@@ -37,10 +39,10 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
     private readonly Dictionary<string, Link> _links = [with(StringComparer.Ordinal)];
 
     public PeerStreams(
-        IMembership membership, IChangeGroupSource source, ITenantDirectory tenants, LocalReplica self, TerraBaseOptions options, TimeProvider time,
-        IMeterFactory meters, ILogger<PeerStreams> logger)
+        IMembership membership, IChangeGroupSource source, IReplicaStates states, ITenantDirectory tenants, LocalReplica self, TerraBaseOptions options,
+        TimeProvider time, IMeterFactory meters, ILogger<PeerStreams> logger)
     {
-        (_membership, _source, _tenants, _self, _options, _time, _logger) = (membership, source, tenants, self, options, time, logger);
+        (_membership, _source, _states, _tenants, _self, _options, _time, _logger) = (membership, source, states, tenants, self, options, time, logger);
         var meter = meters.Create(Telemetry.MeterName);
         meter.CreateObservableGauge("terrabase.replication.send_lag", () => Lags(cursor => cursor.BehindSince), "s",
             "Age of the oldest change group not yet acknowledged by the peer region's machines.");
@@ -48,6 +50,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
             "Reads of a database's change log that failed (a damaged row is refused), by the peer region the batch was for.");
         meter.CreateObservableGauge("terrabase.replication.ack_lag", () => Lags(cursor => cursor.InFlight is null ? null : cursor.SentAt), "s",
             "Age of the oldest batch sent to the peer region's machines but not acknowledged.");
+    }
+
+    public bool Confirms => true;
+
+    public async ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken)
+    {
+        var view = await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false);
+        return view.Elsewhere.IsDefault ? [] : [.. view.Elsewhere.Select(member => member.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
     }
 
     public ReplicationStatus Snapshot()
@@ -229,7 +239,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                     throw new IOException("the peer ended the stream");
                 }
 
-                await AckedAsync(link, call.ResponseStream.Current.Ack, peer, cancellationToken).ConfigureAwait(false);
+                if (call.ResponseStream.Current.Stable is { } report)
+                {
+                    await _source.RecordStableAsync(ChangeGroups.Tenant(report.Database), peer, new Hlc(report.Stable), cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await AckedAsync(link, call.ResponseStream.Current.Ack, peer, cancellationToken).ConfigureAwait(false);
+                }
                 reading = call.ResponseStream.MoveNext(cancellationToken);
             }
         }
@@ -263,23 +280,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                 continue;
             }
 
-            if (!await _source.RetainsAsync(database, acked, cancellationToken).ConfigureAwait(false))
-            {
-                // Retention cut groups after the peer's ack (it was silent or far behind, or it is new): it refills from this
-                // machine, then the stream goes on from the newest change.
-                var head = await _source.HeadAsync(database, cancellationToken).ConfigureAwait(false);
-                await stream.WriteAsync(new PushFrame { Refill = new Refill { Database = ChangeGroups.Wire(database), ChangeId = checked((ulong)head) } }, cancellationToken)
-                    .ConfigureAwait(false);
-                lock (link.Gate)
-                {
-                    cursor.BehindSince ??= _time.GetTimestamp();
-                    (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (head, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true);
-                }
-
-                sent = true;
-                continue;
-            }
-
+            // Read before the retention check: retention only cuts from the oldest group on, so a trim between the two shows
+            // as a cut here and never ships a batch past a hole.
+            var frontier = _self.Clock.Tick();
             IReadOnlyList<OriginGroup> groups;
             try
             {
@@ -301,8 +304,35 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                 continue;
             }
 
+            if (!await _source.RetainsAsync(database, acked, cancellationToken).ConfigureAwait(false))
+            {
+                // Retention cut groups after the peer's ack (it was silent or far behind, or it is new): it refills from this
+                // machine, then the stream goes on from the newest change.
+                var head = await _source.HeadAsync(database, cancellationToken).ConfigureAwait(false);
+                var horizon = await _states.HorizonAsync(database, cancellationToken).ConfigureAwait(false);
+                await stream.WriteAsync(new PushFrame
+                {
+                    Refill = new Refill { Database = ChangeGroups.Wire(database), ChangeId = checked((ulong)head), Horizon = horizon.Value },
+                }, cancellationToken).ConfigureAwait(false);
+                lock (link.Gate)
+                {
+                    cursor.BehindSince ??= _time.GetTimestamp();
+                    (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (head, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true);
+                }
+
+                sent = true;
+                continue;
+            }
+
             if (groups.Count == 0)
             {
+                if (_time.GetElapsedTime(cursor.FrontierAt) >= FrontierEvery || cursor.FrontierAt == 0)
+                {
+                    await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database), Hlc = frontier.Value } }, cancellationToken)
+                        .ConfigureAwait(false);
+                    cursor.FrontierAt = _time.GetTimestamp();
+                }
+
                 lock (link.Gate)
                 {
                     cursor.Convergence = cursor.BehindSince is { } since ? _time.GetElapsedTime(since).TotalSeconds : cursor.Convergence;
@@ -352,12 +382,18 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
             cursor.Acked = inFlight;
         }
 
-        await _source.AckAsync(database, peer, (long)ack.ChangeId, cancellationToken).ConfigureAwait(false);
+        await _source.AckAsync(database, peer, (long)ack.ChangeId, new Hlc(ack.Stable), cancellationToken).ConfigureAwait(false);
     }
 
-    // Whether the database's placement includes the peer's region, read again every heartbeat.
+    // Whether the database's placement includes the peer's region, read again every heartbeat. The system database is placed
+    // in every region.
     private async ValueTask<bool> PlacedAsync(Link link, TenantContext database, CancellationToken cancellationToken)
     {
+        if (database == ChangeGroups.System)
+        {
+            return true;
+        }
+
         if (link.Placements.TryGetValue(database, out var known) && _time.GetElapsedTime(known.ReadAt) < DirectoryMembership.Heartbeat)
         {
             return known.Placed;
@@ -422,6 +458,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
 
         // Whether the batch in flight is a refill.
         public bool Refilling { get; set; }
+
+        // When the last frontier went (a TimeProvider timestamp; 0 before the first).
+        public long FrontierAt { get; set; }
 
         public int InFlightGroups { get; set; }
 

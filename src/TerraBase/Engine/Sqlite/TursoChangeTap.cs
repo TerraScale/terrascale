@@ -416,7 +416,7 @@ internal sealed class TursoChangeTap : IWalTap
         return true;
     }
 
-    // Deletes the rows before the anchor; a client database's peer streams also hold the rows they have not acknowledged
+    // Deletes the rows before the anchor that the peer streams also let go of: the rows they have not acknowledged stay
     // (SqliteStorageTransaction.Retention). Turso does not capture changes to turso_cdc itself.
     private bool Truncate(SqliteSession writer)
     {
@@ -431,6 +431,7 @@ internal sealed class TursoChangeTap : IWalTap
             command.CommandText = SqliteStorageTransaction.Retention;
             command.Parameters.AddWithValue("$below", _anchor);
             command.Parameters.AddWithValue("$now", _time.GetUtcNow().ToUnixTimeSeconds());
+            command.Parameters.AddWithValue("$gone", _store.Member is { } member ? member.GoneBefore(_time.GetUtcNow().ToUnixTimeMilliseconds()) : long.MinValue);
         }
 
         command.ExecuteNonQuery();

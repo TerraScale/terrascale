@@ -103,7 +103,7 @@ their SQLite sessions before network waits, except the local digest scan, which 
 read snapshot without network I/O. Empty and oversized keys stay out of the partial index and out of
 repair. Other inadmissible keys are skipped before their registers are decoded or hashed. Scan cursors retain the last examined key, even for empty pages, and allow at
 most 63 collection bytes and 1024 id bytes so scans advance past these keys. Transferred states
-retain the normal collection/id validation. The system catalog continues to use its existing primary/follower protocol.
+retain the normal collection/id validation. The system catalog is not replicated until R10a (see [Catalog](#catalog)).
 
 A deleted document is one register with its tombstone, so repeated delete/recreate cycles add no keys to scan. This
 first implementation rebuilds trees from bounded pages and scans the keyspace to select ranges:
@@ -122,69 +122,34 @@ Design, guarantees and limits: [0010](decisions/0010-write-wait-and-synced-durab
 - A peer whose stream for the database is failing (unreachable, restarting) is not waited for until a stream to it
   succeeds again.
 - Receivers sync the WAL (`synchronous = FULL`) before `DurableAck`, so an acknowledged group survives the peer's power
-  loss; local commits stay `NORMAL` ([0003](decisions/0003-sqlite-synchronous-normal.md)).
+  loss. Local commits sync too since #181 ([0003](decisions/0003-sqlite-synchronous-normal.md) as amended).
 
-The management catalog and API keys (`_system.db`) replicate separately, from one catalog primary to its
-followers: see [Catalog](#catalog). Client replication does not create or rename organizations, projects or their
+The management catalog and API keys (`_system.db`) are local to each machine until R10a: see [Catalog](#catalog). Client replication does not create or rename organizations, projects or their
 registered databases. There is no pre-tenancy directory migration; main's tenant layout and exclusive ownership
 checks apply.
 
 ## Catalog
 
-Machines of the app's primary region are catalog primaries, and every other machine follows the first one Fly's DNS
-lists there ([fly.md](fly.md)); there is no per-member setup step. Design, limits and failover: [0009](decisions/0009-catalog-replication.md).
+Every machine writes its own catalog (`_system.db`) locally. Nothing forwards catalog writes to another machine, and the
+catalog is not replicated, so a key or database created on one machine is not visible on another until R10a. R10a makes
+`_system` a lattice database replicated to every region through the client database path
+([multi-region-replication.md](multi-region-replication.md) section 15). The catalog primary and follower design in
+[0009](decisions/0009-catalog-replication.md) is superseded.
 
-- Only the primary writes the catalog. A follower forwards every authenticated Management API request on its client
-  listener (reads too), and a data-plane creation of a database it does not have, to the primary over
-  `CatalogForwarding.Forward`; the primary authenticates and serves them through its own pipeline, answering as the
-  follower's region. The follower answers once it applied what the request wrote (at most 5 seconds later), so a key
-  or database created through any member serves there at once: no load balancer routing to the primary is needed.
-  A primary that cannot be reached answers `503 catalog_primary_unavailable` with `Retry-After: 1`. The
-  administrative listener is never forwarded: on a follower its catalog writes (`POST /admin/api-keys`, the
-  service credential's Management writes) answer `503 not_primary`. A follower runs no catalog writer of its own
-  (intent recovery, bootstrap, backups, usage flushes); it sends its usage counts to the primary every 10 seconds
-  over `CatalogUsage.Add`, numbered per process, which the primary adds once per sequence.
-- A follower authenticates API keys and resolves organizations, projects and databases from its replica, and
-  serves a registered database before any of its documents arrived (an empty local file that client replication
-  fills).
-- A deleted database goes from every follower: a follower deletes its local files when it applies the deletion's
-  cleanup intent (a failure stops it from following until the deletion succeeds), and every member receives client
-  replication only for databases its catalog registers (`STREAM_ERROR_UNAUTHORIZED`, retryable, otherwise), so no
-  peer brings a deleted one back. A follower never deletes a file only because it is unregistered; once caught up it
-  counts such files in `terrabase_storage_unknown_files`, as a primary does at startup.
 - A member sends client replication only for databases its catalog registers or is creating (a branch's baseline is
   written before its registration commits), as receivers accept only registered ones: backup snapshots, restore staging
   and files the catalog no longer names stay where they are and do not count in
   `terrabase_replication_sender_durable_lag`.
-- `/readyz` of a follower answers 503 until it has applied the primary's head once in its process, and while its
-  primary reports a head it has not applied yet; a primary that cannot be reached leaves the last head, so a
-  caught-up follower stays ready while the primary restarts. Before stopping a member, a drain waits for its
-  `terrabase_replication_sender_durable_lag` to reach 0 (decision 0009 explains why readiness does not).
-- A follower takes a snapshot only into an empty catalog or one of the primary's origin; it never replaces a
-  catalog of another origin.
-
-Membership and the catalog authority come from Fly's DNS. A mismatched identity must still fail validation rather
-than adopt another catalog.
-
-Metrics on the follower:
-
-| Prometheus name | Meaning |
-| --- | --- |
-| `terrabase_catalog_follower_connected` | `1` while the follower holds a stream to its primary |
-| `terrabase_catalog_follower_lag` | Catalog groups the primary last reported that the follower has not applied |
-| `terrabase_catalog_applied_sequence` | The primary's last group the follower applied; the highest one is the best failover candidate |
-| `terrabase_catalog_follower_failures_total{reason}` | Streams that failed: `lineage` (a catalog of another origin, kept), `invalid` (a frame failed validation; nothing of it applied), `apply` (acting on applied changes, such as a database deletion, failed; retried before the next stream) or `stream` |
-| `terrabase_catalog_forwarded_total{result}` | Requests the follower forwarded to its primary: `answered`, `lagging` (answered before the follower applied what it wrote, after 5 seconds) or `unavailable` (503, or a reset once the response started) |
 
 ## Automatic replication contract
 
 Private NetBird membership admits nodes and discovers every serving region.
-OCI Vault provisions and delivers peer mutual-TLS credentials. Peer destinations,
-local region and catalog authority are derived automatically; write-wait and
+OCI Vault provisions and delivers peer mutual-TLS credentials. Peer destinations
+and local region are derived automatically; write-wait and
 resource limits have one correct setting in code.
 
-**Current gap (TS-773):** the runtime still requires peer listener, certificate,
-address and catalog options. This documentation does not implement automatic
+**Current gap (TS-773):** the runtime still requires peer listener, certificate
+and address options. This documentation does not implement automatic
 replication. Preserve TLS chain/EKU checks, registered-database authorization,
 journal identity validation and secret-free startup errors during removal.
 
@@ -409,8 +374,9 @@ persistence is introduced here.
   arrives.
 - A baseline is the whole current state, written into the change log in bounded chunks: it costs as much
   disk as the data it covers.
-- The member that accepted a write keeps decision 0003's `synchronous = NORMAL`: a power loss can lose its last commits
-  locally. Its unclean start raises its epoch, so it never mints their dots again and its streams continue on new origins,
+- The member that accepted a write syncs its commit (`FULL`, [0003](decisions/0003-sqlite-synchronous-normal.md) as
+  amended by #181), so a power loss no longer loses what it answered. Writer work outside a transaction (the backup
+  tap) stays `NORMAL`. Before #181, a power loss could lose its last commits locally. Its unclean start raises its epoch, so it never mints their dots again and its streams continue on new origins,
   and the peers keep what they acknowledged; the member itself gets those writes back only when they are written again,
   until refill after an expired lease ([anna-core](design/anna-core.md) §5.3) covers it.
 - A database file replaced by hand under the same member and epoch is detected only when a peer is ahead of its head;

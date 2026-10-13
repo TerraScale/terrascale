@@ -20,10 +20,17 @@ internal sealed class PowerLossNode : IAsyncDisposable
     // The child's last lines of error output, for a startup failure's message.
     private readonly Queue<string> _errors = new();
 
-    private PowerLossNode()
+    // The test class the child runs as its host: RegionProcessHost, or one that adds a fault of its own.
+    private readonly string _host;
+
+    private PowerLossNode(string host)
     {
+        _host = host;
         Faults = new WalSyncFaults(Data + ".walfaults");
     }
+
+    /// <summary>A file under this node's root, for a host that reads one (a fault armed while it exists).</summary>
+    public string PathOf(string name) => Path.Combine(_root, name);
 
     public HttpClient Client { get; private set; } = new();
 
@@ -34,9 +41,9 @@ internal sealed class PowerLossNode : IAsyncDisposable
 
     private WalSyncFaults Faults { get; }
 
-    public static async Task<PowerLossNode> StartAsync()
+    public static async Task<PowerLossNode> StartAsync(string host = nameof(RegionProcessHost))
     {
-        var node = new PowerLossNode();
+        var node = new PowerLossNode(host);
         try
         {
             _ = Directory.CreateDirectory(node.Data);
@@ -63,7 +70,7 @@ internal sealed class PowerLossNode : IAsyncDisposable
         };
         start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "TerraBase.E2E.dll"));
         start.ArgumentList.Add("--treenode-filter");
-        start.ArgumentList.Add($"/*/*/{nameof(RegionProcessHost)}/*");
+        start.ArgumentList.Add($"/*/*/{_host}/*");
         start.ArgumentList.Add("--results-directory");
         start.ArgumentList.Add(Path.Combine(_root, "results"));
         foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name.StartsWith("FLY_", StringComparison.Ordinal)).ToList())

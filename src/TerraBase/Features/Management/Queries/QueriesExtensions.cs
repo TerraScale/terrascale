@@ -1,5 +1,4 @@
 using TerraBase.Errors;
-using TerraBase.Hosting;
 
 namespace TerraBase.Features.Management.Queries;
 
@@ -15,29 +14,10 @@ public static class QueriesExtensions
     public static IServiceCollection AddTerraBaseManagementQueries(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
-        services.AddGrpc().AddServiceOptions<QueryShapeReceiver>(grpc => grpc.MaxReceiveMessageSize = QueryShapeForwarding.MaxMessageBytes);
         return services.AddSingleton<QueryFieldRecorder>()
             .AddSingleton<QueryShapeRecorder>()
-            .AddSingleton<QueryShapeReceiver>()
-            .AddSingleton<QueryShapeAdmission>()
             .AddSingleton<IQueryShapeTracker>(provider => provider.GetRequiredService<QueryShapeRecorder>())
             .AddSingleton<IQueryService, QueryService>();
-    }
-
-    /// <summary>Maps follower query-shape forwarding onto the internal listener.</summary>
-    public static WebApplication MapTerraBaseQueryShapes(this WebApplication app)
-    {
-        ArgumentNullException.ThrowIfNull(app);
-        app.MapGrpcService<QueryShapeReceiver>().WithMetadata(ListenerMetadata.Internal);
-        return app;
-    }
-
-    /// <summary>Admits query-shape receives after routing and before gRPC materializes their bodies.</summary>
-    public static WebApplication UseTerraBaseQueryShapeAdmission(this WebApplication app)
-    {
-        ArgumentNullException.ThrowIfNull(app);
-        app.UseMiddleware<QueryShapeAdmission>();
-        return app;
     }
 
     /// <summary>A saved query with its name trimmed, or the rule it breaks: a display name and SQL of the subset.</summary>

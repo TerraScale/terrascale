@@ -498,7 +498,7 @@ internal sealed partial class EngineManagementService
     private async ValueTask<long> CountAsync(IStorageTransaction transaction, ManagementOpRequest limit, CancellationToken cancellationToken)
     {
         var organizationId = limit.Organization!;
-        if (await transaction.GetVersionAsync(Organizations, organizationId, cancellationToken).ConfigureAwait(false) is null)
+        if (await transaction.GetVersionAsync(Organizations, organizationId, cancellationToken).ConfigureAwait(false) is not { Deleted: false })
         {
             return 0;
         }
@@ -643,7 +643,7 @@ internal sealed partial class EngineManagementService
 
             case "set_database_regions":
                 {
-                    if (DatabaseRegions.Check(options.Region, op.ReplicaRegions!) is Validation invalid)
+                    if (DatabaseRegions.Check(options.Region, op.ReplicaRegions!, created: false) is Validation invalid)
                     {
                         return new OperationFailed(invalid);
                     }
@@ -905,13 +905,17 @@ internal sealed partial class EngineManagementService
 
                 var (project, source) = resolved;
                 // A database is created in its home region, the one the commit is sent to (docs/cross-region.md).
-                var replicas = op.ReplicaRegions ?? [];
                 if ((op.HomeRegion ?? options.Region) != options.Region)
                 {
                     return await AbandonAsync(prepared, new CommitRejected(ManagementErrors.WrongRegion, i)).ConfigureAwait(false);
                 }
 
-                if (DatabaseRegions.Check(options.Region, replicas) is Validation invalid)
+                if ((op.ReplicaRegions ?? await DefaultReplicasAsync(cancellationToken).ConfigureAwait(false)) is not { } replicas)
+                {
+                    return await AbandonAsync(prepared, new CommitRejected(DatabaseRegions.NoOtherRegion, i)).ConfigureAwait(false);
+                }
+
+                if (DatabaseRegions.Check(options.Region, replicas, durability.Value.Confirms) is Validation invalid)
                 {
                     return await AbandonAsync(prepared, new CommitRejected(invalid, i)).ConfigureAwait(false);
                 }

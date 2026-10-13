@@ -22,7 +22,7 @@ internal sealed partial class SqliteStorageTransaction
     private IMemoryReservation? ReserveCollectionMetadata(string name)
     {
         var command = store.IsSystem
-            ? Command("SELECT length(CAST(body AS BLOB)) FROM documents WHERE collection = $collection AND id = $id;", DocumentDelta.Collections)
+            ? Command("SELECT octet_length(body) FROM documents WHERE collection = $collection AND id = $id;", DocumentDelta.Collections)
             : TableCommand("SELECT octet_length(doc) FROM {0} WHERE id = $id;", DocumentDelta.Collections);
         command.Parameters.AddWithValue("$id", name);
         var bytes = command.ExecuteScalar();
@@ -152,7 +152,7 @@ internal sealed partial class SqliteStorageTransaction
             // The complete envelope must be admissible on replication as well as locally.
             var body = DocumentJson.Read(buffer.WrittenMemory, requireObject: true);
             WriteMetadata(DocumentDelta.Collections, name, body);
-            _collectionsChanged = true;
+            ChangedReaderState = true;
             return true;
 
             void CountMember(string propertyName, int valueBytes)

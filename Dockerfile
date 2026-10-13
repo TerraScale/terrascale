@@ -50,7 +50,7 @@ RUN make -o restore fmt-check auth-check auth-build CONFIGURATION=Release \
     && dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo
 
 FROM build-auth AS test-auth
-RUN make -o restore auth-test-fast CONFIGURATION=Release && touch /passed
+RUN make -o restore auth-audit auth-test-fast CONFIGURATION=Release && touch /passed
 
 FROM restored AS build-terrabase
 # The commit /healthz reports as revision (MSBuild reads it from the environment); the image has no .git.

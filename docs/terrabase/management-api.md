@@ -217,8 +217,9 @@ a hostile process with filesystem write access. The ownership lock coordinates T
 processes, not arbitrary filesystem writers; deployment permissions provide that boundary.
 
 This covers TerraBase process crashes. The catalog itself is in the system database, which syncs every commit
-(decision 0012); tenant databases keep `synchronous = NORMAL` (decision 0003), so this adds no power-loss or
-operating-system-crash guarantee for their files. Older catalogs return
+(decision 0012). Since #181 tenant databases' write transactions sync their commits too (0003 as amended). Their
+power-loss evidence covers the write-ahead log only. Database-file, checkpoint and sync-error cases are still to be
+proven. Older catalogs return
 `503` and are never migrated or swept.
 Unsupported catalog versions are audited without interpreting tenant rows; their files are preserved,
 logged and counted as unknown while management requests keep returning `503`.
@@ -273,7 +274,7 @@ Base path: `/v1/management`.
 | `GET` | `/organizations/{organization}/projects/{project}` | project |
 | `PATCH` | `/organizations/{organization}/projects/{project}` | `{name}` → renamed project |
 | `DELETE` | `/organizations/{organization}/projects/{project}` | `204`; `409` while it has databases |
-| `POST` | `…/projects/{project}/databases` | `{name, homeRegion?, replicaRegions?}` → `201` empty database; `421 wrong_region` when `homeRegion` is not the called region ([placement](#region-placement)) |
+| `POST` | `…/projects/{project}/databases` | `{name, homeRegion?, replicaRegions?}` → `201` empty database, placed in two regions or more on a cell; `400 placement_needs_two_regions`, `503 remote_region_unavailable`; `421 wrong_region` when `homeRegion` is not the called region ([placement](#region-placement)) |
 | `GET` | `…/projects/{project}/databases` | page of databases |
 | `GET` | `…/projects/{project}/databases/{database}` | database |
 | `PATCH` | `…/projects/{project}/databases/{database}` | `{replicaRegions}` → database with its new replica regions; home region only (`421 wrong_region` elsewhere) |
@@ -306,9 +307,18 @@ Region ids are Atlas region ids (`gru-1`, `sfo-1`), the values of `X-TerraBase-R
 - `homeRegion` is where the database is created and managed: create, change regions, delete and branch go to it.
   `replicaRegions` are the other regions that hold a full copy; every listed region serves reads and writes, and
   writes replicate between them.
-- On create, `homeRegion` defaults to the called region and `replicaRegions` to none. A replica region must be one this
-  deployment replicates with, listed once, and not the home (`400 invalid_request`). Each replica region must register
-  the organization and project under the same ids to take the database.
+- On create, `homeRegion` defaults to the called region. A replica region must be one this deployment replicates with,
+  listed once, and not the home (`400 invalid_request`). Each replica region must register the organization and project
+  under the same ids to take the database.
+- **Two regions or more** (decision 0013a, option A) apply on a machine that belongs to a cell, which is every machine on
+  Fly:
+  - A create without `replicaRegions` places replicas in every other region the membership lists. With none listed, it
+    answers `503 remote_region_unavailable` and creates nothing.
+  - A create with an empty `replicaRegions` answers `400 placement_needs_two_regions`.
+  - A `PATCH` may still remove every replica region, which is the step before a delete. That database then takes no
+    writes until a region is added back: under 0013a its writes are refused with `503 remote_region_unavailable`.
+  - A machine without a member directory (development off Fly, single-machine tests) is a cell of one. It still
+    defaults to no replica regions.
 - `PATCH` sets the complete new `replicaRegions`; `homeRegion` may be repeated but cannot change. An added region takes
   the database and fills its copy. A removed region stops serving it at once and keeps its copy unserved, so the writes it
   accepted keep reaching the others; added back, it resumes from that copy.
@@ -629,36 +639,15 @@ The schema is inferred and read-only: TerraBase has no declared schemas yet.
   current one. A flush deletes every older bucket of each database it saves, and saves counts of an hour or day already
   past them (held through an outage) only in the kept day or the lifetime totals. So a database holds at most the kept
   buckets plus those that expired since its last flush. Reads always include the counts not yet saved.
-- Unsaved counts are kept per database and hour. Before each flush or send, those past the kept hours fold into a
-  day-only entry, and those past the kept days into a lifetime-only one (except the entries of a batch not yet settled
-  or acknowledged), so a backlog holds at most about 1,250 entries per database. A follower sends folded entries with
-  their scope, so the primary never saves them in an hour, whatever the two clocks say. A series has counts only in kept
-  buckets: a bucket past them reads as zero, saved or not, even before a flush prunes it.
-- A catalog follower writes no catalog: every 10 seconds it sends one batch of its counts (at most 4,096 database
-  hours, each count at most 10^12) to the primary over the peer listener (`CatalogUsage.Add`). Batches take the pending
-  database hours in turn, so each gets sent while others keep counting. A batch the primary refuses as invalid (for
-  example hours ahead of its clock) is dropped with a warning, so it cannot hold back later counts. A batch carries the
-  follower's node name, a random epoch per process and a sequence: 1, then one more per batch. A batch that is not
-  acknowledged stays pending and is sent again with the same sequence before any other. The primary adds a batch only
-  past the highest sequence it added for that node and epoch, so a retry, or an attempt that arrives after a later
-  batch, counts once; the primary remembers the last 16 epochs per node, so a delayed attempt of a restarted process
-  counts once too. The primary saves these sequences (catalog collection `usage-senders`, one document per node) in the
-  flush that saves their counts, so a batch sent again after the primary restarted counts once when its counts were
-  saved, and once more only when the primary lost them unsaved. It keeps at most 1,024 nodes; one that sent no batch,
-  retries included, for 7 days retires (its record is deleted by the next flush), so replaced nodes free their places
-  while a follower still retrying keeps its record. A follower gives up a batch unacknowledged for a day and drops its
-  counts, so no retry arrives after its record is gone, even after a longer outage: those counts may be lost, never
-  counted twice. The primary refuses an hour more than a day ahead of
-  its clock, and keeps counts only of databases its catalog names (one point read per level and database of a batch),
-  so what followers send never holds memory for databases that do not exist. So the counts of every member reach the usage routes, which a follower forwards to the primary. A usage
-  read a follower serves itself (its administrative listener) shows the totals replicated from the primary, without
-  its own counts not yet saved there: adding those could count a batch twice.
+- Unsaved counts are kept per database and hour. Before each flush, those past the kept hours fold into a day-only
+  entry, and those past the kept days into a lifetime-only one, so a backlog holds at most about 1,250 entries per
+  database. A series has counts only in kept buckets: a bucket past them reads as zero, saved or not, even before a
+  flush prunes it.
 - A failed flush keeps its counts pending and the next flush retries them. Each flush saves its id with the counts it
   adds, so a flush that fails after its commit is recognized by the next flush or usage read and not counted twice.
-- A clean shutdown flushes once more (a follower sends batch after batch until none is pending), within the host's
-  shutdown timeout. If that fails, its counts are lost and a warning is logged.
+- A clean shutdown flushes once more, within the host's shutdown timeout. If that fails, its counts are lost and a warning is logged.
 - A crash loses the counts since the last successful flush: about 10 seconds of operations while the catalog accepts
-  writes (20 on a follower, whose counts wait for the primary's next flush), longer while flushes fail. The documents
+  writes, longer while flushes fail. The documents
   those operations wrote stay committed.
 - Counts are kept per database of a tenant (organization, project and database). Databases created through the data API
   (`PUT /v1/projects/{project}/databases/{name}`) are in the catalog too, so they are counted like any other.

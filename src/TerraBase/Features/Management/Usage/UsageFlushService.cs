@@ -1,26 +1,19 @@
-using System.Text.Json;
-using Google.Protobuf;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Replication;
-using TerraBase.Features.Replication.V1;
-using TerraBase.Hosting;
-using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using ZLogger;
 
 namespace TerraBase.Features.Management.Usage;
 
 /// <summary>
-/// Flushes <see cref="UsageMeter"/>, <see cref="QueryFieldRecorder"/> and <see cref="QueryShapeRecorder"/> every 10 seconds and once more on shutdown. A catalog
-/// follower writes no catalog: it sends its usage counts to its primary as often instead, and keeps them pending while the
-/// primary does not acknowledge them. Query shapes are independently forwarded until durably acknowledged;
-/// query field counts stay in bounded memory and are lost on restart.
+/// Flushes <see cref="UsageMeter"/>, <see cref="QueryFieldRecorder"/> and <see cref="QueryShapeRecorder"/> every 10 seconds and once more on shutdown,
+/// into this machine's catalog.
 /// </summary>
 internal sealed class UsageFlushService(
     UsageMeter meter, QueryFieldRecorder recorder, QueryShapeRecorder shapes, TimeProvider time, TerraBaseOptions options, ILogger<UsageFlushService> logger,
-    IStorageEngine engine, IReplicationStatus replication, ICatalogPrimaryClient? primary = null) : BackgroundService
+    IStorageEngine engine, IReplicationStatus replication) : BackgroundService
 {
     // Storage is sampled once per minute bucket, so an idle node neither lists databases nor writes usage every tick.
     private const int MaxSamplesPerMinute = 128;
@@ -35,22 +28,11 @@ internal sealed class UsageFlushService(
 
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
-    // Shared process epoch; usage and query shapes number their own independent batches.
-    private readonly ByteString _epoch = ByteString.CopyFrom(EntityIds.New().ToByteArray());
-
     // A clean shutdown saves what is pending, within the host's shutdown timeout. What this flush cannot save is lost
     // and logged: usage counts are best-effort dashboard figures, so they never fail or extend a shutdown.
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
-        if (options.CatalogFollower)
-        {
-            // Each backlog gets the shutdown deadline even when the other takes all of it.
-            await Task.WhenAll(ShutdownFlushAsync(DrainAsync, cancellationToken), ShutdownFlushAsync(DrainShapesAsync, cancellationToken))
-                .ConfigureAwait(false);
-            return;
-        }
-
         foreach (var flush in Flushes)
         {
             await ShutdownFlushAsync(flush, cancellationToken).ConfigureAwait(false);
@@ -85,8 +67,8 @@ internal sealed class UsageFlushService(
             {
                 await work(stoppingToken).ConfigureAwait(false);
             }
-            // FlushAsync stops catching once shutdown begins, so any send failure would otherwise fault this task and the
-            // host's shutdown. StopAsync's drain resends what is still pending and logs what it cannot save.
+            // FlushAsync stops catching once shutdown begins, so any failure would otherwise fault this task and the host's
+            // shutdown. StopAsync's flush saves what is still pending and logs what it cannot save.
             catch (Exception) when (stoppingToken.IsCancellationRequested)
             {
                 return;
@@ -141,9 +123,7 @@ internal sealed class UsageFlushService(
         }
     }
 
-    private Func<CancellationToken, ValueTask>[] Flushes => !options.CatalogFollower
-        ? [meter.FlushAsync, recorder.FlushAsync, shapes.FlushAsync]
-        : [SendOnceAsync, SendShapesOnceAsync];
+    private Func<CancellationToken, ValueTask>[] Flushes => [meter.FlushAsync, recorder.FlushAsync, shapes.FlushAsync];
 
     private ValueTask ReportActive(CancellationToken cancellationToken)
     {
@@ -161,7 +141,9 @@ internal sealed class UsageFlushService(
         var status = replication.Snapshot();
         if (status.Initialized)
         {
+            // The catalog's own replication (ChangeGroups.System) belongs to no tenant's usage.
             foreach (var group in status.Peers.SelectMany(peer => peer.Databases.Select(database => (peer.Region, Database: database)))
+                .Where(observation => observation.Database.OrganizationId != ChangeGroups.System.OrganizationId)
                 .GroupBy(observation => (observation.Database.OrganizationId, observation.Database.ProjectId, observation.Database.DatabaseId, observation.Region)))
             {
                 var (organization, project, database, region) = group.Key;
@@ -230,81 +212,5 @@ internal sealed class UsageFlushService(
         // Only a complete pass marks its minute sampled and moves the cursor; a listing failure leaves both to the next tick.
         _sampledMinute = minute;
         _cursor = last ?? _cursor;
-    }
-
-    // A tick sends one bounded batch; a follower's backlog drains a batch per tick.
-    private async ValueTask SendOnceAsync(CancellationToken cancellationToken) => await meter.SendAsync(SendAsync, cancellationToken).ConfigureAwait(false);
-
-    private async ValueTask SendShapesOnceAsync(CancellationToken cancellationToken) =>
-        await shapes.SendAsync(SendShapesAsync, cancellationToken).ConfigureAwait(false);
-
-    // At shutdown a follower sends batch after batch, while the primary acknowledges them and the shutdown timeout lasts.
-    private async ValueTask DrainAsync(CancellationToken cancellationToken)
-    {
-        while (await meter.SendAsync(SendAsync, cancellationToken).ConfigureAwait(false))
-        {
-        }
-    }
-
-    private async ValueTask DrainShapesAsync(CancellationToken cancellationToken)
-    {
-        while (await shapes.SendAsync(SendShapesAsync, cancellationToken).ConfigureAwait(false))
-        {
-        }
-    }
-
-    // QueryShapeRecorder holds the full send reservation before snapshotting and through this callback.
-    // A fixed buffer prevents serialization from exceeding the payload cap before it can be checked.
-    private Task<bool> SendShapesAsync(long sequence, QueryShapeForwardPayload payload, CancellationToken cancellationToken)
-    {
-        var buffer = new byte[QueryShapeForwarding.MaxBytes];
-        using var stream = new MemoryStream(buffer, writable: true);
-        stream.SetLength(0);
-        try
-        {
-            using var writer = new Utf8JsonWriter(stream);
-            JsonSerializer.Serialize(writer, payload, TerraBaseJsonContext.Default.QueryShapeForwardPayload);
-            writer.Flush();
-        }
-        catch (NotSupportedException)
-        {
-            // This stream cannot grow; an oversized payload was not sent and cannot have mutated the primary.
-            return Task.FromResult(false);
-        }
-
-        var envelope = ApplicationEnvelope.Encode(buffer.AsSpan(0, (int)stream.Length));
-        if (envelope.Length > QueryShapeForwarding.MaxBytes)
-        {
-            return Task.FromResult(false);
-        }
-
-        return primary!.AddQueryShapesAsync(new QueryShapesBatch
-        {
-            Format = QueryShapeForwarding.Format,
-            Epoch = _epoch,
-            Sender = options.MachineId,
-            Sequence = (ulong)sequence,
-            Envelope = ByteString.CopyFrom(envelope.Span),
-        }, cancellationToken);
-    }
-
-    // Counts past MaxCount, which no real hour reaches, are not sent: the primary would refuse the whole batch for good.
-    private Task<AddUsageResult> SendAsync(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
-    {
-        var request = new UsageBatch { Protocol = UsageReceiver.Protocol, Epoch = _epoch, Sequence = (ulong)sequence, Sender = options.MachineId };
-        request.Counts.AddRange(batch.Select(entry => new UsageCount
-        {
-            OrganizationId = entry.Key.Database.OrganizationId,
-            ProjectId = entry.Key.Database.ProjectId,
-            DatabaseId = entry.Key.Database.DatabaseId,
-            Hour = entry.Key.Hour,
-            Reads = (ulong)Math.Min(entry.Value.Reads, UsageMeter.MaxCount),
-            Writes = (ulong)Math.Min(entry.Value.Writes, UsageMeter.MaxCount),
-            Scope = (Replication.V1.UsageScope)entry.Key.Scope,
-            Minute = (uint)entry.Key.Minute,
-            Measurements = entry.Value.Meters is null ? ByteString.Empty
-                : ByteString.CopyFrom(JsonSerializer.SerializeToUtf8Bytes(new OpCounts(0, 0, entry.Value.Meters), TerraBaseJsonContext.Default.OpCounts)),
-        }));
-        return primary!.AddUsageAsync(request, cancellationToken);
     }
 }
