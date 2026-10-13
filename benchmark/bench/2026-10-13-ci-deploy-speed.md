@@ -69,3 +69,16 @@ The reviewed follow-up enables same-repository PR previews after `test` success.
 creation/close cleanup, hosted full Slow, and complete production rollout timings remain pending;
 no result from them is claimed here. Pre-push validation follows the user's build-plus-targeted-tests
 CI-gate decision; the older full local results remain evidence only for their recorded trees.
+
+| Scoped-storage qualification | Source / SDK | Result | Suite time |
+|---|---|---|---:|
+| Release build and targeted real Tigris test | `ad4a83f0` / `78e311fe1dcb6dd603190800ed540d08e06de5fd`, mariogk-dev under ts-heavy, eight-heap sizing | Build: zero warnings/errors; test 1/1 passed, zero skips | 21.277 s |
+| Missing `AWS_ACCESS_KEY_ID` | Same source; key removed only from the child test environment | 1 failed, zero skips; names missing credential without exposing values | Expected negative check |
+| Two overlapping real-storage invocations | Same source and shared private bucket | Both 1/1 passed, zero skips; final bucket listing has zero `ci/` objects | 21.373 / 21.227 s |
+| Main Fast after #212/#210 | `a537727b`, [run 38467073536](https://github.com/TerraScale/terrascale/actions/runs/38467073536) | TerraBase1593/1593, native6/6, local replication matrix16/16, zero skips; log reports8heaps | Not a same-source speed comparison |
+
+The first storage build caught CA2016 on the new cleanup delete call. Passing `CancellationToken.None`
+explicitly corrected it; the successful qualification above uses that correction. Credentials remain
+private; the recorded counts come from the real vendor bucket. Main Slow in the listed run still
+failed the two auth fixture cases (23/25), stopping its old sequential stage before TerraBase Slow.
+Those fixture/native-reader fixes are submitted separately in [#224](https://github.com/TerraScale/terrascale/pull/224).
