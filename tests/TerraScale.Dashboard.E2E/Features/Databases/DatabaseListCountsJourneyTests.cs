@@ -37,9 +37,9 @@ public sealed class DatabaseListCountsJourneyTests(DashboardE2EFixture fixture)
         var account = await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
         using var login = await HttpJourney.LoginAsync(replica, account.Email, account.Password);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        var empty = await TotalsAsync(client);
-        await Assert.That(empty).Contains(">0</dd>");
-        await Assert.That(empty).Contains("Across 0 collections, 0 B");
+        var empty = await PageAsync(client);
+        await Assert.That(empty).Contains("No databases yet.");
+        await Assert.That(empty.Contains("id=\"database-document-totals\"", StringComparison.Ordinal)).IsFalse();
         using var identity = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
         // Test admission permits two databases; it does not simulate a paid checkout.
         using var admission = await producer.PostAsJsonAsync("/__test/control", new
@@ -65,12 +65,17 @@ public sealed class DatabaseListCountsJourneyTests(DashboardE2EFixture fixture)
 
         static async Task<string> TotalsAsync(HttpClient instance)
         {
-            using var response = await instance.GetAsync("/databases");
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            var html = WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync());
+            var html = await PageAsync(instance);
             var panel = Regex.Match(html, "<div[^>]*id=\"database-document-totals\"[^>]*>(.*?)</div>", RegexOptions.Singleline | RegexOptions.CultureInvariant);
             await Assert.That(panel.Success).IsTrue();
             return panel.Groups[1].Value;
+        }
+
+        static async Task<string> PageAsync(HttpClient instance)
+        {
+            using var response = await instance.GetAsync("/databases");
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            return WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync());
         }
     }
 }

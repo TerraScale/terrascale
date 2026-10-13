@@ -61,6 +61,12 @@ It keeps provider IDs unchanged. When the SDK publishes typed methods, move
 this adapter to them. Live verification is required before calling this slice
 complete.
 
+This analytics read alone accepts a response up to 64 MiB, matching the SDK's
+default body bound. The bound applies to both the declared content length and
+bytes actually streamed, under the existing five-second deadline. Authentication
+and discovery envelopes retain their shared 64 KiB limit. This permits full
+database-region series without treating normal dense responses as unavailable.
+
 Parallel-safe HTTP contract coverage lives in
 `tests/TerraScale.Dashboard.E2E/Features/Analytics/AnalyticsBackendContractTests.cs`.
 It checks all four ranges, database-ID/region filters, current session/project

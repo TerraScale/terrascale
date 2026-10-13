@@ -37,7 +37,7 @@ public sealed class AnalyticsBackend(IHttpClientFactory factory, IProjectAccessT
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
             if (response.StatusCode == HttpStatusCode.NotFound) return new(AnalyticsSourceState.NotMetered, []);
             response.EnsureSuccessStatusCode();
-            using var document = await PlatformJson.ReadAsync(response.Content, token);
+            using var document = await ReadAnalyticsAsync(response.Content, token);
             var root = document.RootElement;
             var bucketSeconds = selection.Range switch { "1h" => 60, "24h" => 3600, "7d" => 21600, "30d" => 86400, _ => throw new JsonException("Unknown analytics range.") };
             if (root.GetProperty("projectId").GetString() != project.Id || root.GetProperty("range").GetString() != selection.Range ||
@@ -82,6 +82,24 @@ public sealed class AnalyticsBackend(IHttpClientFactory factory, IProjectAccessT
             }
             return new(AnalyticsSourceState.Available, points);
         }
+    }
+
+    private static async Task<JsonDocument> ReadAnalyticsAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        // Match the SDK body bound for dense series; identity/token envelopes keep their smaller shared limit.
+        const int maxBytes = 64 * 1024 * 1024;
+        if (content.Headers.ContentLength > maxBytes) throw new HttpRequestException("Analytics response is too large.");
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+        using var body = new MemoryStream();
+        var buffer = new byte[65536];
+        while (true)
+        {
+            var count = await stream.ReadAsync(buffer, cancellationToken);
+            if (count == 0) break;
+            if (count > maxBytes - body.Length) throw new HttpRequestException("Analytics response is too large.");
+            body.Write(buffer, 0, count);
+        }
+        return JsonDocument.Parse(body.GetBuffer().AsMemory(0, checked((int)body.Length)));
     }
 
     private static bool ValidRegionId(string region) => region.Length is >= 1 and <= 63 && region[0] is >= 'a' and <= 'z' && region[^1] != '-' &&
