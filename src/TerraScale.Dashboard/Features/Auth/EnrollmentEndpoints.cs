@@ -19,6 +19,7 @@ public static class EnrollmentEndpoints
         services.AddSingleton<IProfileIdentityGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<IPlatformRoleGateway>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<IProjectAccessTokens>(provider => provider.GetRequiredService<TsAuthGateway>());
+        services.AddSingleton<ITsAuthPlatform>(provider => provider.GetRequiredService<TsAuthGateway>());
         services.AddSingleton<DeviceGrants>();
         services.AddSingleton<DeviceAuthorization>();
         services.AddHostedService<DeviceCleanup>();
