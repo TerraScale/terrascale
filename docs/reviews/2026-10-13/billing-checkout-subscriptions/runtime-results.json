@@ -1,7 +1,7 @@
 {
   "auditedSourceHead": "b719878083dffd9441e063bbfaccfa0dffa95abd",
   "base": "b719878083dffd9441e063bbfaccfa0dffa95abd",
-  "durationSeconds": 21.551,
+  "durationSeconds": 8.438,
   "tests": [
     {
       "test": "CanceledUnpaidCheckoutDoesNotMarkPaidTierAsCurrent",
@@ -80,5 +80,6 @@
       "amountRemaining": 234,
       "outstanding": "$12.34"
     }
-  }
+  },
+  "testedAuditHeadSHA": "6a8a3b775420adcbb959d8ca2c0ef1cb58db1db0"
 }

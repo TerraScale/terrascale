@@ -1,5 +1,6 @@
 artifacts/
-evidence/
+evidence/*
+!evidence/committed/
 results/
 *.log
 evidence-manifest.json

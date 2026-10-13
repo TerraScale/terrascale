@@ -2,7 +2,7 @@
 
 Review [02-show-remaining-invoice-balance.patch](02-show-remaining-invoice-balance.patch) first: a partially paid invoice currently shows its original total as the outstanding balance.
 
-Five defects are reproduced through the running dashboard. Eleven focused TUnit cases yield **5 passes and 6 expected failures** in 21.551 seconds, with no skipped assertions. The two annual-selector failures are the same defect at desktop and mobile sizes. Existing source is unchanged; patches below are proposals only.
+Five defects are reproduced through the running dashboard. Eleven focused TUnit cases yield **5 passes and 6 expected failures** in 8.438 seconds at capture/test head `6a8a3b775420adcbb959d8ca2c0ef1cb58db1db0`, with no skipped assertions. The two annual-selector failures are the same defect at desktop and mobile sizes. Existing source is unchanged; patches below are proposals only.
 
 ## Verified defects
 
@@ -131,19 +131,19 @@ done
 
 **Expected failure:** Six regression instances for the five defects. They assert the intended behavior and remain enabled. The focused test command exits nonzero. The source proposals have not been applied, compiled, or tested as fixes.
 
-**Not run:** Aggregate fast/slow/release suites, full CSS/JS bundling and CSS equality lint, live billing/card flows, production auth/persistence, webhook correctness, and real cancellation or charges. No CI or paid services were used. Currency/minor-unit and Free setup/trial-state regressions are assigned to the separate payment-domain audit and have no duplicate cases here.
+**Not run:** Aggregate fast/slow/release suites, full CSS/JS bundling and CSS equality lint, live billing/card flows, production auth/persistence, webhook correctness, and real cancellation or charges. The unchanged normal PR12 CI workflow is running; no paid service was added. Currency/minor-unit and Free setup/trial-state regressions are assigned to the separate payment-domain audit and have no duplicate cases here.
 
 [runtime-results.json](runtime-results.json) records individual test outcomes and sanitized observed values. Ignored [tests.log](tests.log), [build.log](build.log), [format.log](format.log), and the [TRX result](results/TerraScale.Dashboard.E2E_net10.0_x64.trx) preserve the local run output.
 
 ## Browser evidence
 
-All five images are actual running-app captures using local fixtures, against audited source HEAD `b719878083dffd9441e063bbfaccfa0dffa95abd` plus these new audit sources. The account footer is masked. [evidence-manifest.json](evidence-manifest.json) records capture times, image hashes, and tested audit-source hashes. These files are ignored, not committed.
+All five images are actual running-app captures using synthetic local fixtures, captured and tested at audit head `6a8a3b775420adcbb959d8ca2c0ef1cb58db1db0`; the pinned product source is `b719878083dffd9441e063bbfaccfa0dffa95abd`. Every capture was inspected for secrets and personal data. The account footer and account controls are masked; visible organization names are synthetic. The five PNGs total 752,804 bytes (about 735 KiB). [Committed manifest](evidence/committed/manifest.json) records their actual capture head, timestamps and hashes. The latest user instruction explicitly authorizes committing these small screenshots through the existing repository access, overriding the attachment-only checkout guideline. The evidence-only publication commit changes no product or test source. Focused checks are rerun at its final head, with fresh captures retained locally; the PR body records that final head and results. Original capture provenance is retained rather than relabeled.
 
-1. [Annual chooser, desktop](evidence/annual-chooser-1440.png): annual page cards and Monthly-selected dialog, 1440×900.
-2. [Annual chooser, mobile](evidence/annual-chooser-390.png): the same mismatch, 390×844.
-3. [Canceled checkout, mobile](evidence/canceled-checkout-390.png): billing return without cancellation feedback, 390×844.
-4. [Annual review, desktop](evidence/keyboard-review-1440.png): disclosed annual price, limits, and keyboard focus, 1440×900.
-5. [Annual review, mobile](evidence/keyboard-review-390.png): the responsive review, 390×844.
+1. [Annual chooser, desktop](evidence/committed/annual-chooser-1440.png): annual page cards and Monthly-selected dialog, 1440×900.
+2. [Annual chooser, mobile](evidence/committed/annual-chooser-390.png): the same mismatch, 390×844.
+3. [Canceled checkout, mobile](evidence/committed/canceled-checkout-390.png): billing return without cancellation feedback, 390×844.
+4. [Annual review, desktop](evidence/committed/keyboard-review-1440.png): disclosed annual price, limits, and keyboard focus, 1440×900.
+5. [Annual review, mobile](evidence/committed/keyboard-review-390.png): the responsive review, 390×844.
 
 The pixels of all five captures were inspected. There are no before/after images because source fixes are not applied. No video was captured. Collaborative preview attempts returned `Preview automation navigate timed out after 15000ms.` and `Preview automation navigate timed out after 10000ms.`; its snapshot also timed out. The temporary audit preview launcher was not responsive and was removed from the deliverable. The repository-documented Playwright journeys provided the browser evidence instead. No Tailscale preview readiness is claimed.
 
@@ -155,7 +155,7 @@ The pixels of all five captures were inspected. There are no before/after images
 
 **New test files:** `tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/billing-checkout-subscriptions/BillingCheckoutAuditFixture.cs` and `BillingCheckoutAuditJourneyTests.cs`. Their location follows the user's exclusive-directory instruction; existing projects and fixtures were not edited.
 
-**New report files:** this README, five proposal patches, `runtime-results.json`, `ci-capacity.json`, `audit-build.targets`, and a report-local `.gitignore`. The local `evidence-manifest.json`, build outputs, screenshots, logs, and TRX files stay under this report directory and are ignored. Evidence is recaptured after committing the audit and labeled with the tested PR head; it is uploaded separately, never committed.
+**New report files:** this README, five proposal patches, `runtime-results.json`, `ci-capacity.json`, `audit-build.targets`, a report-local `.gitignore`, and five PNGs plus their manifest under `evidence/committed/`. The latest local `evidence-manifest.json`, fresh captures outside `evidence/committed/`, build outputs, logs, and TRX files stay under this report directory and are ignored. Current-head checks recapture the fixtures locally; the published manifest preserves the actual earlier capture head. See the PR validation record for the final tested publication head.
 
 **Overlap dependencies:** The partial-balance proposal touches `InvoiceHistory.cs`, also used by the payment-domain worker's currency work. Its remaining-balance change is separate from currency formatting; integrate both without replacing either. It also proposes a one-line addition to the shared demo invoice response, which needs that fixture owner's integration. The other four proposals touch billing-owned UI/endpoints; retry recovery uses a billing-owned view to avoid the shared UI refactor. No other worker's files or thread history were read, and no worker was contacted.
 
@@ -163,6 +163,6 @@ The pixels of all five captures were inspected. There are no before/after images
 
 **Host and capacity:** `gh repo view` confirms `https://github.com/TerraScale/ts-dashboard`; the official GitHub CLI reads repository/run/job metadata with existing credentials. [ci-capacity.json](ci-capacity.json) records the normal run queue across the organization's repositories. Repository runner inventory is empty; organization runner inventory returns HTTP 403 requiring organization runner permissions. No credential was retrieved or printed, and no scope/permission change was attempted. Active native job metadata is the available capacity evidence; release work retains priority.
 
-**Earlier technical failure:** `fj pr search --repo TerraScale/ts-dashboard --state open 'billing checkout audit'` returned `Error: unexpected status code 410 Gone` from `src/prs.rs:1600:20`. The remote is GitHub. That legacy-host failure is separate from the publication denial; retired Forgejo is not retried. Any subsequently authorized PR must contain only these new deliverable files, disclose the expected failures, remain draft, and attach the ignored screenshots separately. No merge or auto-merge is appropriate for this audit.
+**Earlier technical failure:** `fj pr search --repo TerraScale/ts-dashboard --state open 'billing checkout audit'` returned `Error: unexpected status code 410 Gone` from `src/prs.rs:1600:20`. The remote is GitHub. That legacy-host failure is separate from the publication denial; retired Forgejo is not retried. Any subsequently authorized PR must contain only these new deliverable files, disclose the expected failures, remain draft, and link the authorized committed screenshots by their relative repository paths. No merge or auto-merge is appropriate for this audit.
 
 **Verdict:** Fix findings 1–5 before treating these billing journeys as complete. Start with the remaining-balance patch.
