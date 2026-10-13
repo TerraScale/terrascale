@@ -260,7 +260,24 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                 continue;
             }
 
-            if (!await _source.RetainsAsync(database, acked, cancellationToken).ConfigureAwait(false))
+            var retained = await _source.RetainsAsync(database, acked, cancellationToken).ConfigureAwait(false);
+            if (!retained)
+            {
+                // Retention raises the stored ack over rows that hold no group of this machine's, past the stream's own: go
+                // on from it while it is retained, rather than refill a peer that never fell behind.
+                var stored = await _source.AckedAsync(database, peer, cancellationToken).ConfigureAwait(false);
+                if (await _source.RetainsAsync(database, stored, cancellationToken).ConfigureAwait(false))
+                {
+                    lock (link.Gate)
+                    {
+                        cursor.Acked = acked = stored;
+                    }
+
+                    retained = true;
+                }
+            }
+
+            if (!retained)
             {
                 // Retention cut groups after the peer's ack (it was silent or far behind, or it is new): it refills from this
                 // machine, then the stream goes on from the newest change.
