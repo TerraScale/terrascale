@@ -17,7 +17,7 @@ as errors. Suite times below exclude compilation; they are diagnostic observatio
 | Full native driver suite | Same current base and strengthened fixture | 7 / 7 | 0 / 0 | 112.370 s | Original six finalizer regressions plus unread-reader regression all passed |
 | Full TerraBase Slow, current candidate | Same current source tree, existing dev credentials supplied privately | 58 / 59 | 1 / 0 | 589.904 s | Count passed unchanged; real Tigris test failed because the old dev bucket had been deleted |
 | Real Tigris backup regression | Same current source tree, isolated private bucket with vendor-issued credentials | 1 / 1 | 0 / 0 | 21.412 s | Passed against real storage; not a full green Slow run |
-| Final full Slow | Same current source tree, isolated real bucket | Pending | Pending | Pending | Queued after Docker to avoid extra host contention; default Slow parallelism retained |
+| Final full Slow | Same current source tree, isolated real bucket | Pending | Pending | Pending | Started 18:53:35Z after Docker to avoid extra host contention; default Slow parallelism retained |
 
 Auth reports [#199](https://github.com/TerraScale/terrascale/issues/199) and
 [#200](https://github.com/TerraScale/terrascale/issues/200) were fixture errors: key creation atomically requires an
@@ -28,7 +28,7 @@ TerraBase report [#201](https://github.com/TerraScale/terrascale/issues/201) was
 and native finalization execute unread rows. After cancellation at a consumer boundary, cleanup invoked the cancelled
 scan callback and Turso rolled back the transaction. The pinned native C API's `turso_statement_reset` releases the
 unfinished read before finalization without evaluating unread rows. It also discards later batch statements. Existing
-query budgets, rollback detection and the operation gate remain intact. The vendor patch includes the native regression
+query budgets, rollback detection and the operation gate remain intact. The vendor change is covered by the native regression
 and documents its provenance; no native package upgrade is required.
 
 Two Fast stream fixtures had asserted native rollback after cancelling at the consumer boundary, conflicting with the
@@ -40,7 +40,7 @@ boundary cases require snapshot reuse. Test parallelism is unchanged.
 |---|---|---:|---|---|---|
 | First complete run after host reboot | T0 `ae4bac41`, prepared Docker stages, no Slow fixes | 482 s | 664 / 664, 424.796 s | 1492 / 1558, 66 failures, 388.936 s | Older T0 base; `_system` replication errors; failed build; partial cache from interrupted earlier run |
 | Latest T0, before fixture correction | T0 `62b2c7bb` plus both fixes | Not used for comparison | Build cancelled after TerraBase failure | 1543 / 1561, 18 failures, 246.380 s | Local wrapper omitted the build revision; native/boundary cancellation fixture conflict |
-| Current candidate | Merged main plus both fixes, corrected fixture and automatic build revision | Pending | Pending | Pending | Running after full Slow; local required check failed only the T0-owned shutdown race |
+| Current candidate | Merged main plus both fixes, corrected fixture and automatic build revision | 816 s | 664 / 664, 564.864 s | 1563 / 1563, 322.643 s | Passed exit 0, 18:39:54Z–18:53:30Z; prepared Docker stages, partial warm cache; native 7/7 also passed |
 
 Reproduce full suites with `make auth-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi` and
 `make terrabase-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi`. Run `make docker-test
