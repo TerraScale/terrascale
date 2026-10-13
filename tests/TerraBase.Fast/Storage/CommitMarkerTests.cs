@@ -53,6 +53,66 @@ public sealed class CommitMarkerTests
     }
 
     [Test]
+    public async Task A_competing_writer_cannot_replace_the_first_writes_own_marker()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var token = deadline.Token;
+        using var releaseMarker = new ManualResetEventSlim();
+        var markerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var armed = 0;
+        string? target = null;
+        await using var api = await ManagementApi.StartAsync(cancellationToken: token,
+            services: services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
+            {
+                if (step == "writer.marker" && database.DatabaseId == Volatile.Read(ref target) && Interlocked.Exchange(ref armed, 0) == 1)
+                {
+                    markerEntered.TrySetResult();
+                    releaseMarker.Wait(token);
+                }
+            }));
+        var managed = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(managed.Organization, "documents:write", "documents:read");
+        await ManagementApi.CreateCollectionAsync(data, managed, "items");
+        var (store, source, tenant) = await OpenAsync(api, managed, token);
+        var before = await source.HeadAsync(tenant, token);
+        var firstId = EntityIds.New().ToString();
+        var laterId = EntityIds.New().ToString();
+        await using var transaction = await store.BeginTransactionAsync(write: true, token);
+        _ = await transaction.PutAsync("items", firstId, Body, token);
+        Volatile.Write(ref target, tenant.DatabaseId);
+        Volatile.Write(ref armed, 1);
+        var firstCommit = transaction.CommitAsync(token).AsTask();
+        Task<(long Result, CommitResult Commit)> later;
+        try
+        {
+            await markerEntered.Task.WaitAsync(token);
+            later = PutAsync(store, laterId, token).AsTask();
+            await UntilAsync(() => store.BatchedWrites == 1, token);
+            await Assert.That(firstCommit.IsCompleted).IsFalse();
+            await Assert.That(later.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            releaseMarker.Set();
+        }
+
+        await transaction.DisposeAsync();
+        // Read the first result only after the already queued competing writer has committed.
+        var (_, laterCommit) = await later;
+        var original = await firstCommit;
+        await Assert.That(original.Marker).IsNotNull();
+        await Assert.That(laterCommit.Marker).IsNotNull();
+        await Assert.That(original.Marker!.Value.Incarnation).IsEqualTo(store.Incarnation);
+        await Assert.That(laterCommit.Marker!.Value.Incarnation).IsEqualTo(original.Marker.Value.Incarnation);
+        await Assert.That(laterCommit.Marker.Value.ChangeId).IsGreaterThan(original.Marker.Value.ChangeId);
+        var groups = await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token);
+        await Assert.That(original.Marker.Value.ChangeId).IsEqualTo(groups.Single(group => group.Deltas.Any(delta => delta.Id == firstId)).ChangeId);
+        await Assert.That(laterCommit.Marker.Value.ChangeId).IsEqualTo(groups.Single(group => group.Deltas.Any(delta => delta.Id == laterId)).ChangeId);
+        await AssertValueAsync(data, managed, firstId, 1, token);
+        await AssertValueAsync(data, managed, laterId, 1, token);
+    }
+
+    [Test]
     public async Task A_shared_batch_gives_markers_only_to_its_kept_mutations()
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
@@ -118,10 +178,23 @@ public sealed class CommitMarkerTests
         var token = deadline.Token;
         var armed = 0;
         string? target = null;
+        SqliteDatabaseStore? committing = null;
+        SqliteSession? markedSession = null;
         await using var api = await ManagementApi.StartAsync(cancellationToken: token,
             services: services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
             {
-                if (step == failingStep && database.DatabaseId == Volatile.Read(ref target) && Interlocked.Exchange(ref armed, 0) == 1)
+                if (database.DatabaseId != Volatile.Read(ref target) || Volatile.Read(ref armed) == 0)
+                {
+                    return;
+                }
+
+                if (step == "writer.marker")
+                {
+                    Volatile.Write(ref markedSession, committing!.CurrentWriter());
+                }
+
+                if (step == failingStep && Volatile.Read(ref markedSession) is { } marked
+                    && ReferenceEquals(committing!.CurrentWriter(), marked) && Interlocked.Exchange(ref armed, 0) == 1)
                 {
                     throw new IOException("a test makes the post-commit checkpoint fail");
                 }
@@ -130,6 +203,7 @@ public sealed class CommitMarkerTests
         using var data = await api.CreateClientAsync(managed.Organization, "documents:write", "documents:read");
         await ManagementApi.CreateCollectionAsync(data, managed, "items");
         var (store, source, tenant) = await OpenAsync(api, managed, token);
+        committing = store;
         _ = await PutAsync(store, EntityIds.New().ToString(), token);
         var before = await source.HeadAsync(tenant, token);
         var incarnation = store.Incarnation;
@@ -138,6 +212,12 @@ public sealed class CommitMarkerTests
         var id = EntityIds.New().ToString();
         Volatile.Write(ref target, tenant.DatabaseId);
         Volatile.Write(ref armed, 1);
+        await using (var uncaptured = await store.BeginReplicaAsync(token))
+        {
+            await Assert.That((await uncaptured.CommitAsync(token)).Marker).IsNull();
+        }
+
+        await Assert.That(Volatile.Read(ref armed)).IsEqualTo(1).Because("uncaptured writer cleanup cannot consume this mutation's fault");
         if (failingStep == "writer.marker")
         {
             await Assert.ThrowsAsync<IOException>(() => PutAsync(store, id, token).AsTask());
@@ -151,6 +231,8 @@ public sealed class CommitMarkerTests
             await Assert.That(session!.Connection.State).IsEqualTo(System.Data.ConnectionState.Closed);
         }
 
+        await Assert.That(Volatile.Read(ref armed)).IsEqualTo(0).Because("the intended mutation's checkpoint actually failed");
+        await Assert.That(Volatile.Read(ref markedSession)).IsSameReferenceAs(session);
         await Assert.That(store.CommitSequence).IsGreaterThan(sequence).Because("the successful COMMIT must notify waiters even when its marker read fails");
         await Assert.That(store.Incarnation).IsEqualTo(incarnation);
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.OK);
@@ -169,15 +251,24 @@ public sealed class CommitMarkerTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var token = deadline.Token;
         var armed = 0;
-        var sequence = 0L;
         string? target = null;
         SqliteDatabaseStore? committing = null;
+        SqliteSession? markedSession = null;
         await using var api = await ManagementApi.StartAsync(cancellationToken: token,
             services: services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
             {
-                if (step == failingStep && database.DatabaseId == Volatile.Read(ref target)
-                    && (step == "writer.marker" || committing!.CommitSequence > Volatile.Read(ref sequence))
-                    && Interlocked.Exchange(ref armed, 0) == 1)
+                if (database.DatabaseId != Volatile.Read(ref target) || Volatile.Read(ref armed) == 0)
+                {
+                    return;
+                }
+
+                if (step == "writer.marker")
+                {
+                    Volatile.Write(ref markedSession, committing!.CurrentWriter());
+                }
+
+                if (step == failingStep && Volatile.Read(ref markedSession) is { } marked
+                    && ReferenceEquals(committing!.CurrentWriter(), marked) && Interlocked.Exchange(ref armed, 0) == 1)
                 {
                     throw new IOException("a test fails this client's post-commit checkpoint");
                 }
@@ -191,15 +282,25 @@ public sealed class CommitMarkerTests
         var before = await source.HeadAsync(tenant, token);
         var incarnation = store.Incarnation;
         var id = EntityIds.New().ToString();
-        Volatile.Write(ref sequence, store.CommitSequence);
         Volatile.Write(ref target, tenant.DatabaseId);
         Volatile.Write(ref armed, 1);
+        await using (var uncaptured = await store.BeginReplicaAsync(token))
+        {
+            await Assert.That((await uncaptured.CommitAsync(token)).Marker).IsNull();
+        }
+
+        await Assert.That(Volatile.Read(ref armed)).IsEqualTo(1).Because("uncaptured writer cleanup cannot consume this client's fault");
         using (var response = await data.PutAsJsonAsync(Document(managed, id), new { n = 1 }, token))
         {
             await Assert.That(response.StatusCode).IsEqualTo(expected);
         }
 
         await Assert.That(Volatile.Read(ref armed)).IsEqualTo(0).Because("the requested post-commit failure actually executed");
+        if (failingStep == "writer.reset")
+        {
+            await Assert.That(Volatile.Read(ref markedSession)!.Connection.State).IsEqualTo(System.Data.ConnectionState.Closed);
+            await Assert.That(store.CurrentWriter()).IsNotSameReferenceAs(Volatile.Read(ref markedSession));
+        }
         await Assert.That(store.Incarnation).IsEqualTo(incarnation);
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.OK);
         await AssertValueAsync(data, managed, id, 1, token);
