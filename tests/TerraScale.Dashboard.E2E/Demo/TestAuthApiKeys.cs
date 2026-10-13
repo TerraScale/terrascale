@@ -16,7 +16,7 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
     private readonly TerraScaleIdGenerator ids = new();
     private readonly object gate = new();
     private readonly SortedDictionary<string, (Key Key, string Secret)> keys = new(StringComparer.Ordinal);
-    private readonly List<(string Method, string Path, string UserId)> requests = [];
+    private readonly List<(string Method, string Path, string UserId, string Token)> requests = [];
     private TaskCompletionSource? listGate;
     private int pausedLists;
     public int PausedLists => Volatile.Read(ref pausedLists);
@@ -36,7 +36,8 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
         lock (gate) return new
         {
             keys = keys.Values.Select(value => new { value.Key.Id, value.Key.Name, value.Key.ProjectId, value.Key.Database, value.Key.Scopes, secret = value.Secret }).ToArray(),
-            requests = requests.Select(value => new { method = value.Method, path = value.Path, userId = value.UserId }).ToArray()
+            requests = requests.Select(value => new { method = value.Method, path = value.Path, userId = value.UserId,
+                bearerKind = "original-session", authorization = "Bearer " + value.Token }).ToArray()
         };
     }
 
@@ -50,7 +51,7 @@ sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?
         var match = Route().Match(uri.AbsolutePath);
         if (!match.Success) return Error(HttpStatusCode.NotFound, "not_found");
         string organization = match.Groups["organization"].Value, project = match.Groups["project"].Value, keyId = match.Groups["key"].Value;
-        lock (gate) requests.Add((request.Method.Method, uri.AbsolutePath, actor.UserId));
+        lock (gate) requests.Add((request.Method.Method, uri.AbsolutePath, actor.UserId, token));
         var current = role(actor.UserId, organization, project);
         if (current.Length == 0) return Error(HttpStatusCode.NotFound, "not_found");
         var manage = current is "owner" or "admin";
