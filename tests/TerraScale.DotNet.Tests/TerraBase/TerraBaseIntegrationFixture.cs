@@ -9,13 +9,15 @@ internal static class TerraBaseIntegrationFixture
     internal const string ProjectId = "01JA0000000000000000000001";
     internal static string Read(string name) => ReadContract("fixtures/" + name);
 
-    internal static string ReadContract(string name)
+    internal static string ReadContract(string name) => Encoding.UTF8.GetString(ReadContractBytes(name));
+
+    internal static byte[] ReadContractBytes(string name)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
             var path = Path.Combine(directory.FullName, "contracts", "terrabase", name);
-            if (File.Exists(path)) return File.ReadAllText(path);
+            if (File.Exists(path)) return File.ReadAllBytes(path);
             directory = directory.Parent;
         }
         throw new FileNotFoundException("Missing source-derived TerraBase fixture", name);

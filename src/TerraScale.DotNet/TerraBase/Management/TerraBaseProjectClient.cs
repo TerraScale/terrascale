@@ -18,7 +18,7 @@ public sealed class TerraBaseProjectClient
         this.path = path;
     }
 
-    /// <summary>Creates a database in the called region, or the specified home; another home answers 421. Sent once.</summary>
+    /// <summary>Creates a database in the called region, or the specified home. Sent once; a regional pin may refuse a different home.</summary>
     public async Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string name, string? homeRegion = null,
         IReadOnlyList<string>? replicaRegions = null, CancellationToken cancellationToken = default)
     {

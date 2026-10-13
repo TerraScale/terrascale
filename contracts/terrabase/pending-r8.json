@@ -1,0 +1,29 @@
+{
+  "repository": "https://github.com/TerraScale/terrascale",
+  "pullRequest": "https://github.com/TerraScale/terrascale/pull/165",
+  "status": "unmerged interoperability qualification only",
+  "commit": "2b95f5ef0641d3a8b8695ec1989e02943befbef2",
+  "sources": [
+    {
+      "path": "src/TerraBase/Features/Documents/ChangeCursor.cs",
+      "export": "producer-pending/r8/src/TerraBase/Features/Documents/ChangeCursor.cs.txt",
+      "sha256": "d04c1a898d8e2fc762d53c3903cba1ee4e4340d6d808917ef06917b35f0d7cea"
+    },
+    {
+      "path": "src/TerraBase/Features/Documents/DatabaseChanges.cs",
+      "export": "producer-pending/r8/src/TerraBase/Features/Documents/DatabaseChanges.cs.txt",
+      "sha256": "a034850809fa5bf3a65f6e7a576d389c204301d8582f060ff68ce851b7a70bcb"
+    },
+    {
+      "path": "src/TerraBase/Features/Documents/GetDatabaseChangesEndpoint.cs",
+      "export": "producer-pending/r8/src/TerraBase/Features/Documents/GetDatabaseChangesEndpoint.cs.txt",
+      "sha256": "b6db592550e24b751c952c002e13251037f417388fb014109d3900d15dce3551"
+    }
+  ],
+  "artifact": {
+    "path": "artifacts/terrabase-r8-2b95f5ef-source.tar.gz",
+    "sha256": "13edca03ed374fca0841bcb1734ea6512c5246f1bf9a280da8b068a47d759506",
+    "format": "git archive --format=tar, gzip mtime=0",
+    "commit": "2b95f5ef0641d3a8b8695ec1989e02943befbef2"
+  }
+}

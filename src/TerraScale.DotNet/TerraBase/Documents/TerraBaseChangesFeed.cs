@@ -15,11 +15,11 @@ namespace TerraScale.DotNet.TerraBase;
 /// <param name="Document">Current document on the serving machine; null if absent, including an upsert since deleted.</param>
 public sealed record TerraBaseChange(string Collection, string Id, string Op, string Version, string Origin, JsonElement? Document);
 
-/// <summary>A change or a heartbeat checkpoint. Preserve Cursor from both kinds before resuming in any region.</summary>
-/// <param name="Cursor">Opaque per-origin vector checkpoint; never compare, decode or merge it.</param>
+/// <summary>A change or a heartbeat checkpoint. Preserve non-null Cursor from both kinds before resuming in any region.</summary>
+/// <param name="Cursor">Opaque per-origin vector checkpoint, or null before any checkpoint arrives. Id-less changes retain the prior checkpoint, so an interrupted group replays. Never compare, decode or merge it.</param>
 /// <param name="Change">Change data; null for cursor events.</param>
 /// <param name="Region">Validated X-TerraBase-Region of this connection, when supplied.</param>
-public sealed record TerraBaseChangesEvent(string Cursor, TerraBaseChange? Change, string? Region);
+public sealed record TerraBaseChangesEvent(string? Cursor, TerraBaseChange? Change, string? Region);
 
 internal sealed record TerraBaseChangeCursor(string Cursor);
 internal sealed record TerraBaseStreamError(TerraBaseStreamErrorDetail Error);
@@ -71,11 +71,12 @@ public sealed partial class TerraBaseDatabase
                 throw await TerraBaseException.FromResponseAsync(terminal, opened.Token).ConfigureAwait(false);
             }
             if (type is not ("change" or "cursor")) continue;
-            if (string.IsNullOrEmpty(item.EventId) || item.EventId.Length > 8192) throw InvalidStream(region);
+            var id = item.EventId ?? parser.LastEventId;
+            if (id.Length > 8192 || item.EventId == "" || (type == "cursor" && item.EventId is null)) throw InvalidStream(region);
             TerraBaseChange? change = null;
             if (type == "change") change = ReadStreamData(data, Json.TerraBaseChange, region);
-            else if (ReadStreamData(data, Json.TerraBaseChangeCursor, region).Cursor != item.EventId) throw InvalidStream(region);
-            yield return new TerraBaseChangesEvent(item.EventId, change, region);
+            else if (ReadStreamData(data, Json.TerraBaseChangeCursor, region).Cursor != id) throw InvalidStream(region);
+            yield return new TerraBaseChangesEvent(id.Length == 0 ? null : id, change, region);
         }
     }
 

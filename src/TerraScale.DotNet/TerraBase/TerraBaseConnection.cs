@@ -29,11 +29,12 @@ internal sealed class TerraBaseConnection
     private readonly Func<CancellationToken, ValueTask<string>>? accessTokenProvider;
     private readonly bool anonymous;
     private readonly TimeSpan timeout;
+    private readonly TimeProvider timeProvider;
     private readonly int maxResponseBytes;
     private readonly string? regionPin;
 
     public TerraBaseConnection(HttpClient http, Uri? baseAddress, ITerraBaseEndpointResolver? endpointResolver, string? secret, string secretName, TimeSpan timeout, int maxResponseBytes,
-        Func<CancellationToken, ValueTask<string>>? accessTokenProvider = null, bool anonymousAllowed = false, string? region = null)
+        Func<CancellationToken, ValueTask<string>>? accessTokenProvider = null, bool anonymousAllowed = false, string? region = null, TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         this.http = http;
@@ -78,6 +79,7 @@ internal sealed class TerraBaseConnection
         authorization = secret is null ? null : new AuthenticationHeaderValue("Bearer", secret);
         this.accessTokenProvider = accessTokenProvider;
         this.timeout = timeout;
+        this.timeProvider = timeProvider ?? TimeProvider.System;
         this.maxResponseBytes = maxResponseBytes;
     }
 
@@ -182,8 +184,8 @@ internal sealed class TerraBaseConnection
     private async Task<OpenResponse> OpenAsync(HttpMethod method, string path, HttpContent? content,
         Action<HttpRequestHeaders>? headers, string accept, bool streaming, CancellationToken cancellationToken)
     {
-        var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(timeout);
+        var expiry = new CancellationTokenSource(timeout, timeProvider);
+        var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
         var request = new HttpRequestMessage { Method = method, Content = content };
         HttpResponseMessage? response = null;
         try
@@ -212,16 +214,17 @@ internal sealed class TerraBaseConnection
             response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 throw await TerraBaseException.FromResponseAsync(response, deadline.Token).ConfigureAwait(false);
-            deadline.Token.ThrowIfCancellationRequested();
             // Stream lifetime belongs to enumeration, not the ordinary JSON request timeout.
-            if (streaming) deadline.CancelAfter(Timeout.InfiniteTimeSpan);
-            return new OpenResponse(request, response, deadline);
+            if (streaming) expiry.CancelAfter(Timeout.InfiniteTimeSpan);
+            deadline.Token.ThrowIfCancellationRequested();
+            return new OpenResponse(request, response, deadline, expiry);
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
         {
             response?.Dispose();
             request.Dispose();
             deadline.Dispose();
+            expiry.Dispose();
             throw new TimeoutException($"TerraBase did not answer within {timeout.TotalSeconds.ToString(CultureInfo.InvariantCulture)} seconds.", error);
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && error.InnerException is TimeoutException)
@@ -229,6 +232,7 @@ internal sealed class TerraBaseConnection
             response?.Dispose();
             request.Dispose();
             deadline.Dispose();
+            expiry.Dispose();
             throw new TimeoutException("TerraBase did not answer within the caller's HttpClient.Timeout.", error);
         }
         catch (Exception error)
@@ -237,13 +241,14 @@ internal sealed class TerraBaseConnection
             response?.Dispose();
             request.Dispose();
             deadline.Dispose();
+            expiry.Dispose();
             cancellationToken.ThrowIfCancellationRequested();
             if (expired) throw new TimeoutException("TerraBase did not answer within the request deadline.", error);
             throw;
         }
     }
 
-    internal sealed class OpenResponse(HttpRequestMessage request, HttpResponseMessage response, CancellationTokenSource deadline) : IDisposable
+    internal sealed class OpenResponse(HttpRequestMessage request, HttpResponseMessage response, CancellationTokenSource deadline, CancellationTokenSource expiry) : IDisposable
     {
         public HttpResponseMessage Response { get; } = response;
         public CancellationToken Token => deadline.Token;
@@ -252,6 +257,7 @@ internal sealed class TerraBaseConnection
             Response.Dispose();
             request.Dispose();
             deadline.Dispose();
+            expiry.Dispose();
         }
     }
 

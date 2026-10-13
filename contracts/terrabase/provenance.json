@@ -193,5 +193,11 @@
       "sha256": "3c2c3d0b43883fe2efb2f501ab9ab9c81f4a651f1d25c0c3a4c2f417e7c2b8b6"
     }
   ],
-  "qualification": "Exact source exports, synthetic wire fixtures derived from these DTOs. No producer or live service executed. R8 #165 remains open."
+  "qualification": "Exact source exports, synthetic wire fixtures derived from these DTOs. No producer or live service executed. R8 #165 remains open.",
+  "artifact": {
+    "path": "artifacts/terrabase-e30ffdc-source.tar.gz",
+    "sha256": "962705b1bc9302ea289b65c90d413c8246c542f23bce6de25d3f979bdf8819f3",
+    "format": "git archive --format=tar, gzip mtime=0",
+    "commit": "e30ffdc287530551b161b0130220be53d3c0475e"
+  }
 }

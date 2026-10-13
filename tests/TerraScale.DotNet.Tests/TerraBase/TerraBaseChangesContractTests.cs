@@ -7,6 +7,117 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 public sealed class TerraBaseChangesContractTests
 {
     [Test]
+    public async Task Transaction_changes_advance_only_on_the_final_event_of_the_group()
+    {
+        using var source = new FragmentedStream(Encoding.UTF8.GetBytes(TerraBaseIntegrationFixture.Read("transaction-changes.sse")), 1);
+        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(Sse(source)));
+        using var http = new HttpClient(handler);
+        var events = new List<TerraBaseChangesEvent>();
+        await foreach (var item in Database(http).StreamChangesAsync()) events.Add(item);
+        await Assert.That(events.Count).IsEqualTo(3);
+        await Assert.That(events[0].Change).IsNull();
+        await Assert.That(events[1].Change!.Id).IsEqualTo("a");
+        await Assert.That(events[2].Change!.Id).IsEqualTo("b");
+        await Assert.That(events[1].Change!.Origin).IsEqualTo(events[2].Change!.Origin);
+        await Assert.That(events[1].Change!.Version).IsEqualTo(events[2].Change!.Version);
+        await Assert.That(events[1].Cursor).IsEqualTo(events[0].Cursor);
+        await Assert.That(events[2].Cursor).IsNotEqualTo(events[0].Cursor);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task An_initial_idless_change_is_delivered_without_fabricating_a_checkpoint(bool resuming)
+    {
+        var body = TerraBaseIntegrationFixture.Read("transaction-changes.sse");
+        body = body[(body.IndexOf("\n\n", StringComparison.Ordinal) + 2)..];
+        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(Sse(new MemoryStream(Encoding.UTF8.GetBytes(body)))));
+        using var http = new HttpClient(handler);
+        await using var enumerator = Database(http).StreamChangesAsync(cursor: "now", lastEventId: resuming ? "previous" : null).GetAsyncEnumerator();
+        await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        await Assert.That(enumerator.Current.Change!.Id).IsEqualTo("a");
+        await Assert.That(enumerator.Current.Cursor).IsNull();
+        await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        await Assert.That(enumerator.Current.Change!.Id).IsEqualTo("b");
+        await Assert.That(enumerator.Current.Cursor).IsNotNull();
+        await Assert.That(await enumerator.MoveNextAsync()).IsFalse();
+    }
+
+    [Test]
+    [Arguments(0, false)]
+    [Arguments(1, false)]
+    [Arguments(1, true)]
+    [Arguments(2, false)]
+    public async Task Interrupted_transaction_replays_from_the_last_accepted_checkpoint_and_consumer_deduplicates(int changesBeforeLeaving, bool cancel)
+    {
+        var body = TerraBaseIntegrationFixture.Read("transaction-changes.sse");
+        var calls = 0;
+        var credentials = 0;
+        var sources = new List<FragmentedStream>();
+        string? checkpoint = null;
+        using var handler = new TerraBaseTestHandler(async (request, _) =>
+        {
+            calls++;
+            await Assert.That(request.Headers.Authorization!.Parameter).IsEqualTo("action-" + calls);
+            if (calls == 1)
+            {
+                await Assert.That(request.RequestUri!.Query).IsEqualTo("?collections=items");
+            }
+            else
+            {
+                await Assert.That(request.Headers.GetValues("Last-Event-ID").Single()).IsEqualTo(checkpoint);
+                await Assert.That(request.RequestUri!.Query).IsEqualTo("?collections=items");
+            }
+            var reply = calls == 1 || changesBeforeLeaving < 2 ? body
+                : $"event: cursor\nid: {checkpoint}\ndata: {{\"cursor\":\"{checkpoint}\"}}\n\n";
+            var source = new FragmentedStream(Encoding.UTF8.GetBytes(reply), 1);
+            sources.Add(source);
+            return Sse(source);
+        });
+        using var http = new HttpClient(handler);
+        var db = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
+        {
+            Region = "sjc",
+            AccessTokenProvider = _ => ValueTask.FromResult("action-" + ++credentials),
+        }).Database(TerraBaseIntegrationFixture.ProjectId, "app");
+        using var cancellation = new CancellationTokenSource();
+        var delivered = new List<TerraBaseChange>();
+        var applied = new HashSet<(string Origin, string Version, string Collection, string Id)>();
+        void Accept(TerraBaseChangesEvent item)
+        {
+            if (item.Change is { } change)
+            {
+                delivered.Add(change);
+                // This test consumer owns duplicate suppression; the SDK delivers the replay.
+                applied.Add((change.Origin, change.Version, change.Collection, change.Id));
+            }
+            if (item.Cursor is not null) checkpoint = item.Cursor;
+        }
+        await using (var enumerator = db.StreamChangesAsync(collections: ["items"], cancellationToken: cancellation.Token).GetAsyncEnumerator())
+        {
+            for (var i = 0; i <= changesBeforeLeaving; i++)
+            {
+                await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+                Accept(enumerator.Current);
+            }
+            if (cancel)
+            {
+                await cancellation.CancelAsync();
+                await Assert.ThrowsAsync<OperationCanceledException>(() => enumerator.MoveNextAsync().AsTask());
+            }
+        }
+        await Assert.That(sources[0].Disposed).IsTrue();
+        await Assert.That(calls).IsEqualTo(1);
+        await foreach (var item in db.StreamChangesAsync(lastEventId: checkpoint, collections: ["items"])) Accept(item);
+        await Assert.That(calls).IsEqualTo(2);
+        await Assert.That(credentials).IsEqualTo(2);
+        await Assert.That(delivered.Count).IsEqualTo(changesBeforeLeaving == 1 ? 3 : 2);
+        await Assert.That(applied.Count).IsEqualTo(2);
+        await Assert.That(applied.Select(key => key.Id)).IsEquivalentTo(["a", "b"]);
+        await Assert.That(sources.All(source => source.Disposed)).IsTrue();
+    }
+
+    [Test]
     public async Task Fragmented_UTF8_multiline_data_and_cursor_events_preserve_checkpoints_and_region()
     {
         using var source = new FragmentedStream(Encoding.UTF8.GetBytes(TerraBaseIntegrationFixture.Read("changes.sse")), 1);
@@ -147,9 +258,25 @@ public sealed class TerraBaseChangesContractTests
     }
 
     [Test]
+    public async Task Deadline_expiring_while_stream_acquisition_is_disarmed_is_reported_as_timeout()
+    {
+        using var source = new WaitingStream();
+        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(Sse(source)));
+        using var http = new HttpClient(handler);
+        var connection = new TerraBaseConnection(http, new Uri("https://sjc.api.terrascale.tech"), null, "action-token", "ApiKey",
+            TimeSpan.FromSeconds(30), TerraBaseConnection.DefaultMaxResponseBytes, timeProvider: new ExpireOnDisarmClock());
+        var db = new TerraBaseDatabase(connection, $"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app");
+        await Assert.ThrowsAsync<TimeoutException>(() => DrainAsync(db.StreamChangesAsync()));
+        await Assert.That(source.Started.Task.IsCompleted).IsFalse();
+        await Assert.That(source.Disposed).IsTrue();
+    }
+
+    [Test]
     [Arguments("event: cursor\nid: AQ\ndata: {\"cursor\":\"different\"}\n\n")]
     [Arguments("event: change\nid: AQ\ndata: {}\n\n")]
     [Arguments("event: change\ndata: {}\n\n")]
+    [Arguments("event: cursor\nid: AQ\ndata: {\"cursor\":\"AQ\"}\n\nevent: cursor\ndata: {\"cursor\":\"AQ\"}\n\n")]
+    [Arguments("event: change\nid:\ndata: {\"collection\":\"items\",\"id\":\"a\",\"op\":\"upsert\",\"version\":\"2\",\"origin\":\"0000000000000001\",\"document\":null}\n\n")]
     public async Task Invalid_stream_data_fails_without_advancing_a_checkpoint(string body)
     {
         using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(Sse(new MemoryStream(Encoding.UTF8.GetBytes(body)))));
@@ -247,5 +374,22 @@ public sealed class TerraBaseChangesContractTests
             return 0;
         }
         protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
+    }
+
+    private sealed class ExpireOnDisarmClock : TimeProvider
+    {
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) => new ExpireOnDisarmTimer(callback, state);
+
+        private sealed class ExpireOnDisarmTimer(TimerCallback callback, object? state) : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                // Simulate the deadline callback already running when acquisition tries to disable its timer.
+                if (dueTime == Timeout.InfiniteTimeSpan) callback(state);
+                return true;
+            }
+            public void Dispose() { }
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 }

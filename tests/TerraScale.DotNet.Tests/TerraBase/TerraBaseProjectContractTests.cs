@@ -1,6 +1,7 @@
+using System.Formats.Tar;
+using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using TerraScale.DotNet.TerraBase;
 
@@ -9,14 +10,38 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 public sealed class TerraBaseProjectContractTests
 {
     [Test]
-    public async Task Exported_producer_sources_match_the_pinned_provenance_hashes()
+    [Arguments("provenance.json", "e30ffdc287530551b161b0130220be53d3c0475e")]
+    [Arguments("pending-r8.json", "2b95f5ef0641d3a8b8695ec1989e02943befbef2")]
+    public async Task Exported_sources_match_the_commit_stamped_producer_artifact(string manifestName, string commit)
     {
-        using var manifest = JsonDocument.Parse(TerraBaseIntegrationFixture.ReadContract("provenance.json"));
-        await Assert.That(manifest.RootElement.GetProperty("commit").GetString()).IsEqualTo("e30ffdc287530551b161b0130220be53d3c0475e");
+        using var manifest = JsonDocument.Parse(TerraBaseIntegrationFixture.ReadContract(manifestName));
+        await Assert.That(manifest.RootElement.GetProperty("commit").GetString()).IsEqualTo(commit);
+        var artifact = manifest.RootElement.GetProperty("artifact");
+        await Assert.That(artifact.GetProperty("commit").GetString()).IsEqualTo(commit);
+        var archive = TerraBaseIntegrationFixture.ReadContractBytes(artifact.GetProperty("path").GetString()!);
+        await Assert.That(Convert.ToHexStringLower(SHA256.HashData(archive))).IsEqualTo(artifact.GetProperty("sha256").GetString());
+        using var compressed = new MemoryStream(archive);
+        using var decompressed = new GZipStream(compressed, CompressionMode.Decompress);
+        using var reader = new TarReader(decompressed);
+        var producerFiles = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        string? producerCommit = null;
+        while (await reader.GetNextEntryAsync() is { } entry)
+        {
+            if (entry is PaxGlobalExtendedAttributesTarEntry attributes)
+                producerCommit = attributes.GlobalExtendedAttributes["comment"];
+            if (entry.DataStream is not { } data) continue;
+            using var bytes = new MemoryStream();
+            await data.CopyToAsync(bytes);
+            producerFiles.Add(entry.Name, bytes.ToArray());
+        }
+        await Assert.That(producerCommit).IsEqualTo(commit);
+        await Assert.That(producerFiles.Count).IsEqualTo(manifest.RootElement.GetProperty("sources").GetArrayLength());
         foreach (var source in manifest.RootElement.GetProperty("sources").EnumerateArray())
         {
-            var bytes = Encoding.UTF8.GetBytes(TerraBaseIntegrationFixture.ReadContract(source.GetProperty("export").GetString()!));
-            await Assert.That(Convert.ToHexStringLower(SHA256.HashData(bytes))).IsEqualTo(source.GetProperty("sha256").GetString());
+            var exported = TerraBaseIntegrationFixture.ReadContractBytes(source.GetProperty("export").GetString()!);
+            var producer = producerFiles[source.GetProperty("path").GetString()!];
+            await Assert.That(exported.SequenceEqual(producer)).IsTrue();
+            await Assert.That(Convert.ToHexStringLower(SHA256.HashData(producer))).IsEqualTo(source.GetProperty("sha256").GetString());
         }
     }
 
