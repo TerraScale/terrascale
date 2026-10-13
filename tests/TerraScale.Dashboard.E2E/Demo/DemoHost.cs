@@ -31,7 +31,7 @@ using TerraScale.DotNet.TerraBase;
 public sealed class DemoEnvironment
 {
     private readonly TestState state = new();
-    private readonly TestAuth auth = new();
+    private readonly TestAuth auth;
     private readonly TestIdentity identity = new();
     private readonly TestClock clock = new();
     private readonly TestWorkspace workspace = new();
@@ -45,6 +45,7 @@ public sealed class DemoEnvironment
 
     public DemoEnvironment()
     {
+        auth = new(workspace.ProjectRole);
         databases = new TestDatabases(documents);
         billingPlans = new TestBillingPlanTransport(stripe);
         checkoutPersistence = new TestBillingCheckoutPersistence(state);
@@ -146,7 +147,7 @@ sealed class TestClock : TimeProvider
     public override DateTimeOffset GetUtcNow() => now;
     public void Advance(TimeSpan delta) => now += delta;
 }
-sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, IAuthRefreshGateway, IAuthLogoutGateway, IProfileIdentityGateway, IPlatformRoleGateway, IProjectAccessTokens
+sealed class TestAuth(Func<string, string, string, string> projectRole) : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, IAuthRefreshGateway, IAuthLogoutGateway, IProfileIdentityGateway, IPlatformRoleGateway, IProjectAccessTokens
 {
     private readonly TerraScale.DotNet.TerraScaleIdGenerator subjectIds = new();
     private readonly ConcurrentDictionary<string, string> passwords = new();
@@ -159,6 +160,7 @@ sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, 
     private readonly ConcurrentDictionary<string, byte> revoked = new();
     private readonly ConcurrentDictionary<string, (string SessionToken, string OrganizationId, string ProjectId, string[] Scopes)> projectTokens = new();
     private static readonly string[] ProjectScopes = ["databases:read", "databases:write", "documents:read", "documents:write"];
+    public ConcurrentQueue<TestProjectExchange> ProjectExchanges { get; } = new();
     public bool Active { get; set; } = true;
     public Exception? RevokeError { get; set; }
     public Exception? ExchangeError { get; set; }
@@ -184,9 +186,18 @@ sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, 
         cancellationToken.ThrowIfCancellationRequested();
         if (ExchangeError is not null) return Task.FromException<string>(ExchangeError);
         if (ResolveAccessToken(session.AccessToken) is not { } actor || actor.UserId != session.UserId)
-            throw new HttpRequestException("Test project authority requires a live sign-in.");
+            throw new HttpRequestException("Test project authority requires a live sign-in.", null, HttpStatusCode.Unauthorized);
         if (scopes.Count == 0 || scopes.Any(scope => !ProjectScopes.Contains(scope)) || scopes.Distinct(StringComparer.Ordinal).Count() != scopes.Count)
             throw new HttpRequestException("Test project authority grants only distinct databases:* and documents:* scopes.");
+        var role = projectRole(actor.UserId, organizationId, projectId);
+        // The wire producer returns OAuth 400 invalid_target/invalid_scope; this fake implements I3's mapped gateway boundary.
+        var status = role is not ("viewer" or "member" or "admin") ? HttpStatusCode.NotFound
+            : role == "viewer" && scopes.Any(scope => scope.EndsWith(":write", StringComparison.Ordinal)) ? HttpStatusCode.Forbidden
+            : HttpStatusCode.OK;
+        ProjectExchanges.Enqueue(new(actor.UserId, organizationId, projectId, Array.AsReadOnly(scopes.ToArray()),
+            Array.AsReadOnly(status == HttpStatusCode.OK ? scopes.ToArray() : []), status));
+        if (status != HttpStatusCode.OK) throw new HttpRequestException(status == HttpStatusCode.NotFound
+            ? "The project is unavailable." : "The role does not grant the requested scopes.", null, status);
         var token = "test-project-access-" + Guid.NewGuid().ToString("N");
         projectTokens[token] = (session.AccessToken, organizationId, projectId, scopes.ToArray());
         return Task.FromResult(token);
@@ -292,6 +303,9 @@ sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, 
         ? PasswordAsync("user@example.com", passwords.GetValueOrDefault("user@example.com", "test-password"), "127.0.0.1", cancellationToken)
         : Task.FromException<SessionRecord>(new SignInRejectedException());
 }
+
+sealed record TestProjectExchange(string UserId, string OrganizationId, string ProjectId,
+    IReadOnlyList<string> RequestedScopes, IReadOnlyList<string> GrantedScopes, HttpStatusCode Status);
 sealed class TestState : IDashboardState
 {
     public ConcurrentDictionary<string, TerraBaseDocument> Items { get; } = new();
@@ -358,6 +372,7 @@ sealed class TestWorkspace : ITsAuthPlatform
         {
             var role = ScopedRole(userId, organizationId);
             if (role.Length == 0 || Organizations.GetValueOrDefault(organizationId)?.Projects.ContainsKey(projectId) != true) return "";
+            if (globalRole != "owner") return role;
             return projectCreators.GetValueOrDefault(projectId) == userId || role is "owner" or "admin" ? "admin" : role;
         }
     }
@@ -755,6 +770,7 @@ sealed class TestHttpFactory(HttpMessageHandler transport) : IHttpClientFactory
 }
 sealed class TestStripeTransport : HttpMessageHandler
 {
+    public ConcurrentQueue<(string Field, string Url)> ReturnUrls { get; } = new();
     private readonly ConcurrentDictionary<string, Checkout> checkouts = new();
     private readonly ConcurrentDictionary<string, object> subscriptions = new();
     private readonly ConcurrentDictionary<string, string> customerIds = new();
@@ -822,6 +838,8 @@ sealed class TestStripeTransport : HttpMessageHandler
         }
         else if (request.Method == HttpMethod.Post && path == "/v1/checkout/sessions")
         {
+            ObserveReturn("success_url", form["success_url"].ToString());
+            ObserveReturn("cancel_url", form["cancel_url"].ToString());
             var id = checkoutIds.GetOrAdd(idempotency, _ => "cs_" + Guid.NewGuid().ToString("N"));
             var checkout = checkouts.GetOrAdd(id, _ => new(id, form["customer"].ToString(), form["client_reference_id"].ToString(), form["mode"].ToString(),
                 form.Where(item => item.Key.StartsWith("metadata[", StringComparison.Ordinal)).ToDictionary(item => item.Key[9..^1], item => item.Value.ToString()), form["success_url"].ToString()));
@@ -832,11 +850,21 @@ sealed class TestStripeTransport : HttpMessageHandler
         else if (request.Method == HttpMethod.Get && path.StartsWith("/v1/subscriptions/", StringComparison.Ordinal))
             value = subscriptions[path[("/v1/subscriptions/".Length)..]];
         else if (request.Method == HttpMethod.Post && path == "/v1/billing_portal/sessions")
+        {
+            ObserveReturn("return_url", form["return_url"].ToString());
             value = new { id = "bps_demo", @object = "billing_portal.session", url = origin + "/__test/portal" };
+        }
         else throw new HttpRequestException("Unsupported Stripe test request: " + request.Method + " " + path);
         return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(value), System.Text.Encoding.UTF8, "application/json") };
     }
     public void SetOrigin(string value) => origin = value;
+    private void ObserveReturn(string field, string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != "https" || uri.Host != "dash.terrascale.tech" ||
+            uri.Port != 443 || uri.UserInfo.Length > 0 || uri.Fragment.Length > 0)
+            throw new HttpRequestException("The Stripe fixture requires the canonical dashboard return origin.");
+        ReturnUrls.Enqueue((field, value));
+    }
     public string Complete(string id)
     {
         var checkout = checkouts[id];
