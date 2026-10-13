@@ -421,9 +421,18 @@ internal sealed class TursoChangeTap : IWalTap
     private bool Truncate(SqliteSession writer)
     {
         using var command = writer.Connection.CreateCommand();
-        command.CommandText = SqliteStorageTransaction.Retention;
-        command.Parameters.AddWithValue("$below", _anchor);
-        command.Parameters.AddWithValue("$now", _time.GetUtcNow().ToUnixTimeSeconds());
+        if (_store.IsSystem)
+        {
+            command.CommandText = "DELETE FROM turso_cdc WHERE change_id < $anchor;";
+            command.Parameters.AddWithValue("$anchor", _anchor);
+        }
+        else
+        {
+            command.CommandText = SqliteStorageTransaction.Retention;
+            command.Parameters.AddWithValue("$below", _anchor);
+            command.Parameters.AddWithValue("$now", _time.GetUtcNow().ToUnixTimeSeconds());
+            command.Parameters.AddWithValue("$gone", _store.Member is { } member ? member.GoneBefore(_time.GetUtcNow().ToUnixTimeMilliseconds()) : long.MinValue);
+        }
 
         command.ExecuteNonQuery();
         return true;

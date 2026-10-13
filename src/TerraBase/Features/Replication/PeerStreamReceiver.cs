@@ -179,6 +179,17 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     continue;
                 }
 
+                if (frame.Frontier is { } frontier)
+                {
+                    var at = Tenant(frontier.Database);
+                    await _sink.RecordFrontierAsync(at, origin, new Hlc(frontier.Hlc), stream.Token).ConfigureAwait(false);
+                    await responseStream.WriteAsync(new AckFrame
+                    {
+                        Stable = new StableReport { Database = frontier.Database, Stable = (await _states.StableAsync(at, stream.Token).ConfigureAwait(false)).Value },
+                    }, stream.Token).ConfigureAwait(false);
+                    continue;
+                }
+
                 if (frame.Refill is { } refill)
                 {
                     // The sender no longer holds this machine's gap: join every bucket that differs from it, then go on from its head.
@@ -190,7 +201,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                         continue;
                     }
 
-                    refills[tenant] = (refill, RefillAsync(tenant, hello.Machine, stream.Token));
+                    refills[tenant] = (refill, RefillAsync(tenant, hello.Machine, new Hlc(refill.Horizon), stream.Token));
                     continue;
                 }
 
@@ -258,6 +269,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                         ChangeId = applied is null ? 0 : batch.LastChangeId,
                         Applied = applied?.Value ?? 0,
                         Refused = applied is null,
+                        Stable = applied is null ? 0 : (await _states.StableAsync(database, stream.Token).ConfigureAwait(false)).Value,
                     },
                 }, stream.Token).ConfigureAwait(false);
             }
@@ -334,7 +346,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     }
 
     // A refill that fails (the named machine unreachable, a deadline) refuses the database: the sender asks again later.
-    private async Task<int?> RefillAsync(TenantContext database, string machine, CancellationToken cancellationToken)
+    private async Task<int?> RefillAsync(TenantContext database, string machine, Hlc horizon, CancellationToken cancellationToken)
     {
         try
         {
@@ -350,7 +362,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 return null;
             }
 
-            return await _antiEntropy.RefillAsync(database, machine, cancellationToken).ConfigureAwait(false);
+            return await _antiEntropy.RefillAsync(database, machine, horizon, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {

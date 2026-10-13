@@ -24,4 +24,16 @@ public interface IReplicaStates
     /// </summary>
     ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)> ReadBucketsAsync(
         TenantContext database, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken);
+
+    /// <summary>This machine's stable stamp of the database (section 11), as its acks report it.</summary>
+    ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken);
+
+    /// <summary>This machine's GC horizon of the database: below it, every replica holds every event.</summary>
+    ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// A copying refill: forgets each of <paramref name="keys"/> whose state lies wholly below <paramref name="horizon"/>, the
+    /// horizon of a peer that no longer holds it. Returns how many went.
+    /// </summary>
+    ValueTask<int> ForgetAsync(TenantContext database, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken);
 }

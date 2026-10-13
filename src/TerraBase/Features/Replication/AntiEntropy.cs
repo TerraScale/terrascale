@@ -93,17 +93,19 @@ internal sealed class AntiEntropy : BackgroundService
     /// Returns the documents changed, or null when the refill certifies nothing: that machine is not listed or no longer
     /// holds the database, this one does not hold it, or a page was refused.
     /// </summary>
-    internal async Task<int?> RefillAsync(TenantContext database, string machine, CancellationToken cancellationToken)
+    internal async Task<int?> RefillAsync(TenantContext database, string machine, Hlc horizon, CancellationToken cancellationToken)
     {
         var peer = Peers(await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(member => member.Name == machine);
-        return peer is null ? null : await CompareAsync(database, peer, force: true, cancellationToken).ConfigureAwait(false);
+        return peer is null ? null : await CompareAsync(database, peer, force: true, cancellationToken, horizon).ConfigureAwait(false);
     }
 
     private List<ClusterMember> Peers(ClusterView view) =>
         [.. view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Where(member => member.Name != _membership.Self.Name && member.PeerAddress.Length > 0)];
 
     // Compares digests with the peer and joins the buckets to repair; null when this machine does not hold the database.
-    private async Task<int?> CompareAsync(TenantContext database, ClusterMember peer, bool force, CancellationToken cancellationToken)
+    // With a horizon (a refill), it copies: a local state of a repaired bucket that the peer lacks and that lies wholly below
+    // the peer's horizon was collected there (section 11), so it goes here too instead of coming back by a later round.
+    private async Task<int?> CompareAsync(TenantContext database, ClusterMember peer, bool force, CancellationToken cancellationToken, Hlc? horizon = null)
     {
         if (await _states.DigestAsync(database, cancellationToken).ConfigureAwait(false) is not { } ours)
         {
@@ -139,15 +141,32 @@ internal sealed class AntiEntropy : BackgroundService
         request.Buckets.AddRange(repair.Order().Select(bucket => (uint)bucket));
         using var call = client.ReadBucket(request, deadline: _time.GetUtcNow().UtcDateTime + ReadTimeout, cancellationToken: cancellationToken);
         var changed = 0;
+        var theirKeys = new HashSet<(string Collection, string Id)>();
         while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
         {
-            // A refused page (this machine stopped holding the database) leaves the buckets unrepaired.
-            if (await _sink.RepairAsync(database, Decode(database, call.ResponseStream.Current), cancellationToken).ConfigureAwait(false) is not { } repaired)
+            var states = Decode(database, call.ResponseStream.Current);
+            theirKeys.UnionWith(states.Select(state => (state.Collection, state.Id)));
+            if (await _sink.RepairAsync(database, states, cancellationToken).ConfigureAwait(false) is not { } repaired)
             {
                 return null;
             }
 
             changed += repaired;
+        }
+
+        if (horizon is { } collected)
+        {
+            // shortcut: keeps the peer's keys of every repaired bucket in memory; page the comparison per bucket for databases of millions of documents.
+            List<(string Collection, string Id)> lacking = [];
+            BucketCursor? after = null;
+            do
+            {
+                (var local, after) = await _states.ReadBucketsAsync(database, [.. repair], after, MaxPageStates, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
+                lacking.AddRange(local.Where(state => !theirKeys.Contains((state.Collection, state.Id)) && state.State.MaxStamp.Value < collected.Value)
+                    .Select(state => (state.Collection, state.Id)));
+            }
+            while (after is not null);
+            changed += await _states.ForgetAsync(database, lacking, collected, cancellationToken).ConfigureAwait(false);
         }
 
         _repairs.Add(changed, new KeyValuePair<string, object?>("peer_region", peer.Region));
