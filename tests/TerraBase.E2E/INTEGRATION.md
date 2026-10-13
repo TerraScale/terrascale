@@ -300,6 +300,20 @@ fixes. **The approval does not yet cover the whole head:**
 It merges as soon as #183's and #186's deltas are approved, or COS confirms the delta. All four are test-only changes;
 no product code is in the unreviewed part.
 
+**#175 MERGED (07:45Z)** at its exact head `78226ed0` → main **`5043c1de`**, with a **merge commit**. Push run 38363729043:
+deploy and preview skipped. Slow unverifiable.
+- **Check:** `test` run 38356650502 succeeded (TerraBase Fast 1433/1433, Turso 6/6).
+- **Approvals, covering the whole head:**
+  - `bc60dbf2` (#175 plus #166): comment 6138956593;
+  - #183 `95797cad`: comment 6140304911;
+  - #185 `8d2e19a1`: comment 6139387383;
+  - #186 `5252c120`: comment 6140668802.
+- **Merge integrity:** all three merge commits in `bc60dbf2..78226ed0` are clean (each tree equals a fresh merge of its
+  parents), and the only commits in the delta are the three approved ones. 0 open threads.
+- **GitHub marked #166, #183 and #185 MERGED,** since their heads are on main. #186 stays open: its branch moved to
+  `6212e389`, past the `5252c120` that #175 carries.
+- **Main's run on `5043c1de`:** pending. It must be green before the next merge (#165).
+
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
 **Outside the queue (COS, 03:30Z):** **#167** (`feat/postgres-turso-import-core`, `62f251f6`, one-time PostgreSQL and
