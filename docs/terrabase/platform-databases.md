@@ -43,6 +43,10 @@ region only.
 
 ## Who reaches them
 
+On the production Fly app `ts-terrabase`, code defaults to issuer `https://auth.terrascale.tech/terrascale` and audience
+`https://api.terrascale.tech` without auth settings. Missing settings cannot disable platform-token authentication;
+explicitly incompatible or partial issuer/audience settings are still refused.
+
 - The platform operator: TerraBase's internal listener (`http://top1.nearest.of.ts-terrabase.internal:8081`, HTTP/2
   prior knowledge, sending `X-TerraBase-Peer-Credential` from `TERRABASE_PEER_SECRET`). Verification outcomes are recorded; refusal is the following rollout phase. ts-auth stores here
   (`App.StorageProject`, `App.StorageDatabase`).
