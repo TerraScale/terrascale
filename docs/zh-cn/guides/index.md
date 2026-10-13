@@ -16,6 +16,7 @@ Use the [quickstart](/zh-cn/getting-started/) to establish one working applicati
 - [Queries and pagination](/zh-cn/guides/queries): filters, projection, cursors and version preconditions.
 - [Errors and safe retries](/zh-cn/guides/errors): typed failures and uncertain write outcomes.
 - [Dashboard usage](/zh-cn/guides/dashboard): customer account and database workflow.
+- [Import an existing database](/zh-cn/guides/import) (pending): one-time PostgreSQL or Turso import with dry-run preview and validation.
 
 The [zero-configuration contract](/zh-cn/guides/zero-configuration) explains the platform's intended operating behavior without disclosing deployment internals.
 

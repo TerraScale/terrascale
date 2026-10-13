@@ -16,6 +16,7 @@ Use the [quickstart](/pt-br/getting-started/) to establish one working applicati
 - [Queries and pagination](/pt-br/guides/queries): filters, projection, cursors and version preconditions.
 - [Errors and safe retries](/pt-br/guides/errors): typed failures and uncertain write outcomes.
 - [Dashboard usage](/pt-br/guides/dashboard): customer account and database workflow.
+- [Import an existing database](/pt-br/guides/import) (pending): one-time PostgreSQL or Turso import with dry-run preview and validation.
 
 The [zero-configuration contract](/pt-br/guides/zero-configuration) explains the platform's intended operating behavior without disclosing deployment internals.
 

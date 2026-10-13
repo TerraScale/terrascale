@@ -30,7 +30,7 @@ function titleOf(localePrefix: string, link: string): string {
 const GROUPS = [
   { header: 'quickstart', items: ['/getting-started/', '/getting-started/javascript', '/getting-started/csharp'] },
   { header: 'sdks', items: ['/guides/sdks', '/guides/authentication', '/guides/queries', '/guides/errors'] },
-  { header: 'guides', items: ['/guides/dashboard', ZERO_CONFIGURATION_ROUTE] },
+  { header: 'guides', items: ['/guides/dashboard', '/guides/import', '/guides/import-postgresql', '/guides/import-turso', ZERO_CONFIGURATION_ROUTE] },
   { header: 'concepts', items: ['/concepts/replication', '/concepts/sync', '/concepts/sql'] },
   { header: 'pricingLimits', items: ['/pricing/', '/limits', '/changelog'] },
 ]
