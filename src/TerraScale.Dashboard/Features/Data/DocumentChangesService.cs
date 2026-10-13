@@ -47,22 +47,25 @@ public sealed class DocumentChangesService(DatabaseService databases, IProjectAc
                 yield break;
             }
             var item = stream.Current;
-            checkpoint = item.Cursor ?? checkpoint;
+            var nextCheckpoint = item.Cursor ?? checkpoint;
             if (item.Change is not { } change)
             {
-                yield return new("cursor", checkpoint, Region: item.Region);
+                yield return new("cursor", nextCheckpoint, Region: item.Region);
+                checkpoint = nextCheckpoint;
                 continue;
             }
             if (change.Collection != collection) throw new HttpRequestException("The changes feed returned a foreign collection.");
             var identity = (change.Origin, change.Version, change.Collection, change.Id);
             if (!seen.Add(identity))
             {
-                yield return new("cursor", checkpoint, Region: item.Region);
+                yield return new("cursor", nextCheckpoint, Region: item.Region);
+                checkpoint = nextCheckpoint;
                 continue;
             }
             order.Enqueue(identity);
             if (order.Count > 1024) seen.Remove(order.Dequeue());
-            yield return new("change", checkpoint, change, item.Region);
+            yield return new("change", nextCheckpoint, change, item.Region);
+            checkpoint = nextCheckpoint;
         }
     }
 }
