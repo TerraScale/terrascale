@@ -550,9 +550,21 @@ public sealed class TsAuthPlatformJourneyTests
                     var projectId = Field("project_id");
                     var token = AddInvitation(organization.Id, Field("email"), Field("role"), caller.UserId, projectId.Length == 0 ? null : projectId);
                     var createdInvitation = organization.Invitations.Single(invitation => invitation.Token == token);
-                    return Json(new { invitation = new { id = createdInvitation.Id, email = createdInvitation.Email, role = createdInvitation.Role,
-                        project_id = createdInvitation.ProjectId, invited_by = createdInvitation.InvitedBy, created_at = createdInvitation.CreatedAt,
-                        expires_at = createdInvitation.ExpiresAt, status = createdInvitation.Status }, token }, HttpStatusCode.Created);
+                    return Json(new
+                    {
+                        invitation = new
+                        {
+                            id = createdInvitation.Id,
+                            email = createdInvitation.Email,
+                            role = createdInvitation.Role,
+                            project_id = createdInvitation.ProjectId,
+                            invited_by = createdInvitation.InvitedBy,
+                            created_at = createdInvitation.CreatedAt,
+                            expires_at = createdInvitation.ExpiresAt,
+                            status = createdInvitation.Status
+                        },
+                        token
+                    }, HttpStatusCode.Created);
                 case (["invitations", var invitationId], "DELETE"):
                     if (!admin) return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs admin.");
                     var revokedInvitation = organization.Invitations.SingleOrDefault(invitation => invitation.Id == invitationId);

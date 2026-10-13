@@ -33,13 +33,13 @@ public sealed class InvitationCapacityJourneyTests
     {
         await using var scenario = await CapacityScenario.StartAsync();
         scenario.Platform.Arm(1);
-        var stale = scenario.InviteAsync(1, "older-snapshot@example.test");
-        await scenario.Platform.Arrived[0].Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var stale = scenario.BeginInvite(1, "older-snapshot@example.test");
+        await scenario.Platform.Arrived[0].Task.WaitAsync(CapacityScenario.RequestBudget);
         scenario.Platform.LostResponseEmail = "committed-response-lost@example.test";
         using (var lost = await scenario.InviteAsync(0, scenario.Platform.LostResponseEmail))
             await Assert.That(lost.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         scenario.Platform.Release[0].TrySetResult();
-        using (var result = await stale) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        using (var result = await stale.WaitAsync(CapacityScenario.RequestBudget)) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(await scenario.PendingAsync()).IsEqualTo(4);
     }
 
@@ -106,15 +106,15 @@ public sealed class InvitationCapacityJourneyTests
         await scenario.RevokeAsync("existing-0@example.test");
         // The older request has read ts-auth's invitations and members and pauses before deciding.
         scenario.Platform.PauseMembersAfterNextInvitationRead();
-        var stale = scenario.InviteAsync(1, "older-read@example.test");
-        await scenario.Platform.MembersArrived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var stale = scenario.BeginInvite(1, "older-read@example.test");
+        await scenario.Platform.MembersArrived.Task.WaitAsync(CapacityScenario.RequestBudget);
         using (var accepted = await scenario.InviteAsync(0, "accepted-after-read@example.test"))
             await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await scenario.Platform.AcceptAsync(scenario.Platform.Tokens["accepted-after-read@example.test"]);
         using (var last = await scenario.InviteAsync(0, "last-slot@example.test"))
             await Assert.That(last.StatusCode).IsEqualTo(HttpStatusCode.OK);
         scenario.Platform.MembersRelease.TrySetResult();
-        using (var result = await stale) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        using (var result = await stale.WaitAsync(CapacityScenario.RequestBudget)) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(await scenario.OccupiedAsync()).IsEqualTo(5);
     }
 
@@ -166,13 +166,13 @@ public sealed class InvitationCapacityJourneyTests
             await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         scenario.Platform.DeferredEmail = "";
         scenario.Platform.PauseAfterCreateEmail = "retried@example.test";
-        var retry = scenario.InviteAsync(1, "retried@example.test");
-        await scenario.Platform.CreatedPaused.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var retry = scenario.BeginInvite(1, "retried@example.test");
+        await scenario.Platform.CreatedPaused.Task.WaitAsync(CapacityScenario.RequestBudget);
         await scenario.RevokeAsync("retried@example.test");
         using (var during = await scenario.InviteAsync(0, "during-retry@example.test"))
             await Assert.That(during.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("the last free slot");
         scenario.Platform.ContinueCreate.TrySetResult();
-        using (var result = await retry) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("the retry uses its email's slot");
+        using (var result = await retry.WaitAsync(CapacityScenario.RequestBudget)) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("the retry uses its email's slot");
         using (var afterRevoke = await scenario.InviteAsync(0, "after-revoke@example.test"))
             await Assert.That(afterRevoke.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because("the original may still commit");
         scenario.Platform.CommitDeferred.TrySetResult();
@@ -188,19 +188,19 @@ public sealed class InvitationCapacityJourneyTests
     {
         await using var scenario = await CapacityScenario.StartAsync(replicas: 3);
         scenario.Platform.Arm(3);
-        var stale = scenario.InviteAsync(2, "older-snapshot@example.test");
-        await scenario.Platform.Arrived[0].Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var first = scenario.InviteAsync(0, "same@example.test");
-        await scenario.Platform.Arrived[1].Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var second = scenario.InviteAsync(1, "same@example.test");
-        await scenario.Platform.Arrived[2].Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var stale = scenario.BeginInvite(2, "older-snapshot@example.test");
+        await scenario.Platform.Arrived[0].Task.WaitAsync(CapacityScenario.RequestBudget);
+        var first = scenario.BeginInvite(0, "same@example.test");
+        await scenario.Platform.Arrived[1].Task.WaitAsync(CapacityScenario.RequestBudget);
+        var second = scenario.BeginInvite(1, "same@example.test");
+        await scenario.Platform.Arrived[2].Task.WaitAsync(CapacityScenario.RequestBudget);
         scenario.Platform.Release[1].TrySetResult();
         scenario.Platform.Release[2].TrySetResult();
-        var pair = await Task.WhenAll(first, second);
+        var pair = await Task.WhenAll(first, second).WaitAsync(CapacityScenario.RequestBudget);
         try { await Assert.That(pair.Count(response => response.StatusCode == HttpStatusCode.OK)).IsEqualTo(1); }
         finally { foreach (var response in pair) response.Dispose(); }
         scenario.Platform.Release[0].TrySetResult();
-        using (var result = await stale) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        using (var result = await stale.WaitAsync(CapacityScenario.RequestBudget)) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(await scenario.PendingAsync()).IsEqualTo(4);
     }
 
@@ -209,13 +209,13 @@ public sealed class InvitationCapacityJourneyTests
     {
         await using var scenario = await CapacityScenario.StartAsync();
         scenario.Platform.Arm(1);
-        var stale = scenario.InviteAsync(1, "older-snapshot@example.test");
-        await scenario.Platform.Arrived[0].Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var stale = scenario.BeginInvite(1, "older-snapshot@example.test");
+        await scenario.Platform.Arrived[0].Task.WaitAsync(CapacityScenario.RequestBudget);
         using (var committed = await scenario.InviteAsync(0, "committed-before-expiry@example.test"))
             await Assert.That(committed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         scenario.Clock.Advance(TimeSpan.FromMinutes(20));
         scenario.Platform.Release[0].TrySetResult();
-        using (var result = await stale) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        using (var result = await stale.WaitAsync(CapacityScenario.RequestBudget)) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(await scenario.PendingAsync()).IsEqualTo(4);
     }
 
@@ -225,12 +225,12 @@ public sealed class InvitationCapacityJourneyTests
         await using var scenario = await CapacityScenario.StartAsync();
         var invitee = scenario.Pending[0];
         scenario.Platform.Arm(1);
-        var admitted = scenario.InviteAsync(1, "admitted@example.test");
-        await scenario.Platform.Arrived[0].Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var admitted = scenario.BeginInvite(1, "admitted@example.test");
+        await scenario.Platform.Arrived[0].Task.WaitAsync(CapacityScenario.RequestBudget);
         // The invitee becomes a member between the dashboard's invitation and member reads.
         await scenario.Platform.AcceptAsync(invitee);
         scenario.Platform.Release[0].TrySetResult();
-        using (var result = await admitted) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("the accepted invitee is one slot, not two");
+        using (var result = await admitted.WaitAsync(CapacityScenario.RequestBudget)) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("the accepted invitee is one slot, not two");
         using (var overflow = await scenario.InviteAsync(0, "overflow@example.test"))
             await Assert.That(overflow.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because("the accepted invitee is one slot, not zero");
     }
@@ -240,12 +240,15 @@ public sealed class InvitationCapacityJourneyTests
         private readonly DemoEnvironment environment = new();
         private readonly List<WebApplication> hosts = [];
         private readonly List<(HttpClient Client, string Csrf)> clients = [];
+        private readonly List<HttpClient> pausable = [];
         private SessionRecord owner = null!;
         private string organizationId = "";
         public ControlledPlatform Platform { get; private set; } = null!;
         public JourneyClock Clock { get; } = new();
         public JourneyClock OtherClock { get; } = new();
         public IReadOnlyList<string> Pending { get; private set; } = [];
+        // One budget per request; waiting for a request to reach its gate never gives up sooner than the request would.
+        public static readonly TimeSpan RequestBudget = TimeSpan.FromSeconds(20);
 
         public static async Task<CapacityScenario> StartAsync(int replicas = 2, bool separateClocks = false)
         {
@@ -271,10 +274,12 @@ public sealed class InvitationCapacityJourneyTests
                 // and the form token is the double-submit cookie, so setup stays three light requests at any replica count.
                 var cookies = new CookieContainer();
                 var clients = scenario.hosts.Select(host => new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = cookies })
-                { BaseAddress = new(host.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = TimeSpan.FromSeconds(20) }).ToArray();
+                { BaseAddress = new(host.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)), Timeout = RequestBudget }).ToArray();
                 using (var login = await HttpJourney.LoginAsync(clients[0])) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
                 var csrf = await HttpJourney.CsrfAsync(clients[0]);
                 scenario.clients.AddRange(clients.Select(client => (client, csrf)));
+                scenario.pausable.AddRange(clients.Select(client => new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = cookies })
+                { BaseAddress = client.BaseAddress, Timeout = Timeout.InfiniteTimeSpan }));
                 using var me = JsonDocument.Parse(await scenario.clients[0].Client.GetStringAsync("/api/v1/auth/me"));
                 scenario.organizationId = me.RootElement.GetProperty("organizationId").GetString()!;
                 scenario.owner = new("test-user", "Test User", "user@example.com", "", null, DateTimeOffset.UtcNow.AddHours(1));
@@ -293,6 +298,11 @@ public sealed class InvitationCapacityJourneyTests
         }
 
         public Task<HttpResponseMessage> InviteAsync(int replica, string email) => HttpJourney.PostFormAsync(clients[replica].Client,
+            "/api/v1/access/invitations?tab=invitations", new() { ["_csrf"] = clients[replica].Csrf, ["email"] = email, ["role"] = "member" });
+
+        // A request the journey pauses at a gate: the pause is the journey's, so the caller applies RequestBudget
+        // once it releases the gate (arrival at the gate is bounded by the same budget).
+        public Task<HttpResponseMessage> BeginInvite(int replica, string email) => HttpJourney.PostFormAsync(pausable[replica],
             "/api/v1/access/invitations?tab=invitations", new() { ["_csrf"] = clients[replica].Csrf, ["email"] = email, ["role"] = "member" });
 
         public async Task<int> PendingAsync() =>
@@ -323,6 +333,7 @@ public sealed class InvitationCapacityJourneyTests
         {
             if (Platform is not null) { foreach (var gate in Platform.Release) gate.TrySetResult(); Platform.CommitDeferred.TrySetResult(); Platform.ContinueCreate.TrySetResult(); Platform.MembersRelease.TrySetResult(); }
             foreach (var (client, _) in clients) client.Dispose();
+            foreach (var client in pausable) client.Dispose();
             foreach (var host in hosts) { await host.StopAsync(); await host.DisposeAsync(); }
         }
 
