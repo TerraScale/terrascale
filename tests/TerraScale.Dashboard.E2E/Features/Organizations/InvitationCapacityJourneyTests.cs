@@ -59,6 +59,107 @@ public sealed class InvitationCapacityJourneyTests
         await Assert.That(await scenario.PendingAsync()).IsEqualTo(4);
     }
 
+    // Round-3 review probes, verbatim: ts-auth has no idempotency key or cancellation for invitation creation,
+    // so neither elapsed time nor another replica's clock ends an unknown outcome.
+    [Test]
+    public async Task AnAmbiguousInvitationCannotCommitAfterExpiryAndReplacement()
+    {
+        await using var scenario = await CapacityScenario.StartAsync();
+        scenario.Platform.DeferredEmail = "late-original@example.test";
+        using (var failed = await scenario.InviteAsync(0, scenario.Platform.DeferredEmail))
+            await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        scenario.Clock.Advance(TimeSpan.FromMinutes(20));
+        using var replacement = await scenario.InviteAsync(1, "replacement@example.test");
+        scenario.Platform.CommitDeferred.TrySetResult();
+        await scenario.Platform.DeferredCommitted.WaitAsync(TimeSpan.FromSeconds(10));
+        var pending = await scenario.PendingAsync();
+        Console.WriteLine($"LATE-COMMIT replacement={(int)replacement.StatusCode}, pending={pending}, occupied={pending + 1}, limit=5");
+        await Assert.That(replacement.StatusCode).IsEqualTo(HttpStatusCode.Conflict)
+            .Because("elapsed time and an absent list entry do not terminate the original operation");
+        await Assert.That(pending).IsEqualTo(4);
+    }
+
+    [Test]
+    public async Task AReplicaClockCannotExpireAnotherReplicasAmbiguousOperation()
+    {
+        await using var scenario = await CapacityScenario.StartAsync(separateClocks: true);
+        scenario.Platform.DeferredEmail = "skewed-original@example.test";
+        using (var failed = await scenario.InviteAsync(0, scenario.Platform.DeferredEmail))
+            await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        scenario.OtherClock.Advance(TimeSpan.FromMinutes(16));
+        using var replacement = await scenario.InviteAsync(1, "skewed-replacement@example.test");
+        scenario.Platform.CommitDeferred.TrySetResult();
+        await scenario.Platform.DeferredCommitted.WaitAsync(TimeSpan.FromSeconds(10));
+        var pending = await scenario.PendingAsync();
+        Console.WriteLine($"CLOCK-SKEW replacement={(int)replacement.StatusCode}, pending={pending}, occupied={pending + 1}, real elapsed<15min");
+        await Assert.That(replacement.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(pending).IsEqualTo(4);
+    }
+
+    // Round-3 review probe, verbatim: an earlier accepted invitation for the same email is not this request's.
+    [Test]
+    public async Task AnOlderAcceptedInvitationIsNotProofThatTheNewOperationCommitted()
+    {
+        await using var scenario = await CapacityScenario.StartAsync();
+        await scenario.Platform.AcceptAsync(scenario.Pending[0]);
+        await scenario.RemoveDirectMemberAsync("existing-0@example.test");
+        await scenario.AddDirectInvitationAsync("restore-four-occupied@example.test");
+        scenario.Platform.DeferredEmail = "existing-0@example.test";
+        using (var failed = await scenario.InviteAsync(0, scenario.Platform.DeferredEmail))
+            await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        using var replacement = await scenario.InviteAsync(1, "while-reinviting@example.test");
+        scenario.Platform.CommitDeferred.TrySetResult();
+        await scenario.Platform.DeferredCommitted.WaitAsync(TimeSpan.FromSeconds(10));
+        var occupied = await scenario.OccupiedAsync();
+        Console.WriteLine($"OLDER-ACCEPTED replacement={(int)replacement.StatusCode}, occupied={occupied}, limit=5, no clock advance");
+        await Assert.That(replacement.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(occupied).IsEqualTo(5);
+    }
+
+    // ts-auth decides when an invitation expires; a replica clock ahead of it must not free pending slots.
+    [Test]
+    public async Task AReplicaClockCannotExpireTsAuthsPendingInvitations()
+    {
+        await using var scenario = await CapacityScenario.StartAsync(separateClocks: true);
+        using (var last = await scenario.InviteAsync(0, "last-slot@example.test"))
+            await Assert.That(last.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        // ts-auth lists every pending invitation as expiring in ten minutes; the second replica's clock is 16 ahead.
+        scenario.Platform.ListedExpiry = TimeSpan.FromMinutes(10);
+        scenario.OtherClock.Advance(TimeSpan.FromMinutes(16));
+        using (var skewed = await scenario.InviteAsync(1, "skewed-clock@example.test"))
+            await Assert.That(skewed.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because("ts-auth still lists the invitations as pending");
+        await Assert.That(await scenario.PendingAsync()).IsEqualTo(4);
+    }
+
+    // Recovery for an unknown outcome: the same email is invited again on the slot it already holds. Here the
+    // retry's invitation is revoked before the retry records its id, and another decision ends the original's
+    // reservation on that invitation; the retry's reservation then stands for the original, which may still commit.
+    [Test]
+    public async Task ARetryReusesTheUnknownSlotWhichOutlivesTheRetrysInvitation()
+    {
+        await using var scenario = await CapacityScenario.StartAsync();
+        scenario.Platform.DeferredEmail = "retried@example.test";
+        using (var failed = await scenario.InviteAsync(0, scenario.Platform.DeferredEmail))
+            await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        scenario.Platform.DeferredEmail = "";
+        scenario.Platform.PauseAfterCreateEmail = "retried@example.test";
+        var retry = scenario.InviteAsync(1, "retried@example.test");
+        await scenario.Platform.CreatedPaused.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await scenario.RevokeAsync("retried@example.test");
+        using (var during = await scenario.InviteAsync(0, "during-retry@example.test"))
+            await Assert.That(during.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        scenario.Platform.ContinueCreate.TrySetResult();
+        using (var result = await retry) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("the retry uses its email's slot");
+        using (var afterRevoke = await scenario.InviteAsync(0, "after-revoke@example.test"))
+            await Assert.That(afterRevoke.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because("the original may still commit");
+        scenario.Platform.CommitDeferred.TrySetResult();
+        await scenario.Platform.DeferredCommitted.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(scenario.Platform.DeferredRefused).IsFalse();
+        using (var overflow = await scenario.InviteAsync(1, "overflow@example.test"))
+            await Assert.That(overflow.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(await scenario.PendingAsync()).IsEqualTo(4);
+    }
+
     [Test]
     public async Task ADuplicateEmailLoserNeverFreesTheWinnersSlot()
     {
@@ -120,9 +221,10 @@ public sealed class InvitationCapacityJourneyTests
         private string organizationId = "";
         public ControlledPlatform Platform { get; private set; } = null!;
         public JourneyClock Clock { get; } = new();
+        public JourneyClock OtherClock { get; } = new();
         public IReadOnlyList<string> Pending { get; private set; } = [];
 
-        public static async Task<CapacityScenario> StartAsync(int replicas = 2)
+        public static async Task<CapacityScenario> StartAsync(int replicas = 2, bool separateClocks = false)
         {
             var scenario = new CapacityScenario();
             try
@@ -137,7 +239,7 @@ public sealed class InvitationCapacityJourneyTests
                         state ??= (IDashboardState)builder.Services.Last(service => service.ServiceType == typeof(IDashboardState)).ImplementationInstance!;
                         scenario.Platform ??= new(inner);
                         builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform>(scenario.Platform));
-                        builder.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(scenario.Clock));
+                        builder.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(separateClocks && index == 1 ? scenario.OtherClock : scenario.Clock));
                     });
                     scenario.hosts.Add(host);
                     await host.StartAsync();
@@ -172,9 +274,30 @@ public sealed class InvitationCapacityJourneyTests
         public async Task<int> PendingAsync() =>
             (await Platform.ListInvitationsAsync(owner, organizationId, default)).Count(invitation => invitation.Status == "pending");
 
+        public Task AddDirectInvitationAsync(string email) => Platform.CreateInvitationAsync(owner, organizationId, email, "member", default);
+
+        public async Task RemoveDirectMemberAsync(string email)
+        {
+            var members = await Platform.ListMembersAsync(owner, organizationId, default);
+            await Platform.RemoveMemberAsync(owner, organizationId, members.Single(member => member.Email == email).UserId, default);
+        }
+
+        public async Task<int> OccupiedAsync()
+        {
+            var members = await Platform.ListMembersAsync(owner, organizationId, default);
+            var invitations = await Platform.ListInvitationsAsync(owner, organizationId, default);
+            return members.Select(member => member.Email).Union(invitations.Where(invitation => invitation.Status == "pending").Select(invitation => invitation.Email), StringComparer.OrdinalIgnoreCase).Count();
+        }
+
+        public async Task RevokeAsync(string email)
+        {
+            var invitation = (await Platform.ListInvitationsAsync(owner, organizationId, default)).Single(invitation => invitation.Email == email && invitation.Status == "pending");
+            await Platform.RevokeInvitationAsync(owner, organizationId, invitation.Id, default);
+        }
+
         public async ValueTask DisposeAsync()
         {
-            if (Platform is not null) { foreach (var gate in Platform.Release) gate.TrySetResult(); Platform.CommitDeferred.TrySetResult(); }
+            if (Platform is not null) { foreach (var gate in Platform.Release) gate.TrySetResult(); Platform.CommitDeferred.TrySetResult(); Platform.ContinueCreate.TrySetResult(); }
             foreach (var (client, _) in clients) client.Dispose();
             foreach (var host in hosts) { await host.StopAsync(); await host.DisposeAsync(); }
         }
@@ -195,8 +318,8 @@ public sealed class InvitationCapacityJourneyTests
         public void Advance(TimeSpan delta) => Interlocked.Add(ref offset, delta.Ticks);
     }
 
-    // The in-memory ts-auth platform with gates after invitation-list reads and a response that
-    // is lost after ts-auth committed the invitation.
+    // The in-memory ts-auth platform with gates after invitation-list reads and after a committed invitation,
+    // a response lost after ts-auth committed, and a commit deferred past the dashboard's failure.
     private sealed class ControlledPlatform(ITsAuthPlatform inner) : ITsAuthPlatform
     {
         private int reads;
@@ -206,6 +329,11 @@ public sealed class InvitationCapacityJourneyTests
         public string DeferredEmail { get; set; } = "";
         public TaskCompletionSource CommitDeferred { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task DeferredCommitted { get; private set; } = Task.CompletedTask;
+        public bool DeferredRefused { get; private set; }
+        public TimeSpan? ListedExpiry { get; set; }
+        public string PauseAfterCreateEmail { get; set; } = "";
+        public TaskCompletionSource CreatedPaused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ContinueCreate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public void Arm(int count)
         {
@@ -226,18 +354,24 @@ public sealed class InvitationCapacityJourneyTests
             var result = await inner.ListInvitationsAsync(session, organizationId, cancellationToken);
             var index = Interlocked.Increment(ref reads) - 1;
             if (index < Arrived.Length) { Arrived[index].TrySetResult(); await Release[index].Task.WaitAsync(cancellationToken); }
-            return result;
+            return ListedExpiry is { } expiry ? [.. result.Select(invitation => invitation with { ExpiresAt = DateTimeOffset.UtcNow + expiry })] : result;
         }
 
         public async Task<TerraScaleAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, CancellationToken cancellationToken)
         {
             if (email == DeferredEmail)
             {
-                DeferredCommitted = Task.Run(async () => { await CommitDeferred.Task; await inner.CreateInvitationAsync(session, organizationId, email, role, default); });
+                DeferredCommitted = Task.Run(async () =>
+                {
+                    await CommitDeferred.Task;
+                    try { await inner.CreateInvitationAsync(session, organizationId, email, role, default); }
+                    catch (AccountAccessException) { DeferredRefused = true; }
+                });
                 throw new HttpRequestException("Synthetic timeout before ts-auth committed the invitation.");
             }
             var created = await inner.CreateInvitationAsync(session, organizationId, email, role, cancellationToken);
             if (email == LostResponseEmail) throw new HttpRequestException("Synthetic response loss after ts-auth committed the invitation.");
+            if (email == PauseAfterCreateEmail) { CreatedPaused.TrySetResult(); await ContinueCreate.Task.WaitAsync(cancellationToken); }
             return created;
         }
 
