@@ -34,6 +34,22 @@ Under design C a write answers after one local commit, with `synchronous = NORMA
 - **Remote durable copy of a write.** A machine whose region differs from the accepting machine's, and whose region the
   database's placement includes, acknowledged a change id at or above the write's.
 
+## Four barriers, audited separately (main at `e30ffdc2`)
+
+The contract needs **two independently durable regional copies** before a success answer. Four barriers stand between a
+write and that answer. They are distinct code paths, and each one needs its own proof. A setting proven on one path says
+nothing about another.
+
+| # | Barrier | Code at `e30ffdc2` | State | Fault-test evidence |
+| --- | --- | --- | --- | --- |
+| B1 | **Origin commit and fsync**: the accepting machine's client-database write transaction | Client stores are built without `SyncsEveryCommit` (`Engine/Sqlite/SqliteStorageEngine.cs:1416`; only `_system` sets it, `:776`). So `durable \|= write && SyncsEveryCommit` stays false (`Engine/Sqlite/SqliteDatabaseStore.cs:250`), and the session runs `PRAGMA synchronous = NORMAL` (`Engine/Sqlite/SqliteSession.cs:96`). | **Not synced at commit (audit finding).** A power loss of the origin can lose a write it answered. | None yet. A planned origin power-loss test (a write answered `2xx` must be present after the power loss) is expected to **fail** on `e30ffdc2`. Delivery 2 fixes it, with that test and a mutation back to `NORMAL`. |
+| B2 | **Remote apply commit and fsync**: the receiver's join of a change group | `Features/Replication/StorageChangeGroupSink.cs:36` (apply) and `:66` (repair) use `BeginDurableTransactionAsync` (`Engine/Sqlite/SqliteDatabaseStore.cs:237`). That sets `synchronous = FULL` before `BEGIN` (`:286`). The ack follows `ApplyAsync` (`Features/Replication/PeerStreamReceiver.cs:125-141`). | Configured to sync before the ack. **Configuration is not proof.** | Pending: `ReplicatedApplyPowerLossTests` (H4 shim, power loss after the ack) and the ack-before-fsync mutant, branch `fix/r6-remote-ack-after-fsync` `5711210c`. |
+| B3 | **Backup shipping**: continuous backup to the bucket | `Features/Backup/ContinuousBackup.cs:57` and `:317`: a 1 s timer ships each file's new frames after the commit, off the request path. | Gates no answer, and is **not counted** as one of the two regional copies. It ships what the origin's file holds, so it cannot be more durable than B1 for frames it has not shipped yet. | Covered by the backup suite, outside this contract. A successful point-in-time restore of a non-empty database is an acceptance item (below). |
+| B4 | **Client-success release**: the HTTP answer | `Features/Documents/DocumentService.cs:363` commits through `store.WriteAsync` and returns at `:412`. `Features/Documents/DocumentRoute.cs:277` then answers with `durability = "local_durable"` (`:58`). | The answer is released right after the local commit (B1, under `NORMAL`), and **nothing waits for B2**. | Step 2 moves the release after B1 (synced) **and** B2 (an ack from another placed region). The success-before-remote-ack mutant must fail its tests. |
+
+A success answer is allowed only once B1 and B2 both hold for the write's change group, each proven by its own fault
+test at the same SHA as the code it covers. B3 is never a prerequisite, and never a substitute.
+
 ## Decision
 
 ### Step 1: the receiver acks only a remote durable commit
