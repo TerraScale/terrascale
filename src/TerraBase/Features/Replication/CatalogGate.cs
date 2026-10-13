@@ -287,7 +287,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
             // Known not restored (its anchor holds): pulls from trusted machines that make a majority with this one are enough,
             // so one region's hard stop never keeps another region's restarted machine closed. Without that proof, every one.
             var machines = listed.Select(peer => peer.Name).Union(recorded, StringComparer.Ordinal).Count(name => name != _options.MachineId) + 1;
-            var majority = _anchorHeld && _restored == false && _verified.Count > 0 && (_verified.Count + 1) * 2 > machines;
+            var majority = _anchorHeld && _restored == false && (_verified.Count + 1) * 2 > machines;
             // A fresh file cannot revive old security state; destroyed historical members need not vouch for it.
             var freshPull = _fresh && _restored == false && listed.Count > 0 && listed.All(peer => _verified.Contains(peer.Name));
             if ((Pending.IsEmpty && (_verified.Count > 0 || (_directory is null && !_anchorMissing))) || majority || freshPull)

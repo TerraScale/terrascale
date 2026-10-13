@@ -120,11 +120,14 @@ public sealed class RestoreDrillTests
     }
 
     [Test]
-    public async Task A_current_catalog_reopens_from_its_own_anchor_without_an_operator()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_current_catalog_reopens_from_its_own_anchor_without_an_operator(bool directoryBacked)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var directory = Directory.CreateTempSubdirectory("terrabase-current-catalog-").FullName;
         var s3 = new FakeS3();
+        var members = new FakeMemberStore();
         try
         {
             await using (var api = await ManagementApi.StartAsync(settings =>
@@ -135,9 +138,13 @@ public sealed class RestoreDrillTests
             {
                 s3.Route(services);
                 ManualBackupHosting.Configure(services);
+                if (directoryBacked)
+                {
+                    services.AddSingleton<IMemberDirectory>(members);
+                }
             }))
             {
-                await api.CreateManagedDatabaseAsync();
+                await api.CreateOrganizationAsync("restart-control");
                 await Assert.That(await api.Server.Services.GetRequiredService<ICatalogGate>().TryAnchorAsync(token)).IsTrue();
             }
 
@@ -149,6 +156,10 @@ public sealed class RestoreDrillTests
             {
                 s3.Route(services);
                 ManualBackupHosting.Configure(services);
+                if (directoryBacked)
+                {
+                    services.AddSingleton<IMemberDirectory>(members);
+                }
             });
             var gate = reopened.Services.GetRequiredService<ICatalogGate>();
             await Assert.That(gate.IsOpen).IsTrue();
