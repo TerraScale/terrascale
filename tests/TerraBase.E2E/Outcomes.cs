@@ -37,7 +37,7 @@ internal static class Outcomes
         {
             TestState.Passed => marked.Category is not null ? marked : scenario?.Nodes == Nodes.Harness ? ("harness", "") : ("pass", ""),
             TestState.Skipped => ("skip", context.Execution.SkipReason ?? ""),
-            var state => ("fail", $"{state}: {context.Execution.Result?.Exception?.Message}"),
+            var state => ("fail", $"{state}: {context.Execution.Result?.Exception?.Message}" + (marked.Detail is null ? "" : "\n" + marked.Detail)),
         };
         var line = JsonSerializer.Serialize(new Dictionary<string, string>
         {

@@ -53,9 +53,12 @@ FROM build-auth AS test-auth
 RUN make -o restore auth-test-fast CONFIGURATION=Release && touch /passed
 
 FROM restored AS build-terrabase
+# The commit /healthz reports as revision (MSBuild reads it from the environment); the image has no .git.
+ARG TERRABASE_REVISION
 RUN make -o restore fmt-check terrabase-check CONFIGURATION=Release
 
 FROM build-terrabase AS test-terrabase
+ARG TERRABASE_REVISION
 RUN make -o restore terrabase-test-fast CONFIGURATION=Release && touch /passed
 
 # All three areas (BuildKit runs them in parallel): `make docker-test`.
@@ -81,6 +84,8 @@ FROM mcr.microsoft.com/dotnet/sdk:11.0 AS publish-terrabase
 ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 NUGET_SCRATCH=/nuget-scratch
 WORKDIR /src/terrascale
 COPY . .
+# Shown by TerraBase's /healthz as revision.
+ARG TERRABASE_REVISION
 RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
     dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --output /out
 

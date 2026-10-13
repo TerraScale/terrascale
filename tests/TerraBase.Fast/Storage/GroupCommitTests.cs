@@ -272,13 +272,16 @@ public sealed class GroupCommitTests
     public async Task A_read_its_work_budget_stops_inside_a_batch_is_too_expensive_and_the_writer_keeps_working()
     {
         await using var api = await DocumentApi.StartAsync();
-        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "pro");
+        // Fixture writes need no commercial byte scans; only the stopped read tests Pro's work budget.
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         foreach (var _ in Enumerable.Range(0, 4))
         {
             var creates = Enumerable.Range(0, 1000)
                 .Select(object (_) => new { op = "create", collection = DocumentApi.Collection, document = new { n = 1 } }).ToArray();
             await Assert.That((await api.TransactAsync(creates)).Status).IsEqualTo(HttpStatusCode.OK);
         }
+
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "pro");
 
         // 248 conditions on 4000 documents cost more engine work than Pro's budget, though no document matches. Stopping
         // the read makes Turso roll the whole batch transaction back, its savepoints included.

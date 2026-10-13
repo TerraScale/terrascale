@@ -35,9 +35,11 @@ Each test creates its own `e2e-<guid>` collection in the shared database and del
 nice -n 19 make terrabase-e2e-fly-outage
 ```
 
-Stops the single `sjc` machine of `TERRABASE_E2E_FLY_APP` (default `ts-terrabase`), writes through `gru`, starts `sjc`
-and waits for it to catch up. It needs `flyctl` logged in. It runs alone because it stops a machine the other tests use.
-Without `TERRABASE_E2E_FLY_URL` and `TERRABASE_E2E_FLY_OUTAGE=1` it is reported as skipped.
+Stops the single `sjc` machine of a pinned disposable app, writes through `gru`, starts `sjc` and waits for it to catch
+up. It needs `flyctl` logged in. It runs alone because it stops a machine the other tests use. It never targets
+production: without `TERRABASE_E2E_FLY_URL`, `TERRABASE_E2E_FLY_REVISION` and `TERRABASE_E2E_FLY_OUTAGE=1` it is reported
+as skipped, and `TERRABASE_E2E_FLY_APP` must name the disposable app (no default; production and preview apps are refused,
+see `e2e-disposable-app.md`).
 
 ## Expected failure
 

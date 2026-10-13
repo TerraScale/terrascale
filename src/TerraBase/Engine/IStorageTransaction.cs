@@ -175,6 +175,26 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken);
 
     /// <summary>
+    /// A client database's changes feed after <paramref name="cursor"/> (docs/terrabase/multi-region-replication.md section
+    /// 14): per origin, the events with a stamp above the cursor's, an origin the cursor lacks from the start of retention.
+    /// At most about <paramref name="maxEvents"/> events and <paramref name="maxBytes"/> of documents: a page never ends
+    /// inside one (origin, stamp). Only events of <paramref name="collections"/> when given; the others still advance
+    /// <see cref="FeedPage.Scanned"/>.
+    /// </summary>
+    ValueTask<FeedPage> ReadFeedAsync(
+        IReadOnlyDictionary<ReplicaId, Hlc> cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken);
+
+    /// <summary>The cursor at the feed's head: per origin, the highest stamp in the feed.</summary>
+    ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes feed events with a stamp below <paramref name="before"/>, at most <paramref name="limit"/>, and raises each
+    /// origin's floor to the highest stamp it deleted. Uncaptured: a restore keeps more history, never less. Returns how many
+    /// it deleted.
+    /// </summary>
+    ValueTask<int> TrimFeedAsync(Hlc before, int limit, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Lists live documents with ids after <paramref name="afterId"/> in id order: at most
     /// <paramref name="limit"/> documents and, beyond the first, at most <paramref name="maxBytes"/>
     /// of JSON in total. A page cut short by either bound reports <see cref="DocumentPage.HasMore"/>.

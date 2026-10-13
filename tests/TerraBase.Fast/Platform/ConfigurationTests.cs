@@ -41,6 +41,47 @@ public sealed class ConfigurationTests
     }
 
     [Test]
+    public async Task Production_trusts_only_the_one_platform_issuer_and_audience_ts_auth_issues_in_every_region()
+    {
+        const string ChildFlag = "TERRABASE_TEST_AUTH_PAIR_CHILD";
+        if (Environment.GetEnvironmentVariable(ChildFlag) != "1")
+        {
+            // The FLY_* variables are process-wide: only a process that runs this test alone may set them.
+            await IsolatedTestChild.RunAsync(typeof(ConfigurationTests), nameof(Production_trusts_only_the_one_platform_issuer_and_audience_ts_auth_issues_in_every_region), ChildFlag);
+            return;
+        }
+
+        static Dictionary<string, string> Auth(string issuer, string audience)
+        {
+            return new() { ["auth-issuer"] = issuer, ["auth-audience"] = audience };
+        }
+
+        Environment.SetEnvironmentVariable("FLY_REGION", "sjc");
+        Environment.SetEnvironmentVariable("FLY_MACHINE_ID", "d894655b3ed118");
+        Environment.SetEnvironmentVariable("FLY_APP_NAME", "ts-terrabase");
+
+        // ts-auth's issuer and TerraBase's audience have no region: the same token is accepted in gru, sjc and fra.
+        var production = TerraBaseOptions.FromValues(Auth(TerraBaseOptions.PlatformAuthIssuer, TerraBaseOptions.PlatformAuthAudience));
+        await Assert.That((production.AuthIssuer, production.AuthAudiences.Single())).IsEqualTo(("https://auth.terrascale.tech/terrascale", "https://api.terrascale.tech"));
+        await Assert.That(TerraBaseOptions.FromValues(new Dictionary<string, string>()).AuthIssuer).IsNull();
+        foreach (var (issuer, audience) in new[]
+        {
+            ("https://gru.auth.terrascale.tech/terrascale", TerraBaseOptions.PlatformAuthAudience),
+            ("https://auth.terrascale.tech", TerraBaseOptions.PlatformAuthAudience),
+            (TerraBaseOptions.PlatformAuthIssuer, "https://gru.api.terrascale.tech"),
+        })
+        {
+            var refused = await Assert.That(() => TerraBaseOptions.FromValues(Auth(issuer, audience))).Throws<TerraBaseConfigurationException>();
+            await Assert.That(refused!.Message).Contains("auth-issuer must be https://auth.terrascale.tech/terrascale");
+        }
+
+        // A preview runs its own ts-auth under its own origin.
+        Environment.SetEnvironmentVariable("FLY_APP_NAME", "ts-pr-7");
+        var preview = TerraBaseOptions.FromValues(Auth("https://ts-pr-7.fly.dev/terrascale", "https://ts-pr-7.fly.dev:8443"));
+        await Assert.That(preview.AuthIssuer).IsEqualTo("https://ts-pr-7.fly.dev/terrascale");
+    }
+
+    [Test]
     public async Task Partial_backup_settings_name_a_missing_one()
     {
         var partialBackup = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["backup-bucket"] = "gru-1-backup" }))

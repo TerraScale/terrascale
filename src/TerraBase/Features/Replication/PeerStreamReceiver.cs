@@ -18,6 +18,8 @@ namespace TerraBase.Features.Replication;
 internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 {
     private readonly IChangeGroupSink _sink;
+    private readonly IReplicaStates _states;
+    private readonly AntiEntropy _antiEntropy;
     private readonly LocalReplica _self;
     private readonly TimeProvider _time;
     private readonly ConcurrentDictionary<ReplicaId, CancellationTokenSource> _streams = new();
@@ -25,9 +27,12 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private readonly Histogram<double> _delay;
     private readonly IHostApplicationLifetime _lifetime;
 
-    public PeerStreamReceiver(IChangeGroupSink sink, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime)
+    public PeerStreamReceiver(
+        IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime)
     {
         _sink = sink;
+        _states = states;
+        _antiEntropy = antiEntropy;
         _lifetime = lifetime;
         _self = self;
         _time = time;
@@ -72,6 +77,22 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 var frame = requestStream.Current;
                 if (frame.KindCase == PushFrame.KindOneofCase.Heartbeat)
                 {
+                    continue;
+                }
+
+                if (frame.Refill is { } refill)
+                {
+                    // The sender no longer holds this machine's gap: join every bucket that differs from it, then go on from its head.
+                    var refilled = await _antiEntropy.RefillAsync(Tenant(refill.Database), hello.Machine, stream.Token).ConfigureAwait(false);
+                    if (refilled is not null)
+                    {
+                        last[Tenant(refill.Database)] = refill.ChangeId;
+                    }
+
+                    await responseStream.WriteAsync(new AckFrame
+                    {
+                        Ack = new Ack { Database = refill.Database, ChangeId = refilled is null ? 0 : refill.ChangeId, Refused = refilled is null },
+                    }, stream.Token).ConfigureAwait(false);
                     continue;
                 }
 
@@ -127,6 +148,53 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         finally
         {
             _ = _streams.TryRemove(new KeyValuePair<ReplicaId, CancellationTokenSource>(origin, stream));
+        }
+    }
+
+    public override async Task<DigestReply> Digest(DigestRequest request, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(context);
+        var digests = await _states.DigestAsync(Tenant(request.Database), context.CancellationToken).ConfigureAwait(false);
+        return digests is null
+            ? new DigestReply { Held = false }
+            : new DigestReply { Held = true, Buckets = Google.Protobuf.UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(digests)) };
+    }
+
+    public override async Task ReadBucket(BucketRequest request, IServerStreamWriter<StatePage> responseStream, ServerCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(responseStream);
+        ArgumentNullException.ThrowIfNull(context);
+        var database = Tenant(request.Database);
+        if (request.Buckets.Count is 0 or > 4096 || request.Buckets.Any(bucket => bucket >= 4096))
+        {
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "a bucket read names 1 to 4096 buckets, each 0 to 4095"));
+        }
+
+        var buckets = request.Buckets.Select(bucket => (int)bucket).ToList();
+        BucketCursor? after = null;
+        do
+        {
+            (var states, after) = await _states.ReadBucketsAsync(database, buckets, after, ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, context.CancellationToken)
+                .ConfigureAwait(false);
+            if (states.Count > 0)
+            {
+                await responseStream.WriteAsync(AntiEntropy.Encode(states), context.CancellationToken).ConfigureAwait(false);
+            }
+        }
+        while (after is not null);
+    }
+
+    private static TenantContext Tenant(V1.Database? database)
+    {
+        try
+        {
+            return ChangeGroups.Tenant(database);
+        }
+        catch (InvalidDataException error)
+        {
+            throw new RpcException(new Status(StatusCode.InvalidArgument, error.Message));
         }
     }
 

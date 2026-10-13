@@ -144,6 +144,8 @@ jobs:
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
           target: test-${{ github.job }}
+          # TerraBase's tests check that /healthz reports the exact commit (unused by the other areas' stages).
+          build-args: TERRABASE_REVISION=${{ github.sha }}
           # The build stage is reused for identical inputs; the tests always run on the current head.
           no-cache-filters: test-${{ github.job }}
           push: false
@@ -311,6 +313,7 @@ jobs:
           tags: registry.fly.io/${{ env.APP }}:terrabase-${{ github.sha }}
           cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=preview-terrabase' || '' }}
           cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=preview-terrabase' || '' }}
+          build-args: TERRABASE_REVISION=${{ github.sha }}
           push: true
       - uses: docker/build-push-action@v6
         with:
@@ -372,6 +375,7 @@ jobs:
           tags: registry.fly.io/ts-terrabase:${{ github.sha }}
           cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=deploy-terrabase' || '' }}
           cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=deploy-terrabase' || '' }}
+          build-args: TERRABASE_REVISION=${{ github.sha }}
           push: true
       # Fast must cover the exact tree being deployed (AGENTS.md): instant for a rebased, squash-merged pull request.
       - name: Wait for Fast on this tree
