@@ -17,11 +17,14 @@ Only legacy SET-only version comments active in every declared family are accept
 conditional data and ambiguous gates reject. Default literals are fingerprinted, with
 fixed metadata/report budgets; published output uses private file/directory permissions.
 
-Validation: 121/121 low-priority parallel synthetic CLI checks passed with an independent COPY
+Validation: 127/127 low-priority parallel synthetic CLI checks passed with an independent COPY
 decoder, golden output, byte-identical reruns, read-only source checks, malformed
 inputs, precision/NULL/binary/timezone/identifier boundaries, chunked Unicode records
 and extended INSERT statements over 1 MiB. Regression checks cover conditional
 SQL comments, metadata budgets, default fingerprints and private output permissions.
+Foreign-key/index name reuse is tested for both MySQL and MariaDB. Reused names on
+retained constraints become unnamed output constraints, with original/output names
+recorded in the report, avoiding PostgreSQL namespace collisions.
 `git diff --check` passed; no service/core integration or repository-wide .NET checks ran.
 
 Compatibility/storage/security: only tools/import-adapters/mysql changes. No core

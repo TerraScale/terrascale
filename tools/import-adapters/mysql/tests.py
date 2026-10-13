@@ -198,6 +198,26 @@ def metadata_limit():
     exercise(text, expected_code="metadata_too_large")
 
 
+def foreign_index_name(flavor):
+    text = PREFIX + "CREATE TABLE t (id bigint NOT NULL, parent_id bigint, PRIMARY KEY (id), KEY fk_parent (parent_id), CONSTRAINT fk_parent FOREIGN KEY (parent_id) REFERENCES t (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4; INSERT INTO t (id,parent_id) VALUES (1,NULL),(2,1);"
+    def check(root, source, destination, artifact, report):
+        assert copy_tables(artifact)["t"] == [["1", None], ["2", "1"]]
+        assert report["skippedIndexes"] == 1
+        assert 'ADD CONSTRAINT "fk_parent" FOREIGN KEY' in artifact.decode()
+    exercise(text, check=check, flavor=flavor)
+
+
+def foreign_unique_name():
+    text = PREFIX + "CREATE TABLE t (id bigint NOT NULL, parent_id bigint, PRIMARY KEY (id), UNIQUE KEY same_name (parent_id), CONSTRAINT same_name FOREIGN KEY (parent_id) REFERENCES t (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
+    def check(root, source, destination, artifact, report):
+        constraints = report["tables"][0]["constraints"][1:]
+        assert all(c["name"] == "same_name" and c["outputName"] is None for c in constraints)
+        assert 'ADD UNIQUE ("parent_id");' in artifact.decode()
+        assert 'ADD FOREIGN KEY ("parent_id")' in artifact.decode()
+        assert "same_name" not in artifact.decode()
+    exercise(text, check=check)
+
+
 def cases():
     fixture = (HERE / "fixtures/synthetic.sql").read_bytes()
     result = [("synthetic-" + flavor, lambda f=flavor: exercise(fixture, check=check_fixture, flavor=f)) for flavor in (
@@ -273,6 +293,9 @@ def cases():
         ("binary-key", PREFIX + "CREATE TABLE t (id blob, PRIMARY KEY (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;", "unsupported_primary_key"),
         ("duplicate-schema-column", dump("(1,'x')").replace("`v` text", "`ID` text"), "duplicate_column"),
         ("prefix-index", dump("(1,'x')").replace("PRIMARY KEY (`id`)", "PRIMARY KEY (`id`), UNIQUE KEY u (`v`(2))"), "unsupported_definition"),
+        ("duplicate-index-name", dump("(1,'x')").replace("PRIMARY KEY (`id`)", "PRIMARY KEY (`id`), KEY same_name (`id`), KEY same_name (`v`)"), "duplicate_constraint_name"),
+        ("unique-index-namespace", dump("(1,'x')").replace("PRIMARY KEY (`id`)", "PRIMARY KEY (`id`), UNIQUE KEY same_name (`id`), KEY same_name (`v`)"), "duplicate_constraint_name"),
+        ("duplicate-foreign-name", dump("(1,'x')").replace("PRIMARY KEY (`id`)", "PRIMARY KEY (`id`), CONSTRAINT same_name FOREIGN KEY (`id`) REFERENCES t (`id`), CONSTRAINT same_name FOREIGN KEY (`id`) REFERENCES t (`id`)"), "duplicate_constraint_name"),
         ("unknown-fk", dump("(1,'x')").replace("PRIMARY KEY (`id`)", "PRIMARY KEY (`id`), FOREIGN KEY (`id`) REFERENCES missing (`id`)"), "unknown_foreign_key_target"),
         ("collection-collision", PREFIX + SCHEMA.format(type="text") + SCHEMA.format(type="text").replace("`t`", "`T`"), "collection_name_collision"),
         ("reserved-table", dump("(1,'x')").replace("`t`", "`sqlite_custom`"), "reserved_collection_name"),
@@ -317,6 +340,9 @@ def cases():
         ("no-backslash-content", lambda: exercise(dump("(1,'a\\b''c')", prefix=PREFIX.replace("NO_AUTO_VALUE_ON_ZERO", "NO_BACKSLASH_ESCAPES")), check=check_value("a\\b'c"))),
         ("maria-sandbox", lambda: exercise("/*M!999999\\- enable the sandbox mode */\n" + dump("(1,'x')"), flavor="mariadb-11.4")),
         ("large-default-metadata", default_metadata), ("aggregate-metadata-limit", metadata_limit),
+        ("foreign-index-name-mysql", lambda: foreign_index_name("mysql-8.4")),
+        ("foreign-index-name-maria", lambda: foreign_index_name("mariadb-11.4")),
+        ("foreign-unique-output-names", foreign_unique_name),
     ])
     return result
 

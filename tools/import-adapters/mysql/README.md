@@ -183,6 +183,11 @@ indexes, AUTO_INCREMENT or ON UPDATE behavior. Primary/unique/foreign constraint
 NOT NULL are emitted as core metadata; ordinary indexes and other recognized
 attributes appear only in the report. Collation, type-specific comparison behavior,
 CHAR padding removed by the exporter, and original MySQL database namespace are lost.
+Foreign keys may share names with their supporting indexes. If a UNIQUE/PRIMARY
+constraint and foreign key reuse a name across MySQL namespaces, both constraints
+are emitted without names to avoid invalid PostgreSQL constraint-name collisions;
+original names stay in the report, alongside each constraint's `outputName` (null
+for omitted names/indexes).
 The operator must review those warnings and the future core preview separately.
 
 Fixed bounds: source and output each **1 GiB**, 1000 tables, 1600 columns/table, a

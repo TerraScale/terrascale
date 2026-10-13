@@ -544,8 +544,14 @@ def parse_table(tokens):
     table = Table(name, collection_name(name), columns, constraints, options)
     for constraint in constraints:
         require(all(n in names for n in constraint["columns"]), "unknown_key_column")
-    constraint_names = [c["name"].casefold() for c in constraints if c["name"] is not None]
-    require(len(set(constraint_names)) == len(constraint_names), "duplicate_constraint_name")
+    for kinds in (("primary", "unique", "index"), ("foreign",)):
+        names_in_scope = [c["name"].casefold() for c in constraints if c["kind"] in kinds and c["name"] is not None]
+        require(len(set(names_in_scope)) == len(names_in_scope), "duplicate_constraint_name")
+    emitted_names = [c["name"].casefold() for c in constraints if c["kind"] != "index" and c["name"] is not None]
+    for constraint in constraints:
+        name = constraint["name"]
+        # PostgreSQL has one constraint namespace; keep reused MySQL names in the report.
+        constraint["outputName"] = name if constraint["kind"] != "index" and name and emitted_names.count(name.casefold()) == 1 else None
     for key in table.primary_key:
         column = next(c for c in columns if c.name == key)
         # MySQL primary keys imply NOT NULL even if the column omitted that spelling.
@@ -829,7 +835,7 @@ class Adapter:
                         self.skipped_indexes += 1
                         continue
                     columns = ", ".join(quoted(n) for n in constraint["columns"])
-                    name = "CONSTRAINT " + quoted(constraint["name"]) + " " if constraint["name"] else ""
+                    name = "CONSTRAINT " + quoted(constraint["outputName"]) + " " if constraint["outputName"] else ""
                     if kind == "primary":
                         clause = f"PRIMARY KEY ({columns})"
                     elif kind == "unique":
@@ -851,7 +857,7 @@ class Adapter:
                 "Constraints are metadata only in TerraBase; collation and comparison semantics are lost.",
                 "Unsigned BIGINT becomes a digit string; DECIMAL becomes an exact decimal string; TINYINT(1) remains an integer.",
                 "ENUM/SET become strings; TIME remains text; DATETIME has no timezone; TIMESTAMP is UTC.",
-                "Defaults, auto-increment, ON UPDATE, indexes and MySQL table options are not applied.",
+                "Defaults, auto-increment, ON UPDATE, indexes and MySQL table options are not applied; reused constraint names remain only in the report.",
                 "Counts prove conversion of this file, not completeness or consistency of its source snapshot.",
             ],
         }
