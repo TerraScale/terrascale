@@ -12,7 +12,7 @@ using TerraScale.Dashboard.Features.Auth;
 // Test-only producer protocol. Real dashboard HTTP endpoints, reporting
 // adapters, SDK retention requests and persisted CAS writes remain in use.
 sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Func<string, (string UserId, string Email)?> resolveToken, HttpMessageHandler stripe,
-    Func<string, (string UserId, string OrganizationId, string ProjectId)?> resolveProjectToken) : HttpMessageHandler
+    Func<string, (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)?> resolveProjectToken, TestAuthApiKeys apiKeys) : HttpMessageHandler
 {
     private readonly HttpMessageInvoker vendor = new(stripe, false);
     private readonly ConcurrentDictionary<string, string> scenarios = new();
@@ -68,6 +68,7 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
         cancellationToken.ThrowIfCancellationRequested();
         var uri = request.RequestUri!;
         if (uri.Host == "api.stripe.com") return await vendor.SendAsync(request, cancellationToken);
+        if (uri.Host == "auth.terrascale.tech") return await apiKeys.SendAsync(request, cancellationToken);
         if (uri.Host is not ("api.terrascale.tech" or "gru.api.terrascale.tech") || request.Headers.Authorization is not { Scheme: "Bearer", Parameter: { } token }) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
         var sessionActor = resolveToken(token);
         var scopedActor = resolveProjectToken(token);
@@ -87,7 +88,10 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
             if (org is null || project?.OrganizationId != org.Id || orgId.Length > 0 && orgId != org.Id) return Json(new { error = "not_found" }, HttpStatusCode.NotFound);
         }
         else org = state.Items.GetValueOrDefault(AccountService.OrganizationsCollection + "/" + orgId)?.Document.Deserialize<OrganizationRecord>();
-        var isScopedReporting = segments.Last() is "analytics" or "replication";
+        // TerraBase canonical usage (I2 GetUsageAsync) reads with an exchanged databases:read project token.
+        var isCanonicalUsage = segments is ["v1", "projects", _, "usage"] or ["v1", "projects", _, "databases", _, "usage"];
+        if (isCanonicalUsage && scopedActor?.Scopes.Contains("databases:read") != true) return Json(new { error = new { code = "forbidden_scope", message = "databases:read is required" } }, HttpStatusCode.Forbidden);
+        var isScopedReporting = segments.Last() is "analytics" or "replication" || isCanonicalUsage;
         var actorUserId = sessionActor?.UserId ?? scopedActor!.Value.UserId;
         if (isScopedReporting && (sessionActor is not null || scopedActor is null || scopedActor.Value.ProjectId != id || scopedActor.Value.OrganizationId != org?.Id) ||
             !isScopedReporting && sessionActor is null) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
@@ -114,6 +118,7 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
         if (scenario == "unauthorized") return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
         if (scenario == "oversized") return new(HttpStatusCode.OK) { Content = new StringContent(new string('x', 65537)) };
         var query = QueryHelpers.ParseQuery(uri.Query);
+        if (isCanonicalUsage) return CanonicalUsage(project, segments, query, scenario);
         if (segments.Last() == "usage") return Usage(project, segments, query, scenario);
         if (segments.Last() is not ("analytics" or "replication")) throw new HttpRequestException("Unknown reporting fixture contract.");
         var databaseId = query.GetValueOrDefault("database").ToString();
@@ -198,6 +203,39 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
             items = child || databaseId.Length > 0 ? Array.Empty<object>() : rows.Select(database => Reading(database.Id, 1, true)).ToArray()
         };
         return Json(Reading(databaseId, factor, false));
+    }
+    // I2 contracts/terrabase project-usage.json and database-usage.json: totals equal their items, period equals its series,
+    // {database} is the name and from/to are rounded to UTC buckets.
+    private static HttpResponseMessage CanonicalUsage(ProjectRecord project, string[] segments, Dictionary<string, Microsoft.Extensions.Primitives.StringValues> query, string scenario)
+    {
+        var databaseName = segments.Length == 6 ? segments[4] : "";
+        var selected = project.Databases.Values.Where(database => databaseName.Length == 0 || database.Name == databaseName).Select(database => database.Id).ToArray();
+        if (databaseName.Length > 0 && selected.Length != 1) return Json(new { error = new { code = "not_found", message = "database not found" } }, HttpStatusCode.NotFound);
+        var granularity = query.GetValueOrDefault("granularity").ToString() is { Length: > 0 } requested ? requested : "hour";
+        if (granularity is not ("hour" or "day") || !query.ContainsKey("from") || !query.ContainsKey("to"))
+            return Json(new { error = new { code = "invalid_query", message = "granularity is hour or day; from and to are required here" } }, HttpStatusCode.BadRequest);
+        var step = granularity == "day" ? TimeSpan.TicksPerDay : TimeSpan.TicksPerHour;
+        var from = new DateTimeOffset(DateTimeOffset.Parse(query["from"].ToString(), CultureInfo.InvariantCulture).UtcTicks / step * step, TimeSpan.Zero);
+        var to = new DateTimeOffset((DateTimeOffset.Parse(query["to"].ToString(), CultureInfo.InvariantCulture).UtcTicks + step - 1) / step * step, TimeSpan.Zero);
+        var buckets = (int)((to - from).Ticks / step);
+        var reads = scenario == "negative" ? -1 : scenario == "overflow" ? long.MaxValue : scenario == "zero" ? 0 : 12;
+        var writes = scenario == "zero" ? 0L : 7L;
+        object? Period(long r, long w) => scenario == "no-period" ? null : new { from, to, granularity, reads = r, writes = w };
+        object[] Series(long r, long w) => Enumerable.Range(0, buckets).Select(index => (object)new { start = from.AddTicks(step * index), reads = index == 0 ? r : 0, writes = index == 0 ? w : 0 }).ToArray();
+        object Database(string id, bool child) => new
+        {
+            databaseId = scenario == "foreign-database" ? "foreign" : id, storageBytes = 8192L, logicalBytes = 4096L, collections = 1L, documents = 2L,
+            reads, writes, period = Period(reads, writes), series = child ? Array.Empty<object>() : Series(reads, writes)
+        };
+        if (databaseName.Length > 0) return Json(Database(selected[0], false));
+        var count = selected.Length;
+        var total = unchecked(reads * count);
+        return Json(new
+        {
+            projectId = scenario == "foreign-project" ? "foreign-project" : project.Id, databases = count, storageBytes = 8192L * count,
+            logicalBytes = 4096L * count, documents = 2L * count, reads = total, writes = writes * count, period = Period(total, writes * count),
+            series = Series(total, writes * count), items = selected.Select(id => Database(id, true)).ToArray()
+        });
     }
     private static HttpResponseMessage Json(object value, HttpStatusCode status = HttpStatusCode.OK) => new(status) { Content = new StringContent(JsonSerializer.Serialize(value), new MediaTypeHeaderValue("application/json")) };
     private static string RegionId(string code) => code switch { "GRU" => "gru", "SFO" => "sfo", _ => code };

@@ -42,6 +42,7 @@ public sealed class DemoEnvironment
     private readonly TestBillingPlanTransport billingPlans;
     private readonly TestBillingCheckoutPersistence checkoutPersistence;
     private readonly TestReportingTransport reporting;
+    private readonly TestAuthApiKeys apiKeys;
 
     public DemoEnvironment()
     {
@@ -49,10 +50,12 @@ public sealed class DemoEnvironment
         organizationAccess = new TestOrganizationAccess(workspace);
         billingPlans = new TestBillingPlanTransport(stripe);
         checkoutPersistence = new TestBillingCheckoutPersistence(state);
-        reporting = new TestReportingTransport(state, workspace, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken);
+        apiKeys = new TestAuthApiKeys(auth.ResolveAccessToken, workspace.ProjectRole);
+        reporting = new TestReportingTransport(state, workspace, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken, apiKeys);
     }
 
     internal TestWorkspace Workspace => workspace;
+    internal TestAuthApiKeys ApiKeys => apiKeys;
 
     public async Task InitializeAsync()
     {
@@ -159,7 +162,8 @@ sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, 
     private readonly ConcurrentDictionary<string, byte> consumedRefresh = new();
     private readonly ConcurrentDictionary<string, byte> revokedFamilies = new();
     private readonly ConcurrentDictionary<string, byte> revoked = new();
-    private readonly ConcurrentDictionary<string, (string SessionToken, string OrganizationId, string ProjectId)> projectTokens = new();
+    private readonly ConcurrentDictionary<string, (string SessionToken, string OrganizationId, string ProjectId, string[] Scopes)> projectTokens = new();
+    private static readonly string[] ProjectScopes = ["databases:read", "databases:write", "documents:read", "documents:write"];
     public bool Active { get; set; } = true;
     public Exception? RevokeError { get; set; }
     public int SignIns { get; private set; }
@@ -178,18 +182,21 @@ sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, 
         if (fixturePrincipals.TryGetValue(email, out var principal)) return (principal.Subject, principal.Email);
         return (email == "user@example.com" ? "test-user" : "test-signup-" + email, email);
     }
-    public Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken)
+    // The RFC 8693 exchange grants exactly the requested action scopes; a token outlives nothing its sign-in lost.
+    public Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, IReadOnlyList<string> scopes, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (ResolveAccessToken(session.AccessToken) is not { } actor || actor.UserId != session.UserId)
             throw new HttpRequestException("Test project authority requires a live sign-in.");
+        if (scopes.Count == 0 || scopes.Any(scope => !ProjectScopes.Contains(scope)) || scopes.Distinct(StringComparer.Ordinal).Count() != scopes.Count)
+            throw new HttpRequestException("Test project authority grants only distinct databases:* and documents:* scopes.");
         var token = "test-project-access-" + Guid.NewGuid().ToString("N");
-        projectTokens[token] = (session.AccessToken, organizationId, projectId);
+        projectTokens[token] = (session.AccessToken, organizationId, projectId, scopes.ToArray());
         return Task.FromResult(token);
     }
-    public (string UserId, string OrganizationId, string ProjectId)? ResolveProjectToken(string token) =>
+    public (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)? ResolveProjectToken(string token) =>
         projectTokens.TryGetValue(token, out var grant) && ResolveAccessToken(grant.SessionToken) is { } actor
-            ? (actor.UserId, grant.OrganizationId, grant.ProjectId) : null;
+            ? (actor.UserId, grant.OrganizationId, grant.ProjectId, grant.Scopes) : null;
     public Task<SessionRecord> PasswordAsync(string email, string password, string ip, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(ip)) throw new ArgumentException("Test password provider requires client address.");
@@ -317,18 +324,26 @@ sealed class TestWorkspace : IWorkspaceGateway
 {
     public object Gate { get; } = new();
     public Dictionary<string, OrganizationRecord> Organizations { get; } = [];
+    // ts-auth issues canonical ULIDs, which the official SDK validates before any request.
+    private readonly TerraScale.DotNet.TerraScaleIdGenerator ids = new();
+    private readonly Dictionary<string, string> personal = [];
     public string ScopedRole(string userId, string organizationId)
     {
         lock (Gate) return Organizations.GetValueOrDefault(organizationId)?.Members.GetValueOrDefault(userId)?.Role ?? "";
+    }
+    public string ProjectRole(string userId, string organizationId, string projectId)
+    {
+        lock (Gate) return Organizations.GetValueOrDefault(organizationId)?.Projects.ContainsKey(projectId) == true ? ScopedRole(userId, organizationId) : "";
     }
     public static OrganizationRecord Clone(OrganizationRecord value) => JsonSerializer.Deserialize<OrganizationRecord>(JsonSerializer.Serialize(value))!;
     public Task<OrganizationRecord> EnsurePersonalAsync(SessionRecord session, CancellationToken cancellationToken)
     {
         lock (Gate)
         {
-            var id = "test-org-" + AccountService.AccountId(session.UserId)[..16];
-            if (Organizations.TryGetValue(id, out var existing)) return Task.FromResult(Clone(existing));
-            var projectId = "test-project-" + AccountService.AccountId(session.UserId)[..16];
+            if (personal.TryGetValue(session.UserId, out var known) && Organizations.TryGetValue(known, out var existing)) return Task.FromResult(Clone(existing));
+            var id = ids.NewId();
+            var projectId = ids.NewId();
+            personal[session.UserId] = id;
             var org = new OrganizationRecord { Id = id, Name = "Personal", Slug = "personal", OwnerUserId = session.UserId, CreatedAt = DateTimeOffset.UtcNow };
             org.Members[session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = org.CreatedAt };
             org.Projects[projectId] = new() { Id = projectId, OrganizationId = id, Name = "Personal", Slug = "personal", Region = "GRU", Regions = ["GRU"], IsDefault = true, CreatedAt = DateTimeOffset.UtcNow };
@@ -340,7 +355,7 @@ sealed class TestWorkspace : IWorkspaceGateway
     {
         lock (Gate)
         {
-            var org = new OrganizationRecord { Id = Guid.CreateVersion7().ToString(), Name = name, Slug = AccountService.Slug(name), OwnerUserId = session.UserId, CreatedAt = DateTimeOffset.UtcNow };
+            var org = new OrganizationRecord { Id = ids.NewId(), Name = name, Slug = AccountService.Slug(name), OwnerUserId = session.UserId, CreatedAt = DateTimeOffset.UtcNow };
             org.Members[session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = org.CreatedAt };
             Organizations[org.Id] = org;
             return Task.FromResult(Clone(org));
@@ -353,7 +368,7 @@ sealed class TestWorkspace : IWorkspaceGateway
             var org = Get(organizationId);
             if (ScopedRole(session.UserId, organizationId) is not ("owner" or "admin" or "member")) throw new AccountAccessException("Project provisioning is forbidden.");
             if (org.Projects.Values.Any(project => project.Name == name)) throw new AccountAccessException("A project with that name already exists.", 409);
-            var project = new ProjectRecord { Id = Guid.CreateVersion7().ToString(), OrganizationId = organizationId, Name = name, Slug = AccountService.Slug(name), CreatedAt = DateTimeOffset.UtcNow };
+            var project = new ProjectRecord { Id = ids.NewId(), OrganizationId = organizationId, Name = name, Slug = AccountService.Slug(name), CreatedAt = DateTimeOffset.UtcNow };
             org.Projects[project.Id] = project;
             return Task.FromResult(Clone(new() { Projects = new() { [project.Id] = project } }).Projects[project.Id]);
         }
@@ -378,8 +393,7 @@ sealed class TestMeasurements : IHomeMeasurements
 sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
 {
     private readonly ConcurrentDictionary<string, ManagedDatabase> databases = new();
-    private readonly ConcurrentDictionary<string, ProjectCredential> credentials = new();
-    private readonly ConcurrentDictionary<string, string> credentialRegions = new();
+    private readonly TerraScale.DotNet.TerraScaleIdGenerator ids = new();
     private readonly ConcurrentDictionary<string, DatabaseIndex> indexes = new();
     private static readonly IReadOnlyList<DatabaseRegion> regions = [new("GRU", "gru", "São Paulo", "br", new("https://gru.api.terrascale.tech"), true), new("SFO", "sfo", "San Francisco", "us", new("https://sfo.api.terrascale.tech"), true)];
     public void SeedFixtureDatabase(ManagedDatabase database)
@@ -389,14 +403,13 @@ sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
             !databases.TryAdd(database.Id, database)) throw new InvalidDataException("Invalid or duplicate fixture database.");
     }
     public Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken) => Task.FromResult(regions);
-    public Task RegisterAsync(DatabaseScope scope, DatabaseRegion region, CancellationToken cancellationToken) => Task.CompletedTask;
     public Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ManagedDatabase>>(databases.Values.Where(item => item.ProjectId == scope.ProjectId).ToArray());
     public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, CancellationToken cancellationToken)
-    { var value = new ManagedDatabase(Guid.CreateVersion7().ToString(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: placement[0].Id, ReplicaRegions: placement.Skip(1).Select(item => item.Id).ToArray()); databases[value.Id] = value; return Task.FromResult(value); }
+    { var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: placement[0].Id, ReplicaRegions: placement.Skip(1).Select(item => item.Id).ToArray()); databases[value.Id] = value; return Task.FromResult(value); }
     public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
     {
         var source = Database(scope, databaseId);
-        var value = new ManagedDatabase(Guid.CreateVersion7().ToString(), scope.ProjectId, name, DateTimeOffset.UtcNow, databaseId, home.Id, []);
+        var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, databaseId, home.Id, []);
         documents.CopyDatabase(scope, source.Name, value.Name);
         foreach (var index in indexes.Where(item => item.Key.StartsWith(databaseId + "/", StringComparison.Ordinal)).Select(item => item.Value).ToArray()) indexes[value.Id + "/" + index.Name] = index;
         databases[value.Id] = value;
@@ -423,14 +436,6 @@ sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
     }
     public Task DropIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
     { Database(scope, databaseId); indexes.TryRemove(databaseId + "/" + name, out _); return Task.CompletedTask; }
-    public Task<IReadOnlyList<ProjectCredential>> CredentialsAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ProjectCredential>>(credentials.Values.Where(item => item.ProjectId == scope.ProjectId && credentialRegions.GetValueOrDefault(item.Id) == home.Id).ToArray());
-    public Task<CreatedProjectCredential> CreateCredentialAsync(DatabaseScope scope, DatabaseRegion home, string name, IReadOnlyList<string> scopes, string? databaseId, CancellationToken cancellationToken)
-    { var secret = "tb_" + Guid.NewGuid().ToString("N"); var key = new ProjectCredential(Guid.CreateVersion7().ToString(), scope.ProjectId, name, scopes, databaseId, secret[^4..], DateTimeOffset.UtcNow); credentialRegions[key.Id] = home.Id; credentials[key.Id] = key; return Task.FromResult(new CreatedProjectCredential(key, secret)); }
-    public Task RevokeCredentialAsync(DatabaseScope scope, DatabaseRegion home, string keyId, CancellationToken cancellationToken)
-    {
-        if (!credentials.TryGetValue(keyId, out var key) || key.ProjectId != scope.ProjectId || credentialRegions.GetValueOrDefault(keyId) != home.Id) throw new HttpRequestException("Test credential missing.", null, HttpStatusCode.NotFound);
-        credentials.TryRemove(keyId, out _); credentialRegions.TryRemove(keyId, out _); return Task.CompletedTask;
-    }
     private ManagedDatabase Database(DatabaseScope scope, string id) => databases.TryGetValue(id, out var database) && database.ProjectId == scope.ProjectId ? database : throw new HttpRequestException("Test database missing.", null, HttpStatusCode.NotFound);
 }
 
