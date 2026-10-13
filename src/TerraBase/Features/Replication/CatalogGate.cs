@@ -5,6 +5,7 @@ using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -40,14 +41,16 @@ public interface ICatalogGate
 
     /// <summary>
     /// Records the catalog's head in the restore anchor now (when it moved and the machine has a backup bucket), so a change
-    /// about to be acknowledged cannot be lost to a restore unnoticed. Throws when the anchor cannot be written.
+    /// about to be acknowledged cannot be lost to a restore unnoticed. False when the anchor could not be written within
+    /// <see cref="CatalogGate.AnchorTimeout"/>: the change is committed here and replicates, but is not acknowledged
+    /// (<see cref="CatalogGate.AnchorUnavailable"/>).
     /// </summary>
-    Task AnchorAsync(CancellationToken cancellationToken);
+    Task<bool> TryAnchorAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>
 /// Endpoint metadata: a request a restore could undo to a tenant's harm (a revocation, a removal, a deletion of catalog
-/// state). Its success is anchored before it is acknowledged (<see cref="ICatalogGate.AnchorAsync"/>); decided on the routed
+/// state). Its success is anchored before it is acknowledged (<see cref="ICatalogGate.TryAnchorAsync"/>); decided on the routed
 /// endpoint, so a rewritten or aliased path cannot skip it. Tenant data routes never carry it.
 /// </summary>
 public sealed class AnchoredRevocation
@@ -99,6 +102,13 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
 
     // How often an open machine moves its restore anchor to its catalog's head.
     private static readonly TimeSpan AnchorEvery = TimeSpan.FromSeconds(15);
+
+    /// <summary>The longest an anchor write may take, waiting for another one included: a revocation answers within it.</summary>
+    internal static readonly TimeSpan AnchorTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>A revocation whose anchor could not be written in time: committed here and replicating, not acknowledged.</summary>
+    internal static readonly Unavailable AnchorUnavailable = new(
+        "the change is committed on this machine and replicates, but its restore anchor could not be written in time; retry", "catalog_anchor_unavailable");
 
     // The first pass runs before the listeners start; past this, the machine starts closed and the passes go on.
     private static readonly TimeSpan StartBudget = TimeSpan.FromSeconds(5);
@@ -179,9 +189,14 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
         {
             _ = await VerifyAsync(budget.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
-            // Out of start budget: closed until a pass verifies it.
+            // Out of start budget (a pull it cancels throws RpcException, not OperationCanceledException) or a failed pass:
+            // the host starts either way, closed until a later pass verifies it.
+            if (!budget.IsCancellationRequested)
+            {
+                _logger.ZLogWarning(error, $"The catalog gate's first pass failed; this machine starts closed and tries again");
+            }
         }
 
         await base.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -547,12 +562,31 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
         }
     }
 
-    public async Task AnchorAsync(CancellationToken cancellationToken)
+    public async Task<bool> TryAnchorAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await AnchorAsync(cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.ZLogWarning(error, $"This machine's catalog anchor could not be written within {AnchorTimeout.TotalSeconds}s; a revocation is not acknowledged");
+            return false;
+        }
+    }
+
+    // Throws when the anchor cannot be written within AnchorTimeout.
+    private async Task AnchorAsync(CancellationToken cancellationToken)
     {
         if (_anchors is null)
         {
             return;
         }
+
+        using var deadline = new CancellationTokenSource(AnchorTimeout, _time);
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        cancellationToken = bounded.Token;
 
         // One writer at a time, and the head read inside: the anchor never moves back.
         await _anchoring.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -643,22 +677,47 @@ internal static class CatalogGateExtensions
     {
         ArgumentNullException.ThrowIfNull(app);
         var gate = app.Services.GetRequiredService<ICatalogGate>();
-        app.Use((context, next) =>
+        app.Use(async (context, next) =>
         {
-            if (gate.IsOpen && context.GetEndpoint()?.Metadata.GetMetadata<AnchoredRevocation>() is not null)
+            if (!gate.IsOpen && context.GetEndpoint() is { } endpoint
+                && endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAuthorizeData>() is not null
+                && endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAllowAnonymous>() is null)
             {
-                // A successful revocation, removal or deletion is anchored before it is acknowledged; when the anchor cannot be
-                // written the response fails instead (creations and tenant writes do not wait for the bucket).
-                context.Response.OnStarting(() => context.Response.StatusCode < StatusCodes.Status400BadRequest
-                    ? gate.AnchorAsync(context.RequestAborted)
-                    : Task.CompletedTask);
+                await Closed(context).ConfigureAwait(false);
+                return;
             }
 
-            return gate.IsOpen || context.GetEndpoint() is not { } endpoint
-                || endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAuthorizeData>() is null
-                || endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAllowAnonymous>() is not null
-                    ? next(context)
-                    : Closed(context);
+            if (!gate.IsOpen || context.GetEndpoint()?.Metadata.GetMetadata<AnchoredRevocation>() is null)
+            {
+                await next(context).ConfigureAwait(false);
+                return;
+            }
+
+            // A successful revocation, removal or deletion is anchored before it is acknowledged: its (small) response is held
+            // until the anchor is written, and replaced by 503 catalog_anchor_unavailable when it cannot be in time
+            // (creations and tenant writes do not wait for the bucket).
+            var body = context.Response.Body;
+            using var held = new MemoryStream();
+            context.Response.Body = held;
+            try
+            {
+                await next(context).ConfigureAwait(false);
+            }
+            finally
+            {
+                context.Response.Body = body;
+            }
+
+            if (context.Response.StatusCode < StatusCodes.Status400BadRequest && !await gate.TryAnchorAsync(context.RequestAborted).ConfigureAwait(false))
+            {
+                context.Response.Clear();
+                await BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, CatalogGate.AnchorUnavailable.Code,
+                    CatalogGate.AnchorUnavailable.Message, op: null).ConfigureAwait(false);
+                return;
+            }
+
+            held.Position = 0;
+            await held.CopyToAsync(body, context.RequestAborted).ConfigureAwait(false);
         });
         return app;
     }

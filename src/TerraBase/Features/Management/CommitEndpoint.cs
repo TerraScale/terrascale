@@ -188,9 +188,10 @@ public sealed class CommitEndpoint(
             case CommitOutcome outcome:
                 // A revocation, removal or deletion is anchored before it is acknowledged (CatalogGate); other commits, the
                 // dashboard's document writes among them, do not wait for the backup bucket.
-                if (commit.Operations.OfType<ManagementCommitOperation>().Any(op => RevokingOps.Contains(op.Request.Op ?? string.Empty)))
+                if (commit.Operations.OfType<ManagementCommitOperation>().Any(op => RevokingOps.Contains(op.Request.Op ?? string.Empty))
+                    && !await gate.TryAnchorAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    await gate.AnchorAsync(cancellationToken).ConfigureAwait(false);
+                    return ErrorResponse.From(CatalogGate.AnchorUnavailable);
                 }
 
                 return Respond(outcome);

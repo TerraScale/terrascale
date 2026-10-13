@@ -741,7 +741,7 @@ public sealed class CatalogLatticeTests
     }
 
     /// <summary>
-    /// When the backup bucket refuses the anchor, a revocation is not acknowledged (500; it is committed here and replicates,
+    /// When the backup bucket refuses the anchor, a revocation is not acknowledged (503 catalog_anchor_unavailable; it is committed here and replicates,
     /// and a retry is idempotent), and neither is a management commit carrying a deletion; a creation (it grants nothing if a
     /// restore loses it), a management commit without one, and every tenant write (documents, transactions) still are: the
     /// tenant path never waits for the bucket.
@@ -789,35 +789,35 @@ public sealed class CatalogLatticeTests
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, transfer, new { userId = first })).IsEqualTo(HttpStatusCode.Created);
         // The bucket refuses the anchor only, so each request below fails on its anchor and nothing else.
         cluster.Bucket!.FailPut = key => key.StartsWith("catalog-anchor/", StringComparison.Ordinal);
-        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{key}")).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{key}")).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         // Decided on the routed endpoint: the legacy management alias of the project API's database deletion is anchored too.
-        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/databases/{aliased}")).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/databases/{aliased}")).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         // Not only deletions: replacing the destination, removing a replica region and changing the plan revoke too.
-        await Assert.That(await gru.SendAsync(owner, HttpMethod.Put, $"{projectPath}/backup-destination", destination)).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Put, $"{projectPath}/backup-destination", destination)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Patch, $"{projectPath}/databases/{replicated}", new { replicaRegions = Array.Empty<string>() }))
-            .IsEqualTo(HttpStatusCode.InternalServerError);
+            .IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Put, $"/v1/management/organizations/{organization}/plan", new { plan = "hobby" }))
-            .IsEqualTo(HttpStatusCode.InternalServerError);
-        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/backup-destination")).IsEqualTo(HttpStatusCode.InternalServerError);
+            .IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/backup-destination")).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         var deletion = new { id = EntityIds.New().ToString(), ops = new object[] { new { op = "delete_database", organization, project, database = doomed } } };
         var narrowing = new
         {
             id = EntityIds.New().ToString(),
             ops = new object[] { new { op = "set_database_regions", organization, project, database = replicated, replica_regions = Array.Empty<string>() } },
         };
-        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", deletion)).IsEqualTo(HttpStatusCode.InternalServerError);
-        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", narrowing)).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", deletion)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", narrowing)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         // A new offer replaces the pending one: a restore losing it would bring the first member's offer back.
-        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, transfer, new { userId = second })).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, transfer, new { userId = second })).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         var offer = new { id = EntityIds.New().ToString(), ops = new object[] { new { op = "start_transfer", organization, user = first } } };
-        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", offer)).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", offer)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         // One revoking operation anchors the whole commit, whatever else it carries.
         var mixed = new
         {
             id = EntityIds.New().ToString(),
             ops = new object[] { new { op = "limit", organization, members = 100 }, new { op = "remove_member", organization, user = removed } },
         };
-        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", mixed)).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", mixed)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, $"/v1/management/organizations/{organization}/projects", new { name = "created" }))
             .IsEqualTo(HttpStatusCode.Created);
         var creation = new { id = EntityIds.New().ToString(), ops = new object[] { new { op = "create_database", organization, project, name = "more", id = EntityIds.New().ToString() } } };
@@ -830,6 +830,110 @@ public sealed class CatalogLatticeTests
         cluster.Bucket.FailPut = _ => false;
         var (another, _) = await gru.CreateKeyAsync(owner, projectPath);
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{another}")).IsEqualTo(HttpStatusCode.NoContent);
+    }
+
+    /// <summary>
+    /// A revocation never hangs on its anchor (COS, live run: a revocation on a CPU-throttled machine had no answer after 4
+    /// minutes): while the bucket takes the anchor write and never answers, the route and a management commit carrying a
+    /// revocation answer 503 <c>catalog_anchor_unavailable</c> within the anchor's time bound, and once the bucket answers
+    /// again a revocation is acknowledged.
+    /// </summary>
+    [Test]
+    public async Task A_revocation_whose_anchor_write_stalls_answers_503_within_the_bound_instead_of_hanging()
+    {
+        await using var cluster = await Cluster.StartWithAnchorsAsync("gru", "sjc");
+        var gru = cluster["gru"];
+        var owner = EntityIds.New().ToString();
+        var (organization, project, doomed) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(owner,
+            new { op = "create_organization", id = organization, name = "Stalled" },
+            new { op = "create_project", organization, id = project, name = "p" },
+            new { op = "create_database", organization, project, name = "doomed", id = doomed });
+        var projectPath = $"/v1/management/organizations/{organization}/projects/{project}";
+        var (key, _) = await gru.CreateKeyAsync(owner, projectPath);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        cluster.Bucket!.BeforePut = async (put, cancellationToken) =>
+        {
+            if (put.StartsWith("catalog-anchor/", StringComparison.Ordinal))
+            {
+                await release.Task.WaitAsync(cancellationToken);
+            }
+        };
+        try
+        {
+            using var service = gru.Api.Service(owner);
+            var deletion = new { id = EntityIds.New().ToString(), ops = new object[] { new { op = "delete_database", organization, project, database = doomed } } };
+            foreach (var request in new[]
+            {
+                new HttpRequestMessage(HttpMethod.Delete, ManagementApi.Uri($"{projectPath}/api-keys/{key}")),
+                new HttpRequestMessage(HttpMethod.Post, ManagementApi.Uri("/v1/management/commits")) { Content = JsonContent.Create(deletion) },
+            })
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                using (request)
+                using (var response = await service.SendAsync(request).WaitAsync(TimeSpan.FromSeconds(45)))
+                {
+                    await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(request.RequestUri!.ToString());
+                    var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+                    await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("catalog_anchor_unavailable");
+                }
+
+                await Assert.That(watch.Elapsed).IsLessThan(TimeSpan.FromSeconds(30)).Because(request.RequestUri!.ToString());
+            }
+        }
+        finally
+        {
+            release.TrySetResult();
+            cluster.Bucket.BeforePut = null;
+        }
+
+        var (another, _) = await gru.CreateKeyAsync(owner, projectPath);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{another}")).IsEqualTo(HttpStatusCode.NoContent);
+    }
+
+    /// <summary>
+    /// A peer that takes the connection and never answers stalls the gate's first pass past its start budget (COS, live run:
+    /// the cancelled pull threw RpcException, not OperationCanceledException, and the host aborted). The machine starts,
+    /// closed, keeps trying, and opens once the peer answers.
+    /// </summary>
+    [Test]
+    public async Task A_peer_that_stalls_past_the_start_budget_leaves_the_machine_started_and_closed_until_it_answers()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var stalled = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        stalled.Start();
+        var held = new System.Collections.Concurrent.ConcurrentBag<System.Net.Sockets.TcpClient>();
+        using var stop = new CancellationTokenSource();
+        var accepting = Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                held.Add(await stalled.AcceptTcpClientAsync(stop.Token));
+            }
+        });
+        try
+        {
+            var address = $"http://127.0.0.1:{((IPEndPoint)stalled.LocalEndpoint).Port}";
+            cluster.Members.Map = (node, other) => node == sjc.Machine && other.Name == gru.Machine ? other with { PeerAddress = address } : other;
+            await sjc.StopAsync();
+            await sjc.StartAsync();
+            await Assert.That(await sjc.IsOpenAsync()).IsFalse();
+            await Assert.That(await sjc.StatusAsync("/readyz")).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        }
+        finally
+        {
+            cluster.Members.Map = null;
+            await stop.CancelAsync();
+            stalled.Stop();
+            await Task.WhenAny(accepting);
+            foreach (var client in held)
+            {
+                client.Dispose();
+            }
+        }
+
+        await Assert.That(await sjc.UntilOpenAsync()).IsTrue();
     }
 
     /// <summary>
@@ -875,7 +979,7 @@ public sealed class CatalogLatticeTests
         await Assert.That(await gru.UntilAsync(Features.Management.Backups.ProjectBackupDestinations.Collection(project), "current", json => json is not null)).IsTrue();
         cluster.Bucket.FailPut = key => key.StartsWith("catalog-anchor/", StringComparison.Ordinal);
         release.SetResult();
-        await Assert.That(await racing).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await racing).IsEqualTo(HttpStatusCode.ServiceUnavailable);
     }
 
     /// <summary>

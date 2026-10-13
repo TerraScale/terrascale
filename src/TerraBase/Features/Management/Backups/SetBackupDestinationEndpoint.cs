@@ -54,9 +54,9 @@ public sealed class SetBackupDestinationEndpoint(IManagementService management, 
                 // Replacing a destination revokes the old one: a restore that lost the replacement would resume shipping to the
                 // bucket the customer replaced, so it is anchored before it is acknowledged (CatalogGate). A first destination
                 // revokes nothing.
-                if (saved.Replaced)
+                if (saved.Replaced && !await gate.TryAnchorAsync(cancellationToken))
                 {
-                    await gate.AnchorAsync(cancellationToken);
+                    return ErrorResponse.From(CatalogGate.AnchorUnavailable);
                 }
 
                 return TypedResults.Ok(saved.Destination);

@@ -89,7 +89,10 @@ version said a document a machine held is never missing; that holds only without
 - **The restore gate (`CatalogGate`, COS DECISION 2026-10-12: fail closed; tightened after R3's review of `3ffc2713`,
   #108 comment 6125965915).** Nothing on M can tell a restored file from a current one (a volume snapshot carries every
   local marker with it), so **every start is unverified**:
-  - **Closed** from the start. **Open** only once M has completed a forced anti-entropy pull of `_system` (every
+  - **Closed** from the start, and the start never fails on the gate: the first pass runs before the listeners within a
+    5 s budget, and when it runs out of it (a cancelled pull throws `RpcException`, not `OperationCanceledException`) or
+    fails, M starts closed and later passes keep trying (a peer that takes the connection and never answers costs a pass
+    at most its 30 s digest deadline). **Open** only once M has completed a forced anti-entropy pull of `_system` (every
     differing bucket, at once) since this start from:
     - every other machine the member directory lists as started (read successfully after this start), and
     - **every machine the catalog records** (`cluster_members`: each machine of a cluster records `{region}` under its
@@ -106,7 +109,7 @@ version said a document a machine held is never missing; that holds only without
     metadata `AnchoredRevocation`: `deleteOrganization`, `deleteProject`, `deleteDatabase` (the project API and its legacy
     management alias reach the same endpoint), `revokeProjectApiKey`, `removeMember`, `changeMemberRole`,
     `leaveOrganization`, `revokeInvitation`, `startOwnershipTransfer` (it replaces a pending offer: losing it would bring
-    the earlier nominee's offer back; every offer is anchored, so while the bucket is down even a first offer answers 500), `confirmOwnershipTransfer`, `cancelOwnershipTransfer`,
+    the earlier nominee's offer back; every offer is anchored, so while the bucket is down even a first offer answers 503), `confirmOwnershipTransfer`, `cancelOwnershipTransfer`,
     `deleteBackupDestination` (losing a removal would resume shipping to a bucket the customer removed), `setBackupPolicy`, `updateDatabase` (a replica region removed: losing it
     would make that region serve and hold the data again), `setOrganizationPlan` (a downgrade or suspension) and
     `deleteSavedQuery`. The gate middleware reads the **routed endpoint's** metadata (never the request path, which the
@@ -120,8 +123,10 @@ version said a document a machine held is never missing; that holds only without
     publication may be what is failing). Whether it replaces one is decided in the transaction that writes it: any stored
     record counts, only a definite absence is a first destination. That absence is this machine's: a destination set in
     another region that has not replicated here yet is replaced without an anchor (open, with the other DR gaps). When the
-    anchor cannot be written the
-    request answers 500 instead of acknowledging (the change is committed here and replicates; a retry is idempotent). So no
+    anchor cannot be written within 10 s (the bucket refuses it, or takes the write and never answers, waiting for another
+    anchor write included) the request answers 503 `catalog_anchor_unavailable` instead of acknowledging (the change is
+    committed here and replicates; a retry is idempotent); it never waits longer. The gate holds an anchored route's
+    response until the anchor is written, so the 503 replaces the whole success response. So no
     acknowledged revocation, removal or deletion is newer than its machine's anchor. Creations, other commits (the
     dashboard's document writes among them) and **every tenant data route** (documents, transactions, collections, indexes,
     schemas: client databases, not `_system`) never wait for the bucket. A test classifies every mutating endpoint (POST,
@@ -190,7 +195,7 @@ version said a document a machine held is never missing; that holds only without
   | A machine restarts while a recorded machine is stopped or unreachable | closed until that machine is back | wait, or the operator open |
   | A machine (or its region) is destroyed, replaced or retired for good | every later restart elsewhere stays closed: it stays recorded | the operator open at every restart (machine retirement: proposal below) |
   | A machine's catalog is put back to an older copy (behind its anchor), alone or with every other machine | closed even after its pulls; it verifies nobody | the operator open (a whole-cluster restore is a decision) |
-  | The backup bucket cannot be written | revocations, removals and deletions (and commits carrying them) answer 500 instead of being acknowledged; creations, other commits and all tenant writes still work | fix the bucket |
+  | The backup bucket cannot be written | revocations, removals and deletions (and commits carrying them) answer 503 `catalog_anchor_unavailable` within 10 s instead of being acknowledged; creations, other commits and all tenant writes still work | fix the bucket |
   | The backup bucket cannot be read at start (or none is attached on Fly) | closed | fix or attach the bucket, or the operator open |
   | A new cluster's first machine | closed | the bootstrap request |
   | A cluster of one machine (single region, before a second region) restarts | closed: nothing to pull from is unknown | the operator open |
