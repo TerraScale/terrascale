@@ -17,7 +17,8 @@ as errors. Suite times below exclude compilation; they are diagnostic observatio
 | Full native driver suite | Same current base and strengthened fixture | 7 / 7 | 0 / 0 | 112.370 s | Original six finalizer regressions plus unread-reader regression all passed |
 | Full TerraBase Slow, current candidate | Same current source tree, existing dev credentials supplied privately | 58 / 59 | 1 / 0 | 589.904 s | Count passed unchanged; real Tigris test failed because the old dev bucket had been deleted |
 | Real Tigris backup regression | Same current source tree, isolated private bucket with vendor-issued credentials | 1 / 1 | 0 / 0 | 21.412 s | Passed against real storage; not a full green Slow run |
-| Final full Slow | Same current source tree, isolated real bucket | Pending | Pending | Pending | Started 18:53:35Z after Docker to avoid extra host contention; default Slow parallelism retained |
+| Final full Auth Slow | Same current source tree, isolated real bucket | 25 / 25 | 0 / 0 | 37.260 s | Full run passed |
+| Final full TerraBase Slow | Same current source tree, isolated real bucket | 59 / 59 | 0 / 0 | 571.280 s | Full run passed; real Tigris exercised; count timeout and parallelism unchanged |
 
 Auth reports [#199](https://github.com/TerraScale/terrascale/issues/199) and
 [#200](https://github.com/TerraScale/terrascale/issues/200) were fixture errors: key creation atomically requires an
@@ -55,6 +56,8 @@ then failed one T0-owned shutdown race: TerraBase Fast 1562/1563, 279.940 s.
 `Shutdown_ends_a_replacement_waiting_for_its_predecessors_refill` fails at `PeerStreamTests.cs:1505`
 when `RawPush.WelcomeAsync` sees an HTTP/2 CANCEL. No second identical retry was started.
 Auth Fast passed 664/664 in 468.610 s; the native driver passed 7/7 in 58.170 s.
+
+The final combined Slow command passed (exit 0) from 18:53:35Z to 19:04:15Z, 639.597 s including builds.
 
 This report has no merged fix PR, main-job result, live e2e result or deployment speedup yet. T0 PR
 [#206](https://github.com/TerraScale/terrascale/pull/206) merged with its PR `test` green, but subsequent [main run 38446893001](https://github.com/TerraScale/terrascale/actions/runs/38446893001)
