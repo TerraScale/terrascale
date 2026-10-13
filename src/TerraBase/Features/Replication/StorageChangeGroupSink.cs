@@ -52,6 +52,18 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
         return applied;
     }
 
+    public async ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken)
+    {
+        if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        {
+            return;
+        }
+
+        await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        await transaction.RecordAppliedAsync(origin, frontier, cancellationToken).ConfigureAwait(false);
+        _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public async ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(states);

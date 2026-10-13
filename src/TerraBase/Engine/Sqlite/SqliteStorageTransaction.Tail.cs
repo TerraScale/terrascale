@@ -16,7 +16,8 @@ internal sealed partial class SqliteStorageTransaction
 
     /// <summary>
     /// Deletes the CDC rows of a client database that are shipped (docs/terrabase/multi-region-replication.md section 7):
-    /// below the newest commit row that every peer heard from in the last 24 h acknowledged, continuous backup read (at or
+    /// below the newest commit row that every peer heard from since <c>$gone</c> (Unix ms; 24 h ago, see
+    /// <see cref="LocalReplica.GoneBefore"/>) acknowledged, continuous backup read (at or
     /// below <c>$below</c>), and, once the database has peers, that committed at least 60 s before <c>$now</c> (Unix
     /// seconds). The 60 s hold covers a peer whose stream has not reached the database yet, so it has no <c>_tb_peers</c>
     /// row; a database without peers keeps nothing back, and a peer that holds no row for longer refills (section 10). Deleting below a commit row keeps whole transactions and the newest row, since an empty
@@ -25,7 +26,7 @@ internal sealed partial class SqliteStorageTransaction
     internal const string Retention = """
         DELETE FROM turso_cdc WHERE change_id < coalesce((
             SELECT change_id FROM turso_cdc
-            WHERE change_id <= min($below, coalesce((SELECT min(acked) FROM _tb_peers WHERE seen >= $now * 1000 - 86400000), $below))
+            WHERE change_id <= min($below, coalesce((SELECT min(acked) FROM _tb_peers WHERE seen >= $gone), $below))
                 AND change_type = 2 AND (change_time <= $now - 60 OR NOT EXISTS (SELECT 1 FROM _tb_peers))
             ORDER BY change_id DESC LIMIT 1), 0);
         """;
@@ -244,10 +245,11 @@ internal sealed partial class SqliteStorageTransaction
             var delete = Command(Retention);
             delete.Parameters.AddWithValue("$below", backupAnchor ?? long.MaxValue);
             delete.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
+            delete.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             delete.ExecuteNonQuery();
             var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
-            var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $now * 1000 - 86400000;");
-            floor.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
+            var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $gone;");
+            floor.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             var oldestKept = Command("SELECT coalesce(min(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long first ? first : 0;
             return (left, floor.ExecuteScalar() is long min ? min : (long?)null, raised, oldestKept);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
@@ -261,8 +263,8 @@ internal sealed partial class SqliteStorageTransaction
     internal ValueTask<long?> GetFloorAsync(DateTimeOffset now, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
-            var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $now * 1000 - 86400000;");
-            floor.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
+            var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $gone;");
+            floor.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             return floor.ExecuteScalar() is long acked ? acked : (long?)null;
         }, cancellationToken);
 
@@ -272,21 +274,27 @@ internal sealed partial class SqliteStorageTransaction
     /// epochs. Then deletes what <see cref="Retention"/> allows, continuous backup's <paramref name="backupAnchor"/> included.
     /// Returns the CDC rows left, and the smallest change id a peer heard from in the last 24 h acknowledged (null when there is none).
     /// </summary>
-    internal async ValueTask<(long Left, long? Floor)> RecordAckedAsync(ReplicaId peer, long changeId, long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
+    internal async ValueTask<(long Left, long? Floor)> RecordAckedAsync(
+        ReplicaId peer, long changeId, Hlc stable, long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         return await RunAsync(() =>
         {
             // 0 resets a row GetAckedAsync found stale; an acknowledgement only raises it.
-            var update = Command("UPDATE _tb_peers SET acked = CASE WHEN $acked = 0 THEN 0 ELSE max(acked, $acked) END, seen = $seen WHERE node = $node;");
+            var update = Command("""
+                UPDATE _tb_peers SET acked = CASE WHEN $acked = 0 THEN 0 ELSE max(acked, $acked) END, stable = max(stable, $stable), seen = $seen
+                WHERE node = $node;
+                """);
             update.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
             update.Parameters.AddWithValue("$acked", changeId);
+            update.Parameters.AddWithValue("$stable", Version(stable));
             update.Parameters.AddWithValue("$seen", now.ToUnixTimeMilliseconds());
             if (update.ExecuteNonQuery() == 0)
             {
-                var insert = Command("INSERT INTO _tb_peers (node, applied, acked, stable, seen) VALUES ($node, 0, $acked, 0, $seen);");
+                var insert = Command("INSERT INTO _tb_peers (node, applied, acked, stable, seen) VALUES ($node, 0, $acked, $stable, $seen);");
                 insert.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
                 insert.Parameters.AddWithValue("$acked", changeId);
+                insert.Parameters.AddWithValue("$stable", Version(stable));
                 insert.Parameters.AddWithValue("$seen", now.ToUnixTimeMilliseconds());
                 insert.ExecuteNonQuery();
             }
@@ -301,11 +309,12 @@ internal sealed partial class SqliteStorageTransaction
             var delete = Command(Retention);
             delete.Parameters.AddWithValue("$below", backupAnchor ?? long.MaxValue);
             delete.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
+            delete.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             delete.ExecuteNonQuery();
             // change_id is turso_cdc's rowid alias: both ends are seeks, and deleted ids never come back between them.
             var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
-            var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $now * 1000 - 86400000;");
-            floor.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
+            var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $gone;");
+            floor.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             return (left, floor.ExecuteScalar() is long acked ? acked : (long?)null);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }

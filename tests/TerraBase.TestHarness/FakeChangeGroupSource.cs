@@ -82,7 +82,7 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
 
     public ValueTask<long> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) => ValueTask.FromResult(AckedBy(database, peer));
 
-    public ValueTask AckAsync(TenantContext database, ReplicaId peer, long changeId, CancellationToken cancellationToken)
+    public ValueTask AckAsync(TenantContext database, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken)
     {
         TaskCompletionSource acked;
         lock (_gate)
@@ -125,6 +125,8 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
             return _changed.Task.WaitAsync(cancellationToken);
         }
     }
+
+    public ValueTask RecordStableAsync(TenantContext database, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) => ValueTask.CompletedTask;
 
     public ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken) => ValueTask.FromResult(true);
 

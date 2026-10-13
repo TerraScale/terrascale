@@ -80,10 +80,21 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     continue;
                 }
 
+                if (frame.Frontier is { } frontier)
+                {
+                    var at = Tenant(frontier.Database);
+                    await _sink.RecordFrontierAsync(at, origin, new Hlc(frontier.Hlc), stream.Token).ConfigureAwait(false);
+                    await responseStream.WriteAsync(new AckFrame
+                    {
+                        Stable = new StableReport { Database = frontier.Database, Stable = (await _states.StableAsync(at, stream.Token).ConfigureAwait(false)).Value },
+                    }, stream.Token).ConfigureAwait(false);
+                    continue;
+                }
+
                 if (frame.Refill is { } refill)
                 {
                     // The sender no longer holds this machine's gap: join every bucket that differs from it, then go on from its head.
-                    var refilled = await _antiEntropy.RefillAsync(Tenant(refill.Database), hello.Machine, stream.Token).ConfigureAwait(false);
+                    var refilled = await _antiEntropy.RefillAsync(Tenant(refill.Database), hello.Machine, new Hlc(refill.Horizon), stream.Token).ConfigureAwait(false);
                     if (refilled is not null)
                     {
                         last[Tenant(refill.Database)] = refill.ChangeId;
@@ -137,6 +148,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                         ChangeId = applied is null ? 0 : batch.LastChangeId,
                         Applied = applied?.Value ?? 0,
                         Refused = applied is null,
+                        Stable = applied is null ? 0 : (await _states.StableAsync(database, stream.Token).ConfigureAwait(false)).Value,
                     },
                 }, stream.Token).ConfigureAwait(false);
             }
