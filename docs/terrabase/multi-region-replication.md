@@ -328,8 +328,8 @@ retries 5 s later. R6 adds `Digest`, `ReadBucket` and `refill_required`; R7 adds
 
 1. The receiver checks the batch (a known database, origin = the stream's node, `last_change_id` advancing) and
    decodes groups. Decoding is a trust boundary with the `DeltaGroup` bounds: ≤ 1024 deltas and ≤ 2 MiB per group.
-2. Groups apply in stream order on the write lane. Each batch is one transaction with `synchronous = FULL`, so an ack
-   means the change is durable on the replica. For each delta:
+2. Groups apply in stream order on the write lane, in transactions of at most 1024 deltas, splitting only between whole
+   groups. Every transaction uses `synchronous = FULL`; the ack waits for all their commits. For each delta:
    1. `Observe(S)`.
    2. Read the row, join, normalize and materialize.
    3. Write only if the state changed, with `stamp = S` and `origin = the delta's origin`.
