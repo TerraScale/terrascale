@@ -1,4 +1,6 @@
 // Bound incomplete frames as well as individual lines; the feed is an owned read connection.
+export class ChangesProtocolError extends Error {}
+
 export async function readChanges(body, signal, receive) {
   const reader = body.getReader();
   const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -8,19 +10,21 @@ export async function readChanges(body, signal, receive) {
       const chunk = await reader.read();
       if (chunk.done) break;
       buffer += decoder.decode(chunk.value, { stream: true });
-      if (buffer.length + size > 1024 * 1024) throw new Error('Changes frame exceeds the supported size.');
+      if (buffer.length + size > 1024 * 1024) throw new ChangesProtocolError('Changes frame exceeds the supported size.');
       let ending;
       while ((ending = buffer.search(/[\r\n]/)) >= 0) {
         if (buffer[ending] === '\r' && ending === buffer.length - 1) break;
         const line = buffer.slice(0, ending);
         buffer = buffer.slice(ending + (buffer[ending] === '\r' && buffer[ending + 1] === '\n' ? 2 : 1));
         size += line.length;
-        if (size > 1024 * 1024) throw new Error('Changes frame exceeds the supported size.');
+        if (size > 1024 * 1024) throw new ChangesProtocolError('Changes frame exceeds the supported size.');
         if (!line) {
           if (data.length) {
-            const update = JSON.parse(data.join('\n'));
+            let update;
+            try { update = JSON.parse(data.join('\n')); }
+            catch { throw new ChangesProtocolError('Invalid changes event JSON.'); }
             if (!['change', 'cursor', 'reconnect', 'resync_required'].includes(event) || update.state !== event ||
-                (id !== undefined && id !== update.cursor)) throw new Error('Invalid changes event.');
+                (id !== undefined && id !== update.cursor)) throw new ChangesProtocolError('Invalid changes event.');
             if (await receive(update, id) === false) return;
           }
           event = ''; id = undefined; data = []; size = 0;
