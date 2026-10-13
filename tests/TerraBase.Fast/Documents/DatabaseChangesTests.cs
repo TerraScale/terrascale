@@ -269,6 +269,8 @@ public sealed class DatabaseChangesTests
         // Then a repair brings gru's earlier event: the reader's cursor is past it, so here it must not resume silently.
         var hole = DocumentApi.NewId();
         _ = await JoinAsync(store, gru, now - TimeSpan.FromSeconds(1), repair: true, hole);
+        // A broken refill ordering guarantee pages: the hole is counted.
+        await Assert.That(await api.Server.MetricAsync("terrabase_feed_holes_total")).IsEqualTo(1);
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(past)}", UriKind.Relative)),
             HttpStatusCode.Gone, "cursor_expired", "events after the cursor are no longer retained here; start again with cursor=now and re-read");
         // A reader from the start of retention still gets the repaired event.

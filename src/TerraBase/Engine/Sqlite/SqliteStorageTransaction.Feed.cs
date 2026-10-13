@@ -1,4 +1,5 @@
 using TerraBase.Engine.Lattices;
+using ZLogger;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -156,6 +157,8 @@ internal sealed partial class SqliteStorageTransaction
             raise.Parameters.AddWithValue("$origin", unchecked((long)node.Value));
             raise.Parameters.AddWithValue("$stamp", head + 1);
             raise.ExecuteNonQuery();
+            store.FeedHoles?.Add(1);
+            store.Logger?.ZLogError($"Changes feed hole in database {store.Name:@Database}: a repaired event of origin {node.Value:x16} at stamp {stamp.Value} landed at or below that origin's newest event {head}; the refill ordering guarantee is broken, and cursors past it are now 410 here but not on other machines");
         }
     }
 

@@ -124,6 +124,7 @@ def terrabase():
         ts("Merge rate (groups applied/s)", [(f"sum by (region, peer_region) (rate(terrabase_replication_merged_groups_total{{{f}}}[{RATE}]))", "{{peer_region}} → {{region}}")], "short"),
         ts("Anti-entropy repairs (documents/s)", [(f"sum by (region, peer_region) (rate(terrabase_replication_repairs_total{{{f}}}[{RATE}]))", "{{peer_region}} → {{region}}")], "short"),
         ts("Clock stamps capped (skew > 1 s)", [(f"sum by (region) (increase(terrabase_clock_skew_capped_total{{{f}}}[{RATE}]))", "{{region}}")], "short"),
+        ts("Changes feed holes (refill ordering broken)", [(f"sum by (region) (increase(terrabase_feed_holes_total{{{f}}}[{RATE}]))", "{{region}}")], "short"),
         row("Storage and backups"),
         ts("Data on disk and volume", [(f"max by (region) (terrabase_pressure_data_bytes{{{f}}})", "{{region}} data"),
                                        (f"max by (region) (terrabase_pressure_disk_used_bytes{{{f}}})", "{{region}} volume used"),
@@ -220,7 +221,9 @@ def alerts():
              "{{ $labels.region }} has not sent changes to {{ $labels.peer_region }} for {{ $values.A }} s."),
         rule("ts-replication-tail-lag", "CDC tailer lag > 10 s", f"max by (region) (terrabase_replication_tail_lag_seconds{{{tb}}})", "gt", 10, "5m",
              "A peer of {{ $labels.region }} has not acknowledged a local commit for {{ $values.A }} s."),
-        rule("ts-backup-lag", "Backup shipping lag > 10 min", f"max by (region) (terrabase_backup_lag_seconds{{{tb}}})", "gt", 600, "10m",
+        rule("ts-feed-holes", "Changes feed hole (refill ordering broken)", f"sum by (region) (increase(terrabase_feed_holes_total{{{tb}}}[10m]))", "gt", 0, "0m",
+             "{{ $labels.region }} filed a repaired event below its origin's newest event: a refill's repairs committed after that origin's later batches. Feed readers that move to another machine may miss events."),
+                rule("ts-backup-lag", "Backup shipping lag > 10 min", f"max by (region) (terrabase_backup_lag_seconds{{{tb}}})", "gt", 600, "10m",
              "{{ $labels.region }} has committed data not in Tigris for {{ $values.A }} s."),
         rule("ts-error-rate", "5xx ratio > 5%",
              f'sum by (app, region) (rate(http_server_request_duration_seconds_count{{{APPS},http_response_status_code=~"5.."}}[5m]))'

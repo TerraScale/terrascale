@@ -901,13 +901,18 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   the repair changed (a clear, a field's base, a counter, an added or removed set element), at that node's newest stamp
   among them. Every machine that got those events on their origin's stream filed the same (node, stamp), so a cursor
   means the same everywhere. A repair that changed no versioned entry is filed as this machine's event at a fresh stamp.
-  - Per-origin order needs a refill's repairs to commit before the origin's later stream batches of that database on
-    that machine (R3's guarantee for the refill moved off the frame loop, #114). Then a repaired event is always above
-    every row of its origin already there.
-  - If that is ever broken, the repaired event lands at or below its origin's newest row here (a hole a reader on this
-    machine may have passed). The origin's floor then rises just past that newest row, so a cursor in the hole is 410
-    **on this machine**. Known gap: a reader that passed the hole here and resumes on **another** machine is not caught
-    there. Catching it needs a replicated hole marker (a reserved metadata collection, which is a storage-format change).
+  - **Invariant: on every machine, each origin's feed rows are filed in that origin's stamp order.** Local writes keep it
+    (single writer), streams keep it (one ordered stream per origin), and repairs keep it because a refill's repairs of a
+    database commit before that origin's later stream batches of the database on that machine (the per-database ordering
+    guarantee of the refill fix-forward on #114, which ships a test for it). So a repaired event is always above every row
+    of its origin already there.
+  - **Detection, not prevention, of a violation.** If the invariant ever breaks, a repaired event lands at or below its
+    origin's newest row here (a hole a reader on this machine may have passed). The origin's floor then rises just past that
+    newest row, so a cursor in the hole is 410 **on this machine**. The event is also counted in
+    `terrabase.feed.holes` (`terrabase_feed_holes_total`, alert "Changes feed hole" in `ops/grafana`), with an error log
+    naming the database and origin, so a broken guarantee pages instead of hiding. A reader that passed the hole and
+    resumes on **another** machine is not caught there: a replicated hole marker would need a storage-format change, and
+    COS chose to rely on the guarantee plus this detection (Q-R8-HOLE-MARKER = A, 2026-10-13).
 - **Known limit: stamps more than 1 s ahead.** A request mints `max(clock, document's stamp + 1)`, and the clock moves at
   most `MaxSkew` (1 s) ahead (section 3). A document carrying a stamp further ahead therefore gets a stamp larger than
   this origin's next writes to other documents, so one origin's stamps no longer follow its commit order, and a cursor

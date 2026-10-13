@@ -71,6 +71,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private readonly string _dataDirectory;
     private readonly IMemoryBudget? _schemaMemory;
     private readonly Counter<long> _schemaEvaluations;
+    private readonly Counter<long> _feedHoles;
     private readonly ILogger<SqliteStorageEngine> _logger;
     private readonly TimeSpan _shutdownGrace;
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
@@ -355,6 +356,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         _dataDirectory = dataDirectory;
         _schemaMemory = schemaMemory;
         _schemaEvaluations = meter.CreateCounter<long>("terrabase.schema.keyword_evaluations", description: "Collection schema keyword evaluations started by local writes.");
+        _feedHoles = meter.CreateCounter<long>("terrabase.feed.holes", "{event}",
+            "Repaired events the changes feed filed at or below their origin's newest event here: a broken refill ordering guarantee.");
         _logger = logger;
         _shutdownGrace = shutdownGrace;
         _checkpoint = checkpoint ?? (static (_, _) => { });
@@ -1416,6 +1419,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         var store = new SqliteDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
             null, RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations)
         {
+            FeedHoles = _feedHoles,
             QueryBudget = QueryBudget,
             Member = Member,
         };
