@@ -174,7 +174,7 @@ public sealed class PeerStreamTests
             _ = await transaction.CommitAsync(CancellationToken.None);
         }
 
-        var groups = await gru.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+        var groups = await gru.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, stale: false, CancellationToken.None);
         await Assert.That(groups.Count).IsEqualTo(1);
         await Assert.That(groups[0].Deltas.Select(delta => $"{delta.Collection}/{delta.Id}").Order(StringComparer.Ordinal))
             .IsEquivalentTo(new[] { $"{DocumentDelta.Collections}/items", $"items/{first}", $"items/{second}" }.Order(StringComparer.Ordinal));
@@ -184,18 +184,18 @@ public sealed class PeerStreamTests
 
         // sjc joined both documents: its own tailer finds no group to send back, though its CDC holds the joined rows.
         await Assert.That(await sjc.UntilAsync(first, """{"n":3}""")).IsTrue();
-        await Assert.That(await sjc.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsEmpty();
+        await Assert.That(await sjc.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, stale: false, CancellationToken.None)).IsEmpty();
 
         // sjc acked the group, but gru keeps it for 60 s: a peer whose stream has not reached the database yet needs it.
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, groups[0].ChangeId)).IsTrue();
-        await Assert.That((await gru.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).Count).IsEqualTo(1);
+        await Assert.That((await gru.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, stale: false, CancellationToken.None)).Count).IsEqualTo(1);
 
         // Two minutes on, the next acknowledged group drops everything below its commit: nothing is left to send.
         clock.Offset = TimeSpan.FromMinutes(2);
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", second, Json("""{"m":2}"""), CancellationToken.None));
         await Assert.That(await sjc.UntilAsync(second, """{"m":2}""")).IsTrue();
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, groups[0].ChangeId + 1)).IsTrue();
-        await Assert.That(await gru.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsEmpty();
+        await Assert.That(await gru.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, stale: false, CancellationToken.None)).IsEmpty();
     }
 
     [Test]
@@ -227,7 +227,7 @@ public sealed class PeerStreamTests
         List<OriginGroup> groups = [];
         for (var after = 0L; ;)
         {
-            var page = await gru.Groups.ReadAsync(cluster.Database, after, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+            var page = await gru.Groups.ReadAsync(cluster.Database, after, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, stale: false, CancellationToken.None);
             if (page.Count == 0)
             {
                 break;
@@ -438,7 +438,7 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.ReadAsync(kept)).IsEqualTo("""{"n":1}""");
 
         // A repair is never shipped back: gru's tailer finds no group of sjc's to send for it.
-        await Assert.That(await sjc.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsEmpty();
+        await Assert.That(await sjc.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, stale: false, CancellationToken.None)).IsEmpty();
     }
 
     [Test]
@@ -919,10 +919,18 @@ public sealed class PeerStreamTests
 
         public ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken) => inner.StableAsync(database, cancellationToken);
 
-        public ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken) => inner.HorizonAsync(database, cancellationToken);
+        public ValueTask<RefillBasis?> RefillBasisAsync(TenantContext database, CancellationToken cancellationToken) => inner.RefillBasisAsync(database, cancellationToken);
 
-        public ValueTask<int> ForgetAsync(TenantContext database, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
-            inner.ForgetAsync(database, keys, horizon, cancellationToken);
+        public ValueTask<int> ForgetAsync(TenantContext database, IReadOnlyList<(string Collection, string Id)> keys, RefillBasis basis, CancellationToken cancellationToken) =>
+            inner.ForgetAsync(database, keys, basis, cancellationToken);
+
+        public ValueTask AdoptAsync(TenantContext database, RefillBasis basis, CancellationToken cancellationToken) => inner.AdoptAsync(database, basis, cancellationToken);
+
+        public ValueTask<Hlc?> AppliedFromAsync(TenantContext database, ReplicaId origin, CancellationToken cancellationToken) =>
+            inner.AppliedFromAsync(database, origin, cancellationToken);
+
+        public ValueTask<Hlc> ReportedStableAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) =>
+            inner.ReportedStableAsync(database, peer, cancellationToken);
     }
 
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.

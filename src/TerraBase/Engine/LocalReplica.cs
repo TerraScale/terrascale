@@ -10,6 +10,9 @@ internal sealed record LocalReplica(ReplicaId Id, MemberClock Clock)
     /// <summary>When this process began (Unix ms on the member's clock): a peer counts as gone for 24 h only once this one has been up that long.</summary>
     public long StartedMilliseconds { get; } = Clock.Tick().Milliseconds;
 
+    /// <summary>The machines this process has seen listed, and their replica ids.</summary>
+    public PeerPresence Presence { get; } = new();
+
     /// <summary>
     /// The Unix ms before which a peer last heard from counts as gone (24 h, section 11), or <see cref="long.MinValue"/> while
     /// this process has been up less than that: a machine back after a long absence heard from nobody, and that says nothing
@@ -17,6 +20,14 @@ internal sealed record LocalReplica(ReplicaId Id, MemberClock Clock)
     /// </summary>
     public long GoneBefore(long nowMilliseconds) =>
         nowMilliseconds - StartedMilliseconds >= Day ? nowMilliseconds - Day : long.MinValue;
+
+    /// <summary>
+    /// Whether garbage collection evicts <paramref name="node"/> (section 11): silent for 24 h (it was last heard from at
+    /// <paramref name="seenMilliseconds"/>; see <see cref="GoneBefore"/>) and missing from the directory for as long. A peer
+    /// that is only cut off stays listed, so it holds the horizon however long the partition lasts.
+    /// </summary>
+    public bool Gone(ReplicaId node, long seenMilliseconds, long nowMilliseconds) =>
+        seenMilliseconds < GoneBefore(nowMilliseconds) && Presence.Absent(node, nowMilliseconds - Day);
 
     private const long Day = 86_400_000;
 }

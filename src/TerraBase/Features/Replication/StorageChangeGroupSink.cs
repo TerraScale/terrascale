@@ -38,9 +38,8 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             {
                 foreach (var delta in groups[next].Deltas)
                 {
-                    _ = groups[next].Stale
-                        ? await transaction.JoinStaleAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, origin), cancellationToken).ConfigureAwait(false)
-                        : await transaction.JoinAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, origin), cancellationToken).ConfigureAwait(false);
+                    _ = await transaction.JoinReplicatedAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, origin), groups[next].Stale, cancellationToken)
+                        .ConfigureAwait(false);
                     applied = applied.Value < delta.Stamp.Value ? delta.Stamp : applied;
                 }
             }
@@ -81,7 +80,7 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             foreach (var state in chunk.Where(state => state.State.MaxStamp.Value != 0))
             {
                 // Origin 0: a repair (section 9), so the tailer never ships it and it moves no origin's applied stamp.
-                changed += await transaction.JoinAsync(state.Collection, state.Id, state.State, new EntryVersion(state.State.MaxStamp, default), cancellationToken)
+                changed += await transaction.JoinReplicatedAsync(state.Collection, state.Id, state.State, new EntryVersion(state.State.MaxStamp, default), whole: true, cancellationToken)
                     .ConfigureAwait(false) ? 1 : 0;
             }
 

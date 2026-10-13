@@ -44,7 +44,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     // nothing opened it; keep a set of databases with unacknowledged groups once machines hold many databases.
     public IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken) => _engine.ListDatabasesAsync(cancellationToken);
 
-    public async ValueTask<IReadOnlyList<OriginGroup>> ReadAsync(TenantContext database, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
+    public async ValueTask<IReadOnlyList<OriginGroup>> ReadAsync(TenantContext database, long after, int maxGroups, int maxBytes, bool stale, CancellationToken cancellationToken)
     {
         if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
         {
@@ -63,10 +63,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            // A group older than a day may meet peers that collected a newer deletion of its documents (section 11).
-            var staleBefore = _engine.HostTime.GetUtcNow().ToUnixTimeSeconds() - (24 * 60 * 60);
-            var (groups, quiet, _) = await transaction.ReadChangeGroupsAsync(start, maxGroups, maxBytes, _engine.ReplicaId, staleBefore, cancellationToken)
-                .ConfigureAwait(false);
+            var (groups, quiet, _) = await transaction.ReadChangeGroupsAsync(start, maxGroups, maxBytes, _engine.ReplicaId, stale, cancellationToken).ConfigureAwait(false);
             if (quiet > after)
             {
                 lock (_gate)
@@ -151,11 +148,24 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     public async ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken) =>
         await ReadAsync(database, (transaction, now) => transaction.GetStableAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken) =>
-        await ReadAsync(database, (transaction, now) => transaction.GetHorizonAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
-
-    public async ValueTask<int> ForgetAsync(TenantContext database, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken)
+    public async ValueTask<RefillBasis?> RefillBasisAsync(TenantContext database, CancellationToken cancellationToken)
     {
+        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        {
+            return null;
+        }
+
+        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            var (collected, applied) = await transaction.GetRefillBasisAsync(_engine.Member.Clock.Tick(), cancellationToken).ConfigureAwait(false);
+            return new RefillBasis(collected, applied);
+        }
+    }
+
+    public async ValueTask<int> ForgetAsync(TenantContext database, IReadOnlyList<(string Collection, string Id)> keys, RefillBasis basis, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(basis);
         if (keys.Count == 0 || await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
         {
             return 0;
@@ -164,11 +174,44 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         var transaction = (SqliteStorageTransaction)await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            var forgotten = await transaction.ForgetAsync(keys, horizon, cancellationToken).ConfigureAwait(false);
+            var forgotten = await transaction.ForgetAsync(keys, basis.CollectedBelow, basis.Applied, cancellationToken).ConfigureAwait(false);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return forgotten;
         }
     }
+
+    public async ValueTask AdoptAsync(TenantContext database, RefillBasis basis, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(basis);
+        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        {
+            return;
+        }
+
+        var transaction = (SqliteStorageTransaction)await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            await transaction.AdoptAsync(basis.CollectedBelow, basis.Applied, cancellationToken).ConfigureAwait(false);
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async ValueTask<Hlc?> AppliedFromAsync(TenantContext database, ReplicaId origin, CancellationToken cancellationToken)
+    {
+        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        {
+            return null;
+        }
+
+        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            return await transaction.GetAppliedFromAsync(origin, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async ValueTask<Hlc> ReportedStableAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) =>
+        await ReadAsync(database, (transaction, _) => transaction.GetReportedStableAsync(peer, cancellationToken), cancellationToken).ConfigureAwait(false);
 
     // A stamp read on a read transaction, at this machine's clock; 0 when this machine does not hold the database.
     private async ValueTask<Hlc> ReadAsync(TenantContext database, Func<SqliteStorageTransaction, Hlc, ValueTask<Hlc>> read, CancellationToken cancellationToken)
@@ -311,7 +354,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
-                (_, _, committed) = await transaction.ReadChangeGroupsAsync(after, 1, 1, _engine.ReplicaId, long.MinValue, cancellationToken).ConfigureAwait(false);
+                (_, _, committed) = await transaction.ReadChangeGroupsAsync(after, 1, 1, _engine.ReplicaId, stale: false, cancellationToken).ConfigureAwait(false);
             }
         }
 

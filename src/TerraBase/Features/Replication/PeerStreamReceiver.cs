@@ -28,6 +28,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private readonly Histogram<double> _delay;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<PeerStreamReceiver> _logger;
+    private const int MaxApplied = 65_536;
 
     public PeerStreamReceiver(
         IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime,
@@ -64,6 +65,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         }
 
         var region = TerraBaseOptions.IsRegion(hello.Region) ? hello.Region : "unknown";
+        _self.Presence.Heard(hello.Machine, origin);
         // Shutdown ends the stream; the sender resumes from its last ack elsewhere or later.
         using var stream = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, _lifetime.ApplicationStopping);
         if (_streams.TryGetValue(origin, out var older))
@@ -76,6 +78,8 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         {
             await responseStream.WriteAsync(new AckFrame { Welcome = new Welcome { Node = _self.Id.Value } }, stream.Token).ConfigureAwait(false);
             var last = new Dictionary<TenantContext, ulong>();
+            // Databases whose first batch or frontier on this stream found this file holding what it once reported (Batch.expect).
+            var intact = new HashSet<TenantContext>();
             while (await requestStream.MoveNext(stream.Token).ConfigureAwait(false))
             {
                 var frame = requestStream.Current;
@@ -87,6 +91,13 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 if (frame.Frontier is { } frontier)
                 {
                     var at = Tenant(frontier.Database);
+                    if (!await IntactAsync(intact, at, origin, frontier.Expect, stream.Token).ConfigureAwait(false))
+                    {
+                        await responseStream.WriteAsync(new AckFrame { Stable = new StableReport { Database = frontier.Database, Refill = true } }, stream.Token)
+                            .ConfigureAwait(false);
+                        continue;
+                    }
+
                     await _sink.RecordFrontierAsync(at, origin, new Hlc(frontier.Hlc), stream.Token).ConfigureAwait(false);
                     await responseStream.WriteAsync(new AckFrame
                     {
@@ -103,7 +114,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     int? refilled;
                     try
                     {
-                        refilled = await _antiEntropy.RefillAsync(Tenant(refill.Database), hello.Machine, new Hlc(refill.Horizon), stream.Token).ConfigureAwait(false);
+                        refilled = await _antiEntropy.RefillAsync(Tenant(refill.Database), hello.Machine, Basis(refill), stream.Token).ConfigureAwait(false);
                     }
                     catch (Exception error) when (!stream.IsCancellationRequested && error is not RpcException { StatusCode: StatusCode.InvalidArgument })
                     {
@@ -114,6 +125,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     if (refilled is not null)
                     {
                         last[Tenant(refill.Database)] = refill.ChangeId;
+                        intact.Add(Tenant(refill.Database));
                     }
 
                     await responseStream.WriteAsync(new AckFrame
@@ -149,7 +161,26 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     throw new RpcException(new Status(StatusCode.InvalidArgument, error.Message));
                 }
 
-                var applied = await _sink.ApplyAsync(database, origin, groups, stream.Token).ConfigureAwait(false);
+                if (!await IntactAsync(intact, database, origin, batch.Expect, stream.Token).ConfigureAwait(false))
+                {
+                    await responseStream.WriteAsync(new AckFrame { Ack = new Ack { Database = batch.Database, Refused = true, Refill = true } }, stream.Token)
+                        .ConfigureAwait(false);
+                    continue;
+                }
+
+                Hlc? applied;
+                try
+                {
+                    applied = await _sink.ApplyAsync(database, origin, groups, stream.Token).ConfigureAwait(false);
+                }
+                catch (StaleDeltaException)
+                {
+                    // The sender ships the batch again as whole states (section 11).
+                    await responseStream.WriteAsync(new AckFrame { Ack = new Ack { Database = batch.Database, Refused = true, Stale = true } }, stream.Token)
+                        .ConfigureAwait(false);
+                    continue;
+                }
+
                 if (applied is { } stamp)
                 {
                     last[database] = batch.LastChangeId;
@@ -212,6 +243,36 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             }
         }
         while (after is not null);
+    }
+
+    // Whether this file still holds what it once reported to the origin (Batch.expect): a file restored from an older copy
+    // applied less, and refills before it applies anything (section 10). Checked once per database and stream.
+    private async ValueTask<bool> IntactAsync(HashSet<TenantContext> intact, TenantContext database, ReplicaId origin, ulong expect, CancellationToken cancellationToken)
+    {
+        if (expect == 0 || intact.Contains(database))
+        {
+            return true;
+        }
+
+        if (await _states.AppliedFromAsync(database, origin, cancellationToken).ConfigureAwait(false) is { } applied && applied.Value < expect)
+        {
+            return false;
+        }
+
+        intact.Add(database);
+        return true;
+    }
+
+    // What a refill frame says about its sender (decoding is a trust boundary): a bounded applied vector of real replica ids.
+    private static RefillBasis Basis(Refill refill)
+    {
+        if (refill.Applied.Count > MaxApplied || refill.Applied.Any(entry => entry.Node == 0))
+        {
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "a refill names at most 65536 origins, none of them 0"));
+        }
+
+        return new RefillBasis(new Hlc(refill.CollectedBelow), refill.Applied.GroupBy(entry => entry.Node)
+            .ToDictionary(origin => new ReplicaId(origin.Key), origin => new Hlc(origin.Max(entry => entry.Stamp))));
     }
 
     private static TenantContext Tenant(V1.Database? database)

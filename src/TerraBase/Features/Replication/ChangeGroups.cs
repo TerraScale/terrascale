@@ -13,8 +13,8 @@ namespace TerraBase.Features.Replication;
 /// <param name="ChangeId">Larger than every earlier group's of the database on this machine.</param>
 /// <param name="Deltas">1 to <see cref="ChangeGroups.MaxDeltas"/> deltas.</param>
 /// <param name="Stale">
-/// Committed 24 h or more before it was read: each delta is then the document's whole state as of that commit. Peers may
-/// have collected a newer deletion of it meanwhile (section 11), so they join it only where it cannot bring one back.
+/// Read again for a receiver that may have collected a newer deletion of its documents (section 11): each delta is then the
+/// document's whole state as of that commit, so the receiver joins it only where it cannot bring that deletion back.
 /// </param>
 public sealed record OriginGroup(long ChangeId, IReadOnlyList<ChangeDelta> Deltas, bool Stale = false);
 
@@ -37,9 +37,10 @@ public interface IChangeGroupSource
     /// <summary>
     /// The database's groups with a change id above <paramref name="after"/>, in change id order: at most
     /// <paramref name="maxGroups"/>, and no more than <paramref name="maxBytes"/> of encoded deltas unless the first group alone
-    /// is larger. Empty when there are none.
+    /// is larger. Empty when there are none. With <paramref name="stale"/> (a receiver asked for them, section 11), each delta
+    /// is its document's whole state as of the commit, and the groups say so.
     /// </summary>
-    ValueTask<IReadOnlyList<OriginGroup>> ReadAsync(TenantContext database, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken);
+    ValueTask<IReadOnlyList<OriginGroup>> ReadAsync(TenantContext database, long after, int maxGroups, int maxBytes, bool stale, CancellationToken cancellationToken);
 
     /// <summary>
     /// The highest change id up to which the database holds none of its groups after <paramref name="after"/>, as the last
