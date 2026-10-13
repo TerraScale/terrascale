@@ -9,8 +9,8 @@ The production binary has no demo or billing mode switches. Preparation alone do
 ## Verify the serving target
 
 The production Fly app is `ts-dashboard` (`fly.toml`). The C# application's
-fixed public origin is `https://dashboard.terrascale.tech` (`StripeBilling.Origin`);
-the webhook is `https://dashboard.terrascale.tech/api/v1/billing/stripe/webhook`.
+fixed public origin is `https://dash.terrascale.tech` (`StripeBilling.Origin`);
+the webhook is `https://dash.terrascale.tech/api/v1/billing/stripe/webhook`.
 Verify the app, serving Machine, release, secret names/digests, readiness and
 native login immediately before any change:
 
@@ -18,8 +18,8 @@ native login immediately before any change:
 fly status -a ts-dashboard
 fly releases -a ts-dashboard
 fly secrets list -a ts-dashboard
-curl -fsS https://dashboard.terrascale.tech/readyz
-scripts/smoke-native-login.sh https://dashboard.terrascale.tech
+curl -fsS https://dash.terrascale.tech/readyz
+scripts/smoke-native-login.sh https://dash.terrascale.tech
 ```
 
 The greenfield rebuild removed the old dashboard machine. The rollout creates

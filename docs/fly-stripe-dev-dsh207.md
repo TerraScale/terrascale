@@ -40,7 +40,7 @@ nice -n 19 dotnet run --project src/TerraScale.Dashboard -- audit-stripe
 ```
 
 A auditoria usa a origem canônica fixa compartilhada pelo fluxo de Checkout,
-retorno do portal e configuração de webhook: `https://dashboard.terrascale.tech`.
+retorno do portal e configuração de webhook: `https://dash.terrascale.tech`.
 Ela não substitui a verificação das tentativas de entrega do endpoint no Stripe
 Workbench, nem exercita Checkout, pagamentos, renovações ou alterações de plano.
 Nenhum resultado atual de auditoria ou validação ao vivo é afirmado por este

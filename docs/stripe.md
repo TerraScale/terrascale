@@ -7,10 +7,10 @@ binding and coordinates checkout and plan-change requests; reconciliation reads
 current Stripe state. Signed webhooks trigger reconciliation and do not grant
 entitlements from their payloads.
 
-The shared canonical public origin is `https://dashboard.terrascale.tech`. Checkout
+The shared canonical public origin is `https://dash.terrascale.tech`. Checkout
 return/cancel URLs, the billing portal return URL and the webhook audit all use
 this same origin. The webhook endpoint is
-`https://dashboard.terrascale.tech/api/v1/billing/stripe/webhook`; the older
+`https://dash.terrascale.tech/api/v1/billing/stripe/webhook`; the older
 `/api/auth/stripe/webhook` path is also recognized for compatibility. Configure
 one matching enabled endpoint per Stripe account.
 
@@ -29,7 +29,7 @@ Fly delivers the environment variables; this audit does not provision secrets.
 The command takes no options and reads DashboardIdentity from Fly environment variables. It
 does not accept keys, webhook secrets, origins, API versions or mode settings on
 the command line or from manual audit-specific environment variables. It infers
-test or live mode from the delivered secret key prefix. The audit uses Stripe.net
+test or live mode from the delivered standard (`sk_`) or restricted (`rk_`) secret key prefix. The audit uses Stripe.net
 53 `V1` list/retrieve calls only; it does not create or modify Stripe objects,
 charge customers, or switch the running application's billing mode.
 

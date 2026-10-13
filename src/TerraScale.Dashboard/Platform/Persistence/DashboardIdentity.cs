@@ -51,7 +51,8 @@ public sealed record DashboardCredentials(string AuthClientSecret, string Sessio
             throw new IOException("Dashboard encryption key is invalid.");
         }
         if (Stripe is null || string.IsNullOrWhiteSpace(Stripe.SecretKey) || string.IsNullOrWhiteSpace(Stripe.WebhookSecret) ||
-            !Stripe.SecretKey.StartsWith("sk_", StringComparison.Ordinal) || !Stripe.WebhookSecret.StartsWith("whsec_", StringComparison.Ordinal) ||
+            !(Stripe.SecretKey.StartsWith("sk_test_", StringComparison.Ordinal) || Stripe.SecretKey.StartsWith("sk_live_", StringComparison.Ordinal) ||
+            Stripe.SecretKey.StartsWith("rk_test_", StringComparison.Ordinal) || Stripe.SecretKey.StartsWith("rk_live_", StringComparison.Ordinal)) || !Stripe.WebhookSecret.StartsWith("whsec_", StringComparison.Ordinal) ||
             Stripe.SecretKey.Any(char.IsControl) || Stripe.WebhookSecret.Any(char.IsControl))
             throw new IOException("Dashboard Stripe identity is invalid.");
     }
@@ -63,5 +64,7 @@ public sealed record DashboardCredentials(string AuthClientSecret, string Sessio
 // There are no payment feature toggles.
 public sealed record StripeCredentials(string SecretKey, string WebhookSecret)
 {
+    public bool IsLive => SecretKey.StartsWith("sk_live_", StringComparison.Ordinal) || SecretKey.StartsWith("rk_live_", StringComparison.Ordinal);
+
     public override string ToString() => "Stripe credentials [REDACTED]";
 }

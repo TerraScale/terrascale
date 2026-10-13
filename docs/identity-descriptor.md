@@ -21,7 +21,7 @@ invalid) and on each use, and never logs them.
 | --- | --- | --- | --- |
 | `TS_AUTH_DASHBOARD_CLIENT_SECRET` | 32-512 characters, no whitespace, control character or `;` | `client_secret_basic` for the ts-auth dashboard client. ts-auth reads the same-named secret on its own app to seed that client, so both apps hold the same value | generated once |
 | `TS_DASHBOARD_SESSION_ENCRYPTION_KEY` | base64 of exactly 32 bytes | AES-GCM for browser sessions, refresh credentials and pending OIDC and sign-up flows. Replacing it makes all of those unreadable | generated once |
-| `STRIPE_SECRET_KEY` | starts with `sk_` | Stripe API (Stripe.net) | Stripe (vendor) |
+| `STRIPE_SECRET_KEY` | `sk_test_`, `sk_live_`, `rk_test_` or `rk_live_` prefix | Stripe API (Stripe.net) | Stripe (vendor) |
 | `STRIPE_WEBHOOK_SECRET` | starts with `whsec_` | Verifies the Stripe webhook routes | Stripe (vendor) |
 
 Fixed in code, not delivered: the ts-auth tenant `terrascale`, its issuer

@@ -19,7 +19,7 @@ Automatic delivery of the fixed identity and deployment of the C# application
 remain open qualification gates. This command consumes the identity; it does
 not create or deliver it. See [`csharp-migration.md`](csharp-migration.md).
 
-The audit uses the fixed canonical origin `https://dashboard.terrascale.tech`,
+The audit uses the fixed canonical origin `https://dash.terrascale.tech`,
 shared by checkout return/cancel URLs, the billing portal return URL and
 webhook configuration. It inventories Stripe prices/products, webhook
 endpoints/events, recent invoice-created event delivery counts, portal settings,

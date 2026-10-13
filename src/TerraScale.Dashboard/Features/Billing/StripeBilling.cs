@@ -172,7 +172,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         try { @event = EventUtility.ConstructEvent(body, signature, webhookSecret); }
         catch (Exception error) when (error is StripeException or System.Text.Json.JsonException or Newtonsoft.Json.JsonException)
         { throw new StripeWebhookRejectedException(); }
-        if (@event.Livemode != credentials.Stripe!.SecretKey.StartsWith("sk_live_", StringComparison.Ordinal))
+        if (@event.Livemode != credentials.Stripe!.IsLive)
             throw new StripeWebhookRejectedException();
         if (!WebhookEvents.Contains(@event.Type)) return;
         var customerId = @event.Data.Object switch
