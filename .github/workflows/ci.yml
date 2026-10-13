@@ -14,9 +14,8 @@ name: CI
 # After it:
 # - slow (main, workflow_dispatch, or a pull request labelled `full-ci`): the slow suites; never blocks. A failure
 #   writes the job summary; on main it also opens (or comments on) one `slow-failure` issue per failed test.
-# - e2e (main, after deploy): tests/TerraBase.E2E against the Fly app, gru, sjc and fra pinned with fly-prefer-region; never
-#   blocks. Between replication slices R2a and R10a nothing replicates on Fly, so E1 to E7 fail there
-#   (docs/terrabase/multi-region-replication.md, section 21).
+# - e2e (main, after deploy): tests/TerraBase.E2E against the Fly app, gru, sjc and fra pinned with fly-prefer-region;
+#   failures fail CI and retain evidence after the completed rollout.
 
 on:
   pull_request:
@@ -191,6 +190,7 @@ jobs:
       - name: Fly deploy, volume reset, storage train and e2e summary self-checks
         run: |
           python3 terrascale/scripts/ci/slow-report-test.py
+          python3 terrascale/scripts/ci/e2e-status-test.py
           bash terrascale/scripts/fly/deploy-test.sh
           bash terrascale/scripts/fly/preview-test.sh
           bash terrascale/scripts/fly/volume-reset-test.sh
@@ -429,7 +429,6 @@ jobs:
 
   e2e:
     needs: deploy
-    continue-on-error: true
     runs-on: alpha
     timeout-minutes: 30
     env:
@@ -446,6 +445,7 @@ jobs:
           cache: true
           cache-dependency-path: terrascale/tests/TerraBase.E2E/packages.lock.json
       - name: Six-direction replication matrix against Fly (gru, sjc, fra)
+        shell: bash
         working-directory: terrascale
         run: |
           make terrabase-e2e E2E_LABEL=fly-replication-matrix E2E_RESULTS="$PWD/replication-matrix-results.jsonl" \
@@ -454,6 +454,7 @@ jobs:
           jq -se 'length == 13 and all(.[]; .category == "pass" and .nodes == "Fly machines")' replication-matrix-results.jsonl
       - name: Replication e2e against Fly
         if: ${{ !cancelled() }}
+        shell: bash
         working-directory: terrascale
         run: make terrabase-e2e E2E_LABEL=fly TEST_ARGS='-- --output detailed --no-ansi' 2>&1 | tee replication-e2e.log
       - name: Preserve replication proof and per-direction lag
