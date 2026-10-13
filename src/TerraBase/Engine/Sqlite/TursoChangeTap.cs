@@ -157,14 +157,16 @@ internal sealed class TursoChangeTap : IWalTap
     private async Task<WalRead> ReadCoreAsync(Stream destination, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_store.Closed, _store);
-        var end = await _io.RunAsync(() =>
+        var (end, started) = await _io.RunAsync(() =>
         {
+            // Every commit that completed before this time is visible to the query below.
+            var now = _time.GetUtcNow();
             if (_anchor > 0 && Scalar("SELECT 1 FROM turso_cdc WHERE change_id = $anchor;", _anchor) is null)
             {
-                return -1;
+                return (-1L, now);
             }
 
-            return Scalar("SELECT max(change_id) FROM turso_cdc WHERE change_id > $anchor AND change_type = 2;", _anchor) as long? ?? _anchor;
+            return (Scalar("SELECT max(change_id) FROM turso_cdc WHERE change_id > $anchor AND change_type = 2;", _anchor) as long? ?? _anchor, now);
         }, cancellationToken).ConfigureAwait(false);
         if (end < 0)
         {
@@ -174,7 +176,8 @@ internal sealed class TursoChangeTap : IWalTap
         var buffer = new ArrayBufferWriter<byte>();
         var schema = new Dictionary<long, (string Type, string Name)>(_schema);
         long bytes = 0;
-        for (var after = _anchor; after < end;)
+        var after = _anchor;
+        while (after < end)
         {
             var (next, placed) = await _io.RunAsync(() => ReadPage(after, end, schema, buffer), cancellationToken).ConfigureAwait(false);
             if (!placed)
@@ -186,6 +189,14 @@ internal sealed class TursoChangeTap : IWalTap
             bytes += buffer.WrittenCount;
             buffer.ResetWrittenCount();
             after = next;
+        }
+
+        if (after == end && bytes > 0)
+        {
+            // This read appended through the newest commit when it started: mark when that was.
+            ChangeLog.WriteReadMark(buffer, started);
+            await destination.WriteAsync(buffer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+            bytes += buffer.WrittenCount;
         }
 
         (_anchor, _schema) = (end, schema);
@@ -329,7 +340,8 @@ internal sealed class TursoChangeTap : IWalTap
 /// <summary>
 /// The records of a change log segment, format 1. Each starts with its kind: <c>1</c> upsert (table, rowid, the row's
 /// SQLite record), <c>2</c> delete (table, rowid), <c>3</c> commit, <c>4</c> create (the object's SQL), <c>5</c> drop (type,
-/// name). Strings and records are length-prefixed (unsigned LEB128); rowids are 8 bytes, big-endian.
+/// name), <c>7</c> read mark (Unix milliseconds: every transaction committed before then comes before the mark). Strings
+/// and records are length-prefixed (unsigned LEB128); rowids and times are 8 bytes, big-endian.
 /// </summary>
 internal static class ChangeLog
 {
@@ -338,6 +350,7 @@ internal static class ChangeLog
     private const byte Commit = 3;
     private const byte Create = 4;
     private const byte Drop = 5;
+    private const byte ReadMark = 7;
 
     // Bounds a single length field: no record, name or statement of a valid log is near this.
     private const int MaxLength = 1 << 30;
@@ -366,6 +379,13 @@ internal static class ChangeLog
     }
 
     public static void WriteCommit(IBufferWriter<byte> buffer) => buffer.Write([Commit]);
+
+    /// <summary>A mark after the last commit of a read that reached the newest commit when it started at <paramref name="started"/>.</summary>
+    public static void WriteReadMark(IBufferWriter<byte> buffer, DateTimeOffset started)
+    {
+        buffer.Write([ReadMark]);
+        WriteRowid(buffer, started.ToUnixTimeMilliseconds());
+    }
 
     public static void WriteCreate(IBufferWriter<byte> buffer, string sql)
     {
@@ -440,6 +460,12 @@ internal static class ChangeLog
                             Open = false;
                         }
 
+                        continue;
+                    }
+
+                    if (kind == ReadMark)
+                    {
+                        ReadRowid(segment);
                         continue;
                     }
 
