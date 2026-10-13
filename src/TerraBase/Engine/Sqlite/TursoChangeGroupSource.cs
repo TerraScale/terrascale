@@ -4,6 +4,7 @@ using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -14,11 +15,14 @@ namespace TerraBase.Engine.Sqlite;
 /// </summary>
 internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSource, IReplicaStates
 {
-    // Cached ranges without local groups, keyed by (file incarnation, a read's start): a peer reading again from the same
-    // change id starts at the range's end, so a replica that mostly joins remote writes is not rescanned on every pass.
-    private const int MaxQuiet = 65_536;
+    // Per database file (incarnation), its ranges (from, to] of change ids proven to hold no local group, disjoint and with
+    // adjacent or overlapping ranges merged: a read from inside one starts at its end (a replica that mostly joins remote
+    // writes is not rescanned on every pass), and RetainsAsync checks retention at its end. Ranges ending below the oldest
+    // kept row are pruned on each retention pass, so a file holds about one range per local group still retained.
+    private const int MaxQuietRanges = 4096;
     private readonly Lock _gate = new();
-    private readonly Dictionary<(Ulid Incarnation, long After), long> _quiet = [];
+    private readonly Dictionary<Ulid, SortedList<long, long>> _quiet = [];
+    private readonly ILogger<TursoChangeGroupSource> _logger;
     private readonly SqliteStorageEngine _engine;
 
     // Per database file, the CDC rows its last acknowledgement left; and when its oldest local commit that some peer has
@@ -31,9 +35,10 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     private readonly ConcurrentDictionary<Ulid, TenantContext> _tracked = new();
     private static readonly TimeSpan TailRefresh = TimeSpan.FromSeconds(5);
 
-    public TursoChangeGroupSource(SqliteStorageEngine engine, IMeterFactory meters)
+    public TursoChangeGroupSource(SqliteStorageEngine engine, IMeterFactory meters, ILogger<TursoChangeGroupSource> logger)
     {
         _engine = engine;
+        _logger = logger;
         meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.replication.cdc_backlog", Backlog, null,
             "CDC rows kept because some peer has not acknowledged them, as of each database's last acknowledgement.");
         meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.replication.tail_lag", TailLag, "s",
@@ -51,15 +56,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             return [];
         }
 
-        var start = after;
-        lock (_gate)
-        {
-            while (_quiet.TryGetValue((store.Incarnation, start), out var end))
-            {
-                start = end;
-            }
-        }
-
+        var start = QuietEnd(store.Incarnation, after);
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
@@ -118,15 +115,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             return true;
         }
 
-        var start = after;
-        lock (_gate)
-        {
-            while (_quiet.TryGetValue((store.Incarnation, start), out var end))
-            {
-                start = end;
-            }
-        }
-
+        var start = QuietEnd(store.Incarnation, after);
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
@@ -134,18 +123,88 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         }
     }
 
-    // A range (from, to] of the file that holds no local group, proven by a read over all of its rows.
-    // shortcut: forgets every range at MaxQuiet entries; a live stream below them may then refill once.
-    private void Remember(Ulid incarnation, long from, long to)
+    // The end of the remembered range holding `after`, or `after`: every change id in between holds no local group.
+    private long QuietEnd(Ulid incarnation, long after)
     {
         lock (_gate)
         {
-            if (_quiet.Count >= MaxQuiet)
+            if (!_quiet.TryGetValue(incarnation, out var ranges))
             {
-                _quiet.Clear();
+                return after;
             }
 
-            _quiet[(incarnation, from)] = to;
+            foreach (var (from, to) in ranges)
+            {
+                if (from > after)
+                {
+                    break;
+                }
+
+                if (after <= to)
+                {
+                    return to;
+                }
+            }
+
+            return after;
+        }
+    }
+
+    // A range (from, to] of the file that holds no local group, proven by a read over all of its rows; merged with every
+    // remembered range it overlaps or touches.
+    internal void Remember(Ulid incarnation, long from, long to)
+    {
+        lock (_gate)
+        {
+            if (!_quiet.TryGetValue(incarnation, out var ranges))
+            {
+                _quiet[incarnation] = ranges = [];
+            }
+
+            foreach (var (start, end) in ranges.Where(range => range.Key <= to && range.Value >= from).ToList())
+            {
+                (from, to) = (Math.Min(from, start), Math.Max(to, end));
+                _ = ranges.Remove(start);
+            }
+
+            ranges[from] = to;
+            // shortcut: past MaxQuietRanges (local groups interleaved with joined rows that retention has not cut yet) the
+            // lowest ranges go; a live stream below them may refill once. Raise it if retention windows get that long.
+            while (ranges.Count > MaxQuietRanges)
+            {
+                ranges.RemoveAt(0);
+            }
+        }
+    }
+
+    // Drops the ranges that end before the oldest kept change id: retention cut past them, so they can no longer spare a
+    // refill (the check at their end fails) or a read.
+    private void Prune(Ulid incarnation, long oldest)
+    {
+        lock (_gate)
+        {
+            if (_quiet.TryGetValue(incarnation, out var ranges))
+            {
+                while (ranges.Count > 0 && ranges.Values[0] < oldest - 1)
+                {
+                    ranges.RemoveAt(0);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// For tests: the 5 s retention pass stops running over every database until a stream reaches it again
+    /// (<see cref="AckedAsync"/>), so only the test's own passes (<see cref="TrimAsync"/>) raise acks.
+    /// </summary>
+    internal void Untrack() => _tracked.Clear();
+
+    /// <summary>The remembered quiet ranges of a database file, for tests.</summary>
+    internal int QuietRanges(Ulid incarnation)
+    {
+        lock (_gate)
+        {
+            return _quiet.TryGetValue(incarnation, out var ranges) ? ranges.Count : 0;
         }
     }
 
@@ -205,14 +264,21 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
                     {
                         _ = _tracked.TryRemove(incarnation, out _);
                         _ = _tail.TryRemove(incarnation, out _);
+                        lock (_gate)
+                        {
+                            _ = _quiet.Remove(incarnation);
+                        }
+
                         continue;
                     }
 
                     await TrimAsync(store, stoppingToken).ConfigureAwait(false);
                 }
-                catch (Exception) when (!stoppingToken.IsCancellationRequested)
+                catch (Exception error) when (!stoppingToken.IsCancellationRequested)
                 {
-                    // Only a gauge refresh: the next tick tries again (a deleted or busy database, a closing engine).
+                    // The retention pass (ack raises, trim, the tail gauge): the next tick tries again. Logged, so a pass that
+                    // keeps failing (and the CDC that would then grow) shows.
+                    _logger.ZLogWarning(error, $"The CDC retention pass over database {database.DatabaseId:@Database} failed; the next pass in {TailRefresh:@Interval} retries");
                 }
             }
         }
@@ -227,13 +293,17 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            (var left, floor, var raised) = await transaction.TrimAsync(store.BackupAnchor, _engine.HostTime.GetUtcNow(), _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
-            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            _backlog[store.Incarnation] = left;
+            (var left, floor, var raised, var oldest) = await transaction.TrimAsync(store.BackupAnchor, _engine.HostTime.GetUtcNow(), _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
+            // Before the commit wakes a stream: its RetainsAsync then already sees the ranges the raises proved quiet (which
+            // hold whether or not the commit lands; the rows are unchanged until a later cut).
             foreach (var (from, to) in raised)
             {
                 Remember(store.Incarnation, from, to);
             }
+
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            _backlog[store.Incarnation] = left;
+            Prune(store.Incarnation, oldest);
         }
 
         await TailAsync(store, floor, cancellationToken).ConfigureAwait(false);

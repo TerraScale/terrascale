@@ -161,16 +161,17 @@ internal sealed partial class SqliteStorageTransaction
     /// past it is still here (after a cut the peer refills instead), then a peer whose
     /// unacknowledged CDC rows pass 1 GiB stops holding them (its <c>seen</c> goes to 0 until it is heard from again, and it
     /// refills when it returns), then what <see cref="Retention"/> allows is deleted. Returns the CDC rows left, and the
-    /// smallest acknowledged id of a peer still holding rows, and each raise as the range it proved to hold no local group.
+    /// smallest acknowledged id of a peer still holding rows, each raise as the range it proved to hold no local group, and
+    /// the oldest change id kept.
     /// </summary>
-    internal async ValueTask<(long Left, long? Floor, List<(long From, long To)> Quiet)> TrimAsync(long? backupAnchor, DateTimeOffset now, ReplicaId self, CancellationToken cancellationToken)
+    internal async ValueTask<(long Left, long? Floor, List<(long From, long To)> Quiet, long Oldest)> TrimAsync(long? backupAnchor, DateTimeOffset now, ReplicaId self, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         return await RunAsync(() =>
         {
             if (Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null)
             {
-                return (0L, (long?)null, new List<(long From, long To)>());
+                return (0L, (long?)null, new List<(long From, long To)>(), 0L);
             }
 
             var newest = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0;
@@ -230,7 +231,8 @@ internal sealed partial class SqliteStorageTransaction
             var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
             var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $now * 1000 - 86400000;");
             floor.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
-            return (left, floor.ExecuteScalar() is long min ? min : (long?)null, raised);
+            var oldestKept = Command("SELECT coalesce(min(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long first ? first : 0;
+            return (left, floor.ExecuteScalar() is long min ? min : (long?)null, raised, oldestKept);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
