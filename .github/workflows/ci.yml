@@ -186,7 +186,6 @@ jobs:
       - name: Fly deploy, volume reset, storage train and e2e summary self-checks
         run: |
           python3 terrascale/scripts/ci/slow-report-test.py
-          python3 terrascale/scripts/ci/slow-tigris-test.py
           bash terrascale/scripts/fly/deploy-test.sh
           bash terrascale/scripts/fly/preview-test.sh
           bash terrascale/scripts/fly/volume-reset-test.sh
@@ -200,7 +199,7 @@ jobs:
         run: terrascale/scripts/terrabase/storage-format-check.sh "$GITHUB_REPOSITORY" "${{ github.event.pull_request.number }}"
 
   slow:
-    needs: changes
+    needs: test
     if: >-
       github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
       || contains(github.event.pull_request.labels.*.name, 'full-ci')
@@ -222,20 +221,12 @@ jobs:
       - *checkout
       - *checkout-ts-dotnet
       - *setup-builder
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-        if: matrix.area == 'terrabase'
-      - name: Create isolated Slow backup storage
-        if: matrix.area == 'terrabase'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_PREVIEWS }}
-        run: python3 terrascale/scripts/ci/slow-tigris.py create ts-ci-slow-${{ github.run_id }}-${{ github.run_attempt }} "$RUNNER_TEMP/tigris-slow.env"
       - uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
           target: test-slow-${{ matrix.area }}
-          secret-files: tigris-dev-env=${{ matrix.area == 'terrabase' && format('{0}/tigris-slow.env', runner.temp) || '/dev/null' }}
           # A rerun of the same commit runs the suites again instead of reusing the stored result.
           no-cache-filters: slow-${{ matrix.area }}-run
           outputs: type=local,dest=slow
@@ -288,11 +279,6 @@ jobs:
             fi
           done
           exit "$code"
-      - name: Delete isolated Slow backup storage
-        if: always() && matrix.area == 'terrabase'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_PREVIEWS }}
-        run: python3 terrascale/scripts/ci/slow-tigris.py destroy ts-ci-slow-${{ github.run_id }}-${{ github.run_attempt }} "$RUNNER_TEMP/tigris-slow.env"
 
   preview:
     needs: test
