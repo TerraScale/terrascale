@@ -24,6 +24,8 @@ FLAVORS = ("mysql-8.0", "mysql-8.4", "mariadb-10.11", "mariadb-11.4")
 MAX_SOURCE = 1 << 30
 MAX_DOCUMENT = 1 << 20
 MAX_TOKEN = 2 << 20
+MAX_METADATA = 512 << 10
+MAX_REPORT = 4 << 20
 CHUNK = 65536
 MODES = {
     "NO_AUTO_VALUE_ON_ZERO", "NO_BACKSLASH_ESCAPES", "STRICT_TRANS_TABLES",
@@ -55,8 +57,9 @@ class Token:
 
 
 class Lexer:
-    def __init__(self, source):
+    def __init__(self, source, flavor):
         self.source = source
+        self.flavor = flavor
         self.digest = hashlib.sha256()
         self.decoder = codecs.getincrementaldecoder("utf-8")("strict")
         self.buffer = ""
@@ -68,6 +71,7 @@ class Lexer:
         self.saved = None
         self.bytes_read = 0
         self.sandbox_directives = 0
+        self.version_set_pending = False
 
     def char(self, offset=0):
         while len(self.buffer) - self.position <= offset and not self.eof:
@@ -95,6 +99,7 @@ class Lexer:
             if self.char().isspace():
                 self.take()
             elif self.version_comment and self.char() == "*" and self.char(1) == "/":
+                require(not self.version_set_pending, "unsupported_version_comment")
                 self.take()
                 self.take()
                 self.version_comment = False
@@ -120,6 +125,7 @@ class Lexer:
                         require(len(digits) <= 6, "invalid_version_comment")
                     require(len(digits) in (5, 6), "invalid_version_comment")
                     if maria and digits == "999999":
+                        require(self.flavor.startswith("mariadb-"), "unsupported_sandbox_directive")
                         marker = ""
                         while not (self.char() == "*" and self.char(1) == "/"):
                             require(bool(self.char()) and len(marker) < 128, "unsupported_sandbox_directive")
@@ -129,7 +135,10 @@ class Lexer:
                         self.take()
                         self.sandbox_directives += 1
                         continue
+                    # These legacy SET wrappers are active in every declared exporter family.
+                    require(not maria and digits in ("40014", "40101", "40103", "40111", "50503"), "unsupported_version_comment")
                     self.version_comment = True
+                    self.version_set_pending = True
                 else:
                     while not (self.char() == "*" and self.char(1) == "/"):
                         require(bool(self.take()), "unterminated_comment")
@@ -138,7 +147,14 @@ class Lexer:
             else:
                 break
         line = self.line
+        if self.version_set_pending:
+            require("".join(self.char(i) for i in range(3)).upper() == "SET" and self.char(3).isspace(), "unsupported_version_comment")
+            for _ in range(3):
+                self.take()
+            self.version_set_pending = False
+            return Token("word", "SET", line)
         char = self.take()
+        require(not self.version_comment or char != ";", "unsupported_version_comment")
         if not char:
             require(not self.version_comment, "unterminated_comment")
             return Token("eof", "", line)
@@ -292,6 +308,7 @@ class Column:
     members: list = field(default_factory=list)
     attributes: list = field(default_factory=list)
     type_arguments: list = field(default_factory=list)
+    max_bytes: int | None = None
 
 
 def parse_column(tokens):
@@ -329,7 +346,7 @@ def parse_column(tokens):
         column = Column(name, source_type, "numeric", "decimal_string", size=precision, scale=scale)
     elif source_type in ("BINARY", "VARBINARY", "TINYBLOB", "BLOB", "MEDIUMBLOB", "LONGBLOB"):
         if source_type in ("BINARY", "VARBINARY"):
-            require(len(sizes) == 1 and 1 <= sizes[0] <= 65535, "invalid_type_size")
+            require(len(sizes) == 1 and 1 <= sizes[0] <= (255 if source_type == "BINARY" else 65535), "invalid_type_size")
             size = sizes[0]
         else:
             require(not sizes, "invalid_type_size")
@@ -344,6 +361,7 @@ def parse_column(tokens):
             require(bool(members) and len(set(members)) == len(members), "invalid_enum_definition")
             require(source_type != "SET" or (len(members) <= 64 and all(m and "," not in m for m in members)), "invalid_set_definition")
         column = Column(name, source_type, "text", "string", size=sizes[0] if sizes else None, members=members)
+        column.max_bytes = {"TINYTEXT": 255, "TEXT": 65535, "MEDIUMTEXT": 16777215, "LONGTEXT": 4294967295}.get(source_type)
     elif source_type in ("DATE", "DATETIME", "TIMESTAMP", "TIME"):
         require(len(sizes) <= 1 and (not sizes or source_type != "DATE" and 0 <= sizes[0] <= 6), "invalid_type_size")
         pg_type = {"DATE": "date", "DATETIME": "timestamp", "TIMESTAMP": "timestamptz", "TIME": "text"}[source_type]
@@ -372,7 +390,12 @@ def parse_column(tokens):
             value = definition.pop()
             require(value.kind in ("string", "number", "hex") or value.is_word("NULL") or value.is_word("CURRENT_TIMESTAMP"), "unsupported_default")
             require(attribute != "on_update" or value.is_word("CURRENT_TIMESTAMP"), "unsupported_default")
-            expression = {"kind": value.kind, "value": value.value}
+            expression = {"kind": value.kind}
+            if value.kind in ("string", "number", "hex"):
+                literal = value.value.encode("utf-8")
+                expression.update({"omitted": True, "decodedBytes": len(literal), "decodedSha256": hashlib.sha256(literal).hexdigest()})
+            else:
+                expression["value"] = value.value.upper()
             if value.is_word("CURRENT_TIMESTAMP"):
                 require(source_type in ("TIMESTAMP", "DATETIME"), "unsupported_default")
                 if definition.accept("("):
@@ -398,6 +421,8 @@ def parse_column(tokens):
             column.attributes.append({"comment_omitted": True})
         else:
             raise ConversionError("unsupported_column_attribute")
+    attributes = [next(iter(a)) for a in column.attributes]
+    require(len(set(attributes)) == len(attributes), "duplicate_column_attribute")
     return column
 
 
@@ -519,6 +544,8 @@ def parse_table(tokens):
     table = Table(name, collection_name(name), columns, constraints, options)
     for constraint in constraints:
         require(all(n in names for n in constraint["columns"]), "unknown_key_column")
+    constraint_names = [c["name"].casefold() for c in constraints if c["name"] is not None]
+    require(len(set(constraint_names)) == len(constraint_names), "duplicate_constraint_name")
     for key in table.primary_key:
         column = next(c for c in columns if c.name == key)
         # MySQL primary keys imply NOT NULL even if the column omitted that spelling.
@@ -553,6 +580,7 @@ def convert_value(column, token):
     require(token.kind == "string" and "\0" not in value, "invalid_string")
     if column.mapping == "string":
         require(column.size is None or len(value) <= column.size, "string_out_of_range")
+        require(column.max_bytes is None or len(value.encode("utf-8")) <= column.max_bytes, "string_out_of_range")
         if column.source_type == "ENUM":
             require(value in column.members, "invalid_enum")
         if column.source_type == "SET" and value:
@@ -593,7 +621,7 @@ def copy_escape(value):
 
 class Adapter:
     def __init__(self, source, stage, flavor):
-        self.lexer = Lexer(source)
+        self.lexer = Lexer(source, flavor)
         self.stage = stage
         self.flavor = flavor
         self.tables = {}
@@ -602,6 +630,7 @@ class Adapter:
         self.modes_seen = set()
         self.skipped_indexes = 0
         self.row_bytes = 0
+        self.metadata_bytes = 0
         self.keys = sqlite3.connect(stage / "keys.db")
         # Only this fixed, trusted scratch schema is executed; source SQL is never sent to SQLite.
         self.keys.execute("CREATE TABLE ids (table_name TEXT, id TEXT, PRIMARY KEY (table_name, id)) WITHOUT ROWID")
@@ -739,6 +768,9 @@ class Adapter:
                 elif token.is_word("CREATE"):
                     self.check_settings()
                     table = parse_table(self.lexer.statement())
+                    metadata = {"name": table.name, "columns": [vars(c) for c in table.columns], "constraints": table.constraints, "options": table.options}
+                    self.metadata_bytes += len(json.dumps(metadata, ensure_ascii=True, separators=(",", ":")).encode("ascii"))
+                    require(self.metadata_bytes <= MAX_METADATA, "metadata_too_large")
                     require(len(self.tables) < 1000, "too_many_tables")
                     require(table.name not in self.tables and not any(t.collection == table.collection for t in self.tables.values()), "collection_name_collision")
                     self.tables[table.name] = table
@@ -855,11 +887,16 @@ def convert(source_path, flavor, destination, dry_run=False):
                 report["outputSha256"] = hashlib.file_digest(artifact, "sha256").hexdigest()
             report["outputBytes"] = output.stat().st_size
             report_path = stage / "report.json"
-            report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            with report_path.open("w", encoding="utf-8", newline="\n") as report_file:
+                json.dump(report, report_file, ensure_ascii=False, indent=2)
+                report_file.write("\n")
+            require(report_path.stat().st_size <= MAX_REPORT, "report_too_large")
+            output.chmod(0o600)
+            report_path.chmod(0o600)
             if dry_run:
                 os.link(report_path, destination)
             else:
-                destination.mkdir()
+                destination.mkdir(mode=0o700)
                 published = []
                 try:
                     for name in ("import.sql", "report.json"):

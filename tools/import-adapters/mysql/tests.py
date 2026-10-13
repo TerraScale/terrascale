@@ -57,6 +57,9 @@ def exercise(data, expected_code=None, check=None, flavor="mysql-8.4"):
             assert report["outputBytes"] == len(artifact)
             assert report["sourceBytes"] == len(original)
             assert report["sourceVersionVerified"] is False
+            assert destination.stat().st_mode & 0o077 == 0
+            assert (destination / "import.sql").stat().st_mode & 0o077 == 0
+            assert (destination / "report.json").stat().st_mode & 0o077 == 0
             if check:
                 check(root, source, destination, artifact, report)
 
@@ -134,6 +137,7 @@ def check_fixture(root, source, destination, artifact, report):
     preview = invoke(source, root / "preview.json", "dry-run", flavor=report["sourceDeclaration"])
     assert preview.returncode == 0, preview.stderr
     assert (root / "preview.json").read_bytes() == (destination / "report.json").read_bytes()
+    assert (root / "preview.json").stat().st_mode & 0o077 == 0
     assert not (root / "preview.sql").exists()
     repeat = invoke(source, destination)
     assert repeat.returncode == 1 and "[destination_exists]" in repeat.stderr
@@ -151,7 +155,7 @@ def check_value(expected):
 def large_records():
     value = ("😀漢字'/*;--\\\t\n" * 12000)
     escaped = value.replace("\\", "\\\\").replace("'", "\\'").replace("\t", "\\t").replace("\n", "\\n")
-    exercise(dump("(1,'" + escaped + "')"), check=check_value(value))
+    exercise(dump("(1,'" + escaped + "')", type="longtext"), check=check_value(value))
 
 
 def large_insert():
@@ -174,6 +178,26 @@ def require_count(report, count):
     assert report["rowCount"] == count
 
 
+def default_metadata():
+    literal = "x" * 400000
+    text = PREFIX + "\n".join(SCHEMA.format(type="longtext DEFAULT '" + literal + "'").replace("`t`", f"`t{i}`") for i in range(8))
+    def check(root, source, destination, artifact, report):
+        assert report["rowCount"] == 0 and report["tableCount"] == 8
+        assert (destination / "report.json").stat().st_size < 50000
+        for plan in report["tables"]:
+            default = plan["columns"][1]["attributes"][0]["default"]
+            assert "value" not in default and default["omitted"] is True
+            assert default["decodedBytes"] == len(literal)
+            assert default["decodedSha256"] == hashlib.sha256(literal.encode()).hexdigest()
+    exercise(text, check=check, flavor="mariadb-10.11")
+
+
+def metadata_limit():
+    members = ",".join("'" + str(i) + "x" * 120 + "'" for i in range(1000))
+    text = PREFIX + "\n".join(SCHEMA.format(type="enum(" + members + ")").replace("`t`", f"`t{i}`") for i in range(6))
+    exercise(text, expected_code="metadata_too_large")
+
+
 def cases():
     fixture = (HERE / "fixtures/synthetic.sql").read_bytes()
     result = [("synthetic-" + flavor, lambda f=flavor: exercise(fixture, check=check_fixture, flavor=f)) for flavor in (
@@ -188,7 +212,6 @@ def cases():
         ("enum-empty-member", dump("(1,'')", "enum('','a')")),
         ("literal-comment", dump("(1,'/* SELECT x; */ -- data #')")),
         ("no-backslash", dump("(1,'a\\b''c')", prefix=PREFIX.replace("NO_AUTO_VALUE_ON_ZERO", "NO_BACKSLASH_ESCAPES"))),
-        ("maria-sandbox", "/*M!999999\\- enable the sandbox mode */\n" + dump("(1,'x')")),
         ("saved-session", "SET @OLD_SQL_MODE=@@SQL_MODE; SET @OLD_TIME_ZONE=@@TIME_ZONE;" + dump("(1,'x')") + "SET SQL_MODE=@OLD_SQL_MODE; SET TIME_ZONE=@OLD_TIME_ZONE;"),
         ("multiple-inserts", dump("(1,'x')") + "INSERT INTO t (v,id) VALUES ('y',2);"),
         ("empty-table", PREFIX + SCHEMA.format(type="text")),
@@ -222,6 +245,9 @@ def cases():
         ("decimal-exponent", dump("(1,1e2)", "decimal(5,2)"), "invalid_decimal"),
         ("decimal-unicode", dump("(1,'١.00')", "decimal(5,2)"), "invalid_decimal"),
         ("string-limit", dump("(1,'long')", "varchar(3)"), "string_out_of_range"),
+        ("text-byte-limit", dump("(1,'" + "é" * 128 + "')", "tinytext"), "string_out_of_range"),
+        ("binary-type-limit", dump("(1,0x00)", "binary(256)"), "invalid_type_size"),
+        ("duplicate-attribute", dump("(1,'x')", "text DEFAULT '' DEFAULT ''"), "duplicate_column_attribute"),
         ("enum-invalid", dump("(1,'other')", "enum('a','b')"), "invalid_enum"),
         ("enum-error-sentinel", dump("(1,'')", "enum('a','b')"), "invalid_enum"),
         ("set-order-invalid", dump("(1,'b,a')", "set('a','b')"), "invalid_set"),
@@ -265,12 +291,18 @@ def cases():
         ("unknown-escape", dump(r"(1,'a\q')"), "unsupported_escape"),
         ("nested-version-comment", "/*!40101 /* nested */ SET NAMES utf8mb4 */;", "nested_comment"),
         ("unclosed-comment", PREFIX + "/* truncated", "unterminated_comment"),
-        ("unclosed-version", PREFIX + "/*!40101 SET SQL_NOTES=0;", "unterminated_comment"),
+        ("unclosed-version", PREFIX + "/*!40101 SET SQL_NOTES=0", "unterminated_comment"),
+        ("future-version-data", PREFIX + SCHEMA.format(type="text") + "/*!99999 INSERT INTO t (id,v) VALUES (1,'x') */;", "unsupported_version_comment"),
+        ("active-version-data", PREFIX + SCHEMA.format(type="text") + "/*!40101 INSERT INTO t (id,v) VALUES (1,'x') */;", "unsupported_version_comment"),
+        ("future-version-mode", PREFIX + "/*!99999 SET SQL_MODE='NO_BACKSLASH_ESCAPES' */;" + SCHEMA.format(type="text"), "unsupported_version_comment"),
+        ("ambiguous-mysql-version", PREFIX + "/*!80036 SET SQL_MODE='' */;", "unsupported_version_comment"),
+        ("ambiguous-maria-version", PREFIX + "/*M!101150 SET SQL_MODE='' */;", "unsupported_version_comment"),
+        ("version-multiple-statements", PREFIX + "/*!40101 SET SQL_NOTES=0; INSERT INTO t (id,v) VALUES (1,'x') */;", "unsupported_version_comment"),
         ("fake-sandbox", "/*M!999999\\! system command */" + dump("(1,'x')"), "unsupported_sandbox_directive"),
         ("utf8-invalid", dump("(1,'x')").encode() + b"\xff", "file_encoding_or_io_error"),
         ("bom-rejected", b"\xef\xbb\xbf" + dump("(1,'x')").encode(), "unsupported_token"),
         ("utf16-rejected", dump("(1,'x')").encode("utf-16"), "file_encoding_or_io_error"),
-        ("oversize-document", dump("(1,'" + "x" * (1 << 20) + "')"), "document_too_large"),
+        ("oversize-document", dump("(1,'" + "x" * (1 << 20) + "')", "longtext"), "document_too_large"),
     ]
     for keyword in ("DROP TABLE t", "REPLACE INTO t VALUES (1)", "LOAD DATA INFILE 'synthetic' INTO TABLE t", "SELECT 1", "USE another", "DELIMITER $$", "CALL routine()", "COMMIT"):
         failures.append(("statement-" + keyword.split()[0].lower(), PREFIX + keyword + ";", "unsupported_statement"))
@@ -283,6 +315,8 @@ def cases():
         ("composite-id-escaping", composite_collision),
         ("control-copy-escaping", lambda: exercise(dump(r"(1,'a\b\t\n\r\Z')"), check=check_value("a\b\t\n\r\x1a"))),
         ("no-backslash-content", lambda: exercise(dump("(1,'a\\b''c')", prefix=PREFIX.replace("NO_AUTO_VALUE_ON_ZERO", "NO_BACKSLASH_ESCAPES")), check=check_value("a\\b'c"))),
+        ("maria-sandbox", lambda: exercise("/*M!999999\\- enable the sandbox mode */\n" + dump("(1,'x')"), flavor="mariadb-11.4")),
+        ("large-default-metadata", default_metadata), ("aggregate-metadata-limit", metadata_limit),
     ])
     return result
 

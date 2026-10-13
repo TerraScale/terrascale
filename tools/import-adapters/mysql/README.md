@@ -29,7 +29,8 @@ members, column attributes, constraints, table options, source/output byte count
 SHA-256, and per-table source/COPY counts and COPY-data SHA-256. Those data hashes
 are hashes of COPY row bytes in source order, **not** TerraBase's document checksums.
 The CLI prints only counts or a fixed error code and line; it never prints source values.
-Artifacts and local reports can contain sensitive data and schema defaults.
+Artifacts and local reports can contain sensitive data and schema metadata.
+New output files have mode 0600; bundle directories have mode 0700.
 
 ## Supported source profile
 
@@ -69,13 +70,19 @@ or row rejects the whole conversion; there is no skip-row/exclude policy. In par
    AUTO_INCREMENT. Column options are NULL/NOT NULL, literal DEFAULT or
    CURRENT_TIMESTAMP, ON UPDATE CURRENT_TIMESTAMP, AUTO_INCREMENT, utf8mb4
    CHARACTER SET/COLLATE, and COMMENT. Comments are omitted; other recognized
-   attributes are recorded as metadata, never evaluated.
-5. Ordinary comments and well-formed version comments are tokenized. **All** SQL inside
-   executable version comments is parsed rather than trusting version gates to hide
-   data. Supported SET save/restore statements cover charset/collation, SQL_MODE,
+   attributes are recorded as metadata, never evaluated. Literal defaults are omitted
+   from the report; their token kind, decoded UTF-8 byte count and SHA-256 fingerprint
+   are retained. NULL/CURRENT_TIMESTAMP defaults retain their symbolic spelling.
+5. Ordinary comments are tokenized. Executable comments are limited to SET-only
+   wrappers `/*!40014 ... */`, `/*!40101 ... */`, `/*!40103 ... */`,
+   `/*!40111 ... */`, and `/*!50503 ... */`, which are active in all declared
+   exporter families. Conditional data/schema statements, other version gates and
+   multiple statements inside a wrapper **reject**; no patch version is guessed.
+   Supported SET save/restore statements cover charset/collation, SQL_MODE,
    TIME_ZONE, FOREIGN_KEY_CHECKS, UNIQUE_CHECKS and SQL_NOTES. The exact MariaDB marker
    `/*M!999999\- enable the sandbox mode */` is counted and ignored as a client safety
-   marker. Other shell/client/meta commands and unknown SET statements reject.
+   marker for declared MariaDB sources only. Other shell/client/meta commands and
+   unknown SET statements reject.
 
 The supported rows/types are:
 
@@ -84,7 +91,7 @@ The supported rows/types are:
 | TINYINT, SMALLINT, MEDIUMINT, INT/INTEGER, BIGINT, signed or unsigned | `bigint` → exact JSON integer, except unsigned BIGINT | Original signed/unsigned range checked. TINYINT(1) is an integer, not a boolean. Display width is metadata. |
 | BIGINT UNSIGNED | `text` → digit string | Full 0…18446744073709551615 preserved without signed overflow. |
 | DECIMAL/NUMERIC(p,s), including UNSIGNED | `numeric` → exact decimal string | Precision 1…65; scale 0…min(30,p); exactly s fractional digits; no exponents or rounding. Default declaration means (10,0). |
-| CHAR/VARCHAR, TINYTEXT/TEXT/MEDIUMTEXT/LONGTEXT | `text` → string | CHAR/VARCHAR character length checked; NUL rejected. Exported CHAR padding is not reconstructed. |
+| CHAR/VARCHAR, TINYTEXT/TEXT/MEDIUMTEXT/LONGTEXT | `text` → string | CHAR/VARCHAR character length and TEXT-family byte bounds checked; NUL rejected. Exported CHAR padding is not reconstructed. |
 | ENUM, SET | `text` → string | Exact ENUM member; SET members unique and in declared order. Empty ENUM allowed only if declared; empty SET allowed. Numeric error sentinels reject. Membership semantics are lost after import. |
 | BINARY/VARBINARY, TINYBLOB/BLOB/MEDIUMBLOB/LONGBLOB | `bytea` → standard base64 string | **Hex literal only**, even length, original byte bound checked; BINARY must have exact declared length. Bytes and padding are preserved. |
 | DATE | `date` → `YYYY-MM-DD` | Valid Gregorian date, year 1000…9999. All zero/partial-zero/invalid dates reject. |
@@ -180,7 +187,10 @@ The operator must review those warnings and the future core preview separately.
 
 Fixed bounds: source and output each **1 GiB**, 1000 tables, 1600 columns/table, a
 1 MiB interpreted schema statement, a 2 MiB individual token, a 16 MiB decoded row,
-and a 1 MiB mapped JSON document. Scalar rows have no nested JSON, so the core's
+and a 1 MiB mapped JSON document. Retained schema metadata is capped at **512 KiB**
+of compact ASCII JSON across all tables, and the final report at **4 MiB**. Literal
+default payloads are fingerprinted instead of retained; reports serialize incrementally.
+ENUM declarations have at most 4096 members; SET has at most 64. Scalar rows have no nested JSON, so the core's
 16-level/4096-value bounds are satisfied by that column cap. Extended INSERT
 statements can exceed 1 MiB: tuples are parsed incrementally from 64 KiB UTF-8 chunks.
 Rows are spooled per table; the uniqueness index uses SQLite with **fixed trusted
@@ -206,6 +216,8 @@ decodes COPY values. It also checks determinism, dry-run equivalence, read-only 
 no overwrite/partial publication, integer/decimal boundaries, encoding, SQL modes,
 zero dates/timezone/precision, malformed input, rejected routines/expressions, duplicate
 IDs, a Unicode record crossing many chunks, and a multi-row INSERT over 1 MiB.
+Regressions also reject inactive/ambiguous conditional statements, bound aggregate
+metadata, and verify that multi-megabyte default payloads become small fingerprints.
 
 Required repository-wide .NET checks and external/service integration are not part
 of this local adapter suite. Publishing a PR must first prove its workflows will not

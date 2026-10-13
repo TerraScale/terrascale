@@ -13,12 +13,16 @@ UTC. Original tables, columns and key metadata are retained. Unknown syntax/type
 zero dates, expressions, missing columns, duplicate document IDs and ambiguous
 SQL mode/charset reject the whole conversion. The README documents the precise
 subset, exporter-version declaration limits, snapshot instructions and semantic losses.
+Only legacy SET-only version comments active in every declared family are accepted;
+conditional data and ambiguous gates reject. Default literals are fingerprinted, with
+fixed metadata/report budgets; published output uses private file/directory permissions.
 
-Validation: low-priority parallel synthetic CLI checks with an independent COPY
+Validation: 121/121 low-priority parallel synthetic CLI checks passed with an independent COPY
 decoder, golden output, byte-identical reruns, read-only source checks, malformed
 inputs, precision/NULL/binary/timezone/identifier boundaries, chunked Unicode records
-and extended INSERT statements over 1 MiB. Exact final check count is recorded with
-the completion report; no service/core integration or repository-wide .NET checks ran.
+and extended INSERT statements over 1 MiB. Regression checks cover conditional
+SQL comments, metadata budgets, default fingerprints and private output permissions.
+`git diff --check` passed; no service/core integration or repository-wide .NET checks ran.
 
 Compatibility/storage/security: only tools/import-adapters/mysql changes. No core
 format/API, SDK, authentication, dashboard, replication, root configuration or workflow
