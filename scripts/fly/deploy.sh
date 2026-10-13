@@ -55,6 +55,8 @@ fi
 
 for region in gru sjc fra; do
   start=$SECONDS
+  started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  echo "$started_at: starting $app $region rollout ($image)"
   # Machines and volumes cost money: CI never adds them (volume-reset.sh only replaces a region's refused volume).
   if [[ -z $(machines "$region" .) ]]; then
     echo "$app has no machine in $region; CI creates no machines or volumes. With approval, a human creates it" \
@@ -74,7 +76,8 @@ for region in gru sjc fra; do
   if ! { flyctl deploy -a "$app" -c "$config" --image "$image" --regions "$region" --ha=false --yes --wait-timeout 3m && live; }; then
     { [[ $app == ts-terrabase ]] && "$(dirname "$0")/volume-reset.sh" "$app" "$region" && live; } || exit 1
   fi
-  line="$app $region ($id) runs ${image##*:}${format:+, storage format $format}: live $((SECONDS - start)) s after its deploy started"
+  completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  line="$started_at -> $completed_at: $app $region ($id) runs ${image##*:}${format:+, storage format $format}: live $((SECONDS - start)) s after its deploy started"
   echo "$line"
   if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then echo "- $line" >>"$GITHUB_STEP_SUMMARY"; fi
 done

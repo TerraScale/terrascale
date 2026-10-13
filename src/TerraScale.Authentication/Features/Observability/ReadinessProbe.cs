@@ -145,7 +145,7 @@ public sealed class ReadinessProbe(IStorageHealth health, TimeProvider clock, IL
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
-            // Missing signing keys are reported as such: nothing recovers them but the operator command.
+            // Missing signing keys are reported as such while startup provisioning is pending.
             var operatorAction = exception is ApiException { Code: KeyRing.NoSigningKeysCode } ? exception.Message : null;
             observation = new ReadinessObservation(false, null, operatorAction);
             // Our own deadline cancelling the wait is the expected not-ready answer, not a fault to trace.

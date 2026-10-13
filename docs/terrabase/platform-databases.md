@@ -5,10 +5,25 @@ every start, with constants in code (`src/TerraBase/Features/Platform/PlatformDa
 
 | What | Id | Name |
 |---|---|---|
-| Organization | `00000000000000000000000001` | TerraScale platform (enterprise plan) |
-| Project | `00000000000000000000000002` | platform |
-| ts-auth's database | `00000000000000000000000003` | `platform-auth` |
-| The dashboard's database | `00000000000000000000000004` | `platform-dashboard` |
+| Organization | `00000000000000000000000001` | TerraScale (enterprise plan) |
+| ts-auth project | `00000000000000000000000002` | `ts-auth` |
+| ts-auth database (project02) | `00000000000000000000000003` | `ts-auth` |
+| Dashboard project | `00000000000000000000000005` | `ts-dashboard` |
+| Dashboard database (project05) | `00000000000000000000000004` | `ts-dashboard` |
+
+Each project owns exactly one database. The public constants are `OrganizationId`, `AuthProjectId`, `AuthId`, `Auth`,
+`DashboardProjectId`, `DashboardId` and `Dashboard` on `PlatformDatabases`. Each fixed project has a version-1 catalog binding to `https://auth.terrascale.tech/terrascale`, with both the
+storage organization and authority organization equal to org01. Missing bindings are seeded locally, with fixed
+verification timestamps; conflicting issuer/organization/version/authority records are refused and never overwritten.
+No call to auth is required to create a binding. Auth owns authorization to issue matching project tokens.
+
+Auth and dashboard use these fixed values
+through ts-dotnet; there is no configuration or legacy-name fallback. This is a greenfield storage contract: the old
+`platform-auth`/`platform-dashboard` names are removed, with no migration.
+
+TerraBase seeds the storage catalog without calling ts-auth. Auth separately seeds the matching TerraScale identity
+organization and its two projects at startup; these identity records belong to auth. Service collections and signing
+keys also belong to their owning service.
 
 Both databases are placed in gru (home), sjc and fra. Off Fly (development, tests) they are placed in the node's own
 region only.
@@ -20,8 +35,9 @@ region only.
 - Every write is conditional on absence under the fixed ids and fixed timestamps, so restarts, concurrent runs on one
   node and independent nodes or regions all converge on identical records. An id or name that holds something else is
   never overwritten: the seed logs an error and stops.
-- Every machine seeds its own local catalog. Catalogs are not replicated until R10a
-  ([multi-region-replication.md](multi-region-replication.md) section 15).
+- Every machine seeds its local catalog. The system catalog and placed databases use the existing Anna replication
+  path ([multi-region-replication.md](multi-region-replication.md) section 15). A three-region placement is not proof
+  of live convergence: the rebuild must verify data replication after deploying the new image.
 - Collections belong to the service that owns the data: ts-auth creates its collections at startup (idempotent), and
   the dashboard creates its own. TerraBase does not keep a copy of either list.
 
@@ -30,8 +46,9 @@ region only.
 - The platform operator: TerraBase's internal listener (`http://top1.nearest.of.ts-terrabase.internal:8081`, HTTP/2
   prior knowledge, no credential). Fly's private network is the trust boundary. ts-auth stores here
   (`App.StorageProject`, `App.StorageDatabase`).
-- Nobody else. The platform organization has no members, no API keys and no ts-auth project binding, so customer API
-  keys, ts-auth user tokens and project tokens all get 404 on its routes (`PlatformDatabasesTests`).
+- Matching scoped project tokens signed by the global issuer: only their own project and database routes, with the
+  required scopes. Another project, issuer, customer API key or ordinary user membership cannot grant access
+  (`PlatformDatabasesTests`). The platform storage organization has no catalog members or API keys.
 - Usage of the platform organization is metered under its own id and never under a customer organization.
 
 ## How the dashboard uses its database
@@ -44,7 +61,7 @@ var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOp
 {
     // No credential: the internal listener trusts Fly's private network. The SDK sends HTTP/2 prior knowledge.
     BaseAddress = new Uri("http://top1.nearest.of.ts-terrabase.internal:8081"),
-}).Database("00000000000000000000000002", "platform-dashboard");
+}).Database("00000000000000000000000005", "ts-dashboard");
 
 // At startup, create the collections it needs; an existing name answers 409 name_taken, which is fine.
 await database.CreateCollectionAsync("plans");
@@ -58,7 +75,7 @@ Every route the SDK calls is listed in ts-dotnet's `contracts/terrabase/routes.j
 Read-only, on the public listener, for the dashboard's platform-admin pages. The dashboard forwards the signed-in user's
 ts-auth access token; TerraBase accepts it only when it is a user token (no `project_id`) whose `platform_role` claim is
 `admin` (ts-auth issues that claim to platform admins). Anyone else: 401 without a token, 403 with one. Only
-`platform-auth` and `platform-dashboard` resolve; any other database answers 404.
+`ts-auth` and `ts-dashboard` resolve; any other database answers 404.
 
 | Route | Answer |
 |---|---|
@@ -73,7 +90,7 @@ ts-auth access token; TerraBase accepts it only when it is a user token (no `pro
   `pin`, reads `"[redacted]"`, at any depth. ts-auth's sealed signing keys (`secretBox`), private key parameters and
   password hashes never leave. Over-redaction is the intended failure.
 - **Audit.** Every read logs `Platform admin <user id> read <database>/<collection>/<document id>` (never the content).
-  A durable audit collection follows once the catalog is replicated (R10a).
+  Durable audit storage is separate work.
 - **No writes.** There is no write route; changes go through the owning service.
 
 The ts-dotnet SDK client for these routes ships with the dashboard work (TerraScale/ts-dotnet); its routes join

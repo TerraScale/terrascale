@@ -1,4 +1,5 @@
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Store;
 using ZLogger;
 
@@ -7,13 +8,13 @@ namespace TerraScale.Authentication.Features.SigningKeys;
 /// <summary>
 /// Keeps the serving issuer's signing keys usable and rotated on every replica. At startup it creates ts-auth's collections
 /// in its seeded TerraBase database (<see cref="AuthStore.ProvisionAsync"/>, idempotent), registers the configured OIDC
-/// clients (<see cref="ClientRegistration"/>), then checks that the serving issuer has keys and that every stored key
-/// works under this master key (<see cref="KeyRing.VerifyAsync"/>), retrying (after 5 s, doubling up to 5 min, so an
+/// clients (<see cref="ClientRegistration"/>), seeds the platform owner and projects, then provisions the first signing
+/// key if absent and checks every stored key under this master key, retrying (after 5 s, doubling up to 5 min, so an
 /// unreachable store is not hammered); <see cref="Bootstrapped"/> then completes. Until then readiness reports 503, so
-/// ts-auth starts before TerraBase and recovers on its own. It never creates a key: without one it stays not ready until
-/// an operator runs <see cref="SigningKeyProvisioning"/>. After that, and hourly, it runs the scheduled rotation.
+/// ts-auth starts before TerraBase and recovers on its own. Existing keys are never replaced. After that, and hourly,
+/// it runs the scheduled rotation.
 /// </summary>
-public sealed class SigningKeyRotation(AuthStore store, ClientRegistration clients, KeyRing ring, ILogger<SigningKeyRotation> logger) : BackgroundService
+public sealed class SigningKeyRotation(AuthStore store, ClientRegistration clients, PlatformBootstrap platform, KeyRing ring, ILogger<SigningKeyRotation> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromHours(1);
     private static readonly TimeSpan FirstBootstrapRetry = TimeSpan.FromSeconds(5);
@@ -63,8 +64,12 @@ public sealed class SigningKeyRotation(AuthStore store, ClientRegistration clien
         try
         {
             await store.ProvisionAsync(stoppingToken).ConfigureAwait(false);
+            await platform.EnsureAsync(stoppingToken).ConfigureAwait(false);
             await clients.RegisterAllAsync(stoppingToken).ConfigureAwait(false);
-            await ring.VerifyAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false);
+            if (await ring.ProvisionAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false))
+            {
+                this.Log(target => target.ZLogInformation($"Audit: startup provisioned the platform issuer's first signing key"));
+            }
             return true;
         }
         // As above: while stopping, the retry delay ends the loop.

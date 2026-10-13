@@ -538,8 +538,10 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
         }
 
         var accounts = (await oidc.Database.ListDocumentsAsync(AuthStore.UserCollection)).Items;
-        await Assert.That(accounts.Count).IsEqualTo(1);
-        await Assert.That(accounts[0].Document.GetRawText()).DoesNotContain(Password);
+        await Assert.That(accounts.Count).IsEqualTo(2);
+        await Assert.That(accounts.Count(account => account.Document.GetProperty("email").GetString() == AuthTestServer.BootstrapOwnerEmail)).IsEqualTo(1);
+        var signedUp = accounts.Single(account => account.Document.GetProperty("email").GetString() == "erin@example.test");
+        await Assert.That(signedUp.Document.GetRawText()).DoesNotContain(Password);
         var consumed = (await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single().Document;
         await Assert.That(consumed.TryGetProperty("passwordHash", out var hash) && hash.ValueKind != JsonValueKind.Null).IsFalse();
     }

@@ -7,21 +7,19 @@ using System.Text.Json;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraScale.Authentication.Features.Oidc;
-using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Security;
 
 /// <summary>
 /// The token contract TerraBase relies on in every region: ts-auth replicas (one per Fly region, all on one TerraBase
-/// auth database) fail closed until the operator provisions the platform issuer's key (#96), then share it, so a token
+/// auth database) bootstrap the platform issuer's key at startup and share it, so a token
 /// any replica issues carries the one global issuer and validates against every replica's JWKS. Synthetic master key
 /// and service client; an isolated database per test.
 /// </summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class AuthTokenContractTests(TerraBaseFixture fixture)
 {
-    private const string NoKeys = "no signing keys: operator provisioning required (docs/auth/signing-keys.md)";
     private const string Audience = "https://api.terrascale.test";
     private const string ServiceId = "01M4EQ2FRJ8S8B29E8TQVWNW4K";
     private const string ServiceSecret = "service-test-secret-0123456789abcdefghij";
@@ -29,7 +27,7 @@ public sealed class AuthTokenContractTests(TerraBaseFixture fixture)
     private static readonly string[] Regions = ["gru", "sjc", "fra"];
 
     [Test]
-    public async Task Every_replica_fails_closed_until_provisioned_then_tokens_from_any_replica_validate_against_every_replicas_keys()
+    public async Task Startup_on_every_replica_provisions_shared_keys_and_tokens_validate_against_every_replicas_keys()
     {
         var target = await SharedStateTarget.CreateAsync(fixture);
         var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -48,19 +46,6 @@ public sealed class AuthTokenContractTests(TerraBaseFixture fixture)
                     services: services => target.Register(services)));
             }
 
-            // Fail closed everywhere: not ready with the operator error, no JWKS, no token.
-            foreach (var replica in replicas)
-            {
-                await Assert.That(await ReadinessWait.UntilAsync(async () => await ReadinessErrorAsync(replica) == NoKeys, Recovery)).IsTrue();
-                using var jwks = await replica.Client.GetAsync(new Uri($"/{OidcIssuer.Slug}/.well-known/jwks.json", UriKind.Relative));
-                await Assert.That(jwks.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-                using var refused = await ClientCredentialsAsync(replica);
-                await Assert.That(refused.IsSuccessStatusCode).IsFalse();
-                await Assert.That(await refused.Content.ReadAsStringAsync()).DoesNotContain("access_token");
-            }
-
-            // One operator run against the shared database provisions every replica.
-            await Assert.That(await SigningKeyProvisioning.RunAsync(replicas[0].App.Services, CancellationToken.None)).IsEqualTo(0);
             foreach (var replica in replicas)
             {
                 await Assert.That(await ReadinessWait.ReadyWithinAsync(replica.Client, Recovery)).IsTrue();
@@ -102,13 +87,6 @@ public sealed class AuthTokenContractTests(TerraBaseFixture fixture)
                 await replica.DisposeAsync();
             }
         }
-    }
-
-    private static async Task<string?> ReadinessErrorAsync(AuthTestServer server)
-    {
-        using var response = await server.Client.GetAsync(new Uri("/readyz", UriKind.Relative));
-        return response.StatusCode == HttpStatusCode.ServiceUnavailable
-            && (await response.Content.ReadFromJsonAsync<JsonElement>()).TryGetProperty("error", out var error) ? error.GetString() : null;
     }
 
     private static async Task<HttpResponseMessage> ClientCredentialsAsync(AuthTestServer server)

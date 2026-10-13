@@ -1,3 +1,4 @@
+using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.Platform;
 using TerraBase.Hosting;
@@ -9,8 +10,7 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
 {
     // The platform organization's creator, which owns no membership: nobody can act in the organization as a member.
     private const string PlatformCreator = PlatformDatabases.OrganizationId;
-    private const string PlatformOrganizationName = "TerraScale platform";
-    private const string PlatformProjectName = "platform";
+    private const string PlatformOrganizationName = "TerraScale";
 
     public async ValueTask<EnsurePlatformResult> EnsurePlatformAsync(CancellationToken cancellationToken)
     {
@@ -31,18 +31,35 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
                 return new Conflict("the platform organization id holds another organization", "platform_organization_taken");
             }
 
-            var owner = await GetAsync(transaction, ProjectOrganizations, PlatformDatabases.ProjectId, Id, cancellationToken).ConfigureAwait(false);
-            if (owner is null)
+            foreach (var (name, database) in PlatformDatabases.Databases)
             {
-                var project = new Project(PlatformDatabases.ProjectId, organization.Id, PlatformProjectName, DateTimeOffset.UnixEpoch);
-                await PutAsync(transaction, ProjectOrganizations, project.Id, organization.Id, Id, cancellationToken).ConfigureAwait(false);
-                await TouchOrganizationAsync(transaction, organization.Id, cancellationToken).ConfigureAwait(false);
-                await PutAsync(transaction, ProjectNames(organization.Id), Key(project.Name), project.Id, Id, cancellationToken).ConfigureAwait(false);
-                await PutAsync(transaction, Projects(organization.Id), project.Id, project, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false);
-            }
-            else if (owner != organization.Id)
-            {
-                return new Conflict("the platform project id belongs to another organization", "platform_project_taken");
+                var owner = await GetAsync(transaction, ProjectOrganizations, database.ProjectId, Id, cancellationToken).ConfigureAwait(false);
+                if (owner is null)
+                {
+                    var project = new Project(database.ProjectId, organization.Id, name, DateTimeOffset.UnixEpoch);
+                    await PutAsync(transaction, ProjectOrganizations, project.Id, organization.Id, Id, cancellationToken).ConfigureAwait(false);
+                    await TouchOrganizationAsync(transaction, organization.Id, cancellationToken).ConfigureAwait(false);
+                    await PutAsync(transaction, ProjectNames(organization.Id), Key(project.Name), project.Id, Id, cancellationToken).ConfigureAwait(false);
+                    await PutAsync(transaction, Projects(organization.Id), project.Id, project, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false);
+                }
+                else if (owner != organization.Id)
+                {
+                    return new Conflict("a platform project id belongs to another organization", "platform_project_taken");
+                }
+
+                var binding = await GetAsync(transaction, Bindings(database.ProjectId), "ts_auth", TerraBaseJsonContext.Default.ProjectCatalogBinding, cancellationToken)
+                    .ConfigureAwait(false);
+                if (binding is null)
+                {
+                    await PutAsync(transaction, Bindings(database.ProjectId), "ts_auth",
+                        new ProjectCatalogBinding(1, TerraBaseOptions.PlatformAuthIssuer, organization.Id, organization.Id, PlatformCreator, DateTimeOffset.UnixEpoch),
+                        TerraBaseJsonContext.Default.ProjectCatalogBinding, cancellationToken).ConfigureAwait(false);
+                }
+                else if (binding.Version != 1 || binding.Issuer != TerraBaseOptions.PlatformAuthIssuer
+                    || binding.OrganizationId != organization.Id || binding.AuthorityOrganizationId != organization.Id)
+                {
+                    return new Conflict("a platform project holds another authority binding", "platform_binding_taken");
+                }
             }
 
             return new Done();
@@ -53,20 +70,20 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
         }
 
         var placement = PlatformDatabases.Placement(options.Region);
-        foreach (var (name, id) in PlatformDatabases.Databases)
+        foreach (var (name, database) in PlatformDatabases.Databases)
         {
             var added = await AddDatabaseAsync(
-                async transaction => await OrganizationProjectAsync(transaction, PlatformDatabases.OrganizationId, PlatformDatabases.ProjectId, cancellationToken)
+                async transaction => await OrganizationProjectAsync(transaction, PlatformDatabases.OrganizationId, database.ProjectId, cancellationToken)
                     .ConfigureAwait(false) is { } tenant ? tenant : ManagementErrors.NotFound,
-                name, sourceId: null, branchedFrom: null, cancellationToken, id: id, placement: placement, createdAt: DateTimeOffset.UnixEpoch).ConfigureAwait(false);
+                name, sourceId: null, branchedFrom: null, cancellationToken, id: database.Id, placement: placement, createdAt: DateTimeOffset.UnixEpoch).ConfigureAwait(false);
             EnsurePlatformResult result = added switch
             {
                 AddedDatabase => new Done(),
                 // Taken: by this seed on an earlier start or a concurrent run, which is fine, or by something else.
                 Conflict error when error == ManagementErrors.NameTaken =>
-                    await FindDatabaseRecordAsync(PlatformDatabases.OrganizationId, PlatformDatabases.ProjectId, name, cancellationToken).ConfigureAwait(false) switch
+                    await FindDatabaseRecordAsync(PlatformDatabases.OrganizationId, database.ProjectId, name, cancellationToken).ConfigureAwait(false) switch
                     {
-                        ManagedDatabase existing when existing.Id == id => new Done(),
+                        ManagedDatabase existing when existing.Id == database.Id => new Done(),
                         ManagedDatabase => new Conflict("a platform database name holds another database", "platform_database_taken"),
                         NotFound => new Unavailable("a platform database was deleted while it was seeded"),
                         Unavailable unreadable => unreadable,

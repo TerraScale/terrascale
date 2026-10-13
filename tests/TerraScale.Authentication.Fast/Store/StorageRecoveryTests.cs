@@ -15,8 +15,8 @@ namespace TerraScale.Authentication.Fast.Store;
 
 /// <summary>
 /// No startup order between ts-auth and TerraBase: ts-auth starts without TerraBase, answers 503 on <c>/readyz</c>, and
-/// becomes ready by itself once TerraBase serves and the operator has provisioned the issuer's signing key; a TerraBase
-/// crash and restart while ts-auth runs is the same. ts-auth never creates that key itself. Each test owns its TerraBase
+/// becomes ready by itself once TerraBase serves and startup provisions the issuer's first signing key; a TerraBase
+/// crash and restart while ts-auth runs is the same. Existing keys are kept. Each test owns its TerraBase
 /// process (the one built from this commit), so it can stop it.
 /// </summary>
 public sealed class StorageRecoveryTests
@@ -43,15 +43,9 @@ public sealed class StorageRecoveryTests
         }
 
         await terrabase.RestartAsync();
-        // The bootstrap that ran once TerraBase answered created the collections, but no signing key: not ready until
-        // the operator provisions it.
         var database = terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth");
-        await Assert.That(await ReadinessWait.UntilAsync(async () => await ErrorAsync(auth) is not null, Recovery)).IsTrue();
-        await Assert.That((await database.ListCollectionsAsync(limit: 200)).Items.Count).IsEqualTo(AuthStore.RequiredCollections.Count);
-        await Assert.That((await database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items).IsEmpty();
-
-        await Assert.That(await SigningKeyProvisioning.RunAsync(auth.App.Services, CancellationToken.None)).IsEqualTo(0);
         await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
+        await Assert.That((await database.ListCollectionsAsync(limit: 200)).Items.Count).IsEqualTo(AuthStore.RequiredCollections.Count);
         await Assert.That((await database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Count).IsEqualTo(1);
         using var request = new HttpRequestMessage(HttpMethod.Post, $"/{OidcIssuer.Slug}/oauth/token")
         {
@@ -118,12 +112,6 @@ public sealed class StorageRecoveryTests
     {
         var jwks = await auth.Client.GetFromJsonAsync<JsonElement>($"/{OidcIssuer.Slug}/.well-known/jwks.json");
         return jwks.GetProperty("keys").EnumerateArray().Single().GetProperty("kid").GetString()!;
-    }
-
-    private static async Task<string?> ErrorAsync(AuthTestServer auth)
-    {
-        using var response = await auth.Client.GetAsync("/readyz");
-        return (await response.Content.ReadFromJsonAsync<JsonElement>()).TryGetProperty("error", out var error) ? error.GetString() : null;
     }
 
     private static Task<AuthTestServer> StartAuthAsync(TerraBaseTestServer terrabase, TerraBaseTestTenant tenant, string? serviceClients = null, bool provision = false) =>

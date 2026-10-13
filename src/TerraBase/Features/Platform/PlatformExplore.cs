@@ -81,8 +81,8 @@ public static class PlatformExplore
 
     /// <summary>The platform database named <paramref name="name"/>, or 404 for any other name.</summary>
     internal static async ValueTask<FindDatabaseResult> FindAsync(ITenantDirectory tenants, string? name, CancellationToken cancellationToken) =>
-        name is not null && PlatformDatabases.Databases.ContainsKey(name)
-            ? await tenants.FindDatabaseAsync(PlatformDatabases.OrganizationId, PlatformDatabases.ProjectId, name, cancellationToken).ConfigureAwait(false)
+        name is not null && PlatformDatabases.Databases.TryGetValue(name, out var database)
+            ? await tenants.FindDatabaseAsync(PlatformDatabases.OrganizationId, database.ProjectId, name, cancellationToken).ConfigureAwait(false)
             : new NotFound("the database does not exist", "unknown_database");
 
     /// <summary>The answer for a database <see cref="FindAsync"/> did not find.</summary>

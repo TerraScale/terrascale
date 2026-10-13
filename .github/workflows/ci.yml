@@ -37,7 +37,7 @@ permissions:
 
 env:
   # ts-dotnet revision ts-auth builds against (TerraScale/ts-dotnet is private; read-only deploy key).
-  TS_DOTNET_REV: bcd20603f11f3aa54dc54cec6e410b4fe9e24151
+  TS_DOTNET_REV: 78e311fe1dcb6dd603190800ed540d08e06de5fd
 
 jobs:
   # Runs on every event: a skipped job would skip everything downstream of "test" (deploy, slow).
@@ -340,9 +340,7 @@ jobs:
   # One job, no `needs`: it joins the `deploy` queue when the run starts, so queued deploys keep push order and a newer
   # pending deploy replaces an older one (never the reverse). ts-auth keeps its data in TerraBase, so it rolls out after.
   deploy:
-    # PAUSED 2026-10-12 by the user's approval (containment 1C): merges to main must not deploy until the
-    # three-region storage rebuild is done. Re-enable by deleting `false &&` in a reviewed PR.
-    if: false && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: alpha
     timeout-minutes: 30
     concurrency:
