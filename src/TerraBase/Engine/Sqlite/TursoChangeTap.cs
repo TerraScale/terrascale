@@ -44,7 +44,7 @@ internal sealed class TursoChangeTap : IWalTap
     private readonly SqliteDatabaseStore _store;
     private readonly SqliteIoPool _io;
     private readonly TimeProvider _time;
-    // Replaced when a snapshot's read transaction cannot be ended (EndSnapshotAsync).
+    // Replaced when a snapshot's read transaction may be left open (ReplaceReaderAsync).
     private TursoConnection _reader;
 
     // The change_id of the last row read, kept in turso_cdc; 0 before anything was captured.
@@ -65,6 +65,9 @@ internal sealed class TursoChangeTap : IWalTap
 
     /// <summary>Runs as a snapshot's read transaction ends, before its rollback; for integration tests.</summary>
     internal Func<CancellationToken, Task>? BeforeSnapshotEnd { get; set; }
+
+    /// <summary>Runs after a snapshot's read transaction begins, before the read that pins it; for integration tests.</summary>
+    internal Func<CancellationToken, Task>? AfterSnapshotBegin { get; set; }
 
     private TursoChangeTap(SqliteDatabaseStore store, SqliteIoPool io, TimeProvider time, TursoConnection reader)
     {
@@ -148,7 +151,23 @@ internal sealed class TursoChangeTap : IWalTap
                     return Truncate(writer);
                 }, cancellationToken).ConfigureAwait(false);
                 // The read transaction the copy is made in, pinned at the anchor.
-                await _io.RunAsync(() => Execute("BEGIN;", "SELECT count(*) FROM sqlite_schema;"), cancellationToken).ConfigureAwait(false);
+                await _io.RunAsync(() => Execute("BEGIN;"), cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (AfterSnapshotBegin is { } begun)
+                    {
+                        await begun(cancellationToken).ConfigureAwait(false);
+                    }
+
+                    await _io.RunAsync(() => Execute("SELECT count(*) FROM sqlite_schema;"), cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // The transaction is open but not pinned: the next read would pin it, and every later read keep that state.
+                    await ReplaceReaderAsync().ConfigureAwait(false);
+                    throw;
+                }
+
                 return new WalSnapshot(read, _time.GetUtcNow());
             }, cancellationToken, "the continuous backup's snapshot").ConfigureAwait(false);
 
@@ -185,15 +204,22 @@ internal sealed class TursoChangeTap : IWalTap
         }
         catch
         {
-            var stale = _reader;
-            _reader = new TursoConnection($"Data Source={_store.FilePath}");
-            await _io.RunAsync(() =>
-            {
-                stale.Dispose();
-                SqliteSession.OpenExisting(_reader, _store.FilePath);
-            }, CancellationToken.None).ConfigureAwait(false);
+            await ReplaceReaderAsync().ConfigureAwait(false);
             throw;
         }
+    }
+
+    // A reader that may still be in a snapshot's read transaction is disposed and a new connection opened on the file; if
+    // that open fails, later reads fail instead of reading a pinned state.
+    private async Task ReplaceReaderAsync()
+    {
+        var stale = _reader;
+        _reader = new TursoConnection($"Data Source={_store.FilePath}");
+        await _io.RunAsync(() =>
+        {
+            stale.Dispose();
+            SqliteSession.OpenExisting(_reader, _store.FilePath);
+        }, CancellationToken.None).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
