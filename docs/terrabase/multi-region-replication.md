@@ -278,6 +278,15 @@ until the SDKs drop them). Create-only `If-None-Match: *` goes too. Client ULIDs
 - **`turso_cdc` is the outbox.** Groups are rebuilt from it on demand for each peer (`acked < change_id`), so there is
   no second log. A peer silent for more than 24 h, or more than 1 GiB behind, stops holding CDC rows. It must refill
   when it returns (section 10).
+- **Acks over joined rows.** Joined remote writes and repairs are never shipped, so a peer never acknowledges them. Each
+  5 s retention pass therefore raises a peer's `acked` to the last commit before the next local group past it (the read's
+  quiet point), but only while every row past that ack is still here: after a cut the peer may lack deleted local
+  groups and refills instead. Without this a replica that mostly receives keeps every joined row until the 1 GiB cut.
+  The CDC source remembers each raise, and each read over all of its rows, as a quiet range of the file (merged where
+  ranges touch, pruned once retention cuts past them), and `RetainsAsync` follows those ranges, so a live stream whose
+  in-memory ack is below a raised ack is not refilled.
+- **Copies and restores.** `_tb_peers.acked` names rows of one file's `turso_cdc`; a copy's ids restart at 1, so a copy
+  (database copy, restore, backup snapshot) resets every peer's `acked` to 0. What the peers applied stays.
 - **Atomicity.** One Turso transaction → one group → one apply transaction at the receiver. Readers never see part of
   an operation, nor part of a lane batch.
 
@@ -755,9 +764,12 @@ ts-dotnet until R12 makes ts-auth lattice-native.
   region).
 - **Retention cut and refill.** Retention also runs every 5 s without acks. A peer silent for 24 h stops holding rows,
   as before. A peer whose unacknowledged CDC rows pass 1 GiB (measured once it is 65,536 rows behind) gets `seen = 0` and
-  stops holding rows until it is heard from again. A sender whose CDC no longer holds every row after a peer's ack
-  (retention deletes a prefix, so that is `min(change_id) > acked + 1`; a new peer at 0 counts too) sends `Refill(head)`
-  instead of groups. The receiver finds the sender by the machine name in its `Hello`, joins every bucket that differs at
+  stops holding rows until it is heard from again. A sender whose CDC no longer holds every row the peer lacks after its
+  ack sends `Refill(head)` instead of groups. Retention deletes a prefix, so that is `min(change_id) > acked + 1`, except
+  over remembered quiet ranges (section 7): ranges proven to hold no local group, whose deleted rows the peer cannot lack,
+  so the check runs at the end of the range holding the ack. A new peer at 0 is refilled only when local groups it lacks
+  were cut; a sender whose CDC from 0 is proven quiet does not refill it, and anti-entropy seeds it. So R7's copy-refill
+  of a machine back after more than 24 h cannot count on every sender sending `refill_required`. The receiver finds the sender by the machine name in its `Hello`, joins every bucket that differs at
   once, then acks `head`, and the stream goes on from there.
 - **Not copy-refill.** Without garbage collection (R7) merging old state is safe, so a refill merges. Once R7 collects
   tombstones, a machine away past the horizon must delete its file and copy from a peer (section 10), or it would bring
