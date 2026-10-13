@@ -216,14 +216,8 @@ public sealed class PlatformDatabasesTests
         {
             var stored = await transaction.GetAsync(collection, "ts_auth", CancellationToken.None);
             var binding = JsonNode.Parse(stored!.Json.Span)!;
-            if (field == "version")
-            {
-                binding[field] = 2;
-            }
-            else
-            {
-                binding[field] = field == "issuer" ? "https://auth.example.invalid/other" : EntityIds.New().ToString();
-            }
+            binding[field] = field == "version" ? JsonValue.Create(2)
+                : JsonValue.Create(field == "issuer" ? "https://auth.example.invalid/other" : EntityIds.New().ToString());
 
             conflicting = Encoding.UTF8.GetBytes(binding.ToJsonString());
             await transaction.PutAsync(collection, "ts_auth", conflicting, CancellationToken.None);
