@@ -235,9 +235,14 @@ public sealed class QueryValueRegressionTests
                 cancellation.Cancel();
                 await Assert.That(async () => await rows.MoveNextAsync()).Throws<OperationCanceledException>();
             }
+        }
 
+        // Turso may abort the transaction when it drains a cancelled reader (docs/terrabase/turso-spike.md).
+        // Recovery uses a fresh read transaction; the cancelled transaction is only disposed.
+        await using (var resumedTransaction = (await engine.BeginTransactionAsync(context, write: false, CancellationToken.None))!)
+        {
             var resumed = new List<string>();
-            await foreach (var row in transaction.QuerySqlAsync(new SqlQuery("query_values", null, [], 100), CancellationToken.None))
+            await foreach (var row in resumedTransaction.QuerySqlAsync(new SqlQuery("query_values", null, [], 100), CancellationToken.None))
             {
                 resumed.Add(row.Id);
             }
