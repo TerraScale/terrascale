@@ -33,6 +33,8 @@ internal sealed class TerraBaseConnection
     private readonly int maxResponseBytes;
     private readonly string? regionPin;
 
+    internal TimeProvider TimeProvider => timeProvider;
+
     public TerraBaseConnection(HttpClient http, Uri? baseAddress, ITerraBaseEndpointResolver? endpointResolver, string? secret, string secretName, TimeSpan timeout, int maxResponseBytes,
         Func<CancellationToken, ValueTask<string>>? accessTokenProvider = null, bool anonymousAllowed = false, string? region = null, TimeProvider? timeProvider = null)
     {
