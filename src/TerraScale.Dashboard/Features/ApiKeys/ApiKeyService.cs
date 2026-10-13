@@ -61,12 +61,12 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
     }
 
     public static ProjectApiKeyMetadata Metadata(ProjectCredential key) => new(key.Id, key.ProjectId, key.Name, key.Id + "_", "", key.Scopes,
-        key.DatabaseId ?? "", "", Format(key.CreatedAt), key.ExpiresAt is { } expires ? Format(expires) : "", "", "", key.IsActive);
+        key.DatabaseId ?? "", "", Format(key.CreatedAt), key.ExpiresAt is { } expires ? Format(expires) : "", "", "", key.IsActive) { DatabaseName = key.DatabaseName };
     public static ProjectCredentialMetadata CredentialMetadata(ProjectCredential key)
     {
         var value = Metadata(key);
         return new(value.KeyId, value.ProjectId, value.Name, value.Prefix, value.LastFour, value.Scopes, value.DatabaseId,
-            value.CreatedByEmail, value.CreatedAt, value.ExpiresAt, value.LastUsedAt, value.RevokedAt, value.IsActive, "api-key");
+            value.CreatedByEmail, value.CreatedAt, value.ExpiresAt, value.LastUsedAt, value.RevokedAt, value.IsActive, "api-key") { DatabaseName = value.DatabaseName };
     }
 
     private TerraScaleAuthPlatformClient Client() => new TerraScaleAuthClient(http.CreateClient("platform"),
