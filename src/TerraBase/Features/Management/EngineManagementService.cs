@@ -78,6 +78,13 @@ internal sealed partial class EngineManagementService(
         {
             if (await transaction.GetVersionAsync(Organizations, id, cancellationToken).ConfigureAwait(false) is not null)
             {
+                if (await GetAsync(transaction, Organizations, id, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false) is { } known
+                    && known.Name == name && known.CreatedBy == userId
+                    && await GetMemberAsync(transaction, id, userId, cancellationToken).ConfigureAwait(false) is { Role: OrganizationRole.Owner })
+                {
+                    return known;
+                }
+
                 return ManagementErrors.IdTaken;
             }
 
@@ -266,6 +273,13 @@ internal sealed partial class EngineManagementService(
 
             if (await transaction.GetVersionAsync(ProjectOrganizations, id, cancellationToken).ConfigureAwait(false) is not null)
             {
+                if (await GetAsync(transaction, ProjectOrganizations, id, Id, cancellationToken).ConfigureAwait(false) == organizationId
+                    && await GetAsync(transaction, Projects(organizationId), id, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false) is { } known
+                    && known.Name == name)
+                {
+                    return known;
+                }
+
                 return ManagementErrors.IdTaken;
             }
 
@@ -1308,7 +1322,7 @@ internal sealed partial class EngineManagementService(
     private static string DatabaseNames(string projectId) => $"projects/{projectId}/database_names";
 
     // A database just added to the catalog, with the tenant its storage is addressed by.
-    private sealed record AddedDatabase(ManagedDatabase Database, TenantContext Tenant);
+    private sealed record AddedDatabase(ManagedDatabase Database, TenantContext Tenant, bool Existing = false);
 
     // A database the user may delete here, with the tenant its storage is addressed by.
     private sealed record DeletableDatabase(TenantContext Storage, ManagedDatabase Record);

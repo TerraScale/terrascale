@@ -566,12 +566,6 @@ public sealed class ReplicaRebuildTests
         // The organization, project and database under the pair's ids, placed in both regions.
         private async Task RegisterAsync()
         {
-            // Startup pulls an existing catalog before its recovery creates the placed database.
-            if (await Engine.OpenDatabaseAsync(pair.Database, CancellationToken.None) is not null)
-            {
-                return;
-            }
-
             var database = pair.Database;
             var commit = JsonSerializer.Serialize(new
             {

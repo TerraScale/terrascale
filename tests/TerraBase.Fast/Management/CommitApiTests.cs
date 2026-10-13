@@ -8,6 +8,7 @@ using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Tenancy;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -24,6 +25,89 @@ public sealed class CommitApiTests
     private static readonly Faker Faker = new();
     private static readonly string[] ReadScope = ["documents:read"];
     private static readonly string[] StatusField = ["status"];
+    private static readonly string[] RecoveryReplicas = ["sjc"];
+
+    [Test]
+    public async Task Identical_catalog_creates_initialize_missing_storage_without_rewriting_the_registration()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var api = await ManagementApi.StartAsync();
+        using var service = api.Service(api.User);
+        var (organization, project, database) = (NewId(), NewId(), NewId());
+        object[] ops =
+        [
+            new { op = "create_organization", id = organization, name = "recovery" },
+            new { op = "create_project", organization, id = project, name = "recovery" },
+            new { op = "create_database", organization, project, id = database, name = "recovery", replica_regions = RecoveryReplicas },
+        ];
+        var initial = await CommitAsync(service, ops);
+        await Assert.That(initial.Status).IsEqualTo(HttpStatusCode.OK);
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        var tenant = new TenantContext(organization, PlanTier.Hobby, project, database);
+        var system = await engine.OpenSystemDatabaseAsync(token);
+        var collections = new[] { "organizations", $"organizations/{organization}/projects", $"projects/{project}/databases" };
+        var ids = new[] { organization, project, database };
+        var versions = new DocumentVersion?[3];
+        await using (var read = await system.BeginTransactionAsync(write: false, token))
+        {
+            for (var index = 0; index < ids.Length; index++)
+            {
+                versions[index] = await read.GetVersionAsync(collections[index], ids[index], token);
+            }
+        }
+
+        await Assert.That(await engine.DeleteDatabaseAsync(tenant, token)).IsTrue();
+        await Assert.That(await engine.OpenDatabaseAsync(tenant, token)).IsNull();
+        var repeated = await CommitAsync(service, ops);
+        await Assert.That(repeated.Status).IsEqualTo(HttpStatusCode.OK).Because(repeated.Body);
+        await Assert.That(await engine.OpenDatabaseAsync(tenant, token)).IsNotNull();
+        await using var after = await system.BeginTransactionAsync(write: false, token);
+        for (var index = 0; index < ids.Length; index++)
+        {
+            await Assert.That(repeated.Value(index).GetRawText()).IsEqualTo(initial.Value(index).GetRawText());
+            await Assert.That(await after.GetVersionAsync(collections[index], ids[index], token)).IsEqualTo(versions[index]);
+        }
+    }
+
+    [Test]
+    [Arguments("organization")]
+    [Arguments("project")]
+    [Arguments("database")]
+    [Arguments("placement")]
+    [Arguments("deleted")]
+    public async Task Catalog_create_reuse_rejects_different_content_and_deleted_ids(string conflict)
+    {
+        await using var api = await ManagementApi.StartAsync();
+        using var service = api.Service(api.User);
+        var (organization, project, database) = (NewId(), NewId(), NewId());
+        var initial = await CommitAsync(service,
+            new { op = "create_organization", id = organization, name = "original" },
+            new { op = "create_project", organization, id = project, name = "original" },
+            new { op = "create_database", organization, project, id = database, name = "original", replica_regions = RecoveryReplicas });
+        await Assert.That(initial.Status).IsEqualTo(HttpStatusCode.OK);
+        if (conflict == "deleted")
+        {
+            var deleted = await CommitAsync(service,
+                new { op = "set_database_regions", organization, project, database, replica_regions = Array.Empty<string>() },
+                new { op = "delete_database", organization, project, database });
+            await Assert.That(deleted.Status).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var attempted = await CommitAsync(service,
+            new { op = "create_organization", id = organization, name = conflict == "organization" ? "changed" : "original" },
+            new { op = "create_project", organization, id = project, name = conflict == "project" ? "changed" : "original" },
+            new
+            {
+                op = "create_database",
+                organization,
+                project,
+                id = database,
+                name = conflict == "database" ? "changed" : "original",
+                replica_regions = new[] { conflict == "placement" ? "fra" : "sjc" }
+            });
+        await Assert.That((attempted.Status, attempted.Code)).IsEqualTo((HttpStatusCode.Conflict, "id_taken"));
+        await Assert.That(attempted.Op).IsEqualTo((int?)(conflict == "organization" ? 0 : conflict == "project" ? 1 : 2));
+    }
 
     [Test]
     public async Task Commit_document_creates_use_the_application_clock_for_monotonic_ULIDs()

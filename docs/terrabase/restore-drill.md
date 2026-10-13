@@ -50,7 +50,10 @@ curl --http2-prior-knowledge http://<machine-private-address>:8081/v1/catalog-ga
 
 The response reports `open`, `trusted`, `pending` and the SHA-256 digest of its catalog bucket digests. A catalog whose
 security freshness cannot be established stays unavailable even if tenant backup restore succeeds. Continuous shipping also waits for an open gate. Cleanup skipped while
-the gate is closed is reconsidered at the next verified restart.
+the gate is closed is reconsidered at the next verified restart. Identical create requests reuse live catalog records
+without changing their versions; a missing local database is initialized only after the commit succeeds. Different
+names, ownership, placement and deleted IDs remain conflicts. Shutdown-caused cancelled RPCs are normal cancellation;
+other RPC faults remain visible.
 
 ## Production acceptance
 
@@ -63,4 +66,4 @@ Write known data and record each region's digest; ship it before deleting the ch
 that region, restore tenant data, compare all three digests, and prove replication in both directions. Inspect Fly volume
 snapshot scheduling and restore one daily snapshot into a separate volume before declaring snapshot recovery tested.
 Record backup, download/replay, readiness and convergence timings in `benchmark/bench/`, distinguishing each measurement
-from the total recovery time. Publish proof before merging and removing the task branch/worktree.
+from the total recovery time. Publish production proof after the local gate and drill PRs merge; the live drill remains blocked until COS authorizes it.

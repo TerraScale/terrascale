@@ -2397,12 +2397,6 @@ public sealed class PeerStreamTests
         // The organization, project and database under the cluster's ids, placed in every region of the cluster.
         private async Task RegisterAsync()
         {
-            // Startup pulls an existing catalog before its recovery creates the placed database.
-            if (await Engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None) is not null)
-            {
-                return;
-            }
-
             var database = cluster.Database;
             var commit = JsonSerializer.Serialize(new
             {

@@ -591,12 +591,6 @@ public sealed class CorruptChangeLogTests
         // The organization, project and both databases, placed in `replicas` besides this node's region.
         private async Task RegisterAsync(string[] replicas)
         {
-            // Startup pulls an existing catalog before its recovery creates the placed database.
-            if (await Api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(Database, CancellationToken.None) is not null)
-            {
-                return;
-            }
-
             var commit = JsonSerializer.Serialize(new
             {
                 id = EntityIds.New().ToString(),

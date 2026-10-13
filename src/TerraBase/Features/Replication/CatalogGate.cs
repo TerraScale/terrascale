@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Diagnostics.Metrics;
 using System.Text;
 using System.Text.Json;
+using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
@@ -200,6 +201,11 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
                 try
                 {
                     _ = await VerifyAsync(stoppingToken).ConfigureAwait(false);
+                }
+                catch (RpcException error) when (stoppingToken.IsCancellationRequested && error.StatusCode == StatusCode.Cancelled)
+                {
+                    stoppingToken.ThrowIfCancellationRequested();
+                    throw;
                 }
                 catch (Exception error) when (!stoppingToken.IsCancellationRequested)
                 {

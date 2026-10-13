@@ -47,8 +47,8 @@ tampered or replayed backup state. Unverified catalogs refuse public requests, m
 system replication export and backup shipping. Anchor GETs must carry `X-Tigris-Consistent: true`.
 
 Production acceptance is pending COS `GO DRILL`, after T2 and the live replication matrix. No cloud resource was changed
-by this drill. Tigris CLI identity verification failed twice with `ID token verification failed`; authentication must be
-renewed before live work. Scheduled object listings with timestamps, three-region digest and bidirectional replication
+by this drill. COS replaced the buckets; production now uses Fly-managed `ts-terrabase-backups-20261013-v2` through the app secrets.
+The obsolete Tigris CLI/OAuth path is not a live prerequisite. Scheduled object listings with timestamps, three-region digest and bidirectional replication
 proof, daily Fly snapshot settings and a snapshot restore, production timings, and PR merge remain outstanding.
 
 ## Required full gate: failed, publication blocked
@@ -57,11 +57,23 @@ The subsequent frozen `ts-heavy make check` exited 2: Endpoints 88/88, Logging 4
 Turso driver 6/6 passed. TerraBase Fast ran 1,571 cases: 1,513 passed, 58 failed, zero skipped, in 89.706 seconds.
 Build, whitespace/style, analyzers, security/OpenAPI and benchmark checks passed before the suites.
 
-The failures repeat `id_taken` during replication fixture registration. Startup now pulls the shared catalog, but
-`RegisterAsync` treats a missing physical database file as permission to recreate its already registered catalog IDs.
-The pending fixture correction must check catalog registration and initialize the local database separately.
-This reproduces the earlier full run's duplicate-ID failure; further retries stopped under the user's failure policy.
+The failures repeated `id_taken` during replication fixture registration. The gate pulled the catalog before local
+storage existed; commit preflight rejected the already registered database ID instead of checking for an identical
+entry. Operation 2 is the zero-based `create_database` index. Rebased `2ac0e39f` reproduced all 58 failures plus one
+shutdown-caused cancelled RPC (1,512/1,571 passed; 143.733 seconds). Both old and rebased trees were identical.
+Bisect identified `2cb75e1f` as the first bad commit; the fix is in the product, not fixture registration shortcuts.
 
 No push or PR was made because required checks are red. This full failure does not replace the passing 260-case backup
 namespace evidence above, and that evidence does not satisfy the full required gate. Raw local logs are
 `/tmp/cos-backup-namespace-final.log` and `/tmp/cos-backup-frozen-check.log`; no production proof exists.
+
+## Product correction controls
+
+The product now reuses matching organization/project/database entries without rewriting their catalog versions and
+initializes missing local database storage after a successful commit. Different content, ownership, placement and
+tombstones remain conflicts. Genuine shutdown-caused cancelled RPCs are normalized; other faults remain visible.
+
+The focused batch passed 131/132 cases, clearing every earlier replication/shutdown failure. Its sole failure was the
+new deletion control's setup: replicas must be removed before a database is deleted. The corrected five conflict
+controls then passed 5/5. Driver regressions passed 6/6. Logs: `/tmp/cos-backup-product-focused-v4.log` and
+`/tmp/cos-backup-reuse-conflicts.log`. One detached full gate follows these controls; no cloud proof is inferred.
