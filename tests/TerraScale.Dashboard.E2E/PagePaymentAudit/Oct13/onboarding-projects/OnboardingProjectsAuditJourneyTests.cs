@@ -96,6 +96,7 @@ public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixt
         using var client = scenario.CreateClient();
         using var producer = scenario.CreateProviderClient();
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        var initialProjectId = (await JsonAsync(client, "/api/v1/dashboard/context")).GetProperty("selection").GetProperty("projectId").GetString()!;
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
         { ["_csrf"] = csrf, ["name"] = "scope-origin", ["region"] = "GRU" });
@@ -116,6 +117,12 @@ public sealed class OnboardingProjectsAuditJourneyTests(DashboardE2EFixture fixt
         await Assert.That(switched.Headers.Location?.OriginalString).IsEqualTo("/databases");
         await Assert.That((await JsonAsync(client, "/api/v1/dashboard/context")).GetProperty("selection").GetProperty("projectId").GetString()).IsEqualTo(newId);
         await Assert.That(await destination.Content.ReadAsStringAsync()).Contains("No databases");
+        using var compatible = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-project", new()
+        { ["_csrf"] = csrf, ["projectId"] = initialProjectId, ["returnUrl"] = oldPath });
+        await Assert.That(compatible.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await Assert.That(compatible.Headers.Location?.OriginalString).IsEqualTo(oldPath);
+        using var preservedDetail = await client.GetAsync(compatible.Headers.Location);
+        await Assert.That(preservedDetail.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await ProtocolAcceptedAsync(producer);
     }
 

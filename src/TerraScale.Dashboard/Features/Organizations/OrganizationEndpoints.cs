@@ -10,7 +10,8 @@ namespace TerraScale.Dashboard.Features.Organizations;
 
 public sealed partial record OrganizationPage(ShellModel Shell, string Tab, IReadOnlyList<string> Regions, string Error = "", bool OpenCreateProject = false, bool OpenCreateOrganization = false,
     OrganizationAccessView? Access = null, string InvitationLink = "", OrganizationFilters? Filters = null, string WizardStep = "", bool PaymentCanceled = false,
-    BillingPage? Billing = null, string ProjectDraftName = "", IReadOnlyList<string>? ProjectDraftRegions = null);
+    BillingPage? Billing = null, string ProjectDraftName = "", IReadOnlyList<string>? ProjectDraftRegions = null,
+    string ProjectDraftPrimaryRegion = "", string ProjectDraftBackupRegion = "");
 
 public static class OrganizationEndpoints
 {
@@ -222,13 +223,16 @@ public static class OrganizationEndpoints
         catch (AccountAccessException error)
         {
             if (operation != "projects") return await PageAsync(http, context, placement, error.Message, error.StatusCode);
+            var available = await placement.RegionsAsync(http.RequestAborted);
             var page = (await PageModelAsync(http, context, placement, error.Message)) with
             {
                 Tab = "projects",
-                Regions = await placement.RegionsAsync(http.RequestAborted),
+                Regions = available,
                 OpenCreateProject = true,
                 ProjectDraftName = form["name"].ToString(),
-                ProjectDraftRegions = form["regions"].Select(value => value ?? "").ToArray()
+                ProjectDraftRegions = form["regions"].Select(value => value ?? "").Where(available.Contains).ToArray(),
+                ProjectDraftPrimaryRegion = form["region"].ToString(),
+                ProjectDraftBackupRegion = form["backupRegion"].ToString()
             };
             var slice = OrganizationView.Create(page);
             slice.StatusCode = error.StatusCode;

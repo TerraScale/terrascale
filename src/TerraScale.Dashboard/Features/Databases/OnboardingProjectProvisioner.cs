@@ -18,6 +18,8 @@ public sealed class OnboardingProjectProvisioner(ITsAuthPlatform platform, IData
             ?? throw new OnboardingValidationException("Choose a supported project region.");
         var project = context.Organization.Projects.Values.FirstOrDefault(item => item.IsDefault)
             ?? throw new AccountAccessException("The personal project is unavailable.", 404);
+        if (context.Project?.Id != project.Id)
+            throw new OnboardingValidationException("Return to your Personal workspace and select its default project to finish setup.");
         if (project.Name != name) await platform.RenameProjectAsync(context.Session, context.Organization.Id, project.Id, name, cancellationToken);
         return new ProjectRecord
         {

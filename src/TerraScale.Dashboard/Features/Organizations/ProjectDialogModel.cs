@@ -12,4 +12,7 @@ public sealed record ProjectDialogModel(OrganizationPage Page, ProjectRecord? Pr
     public string Action => Project is null ? "/api/v1/dashboard/organization/projects" : "/api/v1/dashboard/organization/projects/" + Project.Id + "/rename";
     public bool Open => Project is null && Page.OpenCreateProject;
     public IReadOnlyList<string> Selected => Project is null ? Page.ProjectDraftRegions ?? Page.Regions : Project.Regions;
+    public string Primary => Project?.Region ?? (Page.ProjectDraftPrimaryRegion.Length > 0 ? Page.ProjectDraftPrimaryRegion : Page.Regions.FirstOrDefault() ?? "");
+    public string Backup => Project?.BackupRegion is { Length: > 0 } backup ? backup :
+        Page.ProjectDraftBackupRegion.Length > 0 ? Page.ProjectDraftBackupRegion : Page.Regions.FirstOrDefault() ?? "";
 }

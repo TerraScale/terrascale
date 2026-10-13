@@ -1,0 +1,12 @@
+--- a/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/billing-checkout-subscriptions/BillingCheckoutAuditJourneyTests.cs
++++ b/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/billing-checkout-subscriptions/BillingCheckoutAuditJourneyTests.cs
+@@ -5,8 +5,7 @@
+
+ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.BillingCheckout;
+
+-[ClassDataSource<BillingCheckoutAuditFixture>(Shared = SharedType.PerTestSession)]
+-[NotInParallel("dashboard-demo")]
++[ClassDataSource<BillingCheckoutAuditFixture>]
+ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture fixture)
+ {
+     private const string Billing = "/organization?tab=billing";

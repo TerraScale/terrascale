@@ -1,10 +1,27 @@
 # Onboarding and projects audit
 
-Review `01-onboarding-selection-guard.patch` first: unfinished setup can rename the default provider project, return HTTP 503, and interrupt setup after mutating the wrong project.
+The three approved product patches now fix all four verified onboarding/project defects. The seven focused cases pass, including desktop/mobile creation, draft recovery, retry, keyboard controls, history, accessibility scans, and producer-authenticated interrupted setup.
 
-Four verified defects; both the original and rebased seven-case runs report **3 PASS, 4 FAIL on those defects**. The four HTTP regressions still reproduce after rebasing onto `origin/main` at `7d0420ef1979b128fe212a23eb6c4227a2588859`. Release compilation and focused formatting pass. Source fixes remain proposals; the PR adds audit files only.
+**PR #19 is not ready to merge.** The properly built full Fast suite has **325 PASS, 3 FAIL, 0 SKIP**. Those three failures are upstream audit tests with stale role and response-format assumptions. Their precise, unapplied repair is [05-upstream-audit-contract-alignment.patch](05-upstream-audit-contract-alignment.patch). The approved fixes have not been pushed because checkout instructions require green Fast and Slow tests before pushing.
 
-**Merge blockers:** four active desired-behavior regressions fail. Full lint stops because the checkout lacks the locked `browserslist` asset dependency; complete fast/slow suites have not run. GitHub reports `allow_auto_merge=false`. Repository settings, source fixes, and shared dependencies are outside this workstream's authorized scope.
+## Current approved change and validation
+
+The user approved applying proposals 01–03, fixing the billing audit's fixture isolation, and attempting GitHub auto-merge without a paid upgrade. Five product files implement the proposals; the billing journey now owns a fixture per test. No assertions were removed. The onboarding browser regression now requires the sidebar dialog, retained duplicate-name draft, Cancel, and an edited retry to succeed. The selection regression also verifies a compatible database-detail return when switching back.
+
+The original audit findings and historical evidence remain below. References there to observed failures describe the pre-fix source. The applied patches are [01](01-onboarding-selection-guard.patch), [02](02-project-dialog-navigation-and-retry.patch), [03](03-selection-return-navigation.patch), and [04](04-upstream-billing-test-isolation.patch). Proposal 05 remains unapplied and needs a separate exception for three existing audit test files; it does not change authentication or authorization policy.
+
+| Local check | Result | Evidence |
+| --- | --- | --- |
+| Normal locked Release build | PASS, zero warnings/errors | `test-results/approved-fixes-normal-build.log` |
+| Full `make lint` | PASS | `test-results/approved-fixes-lint.log` |
+| `make security` | PASS, zero reported npm vulnerabilities | `test-results/approved-fixes-security.log` |
+| Focused HTTP/browser audit | PASS, 7 cases | `test-results/approved-fixes/focused.trx` |
+| Full Fast, normal build paths | FAIL, 325 passed / 3 failed / 0 skipped | `test-results/approved-fixes/fast-normal.trx` |
+| Full Slow | FAIL, 88 passed / 2 failed / 0 skipped | `test-results/approved-fixes/slow.trx` |
+
+The first Fast run used redirected build outputs and also failed the executable-path prerequisite. A normal `make build` corrected that prerequisite; the properly built run above leaves only the three stale upstream assertions. No product fix, test exclusion, or disabled assertion was used to remove that execution failure.
+
+GitHub accepted the approved repository PATCH but still reports `allow_auto_merge=false`. Rereads confirmed the setting stayed disabled. Native auto-merge is unavailable for this private repository on the current Free plan. No paid upgrade or permissions change occurred. Direct merging remains authorized after readiness is established.
 
 ## Verified defects, in priority order
 
@@ -80,70 +97,46 @@ Four verified defects; both the original and rebased seven-case runs report **3 
 
 **Regression:** `SwitchingProjectFromDatabaseDetailsReturnsToTheDatabaseList` fails on the destination's HTTP 404. It requires `/databases`, the saved new selection, and the empty database list.
 
-## Regression coverage and checks
+## Regression coverage and reproducibility
 
-`tests/TerraScale.Dashboard.E2E` is the actual existing test project. This checkout is .NET 10 with RazorSlices and Datastar; the Go application has been removed. No checkout `.agents` directory or additional checkout `SKILL.md` files were present. The installed ponytail skill was read.
+`tests/TerraScale.Dashboard.E2E` is the existing test project. The current checkout uses .NET 10, RazorSlices, and Datastar. No checkout `.agents` directory or additional checkout skill files were present; the installed ponytail skill applies.
 
-The new HTTP class contains six running-application journeys. Each test owns its fixture, as required by the current E2E boundary guard; no shared-session fixture or parallel-execution limiter remains:
+Six HTTP journeys use independent fixtures and local deterministic ts-auth/database producers. They cover the four repaired defects, relogin across replicas with unfinished setup, invalid placement and retry, Free continuation, repeat final submission, foreign project rejection, safe local redirects, and repeated valid selection. Existing workspace recovery and onboarding MCP journeys are exercised by the complete suites.
 
-1. Four desired-behavior regressions above: **FAIL**, each on the verified product behavior. Assertions are active.
-2. `ProducerAuthenticatedSetupResumesAfterLoginAndValidationFailure`: **PASS** using the real `TsAuthGateway` against the existing signed local producer. It covers relogin into another replica, saved payment-step progress, canceled-payment copy, Free continuation, invalid region, retry, completion, and repeated final submission without renaming the project.
-3. `RepeatedScopedSelectionRejectsForeignIdsAndExternalReturns`: **PASS** using the official management SDK against the existing local producer. It rejects another account's project with 404, preserves selection, rejects external and protocol-relative return URLs, and accepts repeated valid selection with a local return route.
+The browser journey uses the checkout's documented Playwright workflow after two T3 preview navigation timeouts: `Preview automation navigate timed out after 15000ms.` It covers 1440×900 desktop and 390×844 mobile, keyboard opening, focus containment and restoration, Cancel/Close/Escape, repeat submission with one native create POST, success, Back/Forward, the sidebar creation link, duplicate-name failure with a retained draft, edited retry, Free onboarding, and the initial empty database list. Three POSTs occur overall: initial successful creation, duplicate rejection, and successful edited retry.
 
-Existing `WorkspaceRecoveryJourneyTests` already cover interrupted project metadata persistence, retry using the canonical provider identity, and revoked membership. Existing onboarding MCP journeys already cover paid/free setup across replicas. Those source paths were inspected; their tests were not duplicated or rerun as aggregate suites.
-
-Release compilation uses the existing application/test projects and locked dependencies. The usual build target writes shared CSS/JS assets, so this audit uses an ignored, local `test-results/AuditBuild.targets` to omit that bundler only. All MSBuild outputs are redirected to this report's `test-results/artifacts`. The browser helper serves the committed button-loading source and integrity-pinned Datastar bytes directly; the browser holds its native creation request before sending it to capture real pending UI, then releases the unchanged request. Production code, configuration, fixture files, vendor files, assets, locks, and CI are unchanged.
-
-Original browser/check outcomes and evidence labels are recorded in [validation.json](validation.json). Local raw TRX/logs live under the ignored `test-results` directory; they contain only synthetic fixture data but may include synthetic CSRF values in assertion markup, so they are not committed.
-
-The original browser journey **passes** at desktop 1440×900 and mobile 390×844. It verifies keyboard opening and focus movement, Cancel/Close/Escape, restored focus, a single native create POST after two synchronous submissions, successful creation, Back/Forward, Free onboarding, and the initial empty database list. It records the missing-dialog and lost-form defects without hiding the four failing desired-behavior regressions. The native POST count in browser observations is two overall: one successful request despite repeat submission, and one later duplicate-name request.
-
-WCAG 2/2.1/2.2 AA scans report **zero violations** on the project creation dialog and onboarding project step in both viewports. This is sampled automated coverage, not an accessibility certification of all pages. Pixel inspection confirms the mobile dialog stays within the viewport and scrolls vertically; the onboarding form and initial empty database state render at 390 pixels wide.
-
-The T3 preview returned `Preview automation navigate timed out after 15000ms.` twice. Captures use the checkout's documented Playwright/Chromium workflow instead. Earlier capture-driver failures were corrected; only the final redacted captures below are delivery evidence. Emails are replaced with `[redacted email]`, synthetic account identity is concealed, and screenshots additionally mask identity fields. No source fix is represented as applied.
-
-## Running-app evidence
-
-Every capture below is labelled in `validation.json` with audited source commit **`b719878083dffd9441e063bbfaccfa0dffa95abd`**, its SHA-256, and the compiled test/harness hashes. These are local files in the ignored report directory, not committed assets or PR attachments. The two videos show navigation through creation, duplicate-name failure, registration, Free setup, and the initial empty database state.
-
-1. **Desktop project flow:** [dialog](test-results/browser/desktop-dialog.png), [loading](test-results/browser/desktop-loading.png), [success](test-results/browser/desktop-success.png), [short video](test-results/browser/desktop-project-flow.webm).
-2. **Mobile project flow:** [dialog](test-results/browser/mobile-dialog.png), [loading](test-results/browser/mobile-loading.png), [success](test-results/browser/mobile-success.png), [short video](test-results/browser/mobile-project-flow.webm).
-3. **Verified broken recovery:** [desktop missing creation dialog](test-results/browser/desktop-sidebar-link-missing-dialog.png), [mobile missing creation dialog](test-results/browser/mobile-sidebar-link-missing-dialog.png), [desktop duplicate error](test-results/browser/desktop-duplicate-error-lost-form.png), [mobile duplicate error](test-results/browser/mobile-duplicate-error-lost-form.png).
-4. **Initial setup:** [desktop first project](test-results/browser/desktop-first-project.png), [mobile first project](test-results/browser/mobile-first-project.png), [desktop empty databases](test-results/browser/desktop-initial-empty-databases.png), [mobile empty databases](test-results/browser/mobile-initial-empty-databases.png). Registration and optional-plan captures are listed in the manifest.
-
-The fresh browser journey also passes at both viewports with zero violations in the sampled creation and onboarding forms. Fresh captures from the rebased audit are archived at `test-results/pr-preparation/browser`, keeping the original labelled evidence above intact. Final committed-head captures use `test-results/pr-head/browser`, with a separate ignored manifest and results linked locally from the PR description. They remain ignored local files. The PR changes no production UI, and no supported forge-attachment upload tool is available; local captures are not represented as PR attachments. The PR description records the final tested commit and any fresh-run outcome.
-
-## Reproduce without modifying shared files
-
-From the bound worktree, create the following ignored local file at `docs/reviews/2026-10-13/onboarding-projects/test-results/AuditBuild.targets`:
-
-```xml
-<Project><Target Name="BundleDashboardAssets" /></Project>
-```
+The sampled creation and onboarding forms report zero WCAG 2/2.1/2.2 AA violations in both viewports. This is sampled automated coverage. The narrow dialog fits the viewport and scrolls vertically. Recordings and screenshots conceal synthetic identity and redact emails.
 
 ```sh
-nice -n 19 dotnet build tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj \
-  --configuration Release -p:RestoreLockedMode=true -p:UseArtifactsOutput=true \
-  -p:ArtifactsPath="$PWD/docs/reviews/2026-10-13/onboarding-projects/test-results/artifacts" \
-  -p:DirectoryBuildTargetsPath="$PWD/docs/reviews/2026-10-13/onboarding-projects/test-results/AuditBuild.targets"
-
-nice -n 19 dotnet docs/reviews/2026-10-13/onboarding-projects/test-results/artifacts/bin/TerraScale.Dashboard.E2E/release/TerraScale.Dashboard.E2E.dll \
-  --treenode-filter '/*/*/OnboardingProjectsAuditJourneyTests/*' --report-trx \
-  --results-directory "$PWD/docs/reviews/2026-10-13/onboarding-projects/test-results"
+nice -n 19 make build
+nice -n 19 make lint
+nice -n 19 make security
+nice -n 19 make test-fast
+nice -n 19 make test-slow
 ```
 
-Use the same executable with filter `/*/*/OnboardingProjectsAuditBrowserJourneyTests/*` for the focused browser journey. Compilation does not bundle assets; this command is an audit check, not release qualification.
+Run the focused audit from the already-built executable with:
 
-## Source ownership, evidence, and delivery
+```sh
+nice -n 19 dotnet tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/TerraScale.Dashboard.E2E.dll \
+  --treenode-filter '/*/*/OnboardingProjectsAudit*/*' --report-trx \
+  --results-directory "$PWD/docs/reviews/2026-10-13/onboarding-projects/test-results/approved-fixes"
+```
 
-**Original audited source HEAD:** `b719878083dffd9441e063bbfaccfa0dffa95abd`; the tracking ref at the original manifest capture was `015b42c4825866131a00d48469650bcba04b2364`. **Publication base:** `95d16216a0750742261d19b0954a6ad9c9c44a12`, fetched and rebased cleanly. **Bound branch:** `audit/onboarding-projects-20261013`. The orchestrator supplied this worktree; no worktree was created or switched. The PR description records the published audit head.
+Normal bundling now runs with the installed, locked npm dependencies. Tracked generated CSS/JS, configuration, locks, vendor files, project files and CI were not changed. The initial audit's custom output/bundler override was used only for historical audit checks; it is not release qualification. Raw logs/TRX and captures remain ignored because test responses may contain synthetic CSRF markup.
 
-Three proposed patch files pass `git apply --check` against the publication base. The guard and return-navigation proposal contexts were updated for the canonical ts-auth refactor; the proposals remain unapplied. They have not been compiled or runtime-tested. Their target files overlap the active source/refactor work, so the source owner must adapt them after R3–R6 settles and run these desired-behavior regressions on the combined head.
+## Running-app evidence and delivery limits
 
-1. The onboarding guard belongs in `Features/Databases/OnboardingProjectProvisioner.cs`; it is a canonical project-selection check, independent of guided import behavior. No import changes are proposed.
-2. Creation/retry changes belong in `Features/Organizations`. Preserve current placement/auth checks when reconciling with R3–R6.
-3. Return navigation belongs in `Features/Accounts/AccountEndpoints.cs`. It uses the existing context and redirect sanitizer; it does not alter auth/security configuration. Database detail owners should verify navigation after integration.
+Historical audit evidence is labelled in [validation.json](validation.json) with source SHA `b719878083dffd9441e063bbfaccfa0dffa95abd`. Earlier captures remain under `test-results/browser`, `test-results/pr-preparation/browser`, and `test-results/pr-head/browser`; they are before-fix history, not current verification.
 
-No other threads or blocked histories were read or contacted. Banner removal is outside scope. Only local synthetic providers were used; no real user data, real payments, deployments, Alpha CI, paid services, credential retrieval, or account/security changes occurred.
+Fresh after-fix captures use `test-results/approved-fixes/browser`: desktop/mobile dialog, loading, success, `sidebar-link-create-dialog`, `duplicate-error-retained-form`, `retry-success`, first-project and initial-empty-databases screenshots, plus desktop/mobile project-flow videos. Exact committed-head provenance is recorded in the readiness report and ignored capture manifest when recaptured. An uncommitted capture is not labelled as a tested PR commit.
 
-The user requested an audit PR after reviewing the findings; it is prepared as a draft. It must remain draft while the four active regressions fail; full fast/slow gates remain unqualified. Full `make lint` was attempted on the rechecked source base `7d0420ef` and stopped at `ERR_MODULE_NOT_FOUND` for `browserslist`; no shared dependencies or assets were changed to work around it. Focused formatting, SDK/E2E boundary guards, and locked Release compilation pass. Proposed source patches remain uncompiled and runtime-untested. Live authentication, persistent restart and account-to-ts-typescript SDK qualification, and real payments were not run. No merge occurred. GitHub disables repository auto-merge, and this workstream does not authorize changing that setting. Original screenshots are historical audit evidence, not after-fix captures; the PR description distinguishes fresh tested-head results.
+GitHub's private PR returns 404/Sign in in the available browser profile. No authenticated profile or supported attachment upload path is available, and no credentials were retrieved. Media remains local and ignored; it is not represented as uploaded PR evidence. The PR must state this attachment limitation.
+
+## Source ownership and scope
+
+The bound worktree was supplied by the orchestrator; no worktree was created or switched. The approved source fixes were rebased cleanly onto `origin/main` at `7b848fbf3596292dadb7d9d9cabe930f236eb6d4`. The readiness report records original/remote/local SHAs and the exact changed files.
+
+The guard overlaps the database provisioner; creation/retry overlaps Organizations; return navigation overlaps Accounts. They preserve current placement/auth checks and use canonical ts-auth context. No guided import, banner, replication, auth/security configuration or unrelated payment source changes were made. Further cross-slice proposals are coordinated only through this report; no other threads or blocked histories were read or contacted.
+
+Only deterministic local synthetic providers were used. Live authentication, persistent restart, account-to-ts-typescript SDK qualification, and real payments were not run. No deployment, Alpha CI, paid service, new spending, token retrieval, account/security change, or merge occurred.
