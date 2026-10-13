@@ -1,0 +1,87 @@
+SDK base: eac7e3fca1178d30d81eb18ff35d8629e5f454e4
+Current actual server: TerraScale/terrascale e30ffdc287530551b161b0130220be53d3c0475e
+Historical immutable qualification server: 6cb97456b9b52a92a61856601cc025c4f2833518
+Branch: sdk/js-api-contracts-20261013 (isolated SDK worktree)
+Current source snapshot: contracts/terrabase-current-source/pin.json, exact SHA-256 per file.
+No imports, credentials, live allocations or producer builds used.
+
+Runtime versions:
+  Node24.21.0 (default)
+  Node22.23.2 (independent official binary; not npm exec's resolved default)
+  Node22 archive SHA256 d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307
+  npm11.18.0, repository reviewed provisioning
+  Chrome154.0.8037.57 and Edge154.0.4258.37, repository pinned Nix/vendor provisioning
+  Playwright Firefox155.0 and WebKit26.6 downloaded; launch dependencies absent
+
+Red-on-main:
+  The original56 test/v1-http-contract.test.js fixtures copied to SDK baseline checkout:
+  nice -n 19 node <installed-vitest>/vitest.mjs run test/v1-http-contract.test.js
+  44 failed,12 passed. Original output retained in wire-baseline.txt.
+  Same56 fixtures initially passed56/56 with SDK corrections.
+  Public API fixture against exact main:2 failed; with additions:2 passed.
+  Output retained in public-api-baseline.txt; current export fixture is in both final Node suites.
+  Pending SSE return regression before fix: timed out, retained in sse-return-baseline.txt.
+  With fix:44/44 SSE tests pass in final suites.
+  Native Node421 PATCH before fix: catalog31 tests,30 passed/1 failed; expected1 request, received2.
+  Node421 PATCH and four bodyless DELETE surfaces pass with one-shot body mitigation.
+
+Final focused command (260 tests,14 files,zero skips;31.74s Node24 /32.09s Node22):
+  nice -n 19 node node_modules/vitest/vitest.mjs run \
+    test/v1-http-contract.test.js test/v1-sql-http.test.js test/v1-changes-http.test.js \
+    test/v1-catalog-http.test.js test/v1-public-api.test.js test/openapi-drift.test.js \
+    test/v1-route-manifest.test.js test/public-contract-fixture.test.js \
+    test/current-producer-contract.test.js test/current-source-parity.test.js \
+    test/contract-archive-pin.test.js src/v1/validation.test.js src/ids.test.js \
+    test/forbidden-surface.test.js
+  Exact same command with independently verified Node22 binary in place of node.
+  Outputs: node24-focused.txt and node22-focused.txt.
+
+Package/helper command (reviewed npm11.18.0;15.84s):
+  nice -n 19 npm test -- src/release-package.test.js src/sql.test.js src/sql-integers.test.js \
+    src/schema.test.js src/management.test.js src/database-view.test.js \
+    src/react/core.test.js src/svelte/index.test.js src/tanstack/index.test.js
+  9 files,62 passed,1 pre-existing environment-gated skip:
+  "native view observes a real admitted producer write and removal".
+  No live configuration supplied; this skip is not producer evidence.
+  Packed independent install, runtime current root exports, typed SQL/SSE/schema/error caller passed.
+  Output: package-helpers.txt.
+
+Additional completed checks:
+  nice -n 19 node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit
+  nice -n 19 node node_modules/typescript/bin/tsc -p tsconfig.build.json
+  nice -n 19 node scripts/generate-v1-route-manifest.js --check
+  All passed. Historical OpenAPI retained;25 current source routes and negative drift cases verified.
+  Existing public browser-condition export resolution:9 allowed entries load;
+  better-auth/local/postgres reject browser condition.
+
+Real browser command (reviewed npm and pinned vendor launcher paths supplied):
+  nice -n 19 node node_modules/@playwright/test/cli.js test \
+    browser-tests/v1-transport.spec.js browser-tests/public-contract.spec.js \
+    --project=chrome-current --project=edge-current --workers=1
+  20 passed,4 FAILED,29.8s. Exit1 preserved.
+  Each browser's PATCH and DELETE assertion expected1 physical request, observed2.
+  The same tests assert exactly1 SDK call through a counter delegating to native fetch,
+  and zero applied effects in the rejection-before-effect HTTP fixture.
+  Native stream HTTP/1 prevention probe rejects TypeError before sending an application request.
+  No native-browser behavior was replaced with a mocked fetch. No assertions weakened/skipped.
+  Output: chrome-edge.txt; local failure traces remain under test-results.
+
+Firefox/WebKit attempt:
+  Same two specs --project=firefox-current --project=webkit-current --workers=1
+  20 launch failures; Playwright host validation reports missing libraries.
+  Firefox: libxcb-shm,libx11-xcb,libxrandr,libxcomposite,libxcursor,libxdamage,
+  libxi,libxext,libxfixes,libx11,libxcb,libgtk-3,libpangocairo,libpango,libatk,
+  libcairo-gobject,libcairo,libgdk-pixbuf,libglib,libxrender,libasound,libfreetype,
+  libfontconfig,libdbus. WebKit has additional missing host dependencies.
+  These are prerequisite failures, not successful SDK compatibility results.
+
+Primary Fetch/browser/HTTP sources and rejection-before-effect server evidence:
+  docs/fetch-421-assessment-20261013.md
+
+Open gates:
+  Real current generated OpenAPI and immutable C# release/runtime qualification.
+  Full browser one-wire421 guarantee (native browsers expose no retry switch).
+  Current end-to-end producer/edge421 rejection-before-effect enforcement.
+  General mutation idempotency/result replay/reconciliation contract for ambiguous effects.
+  Firefox/WebKit host prerequisites; heavy full release/security suite not run.
+  Draft PR/push awaiting explicit coordinating admission slot. No CI jobs canceled.

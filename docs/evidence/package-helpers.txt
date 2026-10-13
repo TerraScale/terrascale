@@ -1,0 +1,13 @@
+
+> @terrascale/sdk@0.0.3 test
+> vitest run src/release-package.test.js src/sql.test.js src/sql-integers.test.js src/schema.test.js src/management.test.js src/database-view.test.js src/react/core.test.js src/svelte/index.test.js src/tanstack/index.test.js
+
+
+ RUN  v4.1.11 /home/mariogk/.t3/worktrees/ts-js/sdk-js-api-contracts-20261013
+
+
+ Test Files  9 passed (9)
+      Tests  62 passed | 1 skipped (63)
+   Start at  23:39:54
+   Duration  15.84s (transform 1.52s, setup 0ms, import 2.83s, tests 21.54s, environment 2ms)
+

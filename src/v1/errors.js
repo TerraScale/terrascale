@@ -1,5 +1,5 @@
 import { isJsonObject, parseExactJson } from "./json.js";
-/** @import { JsonObject } from "./json.js" */
+/** @import { JsonObject, JsonValue } from "./json.js" */
 
 /**
  * @typedef {object} TerraBaseV1ErrorInit
@@ -11,6 +11,9 @@ import { isJsonObject, parseExactJson } from "./json.js";
  * @property {number | undefined} [retryAfter]
  * @property {string | undefined} [etag]
  * @property {JsonObject | undefined} [details]
+ * @property {JsonValue | undefined} [body]
+ * @property {string | undefined} [responseText]
+ * @property {Headers | undefined} [headers]
  */
 
 /**
@@ -32,6 +35,14 @@ export class TerraBaseV1Error extends Error {
   etag;
   /** @type {JsonObject | undefined} The raw error object, for route-specific metadata. */
   details;
+  /** @type {JsonValue | undefined} Complete parsed response body, including unknown fields. */
+  body;
+  /** @type {string} Original response text; empty when absent or unreadable. */
+  responseText;
+  /** @type {Headers} Response headers, including authentication challenges and retry metadata. */
+  headers;
+  /** @type {string | undefined} Diagnostic X-Request-ID, when supplied by the responder. */
+  requestId;
 
   /** @param {TerraBaseV1ErrorInit} init */
   constructor(init) {
@@ -48,6 +59,10 @@ export class TerraBaseV1Error extends Error {
     this.retryAfter = init.retryAfter;
     this.etag = init.etag;
     this.details = init.details;
+    this.body = init.body;
+    this.responseText = init.responseText ?? "";
+    this.headers = new Headers(init.headers);
+    this.requestId = this.headers.get("x-request-id") ?? undefined;
   }
 }
 
@@ -153,11 +168,13 @@ export function parseRetryAfter(headers) {
  * @returns {TerraBaseV1Error}
  */
 export function parseV1Error(status, headers, text) {
+  /** @type {JsonValue | undefined} */
+  let body;
   /** @type {JsonObject | undefined} */
   let details;
   try {
-    const parsed = text === "" ? undefined : parseExactJson(text);
-    if (isJsonObject(parsed) && isJsonObject(parsed.error)) details = parsed.error;
+    body = text === "" ? undefined : parseExactJson(text);
+    if (isJsonObject(body) && isJsonObject(body.error)) details = body.error;
   } catch {
     details = undefined;
   }
@@ -181,5 +198,8 @@ export function parseV1Error(status, headers, text) {
     retryAfter: parseRetryAfter(headers),
     etag: unquoteEtag(headers.get("etag")),
     details,
+    body,
+    responseText: text,
+    headers,
   });
 }

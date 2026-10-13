@@ -30,11 +30,17 @@ test("only canonical 128-bit ULIDs pass every entity ID boundary", () => {
     expect(isValidId(value)).toBe(true);
     expect(requireId(value)).toBe(value);
   }
-  const version = "opaque-version";
   for (const value of invalidIds) {
     expect(isValidId(value)).toBe(false);
-    for (const validate of [requireId, requireProject, requireDocumentId])
+    for (const validate of [requireId, requireProject])
       expect(() => validate(value)).toThrow(TypeError);
+  }
+});
+
+test("document response keys enforce bounds and valid UTF-8 rather than entity ULIDs", () => {
+  const version = "opaque-version";
+  for (const value of [undefined, null, 1, "", "\u0000", "\u0085", "\ud800", "\udc00", "a".repeat(257)]) {
+    expect(() => requireDocumentId(value)).toThrow(TypeError);
     expect(() => decodeDocument({ id: /** @type {any} */ (value), version, state: "value", document: {} })).toThrow(TypeError);
     expect(() => decodeWrite({ status: 201, headers: new Headers(), value: { id: /** @type {any} */ (value), version, offset: "1", durability: "local_durable" } })).toThrow(TypeError);
     expect(() => decodeShapePage({ shape_id: "0".repeat(32), handle: `h1-${"0".repeat(16)}`, offset: "-1", next_offset: "1", up_to_date: true,
@@ -42,9 +48,9 @@ test("only canonical 128-bit ULIDs pass every entity ID boundary", () => {
   }
 });
 
-test("snapshot continuation IDs reject legacy keys instead of normalizing them", () => {
+test("snapshot continuation keys reject invalid bounds and controls without normalizing them", () => {
   expect(requireShapeOffset(`snap.1.${btoa(id).replace(/=+$/u, "")}`)).toContain("snap.1.");
-  for (const invalid of ["legacy", id.toLowerCase(), `org_${id}`, "\uFEFFlegacy"]) {
+  for (const invalid of ["\u0000", "\u0085", "a".repeat(257)]) {
     const encoded = btoa(String.fromCharCode(...new TextEncoder().encode(invalid))).replace(/=+$/u, "");
     expect(() => requireShapeOffset(`snap.1.${encoded}`)).toThrow(TypeError);
   }
@@ -54,7 +60,7 @@ test("invalid document and transaction IDs fail before any endpoint resolution",
   const resolver = vi.fn(() => "https://database.example");
   const database = createTerraBaseClient({ project: id, token: `tb_${"a".repeat(43)}`, endpointResolver: resolver }).database("app");
   const documents = database.collection("users");
-  for (const invalid of [id.toLowerCase(), `usr_${id}`, "019a0000-0000-7000-8000-000000000002"]) {
+  for (const invalid of ["", "\ud800", "\u007f", "a".repeat(257)]) {
     await expect(documents.get(invalid)).rejects.toThrow(TypeError);
     await expect(documents.put(invalid, {})).rejects.toThrow(TypeError);
     await expect(documents.patch(invalid, { merge: {} })).rejects.toThrow(TypeError);
@@ -69,19 +75,16 @@ test("invalid document and transaction IDs fail before any endpoint resolution",
   expect(resolver).not.toHaveBeenCalled();
 });
 
-test("the document key is the only entity ID, including patches and transactions", async () => {
+test("document data may contain an unrelated id; the producer owns key normalization", () => {
   const resolver = vi.fn(() => "https://database.example");
   const database = createTerraBaseClient({ project: id, token: `tb_${"a".repeat(43)}`, endpointResolver: resolver }).database("app");
-  const documents = database.collection("users");
-  await expect(documents.put(id, { id })).rejects.toThrow(/document key/u);
-  await expect(documents.create({ id })).rejects.toThrow(/document key/u);
-  for (const patch of [{ merge: { id } }, { ops: [{ op: /** @type {const} */ ("set"), path: "/id", value: id }] },
-    { ops: [{ op: /** @type {const} */ ("set"), path: "", value: { id } }] }]) {
-    await expect(documents.patch(id, patch)).rejects.toThrow(/document key/u);
-    expect(() => database.transaction().patch("users", id, patch)).toThrow(/document key/u);
+  for (const patch of [{ merge: { id: "customer-data" } },
+    { ops: [{ op: /** @type {const} */ ("set"), path: "/id", value: "customer-data" }] }]) {
+    expect(() => database.transaction().patch("users", id, patch)).not.toThrow();
   }
-  expect(() => database.transaction().put("users", id, { id })).toThrow(/document key/u);
-  expect(() => decodeDocument({ id, version: "opaque", state: "value", document: { id } })).toThrow(/document key/u);
+  expect(() => database.transaction().put("users", id, { id })).not.toThrow();
+  expect(decodeDocument({ id, version: "opaque", state: "value", document: { id: "customer-data" } }).document)
+    .toEqual({ id: "customer-data" });
   expect(resolver).not.toHaveBeenCalled();
 });
 
@@ -173,7 +176,7 @@ test("hosted-auth entity references are required on mutations and page entries",
   expect(() => validateTsAuthIds({ data: [{ id }] }, "tsauth.auditEvents.list")).toThrow(TypeError);
 });
 
-test("conflict siblings obey the same key/payload separation as the winning document", () => {
+test("conflict siblings retain unrelated id data and validate document object shapes", () => {
   const base = { id, version: "opaque", state: "conflict", document: { name: "winner" } };
   const siblings = [
     { deleted: false, version: "other", document: { name: "sibling", metadata: { id: "customer-key" } }, future: true },
@@ -182,7 +185,9 @@ test("conflict siblings obey the same key/payload separation as the winning docu
   expect(decodeDocument({ ...base, siblings }).siblings).toEqual(siblings);
   for (const deleted of [false, undefined, "true"])
     expect(() => decodeDocument({ ...base, siblings: [{ deleted: /** @type {any} */ (deleted) }] })).toThrow(TypeError);
-  for (const body of [{ id: "legacy" }, { id }, null, []])
+  for (const body of [{ id: "customer-data" }, { id }])
+    expect(decodeDocument({ ...base, siblings: [{ document: body }] }).siblings).toEqual([{ document: body }]);
+  for (const body of [null, []])
     for (const deleted of [false, true])
       expect(() => decodeDocument({ ...base, siblings: [{ deleted, document: /** @type {any} */ (body) }] })).toThrow(TypeError);
 });

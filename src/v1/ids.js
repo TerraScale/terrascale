@@ -27,9 +27,12 @@ export function requireProject(project) {
   return requireId(project);
 }
 
-/** @param {unknown} id @returns {import("../ids.js").EntityId} */
+/** A caller-supplied key is not a generated entity ID. @param {unknown} id @returns {string} */
 export function requireDocumentId(id) {
-  return requireId(id);
+  if (typeof id !== "string" || id.length < 1 || id.length > 256 ||
+      /[\u0000-\u001f\u007f-\u009f\ud800-\udfff]/u.test(id))
+    throw new TypeError("TerraBase document keys must be 1-256 characters of valid UTF-8 without control characters.");
+  return id;
 }
 
 /**

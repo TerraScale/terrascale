@@ -8,7 +8,7 @@ import { isJsonObject } from "./json.js";
  * `document` is the value, or the LWW winner when a causal read answers `"conflict"` with `siblings`.
  * Unknown future states pass through.
  * @typedef {object} V1Document
- * @property {import("../ids.js").EntityId} id
+ * @property {string} id Caller-supplied key or server-generated ULID.
  * @property {string} version
  * @property {"value" | "conflict" | (string & {})} state
  * @property {JsonObject} document
@@ -18,12 +18,13 @@ import { isJsonObject } from "./json.js";
 /**
  * The result of a document write.
  * @typedef {object} V1WriteResult
- * @property {import("../ids.js").EntityId} id
+ * @property {string} id Caller-supplied key or server-generated ULID.
  * @property {string} version For a delete, the tombstone's version.
  * @property {string} offset The database commit offset (decimal u64), usable with shape `waitFor`.
  * @property {V1Durability} durability
  * @property {boolean} created True when a PUT or POST answered 201.
  * @property {string | undefined} location The Location header of a POST create.
+ * @property {JsonObject} [document] Stored document returned by PATCH.
  */
 
 /**
@@ -45,9 +46,7 @@ export function object(value, what) {
 
 /** @param {JsonValue | undefined} value @returns {JsonObject} */
 export function documentObject(value) {
-  const document = object(value, "document body");
-  if (Object.hasOwn(document, "id")) malformed("document body: the entity ID belongs in the document key");
-  return document;
+  return object(value, "document body");
 }
 
 /**
@@ -126,5 +125,6 @@ export function decodeWrite(response) {
     durability: durability(raw.durability),
     created: response.status === 201,
     location: response.headers.get("location") ?? undefined,
+    ...(raw.document === undefined ? {} : { document: documentObject(raw.document) }),
   });
 }

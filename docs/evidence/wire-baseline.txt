@@ -1,0 +1,508 @@
+
+ RUN  v4.1.11 /tmp/sdk-js-baseline-eac7e3f
+
+ ❯ test/v1-http-contract.test.js (56 tests | 44 failed) 304ms
+     × round-trips key "a/b" exactly once through every point method 24ms
+     × round-trips key "a%2Fb" exactly once through every point method 5ms
+     × round-trips key "." exactly once through every point method 2ms
+     × round-trips key ".." exactly once through every point method 1ms
+     × round-trips key "%2E" exactly once through every point method 1ms
+     × round-trips key "%" exactly once through every point method 1ms
+     × round-trips key "?" exactly once through every point method 1ms
+     × round-trips key "#" exactly once through every point method 1ms
+     × round-trips key "+" exactly once through every point method 2ms
+     × round-trips key " " exactly once through every point method 1ms
+     × round-trips key "é" exactly once through every point method 1ms
+     × round-trips key "é" exactly once through every point method 1ms
+     × round-trips key "😀" exactly once through every point method 1ms
+     × round-trips key "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" exactly once through every point method 1ms
+     × preserves stored PATCH data and exact integers in both response forms 1ms
+     × preserves collection identities across all four named operations 56ms
+     × rejects malformed collection identity undefined 28ms
+     × rejects malformed collection identity "not-an-entity-id" 8ms
+     × rejects malformed collection identity "01arz3ndektsv4rrffq69g5fa2" 9ms
+     × quotes transaction ETag "opaque-etag" without changing wildcard semantics 1ms
+     × quotes transaction ETag "tbv2-token" without changing wildcard semantics 1ms
+     × quotes transaction ETag "tbv1-00000000000000000000000000000000" without changing wildcard semantics 1ms
+     × quotes transaction ETag "*" without changing wildcard semantics 1ms
+     × follows opaque cursors, sends count once, and stops at null 15ms
+     × rejects repeated/cyclic cursors "same" 20ms
+     × rejects repeated/cyclic cursors "a" 14ms
+     × rejects a cursor returning to the caller's initial position 9ms
+     × abort between buffered items preserves the reason and issues no next request 5ms
+     × preserves error 401 without retrying a mutation 2ms
+     × preserves error 403 without retrying a mutation 1ms
+     × preserves error 404 without retrying a mutation 1ms
+     × preserves error 412 without retrying a mutation 1ms
+     × preserves error 429 without retrying a mutation 1ms
+     × preserves error 502 without retrying a mutation 1ms
+     × preserves error 503 without retrying a mutation 1ms
+     × preserves error 504 without retrying a mutation 1ms
+     × preserves unreadable error text "" and headers 2ms
+     × preserves unreadable error text "{" and headers 1ms
+     × preserves unreadable error text "not-json" and headers 1ms
+     × retains unknown JSON errors without inventing a problem-details contract 1ms
+     × pre-abort retains the caller's reason with zero requests 2ms
+     × abort during a partial 200 body retains the exact reason 8ms
+     × abort during a partial 403 body retains the exact reason 8ms
+     × redirects never forward credentials or retry the request 2ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 44 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key "a/b" exactly once through every point method
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key "a%2Fb" exactly once through every point method
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key "." exactly once through every point method
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key ".." exactly once through every point method
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key "%2E" exactly once through every point method
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key "%" exactly once through every point method
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key "?" exactly once through every point method
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key "#" exactly once through every point method
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key "+" exactly once through every point method
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key " " exactly once through every point method
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key "é" exactly once through every point method
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key "é" exactly once through every point method
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key "😀" exactly once through every point method
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > round-trips key "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" exactly once through every point method
+TypeError: Entity ID must be a plain 26-character canonical uppercase Crockford ULID.
+ ❯ requireId src/ids.js:20:32
+     18| /** @param {unknown} value @param {string} [name] @returns {EntityId} …
+     19| export function requireId(value, name = "Entity ID") {
+     20|   if (!isValidId(value)) throw new TypeError(`${name} must be a plain …
+       |                                ^
+     21|   return value;
+     22| }
+ ❯ requireDocumentId src/v1/ids.js:32:10
+ ❯ V1Collection.#documentKey src/v1/terrabase-v1.js:276:38
+ ❯ V1Collection.get src/v1/terrabase-v1.js:290:104
+ ❯ test/v1-http-contract.test.js:66:26
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > preserves stored PATCH data and exact integers in both response forms
+TypeError: The document key is the entity ID; payloads must not contain an id field.
+ ❯ patchOp src/v1/terrabase-v1.js:97:63
+     95| function patchOp(op) {
+     96|   if (typeof op !== "object" || op === null || Array.isArray(op)) thro…
+     97|   if (op.path === "/id" || op.path?.startsWith("/id/")) throw new Type…
+       |                                                               ^
+     98|   if (op.path === "" && op.op === "set") assertNoPayloadId(op.value);
+     99|   let allowed = ["op", "path", "value"];
+ ❯ normalizePatch src/v1/terrabase-v1.js:144:21
+ ❯ V1Collection.patch src/v1/terrabase-v1.js:329:24
+ ❯ test/v1-http-contract.test.js:90:50
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > preserves collection identities across all four named operations
+AssertionError: expected { name: 'users', createdAt: '42' } to deeply equal { …(3) }
+
+- Expected
++ Received
+
+  {
+    "createdAt": "42",
+-   "id": "01ARZ3NDEKTSV4RRFFQ69G5FA2",
+    "name": "users",
+  }
+
+ ❯ test/v1-http-contract.test.js:116:50
+    114|       request.method === "POST" ? 201 : 200));
+    115|     const expected = { id: entityId, name: "users", createdAt: "42" };
+    116|     expect(await db.collections.create("users")).toEqual(expected);
+       |                                                  ^
+    117|     expect(await db.collections.get("users")).toEqual(expected);
+    118|     expect(await db.collections.list({ limit: 1, cursor: "opaque+curso…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > rejects malformed collection identity undefined
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > rejects malformed collection identity "not-an-entity-id"
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > rejects malformed collection identity "01arz3ndektsv4rrffq69g5fa2"
+AssertionError: promise resolved "{ name: 'users', createdAt: '42' }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "createdAt": "42",
++   "name": "users",
+  }
+
+ ❯ test/v1-http-contract.test.js:126:46
+    124|   test.each([undefined, "not-an-entity-id", entityId.toLowerCase()])("…
+    125|     const { db } = await fixture((_request, response) => json(response…
+    126|     await expect(db.collections.get("users")).rejects.toThrow(TypeErro…
+       |                                              ^
+    127|   });
+    128|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > quotes transaction ETag "opaque-etag" without changing wildcard semantics
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > quotes transaction ETag "tbv2-token" without changing wildcard semantics
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > quotes transaction ETag "tbv1-00000000000000000000000000000000" without changing wildcard semantics
+ FAIL  test/v1-http-contract.test.js > current document wire contracts > quotes transaction ETag "*" without changing wildcard semantics
+TypeError: The document key is the entity ID; payloads must not contain an id field.
+ ❯ assertNoPayloadId src/v1/terrabase-v1.js:243:11
+    241| function assertNoPayloadId(document) {
+    242|   if (typeof document === "object" && document !== null && Object.hasO…
+    243|     throw new TypeError("The document key is the entity ID; payloads m…
+       |           ^
+    244| }
+    245|
+ ❯ encodeDocument src/v1/terrabase-v1.js:234:3
+ ❯ V1Transaction.put src/v1/terrabase-v1.js:492:5
+ ❯ test/v1-http-contract.test.js:132:28
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > pagination termination and cancellation > follows opaque cursors, sends count once, and stops at null
+TypeError: Entity ID must be a plain 26-character canonical uppercase Crockford ULID.
+ ❯ requireId src/ids.js:20:32
+     18| /** @param {unknown} value @param {string} [name] @returns {EntityId} …
+     19| export function requireId(value, name = "Entity ID") {
+     20|   if (!isValidId(value)) throw new TypeError(`${name} must be a plain …
+       |                                ^
+     21|   return value;
+     22| }
+ ❯ requireDocumentId src/v1/ids.js:32:10
+ ❯ decodeDocument src/v1/decode.js:103:14
+ ❯ decodeQueryPage src/v1/terrabase-v1.js:201:58
+ ❯ V1Collection.query src/v1/terrabase-v1.js:362:12
+ ❯ V1Collection.pages src/v1/terrabase-v1.js:376:20
+ ❯ test/v1-http-contract.test.js:152:22
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > pagination termination and cancellation > rejects repeated/cyclic cursors "same"
+AssertionError: promise resolved "{ value: { items: [], …(2) }, …(1) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "done": false,
++   "value": {
++     "count": undefined,
++     "items": [],
++     "nextCursor": "same",
++   },
+  }
+
+ ❯ test/v1-http-contract.test.js:162:30
+    160|     const iter = db.collection("users").pages();
+    161|     for (let i = 0; i < cursors.length - 1; i++) await iter.next();
+    162|     await expect(iter.next()).rejects.toThrow(/repeated pagination cur…
+       |                              ^
+    163|     expect(requests).toHaveLength(cursors.length);
+    164|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > pagination termination and cancellation > rejects repeated/cyclic cursors "a"
+AssertionError: promise resolved "{ value: { items: [], …(2) }, …(1) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "done": false,
++   "value": {
++     "count": undefined,
++     "items": [],
++     "nextCursor": "a",
++   },
+  }
+
+ ❯ test/v1-http-contract.test.js:162:30
+    160|     const iter = db.collection("users").pages();
+    161|     for (let i = 0; i < cursors.length - 1; i++) await iter.next();
+    162|     await expect(iter.next()).rejects.toThrow(/repeated pagination cur…
+       |                              ^
+    163|     expect(requests).toHaveLength(cursors.length);
+    164|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > pagination termination and cancellation > rejects a cursor returning to the caller's initial position
+AssertionError: promise resolved "{ value: { items: [], …(2) }, …(1) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "done": false,
++   "value": {
++     "count": undefined,
++     "items": [],
++     "nextCursor": "initial",
++   },
+  }
+
+ ❯ test/v1-http-contract.test.js:168:77
+    166|   test("rejects a cursor returning to the caller's initial position", …
+    167|     const { db, requests } = await fixture((_request, response) => jso…
+    168|     await expect(db.collection("users").pages({ cursor: "initial" }).n…
+       |                                                                             ^
+    169|     expect(requests).toHaveLength(1);
+    170|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > pagination termination and cancellation > abort between buffered items preserves the reason and issues no next request
+TypeError: Entity ID must be a plain 26-character canonical uppercase Crockford ULID.
+ ❯ requireId src/ids.js:20:32
+     18| /** @param {unknown} value @param {string} [name] @returns {EntityId} …
+     19| export function requireId(value, name = "Entity ID") {
+     20|   if (!isValidId(value)) throw new TypeError(`${name} must be a plain …
+       |                                ^
+     21|   return value;
+     22| }
+ ❯ requireDocumentId src/v1/ids.js:32:10
+ ❯ decodeDocument src/v1/decode.js:103:14
+ ❯ decodeQueryPage src/v1/terrabase-v1.js:201:58
+ ❯ V1Collection.query src/v1/terrabase-v1.js:362:12
+ ❯ V1Collection.pages src/v1/terrabase-v1.js:376:20
+ ❯ V1Collection.items src/v1/terrabase-v1.js:391:22
+ ❯ test/v1-http-contract.test.js:190:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > preserves error 401 without retrying a mutation
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > preserves error 403 without retrying a mutation
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > preserves error 404 without retrying a mutation
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > preserves error 412 without retrying a mutation
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > preserves error 429 without retrying a mutation
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > preserves error 502 without retrying a mutation
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > preserves error 503 without retrying a mutation
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > preserves error 504 without retrying a mutation
+AssertionError: expected TypeError: Entity ID must be a plain 26-c… to be an instance of TerraBaseV1Error
+ ❯ test/v1-http-contract.test.js:206:19
+    204|     });
+    205|     const error = await db.collection("users").put("key", {}).catch(er…
+    206|     expect(error).toBeInstanceOf(TerraBaseV1Error);
+       |                   ^
+    207|     if (status === 401) expect(error).toBeInstanceOf(V1InvalidKeyError…
+    208|     if (status === 403) expect(error).toBeInstanceOf(V1ForbiddenScopeE…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > preserves unreadable error text "" and headers
+AssertionError: expected TypeError: Entity ID must be a plain 26-c… to match object { status: 403, code: 'http_403', …(3) }
+
+- Expected
++ Received
+
+- {
+-   "body": undefined,
+-   "code": "http_403",
+-   "requestId": "fixture-request",
+-   "responseText": "",
+-   "status": 403,
++ TypeError {
++   "message": "Entity ID must be a plain 26-character canonical uppercase Crockford ULID.",
+  }
+
+ ❯ test/v1-http-contract.test.js:218:52
+    216|     const { db } = await fixture((_request, response) => response.writ…
+    217|       { "content-type": "application/json", "x-request-id": "fixture-r…
+    218|     await expect(db.collection("users").get("key")).rejects.toMatchObj…
+       |                                                    ^
+    219|       responseText: text, body: undefined, requestId: "fixture-request…
+    220|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > preserves unreadable error text "{" and headers
+AssertionError: expected TypeError: Entity ID must be a plain 26-c… to match object { status: 403, code: 'http_403', …(3) }
+
+- Expected
++ Received
+
+- {
+-   "body": undefined,
+-   "code": "http_403",
+-   "requestId": "fixture-request",
+-   "responseText": "{",
+-   "status": 403,
++ TypeError {
++   "message": "Entity ID must be a plain 26-character canonical uppercase Crockford ULID.",
+  }
+
+ ❯ test/v1-http-contract.test.js:218:52
+    216|     const { db } = await fixture((_request, response) => response.writ…
+    217|       { "content-type": "application/json", "x-request-id": "fixture-r…
+    218|     await expect(db.collection("users").get("key")).rejects.toMatchObj…
+       |                                                    ^
+    219|       responseText: text, body: undefined, requestId: "fixture-request…
+    220|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > preserves unreadable error text "not-json" and headers
+AssertionError: expected TypeError: Entity ID must be a plain 26-c… to match object { status: 403, code: 'http_403', …(3) }
+
+- Expected
++ Received
+
+- {
+-   "body": undefined,
+-   "code": "http_403",
+-   "requestId": "fixture-request",
+-   "responseText": "not-json",
+-   "status": 403,
++ TypeError {
++   "message": "Entity ID must be a plain 26-character canonical uppercase Crockford ULID.",
+  }
+
+ ❯ test/v1-http-contract.test.js:218:52
+    216|     const { db } = await fixture((_request, response) => response.writ…
+    217|       { "content-type": "application/json", "x-request-id": "fixture-r…
+    218|     await expect(db.collection("users").get("key")).rejects.toMatchObj…
+       |                                                    ^
+    219|       responseText: text, body: undefined, requestId: "fixture-request…
+    220|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > retains unknown JSON errors without inventing a problem-details contract
+AssertionError: expected TypeError: Entity ID must be a plain 26-c… to match object { status: 403, code: 'http_403', …(2) }
+
+- Expected
++ Received
+
+- {
+-   "body": {
+-     "status": 403,
+-     "title": "Denied",
+-     "type": "about:blank",
+-   },
+-   "code": "http_403",
+-   "details": undefined,
+-   "status": 403,
++ TypeError {
++   "message": "Entity ID must be a plain 26-character canonical uppercase Crockford ULID.",
+  }
+
+ ❯ test/v1-http-contract.test.js:226:52
+    224|     const { db } = await fixture((_request, response) => response.writ…
+    225|       { "content-type": "application/problem+json" }).end(JSON.stringi…
+    226|     await expect(db.collection("users").get("key")).rejects.toMatchObj…
+       |                                                    ^
+    227|   });
+    228|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > pre-abort retains the caller's reason with zero requests
+AssertionError: expected TypeError: Entity ID must be a plain 26-c… to be Error: pre-aborted // Object.is equality
+
+- Expected
++ Received
+
+- Error {
+-   "message": "pre-aborted",
++ TypeError {
++   "message": "Entity ID must be a plain 26-character canonical uppercase Crockford ULID.",
+  }
+
+ ❯ test/v1-http-contract.test.js:242:83
+    240|     const reason = new Error("pre-aborted");
+    241|     controller.abort(reason);
+    242|     await expect(db.collection("users").get("key", { signal: controlle…
+       |                                                                                   ^
+    243|     expect(requests).toHaveLength(0);
+    244|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > abort during a partial 200 body retains the exact reason
+AssertionError: expected BodyTransportError: TerraBase response bo… to be DOMException{ stack: 'AbortError: ab…' } // Object.is equality
+
+- Expected
++ Received
+
+- AbortError {
+-   "message": "abort partial body",
++ BodyTransportError {
++   "message": "TerraBase response body failed in transit.",
++   "name": "BodyTransportError",
+  }
+
+ ❯ test/v1-http-contract.test.js:257:82
+    255|       return response;
+    256|     } }).database("app");
+    257|     await expect(db.collection("users").query({}, { signal: controller…
+       |                                                                                  ^
+    258|     expect(requests).toHaveLength(1);
+    259|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > abort during a partial 403 body retains the exact reason
+AssertionError: expected TerraBaseV1Error: TerraBase 403 http_403 { …(7) } to be DOMException{ stack: 'AbortError: ab…' } // Object.is equality
+
+- Expected
++ Received
+
+- AbortError {
+-   "message": "abort partial body",
++ TerraBaseV1Error {
++   "message": "TerraBase 403 http_403",
++   "status": 403,
++   "code": "http_403",
++   "op": undefined,
++   "handle": undefined,
++   "retryAfter": undefined,
++   "etag": undefined,
++   "details": undefined,
++   "name": "TerraBaseV1Error",
+  }
+
+ ❯ test/v1-http-contract.test.js:257:82
+    255|       return response;
+    256|     } }).database("app");
+    257|     await expect(db.collection("users").query({}, { signal: controller…
+       |                                                                                  ^
+    258|     expect(requests).toHaveLength(1);
+    259|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/44]⎯
+
+ FAIL  test/v1-http-contract.test.js > native fetch failures and typed diagnostics > redirects never forward credentials or retry the request
+AssertionError: expected TypeError: Entity ID must be a plain 26-c… to match object { status: 307, code: 'http_307' }
+
+- Expected
++ Received
+
+- {
+-   "code": "http_307",
+-   "status": 307,
++ TypeError {
++   "message": "Entity ID must be a plain 26-character canonical uppercase Crockford ULID.",
+  }
+
+ ❯ test/v1-http-contract.test.js:263:56
+    261|   test("redirects never forward credentials or retry the request", asy…
+    262|     const { db, requests } = await fixture((_request, response) => res…
+    263|     await expect(db.collection("users").put("key", {})).rejects.toMatc…
+       |                                                        ^
+    264|     expect(requests).toHaveLength(1);
+    265|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/44]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  44 failed | 12 passed (56)
+   Start at  23:04:39
+   Duration  732ms (transform 126ms, setup 0ms, import 197ms, tests 304ms, environment 0ms)
+

@@ -16,11 +16,11 @@ export const maximumRequestBytes = 4 * 1024 * 1024;
 // Query budgets count stored JSON before wrappers and serializer escaping.
 const defaultMaximumResponseBytes = 64 * 1024 * 1024;
 // Validate header-safe credential syntax only; the producer validates JWT claims/signatures.
-// Retain C# keys while the published TS-589 JWT contract awaits a producer release.
+// Retain C# keys; current project routes also authenticate project access JWTs.
 const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|tb_[A-Za-z0-9_-]{43})$/u;
 /**
  * Resolver input contains no credential. A successful URL is cached for this client/database.
- * @typedef {{ readonly project: string; readonly database: string; readonly signal?: AbortSignal | undefined }} V1EndpointContext
+ * @typedef {{ readonly project: string; readonly database?: string | undefined; readonly signal?: AbortSignal | undefined }} V1EndpointContext
  */
 /** @typedef {(context: V1EndpointContext) => string | Promise<string>} V1EndpointResolver */
 /**
@@ -171,8 +171,9 @@ export class V1Transport {
    */
   async url(operation, params, signal) {
     signal?.throwIfAborted();
-    const database = requireName("database", params.database);
-    let base = this.#bases.get(database);
+    const database = v1Route(operation).pathTemplate.includes("{database}") ? requireName("database", params.database) : undefined;
+    const session = database ?? "";
+    let base = this.#bases.get(session);
     if (base === undefined) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(new DOMException(
@@ -182,13 +183,13 @@ export class V1Transport {
       const promise = new Promise((resolve, reject) => {
         controller.signal.addEventListener("abort", () => reject(controller.signal.reason), { once: true });
         void Promise.resolve().then(() => this.#resolver(Object.freeze({
-          project: this.#project, database, signal: controller.signal,
+          project: this.#project, ...(database === undefined ? {} : { database }), signal: controller.signal,
         }))).then(canonicalBaseUrl).then(resolve, reject).finally(() => clearTimeout(timer));
       });
       base = { promise, timer, waiters: 0 };
-      this.#bases.set(database, base);
+      this.#bases.set(session, base);
       // A failed resolution is not a session; a later operation may resolve again.
-      void promise.catch(() => { if (this.#bases.get(database) === base) this.#bases.delete(database); });
+      void promise.catch(() => { if (this.#bases.get(session) === base) this.#bases.delete(session); });
     }
     base.waiters++;
     if (typeof base.timer === "object") base.timer.ref();
@@ -217,9 +218,11 @@ export class V1Transport {
    * Reads a response body as UTF-8 text within the response byte bound. A
    * connection failure while reading is a BodyTransportError.
    * @param {Response} response
+   * @param {AbortSignal | undefined} [signal]
    * @returns {Promise<string>}
    */
-  async readText(response) {
+  async readText(response, signal) {
+    signal?.throwIfAborted();
     const reader = response.body?.getReader();
     if (reader === undefined) return "";
     /** @type {Uint8Array[]} */
@@ -227,13 +230,16 @@ export class V1Transport {
     let size = 0;
     try {
       while (true) {
+        signal?.throwIfAborted();
         /** @type {ReadableStreamReadResult<Uint8Array>} */
         let part;
         try {
           part = await reader.read();
         } catch (error) {
+          signal?.throwIfAborted();
           throw new BodyTransportError(error);
         }
+        signal?.throwIfAborted();
         if (part.done) break;
         size += part.value.byteLength;
         if (size > this.#maxResponseBytes)
@@ -258,10 +264,11 @@ export class V1Transport {
   /**
    * Parses a JSON response body exactly.
    * @param {Response} response
+   * @param {AbortSignal | undefined} [signal]
    * @returns {Promise<JsonValue | undefined>}
    */
-  async readJson(response) {
-    return V1Transport.#decodeJson(response, await this.readText(response));
+  async readJson(response, signal) {
+    return V1Transport.#decodeJson(response, await this.readText(response, signal));
   }
 
   /**
@@ -280,13 +287,15 @@ export class V1Transport {
   /**
    * Converts a non-success response to a TerraBaseV1Error.
    * @param {Response} response
+   * @param {AbortSignal | undefined} [signal]
    * @returns {Promise<TerraBaseV1Error>}
    */
-  async error(response) {
+  async error(response, signal) {
     let text = "";
     try {
-      text = await this.readText(response);
+      text = await this.readText(response, signal);
     } catch {
+      signal?.throwIfAborted();
       text = "";
     }
     return parseV1Error(response.status, response.headers, text);
@@ -300,6 +309,32 @@ export class V1Transport {
    * @returns {Promise<V1CallResult>}
    */
   async call(operation, params, options = {}) {
+    const response = await this.#send(operation, params, options);
+    if (response.status === 307) {
+      await response.body?.cancel();
+      return { status: response.status, headers: response.headers, value: undefined };
+    }
+    return { status: response.status, headers: response.headers, value: await this.readJson(response, options.signal) };
+  }
+
+  /**
+   * @param {"streamDatabaseChanges"} operation
+   * @param {Readonly<Record<string, string>>} params
+   * @param {V1CallOptions} [options]
+   * @returns {Promise<Response>}
+   */
+  async openStream(operation, params, options = {}) {
+    const response = await this.#send(operation, params, options);
+    const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+    if (mediaType !== "text/event-stream" || response.body === null) {
+      void response.body?.cancel().catch(() => undefined);
+      throw new TypeError("TerraBase changes require a text/event-stream response body.");
+    }
+    return response;
+  }
+
+  /** @param {V1Operation} operation @param {Readonly<Record<string, string>>} params @param {V1CallOptions} options @returns {Promise<Response>} */
+  async #send(operation, params, options) {
     const route = v1Route(operation);
     if (options.body !== undefined && new TextEncoder().encode(options.body).byteLength > maximumRequestBytes)
       throw new TypeError(`TerraBase request bodies are limited to ${maximumRequestBytes} bytes.`);
@@ -307,20 +342,25 @@ export class V1Transport {
     if (options.query !== undefined && options.query.size > 0) url += `?${options.query}`;
     const headers = new Headers(options.headers);
     headers.set("authorization", `Bearer ${this.#token}`);
-    headers.set("accept", route.responseMediaType);
+    if (route.responseMediaType !== "") headers.set("accept", route.responseMediaType);
     if (options.body !== undefined) headers.set("content-type", options.contentType ?? "application/json");
-    /** @type {RequestInit} */
+    /** @type {RequestInit & { duplex?: "half" }} */
     const init = { method: route.method, headers, redirect: "manual" };
-    if (options.body !== undefined) init.body = options.body;
+    if (route.permission.endsWith(":write") && typeof process !== "undefined" && process.release?.name === "node") {
+      // Node fetch replays buffered or absent bodies on 421; use a one-shot stream, including DELETE.
+      const bytes = new TextEncoder().encode(options.body ?? "");
+      init.body = new ReadableStream({ start(controller) { if (bytes.byteLength > 0) controller.enqueue(bytes); controller.close(); } });
+      init.duplex = "half";
+    } else if (options.body !== undefined) init.body = options.body;
     if (options.signal !== undefined) init.signal = options.signal;
     const response = await this.#fetch(url, init);
+    if (options.signal?.aborted) {
+      void response.body?.cancel().catch(() => undefined);
+      options.signal.throwIfAborted();
+    }
     if (response.type === "opaqueredirect")
       throw new TypeError("Fresh shape bootstrap requires server fetch; obtain a handle and snapshot offset with collection.shape() on your server.");
-    if (!route.successStatuses.includes(response.status)) throw await this.error(response);
-    if (response.status === 307) {
-      await response.body?.cancel();
-      return { status: response.status, headers: response.headers, value: undefined };
-    }
-    return { status: response.status, headers: response.headers, value: await this.readJson(response) };
+    if (!route.successStatuses.includes(response.status)) throw await this.error(response, options.signal);
+    return response;
   }
 }
