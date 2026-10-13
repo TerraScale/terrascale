@@ -1,0 +1,98 @@
+{
+  "auditedProductSourceSHA": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+  "testedAuditHeadSHA": "6a8a3b775420adcbb959d8ca2c0ef1cb58db1db0",
+  "durationSeconds": 8.438,
+  "tests": [
+    {
+      "test": "CanceledUnpaidCheckoutDoesNotMarkPaidTierAsCurrent",
+      "outcome": "Failed"
+    },
+    {
+      "test": "ConcurrentCheckoutAndCancelReplayKeepOneSessionAndAllowReplacement",
+      "outcome": "Passed"
+    },
+    {
+      "test": "InterruptedCheckoutRetryRepairsIndexWithoutReplacingSession",
+      "outcome": "Passed"
+    },
+    {
+      "test": "InterruptedCheckoutOffersRetryBackToBilling",
+      "outcome": "Failed"
+    },
+    {
+      "test": "PartiallyPaidInvoiceUsesRemainingAmountForOutstandingBalance",
+      "outcome": "Failed"
+    },
+    {
+      "test": "InvoiceFailureCanRetryThroughFiltersWithoutReportingAnEmptyHistory",
+      "outcome": "Passed"
+    },
+    {
+      "test": "CancelCheckoutReturnsVisibleOutcomeAndCanStartDifferentPlan",
+      "outcome": "Failed"
+    },
+    {
+      "test": "AnnualPlanPageKeepsAnnualSelectedWhenChooserOpens(1440, 900)",
+      "outcome": "Failed"
+    },
+    {
+      "test": "AnnualPlanPageKeepsAnnualSelectedWhenChooserOpens(390, 844)",
+      "outcome": "Failed"
+    },
+    {
+      "test": "KeyboardReviewCloseEscapeBackAndForwardStayUsable(1440, 900)",
+      "outcome": "Passed"
+    },
+    {
+      "test": "KeyboardReviewCloseEscapeBackAndForwardStayUsable(390, 844)",
+      "outcome": "Passed"
+    }
+  ],
+  "captures": [
+    {
+      "path": "evidence/committed/annual-chooser-1440.png",
+      "testedHead": "6a8a3b775420adcbb959d8ca2c0ef1cb58db1db0",
+      "sha256": "adda11bae10ac1505140d71907a0e019b6b7f267ab568e4c4019cd1ba9c05de4",
+      "capturedAtUtc": "2026-10-13T02:27:40.965053+00:00",
+      "data": "local deterministic fixture; account footer masked"
+    },
+    {
+      "path": "evidence/committed/annual-chooser-390.png",
+      "testedHead": "6a8a3b775420adcbb959d8ca2c0ef1cb58db1db0",
+      "sha256": "55dd4f27c49bbb7d5e149216d7fdcd96238e428c6f3a6611843cd0a723f6d1c6",
+      "capturedAtUtc": "2026-10-13T02:27:41.710058+00:00",
+      "data": "local deterministic fixture; account footer masked"
+    },
+    {
+      "path": "evidence/committed/canceled-checkout-390.png",
+      "testedHead": "6a8a3b775420adcbb959d8ca2c0ef1cb58db1db0",
+      "sha256": "8320ff566669b8865813598938d86ddcd1d49a3d9db27371e475632c1adc07e5",
+      "capturedAtUtc": "2026-10-13T02:27:40.166047+00:00",
+      "data": "local deterministic fixture; account footer masked"
+    },
+    {
+      "path": "evidence/committed/keyboard-review-1440.png",
+      "testedHead": "6a8a3b775420adcbb959d8ca2c0ef1cb58db1db0",
+      "sha256": "db10c82f7bfaf7dadb6354d48a8bf6ace9db886fdeeadd1b596e1fe4764849c9",
+      "capturedAtUtc": "2026-10-13T02:27:43.417071+00:00",
+      "data": "local deterministic fixture; account footer masked"
+    },
+    {
+      "path": "evidence/committed/keyboard-review-390.png",
+      "testedHead": "6a8a3b775420adcbb959d8ca2c0ef1cb58db1db0",
+      "sha256": "a5d484e94b55921ce9c59ffc39aa38ae7e9983f6ad657b1ce94c86d74e7a038a",
+      "capturedAtUtc": "2026-10-13T02:27:44.811557+00:00",
+      "data": "local deterministic fixture; account footer masked"
+    }
+  ],
+  "inspection": {
+    "inspectedAllFiveImages": true,
+    "containsRealUserData": false,
+    "redactions": [
+      "account footer",
+      "account controls"
+    ],
+    "totalBytes": 752804,
+    "publicationAuthorization": "User authorized repository publication of these local fixture screenshots."
+  }
+}

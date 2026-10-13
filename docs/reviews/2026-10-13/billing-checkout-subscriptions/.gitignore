@@ -1,0 +1,7 @@
+artifacts/
+evidence/*
+!evidence/committed/
+results/
+*.log
+evidence-manifest.json
+pr-body.md

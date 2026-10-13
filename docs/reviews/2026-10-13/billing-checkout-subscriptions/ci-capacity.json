@@ -1,0 +1,99 @@
+{
+  "checkedAtUtc": "2026-10-13T02:23:54.446133+00:00",
+  "runnerInventory": "Repository runners: 0; organization runners: HTTP 403 requiring organization runner permissions; no scopes changed.",
+  "checkedRepositories": [
+    "ku",
+    "terrascale",
+    "ts-cos",
+    "ts-dashboard",
+    "ts-docs",
+    "ts-dotnet",
+    "ts-go",
+    "ts-js",
+    "ts-landing",
+    "ts-resources",
+    "ts-reviewer",
+    "ts-rust",
+    "ts-status"
+  ],
+  "statusFilters": [
+    "in_progress",
+    "pending",
+    "queued",
+    "waiting"
+  ],
+  "activeRuns": [
+    {
+      "repository": "terrascale",
+      "statusFilter": "in_progress",
+      "runs": [
+        {
+          "id": 38336619110,
+          "name": "CI",
+          "status": "in_progress",
+          "headBranch": "fix/e2e-disposable-target",
+          "url": "https://github.com/TerraScale/terrascale/actions/runs/38336619110"
+        },
+        {
+          "id": 38336376782,
+          "name": "CI",
+          "status": "in_progress",
+          "headBranch": "fix/query-value-regression-20261013",
+          "url": "https://github.com/TerraScale/terrascale/actions/runs/38336376782"
+        }
+      ]
+    },
+    {
+      "repository": "ts-dashboard",
+      "statusFilter": "in_progress",
+      "runs": [
+        {
+          "id": 38336180571,
+          "name": "CI",
+          "status": "in_progress",
+          "headBranch": "main",
+          "url": "https://github.com/TerraScale/ts-dashboard/actions/runs/38336180571"
+        }
+      ]
+    }
+  ],
+  "queuedPendingWaitingRuns": 0,
+  "nativeAlphaJobs": [
+    {
+      "repository": "ts-dashboard",
+      "runId": 38336180571,
+      "name": "check",
+      "runner": "alpha-s4",
+      "status": "in_progress"
+    },
+    {
+      "repository": "ts-dashboard",
+      "runId": 38336180571,
+      "name": "slow",
+      "runner": "alpha-s2",
+      "status": "in_progress"
+    },
+    {
+      "repository": "terrascale",
+      "runId": 38336376782,
+      "name": "terrabase",
+      "runner": "alpha-s3",
+      "status": "in_progress"
+    },
+    {
+      "repository": "terrascale",
+      "runId": 38336619110,
+      "name": "terrabase",
+      "runner": "alpha-s1",
+      "status": "in_progress"
+    },
+    {
+      "repository": "terrascale",
+      "runId": 38336619110,
+      "name": "changes",
+      "runner": "alpha-s5",
+      "status": "completed"
+    }
+  ],
+  "publicationDecision": "One Alpha slot had just completed its job; no queued/pending/waiting runs were observed. Four other Alpha jobs remained active; release work retains priority. The authorized first audit publication may use the available slot without modifying CI."
+}

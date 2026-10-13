@@ -1,0 +1,27 @@
+--- a/src/TerraScale.Dashboard/Features/Billing/BillingEndpoints.cs
++++ b/src/TerraScale.Dashboard/Features/Billing/BillingEndpoints.cs
+@@ -72,6 +72,13 @@
+             try { return AuthEndpoints.SeeOther(await billing.StartCheckoutAsync(context, form["plan"].ToString(), form["interval"].ToString(), form["return"].ToString(), http.RequestAborted)); }
+             catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
+             { return Results.Problem(error.Message, statusCode: error is AccountAccessException access ? access.StatusCode : 422); }
++            catch (Exception error) when (error is StripeException or HttpRequestException or IOException ||
++                                          error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
++            {
++                var view = BillingCheckoutUnavailable.Create(new DocumentModel("Checkout unavailable", DocumentModel.NonceFor(http)));
++                view.StatusCode = StatusCodes.Status503ServiceUnavailable;
++                return (IResult)view;
++            }
+         });
+         endpoints.MapGet("/billing/portal", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
+         {
+--- /dev/null
++++ b/src/TerraScale.Dashboard/Features/Billing/BillingCheckoutUnavailable.cshtml
+@@ -0,0 +1,8 @@
++@inherits RazorSlice<DocumentModel>
++@implements IUsesLayout<TerraScale.Dashboard.UI.Slices.Document, DocumentModel>
++<main class="ts-auth"><section class="ts-auth-card">
++    <div class="ts-auth-heading"><h1 class="ts-auth-title">Checkout temporarily unavailable</h1>
++    <p class="ts-auth-subtitle">Return to billing to resume the checkout or cancel it before choosing another plan.</p></div>
++    <a class="ts-btn ts-btn-primary" href="/organization?tab=billing">Try again</a>
++</section></main>
++@functions { public DocumentModel LayoutModel => Model; }
