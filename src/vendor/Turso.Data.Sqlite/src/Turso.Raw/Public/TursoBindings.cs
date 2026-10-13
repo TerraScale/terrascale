@@ -82,6 +82,13 @@ public static class TursoBindings
         return TursoStatementHandle.FromPtr(statementPtr);
     }
 
+    public static void ResetStatement(TursoStatementHandle statement)
+    {
+        statement.ThrowIfInvalid();
+        var status = TursoInterop.StatementReset(statement, out var errorPtr);
+        ThrowIfError(status, errorPtr);
+    }
+
     public static void RegisterScalarFunction(
         TursoDatabaseHandle db,
         string name,

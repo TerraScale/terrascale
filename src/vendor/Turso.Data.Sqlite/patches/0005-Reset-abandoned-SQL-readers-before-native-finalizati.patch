@@ -1,0 +1,88 @@
+From 79ac918c33c2a5ff9c015fd7954d7469fda86a68 Mon Sep 17 00:00:00 2001
+From: mariogk <mariogk@terrascale.tech>
+Date: Tue, 13 Oct 2026 14:56:58 -0300
+Subject: [PATCH] Reset abandoned SQL readers before native finalization
+
+---
+ src/Turso.Data.Sqlite/SqliteDataReader.cs | 31 +++++++++++++++++++++++
+ src/Turso.Raw/Public/TursoBindings.cs     |  7 +++++
+ src/Turso.Raw/TursoInterop.cs             |  3 +++
+ 3 files changed, 41 insertions(+)
+
+diff --git a/src/Turso.Data.Sqlite/SqliteDataReader.cs b/src/Turso.Data.Sqlite/SqliteDataReader.cs
+index 48942430..7824280f 100644
+--- a/src/Turso.Data.Sqlite/SqliteDataReader.cs
++++ b/src/Turso.Data.Sqlite/SqliteDataReader.cs
+@@ -868,6 +868,37 @@ public class SqliteDataReader : DbDataReader
+ 
+     public override void Close() => CloseCore();
+ 
++    /// <summary>Closes the reader without executing unread rows or the remaining statements of its batch.</summary>
++    public void Abort()
++    {
++        if (_isClosed)
++            return;
++
++        try
++        {
++            if (_statement is not null)
++                TursoBindings.ResetStatement(_statement);
++        }
++        catch (TursoException ex)
++        {
++            _command.Connection?.CheckTransactionAfterFailure();
++            throw SqliteCommand.ToSqliteException(ex);
++        }
++        finally
++        {
++            try
++            {
++                _statement?.Dispose();
++                _statement = null;
++                _remainingSql.Clear();
++            }
++            finally
++            {
++                FinishClose();
++            }
++        }
++    }
++
+     private void CloseCore(bool throwOnError = true)
+     {
+         if (_isClosed)
+diff --git a/src/Turso.Raw/Public/TursoBindings.cs b/src/Turso.Raw/Public/TursoBindings.cs
+index eb642cd0..5cd815c4 100644
+--- a/src/Turso.Raw/Public/TursoBindings.cs
++++ b/src/Turso.Raw/Public/TursoBindings.cs
+@@ -82,6 +82,13 @@ public static class TursoBindings
+         return TursoStatementHandle.FromPtr(statementPtr);
+     }
+ 
++    public static void ResetStatement(TursoStatementHandle statement)
++    {
++        statement.ThrowIfInvalid();
++        var status = TursoInterop.StatementReset(statement, out var errorPtr);
++        ThrowIfError(status, errorPtr);
++    }
++
+     public static void RegisterScalarFunction(
+         TursoDatabaseHandle db,
+         string name,
+diff --git a/src/Turso.Raw/TursoInterop.cs b/src/Turso.Raw/TursoInterop.cs
+index 45fe8327..80e7bcb1 100644
+--- a/src/Turso.Raw/TursoInterop.cs
++++ b/src/Turso.Raw/TursoInterop.cs
+@@ -145,6 +145,9 @@ internal static class TursoInterop
+         out IntPtr statement,
+         out IntPtr errorPtr);
+ 
++    [DllImport(DllName, EntryPoint = "turso_statement_reset", CallingConvention = CallingConvention.Cdecl)]
++    public static extern TursoStatusCode StatementReset(TursoStatementHandle statement, out IntPtr errorPtr);
++
+     [DllImport(DllName, EntryPoint = "turso_statement_finalize", CallingConvention = CallingConvention.Cdecl)]
+     public static extern TursoStatusCode StatementFinalize(IntPtr statement, out IntPtr errorPtr);
+ 
+-- 
+2.54.0
+

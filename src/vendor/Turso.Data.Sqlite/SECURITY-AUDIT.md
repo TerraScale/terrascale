@@ -146,6 +146,19 @@ Our build files (`Directory.Build.props`, `Directory.Build.targets`; not patches
 files under `locks/`, not packable, `NU1507;NU1801` as in the root props, Turso.Raw's package id to its project name,
 and the `Turso.Data.Native` reference.
 
+### Patch 0005 (2026-10-13)
+
+`SqliteDataReader.Abort()` resets an unfinished native statement before disposing it and discards unexecuted batch
+statements. The existing native finalizer drains rows, which can invoke cancelled scan callbacks and roll back an
+explicit transaction. `Turso.Raw` binds the `turso_statement_reset` export already present in the pinned v0.8.2 C API;
+the native package, dependencies, formats and configuration do not change. Reset errors use the existing transaction
+failure probe and exception conversion; cleanup still releases the statement and reader callback.
+
+The real-native regression proves that unread callbacks and later SQL never execute, previous writes survive commit,
+and abort is idempotent. The original TerraBase Slow regression proves cancellation between SQL rows releases the
+reader and allows another query in the same transaction. Both targeted tests passed on mariogk-dev. This supplement
+covers the patch; it does not repeat the package or Rust advisory audit above.
+
 ## 6. Rust crates in `libturso_sdk_kit`
 
 Read-only, against upstream's workspace at `5c168be5ef6a32ac966daf5983502a4f694b37ad` (a fresh clone), with tools from

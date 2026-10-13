@@ -708,7 +708,8 @@ internal sealed partial class SqliteStorageTransaction(
                 {
                     try
                     {
-                        reader?.Dispose();
+                        // Reset before finalizing: native finalization drains rows and invokes the cancelled scan guard.
+                        reader?.Abort();
                     }
                     finally
                     {
