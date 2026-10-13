@@ -1,0 +1,53 @@
+{
+  "init": {
+    "swap_size_mb": 4096
+  },
+  "guest": {
+    "cpu_kind": "shared",
+    "cpus": 2,
+    "memory_mb": 512
+  },
+  "metadata": {
+    "fly_platform_version": "v2",
+    "fly_process_group": "app"
+  },
+  "mounts": [
+    {
+      "path": "/data",
+      "volume": "vol_42k9wd5gxo10zx34",
+      "extend_threshold_percent": 80,
+      "add_size_gb": 1,
+      "size_gb_limit": 100
+    }
+  ],
+  "services": [
+    {
+      "protocol": "tcp",
+      "internal_port": 8080,
+      "autostop": false,
+      "autostart": false,
+      "ports": [
+        {
+          "port": 443,
+          "handlers": [
+            "tls",
+            "http"
+          ]
+        },
+        {
+          "port": 80,
+          "handlers": [
+            "http"
+          ]
+        }
+      ],
+      "force_instance_key": null
+    }
+  ],
+  "image": "registry.fly.io/ts-terrabase-e2e:e1812ce3-faults@sha256:20ff66a2422e5b7bdbddd3110eb34b0a7db01a14abc438ddc891d10cd404fa34",
+  "restart": {
+    "policy": "on-failure",
+    "max_retries": 10
+  },
+  "dns": {}
+}

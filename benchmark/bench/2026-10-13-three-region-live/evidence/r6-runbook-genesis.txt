@@ -1,0 +1,86 @@
+TB_IMG=registry.fly.io/ts-terrabase-e2e:e1812ce3-faults@
+## A4 template from e2e machine 68379eec015e58, set to production size 06:37:21
+{"env":null,"guest":{"cpu_kind":"shared","cpus":2,"memory_mb":512},"swap":4096,"restart":{"policy":"on-failure","max_retries":10},"services":[{"internal_port":8080,"autostart":true,"autostop":false,"ports":[443,80]}],"checks":null}
+## B4 park old (stopped already) 06:37:22
+https://fly.io/apps/ts-terrabase-e2e/machines/68379eec015e58
+https://fly.io/apps/ts-terrabase-e2e/machines/18556ddb9d2548
+https://fly.io/apps/ts-terrabase-e2e/machines/7811155eb22568
+68379eec015e58	stopped	no	[false]
+18556ddb9d2548	stopped	no	[false]
+7811155eb22568	stopped	no	[false]
+## B1 volumes 06:37:38
+vol_42k9wd5gxo10zx34	gru	1	created
+vol_4y8zng27xxwkej3r	sjc	1	created
+vol_vxmz6q02700g2184	fra	1	created
+TB_IMG=registry.fly.io/ts-terrabase-e2e:e1812ce3-faults@sha256:20ff66a2422e5b7bdbddd3110eb34b0a7db01a14abc438ddc891d10cd404fa34
+## B2 06:38:02
++ flyctl machine create $TB_IMG -a ts-terrabase-e2e -r gru --machine-config tb-gru.json
+Success! A Machine has been successfully created in app ts-terrabase-e2e
+ Machine ID: 82d1d00a7954d8
+ Version: 01M4SZQ77Z13FZ2MY5E845TWBP
+ State: created
++ flyctl machine create $TB_IMG -a ts-terrabase-e2e -r fra --machine-config tb-fra.json
+Success! A Machine has been successfully created in app ts-terrabase-e2e
+ Machine ID: 2872653f603148
+ Version: 01M4SZQB736G9DT162NJA55RZR
+ State: created
++ flyctl machine create $TB_IMG -a ts-terrabase-e2e -r sjc --machine-config tb-sjc.json
+Success! A Machine has been successfully created in app ts-terrabase-e2e
+ Machine ID: 82237ec7e20648
+ Version: 01M4SZQGR42NJ3T4JN5SA6B1XD
+ State: created
+68379eec015e58	gru	stopped	registry.fly.io/ts-terrabase-e2e:9667b7ef-faults@sha256:84260b8d7ef73a8b433ad84f9661e7a45cd6ea4fca6685ec9e07a1006528c2db	1	2048	1024	vol_rnzg5kw6wz9ney0r	no	[false]
+82d1d00a7954d8	gru	stopped	registry.fly.io/ts-terrabase-e2e:e1812ce3-faults@sha256:20ff66a2422e5b7bdbddd3110eb34b0a7db01a14abc438ddc891d10cd404fa34	2	512	4096	vol_42k9wd5gxo10zx34	on-failure	[false]
+18556ddb9d2548	sjc	stopped	registry.fly.io/ts-terrabase-e2e:9667b7ef-faults@sha256:84260b8d7ef73a8b433ad84f9661e7a45cd6ea4fca6685ec9e07a1006528c2db	1	2048	1024	vol_4y8znojygg575k3r	no	[false]
+82237ec7e20648	sjc	created	registry.fly.io/ts-terrabase-e2e:e1812ce3-faults@sha256:20ff66a2422e5b7bdbddd3110eb34b0a7db01a14abc438ddc891d10cd404fa34	2	512	4096	vol_4y8zng27xxwkej3r	on-failure	[false]
+7811155eb22568	fra	stopped	registry.fly.io/ts-terrabase-e2e:9667b7ef-faults@sha256:84260b8d7ef73a8b433ad84f9661e7a45cd6ea4fca6685ec9e07a1006528c2db	1	2048	1024	vol_40oj6zk22gowxmk4	no	[false]
+2872653f603148	fra	created	registry.fly.io/ts-terrabase-e2e:e1812ce3-faults@sha256:20ff66a2422e5b7bdbddd3110eb34b0a7db01a14abc438ddc891d10cd404fa34	2	512	4096	vol_vxmz6q02700g2184	on-failure	[false]
+## B5 start back to back 06:38:32
+failed to release lease for machine 82d1d00a7954d8: Post "http://[fc01:a7b:10c::]:3593/flyd.v1.LeaseService/Release": dial tcp [fc01:a7b:10c::]:3593: i/o timeout
+82237ec7e20648 has been started
+2872653f603148 has been started
+## B6 round 1 06:39:32
+## B6 round 2 06:40:45
+app[82d1d00a7954d8] gru	"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed	app[82d1d00a7954d8] gru
+"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed	app[82d1d00a7954d8] gru	"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed
+app[82d1d00a7954d8] gru	"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed	app[82d1d00a7954d8] gru
+"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed	app[82d1d00a7954d8] gru	"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed
+app[82237ec7e20648] sjc	"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed	app[82237ec7e20648] sjc
+"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed	app[82d1d00a7954d8] gru	"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed
+app[82d1d00a7954d8] gru	"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed	app[82237ec7e20648] sjc
+"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed	app[82d1d00a7954d8] gru	"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed
+app[2872653f603148] fra	"msg":"The catalog is verified against {_verified.Count} of {machines - 1} other machines; this m	"_verified.Count":2
+app[82237ec7e20648] sjc	"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed	app[82d1d00a7954d8] gru
+"msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed	app[2872653f603148] fra	"msg":"Platform databases are seeded
+app[82237ec7e20648] sjc	"msg":"The catalog is verified against {_verified.Count} of {machines - 1} other machines; this m	"_verified.Count":2
+## B6 (persistent proxies) 06:41:21
+{"open":true,"trusted":true,"pending":[],"digest":"e0e0340a2851eda992c70d7f9bb4948d5b16923de9fea32522862d126e6d00ee"}
+{"open":true,"trusted":true,"pending":[],"digest":"e0e0340a2851eda992c70d7f9bb4948d5b16923de9fea32522862d126e6d00ee"}
+{"open":true,"trusted":true,"pending":[],"digest":"e0e0340a2851eda992c70d7f9bb4948d5b16923de9fea32522862d126e6d00ee"}
+2026-10-13T06:38:34Z runner[82d1d00a7954d8] gru [info]Machine started in 856ms
+2026-10-13T06:39:27Z app[82d1d00a7954d8] gru [info]{"time":"2026-10-13T06:39:27.933110Z","level":"INFO","msg":"The catalog is verified against {_verified.Count} of {machines - 1} other machines; this 
+2026-10-13T06:39:28Z app[82d1d00a7954d8] gru [info]{"time":"2026-10-13T06:39:28.821555Z","level":"INFO","msg":"Platform databases are seeded","service":"terrabase","component":"TerraBase.Features.Plat
+## B8 autostart on 82d1d00a7954d8 06:41:37
+https://fly.io/apps/ts-terrabase-e2e/machines/82d1d00a7954d8
+readyz 200 after 16s
+{"open":true,"trusted":true,"pending":[],"d":"5b5bca6955d4"}
+{"open":true,"trusted":true,"pending":[],"d":"1361c4aa0686"}
+{"open":true,"trusted":true,"pending":[],"d":"1361c4aa0686"}
+## B8 autostart on 82237ec7e20648 06:42:08
+https://fly.io/apps/ts-terrabase-e2e/machines/82237ec7e20648
+readyz 200 after 17s
+{"open":true,"trusted":true,"pending":[],"d":"1d6953c15cc7"}
+{"open":true,"trusted":true,"pending":[],"d":"1d6953c15cc7"}
+{"open":true,"trusted":true,"pending":[],"d":"9c232c34e3a4"}
+## B8 autostart on 2872653f603148 06:42:39
+https://fly.io/apps/ts-terrabase-e2e/machines/2872653f603148
+readyz 200 after 13s
+{"open":true,"trusted":true,"pending":[],"d":"804fffe3be38"}
+{"open":true,"trusted":true,"pending":[],"d":"804fffe3be38"}
+{"open":true,"trusted":true,"pending":[],"d":"245fad2babf0"}
+82d1d00a7954d8	started	on-failure	[true]
+68379eec015e58	stopped	no	[false]
+7811155eb22568	stopped	no	[false]
+2872653f603148	started	on-failure	[true]
+82237ec7e20648	started	on-failure	[true]
+18556ddb9d2548	stopped	no	[false]

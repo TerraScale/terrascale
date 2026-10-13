@@ -1,0 +1,55 @@
+{"open":true,"trusted":true,"pending":[],"d":"afa97cad94a3"}
+{"open":true,"trusted":true,"pending":[],"d":"afa97cad94a3"}
+{"open":true,"trusted":true,"pending":[],"d":"56668a9258e9"}
+## all three restarted together 01:55:34
+01:55:45
+01:55:56 readyz 000 000 503
+01:56:06 readyz 503 000 503
+01:56:17 readyz 503 000 503
+01:56:28 readyz 503 000 503
+01:56:38 readyz 503 000 503
+01:56:49 readyz 503 000 503
+01:56:59 readyz 503 000 503
+01:57:10 readyz 503 000 503
+01:57:16 readyz 503 503 503
+01:57:22 readyz 200 503 200
+01:57:28 readyz 200 503 200
+01:57:34 readyz 200 503 200
+01:57:39 readyz 200 503 200
+01:57:45 readyz 200 503 200
+01:57:51 readyz 200 503 200
+01:57:57 readyz 200 503 200
+01:58:03 readyz 200 503 200
+01:58:08 readyz 200 503 200
+01:58:14 readyz 200 503 200
+01:58:20 readyz 200 503 200
+01:58:26 readyz 200 503 200
+01:58:32 readyz 200 503 200
+01:58:38 readyz 200 503 200
+01:58:44 readyz 200 503 200
+01:58:49 readyz 200 503 200
+01:58:55 readyz 200 503 200
+01:59:01 readyz 200 503 200
+01:59:07 readyz 200 503 200
+01:59:13 readyz 200 503 200
+01:59:19 readyz 200 503 200
+01:59:25 readyz 200 503 200
+01:59:31 readyz 200 503 200
+01:59:36 readyz 200 503 200
+01:59:42 readyz 200 503 200
+01:59:48 readyz 200 503 200
+01:59:54 readyz 200 503 200
+{"open":true,"trusted":true,"pending":[],"d":"efb13904560f"}
+{"open":true,"trusted":true,"pending":[],"d":"a1e3caa9f430"}
+02:00:52 sjc readyz 503 held="Held":180.3
+02:01:09 sjc readyz 503 held="Held":199.8
+02:01:25 sjc readyz 503 held="Held":218.6
+02:01:41 sjc readyz 503 held="Held":226.3
+02:01:58 sjc readyz 503 held="Held":242.9
+02:02:14 sjc readyz 503 held="Held":259.9
+02:02:30 sjc readyz 503 held="Held":276.9
+02:02:46 sjc readyz 503 held="Held":293.9
+02:03:03 sjc readyz 200 held="Held":311
+02:03:19 sjc readyz 200 held="Held":0.2
+02:03:36 sjc readyz 200 held="Held":0.2
+02:03:52 sjc readyz 200 held="Held":0.2

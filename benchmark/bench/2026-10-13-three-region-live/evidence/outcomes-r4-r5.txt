@@ -1,0 +1,167 @@
+## r4-fault-A_restarted_region_replays_its_backlog_to_a_region_that_returns.log (run 2026-10-13T02:45:06Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/ThreeRegion)
+failed A_restarted_region_replays_its_backlog_to_a_region_that_returns (1m 04s 602ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] InvalidOperationException: flyctl machine start 68379eec015e58 --app ts-terrabase-e2e exited 1: Error: could not start machine 68379eec015e58: failed to start VM 68379eec015e58: failed_precondition: unable to start machine from current state: 'stopping' (Request ID: 0
+  total: 1
+  failed: 1
+  succeeded: 0
+  skipped: 0
+## r4-fault-Region_down_then_back_catches_up_on_every_write_made_while_it_was_down.log (run 2026-10-13T02:43:31Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/ThreeRegion)
+replication latency, fra catch-up on 300 documents after rejoin: 49951 ms
+passed Region_down_then_back_catches_up_on_every_write_made_while_it_was_down (1m 08s 441ms)
+  total: 1
+  failed: 0
+  succeeded: 1
+  skipped: 0
+## r4-fault-Restart_in_the_middle_of_replication_loses_no_write.log (run 2026-10-13T02:46:12Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/ThreeRegion)
+failed Restart_in_the_middle_of_replication_loses_no_write (1m 03s 276ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] InvalidOperationException: flyctl machine start 18556ddb9d2548 --app ts-terrabase-e2e exited 1: Error: could not start machine 18556ddb9d2548: failed to start VM 18556ddb9d2548: failed_precondition: unable to start machine from current state: 'stopping' (Request ID: 0
+  total: 1
+  failed: 1
+  succeeded: 0
+  skipped: 0
+## r4-fault-Writes_acknowledged_just_before_their_region_stops_reach_every_region_after_it_returns.log (run 2026-10-13T02:44:43Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/ThreeRegion)
+failed Writes_acknowledged_just_before_their_region_stops_reach_every_region_after_it_returns (21s 736ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] InvalidOperationException: flyctl machine start 68379eec015e58 --app ts-terrabase-e2e exited 1: Error: could not start machine 68379eec015e58: failed to start VM 68379eec015e58: failed_precondition: unable to start machine from current state: 'stopping' (Request ID: 0
+  total: 1
+  failed: 1
+  succeeded: 0
+  skipped: 0
+## r4-flyoutage.log (run 2026-10-13T02:47:17Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/FlyOutageE2)
+replication latency, sjc catch-up after rejoin: 13656 ms
+passed Sjc_machine_stopped_then_started_catches_up_on_writes_made_during_the_outage (34s 116ms)
+  total: 1
+  failed: 0
+  succeeded: 1
+  skipped: 0
+## r4-LatticeE2ETests.log (run 2026-10-13T02:39:49Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/LatticeE2ET)
+expected failure until the changes feed (R8) over peer streams (R4a): HttpRequestException: GET https://ts-terrabase-e2e.fly.dev/v1/projects/01M4SD7D7B2C3CZ4W41F3ZY2FK/databases/e2e/changes?collections=e2e-cc9c6b89526c4138bb5485d1d7bf02c6 answered 404: {"error":{"code":"unknown_route"}}
+passed E10_feed_cursor_from_gru_resumes_in_sjc_with_no_missing_event_in_per_origin_order_expected_to_fail (3s 298ms)
+expected failure until SQL writes (R9) over peer streams (R4a): HttpRequestException: POST https://ts-terrabase-e2e.fly.dev/v1/projects/01M4SD7D7B2C3CZ4W41F3ZY2FK/databases/e2e/sql answered 401: {"error":{"code":"invalid_key"}}
+passed E11_sql_update_in_gru_and_patch_in_sjc_both_survive_and_increments_add_expected_to_fail (4s 016ms)
+expected failure until the changes feed (R8) over peer streams (R4a): HttpRequestException: GET https://ts-terrabase-e2e.fly.dev/v1/projects/01M4SD7D7B2C3CZ4W41F3ZY2FK/databases/e2e/changes?collections=e2e-c806cf371a814814b37bd9541290d772 answered 404: {"error":{"code":"unknown_route"}}
+passed E15_refresh_token_used_in_gru_and_sjc_shows_both_uses_on_both_feeds_expected_to_fail (4s 278ms)
+passed E9_concurrent_add_and_remove_of_one_element_add_wins_expected_to_fail (4s 547ms)
+passed E8_concurrent_inc_in_both_regions_sums_and_set_0_resets_expected_to_fail (6s 170ms)
+passed E14_delete_then_gc_then_recreate_leaves_no_ghost_fields_expected_to_fail (2m 41s 657ms)
+  total: 6
+  failed: 0
+  succeeded: 6
+  skipped: 0
+## r4-ReplicationE2ETests.log (run 2026-10-13T02:42:32Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/Replication)
+replication latency, sjc to gru: 30 ms
+passed Write_in_sjc_is_readable_in_gru_with_the_same_content (3s 836ms)
+replication latency, concurrent different fields: 511 ms
+passed Concurrent_writes_to_different_fields_both_survive_expected_to_fail_until_per_field_lattice (4s 267ms)
+replication latency, gru to sjc: 460 ms
+passed Write_in_gru_is_readable_in_sjc_with_the_same_content (4s 475ms)
+replication latency, delete versus edit: 753 ms
+replication latency, concurrent same field: 784 ms
+passed Concurrent_writes_to_the_same_field_converge_to_one_identical_value (4s 904ms)
+passed Delete_in_one_region_and_edit_in_the_other_converge_to_the_same_state (6s 138ms)
+replication latency, bulk 1000 documents: 2783 ms
+passed Bulk_1000_documents_split_across_regions_have_matching_counts_and_checksums (15s 938ms)
+  total: 6
+  failed: 0
+  succeeded: 6
+  skipped: 0
+## r4-six-1.log (run 2026-10-13T02:38:41Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/ThreeRegion)
+replication latency, fra/7811155eb22568 to gru/68379eec015e58: 38 ms
+replication latency, gru/68379eec015e58 to sjc/18556ddb9d2548: 251 ms
+replication latency, sjc/18556ddb9d2548 to gru/68379eec015e58: 29 ms
+passed Write_in_one_region_is_readable_in_the_other_two(gru, sjc) (6s 939ms)
+replication latency, fra/7811155eb22568 to sjc/18556ddb9d2548: 221 ms
+passed Write_in_one_region_is_readable_in_the_other_two(fra, gru) (7s 004ms)
+replication latency, gru/68379eec015e58 to fra/7811155eb22568: 370 ms
+passed Write_in_one_region_is_readable_in_the_other_two(sjc, gru) (7s 187ms)
+passed Write_in_one_region_is_readable_in_the_other_two(fra, sjc) (7s 332ms)
+passed Write_in_one_region_is_readable_in_the_other_two(gru, fra) (7s 541ms)
+replication latency, sjc/18556ddb9d2548 to fra/7811155eb22568: 296 ms
+passed Write_in_one_region_is_readable_in_the_other_two(sjc, fra) (8s 154ms)
+  total: 6
+  failed: 0
+  succeeded: 6
+  skipped: 0
+## r4-six-2.log (run 2026-10-13T02:38:51Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/ThreeRegion)
+replication latency, sjc/18556ddb9d2548 to gru/68379eec015e58: 25 ms
+replication latency, gru/68379eec015e58 to sjc/18556ddb9d2548: 495 ms
+replication latency, gru/68379eec015e58 to fra/7811155eb22568: 293 ms
+passed Write_in_one_region_is_readable_in_the_other_two(sjc, gru) (5s 656ms)
+passed Write_in_one_region_is_readable_in_the_other_two(gru, sjc) (5s 748ms)
+replication latency, fra/7811155eb22568 to sjc/18556ddb9d2548: 218 ms
+passed Write_in_one_region_is_readable_in_the_other_two(gru, fra) (5s 869ms)
+replication latency, fra/7811155eb22568 to gru/68379eec015e58: 81 ms
+replication latency, sjc/18556ddb9d2548 to fra/7811155eb22568: 620 ms
+passed Write_in_one_region_is_readable_in_the_other_two(fra, sjc) (6s 118ms)
+passed Write_in_one_region_is_readable_in_the_other_two(fra, gru) (6s 201ms)
+passed Write_in_one_region_is_readable_in_the_other_two(sjc, fra) (6s 253ms)
+  total: 6
+  failed: 0
+  succeeded: 6
+  skipped: 0
+## r4-six-3.log (run 2026-10-13T02:38:58Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/ThreeRegion)
+replication latency, gru/68379eec015e58 to sjc/18556ddb9d2548: 226 ms
+passed Write_in_one_region_is_readable_in_the_other_two(gru, sjc) (5s 607ms)
+replication latency, fra/7811155eb22568 to sjc/18556ddb9d2548: 218 ms
+replication latency, fra/7811155eb22568 to gru/68379eec015e58: 28 ms
+replication latency, gru/68379eec015e58 to fra/7811155eb22568: 297 ms
+replication latency, sjc/18556ddb9d2548 to fra/7811155eb22568: 294 ms
+passed Write_in_one_region_is_readable_in_the_other_two(fra, sjc) (5s 976ms)
+passed Write_in_one_region_is_readable_in_the_other_two(fra, gru) (6s 029ms)
+passed Write_in_one_region_is_readable_in_the_other_two(gru, fra) (6s 080ms)
+passed Write_in_one_region_is_readable_in_the_other_two(sjc, fra) (6s 296ms)
+replication latency, sjc/18556ddb9d2548 to gru/68379eec015e58: 26 ms
+passed Write_in_one_region_is_readable_in_the_other_two(sjc, gru) (10s 919ms)
+  total: 6
+  failed: 0
+  succeeded: 6
+  skipped: 0
+## r4-ThreeRegionE2ETests.log (run 2026-10-13T02:39:11Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/ThreeRegion)
+replication latency, gru/68379eec015e58 to sjc/18556ddb9d2548: 464 ms
+passed Write_in_one_region_is_readable_in_the_other_two(gru, sjc) (7s 733ms)
+passed Concurrent_writes_to_different_fields_in_three_regions_all_survive (7s 931ms)
+replication latency, three-way same field: 941 ms
+passed Concurrent_writes_to_the_same_field_in_three_regions_converge_to_one_written_value (8s 310ms)
+replication latency, gru/68379eec015e58 to fra/7811155eb22568: 608 ms
+replication latency, fra/7811155eb22568 to sjc/18556ddb9d2548: 721 ms
+replication latency, sjc/18556ddb9d2548 to fra/7811155eb22568: 341 ms
+passed Write_in_one_region_is_readable_in_the_other_two(gru, fra) (9s 960ms)
+replication latency, sjc/18556ddb9d2548 to gru/68379eec015e58: 383 ms
+passed Write_in_one_region_is_readable_in_the_other_two(sjc, fra) (10s 227ms)
+replication latency, fra/7811155eb22568 to gru/68379eec015e58: 1831 ms
+passed Write_in_one_region_is_readable_in_the_other_two(sjc, gru) (10s 458ms)
+passed Write_in_one_region_is_readable_in_the_other_two(fra, sjc) (10s 544ms)
+passed Write_in_one_region_is_readable_in_the_other_two(fra, gru) (10s 617ms)
+passed Concurrent_set_adds_in_three_regions_union_and_a_concurrent_add_beats_a_remove (10s 752ms)
+passed Concurrent_inc_in_three_regions_sums (11s 389ms)
+passed Delete_in_one_region_and_edits_in_the_other_two_converge_and_stay_converged (11s 889ms)
+replication latency, 900 KiB and 2000-field documents: 6089 ms
+passed Documents_near_the_size_limit_and_with_many_fields_replicate_intact (12s 211ms)
+replication latency, burst of 40 overwrites per region: 13006 ms
+passed Burst_of_overwrites_from_three_regions_converges_to_a_last_write (19s 361ms)
+replication latency, three-way bulk 3000 documents: 3210 ms
+passed Bulk_3000_documents_written_across_three_regions_have_matching_counts_and_digests (36s 905ms)
+  total: 14
+  failed: 0
+  succeeded: 14
+  skipped: 0
+## r5-fault-A_restarted_region_replays_its_backlog_to_a_region_that_returns.log (run 2026-10-13T03:01:32Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/ThreeRegion)
+failed A_restarted_region_replays_its_backlog_to_a_region_that_returns (1m 30s 483ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] HttpRequestException: DELETE https://ts-terrabase-e2e.fly.dev/v1/projects/01M4SD7D7B2C3CZ4W41F3ZY2FK/databases/e2e/collections/e2e-4d9a5389e8d7407aad6f498813d6e834 answered 503: {"error":{"code":"catalog_unverified","message":"this machine\u0027s catalog is not verifi
+  total: 1
+  failed: 1
+  succeeded: 0
+  skipped: 0
+## r5-fault-Restart_in_the_middle_of_replication_loses_no_write.log (run 2026-10-13T03:03:04Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/ThreeRegion)
+failed Restart_in_the_middle_of_replication_loses_no_write (45s 508ms)
+  --->  System.Net.Http.HttpRequestException: POST https://ts-terrabase-e2e.fly.dev/v1/projects/01M4SD7D7B2C3CZ4W41F3ZY2FK/databases/e2e/collections answered 503: {"error":{"code":"catalog_unverified","message":"this machine\u0027s catalog is not verified against the other machines yet"}}
+  total: 1
+  failed: 1
+  succeeded: 0
+  skipped: 0
+## r5-fault-Writes_acknowledged_just_before_their_region_stops_reach_every_region_after_it_returns.log (run 2026-10-13T03:01:05Z tests@9667b7efa18ee99ef4614bfdad68aac78932dda3 dirty=0 args: --treenode-filter /*/*/ThreeRegion)
+replication latency, 200 writes acknowledged just before gru stopped: 7578 ms
+passed Writes_acknowledged_just_before_their_region_stops_reach_every_region_after_it_returns (25s 155ms)
+  total: 1
+  failed: 0
+  succeeded: 1
+  skipped: 0
