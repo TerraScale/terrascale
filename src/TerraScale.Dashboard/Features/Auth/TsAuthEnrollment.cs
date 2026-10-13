@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -11,29 +10,24 @@ public sealed partial class TsAuthGateway
 {
     public async Task<string> SignUpAsync(string email, string password, string ip, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(ip)) throw new ArgumentException("Client address is required.", nameof(ip));
         var credentials = await identity.ReadAsync(cancellationToken);
-        using var request = new HttpRequestMessage(HttpMethod.Post,
-            new Uri(AuthOrigin, $"/{Tenant}/headless/v1/sign-up"));
-        Authenticate(request, credentials);
-        request.Content = JsonContent.Create(new { email, password, ip_address = ip });
-        using var response = await http.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests) throw RateLimited(response);
-        using var document = await PlatformJson.ReadAsync(response.Content, cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        TerraScaleAuthHeadlessPendingSignUp pending;
+        try
         {
-            // Only known validation text is shown. Never expose vendor error
-            // details that could include submitted credentials.
-            if (response.StatusCode == System.Net.HttpStatusCode.BadRequest) ThrowPasswordPolicy(document.RootElement);
-            response.EnsureSuccessStatusCode();
+            pending = await Client().Headless.SignUpAsync(credentials.AuthClientId, credentials.AuthClientSecret,
+                new(email, password, Address(ip)), cancellationToken);
         }
-        if (!document.RootElement.TryGetProperty("pending_token", out var token) || token.ValueKind != JsonValueKind.String || token.GetString() is not { Length: > 0 and <= 4096 } value)
-            throw new HttpRequestException("ts-auth answered without a signup token.");
-        return value;
+        catch (TerraScaleAuthException error) when (error.StatusCode is System.Net.HttpStatusCode.TooManyRequests) { throw RateLimited(error); }
+        // Only the fixed password-policy code is shown; producer text could echo the submitted credentials.
+        catch (TerraScaleAuthException error) when (error.StatusCode is System.Net.HttpStatusCode.BadRequest && error.ErrorCode == "invalid_password")
+        { throw new AuthRequestRejectedException("Choose a different password.", "password"); }
+        if (pending.PendingToken is not { Length: > 0 and <= 4096 }) throw new HttpRequestException("ts-auth answered without a signup token.");
+        return pending.PendingToken;
     }
 
     public Task<SessionRecord> VerifySignUpAsync(string email, string code, string pendingToken, string ip, CancellationToken cancellationToken) =>
-        GrantAsync("urn:terrascale:params:oauth:grant-type:email-code", email, "code", code, ip, cancellationToken, pendingToken);
+        GrantAsync((client, credentials, address) => client.Headless.SignInWithEmailCodeAsync(credentials.AuthClientId, credentials.AuthClientSecret,
+            email, code, address, pendingToken, SignInScope, cancellationToken), ip, cancellationToken);
 
     // ts-auth answers prompt=login with login_required, so no prompt is sent; sign-out ends its session instead.
     public async Task<string> AuthorizationUrlAsync(OidcFlow flow, CancellationToken cancellationToken)
@@ -168,20 +162,11 @@ public sealed partial class TsAuthGateway
         { throw new SignInRejectedException(); }
     }
 
-    private static AuthRequestRejectedException RateLimited(HttpResponseMessage response)
+    private static AuthRequestRejectedException RateLimited(TerraScaleAuthException error)
     {
-        var seconds = response.Headers.RetryAfter?.Delta is { } delta ? (int)Math.Ceiling(delta.TotalSeconds) : 60;
+        var seconds = error.RetryAfter is { } delay ? (int)Math.Ceiling(delay.TotalSeconds) : 60;
         seconds = Math.Clamp(seconds, 1, 3600);
         return new($"Too many attempts. Please wait {seconds} seconds and try again.", statusCode: 429, retryAfter: seconds);
-    }
-
-    private static void ThrowPasswordPolicy(JsonElement body)
-    {
-        if (!body.TryGetProperty("error", out var error) || error.ValueKind != JsonValueKind.Object ||
-            !error.TryGetProperty("code", out var code) || code.ValueKind != JsonValueKind.String || code.GetString() != "invalid_password") return;
-        var message = error.TryGetProperty("message", out var text) && text.ValueKind == JsonValueKind.String ? text.GetString() : null;
-        if (message is not { Length: > 0 and <= 200 } || message.Any(char.IsControl)) message = "Choose a different password.";
-        throw new AuthRequestRejectedException(message, "password");
     }
 
     private static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');

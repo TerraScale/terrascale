@@ -111,9 +111,9 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         return org;
     }
 
-    private async Task<PlatformProject> PersonalProjectAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    private async Task<TerraScaleAuthPlatformProject> PersonalProjectAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
     {
-        PlatformProject? Existing(IEnumerable<PlatformProject> projects) => projects.Where(project => project.Name == PersonalName)
+        TerraScaleAuthPlatformProject? Existing(IEnumerable<TerraScaleAuthPlatformProject> projects) => projects.Where(project => project.Name == PersonalName)
             .OrderBy(project => project.CreatedAt).ThenBy(project => project.Id, StringComparer.Ordinal).FirstOrDefault();
         if (Existing(await platform.ListProjectsAsync(session, organizationId, cancellationToken)) is { } existing) return existing;
         try { return await platform.CreateProjectAsync(session, organizationId, PersonalName, cancellationToken); }
@@ -158,7 +158,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
     }
 
     // An organization created outside the dashboard starts as a business workspace that needs billing.
-    private async Task<OrganizationRecord> OrganizationStateAsync(PlatformOrganization live, CancellationToken cancellationToken)
+    private async Task<OrganizationRecord> OrganizationStateAsync(TerraScaleAuthPlatformOrganization live, CancellationToken cancellationToken)
     {
         var document = await state.GetAsync(OrganizationsCollection, live.Id, cancellationToken);
         if (document is null)
@@ -180,7 +180,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
     }
 
     // ts-auth's name, the caller's role and the project list replace the stored projection in this view.
-    private static void Hydrate(OrganizationRecord org, PlatformOrganization live, IReadOnlyList<PlatformProject> projects, SessionRecord session)
+    private static void Hydrate(OrganizationRecord org, TerraScaleAuthPlatformOrganization live, IReadOnlyList<TerraScaleAuthPlatformProject> projects, SessionRecord session)
     {
         org.Name = live.Name;
         org.Slug = Slug(live.Name);

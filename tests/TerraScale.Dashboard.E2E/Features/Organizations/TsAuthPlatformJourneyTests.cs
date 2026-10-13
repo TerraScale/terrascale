@@ -124,17 +124,19 @@ public sealed class TsAuthPlatformJourneyTests
         await Assert.That(platform.Producer.Role(business, invitee.Subject)).IsEqualTo("member");
         await Assert.That((await Me(inviteeClient)).GetProperty("organizationId").GetString()).IsEqualTo(business);
 
-        // A ts-auth refusal reaches the page with its status and safe message; nothing is stored.
+        // A ts-auth refusal reaches the page with its status and the dashboard's message for its code; nothing is stored.
         using var personalClient = platform.Client();
         using (var login = await HttpJourney.LoginAsync(personalClient, member.Email, member.Password)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         var personal = (await Me(personalClient)).GetProperty("organizationId").GetString()!;
-        platform.Producer.RefuseNext("POST", "/v1/terrascale/organizations/" + personal + "/projects", HttpStatusCode.Conflict, "name_taken", "A project named Taken already exists.");
+        platform.Producer.RefuseNext("POST", "/v1/terrascale/organizations/" + personal + "/projects", HttpStatusCode.Conflict, "name_taken", "Producer text Taken@example.test is never shown.");
         csrf = await HttpJourney.CsrfAsync(personalClient, "/organization?tab=projects");
         using (var refused = await HttpJourney.PostFormAsync(personalClient, "/api/v1/dashboard/organization/projects", new()
         { ["_csrf"] = csrf, ["name"] = "Taken", ["regions"] = "GRU", ["region"] = "GRU" }))
         {
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-            await Assert.That((await refused.Content.ReadAsStringAsync()).Contains("A project named Taken already exists.", StringComparison.Ordinal)).IsTrue();
+            var html = await refused.Content.ReadAsStringAsync();
+            await Assert.That(html.Contains("That name is already used in this organization.", StringComparison.Ordinal)).IsTrue();
+            await Assert.That(html.Contains("Producer text", StringComparison.Ordinal)).IsFalse().Because("only ts-auth's fixed code reaches the page");
         }
         await Assert.That((await Context(personalClient)).GetProperty("organizations").EnumerateArray().Single(org => org.GetProperty("id").GetString() == personal)
             .GetProperty("projects").EnumerateObject().Count()).IsEqualTo(1);

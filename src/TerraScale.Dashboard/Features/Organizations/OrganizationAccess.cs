@@ -1,6 +1,7 @@
 using System.Net.Mail;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Features.Organizations;
 
@@ -80,7 +81,7 @@ public sealed class TsOrganizationAccess(ITsAuthPlatform platform) : IOrganizati
             default: throw new AccountAccessException("Unknown transfer operation.", 422);
         }
     }
-    public static InvitationRecord Invitation(string organizationId, PlatformInvitation remote) => new()
+    public static InvitationRecord Invitation(string organizationId, TerraScaleAuthPlatformInvitation remote) => new()
     {
         Id = remote.Id,
         OrganizationId = organizationId,

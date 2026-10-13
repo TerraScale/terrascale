@@ -1,7 +1,4 @@
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text;
-using System.Text.Json;
+using System.Net;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet;
 
@@ -18,24 +15,29 @@ public interface IAuthGateway
     Task RevokeAsync(SessionRecord session, CancellationToken cancellationToken);
 }
 
-// Headless grants are the owning ts-auth contract; ts-dotnet currently covers
-// OIDC/userinfo/revocation but has no headless-grant methods yet.
+// Every ts-auth call goes through the official ts-dotnet client: headless grants
+// and enrollment, OIDC, the RFC 8693 exchange and the platform API.
 public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClientFactory http, TimeProvider time) : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, IAuthRefreshGateway, IAuthLogoutGateway
 {
     public Task<SessionRecord> PasswordAsync(string email, string password, string ip, CancellationToken cancellationToken) =>
-        GrantAsync("urn:terrascale:params:oauth:grant-type:password", email, "password", password, ip, cancellationToken);
+        GrantAsync((client, credentials, address) => client.Headless.SignInWithPasswordAsync(credentials.AuthClientId, credentials.AuthClientSecret,
+            email, password, address, SignInScope, cancellationToken), ip, cancellationToken);
 
     public Task<SessionRecord> EmailCodeAsync(string email, string code, string ip, CancellationToken cancellationToken) =>
-        GrantAsync("urn:terrascale:params:oauth:grant-type:email-code", email, "code", code, ip, cancellationToken);
+        GrantAsync((client, credentials, address) => client.Headless.SignInWithEmailCodeAsync(credentials.AuthClientId, credentials.AuthClientSecret,
+            email, code, address, null, SignInScope, cancellationToken), ip, cancellationToken);
 
     public Task StartEmailCodeAsync(string email, string ip, CancellationToken cancellationToken) =>
-        HeadlessAsync("email-code/start", new { email }, ip, cancellationToken);
+        HeadlessAsync((client, credentials, address) => client.Headless.StartEmailCodeAsync(credentials.AuthClientId, credentials.AuthClientSecret,
+            new(email, address), cancellationToken), ip, cancellationToken);
 
     public Task StartPasswordResetAsync(string email, string ip, CancellationToken cancellationToken) =>
-        HeadlessAsync("password-reset/start", new { email }, ip, cancellationToken);
+        HeadlessAsync((client, credentials, address) => client.Headless.StartPasswordResetAsync(credentials.AuthClientId, credentials.AuthClientSecret,
+            new(email, address), cancellationToken), ip, cancellationToken);
 
     public Task CompletePasswordResetAsync(string email, string code, string password, string ip, CancellationToken cancellationToken) =>
-        HeadlessAsync("password-reset/complete", new { email, code, new_password = password }, ip, cancellationToken);
+        HeadlessAsync((client, credentials, address) => client.Headless.CompletePasswordResetAsync(credentials.AuthClientId, credentials.AuthClientSecret,
+            new(email, code, password, address), cancellationToken), ip, cancellationToken);
 
     public async Task<bool> IsActiveAsync(SessionRecord session, CancellationToken cancellationToken)
     {
@@ -63,65 +65,40 @@ public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClie
             credentials.AuthClientId, credentials.AuthClientSecret, session.RefreshToken ?? session.AccessToken, cancellationToken);
     }
 
-    private async Task<SessionRecord> GrantAsync(string grant, string email, string secretName, string secret, string ip, CancellationToken cancellationToken, string? pendingToken = null)
+    private async Task<SessionRecord> GrantAsync(Func<TerraScaleAuthClient, DashboardCredentials, IPAddress, Task<TerraScaleAuthTokenResponse>> grant, string ip, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(ip)) throw new ArgumentException("Client address is required.", nameof(ip));
         var credentials = await identity.ReadAsync(cancellationToken);
-        using var request = new HttpRequestMessage(HttpMethod.Post, TokenEndpoint);
-        Authenticate(request, credentials);
-        var fields = new Dictionary<string, string>
-        {
-            ["grant_type"] = grant,
-            ["email"] = email,
-            [secretName] = secret,
-            ["ip_address"] = ip,
-            ["scope"] = "openid email profile offline_access"
-        };
-        if (pendingToken is not null) fields["pending_token"] = pendingToken;
-        request.Content = new FormUrlEncodedContent(fields);
-        using var response = await http.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests) throw RateLimited(response);
-        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest) throw new SignInRejectedException();
-        response.EnsureSuccessStatusCode();
-        using var document = await PlatformJson.ReadAsync(response.Content, cancellationToken);
-        var tokens = document.RootElement.Deserialize<TerraScaleAuthTokenResponse>()
-            ?? throw new HttpRequestException("ts-auth returned no tokens.");
+        TerraScaleAuthTokenResponse tokens;
+        try { tokens = await grant(Client(), credentials, Address(ip)); }
+        catch (TerraScaleAuthException error) when (error.StatusCode is HttpStatusCode.TooManyRequests) { throw RateLimited(error); }
+        catch (TerraScaleAuthException error) when (error.StatusCode is HttpStatusCode.BadRequest) { throw new SignInRejectedException(); }
         return await SessionAsync(tokens, credentials, null, cancellationToken);
     }
 
-    private async Task HeadlessAsync(string action, object body, string ip, CancellationToken cancellationToken)
+    // ts-auth answers headless requests without revealing whether the account exists; only
+    // its fixed codes are shown, never producer text that could echo submitted credentials.
+    private async Task HeadlessAsync(Func<TerraScaleAuthClient, DashboardCredentials, IPAddress, Task> action, string ip, CancellationToken cancellationToken)
     {
         var credentials = await identity.ReadAsync(cancellationToken);
-        var payload = JsonSerializer.SerializeToElement(body);
-        var values = JsonSerializer.Deserialize<Dictionary<string, string>>(payload)!;
-        values["ip_address"] = ip;
-        using var request = new HttpRequestMessage(HttpMethod.Post,
-            new Uri(AuthOrigin, $"/{Tenant}/headless/v1/{action}"));
-        Authenticate(request, credentials);
-        request.Content = JsonContent.Create(values);
-        using var response = await http.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests) throw RateLimited(response);
-        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        try { await action(Client(), credentials, Address(ip)); }
+        catch (TerraScaleAuthException error) when (error.StatusCode is HttpStatusCode.TooManyRequests) { throw RateLimited(error); }
+        catch (TerraScaleAuthException error) when (error.StatusCode is HttpStatusCode.BadRequest)
         {
-            using var error = await PlatformJson.ReadAsync(response.Content, cancellationToken);
-            if (action == "password-reset/complete") ThrowPasswordPolicy(error.RootElement);
+            if (error.ErrorCode == "invalid_password") throw new AuthRequestRejectedException("Choose a different password.", "password");
             throw new SignInRejectedException();
         }
-        response.EnsureSuccessStatusCode();
     }
 
-    private TerraScaleAuthClient Client() => new(http.CreateClient("platform"),
-        new TerraScaleAuthClientOptions { BaseAddress = AuthOrigin, InstanceSlug = Tenant, UseReverseProxy = true });
+    // The end user's address as the dashboard's trusted proxy reported it.
+    private static IPAddress Address(string ip) =>
+        IPAddress.TryParse(ip, out var address) ? address : throw new ArgumentException("Client address is required.", nameof(ip));
 
-    private static void Authenticate(HttpRequestMessage request, DashboardCredentials credentials) =>
-        request.Headers.Authorization = new AuthenticationHeaderValue("Basic",
-            Convert.ToBase64String(Encoding.UTF8.GetBytes($"{credentials.AuthClientId}:{credentials.AuthClientSecret}")));
+    private TerraScaleAuthClient Client() => new(http.CreateClient("platform"), new TerraScaleAuthClientOptions { BaseAddress = AuthOrigin, InstanceSlug = Tenant });
 
-    // ts-auth serves one global issuer, https://auth.terrascale.tech/terrascale, from every region. The pinned SDK
-    // needs UseReverseProxy to call it directly instead of resolving a regional host through Atlas.
+    // ts-auth serves one global issuer, https://auth.terrascale.tech/terrascale, from every region.
     private const string Tenant = "terrascale";
+    private const string SignInScope = "openid email profile offline_access";
     private static readonly Uri AuthOrigin = new("https://auth.terrascale.tech/");
-    private static readonly Uri TokenEndpoint = new(AuthOrigin, $"/{Tenant}/oauth/token");
 }
 
 public sealed class SignInRejectedException : Exception;
