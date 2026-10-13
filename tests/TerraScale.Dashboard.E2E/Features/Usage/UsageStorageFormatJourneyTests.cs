@@ -7,8 +7,8 @@ using TerraScale.Dashboard.Features.Usage;
 
 namespace TerraScale.Dashboard.E2E.Features.Usage;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class UsageStorageFormatJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class UsageStorageFormatJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task NativeSdkDocumentBytesKeepExactUsageUnitsAcrossBothReplicas()

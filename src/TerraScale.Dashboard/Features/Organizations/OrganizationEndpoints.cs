@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.Features.Organizations;
 
 public sealed partial record OrganizationPage(ShellModel Shell, string Tab, IReadOnlyList<string> Regions, string Error = "", bool OpenCreateProject = false, bool OpenCreateOrganization = false,
     OrganizationAccessView? Access = null, string InvitationLink = "", OrganizationFilters? Filters = null, string WizardStep = "", bool PaymentCanceled = false,
-    BillingPage? Billing = null);
+    BillingPage? Billing = null, string ProjectDraftName = "", IReadOnlyList<string>? ProjectDraftRegions = null);
 
 public static class OrganizationEndpoints
 {
@@ -112,7 +112,7 @@ public static class OrganizationEndpoints
 
     private static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "")
     {
-        var tab = http.Request.Query["tab"].ToString();
+        var tab = http.Request.Query["newProject"] == "1" ? "projects" : http.Request.Query["tab"].ToString();
         if (tab is not ("projects" or "members" or "invitations" or "audit" or "billing")) tab = "organization";
         var regions = tab == "projects" || http.Request.Query["newOrganization"] == "project" || http.Request.Query["newProject"] == "1"
             ? await placement.RegionsAsync(http.RequestAborted) : [];
@@ -218,6 +218,20 @@ public static class OrganizationEndpoints
             }
             return AuthEndpoints.SeeOther("/organization?tab=projects");
         }
-        catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode); }
+        catch (AccountAccessException error)
+        {
+            if (operation != "projects") return await PageAsync(http, context, placement, error.Message, error.StatusCode);
+            var page = (await PageModelAsync(http, context, placement, error.Message)) with
+            {
+                Tab = "projects",
+                Regions = await placement.RegionsAsync(http.RequestAborted),
+                OpenCreateProject = true,
+                ProjectDraftName = form["name"].ToString(),
+                ProjectDraftRegions = form["regions"].Select(value => value ?? "").ToArray()
+            };
+            var slice = OrganizationView.Create(page);
+            slice.StatusCode = error.StatusCode;
+            return slice;
+        }
     }
 }

@@ -5,8 +5,8 @@ using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class AnalyticsPageAuditJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     [Arguments("duplicate", "/analytics?range=1h", "Could not load analytics measurements.")]

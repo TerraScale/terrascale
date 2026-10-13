@@ -5,8 +5,8 @@ using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E.Features.Data;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class SqlCheckJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class SqlCheckJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     [Arguments("SELECT * FROM items WHERE title = $1 LIMIT 20", true)]

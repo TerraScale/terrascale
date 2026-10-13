@@ -7,9 +7,9 @@ namespace TerraScale.Dashboard.E2E.Features.Imports;
 
 // The browser fingerprints the export with the dashboard's own SHA-256 and uploads it in 4 MiB parts;
 // the test-only TerraBase producer refuses any byte or digest that differs, so a pass proves both.
-[ClassDataSource<DashboardE2EFixture>]
+[ClassDataSource<DashboardRootFixture>]
 [Category("Slow")]
-public sealed class ImportBrowserJourneyTests(DashboardE2EFixture fixture)
+public sealed class ImportBrowserJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task GuidedPostgresImportUploadsReviewsConfirmsAndVerifiesInTheBrowser()

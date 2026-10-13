@@ -33,8 +33,8 @@ public sealed class AccountsMembersSettingsAuditJourneyTests(AccountsAuditScenar
         {
             var values = Regex.Matches(selector.Groups[1].Value, "<option value=\"([^\"]+)\"")
                 .Select(item => item.Groups[1].Value).ToArray();
-            await Assert.That(values.Contains("viewer", StringComparer.Ordinal)).IsFalse()
-                .Because("Viewer is always rejected with 422 by OrganizationOperations.AvailableRole.");
+            await Assert.That(values.Contains("viewer", StringComparer.Ordinal)).IsTrue()
+                .Because("Viewer is supported by the current ts-auth invitation and membership contracts.");
             await Assert.That(values.Contains("admin", StringComparer.Ordinal)).IsTrue()
                 .Because("Admin is an available provider role, including for an existing administrator.");
         }
@@ -86,9 +86,9 @@ public sealed class AccountsMembersSettingsAuditJourneyTests(AccountsAuditScenar
         for (var attempt = 0; attempt < 2; attempt++)
         {
             using var invite = await HttpJourney.PostFormAsync(owner, "/api/v1/access/invitations?tab=invitations", new()
-            { ["_csrf"] = ownerCsrf, ["email"] = "never-sent@example.test", ["role"] = "viewer" });
+            { ["_csrf"] = ownerCsrf, ["email"] = "never-sent@example.test", ["role"] = "invalid-role" });
             await Assert.That(invite.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
-            await Assert.That((await invite.Content.ReadAsStringAsync()).Contains("The identity provider does not offer a viewer role", StringComparison.Ordinal)).IsTrue();
+            await Assert.That((await invite.Content.ReadAsStringAsync()).Contains("Choose an available role.", StringComparison.Ordinal)).IsTrue();
         }
         using var member = await scenario.LoginAsync("member");
         var before = await member.GetStringAsync("/api/v1/auth/me");

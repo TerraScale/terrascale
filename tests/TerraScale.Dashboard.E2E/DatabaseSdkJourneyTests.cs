@@ -13,8 +13,8 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class DatabaseSdkJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task NativeIssuedKeyStaysAtTsAuthAndCustomerSdkCrudUsesAnExchangedProjectToken()

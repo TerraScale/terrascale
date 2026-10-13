@@ -6,8 +6,8 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.E2E.Features.Backups;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class BackupJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class BackupJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task NativeAndMcpBackupsRestoreActualStoredSnapshotsAcrossReplicasWithoutChangingSource()

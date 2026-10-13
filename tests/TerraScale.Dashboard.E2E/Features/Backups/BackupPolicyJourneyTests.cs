@@ -7,8 +7,8 @@ using TerraScale.Dashboard.Features.Accounts;
 
 namespace TerraScale.Dashboard.E2E.Features.Backups;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class BackupPolicyJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class BackupPolicyJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     [Arguments("unavailable")]

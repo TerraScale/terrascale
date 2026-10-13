@@ -3,8 +3,8 @@ using System.Text.Json;
 
 namespace TerraScale.Dashboard.E2E.Features.Accounts;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class AccountMcpJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class AccountMcpJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task NativePatPreservesSourceSelectionNotificationAndSafeOrganizationContractsAcrossReplicas()

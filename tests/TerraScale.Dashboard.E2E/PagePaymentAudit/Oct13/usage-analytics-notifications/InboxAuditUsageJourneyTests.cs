@@ -5,8 +5,8 @@ using Microsoft.AspNetCore.WebUtilities;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class InboxAuditUsageJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class InboxAuditUsageJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task NativeNotificationPaginationClampsAfterRepeatReadsAndKeepsForeignScopeUnread()

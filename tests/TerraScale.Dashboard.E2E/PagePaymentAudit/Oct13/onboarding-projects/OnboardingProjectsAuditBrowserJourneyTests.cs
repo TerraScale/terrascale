@@ -6,9 +6,9 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.OnboardingProjects;
 
-[ClassDataSource<DashboardE2EFixture>]
+[ClassDataSource<DashboardRootFixture>]
 [Category("Slow")]
-public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardE2EFixture fixture)
+public sealed class OnboardingProjectsAuditBrowserJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task ProjectDialogKeyboardRepeatSubmitHistoryAndFailureEvidence()

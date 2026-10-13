@@ -6,8 +6,8 @@ using TerraScale.Dashboard.Features.Home;
 
 namespace TerraScale.Dashboard.E2E.Features.Home;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class ReportingMcpJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class ReportingMcpJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task ExplicitAuthorizedScopesPersistAcrossReplicasWithoutChangingSelection()

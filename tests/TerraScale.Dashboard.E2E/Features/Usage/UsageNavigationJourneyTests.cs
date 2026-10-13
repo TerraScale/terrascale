@@ -8,8 +8,8 @@ using TerraScale.Dashboard.Features.Usage;
 
 namespace TerraScale.Dashboard.E2E.Features.Usage;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class UsageNavigationJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class UsageNavigationJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     [Arguments(false)]

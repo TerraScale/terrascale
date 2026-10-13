@@ -3,8 +3,8 @@ using System.Text.Json;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class ReferenceDatabaseJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class ReferenceDatabaseJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task CapturedDatabaseScopesAndMeasuredRowsUseNativeMcpWithoutCreatingSchedulerAuthority()

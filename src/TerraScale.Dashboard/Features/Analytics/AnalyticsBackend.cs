@@ -49,6 +49,7 @@ public sealed class AnalyticsBackend(IHttpClientFactory factory, IProjectAccessT
                 seconds != (selection.Range switch { "1h" => 3600, "24h" => 86400, "7d" => 604800, "30d" => 2592000, _ => 0 }))
                 throw new JsonException("Analytics returned an invalid UTC window.");
             var points = new List<AnalyticsPoint>();
+            var seen = new HashSet<(string Database, string Region)>();
             foreach (var database in root.GetProperty("items").EnumerateArray())
             {
                 var databaseId = database.GetProperty("databaseId").GetString() ?? "";
@@ -58,6 +59,8 @@ public sealed class AnalyticsBackend(IHttpClientFactory factory, IProjectAccessT
                     requestedRegion.Length > 0 && region != requestedRegion)
                     throw new JsonException("Analytics returned measurements outside the selected scope.");
                 var displayRegion = regionCodes.GetValueOrDefault(region) ?? DatabaseRegion.FromId(region)?.Code ?? region;
+                if (!seen.Add((databaseId, region)) || !record.Regions.Contains(displayRegion, StringComparer.OrdinalIgnoreCase))
+                    throw new JsonException("Analytics returned duplicate measurements or a region outside the database placement.");
                 DateTimeOffset? previousStart = null;
                 foreach (var series in database.GetProperty("series").EnumerateArray())
                 {

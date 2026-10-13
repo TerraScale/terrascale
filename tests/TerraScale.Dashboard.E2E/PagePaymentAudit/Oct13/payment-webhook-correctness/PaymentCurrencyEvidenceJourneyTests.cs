@@ -6,7 +6,6 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness;
 
-[NotInParallel("dashboard-demo")]
 [Category("Slow")]
 public sealed class PaymentCurrencyEvidenceJourneyTests
 {

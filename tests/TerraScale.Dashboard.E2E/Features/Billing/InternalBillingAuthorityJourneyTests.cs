@@ -4,9 +4,9 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
 
-[ClassDataSource<DashboardE2EFixture>]
+[ClassDataSource<DashboardRootFixture>]
 [Category("Fast")]
-public sealed class InternalBillingAuthorityJourneyTests(DashboardE2EFixture fixture)
+public sealed class InternalBillingAuthorityJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task CurrentPlatformAdministratorCannotConfigureWithOnlyStoredOrganizationMembership()

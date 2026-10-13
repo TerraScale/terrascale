@@ -5,8 +5,8 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class PlatformRoleJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class PlatformRoleJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task RoleGrantAndRemovalAreRereadBeforeEachNativeOperatorRequest()

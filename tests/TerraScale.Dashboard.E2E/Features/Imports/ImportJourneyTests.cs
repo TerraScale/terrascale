@@ -11,8 +11,8 @@ namespace TerraScale.Dashboard.E2E.Features.Imports;
 // Guided imports through the running dashboard, its official SDK import client and the test-only
 // TerraBase import producer for contract v1 revision 3 (54c0c4d9). They qualify the dashboard flow;
 // TerraBase's engine and real exports are qualified by the core owner's integration tests.
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class ImportJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class ImportJourneyTests(DashboardRootFixture fixture)
 {
     private const int Part = 4 * 1024 * 1024;
 

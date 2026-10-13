@@ -6,9 +6,9 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
 
-[ClassDataSource<DashboardE2EFixture>]
+[ClassDataSource<DashboardRootFixture>]
 [Category("Slow")]
-public sealed class InternalBillingPolicyJourneyTests(DashboardE2EFixture fixture)
+public sealed class InternalBillingPolicyJourneyTests(DashboardRootFixture fixture)
 {
     private const string CapAlert = "Internal spending cap reached: estimated bill US$ 124.40, cap US$ 120.00. Report only; services remain active.";
     private const string MissingUsage = "Every project's monthly usage is required to compute the internal bill and evaluate its cap.";

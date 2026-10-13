@@ -5,8 +5,8 @@ using TerraScale.Dashboard.Features.Accounts;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class ReferenceJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class ReferenceJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task MatchedGoPrincipalsUseNativeSessionsAndKeepWorkspaceIsolation()

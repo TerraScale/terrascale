@@ -5,8 +5,8 @@ using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class DocumentChangesHttpJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class DocumentChangesHttpJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task ChangesHttpBindsAuthorityFramesResumesAndRefusesUnsafeCheckpoints()

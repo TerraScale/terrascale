@@ -39,7 +39,20 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
             org.InvitationReservations[reservation] = taken with { Known = [.. invitations.Where(invitation => Same(invitation, taken)).Select(invitation => invitation.Id)] };
         }, cancellationToken);
         CreatedInvitation created;
-        try { created = await access.InviteAsync(context, email, role, projectId, cancellationToken); }
+        try
+        {
+            // Recheck after reservation persistence: direct ts-auth membership writes do not change its version.
+            // shortcut: direct identity writes after this read can still race; enforce global allowance in ts-auth.
+            await accounts.UpdateOrganizationAsync(context, async org =>
+            {
+                OrganizationOperations.Owner(org, context.UserId);
+                var invitations = await platform.ListInvitationsAsync(context.Session, org.Id, cancellationToken);
+                var members = await platform.ListMembersAsync(context.Session, org.Id, cancellationToken);
+                Reconcile(org, invitations);
+                Capacity(org, members, invitations, email);
+            }, cancellationToken);
+            created = await access.InviteAsync(context, email, role, projectId, cancellationToken);
+        }
         catch (AccountAccessException)
         {
             // ts-auth refused, so nothing was created: free only this request's slot.

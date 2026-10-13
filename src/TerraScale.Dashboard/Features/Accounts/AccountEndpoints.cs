@@ -28,7 +28,9 @@ public static class AccountEndpoints
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             try { await accounts.SwitchOrganizationAsync(session, form["organizationId"].ToString(), http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-            return AuthEndpoints.SeeOther(Csrf.LocalRedirect(form["returnUrl"]));
+            var target = Csrf.LocalRedirect(form["returnUrl"]);
+            if (target.StartsWith("/databases/", StringComparison.Ordinal)) target = "/databases";
+            return AuthEndpoints.SeeOther(target);
         }).WithGroupName("integration").WithName("switchDashboardOrganization").WithTags("Workspace")
             .WithSummary("Select an organization the current user can access")
             .Accepts<SwitchOrganizationRequest>("application/x-www-form-urlencoded")
@@ -42,7 +44,9 @@ public static class AccountEndpoints
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             try { await accounts.SwitchProjectAsync(session, form["projectId"].ToString(), http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-            return AuthEndpoints.SeeOther(Csrf.LocalRedirect(form["returnUrl"]));
+            var target = Csrf.LocalRedirect(form["returnUrl"]);
+            if (target.StartsWith("/databases/", StringComparison.Ordinal)) target = "/databases";
+            return AuthEndpoints.SeeOther(target);
         }).WithGroupName("integration").WithName("switchDashboardProject").WithTags("Workspace")
             .WithSummary("Select a project the current user can access")
             .Accepts<SwitchProjectRequest>("application/x-www-form-urlencoded")

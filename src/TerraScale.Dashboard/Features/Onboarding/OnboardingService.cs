@@ -56,6 +56,8 @@ public sealed class OnboardingService(AccountService accounts, StripeBilling pay
                 return await payments.StartCheckoutAsync(context, plan, interval, "/onboarding", cancellationToken);
             case "project":
                 if (context.Account.OnboardingStep != "project") throw new OnboardingValidationException("Complete the current setup step first.");
+                if (context.Organization?.Id != context.Account.PersonalOrganizationId || context.Project?.IsDefault != true)
+                    throw new OnboardingValidationException("Return to your default Personal project to finish account setup.");
                 var name = form["name"].ToString().Trim();
                 if (name.Any(char.IsControl)) throw new OnboardingValidationException("Enter a valid project name.");
                 if (name.EnumerateRunes().Count() > 100) throw new OnboardingValidationException("Use a project name with 100 characters or fewer.");

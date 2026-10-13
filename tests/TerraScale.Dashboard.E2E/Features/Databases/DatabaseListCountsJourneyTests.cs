@@ -7,8 +7,8 @@ using TerraScale.Dashboard.Features.Accounts;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class DatabaseListCountsJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class DatabaseListCountsJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     [Arguments("partial")]

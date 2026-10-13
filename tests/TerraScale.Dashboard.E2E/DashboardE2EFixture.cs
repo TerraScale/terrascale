@@ -50,10 +50,16 @@ public sealed class DashboardE2EFixture : IAsyncInitializer, IAsyncDisposable
     private static Uri Address(WebApplication application) => new(application.Services.GetRequiredService<IServer>()
         .Features.Get<IServerAddressesFeature>()!.Addresses.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal));
 
-    private static string FindRoot()
+    internal static string FindRoot()
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
             if (File.Exists(Path.Combine(directory.FullName, "TerraScale.Dashboard.slnx"))) return directory.FullName;
         throw new DirectoryNotFoundException("The E2E executable must run from the dashboard checkout.");
     }
+}
+
+// Journeys that start their own hosts need the checkout path, not two extra application instances.
+public sealed class DashboardRootFixture
+{
+    public string Root { get; } = DashboardE2EFixture.FindRoot();
 }

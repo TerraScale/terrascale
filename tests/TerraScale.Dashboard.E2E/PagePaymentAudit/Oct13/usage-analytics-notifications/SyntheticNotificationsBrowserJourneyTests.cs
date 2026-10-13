@@ -4,9 +4,9 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13;
 
-[ClassDataSource<DashboardE2EFixture>]
+[ClassDataSource<DashboardRootFixture>]
 [Category("Slow")]
-public sealed class SyntheticNotificationsBrowserJourneyTests(DashboardE2EFixture fixture)
+public sealed class SyntheticNotificationsBrowserJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     [Arguments(1440, 900)]

@@ -5,8 +5,8 @@ using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class ProjectAuthorizationJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class ProjectAuthorizationJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task AnalyticsExchangesFreshProjectAuthorityAndRejectsInvalidTokensWithoutLosingSession()

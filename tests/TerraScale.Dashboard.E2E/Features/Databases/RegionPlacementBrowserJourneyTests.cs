@@ -5,9 +5,9 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases;
 
-[ClassDataSource<DashboardE2EFixture>]
+[ClassDataSource<DashboardRootFixture>]
 [Category("Slow")]
-public sealed class RegionPlacementBrowserJourneyTests(DashboardE2EFixture fixture)
+public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     [Arguments(1440, 900)]
