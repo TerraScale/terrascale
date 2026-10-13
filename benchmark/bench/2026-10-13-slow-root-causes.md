@@ -59,7 +59,26 @@ Auth Fast passed 664/664 in 468.610 s; the native driver passed 7/7 in 58.170 s.
 
 The final combined Slow command passed (exit 0) from 18:53:35Z to 19:04:15Z, 639.597 s including builds.
 
-This report has no merged fix PR, main-job result, live e2e result or deployment speedup yet. T0 PR
+At the earlier validation point, this report had no merged fix PR, main-job result, live e2e result or deployment speedup. T0 PR
 [#206](https://github.com/TerraScale/terrascale/pull/206) merged with its PR `test` green, but subsequent [main run 38446893001](https://github.com/TerraScale/terrascale/actions/runs/38446893001)
 failed two Fast cases: the same shutdown race and replica-rebuild registration. T0 owns main `test` SUCCESS. Workflow and preview
-pushes remain held for T2's deploy re-enable; production machines remain owned by T2.
+pushes were held for T2's deploy re-enable; production machines remain owned by T2.
+
+## Validation after the CPU/GC fix and deployment re-enable
+
+The candidate was rebased onto main `a537727bf70a2ea37f5ee9f75712291dd78f4057`, including
+the merged eight-heap CI fix (#212) and deployment re-enable (#210). On source commit `5997933e`,
+the isolated mariogk-dev worktree ran the Release build and targeted checks under `ts-heavy` with
+`DOTNET_PROCESSOR_COUNT=8` and `DOTNET_GCHeapCount=8`, from 21:16:28Z to 21:21:08Z (280 s).
+The build passed with zero warnings and errors. Following the user's CI-gate decision, the full
+suite was not repeated locally after this rebase; GitHub CI qualifies the submitted commit.
+
+| Current pre-push check | Passed / total | Failed / skipped | Suite wall time |
+|---|---:|---:|---:|
+| Full native regression suite | 7 / 7 | 0 / 0 | 59.065 s |
+| Fast stream lifecycle cases | 8 / 8 | 0 / 0 | 4.594 s |
+| Auth shared-state concurrency cases | 3 / 3 | 0 / 0 | 7.726 s |
+
+The older full Docker and full Slow results above remain historical evidence for their listed
+source trees, not results from this rebased commit. Main Slow/e2e and deployment speed remain
+to be measured after the candidate merges.
