@@ -6,6 +6,7 @@ namespace TerraScale.Dashboard.Features.Databases;
 public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecord> Databases, IReadOnlyList<DatabaseRegion> Choices,
     IReadOnlyList<CollectionStats> Contents, string Search = "", string Error = "", bool OpenCreate = false, string Name = "", IReadOnlyList<string>? Selection = null, string RegionsError = "")
 {
+    public bool ContentsAvailable { get; init; }
     public AccountContext Context => Shell.Context;
     public IReadOnlyList<DatabaseRecord> All => Context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
     public int Ready => All.Count(database => database.Status == "ready");
