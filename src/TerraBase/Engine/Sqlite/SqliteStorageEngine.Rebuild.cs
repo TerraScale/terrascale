@@ -162,7 +162,7 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
     }
 
     // The main file first, then its log: a failure leaves the main file in place, or moves back what had moved.
-    private void MoveAside(string path, string sidePath)
+    private static void MoveAside(string path, string sidePath)
     {
         RejectLink(path);
         File.Move(path, sidePath, overwrite: false);
