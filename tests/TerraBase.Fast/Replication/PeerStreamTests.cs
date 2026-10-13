@@ -506,6 +506,51 @@ public sealed class PeerStreamTests
         await Assert.That(await call.ResponseStream.MoveNext(timeout.Token)).IsFalse();
     }
 
+    // A refill certifies its head only for complete coverage: a source that no longer holds the database covered nothing,
+    // so the refill is refused, never acknowledged (the sender would move its ack past groups never received).
+    [Test]
+    public async Task A_refill_from_a_machine_that_does_not_hold_the_database_is_refused()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var sjc = cluster["sjc"];
+        var database = cluster.Database with { DatabaseId = EntityIds.New().ToString() };
+        var commit = JsonSerializer.Serialize(new
+        {
+            id = EntityIds.New().ToString(),
+            ops = new object[] { new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "sjc-only", id = database.DatabaseId } },
+        });
+        using (var service = sjc.Api.Service(sjc.Api.User))
+        {
+            using var created = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
+            await Assert.That(created.IsSuccessStatusCode).IsTrue().Because(await created.Content.ReadAsStringAsync());
+        }
+
+        using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
+        await push.RefillAsync(database, 5);
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(database), Refused = true });
+    }
+
+    // Likewise a refill whose repair page this machine refuses (it stopped holding the database) is refused.
+    [Test]
+    public async Task A_refill_whose_repair_page_is_refused_is_refused()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var lost = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", lost, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+        await sjc.LoseAsync("items", lost);
+        sjc.RefusesRepairs = true;
+
+        using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
+        await push.RefillAsync(cluster.Database, 1);
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), Refused = true });
+    }
+
     // A batch that fails to apply (here the stored state of its document no longer decodes) refuses its database only: the
     // stream goes on with the other databases, and the batch joins once it is sent again after the damage is gone.
     [Test]
@@ -765,6 +810,9 @@ public sealed class PeerStreamTests
 
         // While set, this machine's repairs wait for it before they join (a faulted one fails them): a test holds a refill open.
         public TaskCompletionSource? HeldRepairs { get; set; }
+
+        // While set, this machine's sink refuses repairs, as when it stops holding the database.
+        public bool RefusesRepairs { get; set; }
 
         // Completes once a repair waits for HeldRepairs.
         public TaskCompletionSource RepairWaits { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1095,7 +1143,7 @@ public sealed class PeerStreamTests
                 await held.Task.WaitAsync(cancellationToken);
             }
 
-            return await sink.RepairAsync(database, states, cancellationToken);
+            return machine.RefusesRepairs ? null : await sink.RepairAsync(database, states, cancellationToken);
         }
     }
 
