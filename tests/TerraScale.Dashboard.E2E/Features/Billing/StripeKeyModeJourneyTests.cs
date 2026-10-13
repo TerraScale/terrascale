@@ -37,8 +37,12 @@ public sealed class StripeKeyModeJourneyTests(DashboardRootFixture fixture)
         {
             var body = JsonSerializer.Serialize(new
             {
-                id = "evt_key_mode", @object = "event", type = "invoice.paid", api_version = StripeConfiguration.ApiVersion,
-                livemode = eventMode, data = new { @object = new { id = "in_unbound", @object = "invoice", customer = "cus_unbound" } }
+                id = "evt_key_mode",
+                @object = "event",
+                type = "invoice.paid",
+                api_version = StripeConfiguration.ApiVersion,
+                livemode = eventMode,
+                data = new { @object = new { id = "in_unbound", @object = "invoice", customer = "cus_unbound" } }
             });
             using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/billing/stripe/webhook")
             {
