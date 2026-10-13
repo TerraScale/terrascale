@@ -280,6 +280,13 @@ after each.
 - **Still unowned:** the operator-key timeout (`An_operator_key_with_an_expiry_stops_authenticating_when_it_expires`).
   #175's combined head is not green until something fixes it.
 
+**#175 status (05:30Z):**
+- **Independent review: APPROVE at `bc60dbf2`** (comment 6138956593; no must-fix). That head is `f898cefc` plus #166's
+  `48429edc`.
+- **Exact-head `test`: failure** (run 38343711423). The terrabase job hit its 30-minute timeout under runner load.
+- **Still needed:** the operator-key timeout fix (task `flaky-operator-key-expiry-2026-10-13`; R8 showed it predates
+  #118) on a new head, then a complete green exact-head run and approval of the new delta.
+
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
 **Outside the queue (COS, 03:30Z):** **#167** (`feat/postgres-turso-import-core`, `62f251f6`, one-time PostgreSQL and
