@@ -1,6 +1,6 @@
 # 0013a: A write attempt answers success only after two independently durable regional copies
 
-- **Status: proposed** (2026-10-13; revision 3 after round 4 at `1a09f6a4`).
+- **Status: proposed** (2026-10-13; revision 3 approved in round 5 at `40464691`; revision 4 applies its should-fixes).
   - This record is split from 0013 for a narrow review. It holds the success barrier (B4) for **one write attempt**.
   - Cross-region idempotency, operation ids, lookups and replay are
     [0013b](0013b-operation-idempotency.md), revision 3 pending. This record claims none of them.
@@ -26,13 +26,14 @@
 - **After COMMIT returns successfully**, B1 holds.
   - If reading the marker then fails, the attempt's barrier cannot be checked, so the answer is outcome unknown, even if
     an ack later arrives.
-  - If resetting the writer session fails after the marker was read (#181), that is not a barrier. The session is
-    discarded and never reused, and the attempt is decided by the wait like any other.
+  - If resetting the writer session fails after the marker was read, that is not a barrier. The session is discarded
+    and never reused, and the attempt is decided by the wait like any other. **Pending:** this needs #181's
+    unpublished revision. At its published head `83291845`, a failed reset still rethrows after a commit.
 - **A transaction that writes nothing** (only `assert` / `assert_count` operations) has no own change to ship and no
   marker. It is answered without a wait, with `durability: "unchanged"`. No mutation is added to it, and it does not
   wait for some unrelated head.
 - **Its local durable commit (B1).** Its transaction committed with `synchronous = FULL`, and `CommitAsync` returned
-  without error. Evidence: #181, `83291845`.
+  without error. Implementation: #181 (published `83291845`). Its validation is pending, so it is not evidence yet.
 - **An eligible acknowledgement (B2).** An ack confirms the marker only when it is:
   - received on a live push link of this process;
   - for the same database;
@@ -41,8 +42,10 @@
   - not refused;
   - with `change_id ≥ marker`.
 
-  The receiver acks only after every transaction that joined those groups committed with FULL. That includes every part
-  of a batch split into several transactions. Evidence for that: #180.
+  The receiver acks only after every group it joined is durable: the ack follows a successful FULL commit made after
+  the last join, and that commit's sync must cover every part of a batch split into several transactions (the
+  sync-coverage invariant). #180 implements a stricter contract, every receiver transaction FULL, which this record
+  does not rely on, and tests it separately (section 8). Implementation: #180; validation pending.
 - **Refill certification.** A refill's ack certifies its `head` only when every one of these holds:
   1. **Complete coverage, validated.** Every bucket that differs from the source was read and repaired. A source that
      no longer holds the database, any refused or undecodable page, or any change of the source's or the receiver's store
@@ -63,6 +66,16 @@
      disk. The copy certifies again only as a new incarnation rebuilt from peers (R7's copy-refill, under section 5's
      surviving-copy rule). Delivery 3's `EIO`/`ENOSPC` evidence on the shipped binary may justify a narrower rule
      later; until then this one holds.
+
+     The fault belongs to the database incarnation on that node, not to a link or a process. Every link of that
+     database refuses, and the fault survives a process restart on the same volume. So it is recorded outside the
+     suspect file (the node's system database), with FULL, before the faulted writer is released.
+
+     **Open gap, blocking runtime qualification.** Suppose the process dies after the failed sync but before that
+     record is durable, then restarts on the same volume. It could reopen the incarnation with the unsynced pages still
+     cached and certify them. Writing this down does not close the gap. Durable acknowledgement is not qualified until
+     a fail-closed recovery mechanism covers that window, and its controlled crash-and-restart test passes (section 8).
+     For example, every receiver copy could be treated as faulted after an unclean exit until it is rebuilt or proven.
 - **Incarnation scoping.** On the sender, a link's acked, in-flight and confirmed positions belong to one source store
   incarnation. When the file is replaced, copied or restored (a new incarnation):
   - they are discarded;
@@ -206,6 +219,11 @@
   - A transaction confirmed by one ack.
   - Grouped writes sharing a marker.
   - Receiver batch splitting: the ack comes only after every part.
+  - Sync coverage: the power is cut at the ack (at the first sync after it), and every acked group survives. The
+    mutant "only the last part FULL" is expected to pass this test, because the last FULL sync covers the earlier
+    parts. It is not forced to fail.
+  - #180's stricter per-transaction contract, tested separately: the power is cut between two parts, and the parts
+    committed before the cut survive. Mutant: only the last part FULL. It must fail this test.
 - **Refill certification:**
   - Held, failed and reconnected refills confirm nothing until a refill completes, while another database flows.
   - Reconnect with equal digests: the ack comes only after the barrier's certificate row committed. Mutant: no
@@ -214,6 +232,16 @@
     and a power loss after the last ack keeps every acked record. Mutant: reopen the writer and certify. It must fail.
   - Two keys with the same encoded state on opposite replicas: the digests differ and the refill repairs both (after
     R8's key fix).
+- **Receiver copy fault (blocks runtime qualification):**
+  - Multi-link refusal: a failed sync on origin A's link, then origin B's live link sends a group the failed commit
+    already made readable. Neither link acks. Mutant: a per-link fault. It must fail.
+  - Controlled restart: the process restarts on the same volume after the fault was recorded. That incarnation still
+    acks nothing. Mutant: a fault kept in memory only. It must fail.
+  - Crash before the fault record (the open gap): a crash injected between the failed sync and the record's commit,
+    then a restart on the same volume. That incarnation certifies nothing. This test must pass before durable
+    acknowledgement is qualified.
+  - Rebuild: R7's copy-refill rebuilds the copy from a peer into a new incarnation that meets section 5 and refill
+    certification. Acks resume, for the new incarnation only.
   - A source that no longer holds the database, and a refused repair page: the refill is refused, never acked.
   - The source's file replaced between its head, its digest and its pages: aborted.
 - **Incarnations:**
@@ -251,11 +279,12 @@
 
 | Area | Change | Owner |
 | --- | --- | --- |
-| `Engine` (`IDatabaseStore.WriteAsync` result, `SqliteStorageTransaction.CommitAsync`) | The commit returns its marker: the store incarnation, and `max(change_id)` of `turso_cdc` read on the writer right after a successful `COMMIT`. The writer is exclusive, so that id is this transaction's own last row. A `COMMIT` error, or a failure to read the marker, returns no marker, and the request answers outcome unknown. A marker already read survives a later session-reset failure: the session is discarded and the wait decides (#181 keeps that failure out of `DisposeAsync` once committed, so `CommitBatchAsync` does not see it as a commit error). | R6-FIX (sync settings and commit, as assigned) |
+| `Engine` (`IDatabaseStore.WriteAsync` result, `SqliteStorageTransaction.CommitAsync`) | The commit returns its marker: the store incarnation, and `max(change_id)` of `turso_cdc` read on the writer right after a successful `COMMIT`. The writer is exclusive, so that id is this transaction's own last row. A `COMMIT` error, or a failure to read the marker, returns no marker, and the request answers outcome unknown. A marker already read survives a later session-reset failure: the session is discarded and the wait decides (**pending**: #181's unpublished revision keeps that failure out of `DisposeAsync` once committed. At the published `83291845`, `DisposeCoreAsync` still rethrows it and `CommitBatchAsync` treats it as a commit error: a conservative failure, never a false success). | R6-FIX (sync settings and commit, as assigned) |
 | `Features/Replication/RemoteDurability.cs` | `IRemoteDurability` gains `CanConfirm(database, placement)` (the precheck) and `WaitAsync(database, marker, cancellationToken)`, which answers confirmed or not within the 10 s bound. | R6-FIX |
 | `Features/Replication/PeerStreams.cs` | It keeps, per link and database, the highest eligible ack with the incarnation of the batch it covers. Its cursors reset when the source incarnation changes. A waiter registry is signalled on every eligible ack and on link loss, and a waiter checks the current position when it registers. `LocalDurability` (a cell of one) confirms at once. | R6-FIX |
 | `Features/Replication/ChangeGroups.cs` / `TursoChangeGroupSource` | **Dependency:** every source read used for a prefix must report the store incarnation it read: `ReadAsync`, `HeadAsync`, `AckedAsync`, `RetainsAsync`, `DigestAsync` and `ReadBucketsAsync`. The digest and bucket reads must also refuse an expected incarnation that no longer matches. `AckAsync` takes the acked incarnation and writes only when it matches the file's own, checked in the same writer transaction; `_tb_peers` stores the incarnation with `acked`, and a stored ack of another incarnation reads as 0. | **R3** (CDC source). To be agreed before coding |
 | `Features/Replication` (`AntiEntropy`, `PeerStreamReceiver`, `StorageChangeGroupSink`, `Protos/.../replication.proto`) | Refill certification: abort on a source that no longer holds the database, on a refused or undecodable page, and on an incarnation change. A FULL barrier commit after the last join, also with nothing to repair. `Refill`, `DigestRequest`/`DigestReply` and `BucketRequest` carry the source incarnation (a versioned contract change). The receiver aborts if its own store is replaced. | R6-FIX |
+| `Features/Replication` (`PeerStreamReceiver`, `StorageChangeGroupSink`) | The receiver copy fault: per database incarnation on the node, recorded with FULL outside the suspect file before the writer is released, refused on every link, kept across restarts; the fail-closed recovery for a crash before the record (open gap); cleared only by a rebuilt new incarnation. | R6-FIX. Where the record is stored in the node's system database: agreed with the catalog owner (R10a). The rebuild: **R7** (copy-refill) |
 | `Features/Documents` (`DocumentService`, `DocumentRoute`, `TransactionEndpoint`) | Precheck before the write; await the wait after the commit; answer `remote_durable` or `503 write_outcome_unknown`; precheck refusals. | R6-FIX (client write path, as assigned) |
 | `Errors`, OpenAPI | `write_outcome_unknown`, `remote_region_unavailable`, `confirmation_busy` typed in the source-generated schemas. | R6-FIX |
 | `Engine/Sqlite/SqliteStorageTransaction.States.cs` | **Dependency:** a record's digest covers its key as well as its state (#114 should-fix 3). | **R8**. Before any refill certifies |
