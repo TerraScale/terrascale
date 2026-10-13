@@ -79,7 +79,8 @@ public sealed partial record OrganizationPage
             var now = Filter.Now ?? DateTimeOffset.UtcNow;
             var rows = (Access?.Invitations ?? []).Select(invite => new InvitationRow(invite.Id, invite.Email, invite.Role,
                 invite.Status == "pending" && invite.ExpiresAt != DateTimeOffset.MinValue && invite.ExpiresAt <= now ? "expired" : invite.Status,
-                invite.CreatedAt, invite.ExpiresAt, invite.Status == "pending")).ToDictionary(invite => invite.Id);
+                // An expired invitation stays manageable: the owner can replace or cancel it.
+                invite.CreatedAt, invite.ExpiresAt, invite.Status is "pending" or "expired")).ToDictionary(invite => invite.Id);
             return rows.Values.OrderBy(invite => !invite.Open).ThenBy(invite => invite.Email, StringComparer.Ordinal).ToArray();
         }
     }
