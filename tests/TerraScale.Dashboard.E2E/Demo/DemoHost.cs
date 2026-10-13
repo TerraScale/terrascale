@@ -351,6 +351,7 @@ sealed class TestWorkspace : ITsAuthPlatform
     public readonly Dictionary<string, OrganizationRecord> Organizations = [];
     private readonly Dictionary<string, (string OrganizationId, InvitationRecord Invitation)> invitations = [];
     private readonly Dictionary<string, IReadOnlyList<TerraScaleAuthPlatformInvitation>> capturedInvitations = [];
+    private readonly Dictionary<string, List<TerraScaleAuthPlatformAuditEvent>> audit = [];
     private readonly Dictionary<string, TerraScaleAuthPlatformOwnershipTransfer> transfers = [];
     private readonly Dictionary<string, string> projectCreators = [];
     private readonly TerraScale.DotNet.TerraScaleIdGenerator ids = new();
@@ -528,6 +529,7 @@ sealed class TestWorkspace : ITsAuthPlatform
                 throw new AccountAccessException("An invitation is pending.", 409, "invitation_pending");
             var invitation = new InvitationRecord { Id = ids.NewId(), OrganizationId = org.Id, Email = email, Role = role, Status = "pending", CreatedAt = DateTimeOffset.UtcNow, ExpiresAt = DateTimeOffset.UtcNow.AddDays(7) };
             invitations[invitation.Id] = (org.Id, invitation);
+            InvitationAudit(org.Id, session.UserId, "invitation.created", email, role);
             return Task.FromResult(new TerraScaleAuthPlatformCreatedInvitation(Wire(invitation, session.UserId), "test-invitation-" + invitation.Id));
         }
     }
@@ -538,6 +540,7 @@ sealed class TestWorkspace : ITsAuthPlatform
             Manage(session.UserId, organizationId);
             if (!invitations.TryGetValue(invitationId, out var value) || value.OrganizationId != organizationId || value.Invitation.Status != "pending") throw new AccountAccessException("Invitation is unavailable.", 404, "not_found");
             value.Invitation.Status = "revoked";
+            InvitationAudit(organizationId, session.UserId, "invitation.revoked", value.Invitation.Email);
             return Task.CompletedTask;
         }
     }
@@ -570,6 +573,8 @@ sealed class TestWorkspace : ITsAuthPlatform
             if (org.Members.ContainsKey(session.UserId)) throw new AccountAccessException("Already a member.", 409, "already_member");
             org.Members[session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = found.Invitation.Role, CreatedAt = DateTimeOffset.UtcNow };
             found.Invitation.Status = "accepted";
+            InvitationAudit(org.Id, session.UserId, "member.joined", session.UserId, found.Invitation.Role);
+            InvitationAudit(org.Id, session.UserId, "invitation.accepted", found.Invitation.Email);
             return Task.FromResult(new TerraScaleAuthPlatformAcceptedInvitation(org.Id, null, found.Invitation.Role));
         }
     }
@@ -580,6 +585,7 @@ sealed class TestWorkspace : ITsAuthPlatform
             var found = Pending(token);
             if (!found.Invitation.Email.Equals(session.Email, StringComparison.OrdinalIgnoreCase)) throw new AccountAccessException("Sign in with the invited email.", 403, "email_mismatch");
             found.Invitation.Status = "declined";
+            InvitationAudit(found.OrganizationId, session.UserId, "invitation.declined", found.Invitation.Email);
             return Task.CompletedTask;
         }
     }
@@ -622,7 +628,20 @@ sealed class TestWorkspace : ITsAuthPlatform
         }
     }
     public Task<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
-    { lock (Gate) { Manage(session.UserId, organizationId); return Task.FromResult<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>>([]); } }
+    {
+        lock (Gate)
+        {
+            Manage(session.UserId, organizationId);
+            return Task.FromResult<IReadOnlyList<TerraScaleAuthPlatformAuditEvent>>((audit.GetValueOrDefault(organizationId) ?? [])
+                .OrderByDescending(item => item.OccurredAt).ThenByDescending(item => item.Id, StringComparer.Ordinal).ToArray());
+        }
+    }
+    // ts-auth e30ffdc2 invitation transactions emit these events; the registry is per test environment.
+    private void InvitationAudit(string organizationId, string actor, string action, string target, string? detail = null)
+    {
+        if (!audit.TryGetValue(organizationId, out var events)) audit[organizationId] = events = [];
+        events.Add(new(ids.NewId(), actor, action, target, detail, DateTimeOffset.UtcNow));
+    }
 }
 sealed class TestMeasurements : IHomeMeasurements
 {
