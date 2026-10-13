@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Accounts;
 
 public static class AccountEndpoints
 {
-    public static IServiceCollection AddAccountFeatures(this IServiceCollection services) => services.AddSingleton<IWorkspaceGateway, TsWorkspaceGateway>().AddSingleton<AccountService>();
+    public static IServiceCollection AddAccountFeatures(this IServiceCollection services) => services.AddSingleton<AccountService>();
 
     public static IEndpointRouteBuilder MapAccountFeatures(this IEndpointRouteBuilder endpoints)
     {
