@@ -6,6 +6,7 @@ using System.Text;
 using Turso.Data.Sqlite;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
+using TerraBase.Hosting;
 using TerraBase.Features.Qos;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -210,8 +211,6 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>What this database's local writes mint their stamps with.</summary>
     internal LocalReplica? Member { get; init; }
 
-    /// <summary>Whether every write commit synchronizes its write-ahead log.</summary>
-    internal bool SyncsEveryCommit { get; init; }
 
     public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken) =>
         await BeginAsync(write, durable: false, cancellationToken).ConfigureAwait(false);
@@ -223,7 +222,9 @@ internal sealed partial class SqliteDatabaseStore(
     private async ValueTask<SqliteStorageTransaction> BeginAsync(
         bool write, bool durable, CancellationToken cancellationToken, string writer = "a write transaction")
     {
-        durable |= write && SyncsEveryCommit;
+        // Every write transaction syncs the write-ahead log at its commit (synchronous = FULL): what a write answers, the
+        // system database's catalog and keys (decision 0012) and a client database's documents (0013), survives a power loss.
+        durable |= write;
         var ownsAdmission = !io.HasAdmission;
         if (ownsAdmission)
         {
@@ -416,8 +417,11 @@ internal sealed partial class SqliteDatabaseStore(
     // keeps it until it closes. Only the holder of _writer uses it.
     private SqliteSession? _writerSession;
 
-    // Fault probes inspect the session while the transaction still holds the writer.
+    /// <summary>The writer connection while one is open: which session the next write transaction uses.</summary>
     internal SqliteSession? CurrentWriter() => _writerSession;
+
+    /// <summary>The host's fault injection point (a no-op in production), for a tenant database's lifecycle steps.</summary>
+    internal DatabaseLifecycleCheckpoint? Checkpoint { get; init; }
 
     /// <summary>
     /// The writer connection; the caller holds the writer. Every change it commits is captured in <c>turso_cdc</c>, mode

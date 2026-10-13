@@ -90,8 +90,8 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         // process-wide heap limit, so these caches are the memory bound (docs/terrabase/memory.md).
         var pageCacheBytes = memoryBudget / 4;
         var cacheKib = Math.Max(2048, pageCacheBytes / threads / 1024);
-        // NORMAL, not Turso's FULL: a local write is acknowledged after one machine's commit (decision 0003,
-        // multi-region-replication.md section 6); durable writes and replicated applies switch to FULL per transaction.
+        // NORMAL is the pooled default between transactions and for writer work outside them (backup tap). Every write
+        // transaction switches to FULL for its commit, so its log is synced before it is answered (0003 as amended, 0012).
         return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"""
             PRAGMA synchronous = NORMAL;
             PRAGMA cache_size = -{cacheKib};

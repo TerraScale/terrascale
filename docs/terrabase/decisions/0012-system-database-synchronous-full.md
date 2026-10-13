@@ -25,7 +25,8 @@ to `NORMAL` afterwards. That covers plain and durable transactions, batched writ
 Work on the writer outside a transaction (snapshots, copies, change-capture cleanup) is not covered: it acknowledges no
 write, and a cleanup lost to a power loss runs again.
 
-Tenant databases keep 0003's `NORMAL`.
+Tenant databases kept 0003's `NORMAL` until 2026-10-13. Since #181, every write transaction of every database syncs the
+same way (0003 as amended).
 
 ## Consequences
 
