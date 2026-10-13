@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
@@ -96,6 +97,27 @@ public sealed class InvitationCapacityJourneyTests
         await Assert.That(pending).IsEqualTo(4);
     }
 
+    // A decision reads ts-auth inside its compare-and-set: an invitation accepted after an older read, whose
+    // reservation another decision already ended, still occupies its slot.
+    [Test]
+    public async Task AnInvitationAcceptedAfterAnOlderReadStillCounts()
+    {
+        await using var scenario = await CapacityScenario.StartAsync();
+        await scenario.RevokeAsync("existing-0@example.test");
+        // The older request has read ts-auth's invitations and members and pauses before deciding.
+        scenario.Platform.PauseMembersAfterNextInvitationRead();
+        var stale = scenario.InviteAsync(1, "older-read@example.test");
+        await scenario.Platform.MembersArrived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        using (var accepted = await scenario.InviteAsync(0, "accepted-after-read@example.test"))
+            await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await scenario.Platform.AcceptAsync(scenario.Platform.Tokens["accepted-after-read@example.test"]);
+        using (var last = await scenario.InviteAsync(0, "last-slot@example.test"))
+            await Assert.That(last.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        scenario.Platform.MembersRelease.TrySetResult();
+        using (var result = await stale) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(await scenario.OccupiedAsync()).IsEqualTo(5);
+    }
+
     // Round-3 review probe, verbatim: an earlier accepted invitation for the same email is not this request's.
     [Test]
     public async Task AnOlderAcceptedInvitationIsNotProofThatTheNewOperationCommitted()
@@ -132,12 +154,13 @@ public sealed class InvitationCapacityJourneyTests
     }
 
     // Recovery for an unknown outcome: the same email is invited again on the slot it already holds. Here the
-    // retry's invitation is revoked before the retry records its id, and another decision ends the original's
+    // retry's invitation is revoked before the retry records its id, and an admitted decision ends the original's
     // reservation on that invitation; the retry's reservation then stands for the original, which may still commit.
     [Test]
     public async Task ARetryReusesTheUnknownSlotWhichOutlivesTheRetrysInvitation()
     {
         await using var scenario = await CapacityScenario.StartAsync();
+        await scenario.RevokeAsync("existing-0@example.test");
         scenario.Platform.DeferredEmail = "retried@example.test";
         using (var failed = await scenario.InviteAsync(0, scenario.Platform.DeferredEmail))
             await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
@@ -147,7 +170,7 @@ public sealed class InvitationCapacityJourneyTests
         await scenario.Platform.CreatedPaused.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await scenario.RevokeAsync("retried@example.test");
         using (var during = await scenario.InviteAsync(0, "during-retry@example.test"))
-            await Assert.That(during.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            await Assert.That(during.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("the last free slot");
         scenario.Platform.ContinueCreate.TrySetResult();
         using (var result = await retry) await Assert.That(result.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("the retry uses its email's slot");
         using (var afterRevoke = await scenario.InviteAsync(0, "after-revoke@example.test"))
@@ -298,7 +321,7 @@ public sealed class InvitationCapacityJourneyTests
 
         public async ValueTask DisposeAsync()
         {
-            if (Platform is not null) { foreach (var gate in Platform.Release) gate.TrySetResult(); Platform.CommitDeferred.TrySetResult(); Platform.ContinueCreate.TrySetResult(); }
+            if (Platform is not null) { foreach (var gate in Platform.Release) gate.TrySetResult(); Platform.CommitDeferred.TrySetResult(); Platform.ContinueCreate.TrySetResult(); Platform.MembersRelease.TrySetResult(); }
             foreach (var (client, _) in clients) client.Dispose();
             foreach (var host in hosts) { await host.StopAsync(); await host.DisposeAsync(); }
         }
@@ -324,6 +347,7 @@ public sealed class InvitationCapacityJourneyTests
     private sealed class ControlledPlatform(ITsAuthPlatform inner) : ITsAuthPlatform
     {
         private int reads;
+        private int pauseMembers;
         public TaskCompletionSource[] Arrived { get; private set; } = [];
         public TaskCompletionSource[] Release { get; private set; } = [];
         public string LostResponseEmail { get; set; } = "";
@@ -332,6 +356,12 @@ public sealed class InvitationCapacityJourneyTests
         public Task DeferredCommitted { get; private set; } = Task.CompletedTask;
         public bool DeferredRefused { get; private set; }
         public TimeSpan? ListedExpiry { get; set; }
+        public ConcurrentDictionary<string, string> Tokens { get; } = new();
+        public TaskCompletionSource MembersArrived { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource MembersRelease { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Pauses the member read that follows the next invitation read, after both have answered.
+        public void PauseMembersAfterNextInvitationRead() => Volatile.Write(ref pauseMembers, 1);
         public string PauseAfterCreateEmail { get; set; } = "";
         public TaskCompletionSource CreatedPaused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ContinueCreate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -353,6 +383,7 @@ public sealed class InvitationCapacityJourneyTests
         public async Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
         {
             var result = await inner.ListInvitationsAsync(session, organizationId, cancellationToken);
+            Interlocked.CompareExchange(ref pauseMembers, 2, 1);
             var index = Interlocked.Increment(ref reads) - 1;
             if (index < Arrived.Length) { Arrived[index].TrySetResult(); await Release[index].Task.WaitAsync(cancellationToken); }
             return ListedExpiry is { } expiry ? [.. result.Select(invitation => invitation with { ExpiresAt = DateTimeOffset.UtcNow + expiry })] : result;
@@ -371,6 +402,7 @@ public sealed class InvitationCapacityJourneyTests
                 throw new HttpRequestException("Synthetic timeout before ts-auth committed the invitation.");
             }
             var created = await inner.CreateInvitationAsync(session, organizationId, email, role, cancellationToken);
+            Tokens[email] = created.Token;
             if (email == LostResponseEmail) throw new HttpRequestException("Synthetic response loss after ts-auth committed the invitation.");
             if (email == PauseAfterCreateEmail) { CreatedPaused.TrySetResult(); await ContinueCreate.Task.WaitAsync(cancellationToken); }
             return created;
@@ -380,7 +412,12 @@ public sealed class InvitationCapacityJourneyTests
         public Task<TerraScaleAuthPlatformOrganization> CreateOrganizationAsync(SessionRecord session, string name, CancellationToken cancellationToken) => inner.CreateOrganizationAsync(session, name, cancellationToken);
         public Task RenameOrganizationAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken) => inner.RenameOrganizationAsync(session, organizationId, name, cancellationToken);
         public Task LeaveOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => inner.LeaveOrganizationAsync(session, organizationId, cancellationToken);
-        public Task<IReadOnlyList<TerraScaleAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => inner.ListMembersAsync(session, organizationId, cancellationToken);
+        public async Task<IReadOnlyList<TerraScaleAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+        {
+            var members = await inner.ListMembersAsync(session, organizationId, cancellationToken);
+            if (Interlocked.CompareExchange(ref pauseMembers, 0, 2) == 2) { MembersArrived.TrySetResult(); await MembersRelease.Task.WaitAsync(cancellationToken); }
+            return members;
+        }
         public Task ChangeMemberRoleAsync(SessionRecord session, string organizationId, string userId, string role, CancellationToken cancellationToken) => inner.ChangeMemberRoleAsync(session, organizationId, userId, role, cancellationToken);
         public Task RemoveMemberAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken) => inner.RemoveMemberAsync(session, organizationId, userId, cancellationToken);
         public Task<IReadOnlyList<TerraScaleAuthPlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => inner.ListProjectsAsync(session, organizationId, cancellationToken);
