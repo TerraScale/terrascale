@@ -165,9 +165,10 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(ownerMembers.Contains("id=\"team-invite\"", StringComparison.Ordinal)).IsTrue();
         await Assert.That(ownerMembers.Contains("name=\"role\" required", StringComparison.Ordinal)).IsTrue();
         var ownerCsrf = await HttpJourney.CsrfAsync(owner, "/organization?tab=members");
-        using (var admitAdmin = await HttpJourney.PostFormAsync(owner, "/__test/organization/members/role", new()
-        { ["_csrf"] = ownerCsrf, ["userId"] = memberId, ["role"] = "admin" }))
-            await Assert.That(admitAdmin.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        // The native member form offers every role ts-auth grants below owner (page audit 7ab7352c: Viewer answered 422).
+        using (var admitAdmin = await HttpJourney.PostFormAsync(owner, "/api/v1/access/members/" + Uri.EscapeDataString(memberId) + "/role?tab=members", new()
+        { ["_csrf"] = ownerCsrf, ["role"] = "admin" }))
+            await Assert.That(admitAdmin.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         await ToolAsync(member, memberSecret, "select_organization", new { organizationId = businessId });
         var admittedAdmin = await ContextAsync(member, memberSecret);
         await Assert.That(Organization(admittedAdmin, businessId).GetProperty("role").GetString()).IsEqualTo("admin");
@@ -188,9 +189,9 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         // ts-auth offers a read-only viewer role.
         await ToolAsync(owner, ownerSecret, "update_member_role", new { organizationId = businessId, userId = memberId, role = "viewer" });
         await Assert.That(Organization(await ContextAsync(member, memberSecret), businessId).GetProperty("role").GetString()).IsEqualTo("viewer");
-        using (var restoreMember = await HttpJourney.PostFormAsync(owner, "/__test/organization/members/role", new()
-        { ["_csrf"] = ownerCsrf, ["userId"] = memberId, ["role"] = "member" }))
-            await Assert.That(restoreMember.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        using (var restoreMember = await HttpJourney.PostFormAsync(owner, "/api/v1/access/members/" + Uri.EscapeDataString(memberId) + "/role?tab=members", new()
+        { ["_csrf"] = ownerCsrf, ["role"] = "member" }))
+            await Assert.That(restoreMember.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         foreach (var (tool, arguments) in new (string, object)[]
         {
             ("rename_organization", new { organizationId = businessId, name = "Forbidden" }),
@@ -224,9 +225,16 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         using var signedOut = await member.GetAsync("/api/v1/auth/me");
         await Assert.That(signedOut.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await ErrorAsync(member, memberSecret, "list_members", new { organizationId = businessId });
-        var revoked = await ToolAsync(owner, ownerSecret, "invite_member", new { organizationId = businessId, email = memberEmail });
-        await ToolAsync(replica, ownerSecret, "revoke_invitation", new { organizationId = businessId, invitationId = revoked.GetProperty("invitation").GetProperty("id").GetString() });
-        await ErrorAsync(member, memberSecret, "get_invitation", new { token = revoked.GetProperty("inviteUrl").GetString() });
+        var inviteCsrf = await HttpJourney.CsrfAsync(owner, "/organization?tab=invitations");
+        using (var viewerInvite = await HttpJourney.PostFormAsync(owner, "/api/v1/access/invitations?tab=invitations", new()
+        { ["_csrf"] = inviteCsrf, ["email"] = memberEmail, ["role"] = "viewer" }))
+            await Assert.That(viewerInvite.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var revoked = (await ToolAsync(owner, ownerSecret, "list_invitations", new { organizationId = businessId })).GetProperty("invitations").EnumerateArray()
+            .Single(invite => invite.GetProperty("open").GetBoolean());
+        await Assert.That(revoked.GetProperty("role").GetString()).IsEqualTo("viewer");
+        await ToolAsync(replica, ownerSecret, "revoke_invitation", new { organizationId = businessId, invitationId = revoked.GetProperty("id").GetString() });
+        await Assert.That((await ToolAsync(owner, ownerSecret, "list_invitations", new { organizationId = businessId })).GetProperty("invitations").EnumerateArray()
+            .Count(invite => invite.GetProperty("open").GetBoolean())).IsEqualTo(0);
     }
 
     [Test]
