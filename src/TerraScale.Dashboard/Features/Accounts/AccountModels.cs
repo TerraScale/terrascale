@@ -58,6 +58,9 @@ public sealed class OrganizationRecord
     public Dictionary<string, ProjectRecord> Projects { get; set; } = [];
     public List<AuditRecord> AuditEvents { get; set; } = [];
     [JsonIgnore] public Dictionary<string, InvitationRecord> Invitations { get; set; } = [];
+    // Plan member allowance: emails being invited right now, by expiry. Writes to this
+    // document are compare-and-set, so concurrent invitations count each other.
+    public Dictionary<string, DateTimeOffset> InvitationReservations { get; set; } = [];
     [JsonIgnore] public DateTimeOffset CreatedAt { get; set; }
     public bool ContainsMember(string userId) => Status == "active" && !Archived &&
         Members.TryGetValue(userId, out var member) && member.Status == "active";

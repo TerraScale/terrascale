@@ -20,8 +20,24 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
         OrganizationOperations.AvailableRole(role);
         if (!MailAddress.TryCreate(email, out var parsed) || !email.Equals(parsed.Address, StringComparison.OrdinalIgnoreCase))
             throw new AccountAccessException("Enter a valid email address.", 422);
-        Capacity(context.Organization!, await access.ReadAsync(context, cancellationToken), email);
-        return await access.InviteAsync(context, email, role, cancellationToken);
+        var snapshot = await access.ReadAsync(context, cancellationToken);
+        // Reserve the slot first: the compare-and-set makes concurrent invitations on any replica see each other.
+        await accounts.UpdateOrganizationAsync(context, org =>
+        {
+            OrganizationOperations.Owner(org, context.UserId);
+            foreach (var expired in org.InvitationReservations.Where(item => item.Value <= time.GetUtcNow()).Select(item => item.Key).ToArray())
+                org.InvitationReservations.Remove(expired);
+            Capacity(org, snapshot, email);
+            org.InvitationReservations[email] = time.GetUtcNow().AddMinutes(1);
+        }, cancellationToken);
+        try { return await access.InviteAsync(context, email, role, cancellationToken); }
+        catch
+        {
+            using var release = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try { await accounts.UpdateOrganizationAsync(context, org => org.InvitationReservations.Remove(email), release.Token); }
+            catch (Exception error) when (error is HttpRequestException or IOException or AccountAccessException or OperationCanceledException) { }
+            throw;
+        }
     }
 
     public async Task<CreatedInvitation> ResendAsync(AccountContext context, string id, CancellationToken cancellationToken)
@@ -38,7 +54,10 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
     public async Task RevokeAsync(AccountContext context, string id, CancellationToken cancellationToken)
     {
         context = await FreshAsync(context, cancellationToken);
+        var email = (await access.ReadAsync(context, cancellationToken)).Invitations.FirstOrDefault(invitation => invitation.Id == id)?.Email.ToLowerInvariant();
         await access.RevokeInvitationAsync(context, id, cancellationToken);
+        // A revoked invitation frees its slot at once instead of when its reservation expires.
+        if (email is not null) await accounts.UpdateOrganizationAsync(context, org => org.InvitationReservations.Remove(email), cancellationToken);
     }
 
     // ts-auth answers a lookup only to a signed-in user holding the token.
@@ -81,11 +100,14 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
     {
         if (org.DeletionRequested) throw new AccountAccessException("Organization deletion has been requested.", 409);
         var members = snapshot.Members.Where(member => member.Status == "active").ToArray();
-        var pending = snapshot.Invitations.Where(invite => invite.Status == "pending" && invite.ExpiresAt > time.GetUtcNow()).ToArray();
+        var listed = snapshot.Invitations.Where(invite => invite.Status == "pending" && invite.ExpiresAt > time.GetUtcNow()).Select(invite => invite.Email.ToLowerInvariant()).ToArray();
         if (members.Any(member => member.Email.Equals(email, StringComparison.OrdinalIgnoreCase)))
             throw new AccountAccessException("This email is already an active member.", 409);
-        if (pending.Any(invite => invite.Email.Equals(email, StringComparison.OrdinalIgnoreCase)))
+        if (listed.Contains(email, StringComparer.OrdinalIgnoreCase))
             throw new AccountAccessException("This email already has a pending invitation.", 409);
+        // Recent reservations count until ts-auth lists them, one slot per email (ts-auth refuses a second
+        // pending invitation for the same email itself).
+        var pending = listed.Concat(org.InvitationReservations.Where(item => item.Value > time.GetUtcNow() && item.Key != email).Select(item => item.Key)).Distinct().ToArray();
         var plan = PlanCatalog.For(org)
             ?? throw new AccountAccessException("The organization's member allowance is unavailable.", 409);
         var limit = PlanCatalog.ResourceLimits(org).Members;
