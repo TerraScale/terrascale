@@ -150,7 +150,8 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(preview.GetProperty("canRespond").GetBoolean()).IsTrue();
         var joined = await ToolAsync(member, memberSecret, "respond_to_invitation", new { token, action = "accept" });
         await Assert.That(joined.GetProperty("organizationId").GetString()).IsEqualTo(businessId);
-        await ToolAsync(member, memberSecret, "respond_to_invitation", new { token, action = "accept" });
+        // ts-auth consumed the token; a repeated answer fails clearly and changes nothing.
+        await ErrorAsync(member, memberSecret, "respond_to_invitation", new { token, action = "accept" });
         var members = await ToolAsync(replica, ownerSecret, "list_members", new { organizationId = businessId, search = memberEmail.ToUpperInvariant(), role = "member" });
         await Assert.That(members.GetProperty("members").GetArrayLength()).IsEqualTo(1);
         await Assert.That(members.GetProperty("members")[0].GetProperty("id").GetString()).IsEqualTo(memberId);
