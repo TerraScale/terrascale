@@ -31,7 +31,7 @@ const entries = [
     </div>
     <div class="docs-paths">
       <a v-for="entry in entries" :key="entry.number" :href="`${prefix}${entry.link}`">
-        <span class="docs-path-number" aria-hidden="true">{{ entry.number }}</span>
+        <span class="docs-tile docs-tile-num" aria-hidden="true">{{ entry.number }}</span>
         <div><h3>{{ entry.title }}</h3><p>{{ entry.detail }}</p></div>
         <svg class="docs-icon docs-path-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
       </a>

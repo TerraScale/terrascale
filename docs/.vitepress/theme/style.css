@@ -166,6 +166,10 @@ body { font-size: var(--ts-fs-md); -webkit-font-smoothing: antialiased; }
 
 /* ---- Top nav ---- */
 .VPNavBarTitle .logo { height: 22px; }
+@media (min-width: 960px) {
+  :root .VPNavBar.has-sidebar .divider { padding-left: 0; }
+  :root .VPNavBarTitle.has-sidebar .title { border-bottom-color: transparent; }
+}
 .VPNavBarTitle .title { gap: var(--ts-s3); font-size: var(--ts-fs-sm); font-weight: 500; color: var(--ts-ink-3); }
 .VPNavBar .VPNavBarMenu .VPNavBarMenuLink { font-size: var(--ts-fs-md); font-weight: 500; }
 .VPNavBar .VPNavBarMenu .VPNavBarMenuLink:not(.active) { color: var(--ts-ink-2); }
@@ -210,13 +214,18 @@ body { font-size: var(--ts-fs-md); -webkit-font-smoothing: antialiased; }
 /* Code blocks: boxed, 40px head with the language and an always-visible copy button. */
 .vp-doc div[class*='language-'] { padding-top: 40px; border-block: 1px solid var(--ts-line); }
 .vp-doc div[class*='language-']::before { content: ''; position: absolute; inset: 0 0 auto; height: 40px; border-bottom: 1px solid var(--ts-line); }
-.vp-doc div[class*='language-'] > span.lang { top: 0; left: var(--ts-s6); right: auto; line-height: 40px; font-family: var(--ts-font-mono); font-size: var(--ts-fs-xs); font-weight: 400; }
+.vp-doc div[class*='language-'] > span.lang { top: 0; left: var(--ts-s4); right: auto; line-height: 40px; font-family: var(--ts-font-sans); font-size: var(--ts-fs-sm); font-weight: 500; color: var(--ts-ink-2); }
 .vp-doc div[class*='language-'] > button.copy { top: 4px; right: 4px; width: var(--ts-control-h-sm); height: var(--ts-control-h-sm); border-radius: var(--ts-radius); background-size: var(--ts-icon); opacity: 1; }
 .vp-doc div[class*='language-'] > button.copy:hover + span.lang, .vp-doc div[class*='language-'] > button.copy.copied + span.lang { opacity: 1; }
 .vp-doc div[class*='language-'] pre { padding: var(--ts-s4) 0; }
-.vp-doc div[class*='language-'] code { font-size: var(--ts-fs-sm); line-height: 1.7; }
+.vp-doc div[class*='language-'] code { padding: 0 var(--ts-s4); font-size: var(--ts-fs-sm); line-height: 1.7; }
 @media (min-width: 640px) {
   .vp-doc div[class*='language-'] { border: 1px solid var(--ts-line); border-radius: var(--ts-radius-lg); }
+}
+/* Phones: blocks run edge to edge, so label and code keep the prose's gutter. */
+@media (max-width: 639px) {
+  .vp-doc div[class*='language-'] > span.lang { left: var(--ts-s6); }
+  .vp-doc div[class*='language-'] code { padding: 0 var(--ts-s6); }
 }
 
 /* Tables: horizontal hairlines only, no zebra, row hover. */
@@ -225,8 +234,10 @@ body { font-size: var(--ts-fs-md); -webkit-font-smoothing: antialiased; }
 .vp-doc tbody tr:hover { background: var(--ts-surface-2); }
 .vp-doc th, .vp-doc td { border: 0; border-bottom: 1px solid var(--ts-line); padding: var(--ts-s3) var(--ts-s4); }
 .vp-doc th { height: 36px; padding-block: 0; background: transparent; text-align: left; }
-.vp-doc td { height: 48px; font-size: var(--ts-fs-md); color: var(--ts-ink); }
+.vp-doc th { white-space: nowrap; }
+.vp-doc td { height: 48px; font-size: var(--ts-fs-md); color: var(--ts-ink); font-variant-numeric: tabular-nums; }
 .vp-doc th:first-child, .vp-doc td:first-child { padding-inline-start: 0; }
+.vp-doc th:last-child, .vp-doc td:last-child { padding-inline-end: 0; }
 
 /* Callouts: the .ts-alert look (2px state edge, 8% tint, Lucide icon). */
 .vp-doc .custom-block {
@@ -254,21 +265,27 @@ body { font-size: var(--ts-fs-md); -webkit-font-smoothing: antialiased; }
 }
 .vp-doc .custom-block.important { --cb: var(--ts-accent); }
 .vp-doc .custom-block .custom-block-title { margin-bottom: var(--ts-s1); color: var(--ts-ink); font-weight: 600; }
-.vp-doc .custom-block p { color: var(--ts-ink-2); }
+.vp-doc .custom-block p { color: var(--ts-ink-2); line-height: var(--ts-lh); }
 .vp-doc .custom-block code { background: var(--ts-surface-2); }
 
 /* Badges (VitePress <Badge>) follow .ts-badge. */
 :root .VPBadge { height: 22px; padding: 0 var(--ts-s2); border: 0; border-radius: var(--ts-radius-sm); font-size: var(--ts-fs-xs); font-weight: 500; line-height: 22px; }
 
 /* ---- Search dialog: one list, hairline separators, surface-2 active row ---- */
-:root .VPLocalSearchBox .search-bar { height: var(--ts-control-h-lg); border-color: var(--ts-control-line); border-radius: var(--ts-radius); }
+:root .VPLocalSearchBox .search-bar { height: var(--ts-control-h-lg); border-color: var(--ts-control-line); border-radius: var(--ts-radius); background: var(--ts-surface); }
 :root .VPLocalSearchBox .results > li + li { border-top: 1px solid var(--ts-line); }
-:root .VPLocalSearchBox .result { border-radius: var(--ts-radius); }
-:root .VPLocalSearchBox .no-results { margin: var(--ts-s2) 0; padding: var(--ts-s10) var(--ts-s6); border: 1px dashed var(--ts-line-strong); border-radius: var(--ts-radius-lg); color: var(--ts-ink-2); }
+:root .VPLocalSearchBox .result { border-radius: var(--ts-radius); transition: background-color var(--ts-fast) var(--ts-ease); }
+:root .VPLocalSearchBox .result.selected { background: var(--ts-surface-2); }
+:root .VPLocalSearchBox .no-results { margin: var(--ts-s2) 0; padding: var(--ts-s8) var(--ts-s6); border: 1px solid var(--ts-line); border-radius: var(--ts-radius-lg); color: var(--ts-ink-2); font-size: var(--ts-fs-sm); }
+:root .VPLocalSearchBox .search-keyboard-shortcuts { opacity: 1; color: var(--ts-ink-3); font-size: var(--ts-fs-xs); }
+:root .VPLocalSearchBox .search-keyboard-shortcuts kbd { display: inline-flex; align-items: center; justify-content: center; height: 20px; min-width: 20px; padding: 0 6px; border: 1px solid var(--ts-line-strong); border-radius: var(--ts-radius-sm); background: var(--ts-surface); box-shadow: none; font: 400 11px / 1 var(--ts-font-mono); color: var(--ts-ink-3); }
+/* Phones: the dialog fills the screen, so frosting only greys the dimmed page behind it. */
+@media (max-width: 767px) { :root .VPLocalSearchBox .shell { background: var(--ts-canvas); -webkit-backdrop-filter: none; backdrop-filter: none; border: 0; border-radius: 0; box-shadow: none; } }
 
 .VPDocFooter .pager-link { border-radius: var(--ts-radius-lg); }
 .VPDocFooter .pager-link:hover { border-color: var(--ts-line-strong); }
-/* Our footer (DocsFooter.vue) is on every page; VitePress's own footer would duplicate it. */
+/* Our footer (DocsFooter.vue) is on every page and ends it; VitePress's own footer would duplicate it. */
+html:root .VPDoc, html:root .VPDoc .content { padding-bottom: 0; }
 .VPFooter { display: none; }
 
 /* ---- Shared pieces used by the docs components ---- */
@@ -309,34 +326,45 @@ html.dark .docs-logo-light, html:not(.dark) .docs-logo-dark { display: none; }
 .docs-footer .docs-status-link:hover { border-color: var(--ts-line-strong); }
 .docs-footer-note { flex-basis: 100%; margin: 0; font-size: var(--ts-fs-xs); line-height: var(--ts-lh); }
 
+/* Icon tile: feature, step and empty-state icons; numbered steps put the number in it. */
+.docs-tile { display: grid; flex: none; place-items: center; width: 32px; height: 32px; border-radius: var(--ts-radius); background: var(--ts-accent-soft); color: var(--ts-accent); }
+.docs-tile-num { font: 400 var(--ts-fs-xs) / 1 var(--ts-font-mono); }
+
 /* 404: the shared empty state. */
-.docs-404 { max-width: var(--ts-prose-max); margin: 0 auto; padding: var(--ts-s16) var(--ts-gutter) 0; }
-.docs-404 + .docs-footer { max-width: var(--ts-prose-max); margin-inline: auto; padding-inline: var(--ts-gutter); box-sizing: content-box; }
-.docs-empty { display: flex; flex-direction: column; align-items: center; gap: var(--ts-s3); padding: var(--ts-s12) var(--ts-s6); border: 1px dashed var(--ts-line-strong); border-radius: var(--ts-radius-lg); text-align: center; }
-.docs-empty .docs-eyebrow { margin: var(--ts-s2) 0 0; }
-.docs-empty h1 { margin: 0; font-size: var(--ts-fs-xl); }
-.docs-empty p { margin: 0; color: var(--ts-ink-2); }
+.docs-404, .docs-404 + .docs-footer { width: min(var(--ts-prose-max), 100% - 2 * var(--ts-gutter)); margin-inline: auto; }
+.docs-404 { padding-top: var(--ts-s16); }
+.docs-empty { display: flex; flex-direction: column; align-items: center; gap: var(--ts-s2); padding: var(--ts-s8) var(--ts-s6); border: 1px solid var(--ts-line); border-radius: var(--ts-radius-lg); text-align: center; }
+.docs-empty .docs-tile { margin-bottom: var(--ts-s2); }
+.docs-404 .docs-empty h1 { margin: 0; font-size: var(--ts-fs-md); font-weight: 500; letter-spacing: 0; line-height: var(--ts-lh); }
+.docs-404-code { margin-inline-end: var(--ts-s1); font-family: var(--ts-font-mono); font-weight: 400; color: var(--ts-ink-3); }
+.docs-empty p { margin: 0; color: var(--ts-ink-2); font-size: var(--ts-fs-sm); }
 .docs-empty .docs-btn { margin-top: var(--ts-s3); }
-.docs-empty-icon { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--ts-line-strong); border-radius: var(--ts-radius-lg); color: var(--ts-ink-2); }
 
 /* ---- Docs home ---- */
 .docs-home { padding-top: var(--ts-s2); }
+/* The home has no outline; an empty column where the aside sits keeps its left edge on the article's. */
+@media (min-width: 1280px) {
+  .VPDoc:not(.has-aside):has(.docs-home) .container::after { content: ''; order: 2; flex-grow: 1; width: 100%; max-width: 256px; }
+}
 .docs-home h1 { margin: 0; font-size: var(--ts-fs-3xl); }
 .docs-intro { max-width: 510px; font-size: var(--ts-fs-lg); }
 .docs-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ts-s3); margin: var(--ts-s6) 0; }
 .docs-release { display: flex; align-items: center; gap: var(--ts-s3); padding: var(--ts-s4) 0; border-block: 1px solid var(--ts-line); color: var(--ts-ink-2); font-size: var(--ts-fs-sm); }
-.docs-section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--ts-s2); margin: var(--ts-s10) 0 var(--ts-s3); }
+.docs-section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--ts-s2); margin: var(--ts-s12) 0 var(--ts-s6); }
 .vp-doc .docs-section-head h2 { margin: 0; padding: 0; border: 0; font-size: var(--ts-fs-xl); }
-.docs-section-head > span, .docs-section-head a { color: var(--ts-ink-3); font-size: var(--ts-fs-sm); }
-.docs-paths { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.vp-doc .docs-paths > a { display: flex; align-items: flex-start; gap: var(--ts-s3); padding: var(--ts-s5) var(--ts-s3) var(--ts-s5) 0; border-top: 1px solid var(--ts-line); color: inherit; text-decoration: none; transition: background-color var(--ts-fast) var(--ts-ease); }
-.docs-paths > a:hover { background: var(--ts-surface-2); }
-.docs-path-number { display: grid; flex-shrink: 0; place-items: center; width: 28px; height: 28px; border: 1px solid var(--ts-line-strong); border-radius: var(--ts-radius); color: var(--ts-ink-2); font-family: var(--ts-font-mono); font-size: var(--ts-fs-xs); }
-.vp-doc .docs-paths h3 { margin: 2px 0 6px; font-size: var(--ts-fs-lg); }
+.docs-section-head > span, .vp-doc .docs-section-head a { color: var(--ts-ink-3); font-size: var(--ts-fs-sm); text-decoration: none; }
+.vp-doc .docs-section-head a:hover { color: var(--ts-ink); text-decoration: underline; }
+.docs-paths { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--ts-s6); }
+/* The hover fill bleeds s3 past the column so the tile keeps the page's left edge. */
+.vp-doc .docs-paths > a { position: relative; z-index: 0; display: flex; align-items: flex-start; gap: var(--ts-s3); padding: var(--ts-s5) 0; border-top: 1px solid var(--ts-line); color: inherit; text-decoration: none; }
+.docs-paths > a::before { content: ''; position: absolute; inset: 0 calc(-1 * var(--ts-s3)) 0; z-index: -1; border-radius: var(--ts-radius); background: transparent; transition: background-color var(--ts-fast) var(--ts-ease); }
+.docs-paths > a:hover::before { background: var(--ts-surface); }
+.vp-doc .docs-paths h3 { margin: 6px 0 6px; font-size: var(--ts-fs-lg); }
 .vp-doc .docs-paths p { margin: 0; font-size: var(--ts-fs-md); line-height: var(--ts-lh); }
-.docs-path-arrow { margin-inline-start: auto; color: var(--ts-ink-3); }
+.docs-path-arrow { margin: 8px 0 0 auto; color: var(--ts-ink-3); transition: color var(--ts-fast) var(--ts-ease); }
+.docs-paths > a:hover .docs-path-arrow { color: var(--ts-ink); }
 .docs-code { margin-top: var(--ts-s3); border: 1px solid var(--ts-line); border-radius: var(--ts-radius-lg); background: var(--ts-surface); overflow: hidden; }
-.docs-code-label { display: flex; align-items: center; height: 40px; padding: 0 var(--ts-s4); border-bottom: 1px solid var(--ts-line); color: var(--ts-ink-3); font-family: var(--ts-font-mono); font-size: var(--ts-fs-xs); }
+.docs-code-label { display: flex; align-items: center; height: 40px; padding: 0 var(--ts-s4); border-bottom: 1px solid var(--ts-line); color: var(--ts-ink-2); font-size: var(--ts-fs-sm); font-weight: 500; }
 .vp-doc .docs-code pre { margin: 0; padding: var(--ts-s4); overflow-x: auto; background: transparent; line-height: 1.7; }
 .vp-doc .docs-code code { padding: 0; border: 0; background: none; color: var(--ts-syn-fn); font-size: var(--ts-fs-sm); }
 .docs-code-keyword { color: var(--ts-syn-keyword); }
