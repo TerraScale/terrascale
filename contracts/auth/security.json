@@ -148,6 +148,6 @@
     "roles": "Organization admin creates/lists/revokes; owner required when inviting owner. Project admin can target/list project_id. Producer checks current authority.",
     "rate_limit": "Create only: 100 invitations per organization per hour; 429 rate_limited, no retry by SDK."
   },
-  "ownership_transfer": "Owner nominates a current non-owner member for seven days; nominee confirms, becoming owner while initiating owner becomes admin. Owner or nominee cancels; absent/expired transfer is 404.",
+  "ownership_transfer": "Owner nominates a current non-owner member for seven days. Starting a transfer replaces any pending offer and returns 201, not 409. Nominee confirms, becoming owner while initiating owner becomes admin. Owner or nominee cancels. A pending offer reads as 404 when absent/expired, when its initiating user is no longer an owner, or when its nominee is no longer a non-owner organization member (viewer/member/admin).",
   "audit_events": "Organization admin reads newest-first items/next; producer retains at least 90 days."
 }

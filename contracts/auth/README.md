@@ -62,14 +62,14 @@ Invitation tokens redact `ToString`; never log/persist creation tokens or token 
 
 ## Fixture behavior derivation
 
-`fixtures/platform-headless.json` uses a fixed synthetic clock of `2026-10-13T00:00:00+00:00` for creation and rotation, independent of the test runner's clock. Source extraction verified the pinned `provenance.json` hashes before generating the affected values; no producer binaries ran. Producer expressions and fixture checks:
+`fixtures/platform-headless.json` uses a fixed synthetic clock of `2026-10-13T00:00:00+00:00` for creation and rotation, independent of the test runner's clock. Values were derived from the producer expressions below after verifying the pinned `provenance.json` hashes; the invariant test guards them. No producer binaries ran.
 
 - `PlatformEndpoints.cs`: `Map(organization, Roles.Owner)` and `Map(project, Roles.Admin)` determine creation roles. `PlatformDirectory.cs` requires admin for both rename operations; rename fixtures use admin.
 - `ApiKeyEndpoints.cs`: `ProjectId()` is null for organization endpoints; non-null database is rejected for organization creation. Organization-key request database and response project/database fields are null.
 - `ApiKeys.cs`: `PreviousSecretExpiresAt = previousTtl > TimeSpan.Zero ? now + previousTtl : null`; the endpoint exposes this only while it is in the future. Both 60-second rotation fixtures expose `2026-10-13T00:01:00+00:00`.
 - `Invitations.cs` / `PlatformDirectory.cs`: creation/transfer expiry is fixed clock + seven days, invitation status is pending, confirmation grants owner. Invitation tokens use the producer `tsi_` prefix and 52 synthetic alphabet characters. Test ID placeholders are replaced by independent ULIDs.
 
-Contract tests verify these invariants, recursively compare exported operation fixtures to `dtos.json`, and check `security.json` error lists against the admitted vocabulary. Opaque pagination cursors and secrets are controlled HTTP-fake values; fake success does not prove a connected producer journey.
+Contract tests verify these invariants, recursively compare exported operation fixtures to `dtos.json`, and check `security.json` error lists against the admitted vocabulary. `fixtures/project-invitation.json` additionally covers `create_invitation`, `lookup_invitation` and `accept_invitation` with a viewer role, non-null `project_id` and named project. Opaque pagination cursors and secrets are controlled HTTP-fake values; fake success does not prove a connected producer journey.
 
 ## Bounds and safety
 

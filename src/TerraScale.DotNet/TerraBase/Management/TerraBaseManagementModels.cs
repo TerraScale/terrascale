@@ -51,7 +51,7 @@ public sealed record TerraBasePage<T>(IReadOnlyList<T> Items, string? Next) : IJ
 }
 
 /// <summary>An organization: the tenant, which owns billing and projects.</summary>
-/// <param name="Id">Lowercase hyphenated UUIDv7.</param>
+/// <param name="Id">Canonical uppercase ULID.</param>
 /// <param name="Name">Display name.</param>
 /// <param name="CreatedBy">ts-auth user id of the creator.</param>
 /// <param name="CreatedAt">Creation time.</param>
@@ -59,19 +59,34 @@ public sealed record TerraBasePage<T>(IReadOnlyList<T> Items, string? Next) : IJ
 public sealed record TerraBaseOrganization(string Id, string Name, string CreatedBy, DateTimeOffset CreatedAt, TerraBasePlan Plan);
 
 /// <summary>A project: a folder of databases inside an organization.</summary>
-/// <param name="Id">Lowercase hyphenated UUIDv7; the Documents API's <c>{project}</c>.</param>
+/// <param name="Id">Canonical uppercase ULID; the Documents API's <c>{project}</c>.</param>
 /// <param name="OrganizationId">Owning organization.</param>
 /// <param name="Name">Display name, unique within the organization.</param>
 /// <param name="CreatedAt">Creation time.</param>
 public sealed record TerraBaseProject(string Id, string OrganizationId, string Name, DateTimeOffset CreatedAt);
 
 /// <summary>A database registered in a project. The Documents API addresses it by <see cref="ProjectId"/> and <see cref="Name"/>.</summary>
-/// <param name="Id">Lowercase hyphenated UUIDv7.</param>
+/// <param name="Id">Canonical uppercase ULID.</param>
 /// <param name="ProjectId">Owning project.</param>
 /// <param name="Name">Database name, unique within the project.</param>
 /// <param name="BranchedFrom">Id of the database this one was branched from, if any.</param>
 /// <param name="CreatedAt">Creation time.</param>
-public sealed record TerraBaseManagedDatabase(string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt);
+public sealed record TerraBaseManagedDatabase(string Id, string ProjectId, string Name, string? BranchedFrom, DateTimeOffset CreatedAt) : IJsonOnDeserialized
+{
+    /// <summary>The region that answered.</summary>
+    [JsonRequired]
+    public string Region { get; init; } = null!;
+
+    /// <summary>The region where the database is created and managed.</summary>
+    [JsonRequired]
+    public string HomeRegion { get; init; } = null!;
+
+    /// <summary>The other regions holding a full copy and serving the database.</summary>
+    [JsonRequired]
+    public IReadOnlyList<string> ReplicaRegions { get; init; } = null!;
+
+    void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(ReplicaRegions);
+}
 
 /// <summary>A user's membership in an organization.</summary>
 /// <param name="UserId">ts-auth user id.</param>
