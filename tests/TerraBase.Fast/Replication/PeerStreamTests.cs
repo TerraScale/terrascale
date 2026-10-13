@@ -551,6 +551,27 @@ public sealed class PeerStreamTests
         await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), Refused = true });
     }
 
+    [Test]
+    public async Task A_refill_whose_source_loses_the_database_after_its_digest_is_refused()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var lost = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", lost, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+        await sjc.LoseAsync("items", lost);
+        gru.LoseOnBucketRead = true;
+
+        using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
+        await push.RefillAsync(cluster.Database, 1);
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), Refused = true });
+        await Assert.That(await sjc.ReadAsync(lost)).IsNull();
+    }
+
     // A batch that fails to apply (here the stored state of its document no longer decodes) refuses its database only: the
     // stream goes on with the other databases, and the batch joins once it is sent again after the damage is gone.
     [Test]
@@ -877,6 +898,9 @@ public sealed class PeerStreamTests
         // While set, this machine's sink refuses repairs, as when it stops holding the database.
         public bool RefusesRepairs { get; set; }
 
+        // The source becomes unavailable between a successful digest and its first bucket page.
+        public bool LoseOnBucketRead { get; set; }
+
         // Completes once a repair waits for HeldRepairs.
         public TaskCompletionSource RepairWaits { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -894,6 +918,7 @@ public sealed class PeerStreamTests
             {
                 services.AddSingleton<IMemberDirectory>(cluster.Members);
                 services.AddSingleton<IChangeGroupSink>(provider => new HeldSink(ActivatorUtilities.CreateInstance<StorageChangeGroupSink>(provider), this));
+                services.AddSingleton<IReplicaStates>(provider => new LosingStates(provider.GetRequiredService<TerraBase.Engine.Sqlite.TursoChangeGroupSource>(), this));
                 if (!cluster.Cdc)
                 {
                     services.AddSingleton<IChangeGroupSource>(Source);
@@ -1215,6 +1240,26 @@ public sealed class PeerStreamTests
             }
 
             return machine.RefusesRepairs ? null : await sink.RepairAsync(database, states, cancellationToken);
+        }
+    }
+
+    private sealed class LosingStates(IReplicaStates states, Machine machine) : IReplicaStates
+    {
+        private bool _lost;
+
+        public ValueTask<byte[]?> DigestAsync(TenantContext database, CancellationToken cancellationToken) =>
+            Volatile.Read(ref _lost) ? ValueTask.FromResult<byte[]?>(null) : states.DigestAsync(database, cancellationToken);
+
+        public ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)> ReadBucketsAsync(
+            TenantContext database, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken)
+        {
+            if (machine.LoseOnBucketRead)
+            {
+                Volatile.Write(ref _lost, true);
+                return ValueTask.FromResult<(IReadOnlyList<RepairState>, BucketCursor?)>(([], null));
+            }
+
+            return states.ReadBucketsAsync(database, buckets, after, maxStates, maxBytes, cancellationToken);
         }
     }
 
