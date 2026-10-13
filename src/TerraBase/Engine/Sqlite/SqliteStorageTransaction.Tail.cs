@@ -42,15 +42,15 @@ internal sealed partial class SqliteStorageTransaction
     /// <paramref name="after"/>: a later read from anywhere in between may start there; and when the first group committed
     /// (Unix seconds).
     /// </summary>
-    /// A group committed before <paramref name="staleBefore"/> (Unix seconds) is stale: its deltas are whole states.
+    /// With <paramref name="stale"/>, each group's deltas are whole states (<see cref="OriginGroup.Stale"/>).
     internal ValueTask<(List<OriginGroup> Groups, long Quiet, long? FirstCommitted)> ReadChangeGroupsAsync(
-        long after, int maxGroups, int maxBytes, ReplicaId self, long staleBefore, CancellationToken cancellationToken) =>
-        RunAsync(() => ReadChangeGroups(after, maxGroups, maxBytes, self, staleBefore, cancellationToken), cancellationToken);
+        long after, int maxGroups, int maxBytes, ReplicaId self, bool stale, CancellationToken cancellationToken) =>
+        RunAsync(() => ReadChangeGroups(after, maxGroups, maxBytes, self, stale, cancellationToken), cancellationToken);
 
     // Worker-only. Rows come in commit order: one writer per file, so a transaction's rows are contiguous and end with its
     // commit row (change_type 2), and a reader never sees part of one.
     private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) ReadChangeGroups(
-        long after, int maxGroups, int maxBytes, ReplicaId self, long staleBefore, CancellationToken cancellationToken)
+        long after, int maxGroups, int maxBytes, ReplicaId self, bool stale, CancellationToken cancellationToken)
     {
         List<OriginGroup> groups = [];
         var quiet = after;
@@ -62,7 +62,7 @@ internal sealed partial class SqliteStorageTransaction
 
         var bytes = 0;
         long? first = null;
-        var transaction = new TailTransaction();
+        var transaction = new TailTransaction(stale);
         for (var from = after; ;)
         {
             var command = Command(TailPage);
@@ -81,15 +81,13 @@ internal sealed partial class SqliteStorageTransaction
                     {
                         if (transaction.Deltas.Count > 0)
                         {
-                            var stale = !reader.IsDBNull(4) && reader.GetInt64(4) < staleBefore;
-                            var deltas = stale ? transaction.States : transaction.Deltas;
-                            var size = deltas.Sum(delta => DocumentStateEncoding.Encode(delta.State).Length);
+                            var size = transaction.Deltas.Sum(delta => DocumentStateEncoding.Encode(delta.State).Length);
                             if (groups.Count > 0 && bytes + size > maxBytes)
                             {
                                 return (groups, quiet, first);
                             }
 
-                            groups.Add(new OriginGroup(from, deltas, stale));
+                            groups.Add(new OriginGroup(from, transaction.Deltas, stale));
                             first ??= reader.IsDBNull(4) ? null : reader.GetInt64(4);
                             bytes += size;
                             if (groups.Count == maxGroups)
@@ -102,7 +100,7 @@ internal sealed partial class SqliteStorageTransaction
                             quiet = from;
                         }
 
-                        transaction = new TailTransaction();
+                        transaction = new TailTransaction(stale);
                         continue;
                     }
 
@@ -268,16 +266,14 @@ internal sealed partial class SqliteStorageTransaction
     // The rows of one Turso transaction, as far as the tailer needs them: its local groups' deltas, and the after-image of
     // each document row, so that every state row pairs with the last document row before it (R2a: a request may rewrite a
     // document's row several times and writes its state row once, at its end).
-    private sealed class TailTransaction
+    private sealed class TailTransaction(bool whole)
     {
         // Document rows before the first local state row, undecoded: a transaction of remote joins never decodes them.
         private List<(string Table, byte[] Image)>? _rows = [];
         private Dictionary<(string Table, string Id), string>? _documents;
 
+        // Each a delta, or with `whole` (a stale read) the document's whole state as of the commit.
         public List<ChangeDelta> Deltas { get; } = [];
-
-        // The same documents' whole states as of the commit, which a stale group ships instead.
-        public List<ChangeDelta> States { get; } = [];
 
         public void Add(string table, byte[] image, ReplicaId self)
         {
@@ -325,8 +321,7 @@ internal sealed partial class SqliteStorageTransaction
                 : throw new InvalidDataException("a captured live document state has no document row before it in its transaction");
             var full = DocumentStateEncoding.DecodeStored(Base64Url.DecodeFromChars(state), document is null ? [] : Encoding.UTF8.GetBytes(document));
             var at = new Hlc(unchecked((ulong)stamp));
-            Deltas.Add(new ChangeDelta(collection, id, at, full.DeltaAt(at)));
-            States.Add(new ChangeDelta(collection, id, at, full));
+            Deltas.Add(new ChangeDelta(collection, id, at, whole ? full : full.DeltaAt(at)));
         }
 
         // id, doc: a collection table's row.

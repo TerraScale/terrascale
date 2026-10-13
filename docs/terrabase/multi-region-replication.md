@@ -391,8 +391,9 @@ retries 5 s later. R6 adds `Digest`, `ReadBucket` and `refill_required`; R7 adds
     that base, so it stays as long as the base does.
 
   Dominated entries go at once through normalization (section 4).
-- **Eviction.** A machine missing from the directory for more than 24 h leaves the horizon and the CDC retention. If it
-  returns, it refills (section 10). A down region therefore holds tombstones and CDC for at most 24 h.
+- **Eviction.** A machine missing from the directory, and silent, for more than 24 h leaves the horizon. A machine
+  silent for 24 h leaves the CDC retention (section 7). If it returns, it refills (section 10). A down region therefore
+  holds tombstones and CDC for at most 24 h; a region only cut off holds tombstones until the cut heals.
 - **Feed retention.** `_tb_feed` rows older than 7 days are deleted and `_tb_feed_floor` advances. Change groups leave
   `turso_cdc` as in section 7.
 
@@ -747,45 +748,98 @@ ts-dotnet until R12 makes ts-auth lattice-native.
   tombstones, a machine away past the horizon must delete its file and copy from a peer (section 10), or it would bring
   collected deletions back. Per-database readiness during a refill is not built either.
 
-**R7 as built** (2026-10-12; no storage format change, it uses `_tb_peers.applied/stable` and `_tb_state_dead`):
+**R7 as built** (2026-10-13, R7-FIX; no schema or `StorageFormat` change: it uses `_tb_peers` and `_tb_state_dead`):
 
-- **Frontiers.** For a database whose groups a peer has all acknowledged, the sender sends `Frontier(hlc)` (at most every
-  5 s), with hlc taken before the read that found nothing to send. The receiver raises `applied[origin]` there and answers
-  with its `StableReport`. Acks of batches carry `stable` too. Idle origins therefore advance stable stamps.
-- **Stable and horizon.** Stable = min(`applied` over origins heard from in the last 24 h, own clock). Horizon =
-  min(own stable, peers' reported stable) − 60 s, over the peers heard from in the last 24 h; a registered peer that never
-  reported holds it at 0. A peer counts as gone (24 h) only once this process has itself been up 24 h
-  (`LocalReplica.GoneBefore`), so a machine back after a long absence never mistakes its own silence for its peers'. The
-  same boundary governs CDC retention.
-- **Collection.** With retention (every 5 s per database a peer stream reached): up to 1024 `_tb_state` rows with
-  `live = 0` whose decoded entries all lie below the horizon are deleted.
-- **No resurrection.** A refill now copies: the sender's horizon travels in `Refill`, and the refilled machine forgets
-  every local state of a repaired bucket that the sender lacks and that lies wholly below that horizon (it was collected
-  there). A machine back after the horizon passed thus drops a document others deleted and collected, instead of keeping
-  it or bringing it back. Rounds need two consecutive differing rounds (60 s apart), while the refill runs at once on
-  reconnect, so peers do not pull the stale copy first. A receiver-side "drop repairs below my horizon that I lack" rule
-  was tried and removed: it cannot tell a collected state from a lost apply (the R6 repair scenario).
-- **Stale writes** (a machine's own writes that stayed queued in its CDC while it was away). Conflicts resolve by last
-  writer wins on the **original** versions; nothing is re-stamped to win. Peers may have collected a newer deletion
-  meanwhile, and its tombstone is gone, so a stale edit joined into nothing would bring the document back. The sender
-  marks a group committed 24 h or more before it is read as `stale` (a peer can only have collected a newer deletion
-  after evicting the sender, which takes 24 h of silence) and ships each document's whole state as of that commit
-  instead of the delta. A receiver that lacks the document drops the state when it proves the receiver once held it: an
-  entry minted there, or one at or below what it applied from that entry's origin. Its state then went only through a
-  collected deletion, which is newer, so the edit loses to it. A state of entries the receiver never saw (a document
-  created during the absence) is joined as usual. Where the receiver still holds the document, the join decides as
-  always. The returning machine's copying refill drops its own copy for the same reason.
-  `A_stale_queued_edit_of_a_document_deleted_and_collected_meanwhile_loses_to_the_deletion_everywhere` covers it: it
-  fails on the commit before this rule, and passes with it.
-- **Open product decisions:**
-  - A stale write that lost to a collected deletion is dropped without a trace beyond the convergence itself; there is
-    no conflict record or notice to the writer. A conflict log would be a new table (a storage format change).
-  - The 24 h mark is the eviction period. A stale write that only reaches peers after more than 24 h but finds the
-    document still present is merged normally.
-  - A receiver whose own copy was lost (a lost apply) is indistinguishable from one that collected a deletion. A stale
-    state of such a document is dropped there, and anti-entropy brings the document back from the peers that hold it.
-- Not in R7: collection of tombstoned fields and removed set dots inside live documents (section 11), GC of databases
-  without peers (no stream reaches them, so nothing triggers collection), and feed retention (R8).
+- **Frontiers.** For a database whose groups a peer has all acknowledged, the sender sends `Frontier(hlc)` at most every
+  30 s, and at once after a (re)connect. hlc is taken before the read that found nothing to send. The receiver raises
+  `applied[origin]` there and answers with its `StableReport`. Acks of batches carry `stable` too. Idle origins therefore
+  advance stable stamps. Each idle (database, peer) pair costs one small write on each machine per frontier.
+- **Eviction** (section 11). A peer is evicted when two things hold, as this process saw them:
+  - it has been silent for 24 h (`_tb_peers.seen`);
+  - no machine that could be it has been in the machine directory for 24 h.
+
+  The receiver learns which machine streams as which replica id from each stream's `Hello` and `Welcome`. A listed
+  machine whose replica id is not known yet could be any of them. A process up less than 24 h evicts nobody. A region
+  that keeps running behind a partition stays listed, so it holds the horizon however long the cut lasts.
+- **Stable and horizon.**
+  - Stable = min(`applied` over origins not evicted, own clock).
+  - Horizon = min(own stable, peers' reported stable over peers not evicted) − 60 s.
+  - A registered peer that never reported holds the horizon at 0.
+  - CDC retention keeps R3's rule: a peer silent for 24 h, or 1 GiB behind, stops holding rows, with the same 24 h uptime
+    guard.
+- **Collection.** It runs with retention, every 5 s per database a peer stream reached. Each pass deletes up to 1024
+  `_tb_state` rows with `live = 0` whose decoded entries all lie below the horizon. The **collection watermark** is the
+  highest horizon at which this file dropped states, by collection or by a refill's copy. It is kept in `_tb_peers` row
+  `node = 0`, in its `applied` column. No replica id is 0, and that row's `acked = long.MaxValue`, so retention and floors
+  ignore it.
+- **No resurrection: the receiver judges.** Below its watermark, a machine no longer knows which deletions it dropped. So a
+  replicated state for a document it holds no state of, carrying entries below that watermark, joins only in these cases:
+  - **Never held.** No entry of it was minted here or applied here. That is a document this machine never saw, such as a
+    stale create, so it joins.
+  - **Held, but lost.** This machine held a version at or above its watermark. A collection could not have taken that
+    version, so the document was lost here, and it joins.
+  - **Held and collected.** Only its entries at or above the watermark join: the collected deletion dominates the rest.
+    Under the stale-writes policy, entries that were never received here lose too.
+
+  The check is `JoinReplicatedAsync`. Stream groups and anti-entropy repairs both go through it, so neither a returning
+  machine nor a restored copy can pull a collected deletion back.
+
+  A plain delta cannot always be judged:
+  - If it is stamped below the watermark, for a missing document, and was applied here before, it is a replay and is
+    dropped.
+  - If it was never applied here, it raises `StaleDeltaException`. The receiver answers `Ack{refused, stale}`, and the
+    sender ships the batch again at once as whole states (`Group.stale`), as of each commit, for the rest of that
+    connection.
+
+  Whether a group is stale is therefore the receiver's decision, from its watermark and its applied stamps. The group's
+  age plays no part.
+- **Copying refill.** `Refill` carries two things from the sender:
+  - its watermark (`collected_below`);
+  - its applied vector, with its own clock standing in for its own entries.
+
+  The receiver joins every differing bucket (guarded as above), 64 buckets per `ReadBucket` call, so it holds one call's
+  keys at a time. It then forgets each local state of those buckets that the sender lacks, that lies wholly below the
+  sender's watermark, and of which the sender applied an entry. Such a state was collected there, and the deletion wins.
+
+  Two kinds of state stay:
+  - a state the sender never held, made where it could not see it. This is what keeps writes made on both sides of a
+    partition alive;
+  - a state above the sender's watermark, which the sender lost rather than collected. Anti-entropy gives it back.
+
+  A forgotten live document gets a deletion row in `_tb_feed`, as this machine's own event at a fresh stamp. Afterwards the
+  receiver raises its `applied` rows to the sender's vector and its watermark to the sender's (section 10, step 4).
+- **Restored copies.**
+  - Every `Batch` and `Frontier` carries `expect`: the receiver's highest stable stamp the sender recorded.
+  - On a stream's first batch or frontier of a database, the receiver checks that it applied at least that much from the
+    sender's machine (any epoch).
+  - A file restored from an older copy fails the check, applies nothing, and answers `refill`. The sender's cursor goes
+    back to 0, so the receiver refills, and the copy forgets what was collected since the copy was made.
+- **Open product decisions.**
+  - **Stale writes lose silently.** A write that loses to a collected deletion is dropped with no trace beyond the
+    convergence itself: no conflict record, and no notice to the writer. A conflict log would be a new table, which is a
+    storage format change.
+  - **Collected deletions win outright.** The tie-break between a collected deletion and an entry this machine never
+    received is "the deletion wins". After collection, nobody can tell that entry's order against the deletion. One case
+    follows: a write made *after* a deletion, on a machine that then stayed away past every peer's horizon before shipping
+    it, loses as well.
+  - **Old lost applies stay lost on one side.** A document a machine lost behind the streams' back (rows deleted while its
+    `applied` stayed) is indistinguishable from a collected one once it lies below that machine's watermark. Anti-entropy
+    does not give such a document back there, though the peers keep it. Restores are not affected: they roll `applied`
+    back too.
+- **Residual risks.**
+  - **A brief run between directory samples.** Eviction trusts the 5 s directory samples. A machine could run for less
+    than a sample, without any contact, write, and stop. The receiver's watermark rule still keeps that write from bringing
+    back a deletion. It does not keep a document that a third machine deleted from coming back where this machine never
+    held it. This was found by reasoning, not by a probe.
+  - **A rerun after restore.** The `expect` check catches a restore only once the restored machine has reported a stable
+    stamp at or above what it lost.
+  - **Idle cost.** The idle cost of frontiers has not been benchmarked on Fly (shared-cpu, 512 MB).
+- **Not in R7:**
+  - collection of tombstoned fields and removed set dots inside live documents (section 11);
+  - GC of databases without peers (no stream reaches them, so nothing triggers collection);
+  - per-database readiness during a refill;
+  - `_tb_peers` rows of a region dropped from a database's placement. That region stays listed, so it holds that database's
+    horizon until the live move (section 16) removes its rows.
 
 **Contract for R3** (`Features/Replication/ChangeGroups.cs`). R4a registers `NoChangeGroupSource`. R3 replaces that
 registration with its tailer and implements `IChangeGroupSource`:

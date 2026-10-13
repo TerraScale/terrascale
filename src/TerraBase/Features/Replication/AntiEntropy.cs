@@ -30,6 +30,9 @@ internal sealed class AntiEntropy : BackgroundService
     private const int DigestBytes = 4096 * 16;
     private const int MaxPageStates = ChangeGroups.MaxDeltas;
 
+    // Buckets read per call: a refill holds one call's keys of the peer at a time.
+    private const int BucketsPerRead = 64;
+
     private readonly IMembership _membership;
     private readonly IChangeGroupSource _source;
     private readonly IReplicaStates _states;
@@ -89,19 +92,25 @@ internal sealed class AntiEntropy : BackgroundService
     /// Joins every bucket of <paramref name="database"/> that differs from the machine named <paramref name="machine"/>.
     /// Returns the documents changed, or null when that machine is not listed or this one does not hold the database.
     /// </summary>
-    internal async Task<int?> RefillAsync(TenantContext database, string machine, Hlc horizon, CancellationToken cancellationToken)
+    internal async Task<int?> RefillAsync(TenantContext database, string machine, RefillBasis basis, CancellationToken cancellationToken)
     {
         var peer = Peers(await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(member => member.Name == machine);
-        return peer is null ? null : await CompareAsync(database, peer, force: true, cancellationToken, horizon).ConfigureAwait(false);
+        if (peer is null || await CompareAsync(database, peer, force: true, cancellationToken, basis).ConfigureAwait(false) is not { } changed)
+        {
+            return null;
+        }
+
+        await _states.AdoptAsync(database, basis, cancellationToken).ConfigureAwait(false);
+        return changed;
     }
 
     private List<ClusterMember> Peers(ClusterView view) =>
         [.. view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Where(member => member.Name != _membership.Self.Name && member.PeerAddress.Length > 0)];
 
     // Compares digests with the peer and joins the buckets to repair; null when this machine does not hold the database.
-    // With a horizon (a refill), it copies: a local state of a repaired bucket that the peer lacks and that lies wholly below
-    // the peer's horizon was collected there (section 11), so it goes here too instead of coming back by a later round.
-    private async Task<int?> CompareAsync(TenantContext database, ClusterMember peer, bool force, CancellationToken cancellationToken, Hlc? horizon = null)
+    // With the peer's basis (a refill), it copies: a local state of a repaired bucket that the peer collected (section 11)
+    // goes here too instead of coming back by a later round.
+    private async Task<int?> CompareAsync(TenantContext database, ClusterMember peer, bool force, CancellationToken cancellationToken, RefillBasis? basis = null)
     {
         if (await _states.DigestAsync(database, cancellationToken).ConfigureAwait(false) is not { } ours)
         {
@@ -132,35 +141,51 @@ internal sealed class AntiEntropy : BackgroundService
             return 0;
         }
 
-        var request = new BucketRequest { Database = ChangeGroups.Wire(database) };
-        request.Buckets.AddRange(repair.Order().Select(bucket => (uint)bucket));
-        using var call = client.ReadBucket(request, deadline: _time.GetUtcNow().UtcDateTime + ReadTimeout, cancellationToken: cancellationToken);
         var changed = 0;
-        var theirKeys = new HashSet<(string Collection, string Id)>();
-        while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
+        foreach (var buckets in repair.Order().Chunk(BucketsPerRead))
         {
-            var states = Decode(call.ResponseStream.Current);
-            theirKeys.UnionWith(states.Select(state => (state.Collection, state.Id)));
-            changed += await _sink.RepairAsync(database, states, cancellationToken).ConfigureAwait(false) ?? 0;
-        }
-
-        if (horizon is { } collected)
-        {
-            // shortcut: keeps the peer's keys of every repaired bucket in memory; page the comparison per bucket for databases of millions of documents.
-            List<(string Collection, string Id)> lacking = [];
-            BucketCursor? after = null;
-            do
+            var request = new BucketRequest { Database = ChangeGroups.Wire(database) };
+            request.Buckets.AddRange(buckets.Select(bucket => (uint)bucket));
+            using var call = client.ReadBucket(request, deadline: _time.GetUtcNow().UtcDateTime + ReadTimeout, cancellationToken: cancellationToken);
+            var keys = new HashSet<(string Collection, string Id)>();
+            while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
             {
-                (var local, after) = await _states.ReadBucketsAsync(database, [.. repair], after, MaxPageStates, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
-                lacking.AddRange(local.Where(state => !theirKeys.Contains((state.Collection, state.Id)) && state.State.MaxStamp.Value < collected.Value)
-                    .Select(state => (state.Collection, state.Id)));
+                var states = Decode(call.ResponseStream.Current);
+                if (basis is not null)
+                {
+                    keys.UnionWith(states.Select(state => (state.Collection, state.Id)));
+                }
+
+                changed += await _sink.RepairAsync(database, states, cancellationToken).ConfigureAwait(false) ?? 0;
             }
-            while (after is not null);
-            changed += await _states.ForgetAsync(database, lacking, collected, cancellationToken).ConfigureAwait(false);
+
+            if (basis is not null)
+            {
+                changed += await ForgetAsync(database, buckets, keys, basis, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         _repairs.Add(changed, new KeyValuePair<string, object?>("peer_region", peer.Region));
         return changed;
+    }
+
+    // A refill's copy: of this machine's states in `buckets`, the ones the peer lacks (`theirs` holds its keys there) and
+    // collected go, page by page.
+    private async Task<int> ForgetAsync(
+        TenantContext database, int[] buckets, HashSet<(string Collection, string Id)> theirs, RefillBasis basis, CancellationToken cancellationToken)
+    {
+        var forgotten = 0;
+        BucketCursor? after = null;
+        do
+        {
+            (var local, after) = await _states.ReadBucketsAsync(database, buckets, after, MaxPageStates, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
+            List<(string Collection, string Id)> lacking = [.. local
+                .Where(state => !theirs.Contains((state.Collection, state.Id)) && state.State.MaxStamp.Value < basis.CollectedBelow.Value)
+                .Select(state => (state.Collection, state.Id))];
+            forgotten += await _states.ForgetAsync(database, lacking, basis, cancellationToken).ConfigureAwait(false);
+        }
+        while (after is not null);
+        return forgotten;
     }
 
     /// <summary>The LZ4 envelope of a page of states.</summary>

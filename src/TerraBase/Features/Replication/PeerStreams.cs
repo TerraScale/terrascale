@@ -23,7 +23,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RefillTimeout = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan FrontierEvery = TimeSpan.FromSeconds(5);
+    // Each frontier costs a write on both machines per idle database; the horizon keeps a 60 s margin anyway.
+    private static readonly TimeSpan FrontierEvery = TimeSpan.FromSeconds(30);
     private const int MaxDetail = 128;
 
     private readonly IMembership _membership;
@@ -94,6 +95,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
             {
                 var view = await _membership.RefreshAsync(stoppingToken).ConfigureAwait(false);
                 var self = _membership.Self.Name;
+                // Every listed machine, reachable or not: garbage collection evicts only machines missing from the list (section 11).
+                _self.Presence.Listed(view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Select(member => member.Name).Where(name => name != self),
+                    _self.Clock.Tick().Milliseconds);
                 var peers = view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere)
                     .Where(member => member.Name != self && member.PeerAddress.Length > 0)
                     .ToDictionary(member => member.Name, StringComparer.Ordinal);
@@ -179,12 +183,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
         }
 
         var peer = new ReplicaId(call.ResponseStream.Current.Welcome.Node);
+        _self.Presence.Heard(link.Peer.Name, peer);
         lock (link.Gate)
         {
             link.Connected = true;
             foreach (var cursor in link.Cursors.Values)
             {
-                (cursor.Acked, cursor.InFlight, cursor.InFlightGroups) = (null, null, 0);
+                // A (re)connected peer gets a frontier at once: it may have restarted, and its stable stamp waits on it.
+                (cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.Expect, cursor.Stale, cursor.FrontierAt) = (null, null, 0, null, false, 0);
             }
         }
 
@@ -228,7 +234,11 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                     throw new IOException("the peer ended the stream");
                 }
 
-                if (call.ResponseStream.Current.Stable is { } report)
+                if (call.ResponseStream.Current.Stable is { Refill: true } restored)
+                {
+                    await RefillAsync(link, ChangeGroups.Tenant(restored.Database), peer, cancellationToken).ConfigureAwait(false);
+                }
+                else if (call.ResponseStream.Current.Stable is { } report)
                 {
                     // The answer to a frontier: the peer is there, and the rows up to the quiet point read with the frontier
                     // hold nothing of this machine's to ship (received groups, bookkeeping), so it counts as acknowledged
@@ -279,9 +289,10 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
             }
 
             var acked = cursor.Acked ?? await _source.AckedAsync(database, peer, cancellationToken).ConfigureAwait(false);
+            var expect = cursor.Expect ?? (await _states.ReportedStableAsync(database, peer, cancellationToken).ConfigureAwait(false)).Value;
             lock (link.Gate)
             {
-                cursor.Acked = acked;
+                (cursor.Acked, cursor.Expect) = (acked, expect);
             }
 
             if (cursor.InFlight is not null || _time.GetTimestamp() < cursor.RetryAt)
@@ -294,11 +305,10 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                 // Retention cut groups after the peer's ack (it was silent or far behind, or it is new): it refills from this
                 // machine, then the stream goes on from the newest change.
                 var head = await _source.HeadAsync(database, cancellationToken).ConfigureAwait(false);
-                var horizon = await _states.HorizonAsync(database, cancellationToken).ConfigureAwait(false);
-                await stream.WriteAsync(new PushFrame
-                {
-                    Refill = new Refill { Database = ChangeGroups.Wire(database), ChangeId = checked((ulong)head), Horizon = horizon.Value },
-                }, cancellationToken).ConfigureAwait(false);
+                var basis = await _states.RefillBasisAsync(database, cancellationToken).ConfigureAwait(false) ?? new RefillBasis(default, new Dictionary<ReplicaId, Hlc>());
+                var refill = new Refill { Database = ChangeGroups.Wire(database), ChangeId = checked((ulong)head), CollectedBelow = basis.CollectedBelow.Value };
+                refill.Applied.AddRange(basis.Applied.Select(entry => new Applied { Node = entry.Key.Value, Stamp = entry.Value.Value }));
+                await stream.WriteAsync(new PushFrame { Refill = refill }, cancellationToken).ConfigureAwait(false);
                 lock (link.Gate)
                 {
                     cursor.BehindSince ??= _time.GetTimestamp();
@@ -311,13 +321,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
 
             // Taken before the read: when it finds nothing to send, the peer holds every event of this machine stamped below it.
             var frontier = _self.Clock.Tick();
-            var groups = await _source.ReadAsync(database, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
+            var groups = await _source.ReadAsync(database, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cursor.Stale, cancellationToken).ConfigureAwait(false);
             if (groups.Count == 0)
             {
                 if (_time.GetElapsedTime(cursor.FrontierAt) >= FrontierEvery || cursor.FrontierAt == 0)
                 {
                     var quiet = await _source.QuietAsync(database, acked, cancellationToken).ConfigureAwait(false);
-                    await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database), Hlc = frontier.Value } }, cancellationToken)
+                    await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database), Hlc = frontier.Value, Expect = expect } }, cancellationToken)
                         .ConfigureAwait(false);
                     lock (link.Gate)
                     {
@@ -337,7 +347,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
             var last = groups[^1].ChangeId;
             await stream.WriteAsync(new PushFrame
             {
-                Batch = new Batch { Database = ChangeGroups.Wire(database), LastChangeId = checked((ulong)last), Groups = ChangeGroups.Encode(groups) },
+                Batch = new Batch { Database = ChangeGroups.Wire(database), LastChangeId = checked((ulong)last), Groups = ChangeGroups.Encode(groups), Expect = expect },
             }, cancellationToken).ConfigureAwait(false);
             lock (link.Gate)
             {
@@ -364,17 +374,47 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
             }
 
             (cursor.InFlight, cursor.InFlightGroups, cursor.Refilling) = (null, 0, false);
-            if (ack.Refused)
+            if (ack is { Refused: true, Stale: true })
+            {
+                // The peer may have collected a newer deletion of a document in the batch: it gets whole states, at once.
+                (cursor.Stale, cursor.RetryAt) = (true, 0);
+                return;
+            }
+
+            if (ack is { Refused: true, Refill: false })
             {
                 // The peer does not hold the database yet (its catalog lags): try again later.
                 cursor.RetryAt = _time.GetTimestamp() + (long)(Retry.TotalSeconds * _time.TimestampFrequency);
                 return;
             }
 
-            cursor.Acked = inFlight;
+            if (!ack.Refused)
+            {
+                cursor.Acked = inFlight;
+            }
+        }
+
+        if (ack.Refill)
+        {
+            await RefillAsync(link, database, peer, cancellationToken).ConfigureAwait(false);
+            return;
         }
 
         await _source.AckAsync(database, peer, (long)ack.ChangeId, new Hlc(ack.Stable), cancellationToken).ConfigureAwait(false);
+    }
+
+    // The peer lost what it acknowledged (its file is an older copy): its cursor goes back to 0, so it refills from here (or
+    // gets every group again while this machine still holds them all) before anything else applies there.
+    private async ValueTask RefillAsync(Link link, TenantContext database, ReplicaId peer, CancellationToken cancellationToken)
+    {
+        await _source.AckAsync(database, peer, 0, default, cancellationToken).ConfigureAwait(false);
+        lock (link.Gate)
+        {
+            if (link.Cursors.TryGetValue(database, out var cursor))
+            {
+                (cursor.Acked, cursor.Expect, cursor.RetryAt) = (0, 0, 0);
+            }
+        }
     }
 
     // Whether the database's placement includes the peer's region, read again every heartbeat.
@@ -449,6 +489,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
         public long FrontierAt { get; set; }
 
         public long FrontierQuiet { get; set; }
+
+        // The peer's highest stable stamp recorded here, sent as Batch.expect (null until read on this connection; 0 after a
+        // reset); and whether the peer asked for whole states (Ack.stale) on this connection.
+        public ulong? Expect { get; set; }
+
+        public bool Stale { get; set; }
 
         public int InFlightGroups { get; set; }
 
