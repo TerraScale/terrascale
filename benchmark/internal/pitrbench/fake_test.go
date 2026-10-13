@@ -128,6 +128,10 @@ func (f *fakeDB) live(name string) []string {
 }
 
 func (f *fakeDB) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Tests change these between or during requests, so read them under the same lock.
+	f.mu.Lock()
+	peers, noBackup, window, restoreStatus, restoreBody := f.peers, f.noBackup, f.window, f.restoreStatus, f.restoreBody
+	f.mu.Unlock()
 	switch {
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/transactions"):
 		f.transaction(w, r)
@@ -137,7 +141,7 @@ func (f *fakeDB) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 		fmt.Fprint(w, `{}`)
 	case r.Method == http.MethodGet && r.URL.Path == "/replication":
-		if f.peers {
+		if peers {
 			fmt.Fprint(w, `{"initialized":true,"peers":[{"region":"sjc"}]}`)
 		} else {
 			fmt.Fprint(w, `{"initialized":true,"peers":[]}`)
@@ -164,12 +168,12 @@ func (f *fakeDB) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "next_cursor": nil})
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/query"):
 		f.query(w, r)
-	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/point-in-time") && f.window != "":
-		fmt.Fprint(w, f.window)
-	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/point-in-time/restore") && f.restoreStatus != 0:
-		w.WriteHeader(f.restoreStatus)
-		fmt.Fprint(w, f.restoreBody)
-	case r.Method == http.MethodGet && r.URL.Path == "/v1/backup" && f.noBackup:
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/point-in-time") && window != "":
+		fmt.Fprint(w, window)
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/point-in-time/restore") && restoreStatus != 0:
+		w.WriteHeader(restoreStatus)
+		fmt.Fprint(w, restoreBody)
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/backup" && noBackup:
 		fmt.Fprint(w, `{"shipping":false,"files":[]}`)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/backup":
 		f.mu.Lock()
