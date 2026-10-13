@@ -393,8 +393,17 @@ Open slow-failure issues: #147 and #153–#161. Slow unverifiable for the freeze
 - #188 (MongoDB Extended JSON adapter, head `402476b9`) → `be9ef3f0`;
 - #172 (query-value regression, head `6b780535`) → main **`4561bb7a`**.
 
-#172 was on the "outside the list, not before freeze" list; the user merged it themselves. Push runs 38391908036
-(`be9ef3f0`) and 38391935489 (`4561bb7a`) must be green before the next train merge.
+#172 was on the "outside the list, not before freeze" list; the user merged it themselves. Push runs:
+- **38391935489 (`4561bb7a`, HEAD): Fast green**; deploy and preview skipped.
+- **38391908036 (`be9ef3f0`): Fast RED, 3 of 1438.** All three are backup-plan tests that timed out
+  (`TaskCanceledException`):
+  - `Final_customer_io_waits_until_platform_wal_and_a_cached_detachment_are_restorable(True)` (BackupShutdownTests.cs:719);
+  - `Oversized_multibyte_entries_still_consume_raw_snapshot_and_WAL_plan_budgets(True)`;
+  - `Unusable_customer_snapshot_and_segment_entries_consume_the_paginated_plan_budget(False)`.
+
+  `b9a68bb9`..`be9ef3f0` changes only `tools/import-adapters/**`, and the TerraBase code on `b9a68bb9` and `4561bb7a`
+  passed the same Fast suite. The failure is a load flake in TerraBase Fast, not a regression; no issue exists for it.
+  A required-suite flake can fail any train PR's `test` check.
 
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
