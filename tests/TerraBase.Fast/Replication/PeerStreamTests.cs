@@ -455,10 +455,11 @@ public sealed class PeerStreamTests
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
     }
 
-    // Decision 0013, placement: on a machine of a cell a database is placed in at least two regions. Created without
-    // replica regions it is placed in every other serving region; a placement of one region is refused on create and update.
+    // Decision 0013a, placement: on a machine of a cell a new database is placed in at least two regions. Created without
+    // replica regions it is placed in every other serving region, and created in one region alone it is refused. An update
+    // may still remove every replica region (the database then takes no writes until one is added back, and can be deleted).
     [Test]
-    public async Task In_a_cell_a_database_is_placed_in_every_other_serving_region_and_never_in_one_region_alone()
+    public async Task In_a_cell_a_new_database_is_placed_in_every_other_serving_region_and_never_created_in_one_region_alone()
     {
         await using var cluster = await Cluster.StartAsync("gru", "sjc", "fra");
         var gru = cluster["gru"];
@@ -474,8 +475,7 @@ public sealed class PeerStreamTests
         await Assert.That(body).Contains("placement_needs_two_regions");
 
         (status, body) = await gru.CommitAsync(new { op = "set_database_regions", organization = database.OrganizationId, project = database.ProjectId, database = database.DatabaseId, replica_regions = Array.Empty<string>() });
-        await Assert.That(status).IsEqualTo(HttpStatusCode.BadRequest).Because(body);
-        await Assert.That(body).Contains("placement_needs_two_regions");
+        await Assert.That(status).IsEqualTo(HttpStatusCode.OK).Because(body);
     }
 
     // While no other region serves, a machine of a cell cannot place a new database in two regions by default: it fails

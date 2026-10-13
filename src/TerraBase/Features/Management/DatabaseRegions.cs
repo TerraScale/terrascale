@@ -35,11 +35,12 @@ public static class DatabaseRegions
 
     /// <summary>
     /// Why <paramref name="replicas"/> cannot be the replica regions of a database at home in this region, or the accepted
-    /// regions. Where writes are confirmed in another region (<paramref name="confirms"/>, decision 0013) a database names one.
+    /// regions. A new database of a cell (<paramref name="created"/> where writes are confirmed in another region, decision
+    /// 0013a) names one; an update may remove them all, and the database then takes no writes until one is added back.
     /// </summary>
     // Regions come and go with their machines, so any well-formed region is accepted; one without members replicates nothing.
-    internal static Valid<IReadOnlyList<string>> Check(string home, IReadOnlyList<string> replicas, bool confirms) =>
-        replicas.Count == 0 && confirms ? TwoRegions
+    internal static Valid<IReadOnlyList<string>> Check(string home, IReadOnlyList<string> replicas, bool created) =>
+        replicas.Count == 0 && created ? TwoRegions
         : replicas.Count > MaxReplicas ? new Validation("replicaRegions holds at most 8 regions")
         : !replicas.All(TerraBaseOptions.IsRegion) ? new Validation("replicaRegions must name regions")
         : replicas.Distinct(StringComparer.Ordinal).Count() != replicas.Count ? new Validation("replicaRegions must not repeat a region")

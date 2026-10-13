@@ -643,7 +643,7 @@ internal sealed partial class EngineManagementService
 
             case "set_database_regions":
                 {
-                    if (DatabaseRegions.Check(options.Region, op.ReplicaRegions!, durability.Value.Confirms) is Validation invalid)
+                    if (DatabaseRegions.Check(options.Region, op.ReplicaRegions!, created: false) is Validation invalid)
                     {
                         return new OperationFailed(invalid);
                     }

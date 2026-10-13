@@ -1,14 +1,13 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
 
 /// <summary><c>PATCH …/databases/{database}</c>: sets a database's replica regions (docs/cross-region.md).</summary>
-public sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options, IRemoteDurability durability) : Endpoint<DatabaseRegionsRequest, IResult>
+public sealed class UpdateManagedDatabaseEndpoint(IManagementService management, TerraBaseOptions options) : Endpoint<DatabaseRegionsRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -55,7 +54,7 @@ public sealed class UpdateManagedDatabaseEndpoint(IManagementService management,
         Valid<IReadOnlyList<string>> checkedRegions = request.Name is not null ? new Validation("a database cannot be renamed")
             : request.HomeRegion is { } requested && requested != home ? new Validation("homeRegion cannot change")
             : request.ReplicaRegions is not { } replicas ? new Validation("replicaRegions is required")
-            : DatabaseRegions.Check(home, replicas, durability.Confirms);
+            : DatabaseRegions.Check(home, replicas, created: false);
         return checkedRegions switch
         {
             Validation error => ErrorResponse.From(error),
