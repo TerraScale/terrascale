@@ -5,6 +5,17 @@ namespace TerraBase.E2E;
 /// <summary>Runs flyctl for a pinned disposable app's run: its read-only target checks and its machine stops and starts.</summary>
 internal static class Flyctl
 {
+    /// <summary>
+    /// Starts a machine that <c>machine stop</c> took down. Fly refuses a start while the machine is still stopping, so this
+    /// first waits, at most two minutes, for it to reach <c>stopped</c>. <paramref name="run"/> replaces flyctl in tests.
+    /// </summary>
+    public static async Task StartStoppedAsync(string app, string machine, Func<string[], Task<string>>? run = null)
+    {
+        run ??= RunAsync;
+        _ = await run(["machine", "wait", machine, "--app", app, "--state", "stopped", "--wait-timeout", "2m"]);
+        _ = await run(["machine", "start", machine, "--app", app]);
+    }
+
     public static async Task<string> RunAsync(params string[] arguments)
     {
         var start = new ProcessStartInfo("flyctl") { RedirectStandardOutput = true, RedirectStandardError = true };
