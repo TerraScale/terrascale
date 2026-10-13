@@ -21,24 +21,33 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardE2EFixture fixtur
         using var producer = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
         var setup = await PrepareAsync(browser, producer);
+        var reservations = Organization(await ObserveAsync(producer), setup.Organization).GetProperty("InvitationReservations").Clone();
 
         await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
-        await BillingStateOnlyAsync(await ObserveAsync(producer), setup.Organization);
+        await BillingStateOnlyAsync(await ObserveAsync(producer), setup.Organization, setup.Projects, reservations);
         await BillAsync(await RunAsync(scenario, browser, producer, Report(setup.Organization)), setup.Month);
         var observed = await ObserveAsync(producer);
-        await BillingStateOnlyAsync(observed, setup.Organization);
+        await BillingStateOnlyAsync(observed, setup.Organization, setup.Projects, reservations);
         await CheckAsync(Alerts(observed, setup.Organization).Length == 1,
             "The live owner receives the cap alert without persisting the canonical member roster");
     }
 
-    private static async Task BillingStateOnlyAsync(JsonElement observed, string organization)
+    private static async Task BillingStateOnlyAsync(JsonElement observed, string organization, string[] projects, JsonElement reservations)
     {
         var stored = Organization(observed, organization);
-        await CheckAsync(!stored.TryGetProperty("Members", out var members) ||
-            members.ValueKind == JsonValueKind.Object && !members.EnumerateObject().Any(),
-            "Configuration and alert writes retain no ts-auth member identities, emails or roles");
-        await CheckAsync(!stored.TryGetProperty("Name", out var name) || name.GetString() == "",
-            "The live organization name authorizes the command without entering dashboard billing state");
+        await CheckAsync(new[] { "Name", "Slug", "OwnerUserId", "Members", "PendingOwnerUserId", "PendingOwnerExpiresAt", "Invitations", "CreatedAt" }
+            .All(field => !stored.TryGetProperty(field, out _)),
+            "Configuration and alert writes retain no ts-auth organization or member identities");
+        await CheckAsync(JsonElement.DeepEquals(stored.GetProperty("InvitationReservations"), reservations),
+            "Configuration and alert writes preserve existing invitation-capacity reservations");
+        var settings = stored.GetProperty("Projects").EnumerateObject().ToArray();
+        await CheckAsync(settings.Select(project => project.Name).Order(StringComparer.Ordinal)
+            .SequenceEqual(projects.Order(StringComparer.Ordinal)),
+            "Billing retains dashboard settings keyed by the current canonical project IDs");
+        await CheckAsync(settings.All(project => project.Value.GetProperty("Region").GetString() == "GRU" &&
+            !project.Value.TryGetProperty("Name", out _) && !project.Value.TryGetProperty("OrganizationId", out _) &&
+            !project.Value.TryGetProperty("Slug", out _) && !project.Value.TryGetProperty("CreatedAt", out _)),
+            "Billing preserves project placement settings without storing ts-auth project identities");
         await PolicyAsync(stored);
         await NoStripeAsync(observed);
     }

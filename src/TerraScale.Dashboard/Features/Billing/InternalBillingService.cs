@@ -99,18 +99,8 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
         var organization = target.Organization;
         if (organization.InternalBilling is null) throw new AccountAccessException("Organization has no internal billing policy.", 422);
         await ValidateClaimsAsync(state, organization, cancellationToken);
-        // This metering projection is transient. Its project list comes from ts-auth,
-        // while only the separate dashboard billing record can be persisted.
-        var metering = new OrganizationRecord
-        {
-            Id = organization.Id,
-            PlanId = organization.PlanId,
-            SpendCapCents = organization.SpendCapCents,
-            InternalBilling = organization.InternalBilling,
-            Projects = target.Authority.Projects
-        };
-        var selection = new UsageSelection(context with { Organization = metering }, "7d", "", false);
-        return (organization, Estimate(metering, await measurements.ReadAsync(selection, cancellationToken), time.GetUtcNow()));
+        var selection = new UsageSelection(context with { Organization = organization }, "7d", "", false);
+        return (organization, Estimate(organization, await measurements.ReadAsync(selection, cancellationToken), time.GetUtcNow()));
     }
 
     public static InternalBill Estimate(OrganizationRecord organization, UsageMeasurements measurements, DateTimeOffset now)
@@ -382,6 +372,8 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             throw new IOException("Internal organization owner identity is invalid.");
         // I3 keeps OwnerUserId transient; each persisted billing alert owns its owner reference.
         target.Organization.OwnerUserId = owners[0].UserId;
+        // I3's hydrated map preserves settings for current projects; canonical project fields are JsonIgnore.
+        target.Organization.Projects = current.Organization!.Projects;
         return (target.Document, target.Organization, current.Organization!);
     }
 
