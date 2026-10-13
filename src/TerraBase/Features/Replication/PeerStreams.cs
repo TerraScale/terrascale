@@ -189,7 +189,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
             link.Connected = true;
             foreach (var cursor in link.Cursors.Values)
             {
-                (cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.Expect, cursor.Stale) = (null, null, 0, null, false);
+                // A (re)connected peer gets a frontier at once: it may have restarted, and its stable stamp waits on it.
+                (cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.Expect, cursor.Stale, cursor.FrontierAt) = (null, null, 0, null, false, 0);
             }
         }
 
