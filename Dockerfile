@@ -53,9 +53,12 @@ FROM build-auth AS test-auth
 RUN make -o restore auth-test-fast CONFIGURATION=Release && touch /passed
 
 FROM restored AS build-terrabase
+# The commit /healthz reports as revision (MSBuild reads it from the environment); the image has no .git.
+ARG TERRABASE_REVISION
 RUN make -o restore fmt-check terrabase-check CONFIGURATION=Release
 
 FROM build-terrabase AS test-terrabase
+ARG TERRABASE_REVISION
 RUN make -o restore terrabase-test-fast CONFIGURATION=Release && touch /passed
 
 # All three areas (BuildKit runs them in parallel): `make docker-test`.

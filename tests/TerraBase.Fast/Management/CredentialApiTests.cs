@@ -71,7 +71,8 @@ public sealed class CredentialApiTests
         var collections = Uri($"/v1/projects/{database.Project}/databases/{database.Name}/collections");
 
         using var before = await data.GetAsync(collections);
-        time.Advance(TimeSpan.FromDays(90));
+        // Move UTC without replaying 90 days of the host's background timers.
+        time.AdjustTime(expires);
         using var after = await data.GetAsync(collections);
         using var past = await api.Server.Client.PostAsJsonAsync(Uri("/admin/api-keys"),
             new { name = "past", scopes = ReadOnly, organizationId = database.Organization, expiresAt = time.GetUtcNow().AddMinutes(-1) });
