@@ -142,7 +142,35 @@ public sealed class NotificationRecord
         (ProjectId == "" || ProjectId == context.Project?.Id);
 }
 
-public sealed record AuditRecord(string Id, string Actor, string Action, string Target, string TargetType, DateTimeOffset OccurredAt, string Source = "dashboard", string? Risk = null);
+public sealed record AuditRecord(string Id, string Actor, string Action, string Target, string TargetType, DateTimeOffset OccurredAt, string Source = "dashboard", string? Risk = null)
+{
+    // The dashboard knows what it records: its own events carry their catalog severity. Other
+    // producers' events keep what they reported, and a missing value stays "Not reported".
+    public string? Risk { get; init; } = Risk ?? (Source == "dashboard" ? DashboardAuditSeverity.ByAction.GetValueOrDefault(Action) : null);
+}
+
+// The one severity map for audit events the dashboard records. A journey checks that
+// every action the dashboard source records appears here.
+public static class DashboardAuditSeverity
+{
+    public static IReadOnlyDictionary<string, string> ByAction { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["organization.renamed"] = "info",
+        ["project.created"] = "info",
+        ["project.renamed"] = "info",
+        ["member.left"] = "info",
+        ["ownership.canceled"] = "info",
+        ["usage.spending_controls_updated"] = "info",
+        ["member.role_changed"] = "warning",
+        ["member.removed"] = "warning",
+        ["ownership.requested"] = "warning",
+        ["project.deleted"] = "warning",
+        ["settings.audit_retention_updated"] = "warning",
+        ["ownership.transferred"] = "critical",
+        ["organization.deletion_requested"] = "critical",
+        ["organization.deleted"] = "critical"
+    };
+}
 
 // A ts-auth invitation as the dashboard shows it; ts-auth stores it and its token.
 public sealed class InvitationRecord
