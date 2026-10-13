@@ -2,7 +2,7 @@
   "auditedSourceSha": "b719878083dffd9441e063bbfaccfa0dffa95abd",
   "baseSha": "b719878083dffd9441e063bbfaccfa0dffa95abd",
   "branch": "audit/payment-webhook-correctness-20261013",
-  "deliveryHead": "Resolve with git rev-parse HEAD; post-commit captures record the exact tested delivery HEAD in ignored per-device JSON.",
+  "deliveryHead": "Resolve with git rev-parse HEAD. Committed PNG evidence was captured at a4670e293fd7d3ccace131682697cf866166d717; final-head checks are recorded separately.",
   "testFilesSha256": {
     "tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/payment-webhook-correctness/PaymentCurrencyEvidenceJourneyTests.cs": "73f30dc16b9d86ae971aea9c4889a8d4166e3cbf1dbf34d7fdf4b52e4d7743a8",
     "tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/payment-webhook-correctness/PaymentWebhookAuditJourneyTests.cs": "4c8214a0f8466549cfb503bc4936b16ddb3f0c131f8652328a66e5228fb4dd25",
@@ -114,8 +114,11 @@
       "mobileKeyboardHorizontalScroll": true,
       "scopedAxeViolations": 0,
       "initialMobileCaptureFailure": "String-form Playwright wait blocked by CSP; corrected to function-form without bypassing application CSP.",
-      "captureHeadMetadata": "test-results/currency-{desktop,mobile}.json",
-      "scope": "Invoice currency display and table accessibility only."
+      "captureHeadMetadata": "screenshots/manifest.json",
+      "scope": "Invoice currency display and table accessibility only.",
+      "testedHeadSha": "a4670e293fd7d3ccace131682697cf866166d717",
+      "rerunForPackaging": false,
+      "rerunRestriction": "Latest command prohibits browser sign-in; existing captures preserved with exact HEAD/hash provenance."
     },
     "proposedPatches": {
       "applicability": "passed",
@@ -133,21 +136,33 @@
   "publication": {
     "pushed": false,
     "prCreated": false,
-    "state": "held_pending_coordinator_serial_CI_slot"
+    "state": "held_while_Mongo_has_active_slot_pending_explicit_coordinator_grant"
   },
   "sourceFilesChanged": [],
   "rawDomainResults": "payment-webhook-audit.trx",
   "screenshots": {
-    "committed": false,
-    "directory": "test-results/",
+    "committed": true,
+    "directory": "screenshots/",
+    "manifest": "screenshots/manifest.json",
+    "captureHeadSha": "a4670e293fd7d3ccace131682697cf866166d717",
+    "totalBytes": 63979,
     "files": [
       "currency-desktop.png",
       "currency-desktop-summary.png",
       "currency-mobile.png",
       "currency-mobile-summary.png"
     ],
-    "method": "Current local app sections; no identity/payment credentials in the crop."
+    "method": "Existing Playwright section screenshots copied byte-for-byte from the ignored local capture outputs. No browser action performed to package them.",
+    "sanitization": {
+      "visuallyInspected": true,
+      "identityAreas": "Excluded by original section capture workflow",
+      "visiblePersonalData": false,
+      "visibleCredentialsOrPaymentMethodDetails": false,
+      "pngTextMetadata": false,
+      "additionalMasking": "Not needed for these section captures"
+    }
   },
   "cachedOriginMainAtPackaging": "015b42c4825866131a00d48469650bcba04b2364",
-  "auditedPathsChangedSinceBase": false
+  "auditedPathsChangedSinceBase": false,
+  "finalHeadVerification": "test-results/final-head/verification.json (ignored local artifact written after commit; exact result returned to coordinator)."
 }
