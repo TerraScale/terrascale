@@ -11,6 +11,51 @@ namespace TerraScale.Dashboard.E2E.Platform;
 public sealed class ProjectAuthorityJourneyTests
 {
     [Test]
+    public async Task AuthRegistrySnapshotRetainsLiveIdentityWithoutSharingMutableMembersOrProjects()
+    {
+        var environment = new DemoEnvironment();
+        await environment.InitializeAsync();
+        await using var app = environment.CreateHost(new DashboardE2EFixture().Root, 0, "http://127.0.0.1");
+        app.MapGet("/__test/auth-snapshot", async (HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, TestWorkspace workspace) =>
+        {
+            var session = await sessions.ReadAsync(http);
+            if (session is null) return Results.Unauthorized();
+            var original = workspace.Organizations.Values.Single();
+            var copy = TestWorkspace.Clone(original);
+            var project = copy.Projects.Values.Single();
+            var identityRetained = copy.Name == original.Name && copy.OwnerUserId == original.OwnerUserId &&
+                copy.CreatedAt == original.CreatedAt && project.Name == original.Projects[project.Id].Name &&
+                project.OrganizationId == original.Id && copy.Members[session.UserId].Role == "owner";
+            var stored = JsonSerializer.SerializeToElement(copy);
+            var storedProject = stored.GetProperty("Projects").GetProperty(project.Id);
+            copy.Members[session.UserId].Role = "viewer";
+            project.Name = "Changed snapshot";
+            var members = await platform.ListMembersAsync(session, original.Id, http.RequestAborted);
+            var projects = await platform.ListProjectsAsync(session, original.Id, http.RequestAborted);
+            return Results.Json(new
+            {
+                identityRetained,
+                identityOmittedFromStorage = !stored.TryGetProperty("Name", out _) && !stored.TryGetProperty("Members", out _) &&
+                    !stored.TryGetProperty("OwnerUserId", out _) && !storedProject.TryGetProperty("Name", out _),
+                copiesIndependent = members.Single(member => member.UserId == session.UserId).Role == "owner" &&
+                    projects.Single(item => item.Id == project.Id).Name == original.Projects[project.Id].Name
+            });
+        });
+        await app.StartAsync();
+        using var browser = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
+        { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
+        using var login = await HttpJourney.LoginAsync(browser);
+        await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        using var response = await browser.GetAsync("/__test/auth-snapshot");
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        await Assert.That(body.RootElement.GetProperty("identityRetained").GetBoolean()).IsTrue();
+        await Assert.That(body.RootElement.GetProperty("identityOmittedFromStorage").GetBoolean()).IsTrue();
+        await Assert.That(body.RootElement.GetProperty("copiesIndependent").GetBoolean()).IsTrue();
+        await app.StopAsync();
+    }
+
+    [Test]
     public async Task ScopedFixtureObservesExactScopesAndRefusesRemovedMembersViewerWritesAndForeignProjects()
     {
         var environment = new DemoEnvironment();
