@@ -567,50 +567,6 @@ public sealed class GroupCommitTests
         await Assert.That(store.Statistics).IsEqualTo(generation + 1);
     }
 
-    // Client databases keep their tenant's version scope; only a catalog follower's system database adopts an incarnation.
-    // A system database of the test's own, outside the server's data directory, so no server service writes to it.
-    [Test]
-    public async Task A_failure_right_after_a_catalog_replica_commit_still_adopts_its_incarnation()
-    {
-        await using var server = await TerraBaseTestServer.StartAsync();
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
-        var directory = Directory.CreateTempSubdirectory("terrabase-incarnation-");
-        try
-        {
-            var path = Path.Combine(directory.FullName, "_system.db");
-            const string name = SqliteStorageEngine.SystemName;
-            await SqliteDatabaseStore.InitializeAsync(name, path, engine.Io, string.Empty, CancellationToken.None);
-            var system = new SqliteDatabaseStore(name, path, engine.Pool, engine.Io, "PRAGMA busy_timeout = 30000;");
-            try
-            {
-                await engine.Io.WithAdmissionAsync(async () =>
-                {
-                    await system.BootstrapAsync(CancellationToken.None);
-                    return true;
-                });
-                var origin = Ulid.NewUlid();
-                var replica = await system.BeginReplicaAsync(CancellationToken.None);
-                await using (replica)
-                {
-                    await replica.ResetReplicaAsync(origin.ToByteArray(), CancellationToken.None);
-                    system.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
-                    // The catalog fails closed, but its ETags already use the incarnation the committed file holds.
-                    await Assert.ThrowsAsync<IOException>(async () => await replica.CommitAsync(CancellationToken.None));
-                }
-
-                await Assert.That(system.Incarnation).IsEqualTo(origin);
-            }
-            finally
-            {
-                await engine.Io.RunAsync(system.Dispose, CancellationToken.None);
-            }
-        }
-        finally
-        {
-            directory.Delete(recursive: true);
-        }
-    }
-
     [Test]
     public async Task A_storage_thread_busy_with_a_long_read_does_not_hold_up_writes()
     {

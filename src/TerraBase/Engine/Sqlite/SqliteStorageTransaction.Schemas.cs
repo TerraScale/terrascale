@@ -152,7 +152,7 @@ internal sealed partial class SqliteStorageTransaction
             // The complete envelope must be admissible on replication as well as locally.
             var body = DocumentJson.Read(buffer.WrittenMemory, requireObject: true);
             WriteMetadata(DocumentDelta.Collections, name, body);
-            _collectionsChanged = true;
+            ChangedReaderState = true;
             return true;
 
             void CountMember(string propertyName, int valueBytes)

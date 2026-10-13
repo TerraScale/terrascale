@@ -30,7 +30,7 @@ internal sealed partial class EngineManagementService
     public async ValueTask<EnsureLocalDatabaseResult> EnsureLocalDatabaseAsync(TenantContext database, CancellationToken cancellationToken) =>
         await RegisteredAsync(database, cancellationToken).ConfigureAwait(false) switch
         {
-            true => await InitializeFollowerAsync(database, cancellationToken).ConfigureAwait(false),
+            true => new Done(),
             false => ManagementErrors.NotFound,
             Unavailable error => error,
         };
@@ -123,56 +123,12 @@ internal sealed partial class EngineManagementService
         record is not { } value || (value.Name.Length <= 63 && TerraBaseOptions.IsRegion(value.Placement.Home)
             && value.Placement.Replicas.Count <= DatabaseRegions.MaxReplicas && value.Placement.Replicas.All(TerraBaseOptions.IsRegion));
 
-    private async ValueTask<FindDatabaseResult> FindUncachedAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
-    {
-        var found = await ReadAsync<FindDatabaseResult>(
+    private ValueTask<FindDatabaseResult> FindUncachedAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken) =>
+        ReadAsync<FindDatabaseResult>(
             async transaction => await FindDatabaseAsync(transaction, organizationId, projectId, database, cancellationToken).ConfigureAwait(false) is { } tenant
                 ? tenant
                 : ManagementErrors.NotFound,
-            static error => error, cancellationToken).ConfigureAwait(false);
-        return found switch
-        {
-            TenantContext tenant => await InitializeFollowerAsync(tenant, cancellationToken).ConfigureAwait(false) switch
-            {
-                Done => tenant,
-                NotFound error => error,
-                Unavailable error => error,
-            },
-            NotFound error => error,
-            Unavailable error => error,
-        };
-    }
-
-    private async ValueTask<EnsureLocalDatabaseResult> InitializeFollowerAsync(TenantContext tenant, CancellationToken cancellationToken)
-    {
-        // A follower serves a registered database before its first documents arrive. Recheck a file created here
-        // after initialization: a concurrent deletion may have applied before the file existed.
-        if (options.CatalogFollower && await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is null
-            && await engine.CreateDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false))
-        {
-            var registration = await RegisteredAsync(tenant, cancellationToken).ConfigureAwait(false);
-            if (registration is not bool registered)
-            {
-                return registration switch
-                {
-                    Unavailable error => error,
-                    bool => throw new UnreachableException(),
-                };
-            }
-
-            if (!registered)
-            {
-                if (await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is { } created)
-                {
-                    _ = await engine.DeleteDatabaseAsync(tenant, cancellationToken, incarnation: created.Incarnation).ConfigureAwait(false);
-                }
-
-                return ManagementErrors.NotFound;
-            }
-        }
-
-        return new Done();
-    }
+            static error => error, cancellationToken);
 
     public async ValueTask<ProvisionDatabaseResult> CreateDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
@@ -559,8 +515,7 @@ internal sealed partial class EngineManagementService
                 static error => error, cancellationToken);
     }
 
-    private Unavailable UnreadableCatalog => !options.CatalogFollower
-        ? ManagementErrors.CatalogUnsupported : ManagementErrors.ReplicatedCatalogUnsupported;
+    private static Unavailable UnreadableCatalog => ManagementErrors.CatalogUnsupported;
 
     private static readonly Conflict CatalogDatabaseDeleted = new("a database deleted here is not brought back", "database_deleted");
 

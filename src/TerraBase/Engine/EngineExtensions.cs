@@ -18,8 +18,8 @@ public static class EngineExtensions
     internal const string QueryDeadlineClock = "query-deadline";
 
     /// <summary>
-    /// Registers the SQLite engine over <see cref="TerraBaseOptions.DataDirectory"/> as <see cref="IStorageEngine"/> and
-    /// <see cref="ISystemReplication"/>, with the <see cref="IWriteStamps"/> of every write made through it.
+    /// Registers the SQLite engine over <see cref="TerraBaseOptions.DataDirectory"/> as <see cref="IStorageEngine"/>, with the
+    /// <see cref="IWriteStamps"/> of every write made through it.
     /// </summary>
     public static IServiceCollection AddTerraBaseEngine(this IServiceCollection services, TerraBaseOptions options)
     {
@@ -40,7 +40,6 @@ public static class EngineExtensions
                 provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), configured.ShutdownGrace, readinessCacheTtl: configured.ReadinessCacheTtl,
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), queryBudget: configured.QueryBudget,
-                systemReplica: configured.CatalogFollower,
                 backupTime: provider.GetService<TimeProvider>(),
                 schemaMemory: provider.GetRequiredService<IMemoryBudget>());
         });
@@ -55,13 +54,8 @@ public static class EngineExtensions
         // The changes feed's 7-day retention.
         services.AddSingleton(provider => new FeedRetention(provider.GetRequiredService<SqliteStorageEngine>()));
         services.AddHostedService(provider => provider.GetRequiredService<FeedRetention>());
-        services.AddSingleton(provider =>
-        {
-            var sqlite = provider.GetRequiredService<SqliteStorageEngine>();
-            return new StampingStorageEngine(sqlite, sqlite);
-        });
+        services.AddSingleton(provider => new StampingStorageEngine(provider.GetRequiredService<SqliteStorageEngine>()));
         services.AddSingleton<IStorageEngine>(provider => provider.GetRequiredService<StampingStorageEngine>());
-        services.AddSingleton<ISystemReplication>(provider => provider.GetRequiredService<StampingStorageEngine>());
         return services.AddSingleton<IWriteStamps>(provider => provider.GetRequiredService<StampingStorageEngine>());
     }
 }

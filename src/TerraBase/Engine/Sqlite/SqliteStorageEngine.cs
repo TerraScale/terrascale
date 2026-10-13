@@ -98,7 +98,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
     // Published under _creation.
     private SqliteDatabaseStore? _system;
-    private readonly bool _systemReplica;
 
     // Protects only probe bookkeeping, never disk work or an await. Task state distinguishes idle/completed/running,
     // independently of timestamps (including zero).
@@ -341,17 +340,15 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// <param name="time">The clock of the query deadline; the system clock by default.</param>
     /// <param name="queryBudget">SQLite execution time one query may spend; <see cref="SqliteDatabaseStore.DefaultQueryBudget"/> by default.</param>
     /// <param name="afterBootstrap">Optional integration-test hook before a tenant database's baseline is seeded.</param>
-    /// <param name="systemReplica">Whether this node follows a catalog primary: its system database accepts only replicated writes.</param>
     /// <param name="backupTime">The host's UTC clock for snapshot boundaries, independent of query deadlines.</param>
     /// <param name="schemaMemory">Shared process admission for collection schema evaluation.</param>
     public SqliteStorageEngine(
         string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<SqliteStorageEngine> logger,
         TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
         TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
-        Action<SqliteDatabaseStore>? afterBootstrap = null, bool systemReplica = false, TimeSpan? queryBudget = null,
+        Action<SqliteDatabaseStore>? afterBootstrap = null, TimeSpan? queryBudget = null,
         TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null)
     {
-        _systemReplica = systemReplica;
         _dataDirectory = dataDirectory;
         _schemaMemory = schemaMemory;
         _schemaEvaluations = meter.CreateCounter<long>("terrabase.schema.keyword_evaluations", description: "Collection schema keyword evaluations started by local writes.");
@@ -768,10 +765,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 var created = await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
                 // Once published, complete the opening even if cancellation arrives.
                 var openingToken = created ? CancellationToken.None : cancellationToken;
-                // Every write is captured into its journal for catalog followers (docs/decisions/0009); no engine event.
-                system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time, static _ => { }, RecordCommittedWrite, _logger)
+                system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time, RecordCommittedWrite, _logger)
                 {
-                    Replica = _systemReplica,
                     QueryBudget = QueryBudget,
                     SyncsEveryCommit = true,
                 };
@@ -1414,7 +1409,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     {
         var tenant = new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database);
         var store = new SqliteDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
-            null, RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations)
+            RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations)
         {
             QueryBudget = QueryBudget,
             Member = Member,

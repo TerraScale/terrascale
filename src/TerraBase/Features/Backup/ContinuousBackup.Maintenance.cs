@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text.Json;
-using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -341,10 +340,6 @@ internal sealed partial class ContinuousBackup
                     .ConfigureAwait(false);
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
-        }
-        catch (CatalogFollowerException)
-        {
-            // anna-full (TS-647): every member writes _system once it is a lattice database; a catalog follower skips it.
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {

@@ -18,18 +18,13 @@ public sealed class ConfigurationTests
         }
 
         var local = TerraBaseOptions.FromValues(new Dictionary<string, string>());
-        await Assert.That((local.Region, local.MachineId, local.App, local.CatalogFollower)).IsEqualTo(("local", "local", (string?)null, false));
+        await Assert.That((local.Region, local.MachineId, local.App)).IsEqualTo(("local", "local", (string?)null));
 
         Environment.SetEnvironmentVariable("FLY_REGION", "sjc");
         Environment.SetEnvironmentVariable("FLY_MACHINE_ID", "d894655b3ed118");
         Environment.SetEnvironmentVariable("FLY_APP_NAME", "ts-terrabase");
-        var primary = TerraBaseOptions.FromValues(new Dictionary<string, string>());
-        await Assert.That((primary.Region, primary.MachineId, primary.App, primary.PrimaryRegion, primary.CatalogFollower))
-            .IsEqualTo(("sjc", "d894655b3ed118", (string?)"ts-terrabase", "sjc", false));
-
-        Environment.SetEnvironmentVariable("PRIMARY_REGION", "gru");
-        var follower = TerraBaseOptions.FromValues(new Dictionary<string, string>());
-        await Assert.That((follower.PrimaryRegion, follower.CatalogFollower)).IsEqualTo(("gru", true));
+        var fly = TerraBaseOptions.FromValues(new Dictionary<string, string>());
+        await Assert.That((fly.Region, fly.MachineId, fly.App)).IsEqualTo(("sjc", "d894655b3ed118", (string?)"ts-terrabase"));
 
         // Fly sets all three together; a partial or malformed identity never starts, and the error names no value.
         Environment.SetEnvironmentVariable("FLY_MACHINE_ID", "Not A Machine");

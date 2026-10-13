@@ -1,5 +1,4 @@
 using Grpc.Net.Client;
-using TerraBase.Engine.Cluster;
 
 namespace TerraBase.Features.Replication;
 
@@ -25,10 +24,4 @@ internal static class PeerChannel
             MaxReceiveMessageSize = ReplicationProtocol.MaxMessageBytes,
         });
     }
-
-    /// <summary>The internal listener of the catalog primary this member follows, or <see langword="null"/> while the membership names none.</summary>
-    public static async ValueTask<Uri?> CatalogPrimaryAsync(this IMembership membership, CancellationToken cancellationToken) =>
-        (await membership.RefreshAsync(cancellationToken).ConfigureAwait(false)).CatalogPrimary is { PeerAddress.Length: > 0 } primary
-            ? new Uri(primary.PeerAddress)
-            : null;
 }

@@ -1,7 +1,6 @@
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
-using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -30,7 +29,7 @@ public sealed class CreateDatabaseEndpoint(ITenantDirectory tenants) : EndpointW
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
-        Metadata(ListenerMetadata.Client, ServedByCatalogPrimary.WhenWriting);
+        Metadata(ListenerMetadata.Client);
     }
 
     /// <inheritdoc />
