@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\TerraScale.DotNet\TerraScale.DotNet.csproj" />
-    <None Include="../../contracts/terrabase/routes.json" Link="contracts/terrabase/routes.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../contracts/auth/**/*" Link="contracts/auth/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../contracts/terrabase/**/*" Link="contracts/terrabase/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

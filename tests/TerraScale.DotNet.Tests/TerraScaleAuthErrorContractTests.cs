@@ -18,7 +18,9 @@ public sealed class TerraScaleAuthErrorContractTests
             using var http = new HttpClient(new Handler(code));
             var client = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions
             {
-                BaseAddress = new Uri("https://auth.customer.example"), InstanceSlug = "acme", ApiKey = "contract-test-key"
+                BaseAddress = new Uri("https://auth.customer.example"),
+                InstanceSlug = "acme",
+                ApiKey = "contract-test-key"
             });
             try
             {

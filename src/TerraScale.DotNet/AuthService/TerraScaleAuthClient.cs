@@ -30,8 +30,8 @@ public sealed class TerraScaleAuthClient
     /// <summary>
     /// Creates a ts-auth client over a caller-owned <see cref="HttpClient"/>.
     /// The client assigns <c>BaseAddress</c> to the HttpClient when it is null
-    /// and is never disposed; later mutations of the HttpClient (including
-    /// <c>BaseAddress</c>) are honored by subsequent requests.
+    /// and is never disposed. Requests remain bound to the validated configured
+    /// origin even if the caller later changes <c>BaseAddress</c>.
     /// </summary>
     public TerraScaleAuthClient(HttpClient httpClient, TerraScaleAuthClientOptions options)
     {
@@ -69,6 +69,8 @@ public sealed class TerraScaleAuthClient
         Instance = new TerraScaleAuthInstanceClient(this);
         OAuthClients = new TerraScaleAuthOAuthClientsClient(this);
         Oidc = new TerraScaleAuthOidcClient(this);
+        Platform = new TerraScaleAuthPlatformClient(this);
+        Headless = new TerraScaleAuthHeadlessClient(this);
     }
 
     /// <summary>User, session-adjacent, MFA factor, and passkey management.</summary>
@@ -109,6 +111,12 @@ public sealed class TerraScaleAuthClient
 
     /// <summary>OIDC discovery, JWKS, token, introspection, revocation, and userinfo.</summary>
     public TerraScaleAuthOidcClient Oidc { get; }
+
+    /// <summary>Platform organizations, projects, members and API keys, using a user sign-in token.</summary>
+    public TerraScaleAuthPlatformClient Platform { get; }
+
+    /// <summary>Confidential-client headless enrollment, sign-in and password recovery.</summary>
+    public TerraScaleAuthHeadlessClient Headless { get; }
 
     /// <summary>The validated instance slug every management route is scoped to.</summary>
     internal string InstanceSlug => options.InstanceSlug!;
@@ -248,9 +256,10 @@ public sealed class TerraScaleAuthClient
         using var response = await SendWithRetriesAsync(
             HttpMethod.Post,
             requestUri,
-            () => new FormUrlEncodedContent(formValues),
+            CreateFormBodyFactory(formValues),
             authorization is null ? RequestAuthentication.None : new RequestAuthentication(authorization),
             deadline.Token).ConfigureAwait(false);
+        await RequireStatusAsync(response, HttpStatusCode.OK, deadline.Token).ConfigureAwait(false);
         return await ReadJsonAsync(response, responseTypeInfo, deadline.Token).ConfigureAwait(false);
     }
 
@@ -267,7 +276,7 @@ public sealed class TerraScaleAuthClient
         using var response = await SendWithRetriesAsync(
             HttpMethod.Post,
             requestUri,
-            () => new FormUrlEncodedContent(formValues),
+            CreateFormBodyFactory(formValues),
             authorization is null ? RequestAuthentication.None : new RequestAuthentication(authorization),
             deadline.Token).ConfigureAwait(false);
         if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
@@ -290,9 +299,51 @@ public sealed class TerraScaleAuthClient
             HttpMethod.Get,
             requestUri,
             bodyFactory: null,
-            new RequestAuthentication(new AuthenticationHeaderValue("Bearer", accessToken.Trim())),
+            new RequestAuthentication(TerraScaleAuthCredentials.Bearer(accessToken)),
             deadline.Token).ConfigureAwait(false);
         return await ReadJsonAsync(response, responseTypeInfo, deadline.Token).ConfigureAwait(false);
+    }
+
+    internal async Task<TResponse> SendAuthenticatedJsonAsync<TRequest, TResponse>(
+        HttpMethod method, string route, TRequest? body, JsonTypeInfo<TRequest> requestType,
+        JsonTypeInfo<TResponse> responseType, AuthenticationHeaderValue authorization,
+        HttpStatusCode expectedStatus, int maxRequestBytes, CancellationToken cancellationToken)
+        where TRequest : class
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(RequestDeadline);
+        using var response = await SendWithRetriesAsync(method, route,
+            body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
+            new RequestAuthentication(authorization), deadline.Token).ConfigureAwait(false);
+        await RequireStatusAsync(response, expectedStatus, deadline.Token).ConfigureAwait(false);
+        return await ReadJsonAsync(response, responseType, deadline.Token).ConfigureAwait(false);
+    }
+
+    internal async Task SendAuthenticatedForStatusAsync<TRequest>(
+        HttpMethod method, string route, TRequest? body, JsonTypeInfo<TRequest> requestType,
+        AuthenticationHeaderValue authorization, HttpStatusCode expectedStatus,
+        int maxRequestBytes, CancellationToken cancellationToken)
+        where TRequest : class
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(RequestDeadline);
+        using var response = await SendWithRetriesAsync(method, route,
+            body is null ? null : CreateJsonBodyFactory(body, requestType, maxRequestBytes),
+            new RequestAuthentication(authorization), deadline.Token).ConfigureAwait(false);
+        await RequireStatusAsync(response, expectedStatus, deadline.Token).ConfigureAwait(false);
+    }
+
+    private static async Task RequireStatusAsync(HttpResponseMessage response, HttpStatusCode expected, CancellationToken cancellationToken)
+    {
+        if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
+        {
+            throw await TerraScaleAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (response.StatusCode != expected)
+        {
+            throw new TerraScaleAuthException(response.StatusCode, "ts-auth returned an unexpected success status.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response));
+        }
     }
 
     private async Task<TResponse> SendAsync<TResponse>(
@@ -344,13 +395,13 @@ public sealed class TerraScaleAuthClient
         }
     }
 
-    private static Func<HttpContent?> CreateJsonBodyFactory<TRequest>(TRequest body, JsonTypeInfo<TRequest> typeInfo)
+    private static Func<HttpContent?> CreateJsonBodyFactory<TRequest>(TRequest body, JsonTypeInfo<TRequest> typeInfo, int maximumBytes = MaxOperationBytes)
     {
         ArgumentNullException.ThrowIfNull(typeInfo);
         var payload = JsonSerializer.SerializeToUtf8Bytes(body, typeInfo);
-        if (payload.Length > MaxOperationBytes)
+        if (payload.Length > maximumBytes)
         {
-            throw new ArgumentException($"The serialized ts-auth operation exceeds the {MaxOperationBytes} byte limit.", nameof(body));
+            throw new ArgumentException($"The serialized ts-auth operation exceeds the {maximumBytes} byte limit.", nameof(body));
         }
 
         return () =>
@@ -359,6 +410,18 @@ public sealed class TerraScaleAuthClient
             content.Headers.ContentType = JsonContentType;
             return content;
         };
+    }
+
+    private static Func<HttpContent?> CreateFormBodyFactory(IReadOnlyList<KeyValuePair<string, string>> values)
+    {
+        using var content = new FormUrlEncodedContent(values);
+        // FormUrlEncodedContent buffers synchronously; its computed length is exact.
+        if (content.Headers.ContentLength > MaxOperationBytes)
+        {
+            throw new ArgumentException("The ts-auth form exceeds the request byte limit.", nameof(values));
+        }
+
+        return () => new FormUrlEncodedContent(values);
     }
 
     private async Task<HttpResponseMessage> SendWithRetriesAsync(
@@ -373,7 +436,12 @@ public sealed class TerraScaleAuthClient
         while (true)
         {
             // Every attempt rebuilds the request: content cannot be reused across sends.
-            using var request = new HttpRequestMessage(method, requestUri);
+            cancellationToken.ThrowIfCancellationRequested();
+            using var request = new HttpRequestMessage(method, new Uri(options.BaseAddress!, requestUri));
+            if (authentication.Kind == RequestAuthenticationKind.None && httpClient.DefaultRequestHeaders.Authorization is not null)
+            {
+                throw new InvalidOperationException("Unauthenticated ts-auth requests require an HttpClient without a default Authorization header.");
+            }
             ApplyAuthentication(request, authentication);
             request.Headers.Accept.Add(AcceptJson);
             if (bodyFactory?.Invoke() is { } content)
@@ -384,7 +452,7 @@ public sealed class TerraScaleAuthClient
             try
             {
                 var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
-                if (!ShouldRetry(response, method, attempt, options.MaxRetryAttempts))
+                if (authentication.Kind == RequestAuthenticationKind.Explicit || !ShouldRetry(response, method, attempt, options.MaxRetryAttempts))
                 {
                     return response;
                 }
@@ -400,7 +468,7 @@ public sealed class TerraScaleAuthClient
                 response.Dispose();
                 await Task.Delay(delay, token).ConfigureAwait(false);
             }
-            catch (HttpRequestException) when (IsSafeRead(method) && attempt < options.MaxRetryAttempts)
+            catch (HttpRequestException) when (authentication.Kind != RequestAuthenticationKind.Explicit && IsSafeRead(method) && attempt < options.MaxRetryAttempts)
             {
                 await Task.Delay(GetRetryDelay(response: null, attempt), token).ConfigureAwait(false);
             }
@@ -475,13 +543,34 @@ public sealed class TerraScaleAuthClient
             throw await TerraScaleAuthErrors.CreateAsync(response, cancellationToken).ConfigureAwait(false);
         }
 
-        // Deserializing straight off the content stream avoids the
-        // synchronizable-stream wrapper ReadFromJsonAsync allocates.
-        var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        var media = response.Content.Headers.ContentType;
+        if (!string.Equals(media?.MediaType, "application/json", StringComparison.OrdinalIgnoreCase)
+            || media?.CharSet is { } charset && !string.Equals(charset.Trim('"'), "utf-8", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new TerraScaleAuthException(response.StatusCode, "ts-auth returned an unexpected response media type.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response));
+        }
+
+        // Bound successful bodies before deserialization, including unknown-length responses.
+        using var destination = new BoundedHttpBodyStream(MaxOperationBytes,
+            () => new TerraScaleAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response)), cancellationToken);
+        if (response.Content.Headers.ContentLength > MaxOperationBytes)
+        {
+            throw new TerraScaleAuthException(response.StatusCode, "ts-auth response exceeds the byte limit.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response));
+        }
+        try
+        {
+            await response.Content.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or HttpRequestException)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new TerraScaleAuthException(response.StatusCode, "ts-auth response body could not be read.", "invalid_response", TerraScaleAuthErrors.ResolveRetryAfter(response));
+        }
+        cancellationToken.ThrowIfCancellationRequested();
         TResponse? payload;
         try
         {
-            payload = await JsonSerializer.DeserializeAsync(stream, responseTypeInfo, cancellationToken).ConfigureAwait(false);
+            payload = JsonSerializer.Deserialize(destination.Written.Span, responseTypeInfo);
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {

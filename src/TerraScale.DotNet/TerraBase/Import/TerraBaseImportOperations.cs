@@ -14,7 +14,7 @@ public sealed partial class TerraBaseDatabase
 
     /// <summary>
     /// Attaches an import to this new, empty database (<c>POST …/import</c>) in <see cref="TerraBaseImportState.AwaitingSource"/>.
-    /// Create the database for this import first (TerraBase's <c>POST /v1/projects/{project}/databases</c> with the same
+    /// Create the database for this import first (<see cref="TerraBaseProjectClient.CreateDatabaseAsync"/> with the same
     /// project access token), under a fresh name such as <c>import-&lt;lowercase ULID&gt;</c> and without replicas; send
     /// every import call to its home region. Replaying the identical request returns the job; any other request throws
     /// <see cref="TerraBaseConflictException"/> (<c>import_exists</c>), a database with collections

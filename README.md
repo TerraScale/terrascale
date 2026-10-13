@@ -3,6 +3,11 @@
 The official .NET SDK for TerraBase (its v1 HTTP API) and ts-auth. The package supports .NET 10 LTS and .NET 11; a .NET 11 toolchain builds
 both targets.
 
+Version `0.0.3` combines accepted ts-auth platform/headless contracts (#13) and
+TerraBase lifecycle/usage/changes contracts (#14). The package includes their
+producer artifacts; pending producer inputs remain qualified separately. Import
+APIs and the later stream-timer follow-up (#15) are excluded from this release.
+
 ## Entity IDs (TS-754)
 
 TerraScale's target entity ID contract is a plain 26-character uppercase
@@ -104,13 +109,14 @@ One-time imports follow TerraBase's import contract v1 revision 3 (monorepo `doc
 live-qualified). The user exports with their own tools
 (`pg_dump --format=plain`, or a rollback-journal SQLite/Turso file from `VACUUM INTO`) and uploads it: TerraBase never
 connects to the source or receives its credentials. Create a new, empty destination database for each import with
-TerraBase's `POST /v1/projects/{project}/databases`, a fresh `import-<lowercase ULID>` name, no replicas and the same
-ts-auth project access token (this SDK does not wrap that route yet; a database created through
-`TerraBaseManagementClient` is reachable by a project token only once TerraBase has verified its project binding). Then
-drive the import through it, on a client pinned to the database's home region:
+`Project(projectId).CreateDatabaseAsync`, a fresh `import-<lowercase ULID>` name, no replicas and the same ts-auth
+project access token (a database created through `TerraBaseManagementClient` is reachable by a project token only once
+TerraBase has verified its project binding). Then drive the import through it, on a client pinned to the database's
+home region:
 
 ```csharp
-TerraBaseDatabase import = regional.Database(projectId, destinationName); // a client with Region = the home region
+TerraBaseManagedDatabase destination = await documents.Project(projectId).CreateDatabaseAsync(destinationName, cancellationToken: cancellationToken);
+TerraBaseDatabase import = regional.Database(projectId, destinationName); // a client with Region = destination.HomeRegion
 TerraBaseImportJob job = await import.CreateImportAsync(TerraBaseImportFormat.PostgresPlain, fileBytes, fileSha256Hex, cancellationToken: cancellationToken);
 var part = new byte[TerraBaseDatabase.MaxImportSourcePartBytes];
 while (job.Source.ReceivedBytes < job.Source.Bytes)

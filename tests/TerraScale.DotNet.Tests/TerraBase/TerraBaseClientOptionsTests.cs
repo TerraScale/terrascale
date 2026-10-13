@@ -111,7 +111,9 @@ public sealed class TerraBaseClientOptionsTests
         {
             await Assert.That(() => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
             {
-                BaseAddress = Origin, ApiKey = secret, AccessTokenProvider = provider,
+                BaseAddress = Origin,
+                ApiKey = secret,
+                AccessTokenProvider = provider,
             })).Throws<ArgumentException>();
         }
 
@@ -204,14 +206,18 @@ public sealed class TerraBaseClientOptionsTests
         {
             var management = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions
             {
-                BaseAddress = Origin, AccessTokenProvider = provider, RequestTimeout = timeout ?? TimeSpan.FromSeconds(30),
+                BaseAddress = Origin,
+                AccessTokenProvider = provider,
+                RequestTimeout = timeout ?? TimeSpan.FromSeconds(30),
             });
             return token => management.ListOrganizationsAsync("user", cancellationToken: token);
         }
 
         var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
         {
-            BaseAddress = Origin, AccessTokenProvider = provider, RequestTimeout = timeout ?? TimeSpan.FromSeconds(30),
+            BaseAddress = Origin,
+            AccessTokenProvider = provider,
+            RequestTimeout = timeout ?? TimeSpan.FromSeconds(30),
         }).Database("project", "app");
         return token => database.ListCollectionsAsync(cancellationToken: token);
     }

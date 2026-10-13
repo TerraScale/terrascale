@@ -53,6 +53,7 @@ public sealed class TerraBaseContractTests
     private static IEnumerable<(string Client, string Operation, Func<object, Task> Call)> Calls(JsonElement json)
     {
         static TerraBaseDatabase Db(object client) => ((TerraBaseDocumentsClient)client).Database(Project, "app");
+        static TerraBaseProjectClient ProjectClient(object client) => ((TerraBaseDocumentsClient)client).Project(Project);
         static TerraBaseManagementClient M(object client) => (TerraBaseManagementClient)client;
         var schema = new TerraBaseUniqueSchemaRequest(Indexes: [new("email", ["email"], Unique: true)]);
         yield return ("documents", "createDatabase", client => Db(client).CreateAsync());
@@ -63,6 +64,8 @@ public sealed class TerraBaseContractTests
         yield return ("documents", "dropCollection", client => Db(client).DropCollectionAsync("users"));
         yield return ("documents", "declareCollectionSchema", client => Db(client).DeclareSchemaAsync("users", schema));
         yield return ("documents", "getCollectionSchema", client => Db(client).GetSchemaAsync("users"));
+        yield return ("documents", "getCollectionSchema", client => Db(client).GetInferredSchemaAsync("users"));
+        yield return ("documents", "getDatabaseSchema", client => Db(client).ListCollectionStatsAsync());
         yield return ("documents", "getDocument", client => Db(client).GetDocumentAsync("users", "id"));
         yield return ("documents", "listDocuments", client => Db(client).ListDocumentsAsync("users"));
         yield return ("documents", "createDocument", client => Db(client).CreateDocumentAsync("users", json));
@@ -79,6 +82,23 @@ public sealed class TerraBaseContractTests
         yield return ("documents", "startImport", client => Db(client).StartImportAsync("preview"));
         yield return ("documents", "cancelImport", client => Db(client).CancelImportAsync());
         yield return ("documents", "resumeImport", client => Db(client).ResumeImportAsync());
+
+        yield return ("project", "createDatabase", client => ProjectClient(client).CreateDatabaseAsync("app"));
+        yield return ("project", "listDatabases", client => ProjectClient(client).ListDatabasesAsync());
+        yield return ("project", "getDatabase", client => ProjectClient(client).GetDatabaseAsync("app"));
+        yield return ("project", "deleteDatabase", client => ProjectClient(client).DeleteDatabaseAsync("app"));
+        yield return ("project", "updateDatabase", client => ProjectClient(client).SetDatabaseRegionsAsync("app", []));
+        yield return ("project", "getProjectUsage", client => ProjectClient(client).GetUsageAsync());
+        yield return ("documents", "getDatabaseUsage", client => Db(client).GetUsageAsync());
+        yield return ("documents", "streamDatabaseChanges", client => ReadFirstAsync(Db(client).StreamChangesAsync()));
+        yield return ("documents", "getDeclaredCollectionSchema", client => Db(client).GetDeclaredSchemaAsync("users"));
+        yield return ("documents", "putDeclaredCollectionSchema", client => Db(client).PutDeclaredSchemaAsync("users", json));
+        yield return ("documents", "deleteDeclaredCollectionSchema", client => Db(client).DeleteDeclaredSchemaAsync("users"));
+        yield return ("documents", "branchDatabase", client => Db(client).BranchAsync("copy"));
+        yield return ("documents", "runSql", client => Db(client).RunSqlAsync("SELECT * FROM users LIMIT 1"));
+        yield return ("documents", "listIndexes", client => Db(client).ListIndexesAsync());
+        yield return ("documents", "createIndex", client => Db(client).CreateIndexAsync("users", ["email"]));
+        yield return ("documents", "dropIndex", client => Db(client).DropIndexAsync("users_email"));
 
         static TerraBasePlatformClient P(object client) => (TerraBasePlatformClient)client;
         yield return ("platform", "listPlatformDatabases", client => P(client).ListDatabasesAsync());
@@ -136,7 +156,7 @@ public sealed class TerraBaseContractTests
         // Management here goes to the private listener (the platform operator, no credential), so it also proves HTTP/2.
         object sdk = client switch
         {
-            "documents" => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" }),
+            "documents" or "project" => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" }),
             "platform" => new TerraBasePlatformClient(http, new TerraBasePlatformClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("user-token") }),
             _ => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Private }),
         };
@@ -156,6 +176,12 @@ public sealed class TerraBaseContractTests
         }
 
         return (sent.Method, uri.AbsolutePath, uri.Query);
+    }
+
+    private static async Task ReadFirstAsync(IAsyncEnumerable<TerraBaseChangesEvent> events)
+    {
+        await using var enumerator = events.GetAsyncEnumerator();
+        await enumerator.MoveNextAsync();
     }
 
     private static List<Route> Load()

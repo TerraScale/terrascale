@@ -53,9 +53,8 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
-            10.0.x
-            11.0.x
-          dotnet-quality: preview
+            10.0.401
+            11.0.100-rc.1.26425.128
       - id: version
         run: |
           version=$(dotnet msbuild src/TerraScale.DotNet -getProperty:Version)
@@ -66,21 +65,22 @@ jobs:
             echo "::error::$GITHUB_SHA is not on main."; exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - run: dotnet build TerraScale.DotNet.slnx --configuration Release -p:ContinuousIntegrationBuild=true
-      - run: dotnet run --project tests/TerraScale.DotNet.Tests --configuration Release --no-build --framework net10.0
-      - run: dotnet run --project tests/TerraScale.DotNet.Tests --configuration Release --no-build --framework net11.0
+      - name: Run release build and tests
+        run: bash scripts/check-release.sh
       - id: pack
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          dotnet pack src/TerraScale.DotNet --configuration Release --no-build -p:ContinuousIntegrationBuild=true --output package
-          package="package/TerraScale.DotNet.$VERSION.nupkg"
+          python3 scripts/pack-reproducible.py "$RUNNER_TEMP/qualified-package"
+          package="$RUNNER_TEMP/qualified-package/TerraScale.DotNet.$VERSION.nupkg"
           unzip -p "$package" TerraScale.DotNet.nuspec | grep -F "commit=\"$GITHUB_SHA\""
           echo "sha256=$(sha256sum "$package" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v6
         with:
           name: package
-          path: package/TerraScale.DotNet.${{ steps.version.outputs.version }}.nupkg
+          path: |
+            ${{ runner.temp }}/qualified-package/TerraScale.DotNet.${{ steps.version.outputs.version }}.nupkg
+            ${{ runner.temp }}/qualified-package/provenance.json
           if-no-files-found: error
 
   github-packages:
@@ -97,7 +97,7 @@ jobs:
       - run: printf 'DOTNET_INSTALL_DIR=%s/dotnet\nNUGET_HTTP_CACHE_PATH=%s/nuget-http\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 10.0.401
       - env:
           VERSION: ${{ needs.package.outputs.version }}
           SHA256: ${{ needs.package.outputs.sha256 }}
@@ -126,9 +126,8 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
-            10.0.x
-            11.0.x
-          dotnet-quality: preview
+            10.0.401
+            11.0.100-rc.1.26425.128
       - env:
           SHA256: ${{ needs.package.outputs.sha256 || inputs.sha256 }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -194,7 +193,7 @@ jobs:
       - run: printf 'DOTNET_INSTALL_DIR=%s/dotnet\nNUGET_HTTP_CACHE_PATH=%s/nuget-http\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 10.0.401
       - env:
           SHA256: ${{ inputs.sha256 }}
         # The artifact keeps the version folder of the NuGet packages folder.
