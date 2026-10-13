@@ -59,8 +59,8 @@ public sealed class OnboardingService(AccountService accounts, StripeBilling pay
                 var name = form["name"].ToString().Trim();
                 if (name.Any(char.IsControl)) throw new OnboardingValidationException("Enter a valid project name.");
                 if (name.EnumerateRunes().Count() > 100) throw new OnboardingValidationException("Use a project name with 100 characters or fewer.");
+                // The provisioner accepts only a region TerraBase reports as serving.
                 var region = form["region"].ToString().Trim().ToUpperInvariant();
-                if (region is not ("GRU" or "SFO")) throw new OnboardingValidationException("Choose a supported project region.");
                 if (context.Organization is null || context.Project is null || !context.CanManage)
                     throw new AccountAccessException("Project membership is required.");
                 var project = await projects.CompleteProjectAsync(context, name.Length == 0 ? context.Project.Name : name, region, cancellationToken);
