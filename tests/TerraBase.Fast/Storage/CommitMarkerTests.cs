@@ -28,13 +28,13 @@ public sealed class CommitMarkerTests
         var (store, source, tenant) = await OpenAsync(api, managed, token);
         var before = await source.HeadAsync(tenant, token);
         var id = EntityIds.New().ToString();
-        var first = await PutAsync(store, id, token);
-        await Assert.That(first.Commit.Marker).IsNotNull();
-        var marker = first.Commit.Marker!.Value;
+        var (_, firstCommit) = await PutAsync(store, id, token);
+        await Assert.That(firstCommit.Marker).IsNotNull();
+        var marker = firstCommit.Marker!.Value;
         await Assert.That(marker.Incarnation).IsEqualTo(store.Incarnation);
         await Assert.That(marker.ChangeId).IsEqualTo((await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token))
             .Single(group => group.Deltas.Any(delta => delta.Id == id)).ChangeId);
-        await Assert.That(first.Commit.Offset).IsGreaterThan(0);
+        await Assert.That(firstCommit.Offset).IsGreaterThan(0);
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.OK);
 
         var later = EntityIds.New().ToString();
@@ -44,9 +44,9 @@ public sealed class CommitMarkerTests
         }
 
         await Assert.That(await source.HeadAsync(tenant, token)).IsGreaterThan(marker.ChangeId);
-        var assertion = await store.WriteAsync((transaction, inner) => transaction.GetAsync("items", id, inner), document => document is not null, token);
-        await Assert.That(assertion.Result).IsNotNull();
-        await Assert.That(assertion.Commit.Marker).IsNull();
+        var (asserted, assertionCommit) = await store.WriteAsync((transaction, inner) => transaction.GetAsync("items", id, inner), document => document is not null, token);
+        await Assert.That(asserted).IsNotNull();
+        await Assert.That(assertionCommit.Marker).IsNull();
     }
 
     [Test]
@@ -84,22 +84,22 @@ public sealed class CommitMarkerTests
         }
 
         _ = await lead;
-        var written = await mutation;
-        var otherWritten = await sibling;
-        var checkedOnly = await assertion;
-        var rolledBack = await rejected;
-        await Assert.That(written.Commit.Marker).IsNotNull();
-        await Assert.That(otherWritten.Commit).IsEqualTo(written.Commit).Because("both mutations share their batch's own CDC commit row");
-        await Assert.That(checkedOnly.Result).IsNotNull();
-        await Assert.That(checkedOnly.Commit.Offset).IsEqualTo(written.Commit.Offset);
-        await Assert.That(checkedOnly.Commit.Marker).IsNull().Because("assertions never inherit a sibling mutation's marker");
-        await Assert.That(rolledBack.Commit).IsEqualTo(default(CommitResult));
+        var (_, writtenCommit) = await mutation;
+        var (_, otherCommit) = await sibling;
+        var (checkedOnly, assertionCommit) = await assertion;
+        var (_, rejectedCommit) = await rejected;
+        await Assert.That(writtenCommit.Marker).IsNotNull();
+        await Assert.That(otherCommit).IsEqualTo(writtenCommit).Because("both mutations share their batch's own CDC commit row");
+        await Assert.That(checkedOnly).IsNotNull();
+        await Assert.That(assertionCommit.Offset).IsEqualTo(writtenCommit.Offset);
+        await Assert.That(assertionCommit.Marker).IsNull().Because("assertions never inherit a sibling mutation's marker");
+        await Assert.That(rejectedCommit).IsEqualTo(default);
         await Assert.That(await StatusAsync(data, managed, kept, token)).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(await StatusAsync(data, managed, alsoKept, token)).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(await StatusAsync(data, managed, refused, token)).IsEqualTo(HttpStatusCode.NotFound);
         var groups = await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token);
-        await Assert.That(groups.Single(group => group.Deltas.Any(delta => delta.Id == kept)).ChangeId).IsEqualTo(written.Commit.Marker!.Value.ChangeId);
-        await Assert.That(groups.Single(group => group.Deltas.Any(delta => delta.Id == alsoKept)).ChangeId).IsEqualTo(written.Commit.Marker!.Value.ChangeId);
+        await Assert.That(groups.Single(group => group.Deltas.Any(delta => delta.Id == kept)).ChangeId).IsEqualTo(writtenCommit.Marker!.Value.ChangeId);
+        await Assert.That(groups.Single(group => group.Deltas.Any(delta => delta.Id == alsoKept)).ChangeId).IsEqualTo(writtenCommit.Marker!.Value.ChangeId);
         await Assert.That(groups.SelectMany(group => group.Deltas).Any(delta => delta.Id == refused)).IsFalse();
     }
 
@@ -138,9 +138,9 @@ public sealed class CommitMarkerTests
         }
         else
         {
-            var committed = await PutAsync(store, id, token);
-            await Assert.That(committed.Commit.Marker).IsNotNull();
-            await Assert.That(committed.Commit.Marker!.Value.Incarnation).IsEqualTo(incarnation);
+            var (_, commit) = await PutAsync(store, id, token);
+            await Assert.That(commit.Marker).IsNotNull();
+            await Assert.That(commit.Marker!.Value.Incarnation).IsEqualTo(incarnation);
             await Assert.That(store.CurrentWriter()).IsNotSameReferenceAs(session);
             await Assert.That(session!.Connection.State).IsEqualTo(System.Data.ConnectionState.Closed);
         }
