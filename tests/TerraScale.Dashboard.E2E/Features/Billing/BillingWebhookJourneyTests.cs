@@ -90,7 +90,7 @@ public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
             var oversizedBody = oversizedPrefix + new string('x', bodyLimit + 1 - oversizedPrefix.Length - 2) + "\"}";
             await Assert.That(Encoding.UTF8.GetByteCount(oversizedBody)).IsEqualTo(bodyLimit + 1);
             var oversizedSignature = EventUtility.GenerateSignatureHeader(oversizedBody, "whsec_demo");
-            // Kestrel may close a rejected upload's connection during its deferred body drain.
+            // Separate framing checks from connection-reuse behavior tracked in https://github.com/TerraScale/ts-dashboard/issues/18.
             using var knownLengthClient = fixture.CreateClient();
             using var oversized = await SendWebhookAsync(knownLengthClient, WebhookPaths[0], oversizedBody, oversizedSignature);
             await Assert.That(oversized.StatusCode).IsEqualTo(HttpStatusCode.RequestEntityTooLarge)
