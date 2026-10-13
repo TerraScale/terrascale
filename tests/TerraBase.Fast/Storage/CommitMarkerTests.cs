@@ -212,7 +212,7 @@ public sealed class CommitMarkerTests
         var id = EntityIds.New().ToString();
         Volatile.Write(ref target, tenant.DatabaseId);
         Volatile.Write(ref armed, 1);
-        await using (var uncaptured = await store.BeginReplicaAsync(token))
+        await using (var uncaptured = await store.BeginTransactionAsync(write: true, token))
         {
             await Assert.That((await uncaptured.CommitAsync(token)).Marker).IsNull();
         }
@@ -284,7 +284,7 @@ public sealed class CommitMarkerTests
         var id = EntityIds.New().ToString();
         Volatile.Write(ref target, tenant.DatabaseId);
         Volatile.Write(ref armed, 1);
-        await using (var uncaptured = await store.BeginReplicaAsync(token))
+        await using (var uncaptured = await store.BeginTransactionAsync(write: true, token))
         {
             await Assert.That((await uncaptured.CommitAsync(token)).Marker).IsNull();
         }

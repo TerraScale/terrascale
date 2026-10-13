@@ -312,7 +312,7 @@ public sealed class ReplicaRebuildTests
                 await hold.Task.WaitAsync(cancellationToken);
             }
 
-            return !RefuseRefill && await pair.Sjc.AntiEntropy.RefillAsync(database, pair.Gru.Name, cancellationToken) is not null;
+            return !RefuseRefill && await pair.Sjc.AntiEntropy.RefillAsync(database, pair.Gru.Name, await pair.Gru.Api.Server.Services.GetRequiredService<IReplicaStates>().HorizonAsync(database, cancellationToken), cancellationToken) is not null;
         }
 
         public ValueTask<bool> CompleteAsync(TenantContext database, Ulid oldIncarnation, Ulid newIncarnation, CancellationToken cancellationToken)
