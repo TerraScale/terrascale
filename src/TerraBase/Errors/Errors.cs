@@ -65,11 +65,16 @@ public sealed record UnsupportedMediaType(string Message, string Code = "unsuppo
 /// <param name="Code">Stable machine-readable code.</param>
 public sealed record RequestTimeout(string Message, string Code = "request_timeout");
 
+/// <summary>What the request resumes from is gone for good, such as a changes feed cursor below retention: start over.</summary>
+/// <param name="Message">What is gone.</param>
+/// <param name="Code">Stable machine-readable code.</param>
+public sealed record Gone(string Message, string Code = "gone");
+
 /// <summary>Success without a value, such as a deletion.</summary>
 public sealed record Done;
 
 /// <summary>Every expected failure; <see cref="ErrorResponse.From"/> maps each to its HTTP response.</summary>
-public readonly union Failure(NotFound, Conflict, Validation, PreconditionFailed, Unauthorized, Forbidden, QuotaExceeded, Unavailable, PayloadTooLarge, UnsupportedMediaType, RequestTimeout);
+public readonly union Failure(NotFound, Conflict, Validation, PreconditionFailed, Unauthorized, Forbidden, QuotaExceeded, Unavailable, PayloadTooLarge, UnsupportedMediaType, RequestTimeout, Gone);
 
 /// <summary>A value read from a request, or the input rule it breaks.</summary>
 /// <typeparam name="T">The value type.</typeparam>

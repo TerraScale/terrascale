@@ -851,6 +851,47 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   the `_collections` document.
 - Not in R3: `_tb_feed` (R8), Merkle folding (R6), the 1 GiB retention cut and per-database readiness (R6).
 
+**R8 as built** (2026-10-12, on R3; no storage format change: `_tb_feed` and `_tb_feed_floor` were in the R2a schema):
+
+- **Index in the write transaction, not a tailer pass.** Every `_tb_state` write (a local request's flush and a join that
+  changed a document) appends `_tb_feed(origin, stamp, collection, id, deleted)` in the same transaction, and the
+  origin's `_tb_feed_floor` row (floor 0) on its first event in the file. So the feed holds exactly the committed
+  states, never a state a crash lost, and backups and copies carry it (its rows are captured; the CDC tailer skips
+  them). Cost: one more captured row per document write (the floor row only on an origin's first event here).
+- **Not in the feed:** metadata documents (`_collections`, `_indexes`, `_unique`); the documents a dropped collection held
+  (the drop deletes their states without events); a uniqueness loser becoming visible when its winner goes (no state
+  write); a duplicate or dominated join (it changes nothing). `document` is read when the event is sent: null when the
+  document no longer exists on the serving machine (deleted since, dropped, or a hidden uniqueness loser).
+- **Reading.** Per origin listed in `_tb_feed_floor`, the rows above the cursor's stamp (index `_tb_feed_order`, at most
+  512, completed to the end of the last stamp), merged by (stamp, origin) up to the lowest last stamp of an origin that
+  has more, cut only between two stamps at 256 events or 4 MiB of documents. A cursor stamp below the origin's floor is
+  410 `cursor_expired`; an origin the cursor lacks starts at its floor. Events the `collections` filter leaves out
+  still advance the cursor, which the next event or heartbeat carries, so a cursor is valid only with the same filter.
+- **Cursor.** base64url of a format byte (1) and, per origin in ascending order, node and stamp as 8-byte big-endian
+  integers (16 bytes per origin, not LEB128: simpler, and a cursor of 5 origins is still 107 characters). Decoding
+  accepts canonical bytes only (400 `invalid_cursor`), at most 256 origins.
+- **Stream.** One page at a time, no queue per connection: after a page that left nothing waiting, the stream waits for
+  the database's next commit (`IDatabaseStore.WaitForCommitAsync`, joins included) or the 15 s heartbeat (`event:
+  cursor`). A client that takes no bytes for 10 s is dropped. Limits: 32 streams per database and 1024 per machine
+  (429 `changes_busy`); a stream ends after 30 minutes or at its access token's expiry, and the client reconnects with
+  `Last-Event-ID` (so a revoked API key streams at most 30 minutes). Once streaming, a stream gives back its slot in the
+  organization's concurrent requests (`QosRequestLease`; Hobby allows 4), and each page's documents are charged to the
+  tenant's memory until sent. Errors after the first byte are an `event: error` with the usual error body, then the end
+  of the stream. TerraBase's error body is `{"error": {"code", "message"}}` on every route, not RFC 9457 problem
+  details; the feed keeps it.
+- **Retention.** `FeedRetention` deletes events stamped more than 7 days ago every hour, 1024 at a time with capture
+  suspended (a restore keeps more history, never less), and raises each origin's floor to the highest stamp deleted.
+  Refill floors are R6's.
+- **Known limit: stamps more than 1 s ahead.** A request mints `max(clock, document's stamp + 1)`, and the clock moves at
+  most `MaxSkew` (1 s) ahead (section 3). A document carrying a stamp further ahead therefore gets a stamp larger than
+  this origin's next writes to other documents, so one origin's stamps no longer follow its commit order, and a cursor
+  past the large stamp skips the later, smaller ones. `terrabase.clock.skew_capped` counts the stamps that cause it.
+  Making the feed exact here needs the origin's stamps to stay monotonic (a design decision on the clock, not R8's).
+- Metrics: `terrabase.changes.streams` (open streams).
+- Tests: Fast `DatabaseChangesTests` (events, `cursor=now`, `Last-Event-ID`, filter, joined remote writes under their
+  origin, 410 at retention, limits, heartbeat, errors); e2e `ChangesFeedE2ETests` (gru and sjc write, a cursor from
+  sjc's feed resumes on fra after sjc stops or is SIGKILLed, in-process and as separate OS processes) and E10.
+
 R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
 table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables). The engine swap (1b, PR #21) lands separately: on Turso,
 174 Fast tests fail, most of them in continuous backup, which reads SQLite's WAL directly.

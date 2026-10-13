@@ -22,6 +22,7 @@ internal static class ErrorResponse
         PayloadTooLarge e => new Response(StatusCodes.Status413PayloadTooLarge, e.Code, e.Message, op),
         UnsupportedMediaType e => new Response(StatusCodes.Status415UnsupportedMediaType, e.Code, e.Message, op),
         RequestTimeout e => new Response(StatusCodes.Status408RequestTimeout, e.Code, e.Message, op),
+        Gone e => new Response(StatusCodes.Status410Gone, e.Code, e.Message, op),
     };
 
     private sealed class Response(int status, string code, string? message, int? op, IReadOnlyList<ValidationDetail>? details = null) : IResult

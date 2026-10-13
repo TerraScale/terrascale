@@ -28,22 +28,35 @@ public sealed class Cluster : IAsyncDisposable
     public const string Fra = "fra";
     public const string FlyUrlVariable = "TERRABASE_E2E_FLY_URL";
 
+    /// <summary>The commit every Fly machine must run; set, it pins each region to its one machine (a disposable app's run).</summary>
+    public const string FlyRevisionVariable = "TERRABASE_E2E_FLY_REVISION";
+
     // A ts-auth project token's scopes: an API key cannot hold databases:*, and E12 and E13 create databases.
     private const string Scopes = "databases:read databases:write documents:read documents:write";
 
     private readonly Dictionary<string, HttpClient> _clients;
     private readonly Local? _local;
+    private readonly Dictionary<string, string>? _identities;
     private readonly Func<Task> _release;
 
-    private Cluster(string projectPath, string databasePath, string collection, Dictionary<string, HttpClient> clients, Local? local, Func<Task> release)
+    private Cluster(
+        string projectPath, string databasePath, string collection, Dictionary<string, HttpClient> clients, Local? local, Dictionary<string, string>? identities,
+        Func<Task> release)
     {
         ProjectPath = projectPath;
         DatabasePath = databasePath;
         Collection = collection;
         _clients = clients;
         _local = local;
+        _identities = identities;
         _release = release;
     }
+
+    /// <summary>
+    /// The region's verified identity for a run's record: <c>region/machine@revision</c> when every request is pinned to
+    /// one machine (<see cref="FlyRevisionVariable"/>), otherwise the region alone.
+    /// </summary>
+    public string Identity(string region) => _identities?.GetValueOrDefault(region) ?? region;
 
     /// <summary>The project's path, <c>/v1/projects/{project}</c>.</summary>
     public string ProjectPath { get; }
@@ -173,7 +186,7 @@ public sealed class Cluster : IAsyncDisposable
             var clients = regions.ToDictionary(region => region, local.Client, StringComparer.Ordinal);
             var collection = NewCollection();
             await CreateCollectionAsync(clients, local.DatabasePath, collection);
-            return new Cluster(local.ProjectPath, local.DatabasePath, collection, clients, local, async () =>
+            return new Cluster(local.ProjectPath, local.DatabasePath, collection, clients, local, null, async () =>
             {
                 foreach (var client in clients.Values)
                 {
@@ -199,7 +212,21 @@ public sealed class Cluster : IAsyncDisposable
         var key = Required("TERRABASE_E2E_FLY_API_KEY");
         var projectPath = $"/v1/projects/{Required("TERRABASE_E2E_FLY_PROJECT")}";
         var path = $"{projectPath}/databases/{Required("TERRABASE_E2E_FLY_DATABASE")}";
-        var clients = regions.ToDictionary(region => region, region => FlyClient(url, key, region), StringComparer.Ordinal);
+        // With TERRABASE_E2E_FLY_REVISION (a disposable app's run) every request goes to the region's one machine, and each
+        // machine must first answer as itself, in its region, running exactly that commit.
+        var revision = Environment.GetEnvironmentVariable(FlyRevisionVariable) is { Length: > 0 } expected ? expected : null;
+        var machines = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var region in regions)
+        {
+            machines[region] = revision is null ? null : await FlyMachineAsync(region);
+        }
+
+        var clients = regions.ToDictionary(region => region, region => FlyClient(url, key, region, machines[region]), StringComparer.Ordinal);
+        if (revision is not null)
+        {
+            await CheckIdentitiesAsync(clients, machines!, revision);
+        }
+
         var collection = NewCollection();
         try
         {
@@ -226,7 +253,8 @@ public sealed class Cluster : IAsyncDisposable
             throw;
         }
 
-        return new Cluster(projectPath, path, collection, clients, null, async () =>
+        return new Cluster(projectPath, path, collection, clients, null, revision is null ? null : regions.ToDictionary(
+            region => region, region => $"{region}/{machines[region]}@{revision}", StringComparer.Ordinal), async () =>
         {
             try
             {
@@ -271,9 +299,34 @@ public sealed class Cluster : IAsyncDisposable
 
     private static string NewCollection() => $"e2e-{Guid.NewGuid():N}";
 
-    private static HttpClient FlyClient(Uri url, string key, string region)
+    // Each region's machine answers /healthz as itself (machine, region) running the commit under test, or the run stops
+    // before any write: an answer from another machine, region or build proves nothing about this one.
+    private static async Task CheckIdentitiesAsync(Dictionary<string, HttpClient> clients, Dictionary<string, string> machines, string revision)
     {
-        var client = new HttpClient(new RegionPin(region) { InnerHandler = new SocketsHttpHandler() }) { BaseAddress = url, Timeout = Timeout.InfiniteTimeSpan };
+        foreach (var (region, client) in clients)
+        {
+            using var health = await client.GetAsync(new Uri("/healthz", UriKind.Relative));
+            await Docs.EnsureSuccessAsync(health);
+            using var body = JsonDocument.Parse(await health.Content.ReadAsStringAsync());
+            var (served, machine, built) = (Text(body, "region"), Text(body, "machine"), Text(body, "revision"));
+            if (served != region || machine != machines[region] || built != revision)
+            {
+                throw new InvalidOperationException(
+                    $"{region}'s machine {machines[region]} must run {revision}; /healthz answered region {served}, machine {machine}, revision {built}");
+            }
+        }
+
+        static string? Text(JsonDocument body, string name)
+        {
+            return body.RootElement.TryGetProperty(name, out var value) ? value.GetString() : null;
+        }
+    }
+
+    private static HttpClient FlyClient(Uri url, string key, string region, string? machine)
+    {
+        DelegatingHandler pin = machine is null ? new RegionPin(region) : new MachinePin(region, machine);
+        pin.InnerHandler = new SocketsHttpHandler();
+        var client = new HttpClient(pin) { BaseAddress = url, Timeout = Timeout.InfiniteTimeSpan };
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key);
         return client;
     }
