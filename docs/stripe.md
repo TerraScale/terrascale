@@ -16,18 +16,17 @@ one matching enabled endpoint per Stripe account.
 
 ## Read-only Stripe audit
 
-Run the app's audit command in an environment where OCI Vault has delivered the
-Dashboard machine identity:
+Run the app's audit command in an environment where Fly has delivered the
+dashboard secrets:
 
 ```sh
 nice -n 19 dotnet run --project src/TerraScale.Dashboard -- audit-stripe
 ```
 
-The fixed identity path is a consumer contract. Automatic Vault delivery and
-the C# deployment remain unqualified; this command does not implement delivery.
-See [`csharp-migration.md`](csharp-migration.md) for the open runtime gates.
+The secret names and formats are in [`identity-descriptor.md`](identity-descriptor.md).
+Fly delivers the environment variables; this audit does not provision secrets.
 
-The command takes no options and reads the fixed DashboardIdentity document. It
+The command takes no options and reads DashboardIdentity from Fly environment variables. It
 does not accept keys, webhook secrets, origins, API versions or mode settings on
 the command line or from manual audit-specific environment variables. It infers
 test or live mode from the delivered secret key prefix. The audit uses Stripe.net
@@ -76,7 +75,7 @@ invoice.marked_uncollectible
 invoice.voided
 ```
 
-Webhook signatures are verified with the endpoint secret in the Vault-delivered
+Webhook signatures are verified with the endpoint secret in the Fly-delivered
 machine identity. Delivery failures remain visible to Stripe for retry. Confirm
 successful delivery attempts in Stripe Workbench when validating an endpoint.
 

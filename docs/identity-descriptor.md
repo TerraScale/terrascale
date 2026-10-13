@@ -6,8 +6,9 @@ This is the consumer contract the application implements
 contains no credential values, and none may be added here, to an issue, a chat
 or a command line.
 
-Status (2026-10-13): nothing is delivered. The Fly app `ts-dashboard` has no
-secrets; the real application refuses to start until they exist.
+Status (2026-10-13): the client secret and session encryption key are staged
+in Fly and saved in GitHub secrets. The app-scoped deploy token is in GitHub.
+Vendor-issued Stripe keys remain required before the application can start.
 
 ## Fly secrets
 
@@ -101,8 +102,8 @@ the invitations the dashboard sends. ts-auth does not enforce it.
 
 ## State database
 
-The dashboard keeps its own state in the `platform-dashboard` database of the
-platform project `00000000000000000000000002`, which TerraBase seeds on every
+The dashboard keeps its own state in the `ts-dashboard` database of the
+ts-dashboard project `00000000000000000000000005`, which TerraBase seeds on every
 start (terrascale `PlatformDatabases.cs`). It reaches TerraBase's private
 listener with no credential: `http://gru.ts-terrabase.internal:8081` on Fly,
 `http://127.0.0.1:8081` only in Development off Fly; Production off Fly refuses
