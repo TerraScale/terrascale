@@ -70,6 +70,7 @@ internal sealed class ReferenceStripeTransport(IHttpClientFactory original) : Ht
                 number = row.Id,
                 status = row.Status,
                 amount_due = row.Amount,
+                amount_remaining = row.Status == "open" ? row.Amount : 0,
                 currency = "usd",
                 created = row.CreatedAt.ToUnixTimeSeconds(),
                 period_start = row.PeriodStart.ToUnixTimeSeconds(),

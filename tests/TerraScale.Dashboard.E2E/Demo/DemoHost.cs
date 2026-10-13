@@ -727,6 +727,7 @@ sealed class TestStripeTransport : HttpMessageHandler
                     number = row.Number,
                     status = row.Status,
                     amount_due = row.Amount,
+                    amount_remaining = row.Status == "open" ? row.Amount : 0,
                     currency = row.Currency,
                     created = row.Created.ToUnixTimeSeconds(),
                     period_start = row.Created.AddDays(-10).ToUnixTimeSeconds(),
