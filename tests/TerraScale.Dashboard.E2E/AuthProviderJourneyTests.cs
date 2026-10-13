@@ -170,13 +170,10 @@ public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
         var secondCookie = SessionCookie(secondLogin);
         var csrf = await HttpJourney.CsrfAsync(second, "/profile?tab=security");
         const string newPassword = "new-provider-password-123";
-        using (var changed = await HttpJourney.PostFormAsync(second, "/api/v1/dashboard/profile/password", new()
-        {
-            ["_csrf"] = csrf,
-            ["currentPassword"] = "test-password",
-            ["newPassword"] = newPassword,
-            ["confirmPassword"] = newPassword
-        }))
+        using (var started = await StartPasswordForm(second, csrf))
+            Check(started.StatusCode == HttpStatusCode.SeeOther && started.Headers.Location?.OriginalString == "/profile?tab=security&status=code-sent",
+                "Current-password proof starts the owning producer reset while the older refresh is leased");
+        using (var changed = await CompletePasswordForm(second, csrf, newPassword))
         {
             Check(changed.StatusCode == HttpStatusCode.SeeOther && changed.Headers.Location?.OriginalString == "/login",
                 "Native signed-in password change completes and signs the current browser out");
@@ -189,16 +186,17 @@ public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
         using (var oldFirst = await Request(first, "/api/v1/auth/me", firstCookie))
         using (var oldSecond = await Request(second, "/api/v1/auth/me", secondCookie))
             Check(oldFirst.StatusCode == HttpStatusCode.Unauthorized && oldSecond.StatusCode == HttpStatusCode.Unauthorized,
-                "Revoke-all wins over the leased refresh and invalidates both captured browser cookies");
+                "Confirmed password reset wins over the leased refresh and invalidates both captured browser cookies");
         using (var oldPassword = await HttpJourney.LoginAsync(second, returnTo: "/api/v1/auth/me"))
             Check(oldPassword.StatusCode == HttpStatusCode.Unauthorized, "The previous password no longer obtains a provider grant");
         using (var newLogin = await HttpJourney.LoginAsync(second, password: newPassword, returnTo: "/api/v1/auth/me"))
             Check(newLogin.StatusCode == HttpStatusCode.SeeOther, "The new password obtains a fresh provider grant after all sessions ended");
         _ = await User(second);
         var observed = await Observations(controls);
-        var mutations = observed.GetProperty("actions").EnumerateArray().Select(item => item.GetString()).Where(item => item?.StartsWith("management/", StringComparison.Ordinal) == true).ToArray();
-        Check(observed.GetProperty("managementMutations").GetInt32() == 2 && mutations.SequenceEqual(new[] { "management/password", "management/revoke-all" }),
-            "Official SDK management uses a distinct service credential, changes only the admitted subject, and then revokes every family");
+        var resetActions = observed.GetProperty("actions").EnumerateArray().Select(item => item.GetString()).Where(item => item?.StartsWith("password-reset/", StringComparison.Ordinal) == true).ToArray();
+        Check(resetActions.SequenceEqual(new[] { "password-reset/start", "password-reset/complete" }) &&
+            observed.GetProperty("managementRequests").GetInt32() == 0 && observed.GetProperty("managementMutations").GetInt32() == 0,
+            "One admitted reset completes once, revokes the provider families, and uses no unsupported management contract");
         Check(observed.GetProperty("refreshes").GetInt32() == 1, "Password change never retries the leased refresh secret");
         CheckProtocol(observed);
     }
@@ -337,8 +335,10 @@ public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
         await Control(controls, new { command = "fault", value = "signup-policy" });
         using (var policy = await HttpJourney.PostFormAsync(browser, "/onboarding", registration))
         {
-            Check(policy.StatusCode == HttpStatusCode.UnprocessableEntity && (await policy.Content.ReadAsStringAsync()).Contains("That password is too common.", StringComparison.Ordinal),
-                "A known producer signup policy error is displayed on its native password field");
+            var policyHtml = await policy.Content.ReadAsStringAsync();
+            Check(policy.StatusCode == HttpStatusCode.UnprocessableEntity && policyHtml.Contains("Choose a different password.", StringComparison.Ordinal) &&
+                !policyHtml.Contains("That password is too common.", StringComparison.Ordinal),
+                "The native password field maps the known producer error code without exposing producer text");
             Check(!(await policy.Content.ReadAsStringAsync()).Contains(initialPassword, StringComparison.Ordinal), "Rejected native signup never echoes the submitted password");
         }
         await Control(controls, new { command = "advance", seconds = 61 });
