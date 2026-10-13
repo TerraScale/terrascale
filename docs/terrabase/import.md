@@ -41,8 +41,11 @@ into a database that holds data, schema/constraint enforcement in TerraBase.
 
 ## 2. Ownership and routing
 
-- Service: TerraBase (`ts-terrabase`), client listener (TLS), `/v1`, ts-auth **project access tokens** (Bearer JWT).
-  No new scopes, no ts-auth change. Legacy `tb_` API keys get `404`.
+- Service: TerraBase (`ts-terrabase`), client listener (TLS), `/v1`, ts-auth **project access tokens** (Bearer JWT,
+  `project_id` = the route's project). No new scopes, no ts-auth change. Legacy `tb_` API keys, membership tokens and
+  `X-TerraBase-User-Id` get `404`. Create the destination with the canonical `POST P/databases` and the same project
+  access token, so the import routes resolve it; a database created through the hidden organization routes is reachable
+  by a project token only once its project binding is verified (api.md, "Authentication").
 - Code: `src/TerraBase/Features/Import/` (jobs, endpoints, PostgreSQL dump reader, SQLite file reader, mapping, runner).
 - Bodies: camelCase JSON; errors in the `ErrorBody` envelope `{"error":{"code","message"}}`.
 - **Region:** an import runs in its destination's **home region**. Every import route answers `421 wrong_region` with
@@ -119,7 +122,11 @@ again. A different or re-exported file is a new import: create a new database an
 
 ### `ImportJob`
 
-Every field is always present; `null` where stated. Counts are JSON integers; times are RFC 3339 UTC strings.
+Every field is always present; `null` where stated, and only there. Counts are JSON integers; times are RFC 3339 UTC
+strings. Strings never stand in for null: `mapping` is always a string (an all-NULL SQLite column is the string
+`"null"`). `constraints[].name` is null when the source names none, `constraints[].references` is null except for
+foreign keys, and `issues[].column`/`issues[].row` are null when the issue has none. Every `ImportJob` response body is
+at most 1 MiB (preview at most 512 KiB, validation at most 1000 tables).
 
 ```json
 {
