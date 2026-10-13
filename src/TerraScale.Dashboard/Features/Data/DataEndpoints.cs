@@ -122,7 +122,8 @@ public static class DataEndpoints
                     if (!DatabaseEndpoints.WantsHtml(http) || DatabaseEndpoints.Status(error) == 404) return DatabaseEndpoints.Failure(error);
                     var section = action.StartsWith("indexes", StringComparison.Ordinal) ? "indexes" : action.Contains("sql", StringComparison.Ordinal) || action.StartsWith("saved-queries", StringComparison.Ordinal) ? "sql" : "documents";
                     var dialog = action == "collections" ? "new-collection" : action == "saved-queries" ? "save-query" : action == "documents" ? form["operation"] == "create" ? "add-document" : form["operation"] == "delete" ? "delete-document" : "edit-document" : "";
-                    return await PageAsync(http, context, id, section, data, saved, collection, DatabaseEndpoints.Message(error), dialog, form["id"].ToString(), form["document"].ToString(), form["version"].ToString(), form["operation"].ToString(), form["sql"].ToString(), queryName: form["name"].ToString(), status: DatabaseEndpoints.Status(error));
+                    var submittedId = error is DocumentWriteOutcomeUnknownException unknown ? unknown.DocumentId : form["id"].ToString();
+                    return await PageAsync(http, context, id, section, data, saved, collection, DatabaseEndpoints.Message(error), dialog, submittedId, form["document"].ToString(), form["version"].ToString(), form["operation"].ToString(), form["sql"].ToString(), queryName: form["name"].ToString(), status: DatabaseEndpoints.Status(error));
                 }
             });
         }

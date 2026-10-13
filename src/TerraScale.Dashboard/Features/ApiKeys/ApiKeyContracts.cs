@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TerraScale.Dashboard.Features.ApiKeys;
 
 public record ProjectApiKeyMetadata(string KeyId, string ProjectId, string Name, string Prefix, string LastFour, IReadOnlyList<string> Scopes,
@@ -12,3 +14,14 @@ public sealed record ProjectApiKeySecret(ProjectApiKeyMetadata ApiKey, string Se
 {
     public override string ToString() => $"Project credential {ApiKey.KeyId} [REDACTED]";
 }
+
+public sealed record CreateProjectCredentialRequest([property: JsonPropertyName("_csrf")] string Csrf,
+    string Name, string? DatabaseId, string[]? Scope, string? Scopes);
+public sealed record RevokeProjectCredentialRequest([property: JsonPropertyName("_csrf")] string Csrf, string? KeyId);
+
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(ProjectCredentialMetadata[]))]
+[JsonSerializable(typeof(ProjectApiKeySecret))]
+[JsonSerializable(typeof(CreateProjectCredentialRequest))]
+[JsonSerializable(typeof(RevokeProjectCredentialRequest))]
+internal sealed partial class ApiKeyContractJson : JsonSerializerContext;
