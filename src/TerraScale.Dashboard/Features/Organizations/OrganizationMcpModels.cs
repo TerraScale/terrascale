@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Organizations;
 public sealed record OrganizationDone(bool Ok);
 public sealed record OrganizationProjectResult(string Id, string OrganizationId, string Name, string Region, string BackupRegion, IReadOnlyList<string> Regions);
 public sealed record OrganizationMemberView(string Id, string Name, string Email, string Role, bool IsOwner, bool IsSelf, bool CanEdit, string JoinedAt);
-public sealed record OrganizationRoleCounts(int Owner, int Member, int Viewer);
+public sealed record OrganizationRoleCounts(int Owner, int Member, int Viewer, int Admin);
 public sealed record OrganizationMemberList(IReadOnlyList<OrganizationMemberView> Members,
     [property: Description("Active members by role across the whole organization.")] OrganizationRoleCounts RoleCounts);
 public sealed record OrganizationInvitationView(string Id, string Email, string Role, string Status, string ExpiresAt, bool Open);
