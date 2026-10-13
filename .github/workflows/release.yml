@@ -73,14 +73,14 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          dotnet pack src/TerraScale.DotNet --configuration Release --no-build -p:ContinuousIntegrationBuild=true --output package
-          package="package/TerraScale.DotNet.$VERSION.nupkg"
+          python3 scripts/pack-reproducible.py "$RUNNER_TEMP/qualified-package"
+          package="$RUNNER_TEMP/qualified-package/TerraScale.DotNet.$VERSION.nupkg"
           unzip -p "$package" TerraScale.DotNet.nuspec | grep -F "commit=\"$GITHUB_SHA\""
           echo "sha256=$(sha256sum "$package" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v6
         with:
           name: package
-          path: package/TerraScale.DotNet.${{ steps.version.outputs.version }}.nupkg
+          path: ${{ runner.temp }}/qualified-package/TerraScale.DotNet.${{ steps.version.outputs.version }}.nupkg
           if-no-files-found: error
 
   github-packages:

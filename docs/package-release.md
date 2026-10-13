@@ -15,8 +15,9 @@ replaced or deleted.
 
 The tag starts [`release.yml`](../.github/workflows/release.yml). Its `package`
 job checks the tag equals `v` + `<Version>` and the commit is on `main`,
-builds, runs the tests on .NET 10 and 11 and packs once, without write access,
-and logs the package SHA-256. Then:
+builds, runs the tests on .NET 10 and 11, and qualifies two clean locked package
+builds before advancing one artifact, without write access. It logs the package
+SHA-256. Then:
 
 1. `github-packages` checks that hash and pushes with the job's
    `GITHUB_TOKEN`. The package is linked to this repository through
@@ -95,7 +96,8 @@ nice -n 19 python3 scripts/pack-reproducible.py /tmp/ts-dotnet-qualified-package
 ```
 
 The script exports that exact commit twice, restores into independent NuGet
-caches, builds both package targets with normalized source paths, and requires
+caches, builds both package targets with normalized source paths and NuGet archive
+timestamps fixed to the source commit time (`SOURCE_DATE_EPOCH`), and requires
 identical package bytes. It then restores the exact package into the existing
 installed-package consumer with another fresh cache and runs its HTTP-fake
 checks on .NET 10 and .NET 11. The output contains the package and source,
