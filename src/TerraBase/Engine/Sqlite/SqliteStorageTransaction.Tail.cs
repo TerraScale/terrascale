@@ -312,12 +312,17 @@ internal sealed partial class SqliteStorageTransaction
             Deltas.Add(new ChangeDelta(collection, id, at, full.DeltaAt(at)));
         }
 
-        // id, doc: a collection table's row.
+        // id, doc: a client collection table's row; collection, id, body: a row of the system database's one documents table.
         private void Document(string table, byte[] image)
         {
-            if (SqliteRecord.Decode(image) is [string id, string doc])
+            switch (SqliteRecord.Decode(image))
             {
-                _documents![(table, id)] = doc;
+                case [string id, string doc]:
+                    _documents![(table, id)] = doc;
+                    break;
+                case [string collection, string id, string body] when table == "documents":
+                    _documents![(collection, id)] = body;
+                    break;
             }
         }
     }

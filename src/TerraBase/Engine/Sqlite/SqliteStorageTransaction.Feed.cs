@@ -109,7 +109,8 @@ internal sealed partial class SqliteStorageTransaction
     // Metadata documents stay out: the feed carries client documents only.
     private void AppendFeed(string collection, string id, EntryVersion at, bool live)
     {
-        if (IsMetadata(collection))
+        // The feed is a client database's (GET …/changes); the catalog is a lattice database too, but keeps none.
+        if (store.IsSystem || IsMetadata(collection))
         {
             return;
         }

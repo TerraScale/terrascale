@@ -45,11 +45,6 @@ internal sealed partial class SqliteStorageTransaction
     private bool Join(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken)
     {
         ThrowIfReadOnly();
-        if (store.IsSystem)
-        {
-            throw new NotSupportedException("the system database does not join replicated deltas");
-        }
-
         Member.Clock.Observe(at.Stamp);
         if (!HasTable(collection))
         {
