@@ -17,7 +17,7 @@ namespace TerraBase.Features.Replication;
 /// groups of every database the peer's region holds, at most one batch per database in flight, resumes from the peer's
 /// last ack after a reconnect, and heartbeats while idle. Its cursors and lags are the outbound replication status.
 /// </summary>
-internal sealed class PeerStreams : BackgroundService, IReplicationStatus
+internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemoteDurability
 {
     private static readonly TimeSpan Idle = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(5);
@@ -45,6 +45,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
             "Age of the oldest change group not yet acknowledged by the peer region's machines.");
         meter.CreateObservableGauge("terrabase.replication.ack_lag", () => Lags(cursor => cursor.InFlight is null ? null : cursor.SentAt), "s",
             "Age of the oldest batch sent to the peer region's machines but not acknowledged.");
+    }
+
+    public bool Confirms => true;
+
+    public async ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken)
+    {
+        var view = await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false);
+        return view.Elsewhere.IsDefault ? [] : [.. view.Elsewhere.Select(member => member.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
     }
 
     public ReplicationStatus Snapshot()
