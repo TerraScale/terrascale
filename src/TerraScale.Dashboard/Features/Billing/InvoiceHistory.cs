@@ -5,7 +5,10 @@ namespace TerraScale.Dashboard.Features.Billing;
 
 public sealed record BillingInvoice(string Id, string Number, string Status, long AmountCents, string Currency,
     DateTimeOffset CreatedAt, DateTimeOffset? PeriodStart, DateTimeOffset? PeriodEnd,
-    string HostedUrl = "", string PdfUrl = "");
+    string HostedUrl = "", string PdfUrl = "")
+{
+    public long? RemainingCents { get; init; }
+}
 public sealed record BillingInvoiceList(IReadOnlyList<BillingInvoice> Invoices, int Page, int PageCount, int Total);
 public sealed record InvoiceHistoryPage(BillingInvoiceList Listing, string Status, string Issued)
 {
@@ -68,10 +71,17 @@ public static class InvoiceHistory
 
     public static string SafeUrl(string? raw) => Uri.TryCreate(raw, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
         uri.Host.Length > 0 && uri.UserInfo.Length == 0 ? uri.AbsoluteUri : "";
+    public static string Amount(long minorUnits, string currency)
+    {
+        // Stripe charge amounts keep ISK and UGX in their special two-decimal representation.
+        var zeroDecimal = currency.ToLowerInvariant() is "bif" or "clp" or "djf" or "gnf" or "jpy" or "kmf" or "krw" or
+            "mga" or "pyg" or "rwf" or "vnd" or "vuv" or "xaf" or "xof" or "xpf";
+        return (minorUnits / (zeroDecimal ? 1m : 100m)).ToString(zeroDecimal ? "F0" : "F2", CultureInfo.InvariantCulture);
+    }
     public static string Money(long cents, string currency = "usd") => currency.Equals("usd", StringComparison.OrdinalIgnoreCase)
-        ? "$" + (cents / 100m).ToString("F2", CultureInfo.InvariantCulture)
-        : currency.Length == 0 ? (cents / 100m).ToString("F2", CultureInfo.InvariantCulture) + " (currency unreported)"
-        : currency.ToUpperInvariant() + " " + (cents / 100m).ToString("F2", CultureInfo.InvariantCulture);
+        ? "$" + Amount(cents, currency)
+        : currency.Length == 0 ? Amount(cents, currency) + " (currency unreported)"
+        : currency.ToUpperInvariant() + " " + Amount(cents, currency);
 
     public static InvoiceSummary Summarize(IReadOnlyList<BillingInvoice> invoices, DateTimeOffset now)
     {
@@ -103,7 +113,7 @@ public static class InvoiceHistory
         {
             var currencies = open.Select(invoice => invoice.Currency.ToUpperInvariant()).Distinct(StringComparer.Ordinal).ToArray();
             long amount = 0;
-            foreach (var invoice in open) amount = checked(amount + Math.Max(0, invoice.AmountCents));
+            foreach (var invoice in open) amount = checked(amount + Math.Max(0, invoice.RemainingCents ?? invoice.AmountCents));
             summary = summary with
             {
                 OutstandingDetail = $"{open.Length} open invoice(s) in recorded history",

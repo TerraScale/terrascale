@@ -1,0 +1,102 @@
+using System.Globalization;
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.WebUtilities;
+using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Usage;
+
+namespace TerraScale.Dashboard.E2E.Features.Usage;
+
+public sealed class UsageBackendContractTests
+{
+    [Test]
+    public async Task CurrentHourAcceptsProducersRoundedUtcEndAndUsesCanonicalDatabaseName()
+    {
+        using var wire = new Wire();
+        var selection = Selection();
+        var result = await new UsageBackend(wire, new Clock(), new Tokens()).ReadAsync(selection, CancellationToken.None);
+        await Assert.That(result.Scope.State).IsEqualTo(UsageSourceState.Measured);
+        await Assert.That(result.Scope.Reading!.Period.To).IsEqualTo(Clock.Now.AddMinutes(45));
+        await Assert.That(result.Scope.Reading.Period.Reads).IsEqualTo(12);
+        await Assert.That(result.Scope.Reading.DatabaseId).IsEqualTo(selection.DatabaseId);
+        await Assert.That(result.Monthly.Values.Single().State).IsEqualTo(UsageSourceState.Measured);
+    }
+
+    [Test]
+    [Arguments(401, UsageSourceState.Unauthorized)]
+    [Arguments(403, UsageSourceState.Unauthorized)]
+    [Arguments(404, UsageSourceState.Restricted)]
+    [Arguments(400, UsageSourceState.QueryTooExpensive)]
+    [Arguments(503, UsageSourceState.Unavailable)]
+    public async Task FailedMetersRemainUnknownInsteadOfBecomingZero(int status, UsageSourceState expected)
+    {
+        using var wire = new Wire { Failure = status };
+        var result = await new UsageBackend(wire, new Clock(), new Tokens()).ReadAsync(Selection(), CancellationToken.None);
+        await Assert.That(result.Scope.State).IsEqualTo(expected);
+        await Assert.That(result.Scope.Reading).IsNull();
+        await Assert.That(result.Monthly.Values.Single().Reading).IsNull();
+    }
+
+    [Test]
+    public async Task ForeignDatabaseIdentityCannotBecomeUsageForSelectedDatabase()
+    {
+        using var wire = new Wire { Foreign = true };
+        var result = await new UsageBackend(wire, new Clock(), new Tokens()).ReadAsync(Selection(), CancellationToken.None);
+        await Assert.That(result.Scope.State).IsEqualTo(UsageSourceState.Unavailable);
+        await Assert.That(result.Scope.Reading).IsNull();
+    }
+
+    private static UsageSelection Selection()
+    {
+        var project = new ProjectRecord { Id = "01JA0000000000000000000001", OrganizationId = "01JA0000000000000000000002", Name = "project" };
+        var database = new DatabaseRecord { Id = "01JA0000000000000000000004", ProjectId = project.Id, Name = "app" };
+        project.Databases.Add(database.Id, database);
+        var organization = new OrganizationRecord { Id = project.OrganizationId };
+        organization.Projects.Add(project.Id, project);
+        var context = new AccountContext(new("user", "Synthetic", "synthetic@example.test", "original", null, Clock.Now.AddMinutes(5)),
+            new() { UserId = "user" }, [organization], organization, project);
+        return new(context, "1h", database.Id, true);
+    }
+    private sealed class Clock : TimeProvider
+    {
+        public static readonly DateTimeOffset Now = new(2026, 10, 12, 0, 15, 0, TimeSpan.Zero);
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+    private sealed class Tokens : IProjectAccessTokens
+    {
+        public Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, IReadOnlyList<string> scopes, CancellationToken cancellationToken)
+        {
+            if (scopes.Single() != "databases:read") throw new InvalidOperationException("Wrong meter authority.");
+            return Task.FromResult("meter-project-token");
+        }
+    }
+    private sealed class Wire : HttpMessageHandler, IHttpClientFactory
+    {
+        public int Failure { get; init; }
+        public bool Foreign { get; init; }
+        public HttpClient CreateClient(string name) => new(this, false);
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            var database = path == "/v1/projects/01JA0000000000000000000001/databases/app/usage";
+            if (!database && path != "/v1/projects/01JA0000000000000000000001/usage" || request.Headers.Authorization?.Parameter != "meter-project-token")
+                throw new InvalidOperationException("Noncanonical meter request.");
+            if (Failure > 0) return Task.FromResult(Response((HttpStatusCode)Failure, "{\"error\":{\"code\":\"invalid_query\",\"message\":\"failed\"}}"));
+            var query = QueryHelpers.ParseQuery(request.RequestUri.Query);
+            var granularity = query["granularity"].ToString();
+            var from = DateTimeOffset.Parse(query["from"].ToString(), CultureInfo.InvariantCulture);
+            var to = granularity == "day" ? Clock.Now.AddDays(1).Date : Clock.Now.AddMinutes(45).UtcDateTime;
+            var period = new { from, to = new DateTimeOffset(to, TimeSpan.Zero), granularity, reads = 12, writes = 3 };
+            var series = new[] { new { start = from, reads = 12, writes = 3 } };
+            var databaseId = Foreign ? "01JA0000000000000000000005" : "01JA0000000000000000000004";
+            var row = new { databaseId, storageBytes = 2048, logicalBytes = 1024, collections = 1, documents = 2, reads = 22, writes = 5, period, series };
+            var child = new { databaseId, storageBytes = 2048, logicalBytes = 1024, collections = 1, documents = 2, reads = 22, writes = 5, period, series = Array.Empty<object>() };
+            var value = database ? JsonSerializer.Serialize(row) : JsonSerializer.Serialize(new
+            { projectId = "01JA0000000000000000000001", databases = 1, storageBytes = 2048, logicalBytes = 1024, documents = 2, reads = 22, writes = 5, period, series, items = new[] { child } });
+            return Task.FromResult(Response(HttpStatusCode.OK, value));
+        }
+        private static HttpResponseMessage Response(HttpStatusCode status, string body) => new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+    }
+}

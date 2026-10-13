@@ -42,6 +42,22 @@ public sealed class DocumentChangesContractTests
     }
 
     [Test]
+    public async Task InitialCheckpointlessChangeIsPresentedWithoutInventingAResumeId()
+    {
+        using var wire = new Wire { Checkpointless = true };
+        await using (var stream = Service(wire).ReadAsync(Context(), "01JA0000000000000000000004", "items", "now").GetAsyncEnumerator())
+        {
+            await Assert.That(await stream.MoveNextAsync()).IsTrue();
+            await Assert.That(stream.Current.State).IsEqualTo("change");
+            await Assert.That(stream.Current.Cursor).IsNull();
+            await Assert.That(stream.Current.Change!.Id).IsEqualTo("txn");
+            await Assert.That(await stream.MoveNextAsync()).IsTrue();
+            await Assert.That(stream.Current.Cursor).IsEqualTo(First);
+        }
+        await Assert.That(wire.Content!.Disposed).IsTrue();
+    }
+
+    [Test]
     public async Task PartialEnumerationDisposesConnection()
     {
         using var wire = new Wire();
@@ -84,6 +100,7 @@ public sealed class DocumentChangesContractTests
     private sealed class Wire : HttpMessageHandler, IHttpClientFactory
     {
         public bool Expired { get; init; }
+        public bool Checkpointless { get; init; }
         public int StreamRequests { get; private set; }
         public string? LastEventId { get; private set; }
         public string? Query { get; private set; }
@@ -104,8 +121,9 @@ public sealed class DocumentChangesContractTests
             Query = request.RequestUri.Query;
             LastEventId = request.Headers.TryGetValues("Last-Event-ID", out var checkpoint) ? checkpoint.Single() : null;
             var change = "{\"collection\":\"items\",\"id\":\"a\",\"op\":\"upsert\",\"version\":\"2\",\"origin\":\"0000000000000001\",\"document\":null}";
+            var initial = Checkpointless ? "event: change\ndata: " + change.Replace("\"a\"", "\"txn\"", StringComparison.Ordinal) + "\n\n" : "";
             Content = Expired ? new("{\"error\":{\"code\":\"cursor_expired\",\"message\":\"expired\"}}", "application/json") :
-                new($"event: change\nid: {First}\ndata: {change}\n\nevent: change\nid: {Next}\ndata: {change}\n\nevent: cursor\nid: {Next}\ndata: {{\"cursor\":\"{Next}\"}}\n\n", "text/event-stream");
+                new(initial + $"event: change\nid: {First}\ndata: {change}\n\nevent: change\nid: {Next}\ndata: {change}\n\nevent: cursor\nid: {Next}\ndata: {{\"cursor\":\"{Next}\"}}\n\n", "text/event-stream");
             var response = new HttpResponseMessage(Expired ? HttpStatusCode.Gone : HttpStatusCode.OK) { Content = Content };
             response.Headers.Add("X-TerraBase-Region", "gru");
             return Task.FromResult(response);
