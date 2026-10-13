@@ -1,0 +1,6 @@
+{
+  "description": "The _tb_state insert carries change type -1 (delete). Turso's delete rows carry no after-image, so a -1 row with one is damaged: dropping it as a delete would leave an acknowledged local write unshipped.",
+  "row": "state",
+  "mutation": { "kind": "change_type", "value": -1 },
+  "expect": "refused"
+}

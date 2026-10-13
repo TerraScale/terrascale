@@ -74,6 +74,14 @@ internal sealed partial class SqliteStorageTransaction
                     rows++;
                     from = reader.GetInt64(0);
                     var type = reader.GetInt64(1);
+                    // Turso's commit rows carry no table and no after-image, its delete rows no after-image. A row whose type
+                    // was damaged into one of those values still has its own table or image: taking it at its type would drop
+                    // the write it captured, so the read is refused.
+                    if ((type == 2 && (!reader.IsDBNull(2) || !reader.IsDBNull(3))) || (type == -1 && !reader.IsDBNull(3)))
+                    {
+                        throw new InvalidDataException($"a captured change of type {type} has the shape of another type");
+                    }
+
                     if (type == 2)
                     {
                         if (transaction.Deltas.Count > 0)
@@ -101,11 +109,20 @@ internal sealed partial class SqliteStorageTransaction
                         continue;
                     }
 
+                    // Turso writes 1 (insert), 0 (update), -1 (delete) and 2 (commit). Any other type is a damaged row: skipping it
+                    // could leave an acknowledged write unshipped, so the read is refused instead.
+                    if (type is not (-1 or 0 or 1))
+                    {
+                        throw new InvalidDataException($"a captured change has change type {type}, which no capture writes");
+                    }
+
                     // A delete carries no after-image: a deleted document's state row says live = 0, so it needs none.
                     // The changes feed's own rows (R8) are bookkeeping of this machine, never shipped.
                     if (type is 0 or 1 && reader.GetString(2) is var table && !ChangeLog.EngineTable(table) && table is not ("_tb_feed" or "_tb_feed_floor"))
                     {
-                        transaction.Add(table, SqliteSession.Bytes(reader, 3), self);
+                        transaction.Add(table, reader.IsDBNull(3)
+                            ? throw new InvalidDataException("a captured insert or update has no after-image")
+                            : SqliteSession.Bytes(reader, 3), self);
                     }
                 }
             }
@@ -120,8 +137,9 @@ internal sealed partial class SqliteStorageTransaction
 
     /// <summary>
     /// See <see cref="IChangeGroupSource.AckedAsync"/>; null when <paramref name="peer"/> has no row yet, or when its row is
-    /// above the newest change id: a restore or a copy brought it back from another file's <c>turso_cdc</c>, whose ids this
-    /// file does not continue (retention always keeps the newest row, so an acknowledged id never passes it).
+    /// above the newest change id: an ack from another file's <c>turso_cdc</c>, whose ids this file does not continue
+    /// (copies and restores reset acks to 0 in <see cref="TursoCopy"/>; this guards any other path; retention always keeps
+    /// the newest row, so an acknowledged id never passes it).
     /// </summary>
     internal ValueTask<long?> GetAckedAsync(ReplicaId peer, CancellationToken cancellationToken) =>
         RunAsync(() =>
@@ -154,19 +172,23 @@ internal sealed partial class SqliteStorageTransaction
             : Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0, cancellationToken);
 
     /// <summary>
-    /// Retention without an acknowledgement (uncaptured): first a peer whose unacknowledged CDC rows pass 1 GiB stops holding
-    /// them (its <c>seen</c> goes to 0 until it is heard from again, and it refills when it returns), then what
-    /// <see cref="Retention"/> allows is deleted. Returns the CDC rows left, and the smallest acknowledged id of a peer still
-    /// holding rows.
+    /// Retention without an acknowledgement (uncaptured): first each peer's acknowledged id rises over the rows past it that
+    /// hold no group of <paramref name="self"/> (joined remote writes and repairs, which are never shipped, so a peer has
+    /// nothing there to acknowledge: a replica that only receives would otherwise keep every joined row), when every row
+    /// past it is still here (after a cut the peer refills instead), then a peer whose
+    /// unacknowledged CDC rows pass 1 GiB stops holding them (its <c>seen</c> goes to 0 until it is heard from again, and it
+    /// refills when it returns), then what <see cref="Retention"/> allows is deleted. Returns the CDC rows left, and the
+    /// smallest acknowledged id of a peer still holding rows, each raise as the range it proved to hold no local group, and
+    /// the oldest change id kept.
     /// </summary>
-    internal async ValueTask<(long Left, long? Floor)> TrimAsync(long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
+    internal async ValueTask<(long Left, long? Floor, List<(long From, long To)> Quiet, long Oldest)> TrimAsync(long? backupAnchor, DateTimeOffset now, ReplicaId self, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         return await RunAsync(() =>
         {
             if (Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null)
             {
-                return (0L, (long?)null);
+                return (0L, (long?)null, new List<(long From, long To)>(), 0L);
             }
 
             var newest = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0;
@@ -176,6 +198,34 @@ internal sealed partial class SqliteStorageTransaction
                 while (reader.Read())
                 {
                     peers.Add((reader.GetInt64(0), reader.GetInt64(1)));
+                }
+            }
+
+            // Peers at one id share one read. Only an ack whose following rows are all still here can rise: past a cut, the
+            // deleted rows may have held groups the peer lacks, and it must refill instead. A damaged row past an ack leaves
+            // that ack where it is (the read refuses, section 7).
+            List<(long From, long To)> raised = [];
+            var oldest = Command("SELECT min(change_id) FROM turso_cdc;").ExecuteScalar() is long kept ? kept : newest + 1;
+            foreach (var at in peers.Select(peer => peer.Acked).Where(acked => acked < newest && oldest <= acked + 1).Distinct().ToList())
+            {
+                long quiet;
+                try
+                {
+                    (_, quiet, _) = ReadChangeGroups(at, 1, 1, self, cancellationToken);
+                }
+                catch (InvalidDataException)
+                {
+                    continue;
+                }
+
+                if (quiet > at)
+                {
+                    var raise = Command("UPDATE _tb_peers SET acked = $quiet WHERE seen > 0 AND acked = $acked;");
+                    raise.Parameters.AddWithValue("$quiet", quiet);
+                    raise.Parameters.AddWithValue("$acked", at);
+                    raise.ExecuteNonQuery();
+                    peers = [.. peers.Select(peer => peer.Acked == at ? (peer.Node, quiet) : peer)];
+                    raised.Add((at, quiet));
                 }
             }
 
@@ -198,7 +248,8 @@ internal sealed partial class SqliteStorageTransaction
             var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
             var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $now * 1000 - 86400000;");
             floor.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
-            return (left, floor.ExecuteScalar() is long min ? min : (long?)null);
+            var oldestKept = Command("SELECT coalesce(min(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long first ? first : 0;
+            return (left, floor.ExecuteScalar() is long min ? min : (long?)null, raised, oldestKept);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
@@ -217,9 +268,9 @@ internal sealed partial class SqliteStorageTransaction
 
     /// <summary>
     /// Raises <paramref name="peer"/>'s acknowledged change id, or sets it to 0 (a new or stale row), so its unshipped rows stay, and marks
-    /// it heard from at <paramref name="now"/>; uncaptured: the tailer's own bookkeeping. Then deletes what
-    /// <see cref="Retention"/> allows, continuous backup's <paramref name="backupAnchor"/> included. Returns the CDC rows left,
-    /// and the smallest change id a peer heard from in the last 24 h acknowledged (null when there is none).
+    /// it heard from at <paramref name="now"/>; uncaptured: the tailer's own bookkeeping. Drops the rows of the peer's older
+    /// epochs. Then deletes what <see cref="Retention"/> allows, continuous backup's <paramref name="backupAnchor"/> included.
+    /// Returns the CDC rows left, and the smallest change id a peer heard from in the last 24 h acknowledged (null when there is none).
     /// </summary>
     internal async ValueTask<(long Left, long? Floor)> RecordAckedAsync(ReplicaId peer, long changeId, long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
     {
@@ -239,6 +290,13 @@ internal sealed partial class SqliteStorageTransaction
                 insert.Parameters.AddWithValue("$seen", now.ToUnixTimeMilliseconds());
                 insert.ExecuteNonQuery();
             }
+
+            // The peer's older epochs (ReplicaId: it restarted uncleanly) never ack again: their rows go, so they do not hold
+            // retention and the tail lag for 24 h. Same region and member, lower epoch: the ids just below the peer's.
+            var retire = Command("DELETE FROM _tb_peers WHERE node >= $machine AND node < $node;");
+            retire.Parameters.AddWithValue("$machine", unchecked((long)(peer.Value & ~(ulong)ushort.MaxValue)));
+            retire.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
+            retire.ExecuteNonQuery();
 
             var delete = Command(Retention);
             delete.Parameters.AddWithValue("$below", backupAnchor ?? long.MaxValue);
@@ -307,7 +365,17 @@ internal sealed partial class SqliteStorageTransaction
             var document = live == 0 ? null
                 : _documents.TryGetValue((collection, id), out var body) ? body
                 : throw new InvalidDataException("a captured live document state has no document row before it in its transaction");
-            var full = DocumentStateEncoding.DecodeStored(Base64Url.DecodeFromChars(state), document is null ? [] : Encoding.UTF8.GetBytes(document));
+            byte[] stored;
+            try
+            {
+                stored = Base64Url.DecodeFromChars(state);
+            }
+            catch (FormatException error)
+            {
+                throw new InvalidDataException("a captured state is not base64url", error);
+            }
+
+            var full = DocumentStateEncoding.DecodeStored(stored, document is null ? [] : Encoding.UTF8.GetBytes(document));
             var at = new Hlc(unchecked((ulong)stamp));
             Deltas.Add(new ChangeDelta(collection, id, at, full.DeltaAt(at)));
         }

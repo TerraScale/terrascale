@@ -6,9 +6,11 @@ using System.Text.Json;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Features.SigningKeys;
 
@@ -71,10 +73,13 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     private const string Algorithm = "ES256";
 
     private readonly TimeSpan refreshInterval = refresh?.Interval ?? TimeSpan.FromMinutes(1);
-    private readonly ConcurrentDictionary<string, Snapshot> reads = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, Lazy<Task<Snapshot>>> pendingReads = new(StringComparer.Ordinal);
+
+    // The authority's reads serve every security use: signing, signature checks, readiness, rotation and first keys. This
+    // region's copy's serve only GetPublishedAsync. Each source has its own cache, shared in-flight reads and failure
+    // backoff, so a JWKS read never becomes a security decision and an authority outage never fails a healthy JWKS.
+    private readonly Reads authority = new((instanceId, cancellationToken) => store.QueryAsync(AuthStore.SigningKeyCollection, instanceId, [], cancellationToken));
+    private readonly Reads published = new((instanceId, cancellationToken) => store.QueryLocalAsync(AuthStore.SigningKeyCollection, instanceId, cancellationToken));
     private readonly ConcurrentDictionary<string, Lazy<Task<Snapshot>>> pendingFirstKeys = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, long> failedReads = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, long> unknownKeyReads = new(StringComparer.Ordinal);
 
     // A snapshot never changes: its keys' public metadata is verified once.
@@ -93,7 +98,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     public async Task<IReadOnlyList<Es256Key>> GetActiveAsync(string instanceId, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
-        var current = await this.ReadAsync(instanceId, fresh: false, cancellationToken).ConfigureAwait(false);
+        var current = await this.ReadAsync(this.authority, instanceId, fresh: false, cancellationToken).ConfigureAwait(false);
         if (current.Keys.Count == 0)
         {
             current = await this.FirstKeyAsync(instanceId, cancellationToken).ConfigureAwait(false);
@@ -118,10 +123,10 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     public async Task<IReadOnlyList<Es256Key>> GetPublicAsync(string instanceId, string? keyId, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
-        var current = await this.ReadAsync(instanceId, fresh: false, cancellationToken).ConfigureAwait(false);
+        var current = await this.ReadAsync(this.authority, instanceId, fresh: false, cancellationToken).ConfigureAwait(false);
         if (keyId is not null && current.Keys.All(key => key.Key.Id != keyId) && this.ClaimUnknownKeyRead(instanceId))
         {
-            current = await this.ReadAsync(instanceId, fresh: false, cancellationToken, TimeSpan.Zero).ConfigureAwait(false);
+            current = await this.ReadAsync(this.authority, instanceId, fresh: false, cancellationToken, TimeSpan.Zero).ConfigureAwait(false);
         }
 
         if (current.Keys.Count == 0)
@@ -133,13 +138,28 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     }
 
     /// <summary>
+    /// The JWKS: the instance's public keys as this region's copy holds them (another region's when it does not answer), read
+    /// and cached apart from the authority's, which every signature check, signing and readiness use. An empty copy (keys
+    /// not replicated yet) publishes the authority's keys instead, as <see cref="GetPublicAsync(string, CancellationToken)"/>
+    /// reads them, which creates a project's first key there: a copy's missing keys never cause a create of their own.
+    /// </summary>
+    public async Task<IReadOnlyList<Es256Key>> GetPublishedAsync(string instanceId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(instanceId);
+        var current = await this.ReadAsync(this.published, instanceId, fresh: false, cancellationToken).ConfigureAwait(false);
+        return current.Keys.Count == 0
+            ? await this.GetPublicAsync(instanceId, cancellationToken).ConfigureAwait(false)
+            : RestorePublic(this.Verify(instanceId, current));
+    }
+
+    /// <summary>
     /// Validates the instance's public key metadata as TerraBase holds it now, bypassing the refresh interval but sharing
     /// an in-flight read; never creates or changes state. An instance without keys fails with <see cref="NoSigningKeys"/>.
     /// </summary>
     public async Task CheckPublicMetadataAsync(string instanceId, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
-        var current = await this.ReadAsync(instanceId, fresh: false, cancellationToken, TimeSpan.Zero).ConfigureAwait(false);
+        var current = await this.ReadAsync(this.authority, instanceId, fresh: false, cancellationToken, TimeSpan.Zero).ConfigureAwait(false);
         if (current.Keys.Count == 0)
         {
             throw NoSigningKeys();
@@ -156,7 +176,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     public async Task VerifyAsync(string instanceId, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
-        var current = await this.ReadAsync(instanceId, fresh: true, cancellationToken).ConfigureAwait(false);
+        var current = await this.ReadAsync(this.authority, instanceId, fresh: true, cancellationToken).ConfigureAwait(false);
         if (current.Keys.Count == 0)
         {
             throw NoSigningKeys();
@@ -173,7 +193,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     public async Task<bool> ProvisionAsync(string instanceId, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
-        var current = await this.ReadAsync(instanceId, fresh: true, cancellationToken).ConfigureAwait(false);
+        var current = await this.ReadAsync(this.authority, instanceId, fresh: true, cancellationToken).ConfigureAwait(false);
         var created = current.Keys.Count == 0;
         if (created)
         {
@@ -210,7 +230,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     private async Task<Es256Key?> RotateAsync(string instanceId, bool scheduled, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
-        var current = await this.ReadAsync(instanceId, fresh: true, cancellationToken).ConfigureAwait(false);
+        var current = await this.ReadAsync(this.authority, instanceId, fresh: true, cancellationToken).ConfigureAwait(false);
         if (current.Keys.Count == 0)
         {
             RequireImplicitFirstKey(instanceId);
@@ -243,7 +263,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
 
         var key = await this.CreateAsync(instanceId, scheduled ? Overlap : this.refreshInterval, cancellationToken).ConfigureAwait(false);
         // This replica serves the new set from its next read.
-        this.reads.TryRemove(instanceId, out _);
+        this.authority.Cached.TryRemove(instanceId, out _);
         return key;
     }
 
@@ -273,12 +293,12 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
         {
             try
             {
-                var current = await this.ReadAsync(instanceId, fresh: true, CancellationToken.None).ConfigureAwait(false);
+                var current = await this.ReadAsync(this.authority, instanceId, fresh: true, CancellationToken.None).ConfigureAwait(false);
                 if (current.Keys.Count == 0)
                 {
                     // Another replica may add its first key at once; both are kept and published.
                     (await this.CreateAsync(instanceId, TimeSpan.Zero, CancellationToken.None).ConfigureAwait(false)).Dispose();
-                    current = await this.ReadAsync(instanceId, fresh: true, CancellationToken.None).ConfigureAwait(false);
+                    current = await this.ReadAsync(this.authority, instanceId, fresh: true, CancellationToken.None).ConfigureAwait(false);
                 }
 
                 return current.Keys.Count > 0 ? current : throw ApiException.Unavailable();
@@ -301,9 +321,23 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
         var key = Es256Key.Generate(AuthStore.NewId());
         try
         {
-            var record = this.Seal(instanceId, key, now.ToUnixTimeSeconds(), activatesAt);
-            await Guard(() => store.CreateAsync(AuthStore.SigningKeyCollection, instanceId, key.KeyId, JsonSerializer.SerializeToElement(record), cancellationToken), cancellationToken).ConfigureAwait(false);
-            this.reads.TryRemove(instanceId, out _);
+            var record = JsonSerializer.SerializeToElement(this.Seal(instanceId, key, now.ToUnixTimeSeconds(), activatesAt));
+            if (instanceId == OidcIssuer.InstanceId)
+            {
+                await Guard(() => store.CreateAsync(AuthStore.SigningKeyCollection, instanceId, key.KeyId, record, cancellationToken), cancellationToken).ConfigureAwait(false);
+            }
+            // A project tenant's key is stored only while its project exists at the authority, checked in the same
+            // transaction: a copy that still lists a deleted project never adds a key for it.
+            else if (await Guard(() => store.TransactAsync(
+            [
+                AuthStore.Require(AuthStore.ProjectCollection, OidcIssuer.InstanceId, instanceId, PlatformDirectory.Filter("exists", "/id")),
+                AuthStore.Create(AuthStore.SigningKeyCollection, instanceId, key.KeyId, record),
+            ], cancellationToken), cancellationToken).ConfigureAwait(false) is int failed)
+            {
+                throw failed == 0 ? new ApiException(404, "not_found", "The project does not exist.") : ApiException.Unavailable();
+            }
+
+            this.authority.Cached.TryRemove(instanceId, out _);
             return key;
         }
         catch
@@ -316,21 +350,21 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     // A fresh read bypasses the cache. Otherwise the keys as this replica last read them, rereading once that read is
     // older than the refresh interval or maxAge (measured monotonically); concurrent lookups on this replica share one
     // read, which ends only when TerraBase answers, never with a waiter.
-    private async Task<Snapshot> ReadAsync(string instanceId, bool fresh, CancellationToken cancellationToken, TimeSpan? maxAge = null)
+    private async Task<Snapshot> ReadAsync(Reads source, string instanceId, bool fresh, CancellationToken cancellationToken, TimeSpan? maxAge = null)
     {
         if (fresh)
         {
-            return this.reads[instanceId] = await this.LoadAsync(instanceId, cancellationToken).ConfigureAwait(false);
+            return this.Current(source.Cached[instanceId] = await this.LoadAsync(source, instanceId, cancellationToken).ConfigureAwait(false));
         }
 
         var limit = maxAge is { } age && age < this.refreshInterval ? age : this.refreshInterval;
-        if (this.reads.TryGetValue(instanceId, out var cached) && clock.GetElapsedTime(cached.Sent) < limit)
+        if (source.Cached.TryGetValue(instanceId, out var cached) && clock.GetElapsedTime(cached.Sent) < limit)
         {
             return cached;
         }
 
         // Fail closed without asking TerraBase again right after a failed read: traffic never multiplies an outage.
-        if (this.failedReads.TryGetValue(instanceId, out var failedAt) && clock.GetElapsedTime(failedAt) < FailedReadBackoff)
+        if (source.Failed.TryGetValue(instanceId, out var failedAt) && clock.GetElapsedTime(failedAt) < FailedReadBackoff)
         {
             throw ApiException.Unavailable();
         }
@@ -340,29 +374,35 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
         {
             try
             {
-                var read = this.reads[instanceId] = await this.LoadAsync(instanceId, CancellationToken.None).ConfigureAwait(false);
-                this.failedReads.TryRemove(instanceId, out _);
+                var read = source.Cached[instanceId] = await this.LoadAsync(source, instanceId, CancellationToken.None).ConfigureAwait(false);
+                source.Failed.TryRemove(instanceId, out _);
                 return read;
             }
             catch
             {
-                this.failedReads[instanceId] = clock.GetTimestamp();
+                source.Failed[instanceId] = clock.GetTimestamp();
                 throw;
             }
             finally
             {
-                this.pendingReads.TryRemove(KeyValuePair.Create(instanceId, created!));
+                source.Pending.TryRemove(KeyValuePair.Create(instanceId, created!));
             }
         });
-        var shared = this.pendingReads.GetOrAdd(instanceId, created);
-        return await shared.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var shared = source.Pending.GetOrAdd(instanceId, created);
+        return this.Current(await shared.Value.WaitAsync(cancellationToken).ConfigureAwait(false));
     }
 
-    private Task<Snapshot> LoadAsync(string instanceId, CancellationToken cancellationToken) => Guard(async () =>
+    // A read that took longer than the refresh interval (measured from when it was sent) is already older than any cached
+    // read may be, so it is refused, never served: a key removed at the authority is accepted for at most that interval,
+    // in-flight reads included. Zero rereads on every lookup and bounds nothing.
+    private Snapshot Current(Snapshot read) =>
+        this.refreshInterval > TimeSpan.Zero && clock.GetElapsedTime(read.Sent) >= this.refreshInterval ? throw ApiException.Unavailable() : read;
+
+    private Task<Snapshot> LoadAsync(Reads source, string instanceId, CancellationToken cancellationToken) => Guard(async () =>
     {
         var sent = clock.GetTimestamp();
         var keys = new List<(SigningKey Key, string Version)>();
-        await foreach (var document in store.QueryAsync(AuthStore.SigningKeyCollection, instanceId, [], cancellationToken).ConfigureAwait(false))
+        await foreach (var document in source.Query(instanceId, cancellationToken).ConfigureAwait(false))
         {
             var key = document.Document.Deserialize<SigningKey>() ?? throw new JsonException("A signing key document is empty.");
             // A key copied to another address, as a storage writer could, is never served.
@@ -549,4 +589,16 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
 
     // Keys: every stored key of the instance with its version; Sent: this replica's monotonic clock when the read was sent.
     private sealed record Snapshot(IReadOnlyList<(SigningKey Key, string Version)> Keys, long Sent);
+
+    // One source's reads by instance: the last snapshot, the read in flight and when a read last failed.
+    private sealed class Reads(Func<string, CancellationToken, IAsyncEnumerable<TerraBaseDocument>> query)
+    {
+        public Func<string, CancellationToken, IAsyncEnumerable<TerraBaseDocument>> Query { get; } = query;
+
+        public ConcurrentDictionary<string, Snapshot> Cached { get; } = new(StringComparer.Ordinal);
+
+        public ConcurrentDictionary<string, Lazy<Task<Snapshot>>> Pending { get; } = new(StringComparer.Ordinal);
+
+        public ConcurrentDictionary<string, long> Failed { get; } = new(StringComparer.Ordinal);
+    }
 }

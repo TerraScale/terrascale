@@ -278,8 +278,33 @@ until the SDKs drop them). Create-only `If-None-Match: *` goes too. Client ULIDs
 - **`turso_cdc` is the outbox.** Groups are rebuilt from it on demand for each peer (`acked < change_id`), so there is
   no second log. A peer silent for more than 24 h, or more than 1 GiB behind, stops holding CDC rows. It must refill
   when it returns (section 10).
+- **Acks over joined rows.** Joined remote writes and repairs are never shipped, so a peer never acknowledges them. Each
+  5 s retention pass therefore raises a peer's `acked` to the last commit before the next local group past it (the read's
+  quiet point), but only while every row past that ack is still here: after a cut the peer may lack deleted local
+  groups and refills instead. Without this a replica that mostly receives keeps every joined row until the 1 GiB cut.
+  The CDC source remembers each raise, and each read over all of its rows, as a quiet range of the file (merged where
+  ranges touch, pruned once retention cuts past them), and `RetainsAsync` follows those ranges, so a live stream whose
+  in-memory ack is below a raised ack is not refilled.
+- **Copies and restores.** `_tb_peers.acked` names rows of one file's `turso_cdc`; a copy's ids restart at 1, so a copy
+  (database copy, restore, backup snapshot) resets every peer's `acked` to 0. What the peers applied stays.
 - **Atomicity.** One Turso transaction → one group → one apply transaction at the receiver. Readers never see part of
   an operation, nor part of a lane batch.
+
+**Damaged change log rows.** The tailer refuses, never skips: a row of a change type Turso does not write (only 1, 0,
+-1 and 2), a row whose shape breaks its type (Turso's commit rows carry no table and no after-image, its delete rows no
+after-image, so a write whose type was damaged into 2 or -1 is caught), an insert or update without an after-image, a state
+that is not base64url or not a `DocumentState`, or a live state without its document row fails the read with
+`InvalidDataException`. Nothing past the peer's ack ships or is
+acknowledged: that database is held, logged as an error, counted (`terrabase.replication.unreadable_reads`) and visible in
+its `send_lag`, and read again from the same ack every 30 s; the other databases on the stream go on. Acks and first
+contacts never fail on it: the `tail_lag` gauge they refresh keeps its last value for a held database. Once the damage is
+gone the next read ships the held writes. If it stays, the peer's `seen` is refreshed by its own writes to that database
+(when it writes there), so the 24 h release never fires; only the 65,536-row / 1 GiB eviction ends the hold and leads to
+a refill. Either way the data converges through anti-entropy (60 s rounds; a bucket is repaired after two differing rounds). CDC rows
+carry no checksum of their own: they live in the same file as the states they come from, so a checksum would only cover
+the copy that ships. Torn writes are caught by the WAL's frame checksums, damage that breaks decoding is refused as above,
+and replicas that diverge silently show in anti-entropy's bucket digests (section 10), which cannot tell which replica is
+right. Revisit when Turso exposes page checksums.
 
 ## 8. Transport
 
@@ -327,8 +352,8 @@ retries 5 s later. R6 adds `Digest`, `ReadBucket` and `refill_required`; R7 adds
 
 1. The receiver checks the batch (a known database, origin = the stream's node, `last_change_id` advancing) and
    decodes groups. Decoding is a trust boundary with the `DeltaGroup` bounds: ≤ 1024 deltas and ≤ 2 MiB per group.
-2. Groups apply in stream order on the write lane. Each batch is one transaction with `synchronous = FULL`, so an ack
-   means the change is durable on the replica. For each delta:
+2. Groups apply in stream order on the write lane, in transactions of at most 1024 deltas, splitting only between whole
+   groups. Every transaction uses `synchronous = FULL`; the ack waits for all their commits. For each delta:
    1. `Observe(S)`.
    2. Read the row, join, normalize and materialize.
    3. Write only if the state changed, with `stamp = S` and `origin = the delta's origin`.
@@ -739,9 +764,12 @@ ts-dotnet until R12 makes ts-auth lattice-native.
   region).
 - **Retention cut and refill.** Retention also runs every 5 s without acks. A peer silent for 24 h stops holding rows,
   as before. A peer whose unacknowledged CDC rows pass 1 GiB (measured once it is 65,536 rows behind) gets `seen = 0` and
-  stops holding rows until it is heard from again. A sender whose CDC no longer holds every row after a peer's ack
-  (retention deletes a prefix, so that is `min(change_id) > acked + 1`; a new peer at 0 counts too) sends `Refill(head)`
-  instead of groups. The receiver finds the sender by the machine name in its `Hello`, joins every bucket that differs at
+  stops holding rows until it is heard from again. A sender whose CDC no longer holds every row the peer lacks after its
+  ack sends `Refill(head)` instead of groups. Retention deletes a prefix, so that is `min(change_id) > acked + 1`, except
+  over remembered quiet ranges (section 7): ranges proven to hold no local group, whose deleted rows the peer cannot lack,
+  so the check runs at the end of the range holding the ack. A new peer at 0 is refilled only when local groups it lacks
+  were cut; a sender whose CDC from 0 is proven quiet does not refill it, and anti-entropy seeds it. So R7's copy-refill
+  of a machine back after more than 24 h cannot count on every sender sending `refill_required`. The receiver finds the sender by the machine name in its `Hello`, joins every bucket that differs at
   once, then acks `head`, and the stream goes on from there.
 - **Not copy-refill.** Without garbage collection (R7) merging old state is safe, so a refill merges. Once R7 collects
   tombstones, a machine away past the horizon must delete its file and copy from a peer (section 10), or it would bring

@@ -106,6 +106,7 @@ list in `src/TerraBase/Hosting/Telemetry.cs` (`peer_region` has one value per re
 | R4a | `terrabase.replication.apply_delay` | histogram, `s`, buckets 0.05 … 300 | `peer_region` (origin) | Apply time minus the origin stamp's physical time: convergence lag |
 | R4a | `terrabase.replication.merged_groups` | counter | `peer_region` (origin) | Change groups joined |
 | R6 | `terrabase.replication.repairs` | counter | `peer_region` | Documents changed by anti-entropy |
+| R3 | `terrabase.replication.unreadable_reads` | counter | `peer_region` | Reads of a database's change log refused as damaged (or failed); that database is held for the peer, the others go on. The `send_lag > 30 s` alert pages for it |
 | R4a | `terrabase.clock.skew_capped` | counter | — | Stamps capped at now + 1 s (section 3 of the design) |
 
 Backup shipping (phase 3b) keeps `terrabase_backup_lag_seconds` and `terrabase_backup_last_success_seconds`.

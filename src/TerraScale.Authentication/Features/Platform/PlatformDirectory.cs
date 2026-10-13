@@ -974,7 +974,7 @@ public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider
                 await store.CompareAndDeleteAsync(collection, Instance, key(record.Value), record.Version, cancellationToken).ConfigureAwait(false);
             }
         }
-        catch (Exception error) when (error is HttpRequestException or TimeoutException)
+        catch (Exception error) when (error is HttpRequestException or TimeoutException or ApiException)
         {
             logger.ZLogWarning($"Cleaning up {collection:@Collection} after a deletion failed ({error.GetType().Name:@Error}); what is left grants nothing");
         }

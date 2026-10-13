@@ -93,8 +93,8 @@ The pinned server's decisions 0003 and 0005 limit deployment: SQLite WAL
 `synchronous=NORMAL` can lose acknowledged writes since the last WAL sync
 after an OS crash or power loss, though a process crash alone preserves them;
 replication `Sync` is unsupported. Every replica stores through
-`http://top1.nearest.of.ts-terrabase.internal:8081`, the nearest TerraBase
-machine's internal listener, with no automatic retries. Lost claim/consumption writes can
+`http://gru.ts-terrabase.internal:8081`, the designated region's TerraBase
+machine's internal listener (discovery and the JWKS at its own region's), with no automatic retries. Lost claim/consumption writes can
 invalidate security guarantees. Live production activation remains gated on
 an approved durability/recovery design and TS-470 verification; readiness
 does not prove production durability. The [port guide's activation gate](csharp-port.md#production-activation-gate)

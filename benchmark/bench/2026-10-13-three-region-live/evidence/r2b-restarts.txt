@@ -1,0 +1,51 @@
+== kill gru 68379eec015e58 01:23:36
+kill signal has been sent
+readyz 200 after 16s; {"region":"gru","machine":"68379eec015e58","revision":"9667b7efa18ee99ef4614bfdad68aac78932dda3"}
+gates equal after ~5s: true/true/3ab4ec8eff2a true/true/3ab4ec8eff2a true/true/3ab4ec8eff2a
+gru/68379eec015e58: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+sjc/18556ddb9d2548: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+fra/7811155eb22568: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+AGREE
+hosting-failed lines in log buffer: 0
+== restart fra 7811155eb22568 01:24:06
+Machine 7811155eb22568 restarted successfully!
+readyz 200 after 71s; {"region":"fra","machine":"7811155eb22568","revision":"9667b7efa18ee99ef4614bfdad68aac78932dda3"}
+gates equal after ~25s: true/true/1036efe6eb6d true/true/1036efe6eb6d true/true/1036efe6eb6d
+gru/68379eec015e58: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+sjc/18556ddb9d2548: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+fra/7811155eb22568: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+AGREE
+hosting-failed lines in log buffer: 1
+== kill sjc 18556ddb9d2548 01:26:10
+kill signal has been sent
+readyz 200 after 17s; {"region":"sjc","machine":"18556ddb9d2548","revision":"9667b7efa18ee99ef4614bfdad68aac78932dda3"}
+gates equal after ~115s: true/true/51c6fb1fc88b true/true/51c6fb1fc88b true/true/51c6fb1fc88b
+gru/68379eec015e58: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+sjc/18556ddb9d2548: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+fra/7811155eb22568: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+AGREE
+hosting-failed lines in log buffer: 1
+== restart fra 7811155eb22568 01:31:03
+Machine 7811155eb22568 restarted successfully!
+readyz 200 after 15s; {"region":"fra","machine":"7811155eb22568","revision":"9667b7efa18ee99ef4614bfdad68aac78932dda3"}
+gates equal after ~5s: true/true/eeda4c0ea2e2 true/true/eeda4c0ea2e2 true/true/eeda4c0ea2e2
+gru/68379eec015e58: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+sjc/18556ddb9d2548: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+fra/7811155eb22568: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+AGREE
+hosting-failed lines in log buffer: 0
+== kill fra 7811155eb22568 01:31:49
+kill signal has been sent
+readyz 200 after 18s; {"region":"fra","machine":"7811155eb22568","revision":"9667b7efa18ee99ef4614bfdad68aac78932dda3"}
+gates equal after ~5s: true/true/5a54354c4ade true/true/5a54354c4ade true/true/5a54354c4ade
+GET /v1/projects/01M4SD7D7B2C3CZ4W41F3ZY2FK/databases/e2e/collections/live-bulk-2b/documents?limit=1000 on fra: 401 b'{"error":{"code":"invalid_key"}}'
+hosting-failed lines in log buffer: 0
+== restart fra 7811155eb22568 01:32:56
+Machine 7811155eb22568 restarted successfully!
+readyz 200 after 18s; {"region":"fra","machine":"7811155eb22568","revision":"9667b7efa18ee99ef4614bfdad68aac78932dda3"}
+gates equal after ~105s: true/true/87a2ea820e7b true/true/87a2ea820e7b true/true/87a2ea820e7b
+gru/68379eec015e58: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+sjc/18556ddb9d2548: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+fra/7811155eb22568: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+AGREE
+hosting-failed lines in log buffer: 0

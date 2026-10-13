@@ -225,7 +225,8 @@ public sealed class TrustPublicOrigin(AuthOptions options, AuthStore store) : IO
 
         try
         {
-            return await store.GetAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, tenant, cancellationToken).ConfigureAwait(false) is null ? null : tenant;
+            // Discovery and the JWKS decide nothing about authorization: this region's copy may answer.
+            return await store.GetLocalAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, tenant, cancellationToken).ConfigureAwait(false) is null ? null : tenant;
         }
         catch (Exception error) when (error is not (OperationCanceledException or OutOfMemoryException))
         {
@@ -278,9 +279,14 @@ public sealed class PublishKeyRing(KeyRing ring) : IOpenIddictServerHandler<Hand
     public async ValueTask HandleAsync(HandleJsonWebKeySetRequestContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        foreach (var key in await KeyRingKeys.LoadAsync(ring, context.Transaction, publicOnly: true, context.CancellationToken).ConfigureAwait(false))
+        var tenant = context.Transaction.GetProperty<string>(TrustPublicOrigin.TenantProperty) ?? throw new InvalidOperationException("The request has no tenant.");
+        // This region's copy, read apart from the keys signature checks use (KeyRing.GetPublishedAsync).
+        foreach (var key in await ring.GetPublishedAsync(tenant, context.CancellationToken).ConfigureAwait(false))
         {
-            context.Keys.Add(key.PublicJwk());
+            using (key)
+            {
+                context.Keys.Add(key.PublicJwk());
+            }
         }
     }
 }

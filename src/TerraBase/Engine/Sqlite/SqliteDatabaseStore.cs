@@ -440,6 +440,9 @@ internal sealed partial class SqliteDatabaseStore(
     // keeps it until it closes. Only the holder of _writer uses it.
     private SqliteSession? _writerSession;
 
+    // Fault probes inspect the session while the transaction still holds the writer.
+    internal SqliteSession? CurrentWriter() => _writerSession;
+
     /// <summary>
     /// The writer connection; the caller holds the writer. Every change it commits is captured in <c>turso_cdc</c>, mode
     /// <c>after</c> (docs/terrabase/multi-region-replication.md section 7), unless a transaction turns capture off with

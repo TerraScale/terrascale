@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Platform;
@@ -74,6 +75,14 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
     [Arguments("jti", null)]
     [Arguments("run_id", null)]
     [Arguments("repository_id", null)]
+    [Arguments("repository_owner_id", null)]
+    [Arguments("repository", null)]
+    [Arguments("ref", null)]
+    [Arguments("event_name", null)]
+    [Arguments("workflow_ref", null)]
+    [Arguments("job_workflow_ref", null)]
+    [Arguments("repository_id", "")]
+    [Arguments("workflow_ref", "terrascale/terrascale/.github/workflows/ci.yml@refs/heads/main")]
     public async Task A_token_outside_the_trust_policy_is_refused(string claim, string? value)
     {
         using var github = new FakeGitHubActions();
@@ -108,7 +117,94 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         await Assert.That(replayed.Error).IsEqualTo("invalid_grant");
     }
 
-    private static Task<HttpResponseMessage> RequestAsync(OidcHarness oidc, string subjectToken, string? scope = null)
+    [Test]
+    public async Task Tokens_from_another_issuer_or_without_time_or_audience_bounds_are_refused()
+    {
+        using var github = new FakeGitHubActions();
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
+        await GitHubActionsBinding.BindAsync(oidc.Server.App.Services, CancellationToken.None);
+
+        // Each is signed with GitHub's published key, so only the named claim makes it wrong.
+        var refused = new Dictionary<string, string>
+        {
+            ["issuer of another provider"] = github.Mint(OidcHarness.Issuer, issuer: "https://token.actions.githubusercontent.com.evil.example"),
+            ["issuer with a path"] = github.Mint(OidcHarness.Issuer, issuer: GitHubActionsGrant.Issuer + "/terrascale"),
+            ["no expiry"] = github.Mint(OidcHarness.Issuer, expires: false),
+            ["not valid yet"] = github.Mint(OidcHarness.Issuer, notBeforeIn: TimeSpan.FromMinutes(5), expiresIn: TimeSpan.FromMinutes(10)),
+            ["issuer with a trailing slash"] = github.Mint(OidcHarness.Issuer, issuer: GitHubActionsGrant.Issuer + "/"),
+            // Just beyond the documented 30 s skew, on both edges.
+            ["not valid for another 45 s"] = github.Mint(OidcHarness.Issuer, notBeforeIn: TimeSpan.FromSeconds(45)),
+            ["expired 45 s ago"] = github.Mint(OidcHarness.Issuer, notBeforeIn: TimeSpan.FromMinutes(-2), expiresIn: TimeSpan.FromSeconds(-45)),
+            ["no audience"] = github.Mint(audience: null),
+            ["audience with a trailing slash"] = github.Mint(OidcHarness.Issuer + "/"),
+        };
+
+        foreach (var (reason, token) in refused)
+        {
+            await Assert.That((await ErrorAsync(await RequestAsync(oidc, token))).Error).IsEqualTo("invalid_grant").Because(reason);
+        }
+
+        // Still within the 30 s clock skew: accepted.
+        using var withinSkew = await RequestAsync(oidc, github.Mint(OidcHarness.Issuer, notBeforeIn: TimeSpan.FromSeconds(10)));
+        await Assert.That((int)withinSkew.StatusCode).IsEqualTo(200);
+    }
+
+    [Test]
+    public async Task Only_rs256_signatures_by_a_published_github_key_are_accepted()
+    {
+        using var github = new FakeGitHubActions();
+        using var foreign = RSA.Create(2048);
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
+        await GitHubActionsBinding.BindAsync(oidc.Server.App.Services, CancellationToken.None);
+        var valid = github.Mint(OidcHarness.Issuer);
+        var parts = valid.Split('.');
+
+        var refused = new Dictionary<string, string>
+        {
+            // GitHub's own key, but RS384 instead of the pinned RS256.
+            ["RS384 by the published key"] = github.Mint(OidcHarness.Issuer, signing: github.Signing(SecurityAlgorithms.RsaSha384)),
+            // An HMAC under GitHub's kid: the published key is RSA, so no shared secret may stand in for it.
+            ["HS256 under the published kid"] = github.Mint(OidcHarness.Issuer,
+                signing: new SigningCredentials(new SymmetricSecurityKey(RandomNumberGenerator.GetBytes(32)) { KeyId = github.KeyId }, SecurityAlgorithms.HmacSha256)),
+            // Another RSA key that claims GitHub's kid.
+            ["foreign key under the published kid"] = github.Mint(OidcHarness.Issuer,
+                signing: new SigningCredentials(new RsaSecurityKey(foreign) { KeyId = github.KeyId }, SecurityAlgorithms.RsaSha256)),
+            ["unsigned (alg none)"] = $"{Base64UrlEncoder.Encode("""{"alg":"none","typ":"JWT"}""")}.{parts[1]}.",
+            ["valid header and payload, signature removed"] = $"{parts[0]}.{parts[1]}.",
+            ["valid token, payload changed"] = $"{parts[0]}.{Base64UrlEncoder.Encode(Base64UrlEncoder.Decode(parts[1]).Replace("refs/heads/main", "refs/heads/evil", StringComparison.Ordinal))}.{parts[2]}",
+        };
+
+        foreach (var (reason, token) in refused)
+        {
+            await Assert.That((await ErrorAsync(await RequestAsync(oidc, token))).Error).IsEqualTo("invalid_grant").Because(reason);
+        }
+
+        using var accepted = await RequestAsync(oidc, valid);
+        await Assert.That((int)accepted.StatusCode).IsEqualTo(200);
+    }
+
+    [Test]
+    public async Task The_caller_cannot_choose_another_project_or_organization()
+    {
+        using var github = new FakeGitHubActions();
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
+        var (organization, project, _) = await GitHubActionsBinding.BindAsync(oidc.Server.App.Services, CancellationToken.None);
+        var otherOrganization = AuthStore.NewId();
+        var otherProject = AuthStore.NewId();
+
+        using var response = await RequestAsync(oidc, github.Mint(OidcHarness.Issuer), extra: new Dictionary<string, string>
+        {
+            ["organization"] = otherOrganization,
+            ["project"] = otherProject,
+        });
+        var access = new JsonWebToken((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("access_token").GetString());
+
+        // The binding alone names the project: request parameters never widen or move the token.
+        await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(project);
+        await Assert.That(access.GetClaim("org_id").Value).IsEqualTo(organization);
+    }
+
+    private static Task<HttpResponseMessage> RequestAsync(OidcHarness oidc, string subjectToken, string? scope = null, IReadOnlyDictionary<string, string>? extra = null)
     {
         var form = new Dictionary<string, string>
         {
@@ -116,6 +212,11 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
             ["client_id"] = GitHubActionsGrant.ClientId,
             ["subject_token"] = subjectToken,
         };
+        foreach (var (name, value) in extra ?? new Dictionary<string, string>())
+        {
+            form[name] = value;
+        }
+
         if (scope is not null)
         {
             form["scope"] = scope;

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json.Nodes;
 using TerraBase.Primitives;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.E2E;
 
@@ -16,7 +17,7 @@ public sealed class LatticeE2ETests
 
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E8_concurrent_inc_in_both_regions_sums_and_set_0_resets_expected_to_fail()
+    public async Task E8_concurrent_inc_in_both_regions_sums_and_set_0_resets()
     {
         await Gaps.RunAsync("E8", async () =>
         {
@@ -24,17 +25,16 @@ public sealed class LatticeE2ETests
             var uri = cluster.Document(EntityIds.New().ToString());
             await Converge.SeedAsync(cluster, uri, new JsonObject { ["name"] = "counter" });
             await Task.WhenAll(IncAsync(cluster[Cluster.Gru], uri, 5), IncAsync(cluster[Cluster.Sjc], uri, 5));
-            var summed = await SettledAsync(cluster, uri, "concurrent inc");
-            Expected.Check(summed.Gru!["n"]?.ToJsonString() == "10", $"five inc in each region sum to 10; {summed}");
+            // Two regions can agree on a sum while increments are still in flight: settled means both hold the final sum.
+            _ = await SettledAsync(cluster, uri, "five inc in each region sum to 10", copies => copies.Gru!["n"]?.ToJsonString() == "10");
             _ = await Docs.OpsAsync(cluster[Cluster.Gru], uri, Op("set", "n", 0));
-            var reset = await SettledAsync(cluster, uri, "set 0");
-            Expected.Check(reset.Gru!["n"]?.ToJsonString() == "0", $"set 0 resets the counter; {reset}");
+            _ = await SettledAsync(cluster, uri, "set 0 resets the counter", copies => copies.Gru!["n"]?.ToJsonString() == "0");
         });
     }
 
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E9_concurrent_add_and_remove_of_one_element_add_wins_expected_to_fail()
+    public async Task E9_concurrent_add_and_remove_of_one_element_add_wins()
     {
         await Gaps.RunAsync("E9", async () =>
         {
@@ -51,7 +51,7 @@ public sealed class LatticeE2ETests
 
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E10_feed_cursor_from_gru_resumes_in_sjc_with_no_missing_event_in_per_origin_order_expected_to_fail()
+    public async Task E10_feed_cursor_from_gru_resumes_in_sjc_with_no_missing_event_in_per_origin_order()
     {
         await Gaps.RunAsync("E10", async () =>
         {
@@ -102,16 +102,19 @@ public sealed class LatticeE2ETests
     }
 
     // The half of E14 with a region back after GC needs a region away for the 24 h eviction, so it is R7's
-    // integration test. Here: concurrent delete and patch leave no ghost fields, and GC rounds bring nothing back.
+    // integration test. Here: concurrent delete and patch leave no ghost fields, GC rounds collect the tombstones of the
+    // documents that stayed deleted (read from each stopped region's file: the proof that GC ran) and bring nothing back.
     [Test]
-    [Scenario(Nodes.InProcess)]
+    [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task E14_delete_then_gc_then_recreate_leaves_no_ghost_fields_expected_to_fail()
     {
+        Skip.When(Cluster.FlyRequested, "reads local nodes' database files to see that GC collected the tombstones");
         await Gaps.RunAsync("E14", async () =>
         {
             const int count = 20;
             await using var cluster = await Cluster.StartAsync();
-            var uris = Enumerable.Range(0, count).Select(_ => cluster.Document(EntityIds.New().ToString())).ToArray();
+            var ids = Enumerable.Range(0, count).Select(_ => EntityIds.New().ToString()).ToArray();
+            var uris = ids.Select(cluster.Document).ToArray();
             await Task.WhenAll(uris.Select(uri => Converge.SeedAsync(cluster, uri, new JsonObject { ["a"] = "a", ["b"] = "b" })));
             await Task.WhenAll(uris.Select(uri => Task.WhenAll(Docs.DeleteAsync(cluster[Cluster.Gru], uri), PatchUnlessDeletedAsync(cluster[Cluster.Sjc], uri))));
             var settled = await Task.WhenAll(uris.Select(uri => Converge.UntilAsync(() => Converge.BothAsync(cluster, uri), copies => copies.Identical, "delete versus patch")));
@@ -120,6 +123,15 @@ public sealed class LatticeE2ETests
             await Task.Delay(GcWindow);
             var collected = await Task.WhenAll(uris.Select(uri => Converge.BothAsync(cluster, uri)));
             Expected.Check(collected.Select(copies => copies.ToString()).SequenceEqual(settled.Select(copies => copies.ToString())), "nothing changed after GC rounds");
+            var deleted = ids.Zip(settled).Where(pair => pair.Second.Gru is null).Select(pair => pair.First).ToArray();
+            foreach (var region in cluster.Regions)
+            {
+                await cluster.StopAsync(region);
+                var tombstones = await TombstonesAsync(cluster.DatabaseFile(region), cluster.Collection, deleted);
+                await cluster.StartAgainAsync(region);
+                Expected.Check(tombstones == 0, $"GC collects the tombstones of deleted documents; {tombstones} of {deleted.Length} left on {region}");
+            }
+
             await Task.WhenAll(uris.Select(uri => Docs.PutAsync(cluster[Cluster.Sjc], uri, new JsonObject { ["d"] = "d" })));
             foreach (var uri in uris)
             {
@@ -133,7 +145,7 @@ public sealed class LatticeE2ETests
     // feeds then show the token with two uses, which ts-auth's watcher revokes the family on. R12 adds the ts-auth half.
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E15_refresh_token_used_in_gru_and_sjc_shows_both_uses_on_both_feeds_expected_to_fail()
+    public async Task E15_refresh_token_used_in_gru_and_sjc_shows_both_uses_on_both_feeds()
     {
         await Gaps.RunAsync("E15", async () =>
         {
@@ -171,6 +183,24 @@ public sealed class LatticeE2ETests
         }
     }
 
+    // The tombstones (dead state rows) of `ids` in the collection, read from a stopped region's database file.
+    private static async Task<long> TombstonesAsync(string file, string collection, string[] ids)
+    {
+        await using var connection = new SqliteConnection($"Data Source={file};Pooling=False");
+        await connection.OpenAsync();
+        long tombstones = 0;
+        foreach (var id in ids)
+        {
+            using var count = connection.CreateCommand();
+            count.CommandText = "SELECT count(*) FROM _tb_state WHERE collection = $collection AND id = $id AND live = 0";
+            _ = count.Parameters.AddWithValue("$collection", collection);
+            _ = count.Parameters.AddWithValue("$id", id);
+            tombstones += (long)(await count.ExecuteScalarAsync())!;
+        }
+
+        return tombstones;
+    }
+
     private static Task<JsonNode?> SqlAsync(HttpClient client, Cluster cluster, string sql) =>
         Docs.PostAsync(client, new Uri($"{cluster.DatabasePath}/sql", UriKind.Relative), new JsonObject { ["sql"] = sql });
 
@@ -179,7 +209,12 @@ public sealed class LatticeE2ETests
         new() { ["op"] = op, ["path"] = "/" + field, [op == "inc" ? "by" : "value"] = value };
 
     private static Task<RegionCopies> SettledAsync(Cluster cluster, Uri uri, string what) =>
-        Converge.UntilAsync(() => Converge.BothAsync(cluster, uri), copies => copies.Identical && copies.Gru is not null, what);
+        SettledAsync(cluster, uri, what, _ => true);
+
+    // Both regions hold the same live document and it is the expected one (`done`); a convergence that never gets there
+    // fails with `what`.
+    private static Task<RegionCopies> SettledAsync(Cluster cluster, Uri uri, string what, Func<RegionCopies, bool> done) =>
+        Converge.UntilAsync(() => Converge.BothAsync(cluster, uri), copies => copies.Identical && copies.Gru is not null && done(copies), what);
 
     private static string Id(JsonNode change) => change["id"]?.GetValue<string>() ?? "";
 

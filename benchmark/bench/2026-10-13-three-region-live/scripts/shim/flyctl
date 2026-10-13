@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Test-run shim (H1 workaround outside R3's harness files): before "machine start <id>", wait until the machine has
+# settled out of "stopping", because Fly refuses to start a machine that is still stopping.
+REAL_FLYCTL=${REAL_FLYCTL:?set REAL_FLYCTL to the real flyctl binary}
+if [[ ${1:-} == machine && ${2:-} == start && -n ${3:-} ]]; then
+  app=ts-terrabase-e2e; for ((i = 4; i <= $#; i++)); do [[ ${!i} == --app ]] && { j=$((i + 1)); app=${!j}; }; done
+  "$REAL_FLYCTL" machine wait "$3" --app "$app" --state stopped --wait-timeout 90s > /dev/null 2>&1 || true
+fi
+exec "$REAL_FLYCTL" "$@"

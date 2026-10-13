@@ -1,0 +1,6 @@
+{
+  "description": "The _tb_state insert carries change type 2 (commit). Turso's commit rows carry no table and no after-image, so a 2 row with either is damaged: taking it as a commit would split the transaction and drop its write.",
+  "row": "state",
+  "mutation": { "kind": "change_type", "value": 2 },
+  "expect": "refused"
+}
