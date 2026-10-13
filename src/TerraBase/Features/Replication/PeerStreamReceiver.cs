@@ -35,7 +35,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private readonly ILogger<PeerStreamReceiver> _logger;
 
     // A test observes a replacement while its predecessor's cancelled repair is still ending.
-    internal Action<ReplicaId>? Replacing { get; set; }
+    internal Func<ReplicaId, CancellationToken, Task>? Replacing { get; set; }
 
     public PeerStreamReceiver(
         IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime,
@@ -87,7 +87,10 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (_streams.TryGetValue(origin, out var older))
         {
-            Replacing?.Invoke(origin);
+            if (Replacing is { } replacing)
+            {
+                await replacing(origin, stream.Token).ConfigureAwait(false);
+            }
             // The older stream ends first, with its refills: none of its repairs commits after this stream joins a batch.
             await older.Stop.CancelAsync().ConfigureAwait(false);
             await older.Ended.WaitAsync(stream.Token).ConfigureAwait(false);

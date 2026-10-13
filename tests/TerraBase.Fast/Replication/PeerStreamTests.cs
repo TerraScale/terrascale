@@ -476,8 +476,17 @@ public sealed class PeerStreamTests
         try
         {
             cluster.Members.Join(new ClusterMember("zzzz-silent", $"http://127.0.0.1:{((IPEndPoint)silent.LocalEndpoint).Port}", "gru", ""));
-            var view = await sjc.Api.Server.Services.GetRequiredService<IMembership>().RefreshAsync(CancellationToken.None);
-            await Assert.That(view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Any(member => member.Name == "zzzz-silent")).IsTrue();
+            using var observed = new CancellationTokenSource(Deadline);
+            while (true)
+            {
+                var view = await sjc.Api.Server.Services.GetRequiredService<IMembership>().RefreshAsync(observed.Token);
+                if (view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Any(member => member.Name == "zzzz-silent"))
+                {
+                    break;
+                }
+
+                await Task.Delay(50, observed.Token);
+            }
 
             using var push = await RawPush.StartAsync(sjc, "zzzz-silent");
             var other = await sjc.CreateOtherDatabaseAsync();
@@ -770,12 +779,14 @@ public sealed class PeerStreamTests
             var replacing = 0;
             var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var both = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            sjc.Api.Server.Services.GetRequiredService<PeerStreamReceiver>().Replacing = origin =>
+            sjc.Api.Server.Services.GetRequiredService<PeerStreamReceiver>().Replacing = (origin, cancellationToken) =>
             {
                 if (origin == ReplicaId.Of(1, 7, 0))
                 {
                     _ = Interlocked.Increment(ref replacing) == 1 ? first.TrySetResult() : both.TrySetResult();
                 }
+
+                return Task.CompletedTask;
             };
 
             using var middle = await RawPush.OpenAsync(sjc, peer);
@@ -798,6 +809,87 @@ public sealed class PeerStreamTests
             await latest.BatchAsync(cluster.Database, 2, later);
             await Assert.That((await latest.AckAsync()) is { ChangeId: 2, Refused: false }).IsTrue();
             await Assert.That(await sjc.ReadAsync(later)).IsEqualTo("""{"n":1}""");
+        }
+        finally
+        {
+            _ = exit.TrySetResult();
+        }
+    }
+
+    [Test]
+    public async Task A_replacement_still_starts_when_its_predecessor_disposes_its_token_during_handover()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var sjc = cluster["sjc"];
+        var peer = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name;
+        using var older = await RawPush.StartAsync(sjc, peer);
+        var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sjc.Api.Server.Services.GetRequiredService<PeerStreamReceiver>().Replacing = (origin, cancellationToken) =>
+        {
+            if (origin != ReplicaId.Of(1, 7, 0))
+            {
+                return Task.CompletedTask;
+            }
+
+            _ = observed.TrySetResult();
+            return release.Task.WaitAsync(cancellationToken);
+        };
+        try
+        {
+            using var replacement = await RawPush.OpenAsync(sjc, peer);
+            await observed.Task.WaitAsync(Deadline);
+            await older.CompleteAsync();
+            release.SetResult();
+            await Assert.That(await replacement.WelcomeAsync()).IsTrue();
+            var id = EntityIds.New().ToString();
+            await replacement.BatchAsync(cluster.Database, 1, id);
+            await Assert.That((await replacement.AckAsync()) is { ChangeId: 1, Refused: false }).IsTrue();
+            await Assert.That(await sjc.ReadAsync(id)).IsEqualTo("""{"n":1}""");
+        }
+        finally
+        {
+            _ = release.TrySetResult();
+        }
+    }
+
+    [Test]
+    public async Task Shutdown_ends_a_replacement_waiting_for_its_predecessors_refill()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var lost = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", lost, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+        await sjc.LoseAsync("items", lost);
+        var peer = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name;
+        sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sjc.HeldRepairExit = exit;
+        using var older = await RawPush.StartAsync(sjc, peer);
+        try
+        {
+            await older.RefillAsync(cluster.Database, 1);
+            await sjc.RepairWaits.Task.WaitAsync(Deadline);
+            var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            sjc.Api.Server.Services.GetRequiredService<PeerStreamReceiver>().Replacing = (origin, cancellationToken) =>
+            {
+                if (origin == ReplicaId.Of(1, 7, 0))
+                {
+                    _ = observed.TrySetResult();
+                }
+
+                return Task.CompletedTask;
+            };
+            using var replacement = await RawPush.OpenAsync(sjc, peer);
+            await observed.Task.WaitAsync(Deadline);
+            sjc.Api.Server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
+            exit.SetResult();
+            await Assert.That(await replacement.WelcomeAsync()).IsFalse();
         }
         finally
         {
@@ -1331,6 +1423,13 @@ public sealed class PeerStreamTests
         {
             using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
             return await _call.ResponseStream.MoveNext(timeout.Token) && _call.ResponseStream.Current.Welcome is not null;
+        }
+
+        public async Task CompleteAsync()
+        {
+            await _call.RequestStream.CompleteAsync();
+            using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
+            await Assert.That(await _call.ResponseStream.MoveNext(timeout.Token)).IsFalse();
         }
 
         public Task RefillAsync(TenantContext database, ulong changeId) =>
