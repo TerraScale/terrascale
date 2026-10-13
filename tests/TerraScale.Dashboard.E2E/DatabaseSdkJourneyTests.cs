@@ -138,6 +138,26 @@ public sealed class DatabaseSdkJourneyTests(DashboardE2EFixture fixture)
         Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0, "Explicit revocation reaches ts-auth");
         CheckNoStoredDataKey(await ObservationsAsync(controls));
 
+        var keyRequests = (await ObservationsAsync(controls)).GetProperty("authKeys").GetProperty("requests").EnumerateArray().ToArray();
+        Check(keyRequests.Length > 0 && keyRequests.All(request =>
+        {
+            var authorization = request.GetProperty("authorization").GetString()!;
+            return request.GetProperty("bearerKind").GetString() == "original-session" &&
+                authorization.StartsWith("Bearer ", StringComparison.Ordinal) && auth.ResolveAccessToken(authorization[7..])?.UserId == journey.User &&
+                auth.ResolveProjectToken(authorization[7..]) is null;
+        }), "Every project-key call uses the original admitted user session, never an exchanged data bearer");
+
+        var beforeFailure = (await ObservationsAsync(controls)).GetProperty("documentsRequests").GetInt32();
+        auth.ExchangeError = new HttpRequestException("Synthetic token exchange unavailable", null, HttpStatusCode.ServiceUnavailable);
+        try
+        {
+            await journey.ErrorAsync(replica, "get_document", reference);
+            Check((await ObservationsAsync(controls)).GetProperty("documentsRequests").GetInt32() == beforeFailure,
+                "A token exchange failure keeps the sign-in alive and sends no document request or stored-key fallback");
+        }
+        finally { auth.ExchangeError = null; }
+        await journey.CallAsync(replica, "get_document", reference);
+
         CheckProtocol(await ObservationsAsync(controls));
     }
 

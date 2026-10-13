@@ -166,6 +166,7 @@ sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, 
     private static readonly string[] ProjectScopes = ["databases:read", "databases:write", "documents:read", "documents:write"];
     public bool Active { get; set; } = true;
     public Exception? RevokeError { get; set; }
+    public Exception? ExchangeError { get; set; }
     public int SignIns { get; private set; }
     public int Resets { get; private set; }
     public string LastPasswordIp { get; private set; } = "";
@@ -186,6 +187,7 @@ sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, 
     public Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, IReadOnlyList<string> scopes, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (ExchangeError is not null) return Task.FromException<string>(ExchangeError);
         if (ResolveAccessToken(session.AccessToken) is not { } actor || actor.UserId != session.UserId)
             throw new HttpRequestException("Test project authority requires a live sign-in.");
         if (scopes.Count == 0 || scopes.Any(scope => !ProjectScopes.Contains(scope)) || scopes.Distinct(StringComparer.Ordinal).Count() != scopes.Count)

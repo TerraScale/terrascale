@@ -502,6 +502,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 workspaceProjects = projects.Values.Select(value => new { value.Id, value.OrganizationId, value.Name }).ToArray(),
                 backups = snapshots.Values.Select(value => value.Backup).ToArray(),
                 credentials = (ApiKeys?.Issued() ?? []).Select(value => new { value.Key.Id, value.Key.Name, Secret = value.Secret, Host = "auth.terrascale.tech", value.Key.Scopes, value.Key.Database }).ToArray(),
+                authKeys = ApiKeys?.Observations(),
                 changes = changes.Select(value => new { value.Sequence, value.Transaction, value.DatabaseId, value.Collection, value.Id, value.Op }).ToArray(),
                 encrypted = State.Encrypted,
                 credentialReads = State.CredentialReads,
