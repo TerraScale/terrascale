@@ -345,6 +345,10 @@ public sealed class CustomerBackupTimerIsolationTests
         public ValueTask<bool> RollForwardAsync(string file, IAsyncEnumerable<Stream> segments, CancellationToken cancellationToken) =>
             engine.RollForwardAsync(file, segments, cancellationToken);
 
+        public LogCut CutLog(Stream segment, DateTimeOffset at, long? previous) => engine.CutLog(segment, at, previous);
+
+        public DateTimeOffset? ReadMark(Stream segment) => engine.ReadMark(segment);
+
         public ValueTask ImportDatabaseAsync(TenantContext database, string file, CancellationToken cancellationToken) =>
             engine.ImportDatabaseAsync(database, file, cancellationToken);
 

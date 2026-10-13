@@ -192,9 +192,14 @@ transaction. The backup's tap (`Engine/Sqlite/TursoChangeTap.cs`) reads that tab
 
 1. Each second it reads, on a connection of its own, the rows after the last one it read (its anchor), in pages of at
    most 1024 rows or 4 MiB, and appends them to the log as records (`ChangeLog`, format 1): upsert (table, rowid,
-   record), delete (table, rowid), commit, create (the object's SQL), drop (type, name). A read stops at the last COMMIT
-   row, or at the first COMMIT row once it has appended 32 MiB, so it always ends between transactions; the rest waits
-   for the next read. One transaction is never split, so a read can exceed 32 MiB by one transaction.
+   record), delete (table, rowid), commit, create (the object's SQL), drop (type, name), timed commit and read mark. A
+   read stops at the last COMMIT row, or at the first COMMIT row once it has appended 32 MiB, so it always ends between
+   transactions; the rest waits for the next read. One transaction is never split, so a read can exceed 32 MiB by one
+   transaction. A timed commit carries the `change_time` of the transaction's first row and of its COMMIT row; a
+   transaction whose times are missing or go back is logged with a plain commit. When a read appended changes up to the
+   newest COMMIT row that existed when it started (not a read stopped at 32 MiB), a read mark follows them with that
+   start time: every transaction committed before it is in the log before the mark. Both records are additive: the
+   object format, the bucket layout and older logs (plain commits only) stay readable.
 2. It then deletes, on the writer, the rows before its anchor, always keeping the newest: an empty `turso_cdc`
    restarts its ids at 1 after a reopen. Turso does not capture changes to `turso_cdc` itself. A read that fails,
    including this delete, puts its anchor back: the shipper drops what that read appended, and the next read appends
@@ -352,70 +357,112 @@ TS-647, through anti-entropy). Backups taken before the TS-602 wipe use the old 
 it (user decision, 2026-10-07). Production backup starts right after that cutover.
 
 `GET /v1/projects/{project}/databases/{database}/point-in-time` returns the restore window: from the oldest snapshot,
-but no earlier than the plan's retention window (a bucket rule may keep older objects), to the newest data in the
-bucket. It returns 404 when no stored data falls within the plan's window, including when retained objects have all
-expired under the plan.
+but no earlier than the plan's retention window (a bucket rule may keep older objects), to the newest time the backup
+proves (see [Proven history](#proven-history)): read from the bucket, the second at or before the newest read mark in
+the newest generation's last three segments (at most three object reads), or its newest snapshot's time. While this
+node ships the database to the platform bucket, `latest` is instead the shipper's acknowledged progress, the end of its
+newest stored read, which a restore can refuse with `409` until a later write or read mark proves it. It returns 404
+when no stored data falls within the plan's window, including when retained objects have all expired under the plan.
 `POST /v1/projects/{project}/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}`
 restores into a new database of the same project (`branchedFrom` set, like a backup restore). The restore:
 
 1. takes the newest snapshot at or before `pointInTime`;
 2. checks from object names that the history up to `pointInTime` can be complete (see
    [Proven history](#proven-history)), before downloading anything;
-3. replays its generation's segments up to `pointInTime` in order, checking they are contiguous: one transaction per
+3. replays its generation's segments read by `pointInTime` in order, checking they are contiguous: one transaction per
    commit record, rows by rowid (`INSERT OR REPLACE`, `DELETE`), schema objects created from their SQL and dropped by
    name. A log that ends inside a transaction, a malformed record or a change the file refuses fails the restore.
-   Eight segments download at once, each retried up to three times if the stream drops. Once they are replayed, the
-   history must be proven to reach `pointInTime`;
+   Eight segments download at once, each retried up to three times if the stream drops. Then the history must be
+   proven to reach `pointInTime`, replaying the transactions of later segments that ran before it;
 4. runs `PRAGMA integrity_check`, then imports the file as a copy, so its replication starts over from a baseline.
 
-`pointInTime` must fall between `earliest` and `latest`, inclusive; requests outside those bounds return 400. A time after
-`latest` is refused even when it is before now, so a delayed shipper cannot silently restore older data for that time.
+`pointInTime` must fall between `earliest` and the newest backed-up data (the shipper's acknowledged progress, or the
+newest segment's time), inclusive; requests outside those bounds return 400. That bound is at or after the window's
+`latest`: between them a restore succeeds only when it proves the time, and answers `409` otherwise. A time after the
+newest data is refused even when it is before now, so a delayed shipper cannot silently restore older data for that time.
 The shared restore service validates these bounds once before downloading or importing a database. It captures the
 retention reference time before reading metadata and uses one snapshot scan for both the window and snapshot selection,
 so metadata latency cannot move the retention floor during a restore. Window reads and previews also capture their
 reference time before reading metadata.
 
-The result holds every transaction the shipper read by `pointInTime`. The shipper reads every second, so a transaction
-committed in the second before `pointInTime` may be missing.
+The result holds every transaction committed before `pointInTime`, or the restore answers `409`.
 
 ### Proven history
 
-A restore never returns a state that leaves out log the bucket cannot account for. It succeeds only when the chosen
-snapshot's generation proves its history complete up to `pointInTime`:
+A restore at `pointInTime` (T, taken to the millisecond) returns `201` only with whole transactions: every transaction
+committed before T, so every write acknowledged before T, and none whose COMMIT row was written at or after T.
+Otherwise it answers `409` and creates nothing. T, segment and snapshot times, read marks and Turso's `change_time` are
+all the node's wall clock, and "acknowledged before T" is measured on it.
 
-- every replayed segment starts exactly where the previous one ends (the first at the snapshot's position); and
-- the history reaches `pointInTime`: the first segment of the generation read after `pointInTime` starts exactly where
-  the replayed ones end, or the generation's next snapshot holds exactly the replayed log (its position is where they
-  end), or the last replayed segment, or the snapshot when none applies, was read in the same millisecond as
-  `pointInTime` (object names carry milliseconds).
+What Turso records (measured on the driver, `TursoChangeTimeTests`): every captured row, the COMMIT row included, holds
+`change_time`, the wall clock when Turso wrote that row, in whole Unix seconds rounded down; rows of one transaction
+differ when its statements run in different seconds. The COMMIT row is written inside the transaction, before it is
+durable, so a transaction commits, and is acknowledged, after its COMMIT row's time; a statement's time is never taken as
+a commit time. One transaction may hold many client writes (a group commit or a transaction request); a restore never
+splits it.
 
-Otherwise the restore answers `409` with code `backup_history_incomplete` and creates nothing. This covers:
+The restore takes the newest snapshot at or before T and replays its generation's segments in log order:
 
-- a missing segment (a lost upload or a bucket-side deletion): every time after the last segment before it is refused,
-  because the missing segment's own time is gone with it, until the generation's next snapshot past the gap, from
-  which restores start again; times up to that segment still restore exactly;
-- a missing final segment: nothing follows it, so times after the last stored segment are refused, even while the
-  platform restore window, which comes from the shipper's acknowledged uploads, still shows the missing segment's time;
-- a generation that ended (a hole, a backlog over 256 MiB that was dropped, a shipper move or restart): the times
-  between its last segment and the next generation's snapshot are refused, since log read in between may never have
-  been stored; the next generation's snapshot time restores;
-- a snapshot or segment object that disappears between listing and download (retention racing the restore).
+- segments read by T (their time at or before T, to the millisecond) are replayed whole: what they hold committed
+  before their read ended;
+- the history must then be proven complete up to T, by one of:
+  - the snapshot was taken in T's millisecond (it holds every writer while it reads);
+  - the last segment read by T was read in T's millisecond and ends with a read mark at or after T;
+  - the segments read after T, read on transaction by transaction: those whose COMMIT row's second ends by T (every
+    row ran before T) are replayed, up to the first whose COMMIT row's second starts at or after T (the witness: it and
+    every later transaction committed after T), or up to a read mark at or after T;
+  - the generation's next snapshot holds exactly the replayed log.
 
-Deliberate fail-closed trade-off: a quiet period after the last segment of a generation can no longer be selected
-unless a later snapshot of the same generation closes it (the daily snapshot does, so a database idle between two
-daily snapshots restores at any time in between). Nothing in the bucket shows that no write was read after that
-segment. The same state is restorable at that segment's time. Backups written before this rule restore under it too;
-times it cannot prove answer `409` instead of restoring a possibly incomplete state.
+A segment's own time is when its read finished: it shows nothing about commits made while the read ran, so it proves no
+time by itself.
 
-Two segments with the same start (an upload stored but answered as failed, then sent again with more log) are not
-contiguous: the first one's own time still restores, and later times answer `409` until the generation's next snapshot.
+`409` `backup_history_incomplete`: the bucket cannot show the history complete up to T.
+
+- A missing or overlapping segment (a lost upload, a bucket-side deletion, two segments with the same start where the
+  first holds log; a segment holding no log ends where it starts, so the next may share its start). Times up to the
+  last segment before it can still restore.
+- Nothing after the replayed log proves T: an unshipped or missing final segment, a generation that ended (a hole, a
+  dropped backlog, a shipper move or restart; the next generation's snapshot time restores), or a quiet period not yet
+  closed by a later write or snapshot.
+- A snapshot or segment that disappears between listing and download (retention racing the restore).
+
+`409` `restore_point_unproven`: the history is there but T cannot be placed between two transactions, in a segment read
+after T: a transaction whose COMMIT row's second contains T (times are whole seconds), one without recorded times (a
+log written before they were recorded, or a clock that went back within it), or times that go back between two
+transactions. A whole second, or a time in a second in which no transaction committed, can be placed.
+
+Guaranteed to restore exactly (`201`), given contiguous segments and timed transactions:
+
+- **Snapshot times**: T in a snapshot's millisecond.
+- **Witnessed times**: T at a whole second, or any time in a second in which no transaction read after T committed,
+  when a transaction committed at or after T (or a read mark at or after T) is shipped later in the same generation.
+  A quiesced cut is this case: writes stop, T is the next whole second, and a later write is the witness.
+- **The latest durable point**: the second at or before the newest read mark's time, with no later write needed.
+- **A quiet time closed by a snapshot**: a time up to the generation's next snapshot when no segment follows the
+  replayed log before it.
+
+Limits:
+
+- T is resolved to the millisecond: a transaction that committed within T's own millisecond, after T, can be included
+  through a segment or snapshot taken in that millisecond.
+- A backward wall-clock step between a commit and the backup read that picks it up, or between a COMMIT row and its
+  acknowledgement, cannot be detected. A step back between two transactions read after T is refused.
+- Only the transactions downloaded after T are checked for times going back; earlier segments are trusted by their read
+  times.
+- A read writes a mark only when it appended changes and reached the newest commit: a read that stops at its byte
+  budget, or an idle database, writes none (an idle database ships nothing). A commit made between a read's start
+  and its query is not covered by that mark; no T at or before the mark needs it.
+- A log written before timed commits and read marks restores only at snapshot times and at times its generation's next
+  snapshot closes.
+- Integration tests run TerraBase on a test clock while Turso stamps rows with the machine's clock; tests that place T
+  between transactions set the recorded `change_time` themselves.
 
 ### Restore preview (TS-493)
 
 `POST /v1/projects/{project}/databases/{database}/point-in-time/plan` with
 `{"pointInTime":"…","destination":"customer"}` reads the selected source's
-backup metadata without downloading or decrypting backup contents, creating scratch files,
-or changing databases. It returns:
+backup metadata without changing databases. It downloads only what the window's `latest` needs when it comes from the
+bucket: at most three of the newest segments, for their read marks. It returns:
 
 ```json
 {
@@ -435,11 +482,14 @@ segments after its position and read by the requested time. The latter is null w
 none apply. No object keys or credentials are returned.
 
 The preview runs the restore's name-only check of [Proven history](#proven-history): the first segment starts at the
-snapshot's position, later ones start after it in order, and the history reaches `pointInTime`. When object names
-already show the history incomplete (a missing final segment, an ended generation, a later snapshot whose position no
-stored segment reaches), it answers `409` `backup_history_incomplete`, as the restore would. `historyCheck` is always
-`metadata`: segment names hold their start but not their length, so whether each segment begins exactly where the
-previous one ends (a missing middle segment) is checked only by an actual restore, which can still answer `409`.
+snapshot's position, each later one starts at or after the previous one, and the history reaches `pointInTime`. When
+object names already show the history incomplete (a missing final segment, an ended generation, a later snapshot whose
+position no stored segment reaches), it answers `409` `backup_history_incomplete`, as the restore would. `historyCheck`
+is always `metadata`: segment names hold their start but not their length, so whether each segment begins exactly where
+the previous one ends (a missing middle segment, or two segments with the same start where the first holds log) is
+checked only by an actual restore, which can still answer `409`. The plan does not read transaction times either: a
+restore can answer `409` `restore_point_unproven` where the plan succeeds. `window.latest` is the window's, as
+`GET …/point-in-time` reports it; `pointInTime` may lie after it, up to the newest backed-up data.
 
 The request needs a ts-auth project token granting `databases:read`; `{database}` is its name.
 The hidden legacy management alias retains membership checks, including organization viewers. Access is checked

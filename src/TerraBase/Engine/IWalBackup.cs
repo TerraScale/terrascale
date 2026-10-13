@@ -18,6 +18,16 @@ public readonly record struct WalRead(long Bytes, bool Continuous, bool Remainin
 /// <param name="At">UTC time when the snapshot's state was pinned, before copying it.</param>
 public readonly record struct WalSnapshot(WalRead Read, DateTimeOffset At);
 
+/// <summary>Where a restore at a time stops in one log segment, from the times its transactions were recorded with.</summary>
+/// <param name="Bytes">Log bytes from the segment's start that the restore replays: whole transactions, each run before the time.</param>
+/// <param name="Reached">
+/// A transaction committed at or after the time follows them in the segment: every later one committed after it, so every
+/// transaction acknowledged before the time is in the bytes up to here.
+/// </param>
+/// <param name="Last">The commit second (Unix) of the segment's last timed transaction read, or the previous one's.</param>
+/// <param name="Unproven">Why the time cannot be placed between two transactions in the segment; null when it can.</param>
+public readonly record struct LogCut(long Bytes, bool Reached, long? Last, string? Unproven);
+
 /// <summary>
 /// The committed changes of one open storage file, in commit order, for continuous backup (TS-633): a log that
 /// <see cref="IWalBackup.RollForwardAsync"/> replays on a snapshot. Calls must not overlap. Positions in a backup
@@ -51,6 +61,21 @@ public interface IWalBackup
     /// appended it, in order), then checks its integrity. <see langword="false"/> when the result is not a sound database.
     /// </summary>
     ValueTask<bool> RollForwardAsync(string file, IAsyncEnumerable<Stream> segments, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Places a restore at <paramref name="at"/> in <paramref name="segment"/> (a log segment, read from its current
+    /// position), which follows transactions that ran before the time, the last committed in second
+    /// <paramref name="previous"/> (Unix) when known.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The log is malformed.</exception>
+    LogCut CutLog(Stream segment, DateTimeOffset at, long? previous);
+
+    /// <summary>
+    /// When the read that appended the end of <paramref name="segment"/> started, if that read reached the newest commit:
+    /// every transaction committed before then is in the log up to the segment's end. Null otherwise.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The log is malformed.</exception>
+    DateTimeOffset? ReadMark(Stream segment);
 
     /// <summary>
     /// Creates <paramref name="database"/> from <paramref name="file"/>, which it takes over, as a copy: its replication
