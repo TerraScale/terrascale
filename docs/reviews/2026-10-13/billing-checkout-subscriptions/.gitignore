@@ -1,0 +1,6 @@
+artifacts/
+evidence/
+results/
+*.log
+evidence-manifest.json
+pr-body.md

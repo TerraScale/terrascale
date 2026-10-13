@@ -1,0 +1,41 @@
+--- a/src/TerraScale.Dashboard/Features/Billing/InvoiceHistory.cs
++++ b/src/TerraScale.Dashboard/Features/Billing/InvoiceHistory.cs
+@@ -5,7 +5,7 @@
+ 
+ public sealed record BillingInvoice(string Id, string Number, string Status, long AmountCents, string Currency,
+     DateTimeOffset CreatedAt, DateTimeOffset? PeriodStart, DateTimeOffset? PeriodEnd,
+-    string HostedUrl = "", string PdfUrl = "");
++    string HostedUrl = "", string PdfUrl = "", long? RemainingCents = null);
+ public sealed record BillingInvoiceList(IReadOnlyList<BillingInvoice> Invoices, int Page, int PageCount, int Total);
+ public sealed record InvoiceHistoryPage(BillingInvoiceList Listing, string Status, string Issued)
+ {
+@@ -103,7 +103,7 @@
+         {
+             var currencies = open.Select(invoice => invoice.Currency.ToUpperInvariant()).Distinct(StringComparer.Ordinal).ToArray();
+             long amount = 0;
+-            foreach (var invoice in open) amount = checked(amount + Math.Max(0, invoice.AmountCents));
++            foreach (var invoice in open) amount = checked(amount + Math.Max(0, invoice.RemainingCents ?? invoice.AmountCents));
+             summary = summary with
+             {
+                 OutstandingDetail = $"{open.Length} open invoice(s) in recorded history",
+--- a/src/TerraScale.Dashboard/Features/Billing/StripeBillingInvoices.cs
++++ b/src/TerraScale.Dashboard/Features/Billing/StripeBillingInvoices.cs
+@@ -27,7 +27,7 @@
+                     throw new IOException("Stripe invoice identity or pagination changed.");
+                 invoices.Add(new(invoice.Id, invoice.Number ?? "", invoice.Status ?? "", invoice.AmountDue, invoice.Currency ?? "",
+                     new(invoice.Created, TimeSpan.Zero), Timestamp(invoice.PeriodStart), Timestamp(invoice.PeriodEnd),
+-                    InvoiceHistory.SafeUrl(invoice.HostedInvoiceUrl), InvoiceHistory.SafeUrl(invoice.InvoicePdf)));
++                    InvoiceHistory.SafeUrl(invoice.HostedInvoiceUrl), InvoiceHistory.SafeUrl(invoice.InvoicePdf), invoice.AmountRemaining));
+             }
+             if (!page.HasMore) break;
+             if (page.Data.Count == 0) throw new IOException("Stripe invoice pagination did not advance.");
+--- a/tests/TerraScale.Dashboard.E2E/Demo/DemoHost.cs
++++ b/tests/TerraScale.Dashboard.E2E/Demo/DemoHost.cs
+@@ -721,6 +721,7 @@
+                     number = row.Number,
+                     status = row.Status,
+                     amount_due = row.Amount,
++                    amount_remaining = row.Status == "open" ? row.Amount : 0,
+                     currency = row.Currency,
+                     created = row.Created.ToUnixTimeSeconds(),
+                     period_start = row.Created.AddDays(-10).ToUnixTimeSeconds(),

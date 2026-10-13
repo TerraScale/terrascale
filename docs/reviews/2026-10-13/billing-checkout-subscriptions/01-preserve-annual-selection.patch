@@ -1,0 +1,12 @@
+--- a/src/TerraScale.Dashboard/Features/Billing/BillingPlanDialogs.cshtml
++++ b/src/TerraScale.Dashboard/Features/Billing/BillingPlanDialogs.cshtml
+@@ -3,7 +3,8 @@
+ @{
+     var data = Model.PlanChanges;
+     var owner = Model.CanManage;
+-    var interval = data.State?.Interval == "annual" ? "annual" : "monthly";
++    var requestedInterval = HttpContext!.Request.Query["interval"].ToString();
++    var interval = requestedInterval is "monthly" or "annual" ? requestedInterval : data.State?.Interval == "annual" ? "annual" : "monthly";
+     var subscribed = data.Binding?.SubscriptionId is { Length: > 0 } && data.Binding.Status is not ("canceled" or "incomplete_expired");
+     var currentKey = data.State?.PlanKey ?? Model.Plans.FirstOrDefault(plan => plan.Id == Model.Shell.Context.Organization!.PlanId)?.Key ?? "";
+ }
