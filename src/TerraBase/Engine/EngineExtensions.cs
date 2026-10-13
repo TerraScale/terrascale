@@ -52,7 +52,7 @@ public static class EngineExtensions
         services.AddSingleton<IReplicaStates>(provider => provider.GetRequiredService<TursoChangeGroupSource>());
         services.AddHostedService(provider => provider.GetRequiredService<TursoChangeGroupSource>());
         // The changes feed's 7-day retention.
-        services.AddSingleton(provider => new FeedRetention(provider.GetRequiredService<SqliteStorageEngine>()));
+        services.AddSingleton(provider => new FeedRetention(provider.GetRequiredService<SqliteStorageEngine>(), provider.GetRequiredService<ILogger<FeedRetention>>()));
         services.AddHostedService(provider => provider.GetRequiredService<FeedRetention>());
         services.AddSingleton(provider =>
         {
