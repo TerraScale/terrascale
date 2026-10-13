@@ -15,6 +15,7 @@ public sealed class ThreeRegionE2ETests
     private static readonly string[] All = [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
 
     [Test]
+    [Category("replication-matrix")]
     [Scenario(Nodes.InProcess)]
     [Arguments(Cluster.Gru, Cluster.Sjc)]
     [Arguments(Cluster.Sjc, Cluster.Gru)]
@@ -27,18 +28,29 @@ public sealed class ThreeRegionE2ETests
         await Gaps.RunAsync("pair", async () =>
         {
             await using var cluster = await Cluster.StartAsync(All);
-            var body = Synthetic(new Faker());
-            var uri = cluster.Document(EntityIds.New().ToString());
-            await Docs.PutAsync(cluster[from], uri, body);
-            var acknowledged = Stopwatch.GetTimestamp();
-            _ = await Converge.UntilAsync(() => Docs.ReadAsync(cluster[to], uri), document => Docs.Canonical(document) == Docs.Canonical(body), $"{from} to {to}");
-            Converge.Report($"{cluster.Identity(from)} to {cluster.Identity(to)}", acknowledged);
-            var everywhere = await Converge.SettledAsync(cluster, uri, $"{from} to every region");
-            Expected.Check(Docs.Canonical(everywhere.Value) == Docs.Canonical(body), $"every region holds the write; {everywhere}");
+            var faker = new Faker();
+            var milliseconds = new double[10];
+            for (var sample = 0; sample < milliseconds.Length; sample++)
+            {
+                var body = Synthetic(faker);
+                var canonical = Docs.Canonical(body);
+                var uri = cluster.Document(EntityIds.New().ToString());
+                await Docs.PutAsync(cluster[from], uri, body);
+                var acknowledged = Stopwatch.GetTimestamp();
+                _ = await Converge.UntilAsync(() => Docs.ReadAsync(cluster[to], uri), document => Docs.Canonical(document) == canonical, $"{from} to {to}");
+                milliseconds[sample] = Stopwatch.GetElapsedTime(acknowledged).TotalMilliseconds;
+                var everywhere = await Converge.SettledAsync(cluster, uri, $"{from} to every region");
+                Expected.Check(Docs.Canonical(everywhere.Value) == canonical, $"every region holds the write; {everywhere}");
+            }
+
+            Array.Sort(milliseconds);
+            Console.WriteLine(FormattableString.Invariant(
+                $"replication matrix lag, {cluster.Identity(from)} to {cluster.Identity(to)}: n=10 min={milliseconds[0]:F1} median={(milliseconds[4] + milliseconds[5]) / 2:F1} p95={milliseconds[9]:F1} max={milliseconds[9]:F1} ms"));
         });
     }
 
     [Test]
+    [Category("replication-matrix")]
     [Scenario(Nodes.InProcess)]
     public async Task Concurrent_writes_to_the_same_field_in_three_regions_converge_to_one_written_value()
     {
@@ -49,8 +61,12 @@ public sealed class ThreeRegionE2ETests
             await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["value"] = "seed" });
             var written = All.ToDictionary(region => $"{region}-{EntityIds.New()}", region => region, StringComparer.Ordinal);
             var acknowledged = Stopwatch.GetTimestamp();
-            await Task.WhenAll(written.Select(write => Docs.PutAsync(cluster[write.Value], uri, new JsonObject { ["value"] = write.Key })));
-            var settled = await Converge.SettledAsync(cluster, uri, "three-way same-field writes");
+            // Each independent field proves that all three mutations arrived, rather than just the first winner.
+            await Task.WhenAll(written.Select(write => Docs.PatchAsync(cluster[write.Value], uri,
+                new JsonObject { ["value"] = write.Key, [write.Value] = write.Key })));
+            var settled = await Converge.UntilAsync(() => Converge.AllAsync(cluster, uri),
+                copies => copies.Identical && written.All(write => copies.Value?[write.Value]?.GetValue<string>() == write.Key)
+                    && written.ContainsKey(copies.Value?["value"]?.GetValue<string>() ?? ""), "three-way same-field writes");
             Converge.Report("three-way same field", acknowledged);
             var value = settled.Value!["value"]!.GetValue<string>();
             Expected.Check(written.ContainsKey(value), $"the value is one of the three writes; {settled}");

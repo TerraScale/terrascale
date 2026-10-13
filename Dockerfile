@@ -64,7 +64,7 @@ RUN make -o restore fmt-check terrabase-check CONFIGURATION=Release
 
 FROM build-terrabase AS test-terrabase
 ARG TERRABASE_REVISION
-RUN make -o restore terrabase-test-fast CONFIGURATION=Release && touch /passed
+RUN make -o restore terrabase-test-fast terrabase-replication-matrix CONFIGURATION=Release && touch /passed
 
 # All three areas (BuildKit runs them in parallel): `make docker-test`.
 FROM scratch AS test

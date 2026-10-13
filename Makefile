@@ -44,7 +44,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test handoff-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
-	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
+	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-replication-matrix terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local benchmark-repl-fly
 
 # Global: the whole solution.
@@ -174,6 +174,11 @@ terrabase-test-fast: restore
 
 terrabase-test-slow: terrabase-build
 	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
+
+# Six writes, six deletes, one three-way conflict and each of the three region outages. No expected failures.
+# CI's required TerraBase test stage runs it locally; the deploy E2E job runs the same non-outage tests on Fly.
+terrabase-replication-matrix: terrabase-build
+	dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/*/*[Category=replication-matrix]' --minimum-expected-tests 16 --output detailed --no-ansi $(TEST_ARGS)
 
 # End-to-end replication (tests/TerraBase.E2E): leaderless writes between gru, sjc and fra, every pair and three-way, with
 # partitions, restarts, a region down, backlog and clock skew. Local by default (in-process nodes); tests/TerraBase.E2E/Gaps.cs
