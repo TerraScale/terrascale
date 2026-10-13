@@ -12,7 +12,7 @@ namespace TerraScale.Dashboard.E2E;
 
 // External test controls prepare provider-owned rows and inject storage/network
 // failures. Journeys exercise the running app and its public CLI entry only.
-sealed class InternalBillingProducer(TestState state, Func<DateTimeOffset> now, Func<string> subject,
+sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, Func<DateTimeOffset> now, Func<string> subject,
     Action<OrganizationRecord>? seedOrganization = null) : IDashboardState
 {
     private readonly ConcurrentQueue<object> usageRequests = new();
@@ -172,7 +172,7 @@ sealed class InternalBillingProducer(TestState state, Func<DateTimeOffset> now, 
                 var project = new ProjectRecord { Id = ids.NewId(), OrganizationId = organization.Id, Name = name, Slug = name, Region = "GRU", Regions = ["GRU"], CreatedAt = now() };
                 organization.Projects[project.Id] = project;
             }
-            lock (TestWorkspace.Gate) TestWorkspace.Organizations[organization.Id] = TestWorkspace.Clone(organization);
+            lock (workspace.Gate) workspace.Organizations[organization.Id] = TestWorkspace.Clone(organization);
             await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), TerraBasePrecondition.Absent, cancellationToken);
             seedOrganization?.Invoke(organization);
             account.OrganizationIds.Add(organization.Id);
@@ -192,7 +192,7 @@ sealed class InternalBillingProducer(TestState state, Func<DateTimeOffset> now, 
             return Results.BadRequest(new { error = "The usage producer requires exact native principal and organization scope." });
         if (!state.Items.TryGetValue(AccountService.OrganizationsCollection + "/" + organizationId, out var document)) return Results.NotFound();
         var organization = AccountService.Read<OrganizationRecord>(document);
-        if (!organization.ContainsMember(activeSubject) || TestWorkspace.ScopedRole(activeSubject, organizationId).Length == 0 ||
+        if (!organization.ContainsMember(activeSubject) || workspace.ScopedRole(activeSubject, organizationId).Length == 0 ||
             !organization.Projects.TryGetValue(projectId, out var project) || project.OrganizationId != organizationId) return Results.StatusCode(403);
         var query = http.Request.Query;
         if (query.Count != 2 || query["granularity"].ToString() != "day" ||
