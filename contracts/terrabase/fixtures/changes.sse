@@ -1,0 +1,18 @@
+: heartbeat
+event: cursor
+id: AQAAAAAAAAABAAAAAAAAAAE
+data: {"cursor":"AQAAAAAAAAABAAAAAAAAAAE"}
+
+event: change
+id: AQAAAAAAAAABAAAAAAAAAAI
+data: {"collection":"items","id":"a","op":"upsert",
+data: "version":"2","origin":"0000000000000001","document":{"title":"São Paulo 😀"}}
+
+event: cursor
+id: AQAAAAAAAAABAAAAAAAAAAM
+data: {"cursor":"AQAAAAAAAAABAAAAAAAAAAM"}
+
+event: change
+id: AQAAAAAAAAABAAAAAAAAAAM
+data: {"collection":"items","id":"a","op":"delete","version":"3","origin":"0000000000000001","document":null}
+

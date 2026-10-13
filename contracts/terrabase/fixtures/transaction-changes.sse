@@ -1,0 +1,11 @@
+event: cursor
+id: AQAAAAAAAABkAAAAAAAAAAEAAAAAAAAAAQ
+data: {"cursor":"AQAAAAAAAABkAAAAAAAAAAEAAAAAAAAAAQ"}
+
+event: change
+data: {"collection":"items","id":"a","op":"upsert","version":"2","origin":"0000000000000001","document":{"title":"first"}}
+
+event: change
+id: AQAAAAAAAABkAAAAAAAAAAEAAAAAAAAAAg
+data: {"collection":"items","id":"b","op":"upsert","version":"2","origin":"0000000000000001","document":{"title":"second"}}
+

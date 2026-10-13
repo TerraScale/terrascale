@@ -27,7 +27,10 @@ public class TerraBaseException : HttpRequestException
     public int? OperationIndex { get; }
 
     /// <summary>The region that answered (<c>X-TerraBase-Region</c>), when it said; TerraBase names it on every response.</summary>
-    public string? Region { get; private set; }
+    public string? Region { get; internal set; }
+
+    /// <summary>Server Retry-After when present; no request is automatically retried.</summary>
+    public TimeSpan? RetryAfter { get; private set; }
 
     internal static async Task<TerraBaseException> FromResponseAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
@@ -70,6 +73,8 @@ public class TerraBaseException : HttpRequestException
             403 => new TerraBaseForbiddenException(status, text, code, op),
             404 => new TerraBaseNotFoundException(status, text, code, op),
             409 => new TerraBaseConflictException(status, text, code, op),
+            410 when code == "cursor_expired" => new TerraBaseCursorExpiredException(status, text, code, op),
+            429 => new TerraBaseRateLimitedException(status, text, code, op),
             412 => new TerraBasePreconditionFailedException(status, text, code, op),
             421 => new TerraBaseWrongRegionException(status, text, code, op)
             {
@@ -81,11 +86,13 @@ public class TerraBaseException : HttpRequestException
             _ => new TerraBaseException(status, text, code, op),
         };
         exception.Region = RegionHeader(response, "X-TerraBase-Region");
+        exception.RetryAfter = response.Headers.RetryAfter?.Delta
+            ?? (response.Headers.RetryAfter?.Date is { } retryAt ? TimeSpan.FromTicks(Math.Max(0, (retryAt - DateTimeOffset.UtcNow).Ticks)) : null);
         return exception;
     }
 
     // A single header value that is a well-formed region id (or, for a list, a comma-separated value), else null.
-    private static string? RegionHeader(HttpResponseMessage response, string name, bool list = false) =>
+    internal static string? RegionHeader(HttpResponseMessage response, string name, bool list = false) =>
         response.Headers.TryGetValues(name, out var values) && values.ToArray() is [var value]
             && (list ? value.Length <= 1024 : TerraBaseRegion.IsValid(value)) ? value : null;
 
@@ -190,4 +197,18 @@ public sealed class TerraBaseUnavailableException : TerraBaseException
         : base(statusCode, message, errorCode, operationIndex)
     {
     }
+}
+
+/// <summary>410 cursor_expired: resume data is no longer retained. Re-read and restart with cursor=now explicitly.</summary>
+public sealed class TerraBaseCursorExpiredException : TerraBaseException
+{
+    internal TerraBaseCursorExpiredException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
+        : base(statusCode, message, errorCode, operationIndex) { }
+}
+
+/// <summary>429: stream slots or tenant capacity exhausted. RetryAfter is advisory; the SDK never retries automatically.</summary>
+public sealed class TerraBaseRateLimitedException : TerraBaseException
+{
+    internal TerraBaseRateLimitedException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
+        : base(statusCode, message, errorCode, operationIndex) { }
 }

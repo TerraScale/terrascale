@@ -49,7 +49,7 @@ public sealed record TerraBaseDocumentsClientOptions
 /// <summary>
 /// Client of the TerraBase Documents API v1 (<c>/v1/projects/{project}/databases/{database}/…</c>), built over a
 /// caller-owned <see cref="HttpClient"/> that it never disposes. Thread-safe. Requests are sent once: TerraBase does not
-/// deduplicate retried writes yet, so retry a write only when its precondition makes the retry safe.
+/// deduplicate retried writes yet, so a lost response leaves the outcome unknown. Do not automatically replay a mutation.
 /// </summary>
 public sealed class TerraBaseDocumentsClient
 {
@@ -66,13 +66,17 @@ public sealed class TerraBaseDocumentsClient
             options.AccessTokenProvider, anonymousAllowed: true, region: options.Region);
     }
 
+    /// <summary>Canonical lifecycle and usage with project-token authority; does not create identity records.</summary>
+    public TerraBaseProjectClient Project(string projectId) =>
+        new(connection, $"/v1/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}");
+
     /// <summary>Addresses one database: <paramref name="databaseName"/> in project <paramref name="projectId"/> of the key's organization.</summary>
     public TerraBaseDatabase Database(string projectId, string databaseName) =>
         new(connection, $"/v1/projects/{TerraBaseConnection.Segment(projectId, nameof(projectId))}/databases/{TerraBaseConnection.Segment(databaseName, nameof(databaseName))}");
 }
 
 /// <summary>One TerraBase database of the Documents API. Thread-safe; obtain it from <see cref="TerraBaseDocumentsClient.Database"/>.</summary>
-public sealed class TerraBaseDatabase
+public sealed partial class TerraBaseDatabase
 {
     private const string MergePatchMediaType = "application/merge-patch+json";
     private const string OpsPatchMediaType = "application/vnd.terrabase.ops+json";
@@ -97,6 +101,11 @@ public sealed class TerraBaseDatabase
     /// </summary>
     public Task DeleteAsync(CancellationToken cancellationToken = default) =>
         connection.SendAsync(HttpMethod.Delete, path, null, null, cancellationToken);
+
+    /// <summary>Reads best-effort dashboard usage, not billing. Granularity is hour or day; from/to are RFC 3339 instants.</summary>
+    public async Task<TerraBaseDatabaseUsage> GetUsageAsync(string? granularity = null, DateTimeOffset? from = null, DateTimeOffset? to = null, CancellationToken cancellationToken = default) =>
+        (await connection.SendAsync(HttpMethod.Get, path + "/usage" + TerraBaseProjectClient.UsageQuery(granularity, from, to),
+            null, Json.TerraBaseDatabaseUsage, null, cancellationToken).ConfigureAwait(false)).Value;
 
     /// <summary>Lists collections in name order.</summary>
     /// <param name="limit">1 to 200; TerraBase's default is 50.</param>
@@ -136,15 +145,15 @@ public sealed class TerraBaseDatabase
     {
         ArgumentNullException.ThrowIfNull(schema);
         var body = TerraBaseConnection.Json(schema, Json.TerraBaseUniqueSchemaRequest);
-        return (await connection.SendAsync(HttpMethod.Put, SchemaPath(collection), body, Json.TerraBaseUniqueSchema, null, cancellationToken).ConfigureAwait(false)).Value;
+        return (await connection.SendAsync(HttpMethod.Put, UniqueSchemaPath(collection), body, Json.TerraBaseUniqueSchema, null, cancellationToken).ConfigureAwait(false)).Value;
     }
 
     /// <summary>
     /// Reads inferred fields and declared unique keys (<c>GET …/schema/{collection}</c>).
     /// Requires a ts-auth project token with <c>databases:read</c> in the current producer contract.
     /// </summary>
-    public async Task<TerraBaseCollectionSchema> GetSchemaAsync(string collection, CancellationToken cancellationToken = default) =>
-        (await connection.SendAsync(HttpMethod.Get, SchemaPath(collection), null, Json.TerraBaseCollectionSchema, null, cancellationToken).ConfigureAwait(false)).Value;
+    public Task<TerraBaseCollectionSchema> GetSchemaAsync(string collection, CancellationToken cancellationToken = default) =>
+        GetInferredSchemaAsync(collection, cancellationToken);
 
     /// <summary>Reads a document; <see langword="null"/> when it is absent or deleted.</summary>
     public async Task<TerraBaseDocument?> GetDocumentAsync(string collection, string id, CancellationToken cancellationToken = default)
@@ -236,7 +245,7 @@ public sealed class TerraBaseDatabase
 
     private string CollectionPath(string collection) => $"{path}/collections/{TerraBaseConnection.Segment(collection, nameof(collection))}";
 
-    private string SchemaPath(string collection) => $"{path}/schema/{TerraBaseConnection.Segment(collection, nameof(collection))}";
+    private string UniqueSchemaPath(string collection) => $"{path}/schema/{TerraBaseConnection.Segment(collection, nameof(collection))}";
 
     // The key travels in the query, so any id (slashes included) addresses exactly one document.
     private string DocumentPath(string collection, string id)
