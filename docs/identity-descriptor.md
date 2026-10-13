@@ -66,6 +66,37 @@ Settled against ts-auth source at terrascale `e30ffdc2`:
    own sign-in token. ts-auth creates no Personal organization; the dashboard
    creates one named "Personal" on first sign-in under a lease in its state.
 
+## Plan member allowance
+
+A plan's member allowance (Starter: 5, pending invitations included) limits
+the invitations the dashboard sends. ts-auth does not enforce it.
+
+1. Each dashboard invitation takes a reservation in the organization's state
+   document, in the same compare-and-set that reads ts-auth's current members
+   and invitations. Occupied slots are distinct emails across members, pending
+   invitations and reservations. ts-auth's status decides expiry, never a
+   replica clock.
+2. ts-auth has no idempotency key or cancellation for invitation creation, so
+   a request with an unknown outcome (timeout, lost response, 5xx) may still
+   commit later. Its reservation ends only when ts-auth lists that request's
+   invitation as accepted, declined, revoked or expired. Elapsed time, clocks
+   and an absent entry never end it.
+3. Cost and recovery: an unknown outcome that never commits keeps its email's
+   slot counted, with no time limit or manual release. The email can still be
+   invited: the retry uses the same slot, and ts-auth holds one pending
+   invitation per email and target, so the retry and the original never both
+   hold one. Unknown outcomes for many emails, for example during a ts-auth
+   outage, can fill the allowance; a larger plan raises it.
+4. Limitation: any organization admin can invite through ts-auth's API (SDK,
+   ts-cli) without the dashboard, and project admins can invite to their
+   projects. Those invitations take no reservation, so the allowance is not a
+   global guarantee. A hard allowance needs ts-auth to hold it and check it in
+   its own invitation and membership transaction; that producer change is not
+   part of this release.
+5. Resending an invitation copies ts-auth's project and role exactly. A
+   project, role or invitation the dashboard cannot confirm refuses the resend
+   before the original is revoked.
+
 ## State database
 
 The dashboard keeps its own state in the `platform-dashboard` database of the
