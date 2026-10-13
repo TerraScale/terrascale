@@ -754,9 +754,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardE2EFixture fixtur
             "An old owner snapshot cannot project an inbox alert after a native provider ownership change at the actual pending-write or refresh boundary");
         var oldIdentity = await IdentityAsync(owner);
         var newIdentity = await IdentityAsync(nominee);
-        await CheckAsync(oldIdentity.GetProperty("role").GetString() == "member" && newIdentity.GetProperty("role").GetString() == "owner" &&
+        await CheckAsync(oldIdentity.GetProperty("role").GetString() == "admin" && newIdentity.GetProperty("role").GetString() == "owner" &&
             newIdentity.GetProperty("organizationId").GetString() == setup.Organization && newIdentity.GetProperty("userId").GetString() == enrolled.Subject,
-            "Fresh native contexts match the real Management contract: nominee becomes owner and starter becomes member");
+            "Fresh native contexts match the ts-auth contract: nominee becomes owner and starter becomes admin");
         using var operatorDenied = await nominee.GetAsync("/admin/users");
         await CheckAsync(operatorDenied.StatusCode == HttpStatusCode.Forbidden &&
             (await ObserveAsync(producer)).GetProperty("issuedAdminRoleGrantsByUser").GetProperty(enrolled.Subject).GetInt32() == 0,
@@ -768,8 +768,8 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardE2EFixture fixtur
             probe.GetProperty("failures").GetArrayLength() == 0 && probe.GetProperty("acceptances").EnumerateArray().Single().GetProperty("email").GetString() == enrolled.Email &&
             transferred.GetProperty("pendingTransfer").ValueKind == JsonValueKind.Null &&
             transferred.GetProperty("members").EnumerateArray().Single(row => row.GetProperty("userId").GetString() == enrolled.Subject).GetProperty("role").GetString() == "owner" &&
-            transferred.GetProperty("members").EnumerateArray().Single(row => row.GetProperty("userId").GetString() == oldIdentity.GetProperty("userId").GetString()).GetProperty("role").GetString() == "member" &&
-            probe.GetProperty("requests").EnumerateArray().Any(row => row.GetProperty("path").GetString() == "/v1/management/organizations/" + setup.Organization + "/ownership-transfer/confirm" &&
+            transferred.GetProperty("members").EnumerateArray().Single(row => row.GetProperty("userId").GetString() == oldIdentity.GetProperty("userId").GetString()).GetProperty("role").GetString() == "admin" &&
+            probe.GetProperty("requests").EnumerateArray().Any(row => row.GetProperty("path").GetString() == "/v1/terrascale/organizations/" + setup.Organization + "/ownership-transfer/confirm" &&
                 row.GetProperty("userId").GetString() == enrolled.Subject),
             "External producer evidence proves the verified email acceptance and nominee-authorized SDK confirm without any dashboard projection shortcut");
         await BillAsync(await RunAsync(scenario, owner, producer, Report(setup.Organization)), setup.Month);
