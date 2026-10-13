@@ -267,6 +267,19 @@ after each.
     refresh tokens) stay single-region and **fail closed**. The rework replaces the earlier decision gate; the PR
     still needs its review.
 
+**Queue update (COS, ~04:30Z):**
+- **#175 goes FIRST.** It is main's red fix; R8 is merging #166's head into it, so merging #175 brings #166 with it. The
+  COS-commissioned review is running.
+- Then the ea37fc59 queue, plus:
+  - **#176** (R3, the #112 fix-forward): **APPROVED at `c3cf4b1f`**;
+  - **#169** (R3, the #106 fix-forward): round-2 review running at `07701547`;
+  - **#179** (F8 bounded shutdown, plus fly.toml `kill_timeout`): **APPROVED at `34045b83`** (comment 6138287772);
+  - **#178** (R3, harness start-after-stopped): **needs review**. It overlaps #164, so whichever merges second takes a
+    one-line merge.
+- The candidate stays **without #120**.
+- **Still unowned:** the operator-key timeout (`An_operator_key_with_an_expiry_stops_authenticating_when_it_expires`).
+  #175's combined head is not green until something fixes it.
+
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
 **Outside the queue (COS, 03:30Z):** **#167** (`feat/postgres-turso-import-core`, `62f251f6`, one-time PostgreSQL and
