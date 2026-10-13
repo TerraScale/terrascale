@@ -15,11 +15,10 @@
 
 ## Context
 
-Under design C a write answers after one local commit, with `synchronous = NORMAL`. That causes three problems:
+Under design C a write answers after one local commit, with `synchronous = NORMAL`. That causes two problems:
 
-- A power loss of the accepting machine loses acknowledged writes.
-- After such a loss, the machine's `turso_cdc` change ids restart below what peers already acknowledged. The sender
-  then treats new groups as already shipped, so they are lost silently.
+- A power loss of the accepting machine can lose writes it answered but had not yet shipped (barrier B1 below; design
+  section 18).
 - The user's contract is: production writes succeed only after a durable copy exists in at least one other region.
 
 ## Definitions
@@ -86,8 +85,7 @@ becomes a code fix.
    `Retry-After: 1`. It is definitely not applied, so retrying is safe.
 3. **Local durable commit.** Client database write transactions commit with `synchronous = FULL`, as the system
    database's do ([0012](0012-system-database-synchronous-full.md)). The group commit lane shares one sync among the
-   writes it batches. This also keeps `turso_cdc` ids from being reused after a power loss. The operation's record (see 5)
-   is written in the same transaction.
+   writes it batches. The operation's record (see 5) is written in the same transaction.
 4. **Wait.** After the commit, the target is the database's CDC head read right after the commit. That is at or above
    the write's own change id, so the wait is conservative. The write waits until a machine of another placed region has
    acknowledged at least the target.
