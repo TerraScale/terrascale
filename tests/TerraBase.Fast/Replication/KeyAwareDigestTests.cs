@@ -183,8 +183,9 @@ public sealed class KeyAwareDigestTests
         public async Task<byte[]> BucketAsync(int bucket)
         {
             var replica = Api.Server.Services.GetRequiredService<IReplicaStates>();
-            return await replica.DigestAsync(Database, CancellationToken.None) is { } digests
-                ? digests.AsSpan(bucket * 16, 16).ToArray()
+            var incarnation = ((SqliteDatabaseStore)await OpenAsync()).Incarnation;
+            return await replica.DigestAsync(Database, incarnation, CancellationToken.None) is { } digests
+                ? digests.Buckets.AsSpan(bucket * 16, 16).ToArray()
                 : throw new InvalidOperationException("the database is not held");
         }
 
@@ -192,7 +193,9 @@ public sealed class KeyAwareDigestTests
         public async Task<DocumentState> StateAsync(string id)
         {
             var replica = Api.Server.Services.GetRequiredService<IReplicaStates>();
-            var (states, _) = await replica.ReadBucketsAsync(Database, [Bucket(id)], null, 64, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+            var incarnation = ((SqliteDatabaseStore)await OpenAsync()).Incarnation;
+            var (states, _) = await replica.ReadBucketsAsync(Database, incarnation, [Bucket(id)], null, 64, ChangeGroups.MaxBatchBytes, CancellationToken.None)
+                ?? throw new InvalidOperationException("the database is not held");
             return states.Single(state => state.Collection == Items && state.Id == id).State;
         }
 
