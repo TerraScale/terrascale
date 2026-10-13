@@ -122,7 +122,7 @@ Design, guarantees and limits: [0010](decisions/0010-write-wait-and-synced-durab
 - A peer whose stream for the database is failing (unreachable, restarting) is not waited for until a stream to it
   succeeds again.
 - Receivers sync the WAL (`synchronous = FULL`) before `DurableAck`, so an acknowledged group survives the peer's power
-  loss; local commits stay `NORMAL` ([0003](decisions/0003-sqlite-synchronous-normal.md)).
+  loss. Local commits sync too since #181 ([0003](decisions/0003-sqlite-synchronous-normal.md) as amended).
 
 The management catalog and API keys (`_system.db`) replicate separately, from one catalog primary to its
 followers: see [Catalog](#catalog). Client replication does not create or rename organizations, projects or their
@@ -409,8 +409,9 @@ persistence is introduced here.
   arrives.
 - A baseline is the whole current state, written into the change log in bounded chunks: it costs as much
   disk as the data it covers.
-- The member that accepted a write keeps decision 0003's `synchronous = NORMAL`: a power loss can lose its last commits
-  locally. Its unclean start raises its epoch, so it never mints their dots again and its streams continue on new origins,
+- The member that accepted a write syncs its commit (`FULL`, [0003](decisions/0003-sqlite-synchronous-normal.md) as
+  amended by #181), so a power loss no longer loses what it answered. Writer work outside a transaction (the backup
+  tap) stays `NORMAL`. Before #181, a power loss could lose its last commits locally. Its unclean start raises its epoch, so it never mints their dots again and its streams continue on new origins,
   and the peers keep what they acknowledged; the member itself gets those writes back only when they are written again,
   until refill after an expired lease ([anna-core](design/anna-core.md) §5.3) covers it.
 - A database file replaced by hand under the same member and epoch is detected only when a peer is ahead of its head;

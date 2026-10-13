@@ -217,8 +217,9 @@ a hostile process with filesystem write access. The ownership lock coordinates T
 processes, not arbitrary filesystem writers; deployment permissions provide that boundary.
 
 This covers TerraBase process crashes. The catalog itself is in the system database, which syncs every commit
-(decision 0012); tenant databases keep `synchronous = NORMAL` (decision 0003), so this adds no power-loss or
-operating-system-crash guarantee for their files. Older catalogs return
+(decision 0012). Since #181 tenant databases' write transactions sync their commits too (0003 as amended). Their
+power-loss evidence covers the write-ahead log only. Database-file, checkpoint and sync-error cases are still to be
+proven. Older catalogs return
 `503` and are never migrated or swept.
 Unsupported catalog versions are audited without interpreting tenant rows; their files are preserved,
 logged and counted as unknown while management requests keep returning `503`.

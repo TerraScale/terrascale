@@ -52,6 +52,9 @@ internal sealed partial class SqliteStorageTransaction(
 
     // A refused or failed write makes this transaction able only to roll back.
     private bool _faulted;
+
+    // Set once COMMIT returned: a later failure resetting the pooled session no longer makes the write look failed.
+    private bool _committed;
     private int _writes;
     private long _writtenBytes;
 
@@ -998,6 +1001,7 @@ internal sealed partial class SqliteStorageTransaction(
 
                 cancellationToken.ThrowIfCancellationRequested();
                 transaction.Commit();
+                _committed = true;
                 if (_collectionsChanged)
                 {
                     store.ForgetCollections();
@@ -1286,11 +1290,17 @@ internal sealed partial class SqliteStorageTransaction(
 
                     if (durable)
                     {
-                        // Likewise a failed reset: pooled sessions keep decision 0003's NORMAL.
+                        // Likewise a failed reset: pooled sessions go back to NORMAL between write transactions.
                         using var normal = session.Connection.CreateCommand();
                         normal.CommandText = "PRAGMA synchronous = NORMAL;";
                         normal.ExecuteNonQuery();
                     }
+                }
+                catch when (_committed)
+                {
+                    // The write committed and synced: only this session is lost, so the commit is not reported as failed.
+                    store.Discard(session);
+                    return;
                 }
                 catch
                 {
