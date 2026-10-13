@@ -9,72 +9,31 @@ namespace TerraBase.E2E;
 /// </summary>
 internal static class Gaps
 {
-    // R2a-1 (#48) deleted the old replication. R4a's peer streams carry change groups, but only the CDC tailer (R3) produces
-    // them from real writes; until it lands nothing crosses regions, locally or on Fly.
-    private const string Streams = "the CDC change group source (R3) for the peer streams (R4a)";
-    // R5 landed the counter and set ops; Fast proves they converge when three nodes' states join
-    // (CounterSetApiTests). Across regions they wait on the streams' source (R3).
-    private const string Counters = "counters and sets over peer streams (R4a) fed by the CDC source (R3)";
-
-    // On main every listed scenario stops in the cluster's setup: the collection it creates in gru never reaches the other
-    // regions without replication. That is reported as not supported (it never reached its own assertions), apart from a
-    // scenario failing its own way.
-    private const string AtSetup = "collection on sjc did not converge";
-
+    // Every other scenario runs plainly: R3's CDC source, R4a's peer streams, R5's lattice, R6's repair and R8's feed are on
+    // main, and those scenarios pass (triage of main e30ffdc2, two full runs). A listed scenario waits on a slice that is
+    // not on main, and fails today exactly as its signature says, the way it must stop failing when the slice lands.
     private static readonly Dictionary<string, Gap> Waiting = new(StringComparer.Ordinal)
     {
-        // ReplicationE2ETests, LatticeE2ETests, CatalogE2ETests (design section 20).
-        ["E1"] = new(Streams, AtSetup),
-        ["E2"] = new(Streams, AtSetup),
-        ["E3"] = new(Streams, AtSetup),
-        ["E4"] = new(Streams, AtSetup),
-        ["E5"] = new(Streams, AtSetup),
-        ["E6"] = new(Streams, AtSetup),
-        ["E8"] = new(Counters, AtSetup),
-        ["E9"] = new(Counters, AtSetup),
-        ["E10"] = new("the changes feed (R8) over peer streams (R4a)", AtSetup),
-        ["E11"] = new("SQL writes (R9) over peer streams (R4a)", AtSetup),
-        ["E12"] = new("the catalog as a lattice database (R10a)", AtSetup),
-        ["E13"] = new("home region and live move (R11)", AtSetup),
-        ["E14"] = new("garbage collection (R7) over peer streams (R4a)", AtSetup),
-        ["E15"] = new("the changes feed (R8) over peer streams (R4a)", AtSetup),
+        // LatticeE2ETests: SQL writes are R9 (no PR yet); the subset refuses an UPDATE before the scenario's checks.
+        ["E11"] = new("SQL writes over peer streams (R9, no PR yet)", "only SELECT statements are supported"),
+        // GC is R7 (#120, R7-FIX): no tombstone of a deleted document is ever collected on main.
+        ["E14"] = new("garbage collection (R7, #120 / R7-FIX)", "GC collects the tombstones of deleted documents"),
 
-        // ThreeRegionE2ETests.
-        ["pair"] = new(Streams, AtSetup),
-        ["three-way-same-field"] = new(Streams, AtSetup),
-        ["three-way-different-fields"] = new(Streams, AtSetup),
-        ["three-way-delete-versus-edit"] = new(Streams, AtSetup),
-        ["three-way-bulk"] = new(Streams, AtSetup),
-        ["three-way-burst"] = new(Streams, AtSetup),
-        ["large-documents"] = new(Streams, AtSetup),
-        ["three-way-counters"] = new(Counters, AtSetup),
-        ["three-way-sets"] = new(Counters, AtSetup),
+        // CatalogE2ETests: a database made in one region never reaches the other before the catalog lattice (R10a, #116/#121);
+        // live move is R11 (no PR yet), whose route does not exist.
+        ["E12"] = new("the catalog as a lattice database (R10a, #116/#121)", "sjc's database on gru did not converge"),
+        ["E13"] = new("home region and live move (R11, no PR yet)", "unknown_route"),
 
-        // ThreeRegionFaultE2ETests. Cluster.Partition needs R4a's streams to cut.
-        ["partition-heal"] = new(Streams, AtSetup),
-        ["region-down-rejoin"] = new(Streams, AtSetup),
-        ["restart-mid-replication"] = new(Streams, AtSetup),
-        ["ack-then-stop"] = new(Streams, AtSetup),
-        ["restarted-sender-backlog"] = new(Streams, AtSetup),
+        // RepairAndContractE2ETests: the new database stops at the same catalog step; its deletion while a region is away
+        // also needs R7.
+        ["deleted-database-stays-deleted"] = new("the catalog as a lattice database (R10a, #116/#121), then garbage collection (R7, #120)", "the new database on sjc did not converge"),
 
-        // CrashAndStallE2ETests. Node processes and lossy links also need test hooks on the peer path (COVERAGE.md).
-        ["crash-replicated"] = new(Streams, AtSetup),
-        ["storage-stall"] = new(Streams, AtSetup),
-        // Passed on SQLite until the Turso engine (#98) took the file's write lock for its single writer.
-        ["storage-stall-single"] = new("a storage stall hook for the Turso engine (#98 holds the file's write lock)", AtSetup),
-        ["lossy-link"] = new(Streams, AtSetup),
-
-        // RepairAndContractE2ETests.
-        ["anti-entropy-repair"] = new("anti-entropy (R6) over peer streams fed by the CDC source (R3)", AtSetup),
-        ["restore-older-state"] = new("refill and anti-entropy (R6) over peer streams fed by the CDC source (R3)", AtSetup),
-        ["unique-under-partition"] = new(Streams, AtSetup),
-        ["deleted-database-stays-deleted"] = new("the catalog as a lattice database (R10a) and garbage collection (R7)", AtSetup),
-        ["replication-metrics"] = new("replication metrics with the CDC source (R3): tail lag, and stream lags that move", AtSetup),
-        ["flow-control"] = new("peer streams fed by the CDC source (R3) and the catalog as a lattice database (R10a)", AtSetup),
-        ["ddl-replication"] = new(Streams, AtSetup),
-        ["backlog"] = new(Streams, AtSetup),
-        ["skew-causal"] = new(Streams, AtSetup),
-        ["skew-concurrent"] = new(Streams, AtSetup),
+        // CrashAndStallE2ETests: harness hooks not wired to these scenarios, reported as not supported (they never reach
+        // their assertions). Node processes as regions exist (RegionProcesses) and the storage stall hook exists
+        // (Cluster.StallStorageAsync); wiring them here is open E2E harness work.
+        ["crash-replicated"] = new("E2E harness: node processes as regions (RegionProcesses) not wired to this scenario", "not supported"),
+        ["storage-stall"] = new("E2E harness: the storage stall hook (Cluster.StallStorageAsync) not wired to this scenario", "not supported"),
+        ["storage-stall-single"] = new("E2E harness: the storage stall hook (Cluster.StallStorageAsync) not wired to this scenario", "not supported"),
     };
 
     // BLOCKED on Fly, not an expected failure there: the Fly suite's TerraBase API key holds documents:read/write on the e2e
@@ -117,10 +76,6 @@ internal static class Gaps
         if (Unsupported(failure) is { } unsupported)
         {
             Outcomes.Mark("not-supported", $"{gap.Waits}; {unsupported.Message}");
-        }
-        else if (gap.Fails == AtSetup)
-        {
-            Outcomes.Mark("not-supported", $"{gap.Waits}; never reached its assertions: the cluster's setup cannot finish without it ({failure.GetType().Name} with \"{AtSetup}\")");
         }
         else
         {
