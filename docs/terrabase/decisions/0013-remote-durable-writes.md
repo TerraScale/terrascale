@@ -200,23 +200,32 @@ For a write answered `2xx`:
   - In a full partition, writes fail: `remote_region_unavailable` before the write, or `write_outcome_unknown` after
     it. None answers success.
 
-### One seam, and single-machine tests
+### Scope: production writes, and one seam
 
-- **The seam.** The other regions, the precheck and the wait sit behind one interface in `Features/Replication`,
-  `IRemoteDurability`:
+- **Where the contract holds.** It holds on the production app, `ts-terrabase` (`TerraBaseOptions.ProductionApp`, the
+  identity Fly sets on every machine as `FLY_APP_NAME`). That app is where production writes are taken.
+- **Everywhere else** the machine answers after its local durable commit (B1, synced as everywhere), with
+  `durability: "local_durable"`, never `remote_durable`. That covers:
+  - PR previews (`ts-pr-<n>`, one machine in gru);
+  - disposable test apps;
+  - development off Fly (identity `local`, a cell of its own);
+  - the test servers.
+
+  The placement rule of two regions or more applies only on the production app.
+- **Not a switch.** No setting, variable or flag turns the contract off on the production app. It follows the app
+  identity Fly assigns, as the existing production auth check does (`TerraBaseOptions`).
+- **The seam.** One interface in `Features/Replication`, `IRemoteDurability`, holds the following:
+  - whether this machine confirms writes remotely;
   - `OtherRegionsAsync`: the serving regions other than this machine's, from the membership, for a new database's
-    default placement. With none listed, such a create answers `503 remote_region_unavailable`.
-  - `CanConfirm`: whether a machine of another placed region has a connected stream for the database.
+    default placement. With none listed, such a create answers `503 remote_region_unavailable`;
+  - `CanConfirm`: whether a machine of another placed region has a connected stream for the database;
   - `WaitAsync`: whether such a machine acknowledged a change id within the bound.
 
-  Production registers the implementation the peer streams back (`PeerStreams`, which holds every link's acks). No
-  configuration selects another one.
-- **Single-machine functional tests.** Most Fast tests run one machine, which can never confirm a write.
-  - Their test servers (`TerraBaseTestServer`, `ManagementApi`, test code only) register a test implementation. It
-    names one stand-in region and confirms at once.
-  - The multi-machine suites (the `PeerStreamTests` cluster and the E2E regions) register the production
-    implementation, and test the real wait.
-  - A Fast test checks that the application's own registration is the production implementation.
+  On the production app it is backed by the peer streams (`PeerStreams`, which holds every link's acks). Elsewhere it
+  confirms locally.
+- **Tests of the contract.** The multi-machine suites register the production implementation explicitly: test code,
+  using the production class. These are the `PeerStreamTests` cluster and the E2E regions of the three-region topology.
+  The single-machine Fast tests keep the local answer.
 
 ## Acceptance
 
