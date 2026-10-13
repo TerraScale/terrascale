@@ -638,7 +638,7 @@
         "status": 307,
         "headers": {
           "Content-Type": "application/json",
-          "Cache-Control": "private, max-age=0, must-revalidate",
+          "Cache-Control": "no-store",
           "Vary": "Authorization",
           "Location": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape?handle=h1-d90dddd41bd8282d&offset=2",
           "TB-Shape-Handle": "h1-d90dddd41bd8282d"
@@ -679,7 +679,7 @@
         "status": 307,
         "headers": {
           "Content-Type": "application/json",
-          "Cache-Control": "private, max-age=0, must-revalidate",
+          "Cache-Control": "no-store",
           "Vary": "Authorization",
           "Location": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape?handle=h1-d90dddd41bd8282d&offset=2",
           "TB-Shape-Handle": "h1-d90dddd41bd8282d"
@@ -990,7 +990,7 @@
         "status": 307,
         "headers": {
           "Content-Type": "application/json",
-          "Cache-Control": "private, max-age=0, must-revalidate",
+          "Cache-Control": "no-store",
           "Vary": "Authorization",
           "Location": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape?handle=h1-d90dddd41bd8282d&offset=4",
           "TB-Shape-Handle": "h1-d90dddd41bd8282d"
@@ -1157,7 +1157,7 @@
         "status": 307,
         "headers": {
           "Content-Type": "application/json",
-          "Cache-Control": "private, max-age=0, must-revalidate",
+          "Cache-Control": "no-store",
           "Vary": "Authorization",
           "Location": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape?handle=h1-d90dddd41bd8282d&offset=2",
           "TB-Shape-Handle": "h1-d90dddd41bd8282d"
@@ -1419,6 +1419,215 @@
       "expected_action": "discard_state_then_bootstrap"
     },
     {
+      "id": "resume-header-preserved-on-followup",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-d90dddd41bd8282d",
+          "offset": "2"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token",
+          "TB-Shape-Resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        }
+      },
+      "fixture": {
+        "redirected_from": "proven-cursor-resume-header"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, max-age=0, must-revalidate",
+          "Vary": "Authorization",
+          "ETag": "\"a8ddeff90c3256fa71b80acd13b7a91f:h1-d90dddd41bd8282d:2:4:ee1af19a6b1f0674\"",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d",
+          "TB-Shape-Next-Offset": "4",
+          "TB-Shape-Up-To-Date": "false"
+        },
+        "body": {
+          "shape_id": "a8ddeff90c3256fa71b80acd13b7a91f",
+          "handle": "h1-d90dddd41bd8282d",
+          "offset": "2",
+          "next_offset": "4",
+          "covered_offset": "4",
+          "values_at": "4",
+          "up_to_date": false,
+          "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAgABCTIAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO",
+          "changes": [
+            {
+              "offset": "4",
+              "ops": [
+                {
+                  "op": "upsert",
+                  "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+                  "version": "tbv1-def52df94d5598d237cf1184a4f5cb00",
+                  "document": {
+                    "title": "Updated",
+                    "read": true
+                  }
+                },
+                {
+                  "op": "delete",
+                  "id": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+                }
+              ]
+            }
+          ]
+        },
+        "body_utf8": "{\"shape_id\":\"a8ddeff90c3256fa71b80acd13b7a91f\",\"handle\":\"h1-d90dddd41bd8282d\",\"offset\":\"2\",\"next_offset\":\"4\",\"covered_offset\":\"4\",\"values_at\":\"4\",\"up_to_date\":false,\"cursor_resume\":\"AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAgABCTIAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO\",\"changes\":[{\"offset\":\"4\",\"ops\":[{\"op\":\"upsert\",\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FB0\",\"version\":\"tbv1-def52df94d5598d237cf1184a4f5cb00\",\"document\":{\"title\":\"Updated\",\"read\":true}},{\"op\":\"delete\",\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FB1\"}]}]}"
+      },
+      "expected_action": "ignore_leftover_resume_header_then_apply_chunk"
+    },
+    {
+      "id": "bootstrap-with-handle-refetch",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "handle": "h1-f3171a2230109328"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-f3171a2230109328"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "bootstrap cannot carry a handle",
+            "handle": "h1-f3171a2230109328"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"bootstrap cannot carry a handle\",\"handle\":\"h1-f3171a2230109328\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "bootstrap-with-handle-ignores-resume-header",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "handle": "h1-f3171a2230109328"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token",
+          "TB-Shape-Resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-f3171a2230109328"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "bootstrap cannot carry a handle",
+            "handle": "h1-f3171a2230109328"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"bootstrap cannot carry a handle\",\"handle\":\"h1-f3171a2230109328\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "changed-machine-continuation-tries-resume-once",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "offset": "2"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "serving_scope": {
+          "organization_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+          "database_id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+          "incarnation": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+          "replica_id": "562954402660355",
+          "replica_epoch": "3",
+          "collection": "notes",
+          "collection_generation": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+          "canonical_filter": "",
+          "wire_format": "1"
+        },
+        "saved_handle": "h1-f3171a2230109328",
+        "saved_cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm",
+        "snapshot_complete": true,
+        "resume_attempts": 0
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "handle belongs to another serving lineage",
+            "handle": "h1-d90dddd41bd8282d"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"handle belongs to another serving lineage\",\"handle\":\"h1-d90dddd41bd8282d\"}}"
+      },
+      "expected_action": "try_one_cursor_resume_before_discarding_state"
+    },
+    {
+      "id": "resume-followup-second-machine-refetch-does-not-loop",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-d90dddd41bd8282d",
+          "offset": "2"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token",
+          "TB-Shape-Resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        }
+      },
+      "fixture": {
+        "saved_handle": "h1-f3171a2230109328",
+        "saved_cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm",
+        "snapshot_complete": true,
+        "resume_attempts": 1,
+        "resume_followup": true
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-f3171a2230109328"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "handle changed again during resume",
+            "handle": "h1-f3171a2230109328"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"handle changed again during resume\",\"handle\":\"h1-f3171a2230109328\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap_without_second_resume"
+    },
+    {
       "id": "presigned-manifest",
       "request": {
         "method": "GET",
@@ -1581,7 +1790,7 @@
         "covered_offset": "4",
         "values_at": "4",
         "up_to_date": false,
-        "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm",
+        "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAQAAMDkAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO",
         "changes": [
           {
             "offset": "4",
@@ -1622,7 +1831,7 @@
         "covered_offset": "4",
         "values_at": "6",
         "up_to_date": false,
-        "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm",
+        "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAgABCTIAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO",
         "changes": [
           {
             "offset": "4",

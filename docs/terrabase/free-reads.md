@@ -66,7 +66,7 @@ Electric references: <https://electric.ax/docs/api/http> and <https://electric.a
 | #192: PITR answers 409 unless it can prove the history up to T | merged | The same proof style applies to resume cursors |
 | #119: R8 changes-feed E2E | merged | The feed this plan builds on |
 | #165: repairs stop appearing under origin 0 (C3) | merged | FR-02 is done. Failover resume no longer answers 400 for repairs |
-| #181: every write transaction syncs the WAL at commit | merged ([SqliteDatabaseStore.cs#L224](../../src/TerraBase/Engine/Sqlite/SqliteDatabaseStore.cs#L224)) | A committed row is locally durable on Turso, subject to FR-07 |
+| #181: every write transaction syncs the WAL at commit | merged ([SqliteDatabaseStore.cs#L226](../../src/TerraBase/Engine/Sqlite/SqliteDatabaseStore.cs#L226)) | A committed row is locally durable on Turso, subject to FR-07 |
 | #184: new databases placed in at least two regions | merged | Cross-region resume is the normal path, not an edge case (3.7) |
 | #191: own CDC commit marker, `CommitMarker(Incarnation, ChangeId)` ([CommitResult.cs#L6](../../src/TerraBase/Engine/CommitResult.cs#L6)) | merged | FR-25 maps it to a feed sequence (3.4) |
 | #207: opaque changes cursor with per-origin proofs ([ChangeCursor.cs](../../src/TerraBase/Features/Documents/ChangeCursor.cs)) | merged | Failover resume builds on it (3.7) |
@@ -162,7 +162,7 @@ fields = organization ‖ project ‖ database ‖ incarnation ‖ replica_id �
 ```
 
 - `replica_id` is the serving machine's full `ReplicaId` as decimal uint64. `replica_epoch` is its unclean-start epoch.
-  `incarnation` is the store incarnation, drawn on every create and copy.
+  `incarnation` is the store incarnation, drawn on every create, copy, restore and rebuild.
 - `collection_name` and `collection_generation` identify the collection and its current create. Generation changes on
   drop or re-create.
 - `canonical_filter` is compact JSON of `where` (whitespace removed, member order kept). Empty when `where` is absent.
@@ -171,7 +171,8 @@ fields = organization ‖ project ‖ database ‖ incarnation ‖ replica_id �
 - Input fields and the expected `handle` and `shape_id` are in `shape-vectors.json` (`identity_vectors`).
 
 **Per machine, not per region.** `replica_id` names one machine. Two machines in one region have different handles and
-do not share cache entries. A request whose handle this machine does not know gets a resume (3.7) or `409 must_refetch`.
+do not share cache entries. A request whose handle this machine does not know answers `409 must_refetch`; the client
+may then try one cursor resume before discarding state, provided its saved cursor is usable (3.7; protocol section 7).
 
 The handle rotates, and clients get `409 must_refetch` or resume with a cursor, when:
 
@@ -253,8 +254,9 @@ A background sealer per database runs on the write lane.
   - `?cursor=<opaque>` only when `offset=-1`, no handle is sent, and `live` is absent;
   - the `TB-Shape-Resume: <opaque>` header when the cursor is too large for a URI. It can be about 19 KB base64url,
     and TS-474's request-line limit is 8 KiB. SDKs send the header when the full URI cannot fit.
-  - Both at once, or a resume cursor with `live=true` (where `cursor` means the live bucket), is `400`. The cursor is
-    never mixed with an invalid mode.
+  - On a resume request, both transports at once or `live=true` is `400`. On other requests the server ignores
+    `TB-Shape-Resume`, because HTTP clients retain it when following the resume redirect. Resume redirects are
+    `no-store`; bootstrap redirects keep the normal private revalidation policy.
 - **Answering it.** The server verifies the proof, then:
   - a malformed envelope or inner cursor is `400`;
   - a scope mismatch (another collection, filter or wire format) is `409 must_refetch`;
@@ -373,9 +375,7 @@ Metrics on `TerraScale.TerraBase`, without tenant labels:
 
 - **Always on.** No flag, setting or toggle. All values are constants.
 - **APIs.** `/v1`, built on TerraScale.Endpoints, OpenAPI through Scalar, source-generated serializer context.
-- **Scope.** `documents:read` for the shape route and the key and manifest routes. ts-auth defines only `documents:read`
-  today ([ApiKeys.cs#L22](../../src/TerraScale.Authentication/Features/Platform/ApiKeys.cs#L22)). A new scope would be
-  cross-service work owned by ts-auth.
+- **Scope.** `documents:read` for the shape route and the key and manifest routes. ts-auth already defines `documents:read` ([ApiKeys.cs#L22](../../src/TerraScale.Authentication/Features/Platform/ApiKeys.cs#L22)). No new scope is needed.
 - **Data placement.** T0: sealed bodies in TerraBase's database file, as uncaptured derived data. T1: TBS1 ciphertext in
   Tigris. No new store.
 - **Tests.** Integration tests only, through `TerraBaseTestServer`. Every test runs in parallel. Fast covers the
@@ -400,7 +400,7 @@ Metrics on `TerraScale.TerraBase`, without tenant labels:
 - Tenant connections set `PRAGMA synchronous = NORMAL`
   ([SqliteSession.cs#L87-L96](https://github.com/TerraScale/terrascale/blob/f7d5c3c45a45c58495068f1874e4a0c7e5465608/src/TerraBase/Engine/Sqlite/SqliteSession.cs#L87-L96)).
 - Since #181, `BeginAsync` sets `durable |= write`. Every write transaction syncs at commit
-  ([SqliteDatabaseStore.cs#L224](../../src/TerraBase/Engine/Sqlite/SqliteDatabaseStore.cs#L224)). Group commit still passes
+  ([SqliteDatabaseStore.cs#L226](../../src/TerraBase/Engine/Sqlite/SqliteDatabaseStore.cs#L226)). Group commit still passes
   `durable: false` ([SqliteDatabaseStore.cs#L687](../../src/TerraBase/Engine/Sqlite/SqliteDatabaseStore.cs#L687)), but
   that argument no longer decides writes. Read-only transactions are unaffected.
 - Decision 0003 states SQLite's WAL semantics: process crash loses nothing; OS crash or power loss loses commits since the

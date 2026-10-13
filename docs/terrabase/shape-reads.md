@@ -38,14 +38,15 @@ Served on the client listener (TLS) and built on `TerraScale.Endpoints`. The bea
 | --- | --- |
 | `where` | Optional filter (below). Absent means every document. |
 | `offset` | Required: `-1`, `snap.<S>.<P>`, or a decimal commit boundary `O` (section 3). |
-| `handle` | Required unless `offset=-1`. Optional and validated for bootstrap; forbidden for cursor resume. |
+| `handle` | Required unless `offset=-1`. Bootstrap with a handle is `409`; a cursor query with a handle is `400`. |
 | `live` | `true`, only with a decimal `O`. |
 | `cursor` | With `live=true`: the decimal live bucket (section 4). With `offset=-1`, no `handle` and no `live`: an opaque resume cursor (section 9). Any other use is `400`. |
 
 Header `TB-Shape-Resume: <opaque>` carries the same resume cursor when the request target would not fit (an R8
-cursor reaches about 19 KiB). It is allowed only with `offset=-1`, no `handle`, no `live` and no `cursor`. Sending
-both transports is `400 invalid_request`. SDKs pass the token byte for byte and never parse it. They use the query
-form when the full target fits and the header otherwise.
+cursor reaches about 19 KiB). The server reads it only when `offset=-1` and no `handle` is sent; on every other
+request it ignores the header, including after a client follows a same-origin `307` and preserves custom headers.
+A resume request with `live` or both the header and `cursor` is `400 invalid_request`. SDKs pass the token byte for
+byte and never parse it. They use the query form when the full target fits and the header otherwise.
 
 **Filter.** `where` is a JSON filter in the grammar and limits of the `filter` member of `POST …/query`
 (`QueryDocumentsEndpoint`): `{"and"|"or":[F…]}` with 1 to 64 children, `{"not":F}`,
@@ -62,7 +63,8 @@ Validation, `400 invalid_request` unless noted **(TS-474)**:
   unpadded base64url of a document id's UTF-8 bytes.
 - A `where` that is not JSON or not a valid filter is `400 invalid_query`. So is a filter over the query budget
   (5 million SQLite VM instructions or 5 seconds).
-- A resume cursor that does not decode canonically (`ChangeCursor.Decode`) is `400 invalid_request`.
+- A resume envelope that does not decode canonically, or whose inner R8 cursor fails `ChangeCursor.Decode`, is
+  `400 invalid_request`.
 - Unknown database, or one the credential cannot reach: `404 unknown_database`. Unknown collection:
   `404 unknown_collection`. Both are checked before the query string.
 - Each continuation target, percent-encoded with the longest snapshot offset and handle, must fit the 8 KiB request
@@ -160,7 +162,7 @@ Inputs, all UTF-8, in this order:
 | 1 | `organization_id` | Tenant organization, canonical uppercase ULID |
 | 2 | `project_id` | Project id |
 | 3 | `database_id` | Database id |
-| 4 | `incarnation` | `IDatabaseStore.Incarnation`, 26-character ULID, drawn on every create, copy and restore |
+| 4 | `incarnation` | `IDatabaseStore.Incarnation`, 26-character ULID, drawn on every create, copy, restore and rebuild |
 | 5 | `replica_id` | Serving machine's `ReplicaId.Value`, decimal uint64 |
 | 6 | `replica_epoch` | That `ReplicaId`'s epoch (its low 16 bits), decimal |
 | 7 | `collection` | Collection name |
@@ -179,7 +181,7 @@ Inputs, all UTF-8, in this order:
 Any input change rotates both values: database copy, restore or re-create; collection drop or re-create; a machine
 change or unclean start (new `replica_epoch`); a filter-encoding change. **Handles are per machine, not per region.**
 Fly can send two requests from one client to different machines in the same region. A handle unknown to the
-receiving machine answers `409 must_refetch`; the client may resume (section 9).
+receiving machine answers `409 must_refetch`; the client may make one resume attempt (section 7, rule 6).
 
 ## 6. Body
 
@@ -219,8 +221,11 @@ receiving machine answers `409 must_refetch`; the client may resume (section 9).
 5. A snapshot's `cursor_resume` is usable only after **every** page of that snapshot is applied. An interrupted
    snapshot either continues paging the same snapshot on the same handle, or restarts at `-1`. It never resumes on
    another lineage from a page's cursor.
-6. `409 must_refetch`: discard state and restart at `-1` without a handle. `503 shape_too_large`, `503 unavailable`,
-   `429 shape_busy`: keep state and offset, retry with backoff.
+6. On a continuation `409 must_refetch` whose `TB-Shape-Handle` differs from the saved handle, a client with a
+   usable `cursor_resume` (rule 5) may make **one** resume attempt. The attempt is the `offset=-1` cursor request and
+   the single `307` follow-up it returns. Any `409` on that attempt, any other `409`, or no usable cursor: discard
+   state and restart at `-1` without a handle or resume token. Never start a second attempt against the same saved
+   state. `503 shape_too_large`, `503 unavailable`, `429 shape_busy`: keep state and offset, retry with backoff.
 
 ## 8. Must-refetch
 
@@ -232,6 +237,9 @@ receiving machine answers `409 must_refetch`; the client may resume (section 9).
   snapshot page;
 - a resume that is unproven, expired, mismatched or behind (section 9);
 - filtered-shape eviction (at most 64 filtered shapes per database, FR-15).
+
+With `offset=-1`, a handle plus a `cursor` query is `400 invalid_request`. A handle without that query is
+`409 must_refetch`; `TB-Shape-Resume` is ignored when a handle is present (section 2).
 
 A dropped collection that was not re-created is `404 unknown_collection` **(TS-474)**.
 
@@ -293,7 +301,8 @@ lands after #211. There is no runtime switch. Until then, every resume answers `
 
 | Response | `Cache-Control` |
 | --- | --- |
-| Sealed object, fresh body, `304`, `307` (origin) | `private, max-age=0, must-revalidate`, with `Vary: Authorization` |
+| Sealed object, fresh body, `304`, bootstrap `307` (origin) | `private, max-age=0, must-revalidate`, with `Vary: Authorization` |
+| Resume `307` | `no-store` |
 | Errors (`400`, `404`, `409`, `414`, `429`, `503`) | `no-store` |
 | Keys and manifest | `private, no-store` |
 | TBS1 objects in Tigris | `public, max-age=31536000, immutable` (FR-24, after A1 and FR-21) |
@@ -383,6 +392,7 @@ from the object. A mismatched object fails its tags. Reject the whole object, ap
   never sealed under an old epoch.
 
 **Revocation bound.** A key is released only to a credential accepted at that moment.
+
 - **API key:** once its revocation reaches the serving machine, no key is released for any epoch.
 - **JWT:** TerraBase validates ts-auth JWTs offline, so an upstream-revoked token is accepted until it expires plus the
   allowed clock skew (30 s, `UserAuthenticationHandler.ClockSkew`). Its holder may already hold the current `K_e`, which
