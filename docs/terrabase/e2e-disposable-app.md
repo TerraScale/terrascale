@@ -34,7 +34,8 @@ Checks, in order, each stopping the run (`DisposableTarget`, negative controls i
 
 1. **Configuration, before any flyctl call or request:** a missing variable; `ts-terrabase`, `ts-auth`, `ts-dashboard` or
    any `ts-pr-*` app; a URL other than the app's own host (so production's `.fly.dev` hosts, `api.`, `auth.` and the
-   regional aliases are refused); the previews' org; org `terrascale` without a network; a region of the run without a
+   regional aliases are refused); the previews' org except the exact approved pair `ts-terrabase-e2e` / `terrascale-previews-515`;
+   org `terrascale` without a network; a region of the run without a
    named machine.
 2. **Read-only, before any write or fault:** `flyctl apps list --org <org> --json` must show the app in that org on that
    network (production's apps show network `""`, Fly's default 6PN, so an option-A app on the default network is refused);
@@ -128,7 +129,8 @@ restarted machine's `/catalog-gate` (it opens by pulling from its trusted peers)
 Invariant: a backup at time T contains every write acknowledged before T, or the restore answers a typed refusal; never
 a silent partial result. A typed refusal passes the **safety** assertion only; it is **not** a successful restore.
 
-Qualification needs both, reported separately:
+Full A7YES qualification needs both, reported separately. The executable checkpoint subset and remaining limits
+are described below:
 
 1. **Supported cuts (functional; must be a frozen, non-empty set):** before the run, fix the cuts that must restore,
    including known fully durable points: a transaction boundary right after an acknowledged commit, and a backup
@@ -142,10 +144,51 @@ Qualification needs both, reported separately:
 
 A run in which every cut is refused is **not** green. The judge of these rules exists and is tested
 (`BackupQualification.Failures`, `BackupQualificationTests`): no supported cut in the plan, a supported cut that refuses,
-any restore that differs from the acknowledged writes (count, digest, a version, source database or regions), an answer
-without an error code, and a missing, repeated or unplanned cut each fail it. **Not wired yet:** no scenario takes
-backups, restores the cuts and feeds the outcomes to it. That scenario (pinned mode, the disposable app's own test bucket)
-is a gate before the backup row can be run; until it lands, no backup qualification result exists. Test bucket only.
+any restore that differs from the acknowledged writes (count, digest, a version, source database or restored regions),
+an unexpected refusal code/status, and a missing, repeated or unplanned cut each fail it.
+
+`BackupQualificationE2ETests.Acknowledged_three_region_writes_survive_snapshot_and_point_in_time_restores` now
+feeds the judge actual HTTP results. It owns a whole source database, commits synthetic documents through gru, sjc
+and fra, waits for their count/digest to converge, and captures the acknowledged versions through the source listing
+and changes feed. Each phase adds an acknowledged checkpoint-marker transaction after the earlier writes converge
+on every member, so a timestamp from a shipping pass that preceded their convergence cannot qualify that phase.
+On Fly, a pass between marker commit and marker arrival can still be selected; its restore fails for the missing
+marker. This can cause a false failure, but cannot produce a passing qualification with missing acknowledged data.
+Before later writes it takes a ready manual backup and records a shipped PIT checkpoint. It then
+updates a document and inserts another in a transaction, waits for convergence and a newer shipped checkpoint, and
+restores the frozen supported cuts (manual, earlier PIT, latest PIT) into separate new databases. The earlier cuts
+must exclude those later changes. A cut before the restore window must answer exactly HTTP 400 `invalid_request`;
+a generic 5xx or an invented snake_case code never counts as safety proof.
+
+Each restored database is read back over HTTP. Count, canonical digest, source id and placement must match.
+Restores deliberately live at home (gru) only under the current API; they do not inherit the source's three-region
+placement. Public ETags include the new database identity, so the harness verifies stored versions by reconstructing
+the expected ETag under that identity from each source change-feed stamp and body. A local integration regression
+rewrites the same restored body and proves the judge rejects the changed version even when count/digest match.
+No engine code is changed.
+
+Run locally with `nice -n 19 make terrabase-e2e TEST_ARGS="--treenode-filter '/*/*/BackupQualificationE2ETests/*'"`
+under `flock -o /tmp/ts-heavy.lock`. Local nodes use the real service, replication and encrypted backup/restore pipeline
+with test-only S3 transport and explicit shipping passes. This proves harness integration, not Tigris behavior.
+
+For Fly, the same scenario requires the full pinned target above, specifically `ts-terrabase-e2e` in
+`terrascale-previews-515`, and `TERRABASE_E2E_FLY_PROJECT_TOKEN`: a ts-auth project token trusted by the app, scoped to
+its test project with `databases:read databases:write documents:read documents:write`. Ordinary API keys cannot hold
+database scopes. `TERRABASE_E2E_FLY_ORGANIZATION` supplies that project's TerraBase organization id for the version
+scope check; a wrong id fails against the real source acknowledgement ETags. A missing token or organization id, unpinned run, missing backup window, failed backup, refused supported cut or wrong
+restore fails; none is converted into a skip or expected failure. The source and every restore are cleaned up,
+including failed-cut database names. Production apps and `ts-pr-*` remain refused.
+
+Set `TERRABASE_E2E_RESULTS` (the make target does this) to retain the frozen plan, actual restore contents/refusals and
+judge failures in the normal per-test JSONL evidence. Per-cut console records also include the requested timestamp
+and node identities. Capture the runner log alongside the JSONL when running live.
+
+**Qualification limits:** supported PIT times are shipped checkpoints after acknowledged writes have converged,
+not the exact instant of acknowledgement. Arbitrary cuts during lag, an injected shipping stall, lease handoff,
+restored three-region placement and Tigris execution remain unqualified until their own live evidence exists.
+A passing local run must not be presented as a live A7YES result. Test bucket only.
+The harness checks app/org identity, not the app's bucket credentials; verify the disposable app's test-bucket
+binding before a live run without reading back secrets.
 
 ## Teardown (scoped, confirmed per step)
 

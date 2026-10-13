@@ -15,14 +15,14 @@ public sealed class BackupQualificationTests
     [
         new("after-commit", true, Committed),
         new("shipped-checkpoint", true, Shipped),
-        new("during-stall", false, Stalled),
+        new("before-window", false, Stalled),
     ];
 
     [Test]
     [Scenario(Nodes.Harness)]
     public async Task Supported_cuts_that_restore_exactly_and_a_typed_refusal_of_a_fault_cut_are_green()
     {
-        var failures = BackupQualification.Failures(Plan, [new("after-commit", Committed, null), new("shipped-checkpoint", Shipped, null), new("during-stall", null, "backup_incomplete")]);
+        var failures = BackupQualification.Failures(Plan, [new("after-commit", Committed, null), new("shipped-checkpoint", Shipped, null), new("before-window", null, "invalid_request")]);
         await Assert.That(failures).IsEmpty();
     }
 
@@ -30,7 +30,7 @@ public sealed class BackupQualificationTests
     [Scenario(Nodes.Harness)]
     public async Task A_fault_cut_that_restores_exactly_what_was_acknowledged_is_green()
     {
-        var failures = BackupQualification.Failures(Plan, [new("after-commit", Committed, null), new("shipped-checkpoint", Shipped, null), new("during-stall", Stalled, null)]);
+        var failures = BackupQualification.Failures(Plan, [new("after-commit", Committed, null), new("shipped-checkpoint", Shipped, null), new("before-window", Stalled, null)]);
         await Assert.That(failures).IsEmpty();
     }
 
@@ -38,7 +38,7 @@ public sealed class BackupQualificationTests
     [Scenario(Nodes.Harness)]
     public async Task Every_cut_refused_is_not_green()
     {
-        var failures = BackupQualification.Failures(Plan, [new("after-commit", null, "backup_incomplete"), new("shipped-checkpoint", null, "backup_incomplete"), new("during-stall", null, "backup_incomplete")]);
+        var failures = BackupQualification.Failures(Plan, [new("after-commit", null, "invalid_request"), new("shipped-checkpoint", null, "invalid_request"), new("before-window", null, "invalid_request")]);
         await Assert.That(failures.Count(failure => failure.Contains("a supported cut must restore", StringComparison.Ordinal))).IsEqualTo(2);
     }
 
@@ -46,7 +46,7 @@ public sealed class BackupQualificationTests
     [Scenario(Nodes.Harness)]
     public async Task A_plan_without_a_supported_cut_is_not_green_even_when_every_refusal_is_typed()
     {
-        var failures = BackupQualification.Failures([new("during-stall", false, Stalled)], [new("during-stall", null, "backup_incomplete")]);
+        var failures = BackupQualification.Failures([new("before-window", false, Stalled)], [new("before-window", null, "invalid_request")]);
         await Assert.That(failures).Contains("the plan has no supported cut: refusals alone prove safety, never a working restore");
     }
 
@@ -59,8 +59,8 @@ public sealed class BackupQualificationTests
     [Arguments("after-commit", "extra")]
     [Arguments("after-commit", "source")]
     [Arguments("after-commit", "regions")]
-    [Arguments("during-stall", "count")]
-    [Arguments("during-stall", "version")]
+    [Arguments("before-window", "count")]
+    [Arguments("before-window", "version")]
     public async Task A_restore_that_differs_from_the_acknowledged_writes_fails_its_cut(string name, string change)
     {
         var acknowledged = Plan.Single(cut => cut.Name == name).Acknowledged;
@@ -85,12 +85,18 @@ public sealed class BackupQualificationTests
     {
         var failures = BackupQualification.Failures(
             [.. Plan, new("after-commit", true, Committed)],
-            [new("after-commit", Committed, null), new("after-commit", Committed, null), new("during-stall", null, " "), new("added-later", Committed, null)]);
+            [new("after-commit", Committed, null), new("after-commit", Committed, null), new("before-window", null, " "), new("added-later", Committed, null)]);
         await Assert.That(failures).Contains("cut after-commit is planned twice");
         await Assert.That(failures).Contains("cut added-later was not in the frozen plan");
         await Assert.That(failures).Contains("cut after-commit has 2 outcomes, not one");
         await Assert.That(failures).Contains("cut shipped-checkpoint has 0 outcomes, not one");
-        await Assert.That(failures).Contains("cut during-stall neither restored nor answered a typed refusal");
+        await Assert.That(failures).Contains("cut before-window neither restored nor answered a typed refusal");
+        foreach (var (code, status) in new[] { (" ", 400), ("unavailable", 503), ("invented_error", 400), ("invalid_request", 500) })
+        {
+            var wrong = BackupQualification.Failures(Plan,
+                [new("after-commit", Committed, null), new("shipped-checkpoint", Shipped, null), new("before-window", null, code, status)]);
+            await Assert.That(wrong).Contains("cut before-window neither restored nor answered a typed refusal");
+        }
     }
 
     private static Contents Of(int count, params (string Id, string Version)[] versions) =>

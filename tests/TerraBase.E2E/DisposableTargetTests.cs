@@ -53,6 +53,16 @@ public sealed class DisposableTargetTests
         var target = DisposableTarget.Resolve(With(DisposableTarget.AppVariable, "tsb-e2e"), Regions);
         await Assert.That(target.App).IsEqualTo("tsb-e2e");
         await Assert.That(target.Network).IsEqualTo("");
+        var approved = DisposableTarget.Resolve(name => name switch
+        {
+            DisposableTarget.AppVariable => "ts-terrabase-e2e",
+            Cluster.FlyUrlVariable => "https://ts-terrabase-e2e.fly.dev/",
+            DisposableTarget.OrgVariable => "terrascale-previews-515",
+            _ => Good(name),
+        }, Regions);
+        // Field names verified read-only against flyctl apps list --org terrascale-previews-515 --json; sanitized output recorded in the PR reply.
+        using var liveShape = JsonDocument.Parse("""[{"Name":"ts-terrabase-e2e","Organization":{"Slug":"terrascale-previews-515"},"Network":""}]""");
+        DisposableTarget.CheckApp(approved, liveShape.RootElement);
         await Assert.That(target.Machines[Cluster.Fra]).IsEqualTo("m-fra");
         var optionA = DisposableTarget.Resolve(name => name switch
         {

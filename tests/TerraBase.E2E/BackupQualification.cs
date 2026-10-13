@@ -4,8 +4,7 @@ namespace TerraBase.E2E;
 /// The A7YES backup qualification (docs/terrabase/e2e-disposable-app.md, "Backup"): a backup at T holds every write
 /// acknowledged before T, or the restore answers a typed refusal. Supported cuts are the functional proof and must
 /// restore and match; a refusal passes only the safety assertion of a fault cut. A plan with no supported cut, or a run
-/// in which every cut refused, is never green. This is the judge only: the pinned scenario that takes backups, restores
-/// the cuts and feeds it is not wired yet, so no backup qualification result exists until it lands (runbook, "Backup").
+/// in which every cut refused, is never green. BackupQualificationE2ETests feeds it real HTTP restore outcomes.
 /// </summary>
 internal static class BackupQualification
 {
@@ -13,10 +12,10 @@ internal static class BackupQualification
     internal sealed record Contents(int Count, string Digest, IReadOnlyDictionary<string, string> Versions, string BranchedFrom, IReadOnlyList<string> Regions);
 
     /// <summary>A cut frozen before the run, with the writes acknowledged before it.</summary>
-    internal sealed record Cut(string Name, bool Supported, Contents Acknowledged);
+    internal sealed record Cut(string Name, bool Supported, Contents Acknowledged, string ExpectedRefusal = "invalid_request", int ExpectedStatus = 400);
 
     /// <summary>A cut's restore: the restored contents, or the typed refusal's error code.</summary>
-    internal sealed record Outcome(string Cut, Contents? Restored, string? Refusal);
+    internal sealed record Outcome(string Cut, Contents? Restored, string? Refusal, int Status = 400, string? RestoredDatabaseId = null);
 
     /// <summary>Every reason the run is not green; empty only when it is.</summary>
     public static IReadOnlyList<string> Failures(IReadOnlyList<Cut> plan, IReadOnlyList<Outcome> outcomes)
@@ -47,8 +46,8 @@ internal static class BackupQualification
             {
                 failures.Add($"supported cut {cut.Name} refused ({outcome.Refusal ?? "no code"}): a supported cut must restore");
             }
-            // shortcut: any snake_case error code counts as typed; the backup scenario pins the exact refusal codes it expects.
-            else if (outcome.Refusal is not [>= 'a' and <= 'z', ..] code || !code.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_'))
+            else if (outcome.Refusal != cut.ExpectedRefusal || outcome.Status != cut.ExpectedStatus
+                || (cut.ExpectedRefusal, cut.ExpectedStatus) is not (("invalid_request", 400) or ("not_found", 404)))
             {
                 failures.Add($"cut {cut.Name} neither restored nor answered a typed refusal");
             }

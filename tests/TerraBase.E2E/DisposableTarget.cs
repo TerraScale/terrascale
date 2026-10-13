@@ -43,7 +43,8 @@ internal static class DisposableTarget
         }
 
         var org = Required(variable, OrgVariable, "the disposable app's org");
-        if (org.StartsWith("terrascale-previews", StringComparison.OrdinalIgnoreCase))
+        if (org.StartsWith("terrascale-previews", StringComparison.OrdinalIgnoreCase)
+            && !(org == "terrascale-previews-515" && app == "ts-terrabase-e2e"))
         {
             throw new InvalidOperationException($"{org} is the PR previews' org; a machine-pinned run targets only a disposable app's org");
         }
