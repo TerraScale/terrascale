@@ -5,6 +5,10 @@
 # this same tree (Makefile TERRABASE_BINARY).
 
 FROM mcr.microsoft.com/dotnet/sdk:11.0 AS base
+# BuildKit can expose the builder host's CPUs; CI supplies the test runner's measured allocation.
+# Publish/runtime stages have their own base and retain Fly's automatic CPU discovery.
+ARG DOTNET_PROCESSOR_COUNT
+ENV DOTNET_PROCESSOR_COUNT=$DOTNET_PROCESSOR_COUNT
 # The SDK image's ASPNETCORE_HTTP_PORTS=8080 makes Kestrel warn "Overriding address(es)", which tests that assert
 # on warnings see; the services choose their own listeners.
 # DOTNET_ROOT lets the framework-dependent `terrabase` apphost that ts-auth's tests start find the runtime.
