@@ -479,10 +479,14 @@ public sealed class PeerStreamTests
             await Task.Delay(DirectoryMembership.Heartbeat + TimeSpan.FromSeconds(1));
 
             using var push = await RawPush.StartAsync(sjc, "zzzz-silent");
-            var other = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
+            var other = await sjc.CreateOtherDatabaseAsync();
+            var otherId = EntityIds.New().ToString();
             await push.RefillAsync(cluster.Database, 1);
-            await push.BatchAsync(other, 1, EntityIds.New().ToString());
-            await Assert.That((await push.AckAsync()).Database).IsEqualTo(ChangeGroups.Wire(other));
+            await push.BatchAsync(other, 1, otherId);
+            var acknowledged = await push.AckAsync();
+            await Assert.That(acknowledged.Database).IsEqualTo(ChangeGroups.Wire(other));
+            await Assert.That(acknowledged is { ChangeId: 1, Refused: false }).IsTrue();
+            await Assert.That(await sjc.ReadAsync(other, otherId)).IsEqualTo("""{"n":1}""");
         }
         finally
         {
@@ -589,11 +593,15 @@ public sealed class PeerStreamTests
         await sjc.DamageAsync("items", id);
 
         using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
-        var other = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
+        var other = await sjc.CreateOtherDatabaseAsync();
+        var otherId = EntityIds.New().ToString();
         await push.BatchAsync(cluster.Database, 1, id);
-        await push.BatchAsync(other, 1, EntityIds.New().ToString());
+        await push.BatchAsync(other, 1, otherId);
         await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), Refused = true });
-        await Assert.That((await push.AckAsync()).Database).IsEqualTo(ChangeGroups.Wire(other));
+        var acknowledged = await push.AckAsync();
+        await Assert.That(acknowledged.Database).IsEqualTo(ChangeGroups.Wire(other));
+        await Assert.That(acknowledged is { ChangeId: 1, Refused: false }).IsTrue();
+        await Assert.That(await sjc.ReadAsync(other, otherId)).IsEqualTo("""{"n":1}""");
 
         await sjc.LoseAsync("items", id);
         await push.BatchAsync(cluster.Database, 1, id);
@@ -656,14 +664,17 @@ public sealed class PeerStreamTests
         // the database's batch and a second refill of it are refused, and another database's batch is acknowledged.
         await sjc.LoseAsync("items", lost);
         var held = sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        var other = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
+        var other = await sjc.CreateOtherDatabaseAsync();
         await push.RefillAsync(cluster.Database, 1);
         await push.BatchAsync(cluster.Database, 2, first);
         await push.RefillAsync(cluster.Database, 1);
         await push.BatchAsync(other, 1, first);
         await Assert.That(await push.AckAsync()).IsEqualTo(refused);
         await Assert.That(await push.AckAsync()).IsEqualTo(refused);
-        await Assert.That((await push.AckAsync()).Database).IsEqualTo(ChangeGroups.Wire(other));
+        var acknowledged = await push.AckAsync();
+        await Assert.That(acknowledged.Database).IsEqualTo(ChangeGroups.Wire(other));
+        await Assert.That(acknowledged is { ChangeId: 1, Refused: false }).IsTrue();
+        await Assert.That(await sjc.ReadAsync(other, first)).IsEqualTo("""{"n":1}""");
 
         // The repair fails: the refill is refused, and the database's batch still waits.
         held.SetException(new IOException("a test fails the repair"));
@@ -942,6 +953,20 @@ public sealed class PeerStreamTests
         public async Task<IDatabaseStore> StoreAsync() =>
             await Engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None) ?? throw new InvalidOperationException("the database is missing");
 
+        public async Task<TenantContext> CreateOtherDatabaseAsync()
+        {
+            var database = cluster.Database with { DatabaseId = EntityIds.New().ToString() };
+            var commit = JsonSerializer.Serialize(new
+            {
+                id = EntityIds.New().ToString(),
+                ops = new object[] { new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = $"other-{database.DatabaseId}", id = database.DatabaseId } },
+            });
+            using var service = Api.Service(Api.User);
+            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
+            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+            return database;
+        }
+
         // Commits the deltas here, as a local write does, then hands them to the fake source as one group (the CDC tailer
         // finds them itself).
         public async Task CommitAsync(params ChangeDelta[] deltas)
@@ -1179,9 +1204,11 @@ public sealed class PeerStreamTests
             Directory.Delete(_directory, recursive: true);
         }
 
-        public async Task<string?> ReadAsync(string id)
+        public Task<string?> ReadAsync(string id) => ReadAsync(cluster.Database, id);
+
+        public async Task<string?> ReadAsync(TenantContext database, string id)
         {
-            if (await Engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None) is not { } store)
+            if (await Engine.OpenDatabaseAsync(database, CancellationToken.None) is not { } store)
             {
                 return null;
             }
