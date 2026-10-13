@@ -14,7 +14,7 @@ public sealed partial class TsAuthGateway
         if (string.IsNullOrWhiteSpace(ip)) throw new ArgumentException("Client address is required.", nameof(ip));
         var credentials = await identity.ReadAsync(cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Post,
-            new Uri(AuthOrigin, $"/{Uri.EscapeDataString(credentials.AuthInstanceSlug)}/headless/v1/sign-up"));
+            new Uri(AuthOrigin, $"/{Tenant}/headless/v1/sign-up"));
         Authenticate(request, credentials);
         request.Content = JsonContent.Create(new { email, password, ip_address = ip });
         using var response = await http.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
@@ -39,9 +39,8 @@ public sealed partial class TsAuthGateway
     public async Task<string> AuthorizationUrlAsync(OidcFlow flow, CancellationToken cancellationToken)
     {
         var credentials = await identity.ReadAsync(cancellationToken);
-        var origin = AuthOrigin;
-        var metadata = await Client(credentials, origin).Oidc.GetDiscoveryDocumentAsync(cancellationToken);
-        var endpoint = TrustedEndpoint(metadata.AuthorizationEndpoint, origin, credentials.AuthInstanceSlug);
+        var metadata = await Client().Oidc.GetDiscoveryDocumentAsync(cancellationToken);
+        var endpoint = TrustedEndpoint(metadata.AuthorizationEndpoint);
         var fields = new Dictionary<string, string>
         {
             ["response_type"] = "code",
@@ -60,23 +59,21 @@ public sealed partial class TsAuthGateway
     {
         if (string.IsNullOrWhiteSpace(code) || code.Length > 4096) throw new SignInRejectedException();
         var credentials = await identity.ReadAsync(cancellationToken);
-        var origin = AuthOrigin;
         TerraScaleAuthTokenResponse tokens;
         try
         {
-            tokens = await Client(credentials, origin).Oidc.ExchangeAuthorizationCodeAsync(
+            tokens = await Client().Oidc.ExchangeAuthorizationCodeAsync(
                 credentials.AuthClientId, credentials.AuthClientSecret, code, flow.RedirectUri, flow.Verifier, cancellationToken);
         }
         catch (TerraScaleAuthException error) when (error.ErrorCode == "invalid_grant") { throw new SignInRejectedException(); }
-        return await SessionAsync(tokens, credentials, origin, flow.Nonce, cancellationToken);
+        return await SessionAsync(tokens, credentials, flow.Nonce, cancellationToken);
     }
 
     public async Task<SessionRecord> RefreshAsync(SessionRecord session, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(session.RefreshToken)) throw new SignInRejectedException();
         var credentials = await identity.ReadAsync(cancellationToken);
-        var origin = AuthOrigin;
-        var client = Client(credentials, origin);
+        var client = Client();
         TerraScaleAuthTokenResponse tokens;
         try
         {
@@ -91,7 +88,7 @@ public sealed partial class TsAuthGateway
         if (tokens.IdToken is { Length: > 0 })
         {
             var metadata = await client.Oidc.GetDiscoveryDocumentAsync(cancellationToken);
-            _ = TrustedIssuer(metadata.Issuer, origin, credentials.AuthInstanceSlug);
+            _ = TrustedIssuer(metadata.Issuer);
             var claims = AuthIdToken.Validate(tokens.IdToken, metadata.Issuer, credentials.AuthClientId, null,
                 await client.Oidc.GetJwksAsync(cancellationToken), time.GetUtcNow());
             if (claims.Subject != session.UserId) throw new SignInRejectedException();
@@ -118,23 +115,22 @@ public sealed partial class TsAuthGateway
         try
         {
             var credentials = await identity.ReadAsync(cancellationToken);
-            var origin = AuthOrigin;
-            var metadata = await Client(credentials, origin).Oidc.GetDiscoveryDocumentAsync(cancellationToken);
+            var metadata = await Client().Oidc.GetDiscoveryDocumentAsync(cancellationToken);
             if (string.IsNullOrWhiteSpace(metadata.EndSessionEndpoint)) return "/login";
-            var endpoint = TrustedEndpoint(metadata.EndSessionEndpoint, origin, credentials.AuthInstanceSlug);
+            var endpoint = TrustedEndpoint(metadata.EndSessionEndpoint);
             return endpoint + "?client_id=" + Uri.EscapeDataString(credentials.AuthClientId) +
                 "&post_logout_redirect_uri=" + Uri.EscapeDataString(new Uri(dashboard, "/login").AbsoluteUri);
         }
         catch (HttpRequestException) { return "/login"; }
     }
 
-    private async Task<SessionRecord> SessionAsync(TerraScaleAuthTokenResponse tokens, DashboardCredentials credentials, Uri origin, string? nonce, CancellationToken cancellationToken)
+    private async Task<SessionRecord> SessionAsync(TerraScaleAuthTokenResponse tokens, DashboardCredentials credentials, string? nonce, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(tokens.AccessToken) || tokens.ExpiresIn is <= 0 or > 86400 ||
             !string.Equals(tokens.TokenType, "Bearer", StringComparison.OrdinalIgnoreCase)) throw new SignInRejectedException();
-        var client = Client(credentials, origin);
+        var client = Client();
         var metadata = await client.Oidc.GetDiscoveryDocumentAsync(cancellationToken);
-        _ = TrustedIssuer(metadata.Issuer, origin, credentials.AuthInstanceSlug);
+        _ = TrustedIssuer(metadata.Issuer);
         if (!metadata.IdTokenSigningAlgValuesSupported.Contains("ES256", StringComparer.Ordinal)) throw new SignInRejectedException();
         var keys = await client.Oidc.GetJwksAsync(cancellationToken);
         var claims = AuthIdToken.Validate(tokens.IdToken, metadata.Issuer, credentials.AuthClientId, nonce, keys, time.GetUtcNow());
@@ -145,9 +141,9 @@ public sealed partial class TsAuthGateway
         return session;
     }
 
-    private static string TrustedIssuer(string issuer, Uri origin, string slug)
+    private static string TrustedIssuer(string issuer)
     {
-        var expected = new Uri(origin, "/" + Uri.EscapeDataString(slug));
+        var expected = new Uri(AuthOrigin, "/" + Tenant);
         if (!Uri.TryCreate(issuer, UriKind.Absolute, out var uri) || uri.Scheme != "https" || !uri.IsDefaultPort ||
             uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
             uri.AbsoluteUri != expected.AbsoluteUri)
@@ -155,12 +151,12 @@ public sealed partial class TsAuthGateway
         return uri.AbsoluteUri;
     }
 
-    private static string TrustedEndpoint(string endpoint, Uri origin, string slug)
+    private static string TrustedEndpoint(string endpoint)
     {
         if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme != "https" || !uri.IsDefaultPort ||
             uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
-            uri.Host != origin.Host ||
-            (uri.AbsolutePath != "/" + Uri.EscapeDataString(slug) && !uri.AbsolutePath.StartsWith("/" + Uri.EscapeDataString(slug) + "/", StringComparison.Ordinal)))
+            uri.Host != AuthOrigin.Host ||
+            (uri.AbsolutePath != "/" + Tenant && !uri.AbsolutePath.StartsWith("/" + Tenant + "/", StringComparison.Ordinal)))
             throw new HttpRequestException("ts-auth published an invalid OIDC endpoint.");
         return uri.AbsoluteUri.TrimEnd('/');
     }

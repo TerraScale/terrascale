@@ -4,7 +4,7 @@ using TerraScale.Dashboard.Features.Auth;
 namespace TerraScale.Dashboard.Features.Organizations;
 
 // Native forms and MCP calls share provider mutations and canonical CAS writes.
-public sealed class OrganizationOperations(AccountService accounts, IWorkspaceGateway gateway,
+public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatform platform,
     IWorkspacePlacement placement, IOrganizationAccess access, DashboardSessions sessions,
     TimeProvider time, ILogger<OrganizationOperations> logger)
 {
@@ -12,7 +12,7 @@ public sealed class OrganizationOperations(AccountService accounts, IWorkspaceGa
     {
         context = await FreshOwnerAsync(context, cancellationToken);
         name = AccountService.ValidName(name);
-        await gateway.RenameOrganizationAsync(context.Session, context.Organization!.Id, name, cancellationToken);
+        await platform.RenameOrganizationAsync(context.Session, context.Organization!.Id, name, cancellationToken);
         await accounts.UpdateOrganizationAsync(context, org =>
         {
             Owner(org, context.UserId);
@@ -29,13 +29,19 @@ public sealed class OrganizationOperations(AccountService accounts, IWorkspaceGa
         name = AccountService.ValidName(name);
         CanCreate(context.Organization!, context.UserId, name);
         var locations = await LocationsAsync(region, backupRegion, regions, cancellationToken);
-        var project = await gateway.CreateProjectAsync(context.Session, context.Organization!.Id, name, cancellationToken);
-        if (project.Id.Length == 0 || project.OrganizationId != context.Organization.Id)
-            throw new IOException("Project provisioning returned an invalid identity.");
-        project.Region = locations.Primary;
-        project.BackupRegion = locations.Backup;
-        project.Regions = locations.Regions;
-        await placement.RegisterAsync(context, project, cancellationToken);
+        // ts-auth refuses a duplicate name (409 name_taken), so a repeated submit fails clearly.
+        var remote = await platform.CreateProjectAsync(context.Session, context.Organization!.Id, name, cancellationToken);
+        var project = new ProjectRecord
+        {
+            Id = remote.Id,
+            OrganizationId = remote.OrganizationId,
+            Name = remote.Name,
+            Slug = AccountService.Slug(remote.Name),
+            CreatedAt = remote.CreatedAt,
+            Region = locations.Primary,
+            BackupRegion = locations.Backup,
+            Regions = locations.Regions
+        };
         await accounts.UpdateOrganizationAsync(context, org =>
         {
             Owner(org, context.UserId);
@@ -63,17 +69,7 @@ public sealed class OrganizationOperations(AccountService accounts, IWorkspaceGa
         var locations = regions is { Count: > 0 }
             ? await LocationsAsync(region, backupRegion, regions, cancellationToken)
             : (Primary: project.Region, Backup: project.BackupRegion, Regions: project.Regions.ToList());
-        await gateway.RenameProjectAsync(context.Session, context.Organization!.Id, project.Id, name, cancellationToken);
-        var registration = new ProjectRecord
-        {
-            Id = project.Id,
-            OrganizationId = project.OrganizationId,
-            Name = name,
-            Region = locations.Primary,
-            BackupRegion = locations.Backup,
-            Regions = locations.Regions
-        };
-        if (regions is { Count: > 0 }) await placement.RegisterAsync(context, registration, cancellationToken);
+        if (project.Name != name) await platform.RenameProjectAsync(context.Session, context.Organization!.Id, project.Id, name, cancellationToken);
         await accounts.UpdateOrganizationAsync(context, org =>
         {
             Owner(org, context.UserId);
@@ -141,8 +137,7 @@ public sealed class OrganizationOperations(AccountService accounts, IWorkspaceGa
 
     public static void AvailableRole(string role)
     {
-        if (role == "viewer") throw new AccountAccessException("The identity provider does not offer a viewer role. No membership was changed.", 422);
-        if (role is not ("member" or "admin")) throw new AccountAccessException("Choose an available role.", 422);
+        if (role is not ("viewer" or "member" or "admin")) throw new AccountAccessException("Choose an available role.", 422);
     }
 
     public async Task<AccountContext> FreshOwnerAsync(AccountContext context, CancellationToken cancellationToken, bool requireProject = false)

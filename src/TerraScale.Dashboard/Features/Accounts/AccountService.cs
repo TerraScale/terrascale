@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -8,94 +9,194 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Features.Accounts;
 
-public sealed class AccountService(IDashboardState state, TimeProvider time, IWorkspaceGateway workspaces)
+// ts-auth decides which organizations and projects exist and the caller's role
+// in them. The dashboard stores only its own state for those IDs.
+public sealed class AccountService(IDashboardState state, TimeProvider time, ITsAuthPlatform platform)
 {
     public const string AccountsCollection = "dashboard_accounts";
     public const string IdentitiesCollection = "dashboard_account_identities";
     public const string OrganizationsCollection = "dashboard_organizations";
-    private readonly TerraScaleIdGenerator publicIds = new();
+    private const string PersonalName = "Personal";
+    private static readonly TerraScaleIdGenerator Ids = new();
 
     public static string AccountStorageKey(string subject) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(subject)));
     // Retained for callers whose existing aggregate keys use the subject digest.
     public static string AccountId(string subject) => AccountStorageKey(subject);
-    public static string NewId() => Guid.NewGuid().ToString();
+    public static string NewId() => Ids.NewId();
 
     public async Task<AccountRecord> EnsureAsync(SessionRecord session, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(session.UserId);
         var id = AccountStorageKey(session.UserId);
-        var existing = await state.GetAsync(AccountsCollection, id, cancellationToken);
-        if (existing is not null) return await ReadAccountAsync(existing, session.UserId, cancellationToken);
-        // Reserve a single public identity before provider provisioning. A
-        // retry after an interrupted enrollment reuses this create-only claim.
-        var identity = await ReserveIdentityAsync(session.UserId, null, cancellationToken);
-        var now = time.GetUtcNow();
-        var org = await workspaces.EnsurePersonalAsync(session, cancellationToken);
-        var personalId = org.Id;
-        // Provider IDs and create-only writes make interrupted enrollment resumable across replicas.
-        try { await state.PutAsync(OrganizationsCollection, personalId, JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Absent, cancellationToken); }
-        catch (TerraBasePreconditionFailedException)
+        var waited = Stopwatch.StartNew();
+        while (true)
         {
-            var stored = await state.GetAsync(OrganizationsCollection, personalId, cancellationToken) ?? throw new IOException("Personal organization creation did not persist.");
-            org = Read<OrganizationRecord>(stored);
-            if (stored.Id != personalId || org.Id != personalId) throw new JsonException("Personal organization identity is invalid.");
-            if (org.OwnerUserId != session.UserId || !org.ContainsMember(session.UserId)) throw new AccountAccessException("Personal organization identity does not match.");
+            var document = await state.GetAsync(AccountsCollection, id, cancellationToken);
+            if (document is null)
+            {
+                // Reserve a single public identity before creating the account.
+                var identity = await ReserveIdentityAsync(session.UserId, null, cancellationToken);
+                var created = new AccountRecord { Id = identity.AccountId, UserId = session.UserId, Name = session.Name, Email = session.Email, CreatedAt = time.GetUtcNow() };
+                try { await state.PutAsync(AccountsCollection, id, JsonSerializer.SerializeToElement(created), TerraBasePrecondition.Absent, cancellationToken); }
+                catch (TerraBasePreconditionFailedException) { }
+                continue;
+            }
+            var account = await ReadAccountAsync(document, session.UserId, cancellationToken);
+            if (account.PersonalOrganizationId.Length != 0) return account;
+            var now = time.GetUtcNow();
+            if (account.PersonalClaimUntil > now)
+            {
+                // Another replica is creating this account's Personal organization.
+                if (waited.Elapsed > TimeSpan.FromSeconds(20)) throw new TimeoutException("Workspace setup is still in progress.");
+                await Task.Delay(100, cancellationToken);
+                continue;
+            }
+            account.PersonalClaimUntil = now.AddMinutes(1);
+            try { await state.PutAsync(AccountsCollection, id, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Matches(document.Version), cancellationToken); }
+            catch (TerraBasePreconditionFailedException) { continue; }
+            var personal = await CreatePersonalAsync(session, cancellationToken);
+            await UpdateAccountAsync(session, current =>
+            {
+                if (current.PersonalOrganizationId.Length != 0) return;
+                current.PersonalOrganizationId = personal.Id;
+                current.PersonalClaimUntil = null;
+                if (!current.OrganizationIds.Contains(personal.Id)) current.OrganizationIds.Add(personal.Id);
+                if (current.ActiveOrganizationId.Length != 0) return;
+                current.ActiveOrganizationId = personal.Id;
+                current.ActiveProjectId = personal.Projects.Values.FirstOrDefault(project => project.IsDefault)?.Id ?? "";
+            }, cancellationToken);
         }
-        var account = new AccountRecord
+    }
+
+    // Runs only under this account's claim. A lapsed claim means a replica
+    // stopped part-way: adopt what it created instead of creating a second one.
+    private async Task<OrganizationRecord> CreatePersonalAsync(SessionRecord session, CancellationToken cancellationToken)
+    {
+        var live = (await platform.ListOrganizationsAsync(session, cancellationToken))
+            .Where(org => org.Name == PersonalName && org.CreatedBy == session.UserId && org.Role == "owner")
+            .OrderBy(org => org.CreatedAt).ThenBy(org => org.Id, StringComparer.Ordinal).FirstOrDefault()
+            ?? await platform.CreateOrganizationAsync(session, PersonalName, cancellationToken);
+        var project = await PersonalProjectAsync(session, live.Id, cancellationToken);
+        var org = new OrganizationRecord
         {
-            Id = identity.AccountId,
-            UserId = session.UserId,
-            Name = session.Name,
-            Email = session.Email,
-            CreatedAt = now,
-            OrganizationIds = [personalId],
-            ActiveOrganizationId = personalId,
-            ActiveProjectId = org.Projects.Values.FirstOrDefault(project => project.IsDefault)?.Id ?? ""
+            Id = live.Id,
+            Name = live.Name,
+            Slug = Slug(live.Name),
+            Kind = "personal",
+            OwnerUserId = session.UserId,
+            CreatedAt = live.CreatedAt,
+            Members = new() { [session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = live.CreatedAt } },
+            Projects = new() { [project.Id] = new() { Id = project.Id, OrganizationId = live.Id, Name = project.Name, Slug = Slug(project.Name), IsDefault = true, CreatedAt = project.CreatedAt } }
         };
-        try { await state.PutAsync(AccountsCollection, id, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Absent, cancellationToken); }
+        try { await state.PutAsync(OrganizationsCollection, org.Id, JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Absent, cancellationToken); }
         catch (TerraBasePreconditionFailedException)
         {
-            var stored = await state.GetAsync(AccountsCollection, id, cancellationToken) ?? throw new IOException("Account creation did not persist.");
-            return await ReadAccountAsync(stored, session.UserId, cancellationToken);
+            var stored = await state.GetAsync(OrganizationsCollection, org.Id, cancellationToken) ?? throw new IOException("Personal organization state did not persist.");
+            org = Read<OrganizationRecord>(stored);
+            if (stored.Id != live.Id || org.Id != live.Id || org.Kind != "personal" || org.OwnerUserId != session.UserId)
+                throw new AccountAccessException("Personal organization identity does not match.");
         }
-        return account;
+        return org;
+    }
+
+    private async Task<PlatformProject> PersonalProjectAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    {
+        PlatformProject? Existing(IEnumerable<PlatformProject> projects) => projects.Where(project => project.Name == PersonalName)
+            .OrderBy(project => project.CreatedAt).ThenBy(project => project.Id, StringComparer.Ordinal).FirstOrDefault();
+        if (Existing(await platform.ListProjectsAsync(session, organizationId, cancellationToken)) is { } existing) return existing;
+        try { return await platform.CreateProjectAsync(session, organizationId, PersonalName, cancellationToken); }
+        catch (AccountAccessException error) when (error.Code == "name_taken")
+        {
+            return Existing(await platform.ListProjectsAsync(session, organizationId, cancellationToken))
+                ?? throw new IOException("The Personal project is unavailable.");
+        }
     }
 
     public async Task<AccountContext> GetContextAsync(SessionRecord session, CancellationToken cancellationToken)
     {
         var account = await EnsureAsync(session, cancellationToken);
         var organizations = new List<OrganizationRecord>();
-        foreach (var id in account.OrganizationIds.Distinct())
+        // A project collaborator has no organization role (role null) and no organization view.
+        foreach (var live in await platform.ListOrganizationsAsync(session, cancellationToken))
         {
-            var document = await state.GetAsync(OrganizationsCollection, id, cancellationToken);
-            if (document is null) continue;
-            var candidate = Read<OrganizationRecord>(document);
-            if (document.Id != id || candidate.Id != id) throw new JsonException("Organization identity is invalid.");
-            if (candidate.ContainsMember(session.UserId) && await workspaces.RoleAsync(session, candidate.Id, cancellationToken) is { Length: > 0 } role)
-            {
-                // Provider authorization is authoritative even when the dashboard projection is stale.
-                candidate.Members[session.UserId].Role = role;
-                organizations.Add(candidate);
-            }
+            if (live.Role is not { Length: > 0 } || !TerraScaleIds.IsValid(live.Id)) continue;
+            var org = await OrganizationStateAsync(live, cancellationToken);
+            Hydrate(org, live, await platform.ListProjectsAsync(session, live.Id, cancellationToken), session);
+            if (org.ContainsMember(session.UserId)) organizations.Add(org);
         }
-        var org = organizations.FirstOrDefault(item => item.Id == account.ActiveOrganizationId);
-        var project = org?.Projects.GetValueOrDefault(account.ActiveProjectId);
-        if (org is null && organizations.Count > 0)
+        var active = organizations.FirstOrDefault(item => item.Id == account.ActiveOrganizationId);
+        var project = active?.Projects.GetValueOrDefault(account.ActiveProjectId);
+        if (active is null && organizations.Count > 0)
         {
-            org = organizations.OrderBy(item => item.Kind != "personal").ThenBy(item => item.Name).First();
-            project = org.Projects.Values.FirstOrDefault(item => item.IsDefault) ?? org.Projects.Values.OrderBy(item => item.Id).FirstOrDefault();
+            active = organizations.OrderBy(item => item.Kind != "personal").ThenBy(item => item.Name).First();
+            project = DefaultProject(active);
             await UpdateAccountAsync(session, current =>
             {
                 if (current.ActiveOrganizationId != account.ActiveOrganizationId) return;
-                current.ActiveOrganizationId = org.Id;
+                current.ActiveOrganizationId = active.Id;
                 current.ActiveProjectId = project?.Id ?? "";
             }, cancellationToken);
-            account.ActiveOrganizationId = org.Id;
+            account.ActiveOrganizationId = active.Id;
             account.ActiveProjectId = project?.Id ?? "";
         }
-        if (project is not null && project.OrganizationId != org!.Id) throw new AccountAccessException("Project belongs to another organization.");
-        return new(session, account, organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray(), org, project);
+        if (project is not null && project.OrganizationId != active!.Id) throw new AccountAccessException("Project belongs to another organization.");
+        return new(session, account, organizations.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray(), active, project);
     }
+
+    // An organization created outside the dashboard starts as a business workspace that needs billing.
+    private async Task<OrganizationRecord> OrganizationStateAsync(PlatformOrganization live, CancellationToken cancellationToken)
+    {
+        var document = await state.GetAsync(OrganizationsCollection, live.Id, cancellationToken);
+        if (document is null)
+        {
+            var created = new OrganizationRecord { Id = live.Id, Name = live.Name, Slug = Slug(live.Name), Kind = "business", BillingStatus = "billing_required", OwnerUserId = live.CreatedBy, CreatedAt = live.CreatedAt };
+            try
+            {
+                await state.PutAsync(OrganizationsCollection, live.Id, JsonSerializer.SerializeToElement(created), TerraBasePrecondition.Absent, cancellationToken);
+                return created;
+            }
+            catch (TerraBasePreconditionFailedException)
+            {
+                document = await state.GetAsync(OrganizationsCollection, live.Id, cancellationToken) ?? throw new IOException("Organization state did not persist.");
+            }
+        }
+        var org = Read<OrganizationRecord>(document);
+        if (document.Id != live.Id || org.Id != live.Id) throw new JsonException("Organization identity is invalid.");
+        return org;
+    }
+
+    // ts-auth's name, the caller's role and the project list replace the stored projection in this view.
+    private static void Hydrate(OrganizationRecord org, PlatformOrganization live, IReadOnlyList<PlatformProject> projects, SessionRecord session)
+    {
+        org.Name = live.Name;
+        org.Slug = Slug(live.Name);
+        Member(org, session, live.Role!);
+        var saved = org.Projects;
+        org.Projects = new();
+        foreach (var remote in projects.Where(project => project.OrganizationId == live.Id && TerraScaleIds.IsValid(project.Id)))
+        {
+            var project = saved.GetValueOrDefault(remote.Id) ?? new ProjectRecord { Id = remote.Id, CreatedAt = remote.CreatedAt };
+            project.OrganizationId = live.Id;
+            project.Name = remote.Name;
+            project.Slug = Slug(remote.Name);
+            org.Projects[remote.Id] = project;
+        }
+    }
+
+    // The caller's live ts-auth role decides; a demoted owner stops being this view's owner.
+    private static void Member(OrganizationRecord org, SessionRecord session, string role)
+    {
+        var member = org.Members.GetValueOrDefault(session.UserId) ?? new MemberRecord { UserId = session.UserId, Name = session.Name, Email = session.Email };
+        member.Role = role;
+        member.Status = "active";
+        org.Members[session.UserId] = member;
+        if (role == "owner") org.OwnerUserId = session.UserId;
+        else if (org.OwnerUserId == session.UserId) org.OwnerUserId = "";
+    }
+
+    private static ProjectRecord? DefaultProject(OrganizationRecord org) =>
+        org.Projects.Values.Where(item => item.IsDefault).OrderBy(item => item.Id, StringComparer.Ordinal).FirstOrDefault() ??
+        org.Projects.Values.OrderBy(item => item.Id, StringComparer.Ordinal).FirstOrDefault();
 
     public async Task UpdateAccountAsync(SessionRecord session, Action<AccountRecord> update, CancellationToken cancellationToken)
     {
@@ -105,8 +206,10 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, IWo
             var document = await state.GetAsync(AccountsCollection, id, cancellationToken) ?? throw new AccountAccessException("Account is unavailable.", 401);
             var account = await ReadAccountAsync(document, session.UserId, cancellationToken);
             var publicId = account.Id;
+            var personal = account.PersonalOrganizationId;
             update(account);
-            if (account.Id != publicId || account.UserId != session.UserId) throw new AccountAccessException("Account identity cannot change.");
+            if (account.Id != publicId || account.UserId != session.UserId || personal.Length != 0 && account.PersonalOrganizationId != personal)
+                throw new AccountAccessException("Account identity cannot change.");
             try
             {
                 await state.PutAsync(AccountsCollection, id, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Matches(document.Version), cancellationToken);
@@ -121,13 +224,14 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, IWo
         var id = context.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
         for (var attempt = 0; attempt < 4; attempt++)
         {
+            // Re-read the caller's ts-auth role for every attempt; the stored members never authorize.
+            var live = (await platform.ListOrganizationsAsync(context.Session, cancellationToken)).FirstOrDefault(org => org.Id == id);
+            if (live?.Role is not { Length: > 0 } role) throw new AccountAccessException("Organization membership is required.");
             var document = await state.GetAsync(OrganizationsCollection, id, cancellationToken) ?? throw new AccountAccessException("Organization is unavailable.", 404);
             var org = Read<OrganizationRecord>(document);
             if (document.Id != id || org.Id != id) throw new JsonException("Organization identity is invalid.");
+            Member(org, context.Session, role);
             if (!org.ContainsMember(context.UserId)) throw new AccountAccessException("Organization membership is required.");
-            var role = await workspaces.RoleAsync(context.Session, id, cancellationToken);
-            if (role.Length == 0) throw new AccountAccessException("Organization membership is required.");
-            org.Members[context.UserId].Role = role;
             update(org);
             if (org.Id != id) throw new AccountAccessException("Organization identity cannot change.");
             try
@@ -146,8 +250,8 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, IWo
         await UpdateAccountAsync(session, account =>
         {
             account.ActiveOrganizationId = org.Id;
-            account.ActiveProjectId = org.Projects.Values.OrderBy(project => project.Id).FirstOrDefault(project => project.IsDefault)?.Id ??
-                org.Projects.Keys.Order().FirstOrDefault() ?? "";
+            account.ActiveProjectId = DefaultProject(org)?.Id ?? "";
+            if (!account.OrganizationIds.Contains(org.Id)) account.OrganizationIds.Add(org.Id);
         }, cancellationToken);
     }
 
@@ -156,7 +260,12 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, IWo
         var context = await GetContextAsync(session, cancellationToken);
         var org = context.Organizations.FirstOrDefault(item => item.Projects.TryGetValue(id, out var project) && project.OrganizationId == item.Id)
             ?? throw new AccountAccessException("Project is unavailable.", 404);
-        await UpdateAccountAsync(session, account => { account.ActiveOrganizationId = org.Id; account.ActiveProjectId = id; }, cancellationToken);
+        await UpdateAccountAsync(session, account =>
+        {
+            account.ActiveOrganizationId = org.Id;
+            account.ActiveProjectId = id;
+            if (!account.OrganizationIds.Contains(org.Id)) account.OrganizationIds.Add(org.Id);
+        }, cancellationToken);
     }
 
     public async Task<OrganizationRecord> CreateBusinessAsync(SessionRecord session, string name, CancellationToken cancellationToken)
@@ -173,11 +282,22 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, IWo
             }
             throw new AccountAccessException("You already own an organization with this name.", 409);
         }
-        var org = await workspaces.CreateOrganizationAsync(session, name, cancellationToken);
-        org.Kind = "business";
-        org.PlanId = OrganizationRecord.StarterPlanId;
-        org.BillingStatus = "billing_required";
-        await state.PutAsync(OrganizationsCollection, org.Id, JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Absent, cancellationToken);
+        var live = await platform.CreateOrganizationAsync(session, name, cancellationToken);
+        var org = new OrganizationRecord
+        {
+            Id = live.Id,
+            Name = live.Name,
+            Slug = Slug(live.Name),
+            Kind = "business",
+            PlanId = OrganizationRecord.StarterPlanId,
+            BillingStatus = "billing_required",
+            OwnerUserId = session.UserId,
+            CreatedAt = live.CreatedAt,
+            Members = new() { [session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = live.CreatedAt } }
+        };
+        // A context read between creation and this write stores the default business state; keep it.
+        try { await state.PutAsync(OrganizationsCollection, org.Id, JsonSerializer.SerializeToElement(org), TerraBasePrecondition.Absent, cancellationToken); }
+        catch (TerraBasePreconditionFailedException) { }
         await UpdateAccountAsync(session, account => { account.OrganizationIds.Add(org.Id); account.ActiveOrganizationId = org.Id; account.ActiveProjectId = ""; }, cancellationToken);
         return org;
     }
@@ -196,7 +316,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, IWo
     {
         if (document.State != "value") throw new IOException("Dashboard record has a causal conflict.");
         var value = document.Document.Deserialize<T>() ?? throw new JsonException("Dashboard record is invalid.");
-        if (value is AccountRecord account && (account.OrganizationIds is null || account.Notifications is null || account.Name is null || account.Email is null || account.ActiveOrganizationId is null || account.ActiveProjectId is null))
+        if (value is AccountRecord account && (account.OrganizationIds is null || account.Notifications is null || account.Name is null || account.Email is null || account.ActiveOrganizationId is null || account.ActiveProjectId is null || account.PersonalOrganizationId is null))
             throw new JsonException("Dashboard account structure is invalid.");
         if (value is OrganizationRecord org && (org.Members is null || org.Projects is null || org.AuditEvents is null || org.Invitations is null || org.Invitations.Values.Any(invite => invite is null) || org.Name is null || org.OwnerUserId is null || org.Members.Values.Any(member => member is null) || org.Projects.Values.Any(project => project is null || project.Databases is null || project.Regions is null)))
             throw new JsonException("Dashboard organization structure is invalid.");
@@ -226,7 +346,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, IWo
         var existing = await state.GetAsync(IdentitiesCollection, key, cancellationToken);
         if (existing is not null) return ReadIdentity(existing, subject);
         if (validatedLegacyId is not null && validatedLegacyId != key) throw IdentityMismatch();
-        var candidate = new AccountIdentityBinding(subject, validatedLegacyId ?? publicIds.NewId());
+        var candidate = new AccountIdentityBinding(subject, validatedLegacyId ?? NewId());
         try
         {
             await state.PutAsync(IdentitiesCollection, key, JsonSerializer.SerializeToElement(candidate), TerraBasePrecondition.Absent, cancellationToken);
@@ -249,5 +369,4 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, IWo
 
     private static bool ValidPublicId(string? id, string key) => TerraScaleIds.IsValid(id) || id == key;
     private static AccountAccessException IdentityMismatch() => new("Account identity does not match.", 401);
-
 }

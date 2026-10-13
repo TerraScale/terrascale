@@ -40,8 +40,7 @@ public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClie
     public async Task<bool> IsActiveAsync(SessionRecord session, CancellationToken cancellationToken)
     {
         if (session.ExpiresAt <= time.GetUtcNow()) return false;
-        var credentials = await identity.ReadAsync(cancellationToken);
-        var client = Client(credentials, AuthOrigin);
+        var client = Client();
         try
         {
             // The owning issuer's userinfo validates signature, access-token
@@ -60,7 +59,7 @@ public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClie
     public async Task RevokeAsync(SessionRecord session, CancellationToken cancellationToken)
     {
         var credentials = await identity.ReadAsync(cancellationToken);
-        await Client(credentials, AuthOrigin).Oidc.RevokeTokenAsync(
+        await Client().Oidc.RevokeTokenAsync(
             credentials.AuthClientId, credentials.AuthClientSecret, session.RefreshToken ?? session.AccessToken, cancellationToken);
     }
 
@@ -68,8 +67,7 @@ public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClie
     {
         if (string.IsNullOrWhiteSpace(ip)) throw new ArgumentException("Client address is required.", nameof(ip));
         var credentials = await identity.ReadAsync(cancellationToken);
-        var origin = AuthOrigin;
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, $"/{Uri.EscapeDataString(credentials.AuthInstanceSlug)}/oauth/token"));
+        using var request = new HttpRequestMessage(HttpMethod.Post, TokenEndpoint);
         Authenticate(request, credentials);
         var fields = new Dictionary<string, string>
         {
@@ -88,7 +86,7 @@ public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClie
         using var document = await PlatformJson.ReadAsync(response.Content, cancellationToken);
         var tokens = document.RootElement.Deserialize<TerraScaleAuthTokenResponse>()
             ?? throw new HttpRequestException("ts-auth returned no tokens.");
-        return await SessionAsync(tokens, credentials, origin, null, cancellationToken);
+        return await SessionAsync(tokens, credentials, null, cancellationToken);
     }
 
     private async Task HeadlessAsync(string action, object body, string ip, CancellationToken cancellationToken)
@@ -98,7 +96,7 @@ public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClie
         var values = JsonSerializer.Deserialize<Dictionary<string, string>>(payload)!;
         values["ip_address"] = ip;
         using var request = new HttpRequestMessage(HttpMethod.Post,
-            new Uri(AuthOrigin, $"/{Uri.EscapeDataString(credentials.AuthInstanceSlug)}/headless/v1/{action}"));
+            new Uri(AuthOrigin, $"/{Tenant}/headless/v1/{action}"));
         Authenticate(request, credentials);
         request.Content = JsonContent.Create(values);
         using var response = await http.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
@@ -112,16 +110,18 @@ public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClie
         response.EnsureSuccessStatusCode();
     }
 
-    private TerraScaleAuthClient Client(DashboardCredentials credentials, Uri origin) => new(http.CreateClient("platform"),
-        new TerraScaleAuthClientOptions { BaseAddress = origin, InstanceSlug = credentials.AuthInstanceSlug, UseReverseProxy = true });
+    private TerraScaleAuthClient Client() => new(http.CreateClient("platform"),
+        new TerraScaleAuthClientOptions { BaseAddress = AuthOrigin, InstanceSlug = Tenant, UseReverseProxy = true });
 
     private static void Authenticate(HttpRequestMessage request, DashboardCredentials credentials) =>
         request.Headers.Authorization = new AuthenticationHeaderValue("Basic",
             Convert.ToBase64String(Encoding.UTF8.GetBytes($"{credentials.AuthClientId}:{credentials.AuthClientSecret}")));
 
-    // ts-auth serves one global issuer, https://auth.terrascale.tech/{tenant}, from every region. The pinned SDK
+    // ts-auth serves one global issuer, https://auth.terrascale.tech/terrascale, from every region. The pinned SDK
     // needs UseReverseProxy to call it directly instead of resolving a regional host through Atlas.
+    private const string Tenant = "terrascale";
     private static readonly Uri AuthOrigin = new("https://auth.terrascale.tech/");
+    private static readonly Uri TokenEndpoint = new(AuthOrigin, $"/{Tenant}/oauth/token");
 }
 
 public sealed class SignInRejectedException : Exception;

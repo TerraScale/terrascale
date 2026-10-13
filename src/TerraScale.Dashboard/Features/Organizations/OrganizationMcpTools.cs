@@ -2,7 +2,6 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Platform.Mcp;
-using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Organizations;
 
@@ -90,10 +89,8 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
     {
         var context = await FreshAsync(organizationId, projectId);
         var snapshot = await access.ReadAsync(context, Cancellation);
-        var rows = context.Organization!.Invitations.Values.Select(invite => View(invite.Id, invite.Email, invite.Role, invite.Status, invite.ExpiresAt)).ToDictionary(invite => invite.Id);
-        foreach (var invite in snapshot.Invitations)
-            rows.TryAdd(invite.Id, View(invite.Id, invite.Email, invite.Role.ToString().ToLowerInvariant(), "pending", invite.ExpiresAt));
-        return new OrganizationInvitationList(rows.Values.OrderBy(invite => invite.Status != "Pending").ThenBy(invite => invite.Email).ToArray());
+        var rows = snapshot.Invitations.Select(invite => View(invite.Id, invite.Email, invite.Role, invite.Status, invite.ExpiresAt));
+        return new OrganizationInvitationList(rows.OrderBy(invite => invite.Status != "Pending").ThenBy(invite => invite.Email).ToArray());
     });
 
     [McpServerTool(Name = "invite_member", Title = "Invite member", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Invite an email address to an organization and return a one-time invitation link. Requires the owner role and plan member capacity.")]
@@ -120,7 +117,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
     public Task<OrganizationInvitationPreview> GetInvitation([Description("Invitation token or the full invitation link.")] string token) => Invoke(async () =>
     {
         var context = await PrincipalAsync();
-        var pending = await invitations.FindAsync(Token(token), Cancellation) ?? throw new AccountAccessException("No pending invitation matches that token.", 404);
+        var pending = await invitations.FindAsync(context.Session, Token(token), Cancellation) ?? throw new AccountAccessException("No pending invitation matches that token.", 404);
         return new OrganizationInvitationPreview(pending.Organization.Id, pending.Organization.Name, pending.Invitation.Email, pending.Invitation.Role,
             pending.Invitation.ExpiresAt, pending.Invitation.Email.Equals(context.Account.Email, StringComparison.OrdinalIgnoreCase));
     });
@@ -179,8 +176,8 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         var marker = raw.IndexOf("/invitations/", StringComparison.Ordinal);
         return marker < 0 ? raw : Uri.UnescapeDataString(raw[(marker + 13)..].Split('/', '?', '#')[0]);
     }
-    private OrganizationIssuedInvitation Issued(TerraBaseCreatedInvitation created) => new(
-        View(created.Invitation.Id, created.Invitation.Email, created.Invitation.Role.ToString().ToLowerInvariant(), "pending", created.Invitation.ExpiresAt),
+    private OrganizationIssuedInvitation Issued(CreatedInvitation created) => new(
+        View(created.Invitation.Id, created.Invitation.Email, created.Invitation.Role, "pending", created.Invitation.ExpiresAt),
         "/invitations/" + Uri.EscapeDataString(created.Token));
     private OrganizationInvitationView View(string id, string email, string role, string status, DateTimeOffset expires) => new(id, email, role,
         status == "pending" && expires != DateTimeOffset.MinValue && expires <= time.GetUtcNow() ? "Expired" : status switch
@@ -188,11 +185,8 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         expires == DateTimeOffset.MinValue ? "" : expires.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ"), status == "pending");
     private async Task<T> Invoke<T>(Func<Task<T>> action)
     {
+        // ts-auth refusals arrive as AccountAccessException with its status and message.
         try { return await action(); }
-        catch (TerraBaseForbiddenException) { throw new AccountAccessException("Organization access is forbidden."); }
-        catch (TerraBaseNotFoundException) { throw new AccountAccessException("Organization resource is unavailable.", 404); }
-        catch (TerraBaseValidationException) { throw new AccountAccessException("The organization request is invalid.", 400); }
-        catch (TerraBaseConflictException) { throw new AccountAccessException("The organization changed. Reload it and try again.", 409); }
         catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !Cancellation.IsCancellationRequested)
         { throw new AccountAccessException("The organization provider could not complete this request. Reload it and try again.", 502); }
     }
