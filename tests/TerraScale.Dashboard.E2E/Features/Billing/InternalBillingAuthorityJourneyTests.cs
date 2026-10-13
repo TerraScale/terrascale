@@ -1,0 +1,49 @@
+using System.Net.Http.Json;
+using System.Text.Json;
+using TUnit.Core;
+
+namespace TerraScale.Dashboard.E2E.Features.Billing;
+
+[ClassDataSource<DashboardE2EFixture>]
+[Category("Fast")]
+public sealed class InternalBillingAuthorityJourneyTests(DashboardE2EFixture fixture)
+{
+    [Test]
+    public async Task CurrentPlatformAdministratorCannotConfigureWithOnlyStoredOrganizationMembership()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var producer = scenario.CreateProviderClient();
+        using var browser = scenario.CreateClient();
+        await InternalBillingAuthenticationJourneyTests.SignInAsync(browser, producer, "admin");
+        using var seeded = await producer.PostAsJsonAsync("/__test/control", new { command = "internal-seed", count = 1, paymentMethodValidated = false });
+        seeded.EnsureSuccessStatusCode();
+        using var targets = JsonDocument.Parse(await seeded.Content.ReadAsStringAsync());
+        var organization = targets.RootElement.GetProperty("targets")[0].GetProperty("organizationId").GetString()!;
+
+        var result = await InternalBillingAuthenticationJourneyTests.RunApprovedAsync(scenario, browser, producer,
+            InternalBillingAuthenticationJourneyTests.CommandArguments("configure-internal-billing", organization), beforePoll: async () =>
+            {
+                using var removed = await producer.PostAsJsonAsync("/__test/control", new { command = "workspace-role", role = "" });
+                removed.EnsureSuccessStatusCode();
+            });
+
+        await Assert.That(result.ExitCode).IsEqualTo(1);
+        await Assert.That(result.Error).IsEqualTo("configure-internal-billing: Organization is unavailable.\n");
+        await Assert.That(result.Observed.GetProperty("issuedAdminRoleGrants").GetInt32()).IsEqualTo(3);
+        var billing = result.Observed.GetProperty("billing");
+        var stored = billing.GetProperty("organizations").EnumerateArray().Single(row => row.GetProperty("id").GetString() == organization).GetProperty("document");
+        var owner = stored.GetProperty("OwnerUserId").GetString()!;
+        await Assert.That(stored.GetProperty("Members").GetProperty(owner).GetProperty("Role").GetString()).IsEqualTo("owner");
+        await Assert.That(stored.GetProperty("Members").GetProperty(owner).GetProperty("Status").GetString()).IsEqualTo("active");
+        await Assert.That(stored.GetProperty("InternalBilling").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(billing.GetProperty("bindings").GetArrayLength()).IsEqualTo(0);
+        await Assert.That(billing.GetProperty("singleton").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(billing.GetProperty("writes").EnumerateArray().Any(write =>
+            write.GetProperty("collection").GetString() is "dashboard_billing" or "dashboard_internal_billing")).IsFalse();
+        await Assert.That(billing.GetProperty("stripeRequests").GetArrayLength()).IsEqualTo(0);
+        await Assert.That(result.Observed.GetProperty("contractFailures").GetInt32()).IsEqualTo(0);
+        await Assert.That(result.Observed.GetProperty("managementMutations").GetInt32()).IsEqualTo(0);
+        await Assert.That(result.Observed.GetProperty("encryptedCredentialRecords").GetInt32()).IsEqualTo(0);
+        await Assert.That(result.Observed.GetProperty("accessTokenHashRecords").GetInt32()).IsEqualTo(0);
+    }
+}
