@@ -352,8 +352,17 @@ internal sealed partial class SqliteDatabaseStore(
     }
 
     /// <summary>Logs a step after a landed commit that failed; the commit's other steps still ran.</summary>
-    internal void LogAfterCommit(string step, Exception error) =>
-        logger?.ZLogError(error, $"Database {name:@Database} committed, but {step:@Step} after its commit failed");
+    internal void LogAfterCommit(string step, Exception error)
+    {
+        try
+        {
+            logger?.ZLogError(error, $"Database {name:@Database} committed, but {step:@Step} after its commit failed");
+        }
+        catch (Exception)
+        {
+            // A failing logger must not skip the commit's remaining steps.
+        }
+    }
 
     // Takes the writer, waiting at most 30 s as busy_timeout did before this wait replaced it in-process. A wait of
     // SlowWriterWait or more, whatever its outcome, logs what held the writer, for how long, and whether it was running a
@@ -775,13 +784,20 @@ internal sealed partial class SqliteDatabaseStore(
                 }
             }
         }
-        catch (Exception error) when (!IsSystem && transaction?.Committed is { } committedAt)
+        catch (Exception error) when (!IsSystem && transaction?.Committed is { } committedAt && !transaction.ChangedReaderState)
         {
-            // A client database's batch committed: its writes are answered as committed, not as a failure a client would
-            // retry. A batch never changes collection names or the incarnation, so what failed is a wake-up or the cleanup
-            // after the commit (disposing the transaction, releasing the writer).
+            // A client database's batch committed and changed no state readers see beside its documents: its writes are
+            // answered as committed, not as a failure a client would retry. What failed is a wake-up or the cleanup after
+            // the commit (disposing the transaction, releasing the writer).
             offset = committedAt;
-            logger?.ZLogError(error, $"A group commit of database {name:@Database} committed, but the work after its commit failed; its writes are answered as committed");
+            try
+            {
+                logger?.ZLogError(error, $"A group commit of database {name:@Database} committed, but the work after its commit failed; its writes are answered as committed");
+            }
+            catch (Exception)
+            {
+                // A failing logger must not fault the batch loop, which would leave this database's writes waiting forever.
+            }
         }
         catch (Exception error)
         {
