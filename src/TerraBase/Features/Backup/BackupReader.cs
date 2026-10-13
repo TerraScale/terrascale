@@ -288,14 +288,14 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
 
     private static async Task<(Stream Log, long Expected)> TakeAsync(Queue<(SegmentKey Segment, Task<FileStream> Log)> inFlight, long expected)
     {
-        var (segment, download) = inFlight.Dequeue();
-        var frames = await download.ConfigureAwait(false);
-        if (segment.Start != expected)
+        if (inFlight.Peek().Segment.Start != expected)
         {
-            await frames.DisposeAsync().ConfigureAwait(false);
+            // A gap or an overlap, whatever it holds (a copy under another key does not even authenticate); its download
+            // stays queued for the caller to cancel.
             throw new BackupHistoryIncompleteException("the backup of this database is missing a log segment");
         }
 
+        var frames = await inFlight.Dequeue().Log.ConfigureAwait(false);
         return (frames, expected + frames.Length);
     }
 

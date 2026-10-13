@@ -298,10 +298,12 @@ restores into a new database of the same project (`branchedFrom` set, like a bac
    proven to reach `pointInTime`, replaying the transactions of later segments that ran before it;
 4. runs `PRAGMA integrity_check`, then imports the file as a copy, so its replication starts over from a baseline.
 
-`pointInTime` must fall between `earliest` and the newest backed-up data (the shipper's acknowledged progress, or the
-newest segment's time), inclusive; requests outside those bounds return 400. That bound is at or after the window's
-`latest`: between them a restore succeeds only when it proves the time, and answers `409` otherwise. A time after the
-newest data is refused even when it is before now, so a delayed shipper cannot silently restore older data for that time.
+A restore answers 400 only for a time no backup can ever hold: after now, or before the plan's retention window. A time
+in between that lies outside the restore window (before its oldest stored snapshot, or after the newest backed-up data:
+the shipper's acknowledged progress or the newest segment's time) answers `409` `backup_history_incomplete`, which a
+later retry can turn into a restore once the backup holds it: an unshipped final segment, or one or a snapshot lost from
+the bucket. So a delayed shipper cannot silently restore older data for a time it has not shipped. Between the window's
+`latest` and the newest data, a restore succeeds only when it proves the time.
 The shared restore service validates these bounds once before downloading or importing a database. It captures the
 retention reference time before reading metadata and uses one snapshot scan for both the window and snapshot selection,
 so metadata latency cannot move the retention floor during a restore. Window reads and previews also capture their
@@ -351,7 +353,12 @@ time by itself.
 `409` `restore_point_unproven`: the history is there but T cannot be placed between two transactions, in a segment read
 after T: a transaction whose COMMIT row's second contains T (times are whole seconds), one without recorded times (a
 log written before they were recorded, or a clock that went back within it), or times that go back between two
-transactions. A whole second, or a time in a second in which no transaction committed, can be placed.
+transactions. A whole second, or a time in a second in which no transaction committed, can be placed; the message of a
+time within a commit second names that second's start, the nearest earlier time it can place.
+
+`409` `backup_unreadable`: an object the restore needs fails authentication (a corrupted object, a data key the node's
+master key did not wrap) or is cut short, or the replayed file fails its integrity check. Each download is tried three
+times first. Like the other refusals, nothing is created.
 
 Guaranteed to restore exactly (`201`), given contiguous segments and timed transactions:
 

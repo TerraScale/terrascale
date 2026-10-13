@@ -535,7 +535,7 @@ internal static class ChangeLog
                         {
                             var second = DateTimeOffset.FromUnixTimeSeconds(last);
                             return new(before, false, previous, string.Create(CultureInfo.InvariantCulture,
-                                $"one committed in its second, {second:yyyy-MM-ddTHH:mm:ssZ} to {second.AddSeconds(1):yyyy-MM-ddTHH:mm:ssZ}, and transaction times are whole seconds"));
+                                $"one committed in its second, {second:yyyy-MM-ddTHH:mm:ssZ} to {second.AddSeconds(1):yyyy-MM-ddTHH:mm:ssZ}, and transaction times are whole seconds; the nearest earlier time it can place is {second:yyyy-MM-ddTHH:mm:ssZ}"));
                         }
 
                         break;

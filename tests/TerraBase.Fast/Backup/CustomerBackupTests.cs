@@ -125,8 +125,9 @@ public sealed class CustomerBackupTests
             {
                 await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(planRoute, new { pointInTime = at, destination }, cancellationToken),
                     HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times");
+                // Not in the future: the backup does not hold the time yet.
                 await ErrorAssert.ErrorAsync(writer.PostAsJsonAsync(restoreRoute, new { pointInTime = at, destination, name = "after-" + destination }, cancellationToken),
-                    HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times");
+                    HttpStatusCode.Conflict, "backup_history_incomplete", "continuous backup cannot prove this database's history complete up to pointInTime");
             }
 
             var name = "selected-" + destination;
