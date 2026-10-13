@@ -15,7 +15,7 @@ public sealed class OnboardingProjectProvisioner(ITsAuthPlatform platform, IData
         if (context.Organization is null || !context.CanManage || context.Organization.Kind != "personal")
             throw new AccountAccessException("Select your personal organization to complete onboarding.");
         var placement = (await backend.RegionsAsync(cancellationToken)).FirstOrDefault(item => item.Code == region && item.Healthy)
-            ?? throw new OnboardingValidationException("Choose a serving project region.");
+            ?? throw new OnboardingValidationException("Choose a supported project region.");
         var project = context.Organization.Projects.Values.FirstOrDefault(item => item.IsDefault)
             ?? throw new AccountAccessException("The personal project is unavailable.", 404);
         if (project.Name != name) await platform.RenameProjectAsync(context.Session, context.Organization.Id, project.Id, name, cancellationToken);

@@ -126,7 +126,7 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         var memberId = memberContext.GetProperty("user").GetProperty("id").GetString()!;
         var memberPersonal = memberContext.GetProperty("selection").GetProperty("organizationId").GetString()!;
         var businessId = await CreateBusinessAsync(owner, "Access company " + suffix);
-        await ErrorAsync(owner, ownerSecret, "invite_member", new { organizationId = businessId, email = memberEmail, role = "viewer" });
+        await ErrorAsync(owner, ownerSecret, "invite_member", new { organizationId = businessId, email = memberEmail, role = "owner" });
         await Assert.That((await ToolAsync(owner, ownerSecret, "list_invitations", new { organizationId = businessId })).GetProperty("invitations").GetArrayLength()).IsEqualTo(0);
         var first = await ToolAsync(owner, ownerSecret, "invite_member", new { organizationId = businessId, email = memberEmail });
         var firstPath = first.GetProperty("inviteUrl").GetString()!;
