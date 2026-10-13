@@ -20,6 +20,7 @@ public sealed class TenantLookupCacheTests
 {
     private const string Credentials = "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n";
     private static readonly string[] InSfo = ["sfo-1"];
+    private static readonly string[] InIad = ["iad-1"];
 
     [Test]
     public async Task Identity_lookups_follow_committed_registration_placement_and_deletion()
@@ -38,7 +39,10 @@ public sealed class TenantLookupCacheTests
                 settings["data-directory"] = Directory.CreateDirectory(Path.Combine(directory, "gru")).FullName;
             }, services =>
             {
-                services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
+                // A cell places a new database in every other serving region (decision 0013): sfo-1 serves too.
+                var members = new FakeMemberStore();
+                members.Join(new ClusterMember("sfo-member", string.Empty, "sfo-1", string.Empty));
+                services.AddSingleton<IMemberDirectory>(members);
             });
             var tenants = gru.Server.Services.GetRequiredService<ITenantDirectory>();
             var organization = await gru.CreateOrganizationAsync(faker.Company.CompanyName());
@@ -66,13 +70,14 @@ public sealed class TenantLookupCacheTests
             await Assert.That(placed.Placement.Replicas).IsEquivalentTo(InSfo);
             await Assert.That(await tenants.FindDatabaseAsync(organization, project, name, token) is TenantContext found ? found.DatabaseId : null).IsEqualTo(database.DatabaseId);
 
-            using (var unplaced = await gru.Client.PatchAsJsonAsync(ManagementApi.Uri($"{path}/{database.DatabaseId}"), new { replicaRegions = Array.Empty<string>() }, token))
+            // A database stays in two regions or more (decision 0013): its replica moves from sfo-1 to iad-1.
+            using (var replaced = await gru.Client.PatchAsJsonAsync(ManagementApi.Uri($"{path}/{database.DatabaseId}"), new { replicaRegions = InIad }, token))
             {
-                await Assert.That(unplaced.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(replaced.StatusCode).IsEqualTo(HttpStatusCode.OK);
             }
 
             var moved = RequireRecord(await AssertLookupsAsync(tenants, database, registered: true, token));
-            await Assert.That(moved.Placement.Replicas).IsEmpty();
+            await Assert.That(moved.Placement.Replicas).IsEquivalentTo(InIad);
             await Assert.That(moved.Placement.Version).IsGreaterThan(placed.Placement.Version);
 
             using (var deleted = await gru.Client.DeleteAsync(ManagementApi.Uri($"{path}/{database.DatabaseId}"), token))
