@@ -44,10 +44,13 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     // A test observes a replacement while its predecessor's cancelled repair is still ending.
     internal Func<ReplicaId, CancellationToken, Task>? Replacing { get; set; }
 
+    private readonly Lazy<ICatalogGate> _catalogGate;
+
     public PeerStreamReceiver(
         IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime,
-        ILogger<PeerStreamReceiver> logger, IMemoryBudget memory)
+        ILogger<PeerStreamReceiver> logger, IMemoryBudget memory, Lazy<ICatalogGate> catalogGate)
     {
+        _catalogGate = catalogGate;
         _memory = memory;
         _logger = logger;
         _sink = sink;
@@ -125,6 +128,8 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         Task<bool>? reading = null;
         try
         {
+            // Start the accepted response before a predecessor can delay it, so shutdown can end it without a welcome.
+            await context.WriteResponseHeadersAsync(Metadata.Empty).ConfigureAwait(false);
             if (precedingStop is not null)
             {
                 if (Replacing is { } replacing)
@@ -308,7 +313,9 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
-        var digests = await _states.DigestAsync(Tenant(request.Database), context.CancellationToken).ConfigureAwait(false);
+        var database = Tenant(request.Database);
+        var digests = database == ChangeGroups.System && !_catalogGate.Value.Trusted ? null
+            : await _states.DigestAsync(database, context.CancellationToken).ConfigureAwait(false);
         return digests is null
             ? new DigestReply { Held = false }
             : new DigestReply { Held = true, Buckets = Google.Protobuf.UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(digests)) };
@@ -320,6 +327,11 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         ArgumentNullException.ThrowIfNull(responseStream);
         ArgumentNullException.ThrowIfNull(context);
         var database = Tenant(request.Database);
+        if (database == ChangeGroups.System && !_catalogGate.Value.Trusted)
+        {
+            throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source catalog is unverified"));
+        }
+
         if (request.Buckets.Count is 0 or > 4096 || request.Buckets.Any(bucket => bucket >= 4096))
         {
             throw new RpcException(new Status(StatusCode.InvalidArgument, "a bucket read names 1 to 4096 buckets, each 0 to 4095"));

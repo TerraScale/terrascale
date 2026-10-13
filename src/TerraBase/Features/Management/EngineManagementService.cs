@@ -44,7 +44,7 @@ namespace TerraBase.Features.Management;
 internal sealed partial class EngineManagementService(
     IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
     Lazy<IDocumentService> documents, Lazy<IQueryShapeTracker> shapes, IMemoryBudget memory, IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota,
-    Lazy<IRemoteDurability> durability)
+    Lazy<IRemoteDurability> durability, Lazy<ICatalogGate> catalogGate)
     : IManagementService, IAccessService, IManagementCommits, ITenantDirectory, IHostedService, ICatalogGuard
 {
     private const string Organizations = "organizations";
@@ -78,6 +78,13 @@ internal sealed partial class EngineManagementService(
         {
             if (await transaction.GetVersionAsync(Organizations, id, cancellationToken).ConfigureAwait(false) is not null)
             {
+                if (await GetAsync(transaction, Organizations, id, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false) is { } known
+                    && known.Name == name && known.CreatedBy == userId
+                    && await GetMemberAsync(transaction, id, userId, cancellationToken).ConfigureAwait(false) is { Role: OrganizationRole.Owner })
+                {
+                    return known;
+                }
+
                 return ManagementErrors.IdTaken;
             }
 
@@ -266,6 +273,13 @@ internal sealed partial class EngineManagementService(
 
             if (await transaction.GetVersionAsync(ProjectOrganizations, id, cancellationToken).ConfigureAwait(false) is not null)
             {
+                if (await GetAsync(transaction, ProjectOrganizations, id, Id, cancellationToken).ConfigureAwait(false) == organizationId
+                    && await GetAsync(transaction, Projects(organizationId), id, TerraBaseJsonContext.Default.Project, cancellationToken).ConfigureAwait(false) is { } known
+                    && known.Name == name)
+                {
+                    return known;
+                }
+
                 return ManagementErrors.IdTaken;
             }
 
@@ -958,7 +972,7 @@ internal sealed partial class EngineManagementService(
         }
         else
         {
-            _ = await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
+            _ = await FinishDatabaseCleanupAsync(storage, CancellationToken.None, abandonedCreation: true).ConfigureAwait(false);
         }
     }
 
@@ -1212,6 +1226,11 @@ internal sealed partial class EngineManagementService(
     // Initializes only fresh catalogs. Concurrent first calls serialize on the write transaction.
     public async ValueTask<CatalogCheck> EnsureCatalogAsync(CancellationToken cancellationToken)
     {
+        if (!catalogGate.Value.IsOpen)
+        {
+            return new Unavailable("this machine's catalog has not passed the restore gate", "catalog_unverified");
+        }
+
         if (_catalogCurrent)
         {
             return new Done();
@@ -1303,7 +1322,7 @@ internal sealed partial class EngineManagementService(
     private static string DatabaseNames(string projectId) => $"projects/{projectId}/database_names";
 
     // A database just added to the catalog, with the tenant its storage is addressed by.
-    private sealed record AddedDatabase(ManagedDatabase Database, TenantContext Tenant);
+    private sealed record AddedDatabase(ManagedDatabase Database, TenantContext Tenant, bool Existing = false);
 
     // A database the user may delete here, with the tenant its storage is addressed by.
     private sealed record DeletableDatabase(TenantContext Storage, ManagedDatabase Record);

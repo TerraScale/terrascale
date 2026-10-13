@@ -340,7 +340,14 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
         GetObjectResponse response;
         try
         {
-            response = await SafeAsync(_s3.GetObjectAsync(_bucket, key, cancellationToken)).ConfigureAwait(false);
+            var request = new GetObjectRequest { BucketName = _bucket, Key = key };
+            // Mutable security anchors must observe the latest write across Tigris regions.
+            if (!_customer && key.StartsWith("catalog-anchor/", StringComparison.Ordinal))
+            {
+                request = Tigris(request, "X-Tigris-Consistent", "true");
+            }
+
+            response = await SafeAsync(_s3.GetObjectAsync(request, cancellationToken)).ConfigureAwait(false);
         }
         catch (AmazonS3Exception error) when (error.StatusCode == HttpStatusCode.NotFound)
         {

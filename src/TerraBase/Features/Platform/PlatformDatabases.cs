@@ -5,30 +5,39 @@ using ZLogger;
 namespace TerraBase.Features.Platform;
 
 /// <summary>
-/// TerraScale's own databases (dogfooding): one organization and project with a database for ts-auth and one for the
+/// TerraScale's own databases (dogfooding): one organization and a separate project and database for ts-auth and for the
 /// dashboard, under fixed ids so every node and region that seeds them writes the same records. The organization has no
-/// members, no API keys and no ts-auth project binding, so no customer credential ever reaches it: only the platform
-/// operator on the internal listener (ts-auth, the dashboard) and platform admins through the explore API do.
+/// catalog members or API keys. Its fixed project bindings trust only the global ts-auth issuer. Access requires the
+/// platform operator on the internal listener, a matching scoped project token, or a platform admin through explore.
 /// </summary>
 public static class PlatformDatabases
 {
     /// <summary>The platform organization, on the enterprise plan (no per-tenant request budget).</summary>
     public const string OrganizationId = "00000000000000000000000001";
 
-    /// <summary>The platform project; ts-auth names it as its storage project (App.StorageProject).</summary>
-    public const string ProjectId = "00000000000000000000000002";
+    /// <summary>The ts-auth project; ts-auth names it as its storage project (App.StorageProject).</summary>
+    public const string AuthProjectId = "00000000000000000000000002";
+
+    /// <summary>The dashboard project, distinct from ts-auth's storage project.</summary>
+    public const string DashboardProjectId = "00000000000000000000000005";
+
+    /// <summary>ts-auth's fixed database id.</summary>
+    public const string AuthId = "00000000000000000000000003";
+
+    /// <summary>The dashboard's fixed database id.</summary>
+    public const string DashboardId = "00000000000000000000000004";
 
     /// <summary>ts-auth's database. ts-auth creates its collections itself at startup.</summary>
-    public const string Auth = "platform-auth";
+    public const string Auth = "ts-auth";
 
     /// <summary>The dashboard's database. The dashboard creates its collections itself.</summary>
-    public const string Dashboard = "platform-dashboard";
+    public const string Dashboard = "ts-dashboard";
 
-    /// <summary>Every platform database, name to fixed id.</summary>
-    public static IReadOnlyDictionary<string, string> Databases { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
+    /// <summary>Every platform database, name to fixed database and owning project ids.</summary>
+    public static IReadOnlyDictionary<string, (string Id, string ProjectId)> Databases { get; } = new Dictionary<string, (string Id, string ProjectId)>(StringComparer.Ordinal)
     {
-        [Auth] = "00000000000000000000000003",
-        [Dashboard] = "00000000000000000000000004",
+        [Auth] = (AuthId, AuthProjectId),
+        [Dashboard] = (DashboardId, DashboardProjectId),
     };
 
     /// <summary>The Fly regions every platform database is placed in, home first.</summary>
@@ -55,7 +64,7 @@ public static class PlatformDatabases
     }
 }
 
-/// <summary>The platform organization, project and databases exist as <see cref="PlatformDatabases"/> records them, or why not yet.</summary>
+/// <summary>The platform organization, projects, bindings and databases exist as <see cref="PlatformDatabases"/> records them, or why not yet.</summary>
 public readonly union EnsurePlatformResult(Done, Conflict, Unavailable);
 
 /// <summary>Creates the platform records idempotently in this node's catalog.</summary>

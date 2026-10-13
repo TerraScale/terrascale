@@ -70,11 +70,11 @@ The Fly image is the self-contained executable on the chiseled
 
 Configuration retains the `TS_AUTH_*` convention, with these changes:
 
-- **Storage database:** fixed in code, no setting. ts-auth stores everything in database `platform-auth` of the
+- **Storage database:** fixed in code, no setting. ts-auth stores everything in database `ts-auth` of the
   platform project `00000000000000000000000002` (`App.StorageProject`, `App.StorageDatabase`), which TerraBase seeds on
   every start. At startup ts-auth creates its collections there (`AuthStore.ProvisionAsync`, idempotent) before the
-  signing key check, retrying after five seconds and backing off; `/readyz` answers 503 until both succeed, so ts-auth
-  may start before TerraBase and recovers on its own once the issuer's key is provisioned
+  identity and first-key bootstrap, retrying after five seconds and backing off; `/readyz` answers 503 until startup
+  succeeds, so ts-auth may start before TerraBase and recovers on its own
   ([signing-keys.md](signing-keys.md)). `TS_AUTH_DATABASE` is gone.
 - **Storage endpoints:** fixed in code (`App.TerraBaseOrigin`, `App.TerraBaseOtherRegions`, `App.TerraBaseAuthority`,
   `App.AuthorityRegion`, `Hosting/TerraBaseTransport.cs`, `AuthStore`). Off Fly only Development uses the loopback
@@ -873,7 +873,7 @@ The rest of the platform management API (contract section 7), in
 
 ## Production activation gate
 
-ts-auth creates its collections at startup in the seeded `platform-auth` database (see "Storage database" above);
+ts-auth creates its collections at startup in the seeded `ts-auth` database (see "Storage database" above);
 qualification and storage-integrity requirements still gate safe serving.
 Every auth replica reads and writes through gru's TerraBase internal listener
 (`http://gru.ts-terrabase.internal:8081`, with no fallback; discovery and the JWKS read its own region's,
@@ -954,15 +954,10 @@ concurrent lookups share one read. A token naming a key the cached read lacks
 rereads first (at most every ten seconds, `UnknownKeyRefresh`), and after a
 failed read lookups answer 503 for five seconds (`FailedReadBackoff`).
 
-`SigningKeyRotation` runs on every replica. At startup (`KeyRing.VerifyAsync`)
-it checks that the serving issuer has keys and that every stored key verifies
-and opens. It never creates the first key: without keys the replica stays not
-ready (`/readyz` `error`: `no signing keys: operator provisioning required`)
-until an operator runs `ts-auth provision-signing-key` (`KeyRing.ProvisionAsync`,
-[signing-keys.md](signing-keys.md)). It never replaces keys it cannot use
-(another master key or tampering keeps the replica not ready until an operator
-removes them through `fly ssh`). `/readyz` stays 503 until this replica's
-bootstrap completed, and each readiness pass rechecks the public metadata.
+`SigningKeyRotation` runs on every replica. At startup it seeds TerraScale's owner and projects, then provisions the
+first encrypted signing key if the ring is empty (`KeyRing.ProvisionAsync`). Existing keys must verify and open under
+the Fly-secret master key; unusable keys are never replaced ([signing-keys.md](signing-keys.md)). `/readyz` stays 503
+until this replica's bootstrap completes, and every readiness pass rechecks public metadata.
 After the bootstrap, and then hourly, `KeyRing.RotateIfDueAsync` adds a key
 once the newest is 30 days old (`RotationAge`), published at once and signing
 only after `Overlap` (two days), so every replica and every verifier that

@@ -345,6 +345,10 @@ both directions of a pair, so the receiver cannot also keep the sender's change 
 every `Ack` back. `refused` means the receiver does not hold the database yet (its catalog lags), and the sender
 retries 5 s later. R6 adds `Digest`, `ReadBucket` and `refill_required`; R7 adds `stable`.
 
+An accepted `Push` publishes its gRPC response headers before waiting for a predecessor's refill to end. The
+`Welcome` still waits for that handover; host shutdown can therefore finish the accepted response without a
+`Welcome`, and the sender reads the end of the stream rather than an unstarted response becoming gRPC Internal.
+
 - **Sender.** One `Push` stream per peer machine carries every database the pair shares. It holds at most one batch
   (≤ 1024 groups, ≤ 2 MiB) in flight per database and resumes from the receiver's acked `change_id` after a
   reconnect. The `ReplicationSender` of PR #11 takes its peers once at start. The new sender follows the directory
@@ -645,6 +649,29 @@ convergence deadline).
 
 ## 21. Slice plan
 
+The focused regression matrix runs with `make terrabase-replication-matrix`: six write directions,
+six delete directions, a three-region same-field conflict, and each region stopped and restarted
+on its existing data. Every local case owns three real application nodes, ephemeral listeners and
+storage directories; TUnit runs them in parallel. Catch-up includes writes from both surviving
+regions, conflicts and deletes of documents that the stopped region still holds. Local delete
+cases also inspect the persisted tombstones. No matrix case is an expected failure.
+
+The required CI TerraBase test stage runs this local matrix. The post-deploy `e2e` job first
+selects `Category=replication-matrix-live`: 13 write, conflict and delete cases against gru, sjc
+and fra through `fly-prefer-region`; the harness rejects responses naming a different serving
+region. That step requires 13 actual passes on Fly machines; skips and expected failures cannot
+qualify it. The broader e2e suite still runs after the matrix. Convergence measurements appear in detailed
+test output, measured from write acknowledgement to the first matching pinned read. These are
+client-observed bounds including HTTP and polling overhead, rather than internal replication timings.
+Publish measured results in `benchmark/bench/`, distinguishing local results from Fly results.
+
+Local outage cases skip on Fly because parallel tests cannot each own a production machine.
+Live outage proof uses `make terrabase-e2e-fly-outage` on a pinned disposable three-region app
+(see [the disposable-app runbook](e2e-disposable-app.md)); its result must be reported separately.
+A skipped outage is never live catch-up evidence. The post-deploy job preserves the matrix and
+broader suite logs and per-test outcomes as the `replication-e2e-<commit>` artifact. Each write direction reports ten
+samples with minimum, median, p95 (nearest rank) and maximum latency.
+
 Ordered PRs, each at most 1,500 changed lines. Pure deletion slices are listed separately so they stay reviewable.
 Model: **Opus** = Opus 5.5 (complex, correctness-critical); **Haiku** = Haiku 5.5 (mechanical against this spec).
 Metrics: R3, R4a and R6 emit the replication instruments named in `ops/grafana/README.md` (Metrics); the Grafana
@@ -944,7 +971,7 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   the last event of an (origin, stamp) carries an `id:` (a stamp holds one document today, as stamps are minted per
   document, but a reader that leaves inside one never skips the rest of it). These rules assume a machine receives an
   origin's events within the retention (otherwise it refills, R6).
-- **Cursor (format 2).** base64url of a format byte (2), the issue instant and issuing node, then per origin in
+- **Opaque cursor.** base64url of a marker, the issue instant and issuing node, then per origin in
   ascending order its node, stamp, retention floor and SHA-256 prefix hash. Integers are 8-byte big-endian; the header
   is 17 bytes and each origin 56 bytes. The hash chains event identities (stamp, deletion bit, length-prefixed UTF-8
   collection and document id), including filtered events. A cross-machine resume streams the retained prefix above
@@ -952,10 +979,28 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   returns 410. This verification uses constant memory per origin and work proportional to its retained prefix;
   subsequent pages on the same machine update hashes incrementally. `cursor=now` builds the prefix once.
   Every event and heartbeat re-issues the cursor at the instant the read behind it began. Decoding accepts canonical
-  bytes only (400 `invalid_cursor`), at most 256 origins; encoding refuses more. Format 1 cursors are rejected with
-  400 `invalid_cursor`: clients must resync after this explicit opaque-cursor format change. No storage schema,
-  replication protocol, authentication or lattice conflict semantics change. An issued cursor with no origin is not
+  bytes only, at most 256 origins; encoding refuses more. Any cursor that does not decode to the current opaque
+  layout returns 410 `cursor_expired`; there are no alternate layouts or compatibility branches. No public API or
+  storage schema version changes, nor changes to replication, authentication or lattice conflict semantics.
+  An issued cursor with no origin is not
   "no cursor": it is expired by the retention rules above.
+- **410 frequency and recovery impact.** Matching retained prefixes resume with 200 in all six directed gru/sjc/fra
+  pairs in Fast, including collection-filtered events sharing a stamp. This is controlled integration coverage, not a
+  measured production error rate. Prefix verification is conservative: a destination behind the consumed prefix,
+  different events omitted by dominated joins, or different within-stamp ordering can produce 410 without a repair.
+  A newer destination retention floor also expires the proof even if only already-consumed events were trimmed;
+  hourly feed retention can therefore invalidate cross-machine resumes of an ongoing consumer's older proof.
+  Same-machine resumes bypass prefix comparison and keep the existing retention checks.
+  A repair whose join changes no state adds no feed event. A repair that changes a document adds a machine-specific
+  event: once a cursor passes it (even via a collection filter or a later local write), another machine normally lacks
+  that event and rejects the proof. A cursor issued before repair may also differ from a machine holding the original
+  history, as the regression demonstrates. Consequently **every affected client switching away from a repaired
+  machine after an outage can receive 410**; this is not limited to one pre-repair cursor. Catch-up through retained
+  ordered CDC groups alone does not introduce repair events. Resync recovers state but does not make that machine's
+  repair history portable: repeated switches can cause repeated 410 until the incompatible prefix is no longer named,
+  or its repair rows age out (7 days) and a new proof starts beyond them. Existing proofs retain their old baseline.
+  There is no fixed 410 percentage or guaranteed low frequency: it depends on repair/refill incidence, join histories,
+  retention advancement and client region switches. The production rate has not been measured.
 - **Stream.** One page at a time, no queue per connection: after a page that left nothing waiting, the stream waits for
   the database's next commit (`IDatabaseStore.WaitForCommitAsync`, joins included) or the 15 s heartbeat (`event:
   cursor`). A client that takes no bytes for 10 s is dropped. Limits: 32 streams per database and 1024 per machine

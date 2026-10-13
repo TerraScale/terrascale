@@ -19,7 +19,7 @@ public sealed class ListPlatformCollectionsEndpoint(IDocumentService documents, 
         Get(PlatformExplore.Collections);
         Name("listPlatformCollections");
         Summary("Lists a platform database's collections");
-        Description("Platform admins only (platform_role admin). database: platform-auth or platform-dashboard; 404 for any other. Up to 200 collections in name order.");
+        Description("Platform admins only (platform_role admin). database: ts-auth or ts-dashboard; 404 for any other. Up to 200 collections in name order.");
         Tags("Platform");
         Produces<CollectionPageBody>();
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);

@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -12,6 +13,7 @@ public sealed class DeleteProjectEndpoint(IManagementService management) : Endpo
     public override void Configure()
     {
         Delete(ManagementRoute.Project);
+        Metadata(AnchoredRevocation.Instance);
         Name("deleteProject");
         Summary("Deletes a project");
         Description("Fails with 409 while the project still has databases, API keys or a customer backup destination. Detach the backup destination before deleting its project." + " " + ManagementRoute.IdentityDescription);

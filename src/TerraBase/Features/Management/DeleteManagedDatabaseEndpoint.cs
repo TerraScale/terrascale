@@ -1,6 +1,7 @@
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -13,6 +14,7 @@ public sealed class DeleteManagedDatabaseEndpoint(IManagementService management,
     public override void Configure()
     {
         Delete(ProjectApiRoute.Database);
+        Metadata(AnchoredRevocation.Instance);
         Name("deleteDatabase");
         Summary("Deletes a database and its data");
         Description("Branches of the database are independent copies and are not deleted. A database is deleted in its home region (421 wrong_region elsewhere) once it has no replica regions (409 database_replicated): remove them with PATCH first." + " " + ProjectApiRoute.IdentityDescription);

@@ -14,7 +14,7 @@ workflow = Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
 match = re.search(r"      - name: Report the Slow result\n.*?        run: \|\n(.*?)\n  preview:", workflow.read_text(), re.DOTALL)
 assert match, "Slow report block not found"
 script = "set -euo pipefail\n" + textwrap.dedent(match[1])
-script = script.replace("${{ matrix.area }}", "auth").replace("${{ matrix.runner }}", "blacksmith-4vcpu-ubuntu-2404")
+script = script.replace("${{ matrix.area }}", "auth").replace("${{ matrix.runner }}", "alpha")
 assert "${{" not in script, "Unhandled workflow expression"
 
 

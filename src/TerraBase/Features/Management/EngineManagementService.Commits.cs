@@ -58,7 +58,7 @@ internal sealed partial class EngineManagementService
     private readonly union PreparedDatabases(Dictionary<int, AddedDatabase>, CommitRejected);
 
     // The authorized project and optional branch source before database files are prepared.
-    private readonly union PreparedDatabaseTarget((TenantContext Tenant, ManagedDatabase? Source), NotFound, Forbidden, Conflict, Unavailable);
+    private readonly union PreparedDatabaseTarget((TenantContext Tenant, ManagedDatabase? Source), AddedDatabase, NotFound, Forbidden, Conflict, Unavailable);
 
     private readonly union RecordedCommit(CommitRecord, NotFound, Unavailable);
 
@@ -156,7 +156,7 @@ internal sealed partial class EngineManagementService
         }
         catch
         {
-            foreach (var database in created.Values)
+            foreach (var database in created.Values.Where(database => !database.Existing))
             {
                 await AbandonDatabaseAsync(database.Tenant).ConfigureAwait(false);
             }
@@ -165,7 +165,7 @@ internal sealed partial class EngineManagementService
         }
 
         var committed = result is CommitOutcome { Replayed: false };
-        foreach (var database in created.Values)
+        foreach (var database in created.Values.Where(database => !database.Existing))
         {
             if (committed)
             {
@@ -183,6 +183,23 @@ internal sealed partial class EngineManagementService
             foreach (var storage in deleted)
             {
                 _ = await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+
+        if (result is CommitOutcome)
+        {
+            foreach (var (index, database) in created.Where(pair => pair.Value.Existing))
+            {
+                var initialized = await InitializeLocalAsync(database.Tenant, cancellationToken).ConfigureAwait(false);
+                if (initialized is not Done)
+                {
+                    return initialized switch
+                    {
+                        NotFound error => new CommitRejected(error, index),
+                        Unavailable error => new CommitRejected(error, index),
+                        Done => throw new UnreachableException(),
+                    };
+                }
             }
         }
 
@@ -617,6 +634,20 @@ internal sealed partial class EngineManagementService
             case "create_database" or "branch_database":
                 {
                     var added = created!;
+                    if (added.Existing)
+                    {
+                        var access = await MemberProjectAsync(transaction, userId, organization, op.Project!, cancellationToken).ConfigureAwait(false);
+                        return access switch
+                        {
+                            TenantContext when await GetAsync(transaction, Databases(op.Project!), added.Database.Id,
+                                TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is { } known
+                                && SameDatabaseCreation(known, op) => Body(ManagedDatabaseBody.From(known, options.Region), TerraBaseJsonContext.Default.ManagedDatabaseBody),
+                            TenantContext => new OperationFailed(ManagementErrors.IdTaken),
+                            NotFound error => new OperationFailed(error),
+                            Forbidden error => new OperationFailed(error),
+                        };
+                    }
+
                     // The copy was taken before the commit: its source must still exist where the operation runs.
                     if (added.Database.BranchedFrom is { } source
                         && await transaction.GetVersionAsync(Databases(op.Project!), source, cancellationToken).ConfigureAwait(false) is not { Deleted: false })
@@ -840,10 +871,22 @@ internal sealed partial class EngineManagementService
                 var target = await ReadAsync<PreparedDatabaseTarget>(async transaction =>
                 {
                     // A chosen id registers a database another region holds under the same ids (docs/cross-region.md).
-                    if (op.Id is { } id && (prepared.Values.Any(added => added.Database.Id == id)
-                        || await transaction.GetVersionAsync(EngineManagedBackupService.BackedUpDatabases, id, cancellationToken).ConfigureAwait(false) is not null))
+                    if (op.Id is { } id && prepared.Values.Any(added => added.Database.Id == id))
                     {
                         return ManagementErrors.IdTaken;
+                    }
+
+                    ManagedDatabase? registered = null;
+                    if (op.Id is { } existingId
+                        && await transaction.GetVersionAsync(EngineManagedBackupService.BackedUpDatabases, existingId, cancellationToken).ConfigureAwait(false) is not null)
+                    {
+                        var owner = await GetAsync(transaction, EngineManagedBackupService.BackedUpDatabases, existingId,
+                            TerraBaseJsonContext.Default.DatabaseOwner, cancellationToken).ConfigureAwait(false);
+                        registered = await GetAsync(transaction, Databases(op.Project!), existingId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false);
+                        if (owner is null || owner.OrganizationId != op.Organization || owner.ProjectId != op.Project || registered is null || !SameDatabaseCreation(registered, op))
+                        {
+                            return ManagementErrors.IdTaken;
+                        }
                     }
 
                     var organization = await GetAsync(transaction, Organizations, op.Organization!, TerraBaseJsonContext.Default.Organization, cancellationToken).ConfigureAwait(false);
@@ -879,6 +922,11 @@ internal sealed partial class EngineManagementService
                         return ManagementErrors.NotFound;
                     }
 
+                    if (registered is not null)
+                    {
+                        return new AddedDatabase(registered, tenant with { DatabaseId = registered.Id }, Existing: true);
+                    }
+
                     if (op.Op == "create_database")
                     {
                         return (tenant, null);
@@ -890,6 +938,12 @@ internal sealed partial class EngineManagementService
                         : source.Home(options.Region) != options.Region ? ManagementErrors.WrongRegion
                         : (tenant, source);
                 }, static error => error, cancellationToken).ConfigureAwait(false);
+                if (target is AddedDatabase existing)
+                {
+                    prepared[i] = existing;
+                    continue;
+                }
+
                 if (target is not ValueTuple<TenantContext, ManagedDatabase?> resolved)
                 {
                     var rejected = target switch
@@ -899,6 +953,7 @@ internal sealed partial class EngineManagementService
                         Conflict error => new CommitRejected(error, i),
                         Unavailable error => new CommitRejected(error, i),
                         ValueTuple<TenantContext, ManagedDatabase?> => throw new UnreachableException(),
+                        AddedDatabase => throw new UnreachableException(),
                     };
                     return await AbandonAsync(prepared, rejected).ConfigureAwait(false);
                 }
@@ -939,7 +994,7 @@ internal sealed partial class EngineManagementService
         }
         catch
         {
-            foreach (var database in prepared.Values)
+            foreach (var database in prepared.Values.Where(database => !database.Existing))
             {
                 await AbandonDatabaseAsync(database.Tenant).ConfigureAwait(false);
             }
@@ -953,13 +1008,20 @@ internal sealed partial class EngineManagementService
     // Removes the files of databases prepared for a commit that stops before its transaction.
     private async ValueTask<CommitRejected> AbandonAsync(Dictionary<int, AddedDatabase> prepared, CommitRejected rejected)
     {
-        foreach (var database in prepared.Values)
+        foreach (var database in prepared.Values.Where(database => !database.Existing))
         {
             await AbandonDatabaseAsync(database.Tenant).ConfigureAwait(false);
         }
 
         return rejected;
     }
+
+    // A replicated registration is reused, never rewritten into a new home or revived from a tombstone.
+    private bool SameDatabaseCreation(ManagedDatabase database, ManagementOpRequest op) =>
+        op.Op == "create_database" && database.BranchedFrom is null && database.ProjectId == op.Project && database.Name == op.Name
+        && database.PlacedIn(options.Region) && (op.HomeRegion is null || op.HomeRegion == database.Home(options.Region))
+        && (op.ReplicaRegions is null || database.Placement(options.Region).Regions.Order(StringComparer.Ordinal)
+            .SequenceEqual(new[] { options.Region }.Concat(op.ReplicaRegions).Order(StringComparer.Ordinal), StringComparer.Ordinal));
 
     // The user's record of a commit within the retention.
     private async ValueTask<Found<CommitRecord>> RecordedAsync(IStorageTransaction transaction, string userId, string commitId, CancellationToken cancellationToken) =>

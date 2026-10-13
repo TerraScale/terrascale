@@ -186,7 +186,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     }
 
     /// <summary>
-    /// Explicit operator provisioning (<see cref="SigningKeyProvisioning"/>): creates the instance's first key when it has
+    /// Startup or operator provisioning (<see cref="SigningKeyProvisioning"/>): creates the instance's first key when it has
     /// none, then checks every stored key like <see cref="VerifyAsync"/>. Existing keys are never replaced or changed, so
     /// running it again, or on two replicas at once, is safe. Returns whether it created a key.
     /// </summary>
@@ -204,9 +204,9 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
         return created;
     }
 
-    /// <summary>The platform issuer has no signing key: 503 until an operator provisions one.</summary>
+    /// <summary>The platform issuer has no signing key: 503 until startup provisioning completes.</summary>
     public static ApiException NoSigningKeys() =>
-        new(503, NoSigningKeysCode, "no signing keys: operator provisioning required (docs/auth/signing-keys.md)");
+        new(503, NoSigningKeysCode, "no signing keys: startup bootstrap pending (docs/auth/signing-keys.md)");
 
     /// <summary>
     /// Adds a key now, published at once and signing one refresh interval later, when every replica's cached JWKS holds it,

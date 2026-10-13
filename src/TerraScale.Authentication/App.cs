@@ -91,7 +91,7 @@ public static class App
     public const string StorageProject = "00000000000000000000000002";
 
     /// <summary>ts-auth's database in <see cref="StorageProject"/>; ts-auth creates its collections there itself.</summary>
-    public const string StorageDatabase = "platform-auth";
+    public const string StorageDatabase = "ts-auth";
 
     /// <summary>
     /// Builds the application for validated options. <paramref name="configure"/> lets
@@ -151,6 +151,7 @@ public static class App
         builder.Services.AddSingleton<HeadlessAuth>();
         builder.Services.AddSingleton<TotpCredentials>();
         builder.Services.AddSingleton<PlatformDirectory>();
+        builder.Services.AddSingleton<PlatformBootstrap>();
         builder.Services.AddSingleton<PlatformAuthentication>();
         builder.Services.AddSingleton<ApiKeys>();
         builder.Services.AddSingleton<PlatformGrants>();

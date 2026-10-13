@@ -136,18 +136,17 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Startup_creates_every_collection_in_an_empty_database_but_no_signing_key()
+    public async Task Startup_creates_every_collection_and_the_first_signing_key_in_an_empty_database()
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync(provision: false);
         await using var auth = await StartAuthAsync(tenant, provision: false);
 
         await Assert.That(await ReadinessWait.UntilAsync(async () => (await database.ListCollectionsAsync(limit: 200)).Items.Count == AuthStore.RequiredCollections.Count, TimeSpan.FromSeconds(15))).IsTrue();
         await Assert.That((await database.ListCollectionsAsync(limit: 200)).Items.Select(item => item.Name)).IsEquivalentTo(AuthStore.RequiredCollections);
-        await Task.Delay(ReadinessWait.NextPass);
+        await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(15))).IsTrue();
         using var response = await auth.Client.GetAsync("/readyz");
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()).StartsWith("no signing keys: operator provisioning required");
-        await Assert.That((await database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items).IsEmpty();
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Count).IsEqualTo(1);
     }
 
     private static Task<bool> ReadyWithinAsync(AuthTestServer auth, TimeSpan limit) => ReadinessWait.ReadyWithinAsync(auth.Client, limit);

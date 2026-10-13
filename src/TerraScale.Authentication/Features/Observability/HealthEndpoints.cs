@@ -15,7 +15,7 @@ public sealed record StatusBody(
 /// <param name="Status"><c>ready</c> or <c>not_ready</c>.</param>
 /// <param name="Version">Service version of the running build.</param>
 /// <param name="Region">Storage authority region, when it answered.</param>
-/// <param name="Error">Why it is not ready, only when an operator must act (<c>no signing keys: operator provisioning required …</c>).</param>
+/// <param name="Error">Why it is not ready, when signing-key bootstrap is pending (<c>no signing keys: startup bootstrap pending …</c>).</param>
 public sealed record ReadyBody(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("version")] string Version,
@@ -49,7 +49,7 @@ public sealed class ReadyzEndpoint(ReadinessProbe probe) : EndpointWithoutReques
         Get("/readyz");
         Name("readyz");
         Summary("Readiness probe");
-        Description("Returns 200 only when the configured TerraBase auth database, required collections, reads and conditional writes are usable, the serving issuer has signing keys with valid authenticated public metadata, and this replica's startup signing-ring bootstrap has completed. ts-auth never creates the issuer's first key itself: without keys it answers not ready with `error` \"no signing keys: operator provisioning required\" until an operator runs `ts-auth provision-signing-key`. A background check runs every five seconds with a two-second deadline and this endpoint answers its latest result. Answers not ready before the first check completes and when the latest check is older than fifteen seconds.");
+        Description("Returns 200 only when the configured TerraBase auth database, required collections, reads and conditional writes are usable, the serving issuer has signing keys with valid authenticated public metadata, and this replica's startup signing-ring bootstrap has completed. Startup seeds the platform owner and projects and provisions the first encrypted signing key when absent; existing unusable keys fail closed without replacement. A background check runs every five seconds with a two-second deadline and this endpoint answers its latest result. Answers not ready before the first check completes and when the latest check is older than fifteen seconds.");
         Tags("Observability");
         Produces<ReadyBody>();
         Produces<ReadyBody>(StatusCodes.Status503ServiceUnavailable);

@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Turso.Data.Sqlite;
 using TerraBase.Tenancy;
+using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -66,7 +67,19 @@ internal sealed partial class SqliteStorageEngine
                     connection.Open();
                     using var command = connection.CreateCommand();
                     command.CommandText = "PRAGMA integrity_check;";
-                    return command.ExecuteScalar() as string == "ok";
+                    if (command.ExecuteScalar() as string != "ok")
+                    {
+                        return false;
+                    }
+
+                    // Replay can restore the source's commit_offset row; renew only after every segment is applied.
+                    command.CommandText = SqliteStatements.RenewIncarnation;
+                    command.Parameters.AddWithValue("$incarnation", EntityIds.New().ToString());
+                    command.ExecuteNonQuery();
+                    command.Parameters.Clear();
+                    command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+                    command.ExecuteScalar();
+                    return true;
                 }
                 catch (SqliteException)
                 {
@@ -151,14 +164,16 @@ internal sealed partial class SqliteStorageEngine
                 {
                     var name = "\"" + table.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
                     using var command = connection.CreateCommand();
-                    command.CommandText = $"SELECT * FROM {name} LIMIT 0;";
+                    // File incarnations deliberately differ after restore; compare the logical commit offset instead.
+                    var projection = table == "commit_offset" ? "id, value" : "*";
+                    command.CommandText = $"SELECT {projection} FROM {name} LIMIT 0;";
                     int columns;
                     using (var shape = command.ExecuteReader())
                     {
                         columns = shape.FieldCount;
                     }
 
-                    command.CommandText = $"SELECT * FROM {name} ORDER BY {string.Join(", ", Enumerable.Range(1, columns).Select(column => column.ToString(CultureInfo.InvariantCulture)))};";
+                    command.CommandText = $"SELECT {projection} FROM {name} ORDER BY {string.Join(", ", Enumerable.Range(1, columns).Select(column => column.ToString(CultureInfo.InvariantCulture)))};";
                     using var rows = command.ExecuteReader();
                     hash.AppendData(Encoding.UTF8.GetBytes(table + "\0"));
                     while (rows.Read())

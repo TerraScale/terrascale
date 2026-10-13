@@ -1500,6 +1500,8 @@ public sealed class PeerStreamTests
             };
             using var replacement = await RawPush.OpenAsync(sjc, peer);
             await observed.Task.WaitAsync(Deadline);
+            // Headers arrive while the predecessor still holds the refill; shutdown must finish an accepted response.
+            _ = await replacement.HeadersAsync().WaitAsync(Deadline);
             sjc.Api.Server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
             exit.SetResult();
             await Assert.That(await replacement.WelcomeAsync()).IsFalse();
@@ -1891,6 +1893,8 @@ public sealed class PeerStreamTests
 
         public FakeMemberStore Members { get; } = new();
 
+        public string User { get; } = EntityIds.New().ToString();
+
         public TenantContext Database { get; } = new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
 
         // Whether the machines keep their CDC tailer as the change group source, instead of a fake.
@@ -2001,7 +2005,7 @@ public sealed class PeerStreamTests
                 {
                     services.AddSingleton<IChangeGroupSource>(Source);
                 }
-            }, time: cluster.Clock);
+            }, time: cluster.Clock, userId: cluster.User);
             if (first)
             {
                 await RegisterAsync();
@@ -2560,6 +2564,8 @@ public sealed class PeerStreamTests
             using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
             return await _call.ResponseStream.MoveNext(timeout.Token) && _call.ResponseStream.Current.Welcome is not null;
         }
+
+        public Task<Metadata> HeadersAsync() => _call.ResponseHeadersAsync;
 
         public async Task CompleteAsync()
         {
