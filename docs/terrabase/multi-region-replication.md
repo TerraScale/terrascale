@@ -226,7 +226,8 @@ CREATE TABLE _tb_tail (id INTEGER PRIMARY KEY CHECK (id = 1), change_id INTEGER 
   `DROP`.
 - **Dropping a collection** deletes its `_collections` document at version D. The lane drops the table and its
   `_tb_state` rows locally. Any later-arriving entry of that collection below D is dominated and dropped.
-- `_system.db` uses the same layout (section 15).
+- `_system.db` replicates catalog document states through CDC (section 15), with its materialized documents in one
+  shared table. It has no client changes-feed tables; catalog writes do not append client feed events.
 
 ## 6. Write path
 

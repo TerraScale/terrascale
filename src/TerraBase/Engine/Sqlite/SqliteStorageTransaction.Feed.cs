@@ -110,10 +110,10 @@ internal sealed partial class SqliteStorageTransaction
     }
 
     // Worker-only, after a state row's write: its feed row, and its origin's floor row on the origin's first event here.
-    // Metadata documents stay out: the feed carries client documents only.
+    // System and metadata documents stay out: only client databases have feed tables.
     private void AppendFeed(string collection, string id, EntryVersion at, bool live)
     {
-        if (IsMetadata(collection))
+        if (store.IsSystem || IsMetadata(collection))
         {
             return;
         }
