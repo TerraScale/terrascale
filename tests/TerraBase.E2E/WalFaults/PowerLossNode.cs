@@ -3,6 +3,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
 
+using TerraBase.Testing;
+
 namespace TerraBase.E2E.WalFaults;
 
 // shortcut: one node of RegionProcessHost started here with the shim, until RegionProcesses loads it (hookup on #108);
@@ -78,6 +80,7 @@ internal sealed class PowerLossNode : IAsyncDisposable
             _ = start.Environment.Remove(name);
         }
 
+        start.Environment[PeerTls.TestSecretVariable] = PeerTls.Secret;
         start.Environment[RegionProcessHost.InfoVariable] = info;
         start.Environment[RegionProcessHost.RegionVariable] = Cluster.Gru;
         start.Environment[RegionProcessHost.MachineVariable] = _machine;
@@ -124,7 +127,7 @@ internal sealed class PowerLossNode : IAsyncDisposable
         }
 
         Client.Dispose();
-        Client = new HttpClient(new SocketsHttpHandler { UseCookies = false })
+        Client = new HttpClient(PeerTls.Credential.Wrap(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }))
         {
             BaseAddress = new Uri(JsonNode.Parse(await File.ReadAllTextAsync(info))!["internal"]!.GetValue<string>()),
             DefaultRequestVersion = HttpVersion.Version20,

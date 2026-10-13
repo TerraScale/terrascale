@@ -101,6 +101,8 @@ public static class App
     {
         ArgumentNullException.ThrowIfNull(options);
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
+        builder.Configuration.Sources.Clear();
+        builder.Configuration.AddEnvironmentVariables();
         builder.WebHost.ConfigureKestrel(kestrel =>
         {
             kestrel.Listen(options.Listen);
@@ -124,17 +126,19 @@ public static class App
         }
 
         builder.Services.AddSingleton(TimeProvider.System);
-        // TerraBase machines' private listeners: no credential, they trust the private network. This region's, for discovery
+        // TerraBase machines' internal listeners: every request carries the supplied peer credential. This region's, for discovery
         // and JWKS reads, falls back to other regions; the authority, for everything else, never does.
         builder.Services.AddSingleton(services => new HttpClient(TerraBaseTransport.CreateHandler(
             TerraBaseOtherRegions(options, services.GetRequiredService<IConfiguration>()),
-            services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>())));
+            services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
+            peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable])));
         builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
         {
             BaseAddress = TerraBaseOrigin(options, services.GetRequiredService<IConfiguration>()),
         }).Database(StorageProject, StorageDatabase));
         builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) => new HttpClient(TerraBaseTransport.CreateHandler(
-            [], services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>())));
+            [], services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>(),
+            peerSecret: services.GetRequiredService<IConfiguration>()[TerraBaseTransport.PeerSecretVariable])));
         builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) =>
             TerraBaseAuthority(options, services.GetRequiredService<IConfiguration>()) is { } authority
                 ? new TerraBaseDocumentsClient(services.GetRequiredKeyedService<HttpClient>(StorageAuthority), new TerraBaseDocumentsClientOptions
@@ -194,6 +198,17 @@ public static class App
         builder.AddAuthTelemetry(options);
 
         configure?.Invoke(builder);
+
+        // On Fly, a missing or malformed peer credential stops the start here, not at the first storage request.
+        if (!string.IsNullOrEmpty(builder.Configuration["FLY_APP_NAME"]) && string.IsNullOrEmpty(builder.Configuration[TerraBaseTransport.PeerSecretVariable]))
+        {
+            throw new AuthConfigurationException($"{TerraBaseTransport.PeerSecretVariable} is required on Fly");
+        }
+
+        if (builder.Configuration[TerraBaseTransport.PeerSecretVariable] is { Length: > 0 } peerSecret)
+        {
+            _ = TerraBaseTransport.Validated(peerSecret);
+        }
 
         // This pipeline owns forwarding order and trust, even when ASP.NET's automatic forwarding setting is enabled.
         builder.Configuration["ForwardedHeaders_Enabled"] = "false";

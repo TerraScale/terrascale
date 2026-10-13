@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Configuration;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
@@ -11,9 +12,16 @@ namespace TerraScale.Authentication.Hosting;
 /// answers, to a machine of <c>otherRegions</c>, in order (none for the authority, which takes every write). Only where a
 /// connection goes changes: a request is never resent, so a write is never applied twice. A TerraBase that cannot be
 /// reached fails the operation closed: <see cref="ApiException.Unavailable"/> (503 <c>temporarily_unavailable</c>).
+/// With a supplied peer credential (<c>TERRABASE_PEER_SECRET</c>), every request carries it. TerraBase verifies it on its internal listener.
 /// </summary>
 public static class TerraBaseTransport
 {
+    /// <summary>The environment variable holding the peer credential: 64 hexadecimal characters (32 random bytes).</summary>
+    public const string PeerSecretVariable = "TERRABASE_PEER_SECRET";
+
+    /// <summary>The request header carrying the peer credential on TerraBase's internal listener.</summary>
+    public const string PeerCredentialHeader = "X-TerraBase-Peer-Credential";
+
     // Same-region connects take milliseconds and cross-region ones a few hundred; two seconds allows one lost SYN.
     private static readonly TimeSpan DialTimeout = TimeSpan.FromSeconds(2);
 
@@ -25,13 +33,14 @@ public static class TerraBaseTransport
 
     /// <summary>
     /// A handler that connects to the request's host, then to <paramref name="otherRegions"/>; each machine is tried once
-    /// per connection.
+    /// per connection. It sends <paramref name="peerSecret"/> when supplied; TerraBase records its verification outcome.
     /// </summary>
-    public static HttpMessageHandler CreateHandler(IReadOnlyList<DnsEndPoint> otherRegions, ILogger logger, HostResolver? resolve = null)
+    public static HttpMessageHandler CreateHandler(IReadOnlyList<DnsEndPoint> otherRegions, ILogger logger, HostResolver? resolve = null, string? peerSecret = null)
     {
         resolve ??= Dns.GetHostAddressesAsync;
         ArgumentNullException.ThrowIfNull(otherRegions);
         ArgumentNullException.ThrowIfNull(logger);
+        peerSecret = string.IsNullOrEmpty(peerSecret) ? null : Validated(peerSecret);
         var handler = TerraBaseHttp.CreateHandler();
         handler.PooledConnectionLifetime = ConnectionLifetime;
         // HTTP/2 pings close a connection to a machine that vanished (a host failure) instead of waiting for TCP to give up.
@@ -59,7 +68,25 @@ public static class TerraBaseTransport
             logger.ZLogWarning($"No TerraBase machine answered at {context.DnsEndPoint.Host:@Region} or at any of {otherRegions.Count:@Fallbacks} fallbacks; storage fails closed");
             throw new HttpRequestException(HttpRequestError.ConnectionError, $"No TerraBase machine answered at {context.DnsEndPoint.Host}");
         };
-        return new FailClosed(handler);
+        HttpMessageHandler pipeline = new FailClosed(handler);
+        return peerSecret is null ? pipeline : new PeerCredentialHandler(peerSecret) { InnerHandler = pipeline };
+    }
+
+    internal static string Validated(string peerSecret) =>
+        peerSecret.Length == 64 && peerSecret.All(char.IsAsciiHexDigit)
+            ? peerSecret
+            : throw new AuthConfigurationException($"{PeerSecretVariable} must contain 64 hexadecimal characters");
+
+    // Sets the credential on every request, so a request never leaves without it. Redirects are off in TerraBaseHttp, so it never
+    // reaches another host.
+    private sealed class PeerCredentialHandler(string peerSecret) : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            request.Headers.Remove(PeerCredentialHeader);
+            request.Headers.Add(PeerCredentialHeader, peerSecret);
+            return base.SendAsync(request, cancellationToken);
+        }
     }
 
     // Transport failures (no connection, a dropped one) answer 503 everywhere, never a 500 or a retry elsewhere.

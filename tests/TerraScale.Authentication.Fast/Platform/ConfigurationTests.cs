@@ -384,12 +384,69 @@ public sealed class ConfigurationTests
         settings.Remove("environment");
         // On Fly: storage comes from the Fly identity alone (App.TerraBaseOrigin), with no setting. Off Fly a production
         // ts-auth refuses to start (Production_off_fly_refuses_to_start_instead_of_storing_on_loopback).
-        await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string> { ["FLY_APP_NAME"] = "ts-auth", ["FLY_REGION"] = "gru" });
+        await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string>
+        {
+            ["FLY_APP_NAME"] = "ts-auth",
+            ["FLY_REGION"] = "gru",
+            ["TERRABASE_PEER_SECRET"] = TerraBaseTestServer.PeerSecret,
+        });
 
         using var health = await service.Client.GetAsync("/healthz");
 
         await Assert.That(health.StatusCode).IsEqualTo(System.Net.HttpStatusCode.OK);
         // Exercise startup without sending any request to a production storage endpoint.
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task On_fly_missing_or_malformed_peer_credential_refuses_start_without_echoing_it(bool malformed)
+    {
+        var secret = malformed ? TerraBaseTestServer.PeerSecret[..62] + "zz" : string.Empty;
+        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(
+            settings: values => values.Remove("environment"),
+            configure: builder =>
+            {
+                builder.Configuration["FLY_APP_NAME"] = "ts-auth";
+                builder.Configuration["FLY_REGION"] = "gru";
+                builder.Configuration["TERRABASE_PEER_SECRET"] = secret;
+            }));
+
+        await Assert.That(exception!.Message).Contains("TERRABASE_PEER_SECRET");
+        if (malformed)
+        {
+            await Assert.That(exception.Message.Contains(secret, StringComparison.Ordinal)).IsFalse();
+        }
+    }
+
+    [Test]
+    [Arguments("appsettings.json")]
+    [Arguments("appsettings.Production.json")]
+    public async Task On_fly_a_file_cannot_replace_the_missing_peer_secret(string filename)
+    {
+        var directory = Directory.CreateTempSubdirectory("ts-auth-peer-");
+        var secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(directory.FullName, filename), $$"""{"TERRABASE_PEER_SECRET":"{{secret}}"}""");
+            var settings = AuthTestServer.DefaultSettings();
+            settings.Remove("environment");
+            var (exitCode, output) = await RunBinaryAsync("--rate-limit=1000", settings, directory.FullName, new Dictionary<string, string>
+            {
+                ["FLY_APP_NAME"] = "ts-pr-env-provenance-test",
+                ["FLY_REGION"] = "gru",
+                ["DOTNET_ENVIRONMENT"] = "Production",
+            });
+
+            await Assert.That(exitCode).IsEqualTo(2);
+            await Assert.That(output).Contains("TERRABASE_PEER_SECRET is required on Fly");
+            await Assert.That(output).DoesNotContain(secret);
+            await Assert.That(output).DoesNotContain("   at ");
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
     }
 
     /// <summary>The real service binary on a free loopback port, with a controlled environment.</summary>
@@ -517,16 +574,26 @@ public sealed class ConfigurationTests
         }
     }
 
-    private static async Task<(int ExitCode, string Output)> RunBinaryAsync(string argument, Dictionary<string, string>? settings = null)
+    private static async Task<(int ExitCode, string Output)> RunBinaryAsync(string argument, Dictionary<string, string>? settings = null,
+        string? workingDirectory = null, Dictionary<string, string>? environment = null)
     {
         var binary = Path.Combine(AppContext.BaseDirectory, "ts-auth.dll");
         var start = new ProcessStartInfo("dotnet", [binary, argument])
         {
             RedirectStandardError = true,
             RedirectStandardOutput = true,
+            WorkingDirectory = workingDirectory ?? string.Empty,
         };
-        // A developer's own TS_AUTH_* settings (and a Fly identity) must not change the outcome.
-        foreach (var name in start.Environment.Keys.Where(key => key.StartsWith("TS_AUTH_", StringComparison.Ordinal) || key == "FLY_APP_NAME").ToList())
+        // Isolate application and host configuration while preserving runtime paths and bundle extraction settings.
+        foreach (var name in start.Environment.Keys.Where(key =>
+            key.StartsWith("TS_AUTH_", StringComparison.OrdinalIgnoreCase) || key.StartsWith("FLY_", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("ASPNETCORE_", StringComparison.OrdinalIgnoreCase) || key.StartsWith("DOTNET_FLY_", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("OTEL_", StringComparison.OrdinalIgnoreCase) || key.StartsWith("Logging__", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("Kestrel__", StringComparison.OrdinalIgnoreCase) || key.StartsWith("Sentry__", StringComparison.OrdinalIgnoreCase)
+            || key.ToUpperInvariant() is "TERRABASE_PEER_SECRET" or "DOTNET_TERRABASE_PEER_SECRET" or "DOTNET_ENVIRONMENT"
+                or "DOTNET_CONTENTROOT" or "DOTNET_APPLICATIONNAME" or "ENVIRONMENT" or "CONTENTROOT" or "APPLICATIONNAME"
+                or "URLS" or "HTTP_PORTS" or "HTTPS_PORTS" or "PREFERHOSTINGURLS" or "FORWARDEDHEADERS_ENABLED"
+                or "HOSTINGSTARTUPASSEMBLIES" or "HOSTINGSTARTUPEXCLUDEASSEMBLIES" or "PREVENTHOSTINGSTARTUP").ToList())
         {
             start.Environment.Remove(name);
         }
@@ -534,6 +601,11 @@ public sealed class ConfigurationTests
         foreach (var (key, value) in settings ?? [])
         {
             start.Environment[$"TS_AUTH_{key.Replace('-', '_').ToUpperInvariant()}"] = value;
+        }
+
+        foreach (var (key, value) in environment ?? [])
+        {
+            start.Environment[key] = value;
         }
 
         using var process = Process.Start(start)!;
@@ -550,6 +622,7 @@ public sealed class ConfigurationTests
             if (!process.HasExited)
             {
                 process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync();
             }
         }
 

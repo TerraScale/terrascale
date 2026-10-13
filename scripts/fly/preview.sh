@@ -10,6 +10,7 @@
 #   scripts/fly/preview.sh destroy <pr>                     delete the app and everything in it
 #   scripts/fly/preview.sh reap                             destroy previews created more than 24 hours ago
 set -euo pipefail
+set +x
 
 org=terrascale-previews-515
 api() { curl -sS --fail-with-body -H "Authorization: $FLY_API_TOKEN" -H 'Content-Type: application/json' "$@"; }
@@ -45,6 +46,15 @@ case ${1:-} in
     if ! grep -qx TERRABASE_MASTER_KEY <<<"$secrets"; then
       flyctl secrets set -a "$app" --stage TERRABASE_MASTER_KEY="$(openssl rand -base64 32)"
     fi
+    if ! grep -qx TERRABASE_PEER_SECRET <<<"$secrets"; then
+      (
+        umask 077
+        peer_secret_file=$(mktemp /tmp/terrabase-peer-secret.XXXXXX)
+        trap 'rm -f -- "$peer_secret_file"' EXIT
+        openssl rand -hex 32 > "$peer_secret_file"
+        flyctl secrets set -a "$app" --stage TERRABASE_PEER_SECRET=- < "$peer_secret_file"
+      )
+    fi
     ;;
   machine)
     app=ts-pr-$2 terrabase=$3 auth=$4
@@ -55,10 +65,10 @@ case ${1:-} in
       mounts: [{volume: $volume, path: "/data"}],
       containers: [
         {name: "terrabase", image: $terrabase, secrets: ([
-          "AWS_ENDPOINT_URL_S3", "AWS_REGION", "BUCKET_NAME", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "TERRABASE_MASTER_KEY"
+          "AWS_ENDPOINT_URL_S3", "AWS_REGION", "BUCKET_NAME", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "TERRABASE_MASTER_KEY", "TERRABASE_PEER_SECRET"
         ] | map({env_var: ., name: .}))},
         {name: "ts-auth", image: $auth, env: {TS_AUTH_PUBLIC_ORIGIN: "https://\($app).fly.dev"},
-          secrets: (["TS_AUTH_MASTER_KEY", "TS_AUTH_AUDIT_SIGNING_KEY"] | map({env_var: ., name: .})),
+          secrets: (["TS_AUTH_MASTER_KEY", "TS_AUTH_AUDIT_SIGNING_KEY", "TERRABASE_PEER_SECRET"] | map({env_var: ., name: .})),
           depends_on: [{name: "terrabase", condition: "started"}]}
       ],
       services: [

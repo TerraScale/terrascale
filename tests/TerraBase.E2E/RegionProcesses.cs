@@ -147,6 +147,7 @@ internal sealed class RegionProcesses : IAsyncDisposable
             _ = start.Environment.Remove(name);
         }
 
+        start.Environment[PeerTls.TestSecretVariable] = PeerTls.Secret;
         start.Environment[RegionProcessHost.InfoVariable] = info;
         start.Environment[RegionProcessHost.RegionVariable] = node.Name;
         start.Environment[RegionProcessHost.MachineVariable] = node.MachineId;
@@ -176,7 +177,7 @@ internal sealed class RegionProcesses : IAsyncDisposable
         }
 
         var address = new Uri(JsonNode.Parse(await File.ReadAllTextAsync(info))!["internal"]!.GetValue<string>());
-        node.Client = new HttpClient(new SocketsHttpHandler { UseCookies = false })
+        node.Client = new HttpClient(PeerTls.Credential.Wrap(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }))
         {
             BaseAddress = address,
             DefaultRequestVersion = HttpVersion.Version20,

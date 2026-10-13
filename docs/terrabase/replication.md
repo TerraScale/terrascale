@@ -159,7 +159,7 @@ and remain `unknown`; it does not authorize placement or residency.
 ## Transport
 
 Members reach each other's internal listener over Fly's private network with HTTP/2 and no TLS (plan decision: no
-mTLS and no service authentication on 6PN; see [fly.md](fly.md#listeners)).
+mTLS; every RPC carries the shared credential from `TERRABASE_PEER_SECRET`, including catalog and repair calls; see [peer-authentication.md](peer-authentication.md)).
 
 ## Sync stream
 

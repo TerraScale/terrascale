@@ -4,6 +4,8 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using TerraBase.Primitives;
+using TerraBase.Features.Replication;
+using TerraBase.Testing;
 
 namespace TerraBase.E2E;
 
@@ -11,7 +13,7 @@ namespace TerraBase.E2E;
 /// One TerraBase node as its own operating-system process: the production entry point (<c>terrabase.dll</c> of this
 /// build), its own data directory and fixed loopback ports. It can be killed with SIGKILL and started again on the same
 /// data, which an in-process node cannot. This is a harness for the current architecture: it drives the node only over
-/// its listeners, as the platform operator on the internal listener (loopback off Fly, h2c, no credential) and as a
+/// its listeners, as the platform operator on the internal listener (loopback off Fly, h2c, generated test credential) and as a
 /// client on the public one. It is not the deleted CrashableTerraBase: it takes no peer, TLS or catalog-primary
 /// settings, because design C discovers peers itself.
 /// </summary>
@@ -26,7 +28,7 @@ internal sealed class NodeProcess : IAsyncDisposable
 
     private NodeProcess()
     {
-        Internal = new HttpClient(new SocketsHttpHandler { UseCookies = false })
+        Internal = new HttpClient(PeerTls.Credential.Wrap(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }))
         {
             BaseAddress = new Uri($"http://127.0.0.1:{_internalPort}/"),
             DefaultRequestVersion = HttpVersion.Version20,
@@ -104,6 +106,7 @@ internal sealed class NodeProcess : IAsyncDisposable
         }
 
         // As the in-process harness runs it: Development needs no Tigris bucket or master key for backups.
+        start.Environment[PeerCredential.EnvironmentVariable] = PeerTls.Secret;
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
         start.Environment["DOTNET_ENVIRONMENT"] = "Development";
         var process = Process.Start(start) ?? throw new InvalidOperationException("the node process did not start");

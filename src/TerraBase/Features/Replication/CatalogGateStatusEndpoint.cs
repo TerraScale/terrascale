@@ -11,7 +11,7 @@ public sealed record CatalogGateStatus(bool Open, bool Trusted, IReadOnlyList<st
 
 /// <summary>
 /// <c>GET /catalog-gate</c>: whether this machine's catalog gate is open and its catalog trusted. Internal listener only,
-/// unauthenticated like the other probes: the other machines' gates read it, and it carries no tenant data.
+/// records peer credential verification like the other internal probes: the other machines' gates read it.
 /// </summary>
 public sealed class CatalogGateStatusEndpoint(ICatalogGate gate) : EndpointWithoutRequest<CatalogGateStatus>
 {

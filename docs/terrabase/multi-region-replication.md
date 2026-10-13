@@ -327,7 +327,7 @@ right. Revisit when Turso exposes page checksums.
   peers are the machines whose region is in its placement (section 16), minus self. They are addressed per machine at
   `http://<machine>.vm.ts-terrabase.internal:8081`: the internal listener on `fly-local-6pn` (h2c, gRPC). Region names
   like `<region>.ts-terrabase.internal` serve routing only, because a region will hold more than one machine. There is
-  no mTLS and no service auth on 6PN (plan decision). `PeerCredentials` and the `peer-*` settings go.
+  no mTLS. Every internal request carries `X-TerraBase-Peer-Credential` from the shared Fly secret `TERRABASE_PEER_SECRET` (see [peer-authentication.md](peer-authentication.md)); the old `PeerCredentials` and `peer-*` settings remain removed.
 - **Protocol** (replaces `terrabase/v1/replication.proto`, `catalog.proto`, `wan.proto` and
   `terrabase/alpha/anti_entropy.proto`; package `terrabase.v1`, everything v1):
 

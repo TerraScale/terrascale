@@ -14,6 +14,8 @@ setup() {
   cp "$root/scripts/handoff/morning-credentials.sh" "$work/repo/scripts/handoff/"
   cp "$root/scripts/e2e/install-ci-credential.sh" "$work/repo/scripts/e2e/"
   export FAKE_DIR="$work/state" FAKE_LOG="$work/calls.log" FAKE_SECRET=$SECRET PATH="$here/testdata/fakes:$PATH" HOME="$work"
+  export TERRABASE_PEER_SECRET
+  TERRABASE_PEER_SECRET=$(openssl rand -hex 32)
   : > "$FAKE_LOG"
 }
 run() { (cd "$work" && bash "$work/repo/scripts/handoff/morning-credentials.sh" "$@" 2>&1); }
@@ -23,10 +25,23 @@ contains() { grep -qF -- "$2" <<<"$1" || fail "$3: expected '$2' in: $1"; }
 no_leak() {
   grep -qF "$SECRET" <<<"$1" && fail "$2: the key was printed"
   grep -qF "$SECRET" "$FAKE_LOG" && fail "$2: the key was on a command line"
+  grep -qF "$TERRABASE_PEER_SECRET" <<<"$1" && fail "$2: the peer credential was printed"
+  grep -qF "$TERRABASE_PEER_SECRET" "$FAKE_LOG" && fail "$2: the peer credential was on a command line"
   local file
   while IFS= read -r file; do
     [[ $file == "$FAKE_DIR/secrets/TERRABASE_E2E_FLY_API_KEY" ]] || fail "$2: the key was written to $file"
   done < <(grep -rlF "$SECRET" "$work" || true)
+}
+
+test_missing_peer_credential_refuses_before_proxy() {
+  setup
+  local out
+  if out=$(unset TERRABASE_PEER_SECRET; run install e2e); then
+    fail "install without a peer credential succeeded"
+  fi
+  contains "$out" "TERRABASE_PEER_SECRET must contain 64 hexadecimal characters" missing-peer
+  grep -q 'flyctl proxy' "$FAKE_LOG" && fail "missing peer credential opened a proxy"
+  rm -rf "$work"
 }
 
 test_dry_run_touches_nothing() {
@@ -95,5 +110,6 @@ test_dry_run_touches_nothing
 test_install_status_rotate_revoke_e2e
 test_cleanup_e2e_leaves_nothing
 test_bench_is_delegated_and_isolated
+test_missing_peer_credential_refuses_before_proxy
 [[ $failures == 0 ]] || { echo "$failures failure(s)"; exit 1; }
-echo "morning-credentials: 4 tests passed"
+echo "morning-credentials: 5 tests passed"

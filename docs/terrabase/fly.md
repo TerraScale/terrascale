@@ -50,7 +50,7 @@ listed; there is no region list to maintain.
 | Internal | 8081 | `fly-local-6pn` (loopback off Fly) | HTTP/2 without TLS (h2c) | inter-node gRPC, the platform operator's Management API, administration, `/metrics` |
 | Metrics | 9091 | every interface, no Fly service (`[[metrics]]`); loopback in Development off Fly | HTTP/1.1 | `/metrics` only |
 
-- There is no mTLS and no service credential: Fly's private network is the trust boundary (plan decision). On the
+- Every request on the internal listener verifies `X-TerraBase-Peer-Credential` before endpoint execution and records matched/unmatched outcomes. This preparation release does not refuse unmatched requests; refusal follows after all three regions run the senders. The shared `TERRABASE_PEER_SECRET` arrives from Fly secrets; a missing or malformed secret stops a Fly node before it listens. Transport remains h2c over Fly's private network. On the
   internal listener the platform operator acts as the user named in `X-TerraBase-User-Id`; every use is logged.
 - Kestrel cannot serve HTTP/1.1 and HTTP/2 prior knowledge on one cleartext port (checked 2026-10-11: an HTTP/2
   request to an `Http1AndHttp2` port answers `HTTP_1_1_REQUIRED`). The internal listener serves gRPC, so it is

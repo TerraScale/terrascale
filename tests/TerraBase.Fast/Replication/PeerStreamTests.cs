@@ -61,6 +61,31 @@ public sealed class PeerStreamTests
     }
 
     [Test]
+    public async Task Production_senders_authenticate_every_peer_request_with_no_unmatched_credential()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (fromGru, fromSjc) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", fromGru, Json("""{"from":"gru"}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(fromGru, """{"from":"gru"}""")).IsTrue();
+        await sjc.WriteAsync(async transaction =>
+        {
+            _ = await transaction.PutAsync("items", fromSjc, Json("""{"from":"sjc"}"""), CancellationToken.None);
+        });
+        await Assert.That(await gru.UntilAsync(fromSjc, """{"from":"sjc"}""")).IsTrue();
+
+        // Each machine's push to the other crossed the credential check: gru received sjc's stream and sjc received gru's.
+        foreach (var machine in cluster.Machines)
+        {
+            await AssertAuthenticatedAsync(machine);
+        }
+    }
+
+    [Test]
     public async Task A_restarted_machine_catches_up_from_its_last_ack()
     {
         await using var cluster = await Cluster.StartAsync("gru", "sjc");
@@ -97,7 +122,7 @@ public sealed class PeerStreamTests
     {
         await using var cluster = await Cluster.StartAsync("gru");
         var gru = cluster["gru"];
-        using var channel = PeerChannel.Create(gru.Api.Server.BaseAddress);
+        using var channel = PeerChannel.Create(gru.Api.Server.BaseAddress, PeerTls.Credential);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
         var origin = ReplicaId.Of(1, 7, 0);
         var other = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
@@ -431,6 +456,10 @@ public sealed class PeerStreamTests
 
         // A repair is never shipped back: gru's tailer finds no group of sjc's to send for it.
         await Assert.That(await sjc.GroupsAsync(cluster.Database, 0)).IsEmpty();
+
+        // The digest rounds reached gru's listener as real anti-entropy traffic, and gru's push reached sjc's.
+        await AssertAuthenticatedAsync(gru);
+        await AssertAuthenticatedAsync(sjc);
     }
 
     [Test]
@@ -1110,7 +1139,7 @@ public sealed class PeerStreamTests
     {
         await using var cluster = await Cluster.StartAsync("gru");
         var gru = cluster["gru"];
-        using var channel = PeerChannel.Create(gru.Api.Server.BaseAddress);
+        using var channel = PeerChannel.Create(gru.Api.Server.BaseAddress, PeerTls.Credential);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push();
         await Assert.That(await gru.UntilMetricAsync("http_server_active_requests", value => value >= 1, "http_request_method=\"POST\"")).IsTrue();
 
@@ -1903,7 +1932,7 @@ public sealed class PeerStreamTests
 
     private static async Task Review176PushAsync(Cluster cluster, Machine machine, ReplicaId origin, params ChangeDelta[] deltas)
     {
-        using var channel = PeerChannel.Create(machine.Api.Server.BaseAddress);
+        using var channel = PeerChannel.Create(machine.Api.Server.BaseAddress, PeerTls.Credential);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
         using var timeout = new CancellationTokenSource(Deadline);
         using var call = client.Push(cancellationToken: timeout.Token);
@@ -1920,7 +1949,7 @@ public sealed class PeerStreamTests
 
     private static async Task<byte[]> Review176DigestAsync(Cluster cluster, Machine machine)
     {
-        using var channel = PeerChannel.Create(machine.Api.Server.BaseAddress);
+        using var channel = PeerChannel.Create(machine.Api.Server.BaseAddress, PeerTls.Credential);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
         var incarnation = await machine.IncarnationAsync();
         var digest = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(cluster.Database, incarnation) });
@@ -2012,6 +2041,15 @@ public sealed class PeerStreamTests
         var at = new EntryVersion(new Hlc(stamp), machine.Node);
         using var body = JsonDocument.Parse($$"""{"created_at":{{(long)(stamp >> 16)}},"entity_id":"{{EntityIds.New()}}"}""");
         return new ChangeDelta(DocumentDelta.Collections, collection, at.Stamp, DocumentState.Bottom.Put(at, body.RootElement).DeltaAt(at.Stamp));
+    }
+
+    // The machine's internal listener recorded its peers' requests and none arrived without the generated credential.
+    private static async Task AssertAuthenticatedAsync(Machine machine)
+    {
+        using var scraper = new HttpClient { BaseAddress = machine.Api.Server.MetricsAddress, Timeout = Deadline };
+        var (matched, unmatched) = await PeerCredentialObservationTests.CountsAsync(scraper);
+        await Assert.That(matched).IsGreaterThan(0).Because(machine.Region);
+        await Assert.That(unmatched).IsEqualTo(0).Because(machine.Region);
     }
 
     /// <summary>One machine per region, all listed in one fake DNS, each holding the same database.</summary>
@@ -2717,7 +2755,7 @@ public sealed class PeerStreamTests
         {
             _origin = origin ?? Origin;
             _peer = machine.Cluster.Machines.FirstOrDefault(listed => listed.Name == peer);
-            _channel = PeerChannel.Create(machine.Api.Server.BaseAddress);
+            _channel = PeerChannel.Create(machine.Api.Server.BaseAddress, PeerTls.Credential);
             _call = new Features.Replication.V1.Replication.ReplicationClient(_channel).Push();
         }
 

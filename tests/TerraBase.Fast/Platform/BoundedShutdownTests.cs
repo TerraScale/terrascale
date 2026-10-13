@@ -55,7 +55,7 @@ public sealed class BoundedShutdownTests
             services.AddSingleton(entered);
             services.AddGrpc(options => options.Interceptors.Add<HandshakeProbe>());
         });
-        using var channel = PeerChannel.Create(server.BaseAddress);
+        using var channel = PeerChannel.Create(server.BaseAddress, PeerTls.Credential);
         using var peer = new Features.Replication.V1.Replication.ReplicationClient(channel).Push(cancellationToken: token);
         await entered.Entered.Task.WaitAsync(token);
         var completion = server.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
@@ -85,7 +85,7 @@ public sealed class BoundedShutdownTests
         var hostedBudget = server.Services.GetRequiredService<IOptions<HostOptions>>().Value.ShutdownTimeout;
         var streams = new List<HttpResponseMessage>();
         var readers = new List<StreamReader>();
-        using var channel = PeerChannel.Create(server.BaseAddress);
+        using var channel = PeerChannel.Create(server.BaseAddress, PeerTls.Credential);
         var peers = new List<AsyncDuplexStreamingCall<PushFrame, AckFrame>>();
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

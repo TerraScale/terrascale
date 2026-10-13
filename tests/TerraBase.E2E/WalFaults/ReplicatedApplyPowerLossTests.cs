@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Testing;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
@@ -41,7 +42,7 @@ public sealed class ReplicatedApplyPowerLossTests
         int[] sizes = [1000, 100, 1];
         var ids = sizes.Select(size => Enumerable.Range(0, size).Select(_ => EntityIds.New().ToString()).ToArray()).ToArray();
         var delay = TimeSpan.FromMilliseconds(300);
-        using (var channel = PeerChannel.Create(node.Address))
+        using (var channel = PeerChannel.Create(node.Address, PeerTls.Credential))
         {
             using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push();
             await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = origin.Value, Region = "sjc", Machine = "zzzz-sender" } });

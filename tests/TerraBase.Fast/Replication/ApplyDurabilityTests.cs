@@ -44,7 +44,7 @@ public sealed class ApplyDurabilityTests
         Volatile.Write(ref target, tenant.DatabaseId);
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        using var channel = PeerChannel.Create(api.Server.BaseAddress);
+        using var channel = PeerChannel.Create(api.Server.BaseAddress, PeerTls.Credential);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
         using var call = client.Push(cancellationToken: deadline.Token);
         var origin = ReplicaId.Of(1, 7, 0);

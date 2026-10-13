@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Logging;
@@ -18,6 +19,7 @@ using OpenTelemetry.Exporter;
 using TerraBase.Configuration;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Platform;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 
 namespace TerraBase.Testing;
@@ -48,7 +50,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         BaseAddress = listeners[0];
         ClientAddress = new UriBuilder(listeners[1]) { Host = "127.0.0.1" }.Uri;
         MetricsAddress = new UriBuilder(listeners[2]) { Host = "127.0.0.1" }.Uri;
-        Client = PeerTls.CreateClient(BaseAddress);
+        // The effective registration, so a test that replaced the credential gets a client that sends its secret.
+        Credential = factory.Services.GetRequiredService<PeerCredential>();
+        Client = PeerTls.CreateClient(BaseAddress, credential: Credential);
     }
 
     /// <summary>
@@ -74,6 +78,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     /// <summary>An HTTP/2 client for the internal listener that never follows redirects and never stores cookies.</summary>
     public HttpClient Client { get; }
+
+    /// <summary>The peer credential this server accepts and <see cref="Client"/> sends: the process secret unless a test replaced it.</summary>
+    internal PeerCredential Credential { get; }
 
     /// <summary>The running server's services, for checks no listener exposes (for example engine transactions or its endpoints).</summary>
     public IServiceProvider Services => _factory.Services;
@@ -171,7 +178,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
                 services?.Invoke(collection);
             };
-            factory = new Factory(arguments, topology, withoutSeed, environmentName, linkedCancellation, testCancellation);
+            factory = new Factory(arguments, topology, withoutSeed, environmentName, PeerTls.Credential, linkedCancellation, testCancellation);
             factory.UseKestrel();
             IServerAddressesFeature addresses;
             try
@@ -478,7 +485,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     private sealed class Factory(
         IReadOnlyDictionary<string, string> settings, TestTopology topology, Action<IServiceCollection>? services, string environmentName,
-        CancellationTokenSource? linkedCancellation, CancellationToken cancellationToken) : WebApplicationFactory<Program>
+        PeerCredential peerCredential, CancellationTokenSource? linkedCancellation, CancellationToken cancellationToken) : WebApplicationFactory<Program>
     {
         private ShutdownHost? _host;
         private SqliteStorageEngine? _nativeEngine;
@@ -604,6 +611,8 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
             builder.ConfigureTestServices(values =>
             {
+                // Replaces Program's registration (empty: records peers as unmatched and cannot send) before the test's callbacks, which may replace it again.
+                values.Replace(ServiceDescriptor.Singleton(peerCredential));
                 // Completion barriers must observe commits after the previous scrape, not its cached zero.
                 values.Configure<PrometheusAspNetCoreOptions>(options => options.ScrapeResponseCacheDurationMilliseconds = 0);
                 topology.ApplyIdentity(values);

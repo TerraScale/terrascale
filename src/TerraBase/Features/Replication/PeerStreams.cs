@@ -27,6 +27,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private const int MaxDetail = 128;
 
     private readonly IMembership _membership;
+    private readonly PeerCredential _credential;
     private readonly IChangeGroupSource _source;
     private readonly IReplicaStates _states;
     private readonly ITenantDirectory _tenants;
@@ -42,8 +43,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
     public PeerStreams(
         IMembership membership, IChangeGroupSource source, IReplicaStates states, ITenantDirectory tenants, LocalReplica self, TerraBaseOptions options,
-        TimeProvider time, IMeterFactory meters, ILogger<PeerStreams> logger, Lazy<ICatalogGate> catalogGate)
+        TimeProvider time, IMeterFactory meters, ILogger<PeerStreams> logger, Lazy<ICatalogGate> catalogGate, PeerCredential credential)
     {
+        _credential = credential;
         (_membership, _source, _states, _tenants, _self, _options, _time, _logger) = (membership, source, states, tenants, self, options, time, logger);
         _catalogGate = catalogGate;
         var meter = meters.Create(Telemetry.MeterName);
@@ -177,7 +179,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
     private async Task StreamAsync(Link link, Action welcomed, CancellationToken cancellationToken)
     {
-        using var channel = PeerChannel.Create(new Uri(link.Peer.PeerAddress));
+        using var channel = PeerChannel.Create(new Uri(link.Peer.PeerAddress), _credential);
         using var call = new V1.Replication.ReplicationClient(channel).Push(cancellationToken: cancellationToken);
         await call.RequestStream.WriteAsync(new PushFrame
         {

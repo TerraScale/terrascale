@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Text.Json;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
@@ -11,13 +12,17 @@ namespace TerraScale.Authentication.Tests;
 /// <summary>
 /// One real TerraBase process built from this same commit (<c>TERRABASE_BINARY</c>, set by the Makefile's auth test
 /// targets) on ports it binds itself (port 0, read back from its startup log) with a fresh data directory: its public listener (plain HTTP, as behind Fly Proxy) and
-/// its internal listener (h2c, loopback off Fly), where the platform operator needs no credential. Share one per test
-/// session and dispose it at the end.
+/// its internal listener (h2c, loopback off Fly), which records verification of this server's peer credential. Share one
+/// per test session and dispose it at the end.
 /// </summary>
 public sealed class TerraBaseTestServer : IAsyncDisposable
 {
+    private const string PeerSecretVariable = "TERRABASE_PEER_SECRET";
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
     private static readonly TerraScaleIdGenerator Ids = new();
+
+    /// <summary>The peer credential of every TerraBase this suite starts and of every client it builds: 32 random bytes, hex.</summary>
+    internal static readonly string PeerSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
     private readonly ConcurrentQueue<string> output = new();
     private readonly ConcurrentQueue<Uri> listening = new();
@@ -32,11 +37,20 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// <summary>Origin of the public listener (Documents API with API keys and ts-auth tokens).</summary>
     public Uri ClientAddress => new($"http://127.0.0.1:{this.publicPort}/");
 
-    /// <summary>Origin of the internal listener (HTTP/2 only), where the platform operator needs no credential.</summary>
+    /// <summary>Origin of the internal listener (HTTP/2 only), which needs the peer credential that <see cref="Http"/> sends.</summary>
     public Uri InternalAddress => new($"http://127.0.0.1:{this.internalPort}/");
 
-    /// <summary>A client that never follows redirects. Owned by the server.</summary>
-    public HttpClient Http { get; } = new(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
+    /// <summary>Origin of the metrics listener (Prometheus scrape, no credential).</summary>
+    public Uri MetricsAddress => new($"http://127.0.0.1:{this.metricsPort}/");
+
+    /// <summary>A client that never follows redirects and sends the peer credential. Owned by the server.</summary>
+    public HttpClient Http { get; } = new(new PeerCredentialHandler(PeerSecret)
+    {
+        InnerHandler = new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false },
+    });
+
+    /// <summary>A plain client for the public listener. It never carries the internal credential.</summary>
+    public HttpClient PublicHttp { get; } = new(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
 
     /// <summary>Starts <c>TERRABASE_BINARY</c>; returns the reason instead when it names no file.</summary>
     public static async Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(CancellationToken cancellationToken = default)
@@ -65,9 +79,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
     /// <summary>A Documents API client on the client listener, authenticated with <paramref name="apiKey"/>.</summary>
     public TerraBaseDocumentsClient Documents(string apiKey) =>
-        new(this.Http, new TerraBaseDocumentsClientOptions { BaseAddress = this.ClientAddress, ApiKey = apiKey });
+        new(this.PublicHttp, new TerraBaseDocumentsClientOptions { BaseAddress = this.ClientAddress, ApiKey = apiKey });
 
-    /// <summary>A Documents API client on the internal listener without a credential: how ts-auth reaches TerraBase on Fly.</summary>
+    /// <summary>A Documents API client on the internal listener with the peer credential: how ts-auth reaches TerraBase on Fly.</summary>
     public TerraBaseDocumentsClient InternalDocuments() => new(this.Http, new TerraBaseDocumentsClientOptions { BaseAddress = this.InternalAddress });
 
     /// <summary>Issues an API key for <paramref name="organizationId"/> (<c>POST /admin/api-keys</c>, internal listener).</summary>
@@ -139,6 +153,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     {
         await this.StopAsync();
         this.Http.Dispose();
+        this.PublicHttp.Dispose();
         Directory.Delete(this.directory, recursive: true);
     }
 
@@ -157,6 +172,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         {
             start.Environment.Remove(name);
         }
+
+        // This server's own generated secret, never a production one: the internal listener verifies it.
+        start.Environment[PeerSecretVariable] = PeerSecret;
 
         // Port 0 the first time: TerraBase binds free ports itself, so no other process can take one between a probe and
         // the bind. shortcut: a restart reuses the bound ports, which ts-auth already holds; another process can take one
@@ -196,7 +214,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                     throw new HttpRequestException("TerraBase has not reported its ports yet");
                 }
 
-                using var health = await this.Http.GetAsync(new Uri(this.ClientAddress, "healthz"), startup.Token);
+                using var health = await this.PublicHttp.GetAsync(new Uri(this.ClientAddress, "healthz"), startup.Token);
                 if (health.StatusCode == HttpStatusCode.OK)
                 {
                     return;
@@ -256,6 +274,18 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         }
     }
 }
+
+/// <summary>Sends the peer credential on every request; the header name is spelled out here so a drift from production fails the tests.</summary>
+internal sealed class PeerCredentialHandler(string peerSecret) : DelegatingHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        request.Headers.Remove("X-TerraBase-Peer-Credential");
+        request.Headers.Add("X-TerraBase-Peer-Credential", peerSecret);
+        return base.SendAsync(request, cancellationToken);
+    }
+}
+
 /// <summary>A tenant created by <see cref="TerraBaseTestServer.CreateTenantAsync"/>.</summary>
 /// <param name="UserId">The owner's user id.</param>
 /// <param name="Organization">The organization.</param>
