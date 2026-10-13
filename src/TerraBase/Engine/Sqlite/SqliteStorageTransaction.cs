@@ -90,10 +90,17 @@ internal sealed partial class SqliteStorageTransaction(
             {
                 var command = Command(SqliteStatements.DocumentBytes, collection);
                 command.Parameters.AddWithValue("$id", id);
+                CountRead("point");
                 return command.ExecuteScalar() as long? ?? 0;
             }
 
-            return HasTable(collection) ? TableCommand(SqliteStatements.ClientDocumentBytes, collection, id).ExecuteScalar() as long? ?? 0 : 0;
+            if (!HasTable(collection))
+            {
+                return 0;
+            }
+
+            CountRead("point");
+            return TableCommand(SqliteStatements.ClientDocumentBytes, collection, id).ExecuteScalar() as long? ?? 0;
         }, cancellationToken);
 
     public ValueTask<long> GetStoredDocumentBytesAsync(CancellationToken cancellationToken) =>
@@ -117,15 +124,16 @@ internal sealed partial class SqliteStorageTransaction(
         }, cancellationToken);
 
     // Worker-only: query readers fetch bodies after their id/key page has admitted the row.
-    private StoredDocument? ReadDocument(string collection, string id)
+    private StoredDocument? ReadDocument(string collection, string id, string path = "point")
     {
         if (IsClient)
         {
-            return ReadUniqueDocument(collection, id, reserveResult: true);
+            return ReadUniqueDocument(collection, id, reserveResult: true, path: path);
         }
 
         var command = Command(SqliteStatements.Get, collection);
         command.Parameters.AddWithValue("$id", id);
+        CountRead(path);
         using var reader = command.ExecuteReader();
         if (!reader.Read())
         {
@@ -151,6 +159,7 @@ internal sealed partial class SqliteStorageTransaction(
 
         var command = store.IsSystem ? Command(SqliteStatements.Version, collection) : TableCommand(UniqueVersion, collection);
         command.Parameters.AddWithValue("$id", id);
+        CountRead("point");
         using var reader = command.ExecuteReader();
         if (!reader.Read() || (reader.IsDBNull(0) && !_pending.ContainsKey((collection, id))))
         {
@@ -349,6 +358,7 @@ internal sealed partial class SqliteStorageTransaction(
             command.Parameters.AddWithValue("$limit", limit + 1);
             var documents = new List<StoredDocument>();
             long bytes = 0;
+            CountRead("query");
             using var reader = command.ExecuteReader();
             while (true)
             {
@@ -535,6 +545,7 @@ internal sealed partial class SqliteStorageTransaction(
             SELECT octet_length({source.Json}) FROM {source.From}
             WHERE {(observation is not null ? "tb_query_scan(id) AND " : "")}{source.Live} ORDER BY id LIMIT 10001;
             """;
+        CountRead("query");
         using var reader = command.ExecuteReader();
         long bytes = 0;
         var rows = 0;
@@ -562,6 +573,7 @@ internal sealed partial class SqliteStorageTransaction(
         _queryBudget!.Charge(command.CommandText);
         var rows = new List<QueryRow>();
         long bytes = 0;
+        CountRead("query");
         using var reader = command.ExecuteReader();
         while (true)
         {
@@ -579,7 +591,7 @@ internal sealed partial class SqliteStorageTransaction(
 
             bytes += size;
             // ReadDocument admits the body's detached copies before the body and sort keys allocate.
-            var document = ReadDocument(query.Collection, reader.GetString(0))!;
+            var document = ReadDocument(query.Collection, reader.GetString(0), "query")!;
             var keys = new object?[reader.FieldCount - 3];
             for (var i = 0; i < keys.Length; i++)
             {
@@ -606,6 +618,7 @@ internal sealed partial class SqliteStorageTransaction(
             using var command = Uncached(collection);
             command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(collection)).CompileCount(filter, maxExamined, observation is not null);
             _queryBudget!.Charge(command.CommandText);
+            CountRead("query");
             using var reader = command.ExecuteReader();
             cancellationToken.ThrowIfCancellationRequested();
             reader.Read();
@@ -642,6 +655,7 @@ internal sealed partial class SqliteStorageTransaction(
                     }
 
                     budget.Charge(command.CommandText);
+                    CountRead("query");
                     reader = command.ExecuteReader();
                 }
                 catch (SqliteException error) when (SqliteSession.Stopped(error))
@@ -672,7 +686,7 @@ internal sealed partial class SqliteStorageTransaction(
                             throw new QueryCapacityException("query execution budget exceeded");
                         }
 
-                        var document = read ? ReadDocument(query.Collection, changes.GetString(0)) : null;
+                        var document = read ? ReadDocument(query.Collection, changes.GetString(0), "query") : null;
                         if (queryBudget.Exceeded)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
@@ -1458,6 +1472,9 @@ internal sealed partial class SqliteStorageTransaction(
         command.Parameters.AddWithValue("$id", id);
         return command;
     }
+
+    // Called right before a physical SELECT over document or feed rows, so misses and empty pages count too.
+    private void CountRead(string path) => store.StorageReads?.Add(1, new KeyValuePair<string, object?>("path", path));
 
     // Native octet_length projections inspect size without copying JSON; GetBytes/GetStream would allocate first.
     private void ReserveJson(long size)

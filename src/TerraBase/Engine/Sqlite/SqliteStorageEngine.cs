@@ -71,6 +71,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private readonly string _dataDirectory;
     private readonly IMemoryBudget? _schemaMemory;
     private readonly Counter<long> _schemaEvaluations;
+    private readonly Counter<long> _storageReads;
     private readonly ILogger<SqliteStorageEngine> _logger;
     private readonly TimeSpan _shutdownGrace;
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
@@ -352,6 +353,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         _dataDirectory = dataDirectory;
         _schemaMemory = schemaMemory;
         _schemaEvaluations = meter.CreateCounter<long>("terrabase.schema.keyword_evaluations", description: "Collection schema keyword evaluations started by local writes.");
+        _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Physical document and feed SELECTs executed, by path (point, query, feed).");
         _logger = logger;
         _shutdownGrace = shutdownGrace;
         _checkpoint = checkpoint ?? (static (_, _) => { });
@@ -765,7 +767,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 var created = await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
                 // Once published, complete the opening even if cancellation arrives.
                 var openingToken = created ? CancellationToken.None : cancellationToken;
-                system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time, RecordCommittedWrite, _logger)
+                system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time, RecordCommittedWrite, _logger,
+                    storageReads: _storageReads)
                 {
                     QueryBudget = QueryBudget,
                     Member = Member,
@@ -1410,7 +1413,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     {
         var tenant = new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database);
         var store = new SqliteDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
-            RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations)
+            RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
         {
             QueryBudget = QueryBudget,
             Member = Member,

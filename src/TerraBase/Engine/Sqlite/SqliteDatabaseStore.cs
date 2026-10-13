@@ -25,12 +25,15 @@ namespace TerraBase.Engine.Sqlite;
 /// <param name="logger">Receives the warning about a long wait for this database's writer.</param>
 /// <param name="schemaMemory">Shared process admission for schema evaluation, when hosted.</param>
 /// <param name="schemaEvaluations">Host-owned counter of collection schema keyword evaluations.</param>
+/// <param name="storageReads">Host-owned counter of physical document and feed SELECTs, tagged by path (point, query, feed).</param>
 internal sealed partial class SqliteDatabaseStore(
     string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TenantContext? tenant, TimeProvider? time,
-    Action? committed, ILogger? logger = null, IMemoryBudget? schemaMemory = null, Counter<long>? schemaEvaluations = null) : IDatabaseStore, IDisposable
+    Action? committed, ILogger? logger = null, IMemoryBudget? schemaMemory = null, Counter<long>? schemaEvaluations = null,
+    Counter<long>? storageReads = null) : IDatabaseStore, IDisposable
 {
     internal IMemoryBudget? SchemaMemory { get; } = schemaMemory;
     internal Counter<long>? SchemaEvaluations { get; } = schemaEvaluations;
+    internal Counter<long>? StorageReads { get; } = storageReads;
 
     internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TimeProvider? time = null, Action? committed = null)
         : this(name, path, pool, io, pragmas, null, time, committed) { }

@@ -164,14 +164,20 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 	if err := b.target.waitReady(b, ctx, 0); err != nil {
 		return fail(err)
 	}
+	// The window opens here, before admission: the storage delta covers admission, warmup, the measured window, grace
+	// and the settle below, not the 30 s measured window alone.
 	before, err := get(ctx, metricsClient, b.metrics)
 	if err != nil {
 		return fail(err)
 	}
-	p.before = strings.Join(promLines(before, "terrabase_stats_operations"), "\n") + "\n"
+	p.before = rawSamples(before)
 	readsBefore, ok := promValue(before, "terrabase_stats_operations", `kind="read"`)
 	if !ok {
 		return fail(fmt.Errorf("metrics: no terrabase_stats_operations{kind=\"read\"}"))
+	}
+	feedBefore, err := feedReads(before)
+	if err != nil {
+		return fail(err)
 	}
 
 	m := &measure{hist: hdrhistogram.New(1, 60_000_000, 3)}
@@ -236,16 +242,25 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 	stop()
 	wg.Wait()
 
-	// The read counter moves once per closed 5 s window: wait one out so the step's reads are in it.
+	// The accounting read counter moves once per closed 5 s window: wait one out so the step's reads are in it. The
+	// storage counter is synchronous; this settle also covers server work still running after the streams close.
 	sleep(ctx, 6*time.Second)
 	after, err := get(ctx, metricsClient, b.metrics)
 	if err != nil {
 		return fail(err)
 	}
-	p.after = strings.Join(promLines(after, "terrabase_stats_operations"), "\n") + "\n"
+	p.after = rawSamples(after)
 	readsAfter, ok := promValue(after, "terrabase_stats_operations", `kind="read"`)
 	if !ok {
 		return fail(fmt.Errorf("metrics: no terrabase_stats_operations{kind=\"read\"}"))
+	}
+	feedAfter, err := feedReads(after)
+	if err != nil {
+		return fail(err)
+	}
+	storageDelta, err := feedDelta(feedBefore, feedAfter)
+	if err != nil {
+		return fail(err)
 	}
 
 	m.mu.Lock()
@@ -263,6 +278,7 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 		return fail(fmt.Errorf("no CPU sample of process %d", b.pid))
 	}
 	status["writes"] = w
+	status["storage_reads_delta"] = storageDelta
 	status["accounting_reads_delta"] = int64(readsAfter - readsBefore)
 	status["inferred_min_doc_selects"] = m.events
 	d := float64(st.StepS)
