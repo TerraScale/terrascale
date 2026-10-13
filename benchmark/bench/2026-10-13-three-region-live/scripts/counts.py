@@ -106,11 +106,22 @@ def operator(method, path, body=None):
     return int(status), (json.loads(data) if data.strip() else None)
 
 
+def management_db(name):
+    """The internal listener's operator path for a database: /v1/management/organizations/{org}/projects/{project}/databases/{id}."""
+    base = f"/v1/management/organizations/{os.environ['ORG']}/projects/{os.environ['TERRABASE_E2E_FLY_PROJECT']}/databases"
+    status, page = operator("GET", base)
+    match = [d["id"] for d in page["items"] if d["name"] == name]
+    if status != 200 or len(match) != 1:
+        raise SystemExit(f"database {name}: {status} {page}")
+    return f"{base}/{match[0]}"
+
+
 def pitr(collection, n, extra):
     """n documents, T after the last ack and its convergence, then extra later documents; restore at T into a new database
     and require exactly the first n (count + digest), never a partial set."""
     global DB
     import datetime
+    MDB = management_db("e2e")
     load(collection, n)
     expected = verify(collection, n)[1]["gru"]
     t = datetime.datetime.now(datetime.timezone.utc)
@@ -120,15 +131,17 @@ def pitr(collection, n, extra):
         call(list(MACHINES)[i % 3], "PUT", f"{DB}/collections/{collection}/documents/by-key?id=late-{i:04d}", doc(rng))
     print(f"T = {t.isoformat()}; wrote {extra} later documents")
     while True:
-        status, window = operator("GET", f"{DB}/point-in-time")
+        status, window = operator("GET", f"{MDB}/point-in-time")
         latest = window and window.get("latest")
         print(f"window {status} {window}")
         if latest and datetime.datetime.fromisoformat(latest) >= t:
             break
+        if status != 200 or time.time() - t.timestamp() > 600:
+            raise SystemExit(f"restore window never reached T: {status} {window}")
         time.sleep(5)
     name = f"e2e-pitr-{int(time.time())}"
-    print("plan", operator("POST", f"{DB}/point-in-time/plan", {"pointInTime": t.isoformat()}))
-    status, restored = operator("POST", f"{DB}/point-in-time/restore", {"pointInTime": t.isoformat(), "name": name})
+    print("plan", operator("POST", f"{MDB}/point-in-time/plan", {"pointInTime": t.isoformat()}))
+    status, restored = operator("POST", f"{MDB}/point-in-time/restore", {"pointInTime": t.isoformat(), "name": name})
     print("restore", status, json.dumps(restored)[:400])
     if status != 201:
         raise SystemExit(f"restore refused or failed: {status}")
@@ -196,6 +209,7 @@ def partition(collection, n):
     for r, (count, d) in views.items():
         print(f"during cut {r}: count={count} digest={d}")
     edits = {r: call(r, "GET", shared)[1] for r in MACHINES}
+    print("shared version tokens during the cut: " + ", ".join(f"{r}={v.get('version')}" for r, v in edits.items()))
     print("shared document during the cut: " + "; ".join(f"{r}={canonical(v)}" for r, v in edits.items()))
     side = views[isolated][0]
     rest = {views[r][0] for r in others}
@@ -207,11 +221,11 @@ def partition(collection, n):
     print(f"{time.strftime('%H:%M:%S', time.gmtime())} healed after {healed - t0:.0f} s")
     while True:
         views = {r: listing(r, collection) for r in MACHINES}
-        sharedviews = {r: call(r, "GET", shared)[1] for r in MACHINES}
+        # The document only: the read also returns a per-replica version token.
+        sharedviews = {r: (lambda v: v.get("document", v))(call(r, "GET", shared)[1]) for r in MACHINES}
         states = {canonical(v) for v in sharedviews.values()}
         if len({v for v in views.values()}) == 1 and next(iter(views.values()))[0] == 3 * n + 1 and len(states) == 1:
             merged = next(iter(sharedviews.values()))
-            merged = merged.get("document", merged) if isinstance(merged, dict) else merged
             own = all(merged.get(r) == f"{r}-edit" for r in MACHINES)
             for r, (count, d) in views.items():
                 print(f"after heal {r}: count={count} digest={d}")
@@ -228,10 +242,22 @@ def partition(collection, n):
         time.sleep(5)
 
 
+def shared_check(collection):
+    """Prints each region's read of the partition step's shared document (document and version token)."""
+    for r in MACHINES:
+        print(r, canonical(call(r, "GET", f"{DB}/collections/{collection}/documents/by-key?id=shared")[1]))
+
+
 if __name__ == "__main__":
     mode, collection = sys.argv[1], sys.argv[2]
     if mode == "load":
         load(collection, int(sys.argv[3]))
+    elif mode == "list":   # list <collection> <database> <region>: one region's count and digest of another database
+        DB = DB.rsplit("/", 1)[0] + "/" + sys.argv[3]
+        count, d = listing(sys.argv[4], collection)
+        print(f"{sys.argv[3]}/{collection} in {sys.argv[4]}: count={count} digest={d}")
+    elif mode == "shared":
+        shared_check(collection)
     elif mode == "partition":
         partition(collection, int(sys.argv[3]))
     elif mode == "pitr":

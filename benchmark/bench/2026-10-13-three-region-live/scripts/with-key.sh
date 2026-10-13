@@ -14,5 +14,5 @@ issued=$(curl -sS --fail --http2-prior-knowledge -H 'content-type: application/j
 id=$(jq -r .id <<< "$issued"); echo "key $name id $id expires $(jq -r .expiresAt <<< "$issued")" >&2
 revoke() { for port in 18181 18182 18183; do curl -sS --fail --http2-prior-knowledge -H "X-TerraBase-User-Id: $owner" -X DELETE -o /dev/null "${keys/18181/$port}/$id" 2> /dev/null && { echo "key $name revoked via :$port" >&2; return; }; done; echo "REVOKE FAILED for key $id" >&2; }
 trap revoke EXIT
-TERRABASE_E2E_FLY_API_KEY=$(jq -r .secret <<< "$issued"); unset issued; export TERRABASE_E2E_FLY_API_KEY TERRABASE_E2E_FLY_PROJECT=$project OWNER=$owner
+TERRABASE_E2E_FLY_API_KEY=$(jq -r .secret <<< "$issued"); unset issued; export TERRABASE_E2E_FLY_API_KEY TERRABASE_E2E_FLY_PROJECT=$project OWNER=$owner ORG=$org
 "$@"

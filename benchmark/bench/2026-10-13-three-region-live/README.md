@@ -4,7 +4,74 @@
 review. Latencies were measured from delta (a dev host) through Fly's edge, under no controlled load, so they are not
 benchmark numbers. Final acceptance needs the same run at one main SHA (prod-rebuild-runbook E5).
 
-## Not proven yet (read first)
+## Latest: pre-freeze run 6 at `e1812ce3` (2026-10-13 06:37–07:59Z)
+
+The candidate is `e1812ce3da125f9d21b4b37cfc261d7d91c5eeef`: R10a re-stacked on main (`feat/r10a-on-main` `6b08aa61`,
+which includes main `e30ffdc2`, #144 `_system` FULL, the F3 gate-start fix, F6 bounded anchor writes and F7 majority
+opening) merged with #175 (`78226ed0`). The merge was clean. Tests are at `624c219d`: the same tree plus a candidate-only
+`Gaps.cs` that keeps only E10, E11, E13 and E15 as expected failures.
+
+The machines were **production size**: shared-cpu-2x, 512 MB, 4 GB swap. Image: `registry.fly.io/ts-terrabase-e2e:e1812ce3-faults@sha256:20ff66a2…`,
+the same binary on the test-only faults base.
+
+| Machine | gru | sjc | fra |
+| --- | --- | --- | --- |
+| id | `82d1d00a7954d8` | `82237ec7e20648` | `2872653f603148` |
+| volume | `vol_42k9wd5gxo10zx34` | `vol_4y8zng27xxwkej3r` | `vol_vxmz6q02700g2184` |
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| **Genesis by prod-rebuild-runbook r2 B1/B2/B4/B5/B6/B8** (`machine create --machine-config`, created but not started, then started back to back) | **pass.** Every B2 config field matched: image digest, 2 CPUs, 512 MB, 4096 swap, new volume, on-failure, autostart false. All three opened with **no operator file**: gru verified against 2 peers at 06:39:27Z after logging "could not be pulled" while its peers booted, with **no host abort (F3 fixed)**. B6 digests were equal; in B8 each machine was `readyz` 200 within 13–17 s. | `evidence/r6-runbook-genesis.txt` |
+| Six directions ×3, machine-pinned | **18/18 pass.** Latency (ms): SJC→GRU 23/30/37, SJC→FRA 294/298/300, GRU→SJC 226/218/215, GRU→FRA 310/291/295, FRA→SJC 223/226/217, FRA→GRU 24/55/28 | `evidence/outcomes-r6-r7.txt` |
+| ThreeRegionE2ETests | **14/14 pass** (Bulk 3,000 converged in 3.2 s; burst in 12.5 s) | same |
+| ReplicationE2ETests | **6/6 pass** | same |
+| LatticeE2ETests | E8 and E14 pass. **E10 and E15 (R8 changes feed) pass outright** ("landed"). **E9 fails 6 of 6** (see B1). E11: `/sql` answers 401 to an API key, so it is not testable on Fly | same |
+| Independent 3,000-doc load | count 3000 and digest `80230dee64cfded1e49bf8122188edca7aece2ee23ce6e1b630ce7e74e562d22` in gru, sjc and fra, 7.6 s after the last ack; **unchanged after everything below** | `evidence/live-run-r6.txt` |
+| **Partition with same-document conflicts** (fra cut off from gru + sjc for 60 s) | During the cut fra had 301 docs and gru/sjc 601 (the cut was real). After the heal all three had 901 with equal listing digests. The shared document is equal everywhere: `{"base":true,"fra":"fra-edit","gru":"gru-edit","sjc":"sjc-edit","winner":"fra"}`. Every region's own field survived, and the contested field holds one written value in all regions. **But see B2:** fra's version token differs. | `evidence/live-run-r6.txt`, `evidence/live-run-r7.txt` |
+| Fault tests (start-after-stopped shim) | **all pass:** Region_down, Writes_acknowledged…, A_restarted_region…, Restart_in_the_middle…, FlyOutage | `evidence/outcomes-r6-r7.txt` |
+| SIGKILL, then clean restart, of each machine | **pass ×6.** `readyz` 200 within 12–17 s; gates equal within 5–30 s; 3,000 docs equal in all three after each step; no host aborts | `evidence/live-run-r6.txt` |
+| **F7 live proof** (anchored revocation, then gru frozen with SIGSTOP and stopped; Fly event `stopped/crash exit_code=-1 requested_stop=true` 10.5 s later, the abrupt-VM path that lost commits before) | **pass ×2** (07:47Z, 07:53Z), plus a SIGKILL variant. The revocation answered 204. After the start: gate open + trusted with `pending: []` and **no operator step**. The revoked key is refused **401 in gru, sjc and fra**. | `evidence/r6-f7a-rerun.txt`, `evidence/live-run-r6.txt` |
+| **F3 live proof** (gru restarted while sjc and fra drop its 6PN traffic, so its first gate pass stalls) | **pass.** The host stayed up (`/healthz` ok), the gate stayed closed (`readyz` 503, pending = both peers), with no abort. It opened 7 s after the traffic was restored, with no operator. | `evidence/live-run-r6.txt` |
+| **PITR restore, non-empty** | **pass.** Write 500 docs, then T = 07:54:31.85Z, then 100 later docs. The plan used snapshot 07:53:50Z + 7 segments. The restore answered 201 with database `e2e-pitr-1791878099`. **Restored = 500 docs, digest `53e5a1c8…` = the source's digest at T**; the source now holds 600 (`a9c3e2e7…`), so the later writes are excluded. See B3 for placement. | `evidence/live-run-r7.txt` |
+| Catalog digests | equal in 5 of 6 samples taken 5 s apart (the catalog keeps changing) | — |
+
+### Sizing at production size (shared-cpu-2x 512 MB, the whole run, 78 one-minute samples per machine)
+
+| Machine | Busy (user + system), share of 1 vCPU: mean / p50 / p90 / max | Steal mean / max | CPU balance | Min free memory |
+| --- | --- | --- | --- | --- |
+| gru | 5.6 / 2.1 / 15.4 / 49.8 % | 0.0 / 0.3 % | 10,349 → 40,110 (grew all run) | 165 MB |
+| sjc | 5.5 / 2.4 / 13.7 / 33.5 % | 0.0 / 0.2 % | 9,987 → 41,047 | 156 MB |
+| fra | 7.4 / 3.6 / 18.5 / 43.3 % | 0.0 / 0.2 % | 9,250 → 32,365 | 165 MB |
+
+The baseline is 12.5 %. **There was no throttling during the full run:** the mean was below the baseline and the credit
+balance grew. The earlier candidate (`9667b7ef`) used 24–33 % on performance-1x under nearly the same plan. The likely reason is the
+code, but that is an inference: the two runs were not a controlled A/B. The production plan (shared-cpu-2x 512 MB + swap) holds for this workload. The tight
+spot is memory: about 160 MB free out of 512 MB.
+
+### New findings (evidence only; owners fix)
+
+| ID | Owner | What | Evidence |
+| --- | --- | --- | --- |
+| **B1** | R5/R3 (sets) | **E9 add-wins is violated, 6 of 6 times.** gru runs `add tags x` while sjc concurrently runs `remove tags x`, with x already seeded. Every region settles to `{"tags":[]}`; the expected result is `["x"]`. It passed on `9667b7ef` (runs 2a, 2b, 4), so this is a regression in the main-based stack. Likely cause: an add of an element that is already present mints no new dot, so the concurrent remove covers it. | `evidence/outcomes-r6-r7.txt` (r6, r7 E9 ×5) |
+| **B2** | R3 | **Equal documents carry different version tokens after convergence.** The partition's shared document is identical in all three regions, but `version` is `tbv1-3d913d8b…` in gru and sjc and `tbv1-75dd31a5…` in fra, unchanged 40 min after the heal. Either fra's lattice state (stamps or losing entries) differs while the values are equal, or the token is per replica. A client using `If-Match` across regions would get spurious conflicts. | `evidence/live-run-r7.txt` |
+| B3 | R10a/backup | The PITR restore creates the new database single-region (`homeRegion: gru`, `replicaRegions: null`). It does not inherit the source's sjc/fra placement, so reads pinned to sjc are replayed to gru. | `evidence/live-run-r7.txt` |
+| B4 | docs | On the internal listener, `/v1/projects/{p}/databases/{name}/point-in-time` answers `unknown_route`. The operator path is `/v1/management/organizations/{org}/projects/{p}/databases/{id}/point-in-time`. | — |
+
+### Runbook r2 deviations (for PROD-REBUILD)
+
+1. **B2 state.** Right after `machine create`, gru's new machine listed as `stopped`, not `created` (sjc and fra:
+   `created`). Expect either state.
+2. **No 422 here.** The previews org accepted 21 machines (15 + 3 parked + 3 new). Production's org may differ.
+3. **A2: `skopeo inspect` needs `skopeo login` first.** Without it, the digest came back empty.
+4. **B5:** `flyctl machine start` printed "failed to release lease … i/o timeout" for gru, but the machine started.
+   Check the state rather than the exit message.
+5. **E5 proof harness:** `Flyctl.MachineInRegionAsync` requires exactly one machine per region. While the parked old
+   machines exist (until C2), every pinned test fails with "found 2". Destroy them (C2), or run the proof before
+   parking, or adjust the harness (R3).
+6. **The e2e template has `env: null` and `checks: null`** (machines created with `machine run`/`clone`); the
+   production template has env. The machine config is in `scripts/runbook-b2-machine-config-gru.json`.
+
+## Not proven yet (as of runs 1–5, before run 6)
 
 - **Point-in-time restore still has not run.** Run 5 wrote 500 documents and then 100 later ones, but the restore-window
   call failed in the script: the internal listener speaks h2c, and the checker used HTTP/1.1 (fixed since). Then F7 closed
@@ -202,6 +269,9 @@ Recommendation (a user and COS decision, because it is recurring spend):
   inherited environment, and revoked at exit. 0 were listed on the current tenant after the run.
 - **Run 3.** One key, `01M4SG3YY86SS55QKEXBKQJWW8` (24 h expiry, documents read/write on one project), revoked at
   02:30Z through sjc; 0 listed afterwards.
+- **Run 6 (pre-freeze).** Session keys `01M4T1MBNS5RD3PWFDSQDQ2E54` (aborted start), `01M4T1NX6N28XMJ8Q7B1HY929Y` and
+  `01M4T42HGADNYG05KAQKM6PXM1`, plus 3 short check sessions (`list` ×2, `shared`) and 3 `f7-throwaway` keys revoked by the F7 test itself; all
+  were revoked, held in memory only, and documents-only on project `01M4T1K15T2XR1MKCHY3VT9APK`.
 - **Runs 4 and 5.** Key `01M4SJ0QJ23AB7CEBD8VTWA2PH` (02:38:41Z) was revoked at 02:55Z; key
   `01M4SK5FV80P67MBQJ4N8Q2GHB` (02:58:46Z) was revoked at 03:03:51Z through sjc. Both were 24 h keys, documents read/write
   on project `01M4SD7D7B2C3CZ4W41F3ZY2FK` only, held in memory only.
@@ -209,7 +279,7 @@ Recommendation (a user and COS decision, because it is recurring spend):
 
 ## Cost
 
-About 7.5 machine-hours of shared-cpu-1x 512 MB (≈ $0.05), plus performance-1x 2 GB × 3 from 02:37 to 03:05Z (≈ 0.47 h × $0.181/h ≈ $0.09). Total ≈ $0.15. Volumes peaked at 9 × 1 GB from 01:07 to 02:04Z; 3 GB
+About 7.5 machine-hours of shared-cpu-1x 512 MB (≈ $0.05), plus performance-1x 2 GB × 3 from 02:37 to 03:05Z (≈ 0.47 h × $0.181/h ≈ $0.09). Total ≈ $0.15. Run 6: shared-cpu-2x 512 MB × 3 from 06:38 to 07:59Z (≈ 1.35 h × $0.024/h ≈ $0.03), plus 3 new 1 GB volumes. Cumulative ≈ $0.20. Volumes peaked at 9 × 1 GB from 01:07 to 02:04Z; 3 GB
 remain. Transfer was a few hundred MB. The three machines are stopped. Recurring now: ≈ $0.45/month for volumes plus
 stopped rootfs.
 
