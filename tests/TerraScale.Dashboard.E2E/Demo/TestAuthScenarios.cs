@@ -39,7 +39,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
     private readonly ConcurrentQueue<string> cliRequests = new();
     private string root = "";
 
-    private AuthProviderScenario() => provider = new(clock, state);
+    private AuthProviderScenario() => provider = new(clock, state, environment.Workspace);
 
     public Uri Origin { get; private set; } = null!;
     public Uri ReplicaOrigin { get; private set; } = null!;
@@ -227,7 +227,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         }
     }
 
-    private sealed class ScenarioProvider(ScenarioClock clock, TestState state) : IDisposable
+    private sealed class ScenarioProvider(ScenarioClock clock, TestState state, TestWorkspace workspace) : IDisposable
     {
         // ts-auth 6bb896bb: one global issuer, {PublicOrigin}/{tenant}, served from every region.
         private const string Issuer = "https://auth.terrascale.tech/terrascale";
@@ -241,7 +241,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private readonly ConcurrentDictionary<string, PendingEnrollment> pendingEnrollments = new(StringComparer.Ordinal);
         private long authEpoch;
         private InternalBillingProducer? billing;
-        public InternalBillingProducer Billing => billing ??= new(state, clock.GetUtcNow, () => subject, organization => Ownership?.SeedOrganization(organization));
+        public InternalBillingProducer Billing => billing ??= new(state, workspace, clock.GetUtcNow, () => subject, organization => Ownership?.SeedOrganization(organization));
         public OwnershipSdkProtocol? Ownership { get; private set; }
         public Func<HttpContext, Task<IResult?>>? ReportingExtension { get; set; }
         public void ComposeOwnership() => Ownership = new(Billing, clock, ResolveActiveBearer);
@@ -741,8 +741,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 case "workspace-role":
                     var role = body.GetProperty("role").GetString()!;
                     if (role is not ("owner" or "admin" or "member" or "readonly" or "")) return Results.BadRequest();
-                    lock (TestWorkspace.Gate)
-                        foreach (var org in TestWorkspace.Organizations.Values.Where(org => org.Members.ContainsKey(subject)))
+                    lock (workspace.Gate)
+                        foreach (var org in workspace.Organizations.Values.Where(org => org.Members.ContainsKey(subject)))
                         {
                             org.Members[subject].Role = role;
                             org.Members[subject].Status = role.Length == 0 ? "inactive" : "active";
@@ -784,7 +784,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             if (publicId == "legacy") publicId = key;
             else TerraScaleIds.Validate(publicId);
             var session = new SessionRecord(subject, "Protocol User", "user@example.com", "", null, clock.GetUtcNow().AddHours(1));
-            var organization = await new TestWorkspace().EnsurePersonalAsync(session, default);
+            var organization = await workspace.EnsurePersonalAsync(session, default);
             var account = new AccountRecord
             {
                 Id = publicId,

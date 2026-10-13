@@ -11,7 +11,7 @@ namespace TerraScale.Dashboard.E2E;
 public static class InvitationExpiryScenario
 {
     public static void MapRoutes(WebApplication app) => app.MapPost("/__test/organization/invitations/expire",
-        async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
+        async (HttpContext http, DashboardSessions sessions, AccountService accounts, TestOrganizationAccess access) =>
         {
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
@@ -23,7 +23,7 @@ public static class InvitationExpiryScenario
             if (!context.Organization.Invitations.TryGetValue(id, out var invitation) || invitation.OrganizationId != context.Organization.Id || invitation.Status != "pending")
                 return Results.NotFound();
             var expiresAt = DateTimeOffset.UtcNow.AddDays(-1);
-            TestOrganizationAccess.ExpireInvitation(context, id, expiresAt);
+            access.ExpireInvitation(context, id, expiresAt);
             await accounts.UpdateOrganizationAsync(context, org =>
             {
                 if (org.RoleFor(context.UserId) != "owner" || org.OwnerUserId != context.UserId || org.DeletionRequested)

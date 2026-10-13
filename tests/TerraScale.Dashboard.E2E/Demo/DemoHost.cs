@@ -37,7 +37,7 @@ public sealed class DemoEnvironment
     private readonly TestWorkspace workspace = new();
     private readonly TestDocuments documents = new();
     private readonly TestDatabases databases;
-    private readonly TestOrganizationAccess organizationAccess = new();
+    private readonly TestOrganizationAccess organizationAccess;
     private readonly TestStripeTransport stripe = new();
     private readonly TestBillingPlanTransport billingPlans;
     private readonly TestBillingCheckoutPersistence checkoutPersistence;
@@ -46,10 +46,13 @@ public sealed class DemoEnvironment
     public DemoEnvironment()
     {
         databases = new TestDatabases(documents);
+        organizationAccess = new TestOrganizationAccess(workspace);
         billingPlans = new TestBillingPlanTransport(stripe);
         checkoutPersistence = new TestBillingCheckoutPersistence(state);
-        reporting = new TestReportingTransport(state, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken);
+        reporting = new TestReportingTransport(state, workspace, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken);
     }
+
+    internal TestWorkspace Workspace => workspace;
 
     public async Task InitializeAsync()
     {
@@ -74,7 +77,7 @@ public sealed class DemoEnvironment
     public async Task<ReferencePersonas> InitializeReferenceAsync(string root)
     {
         await InitializeAsync();
-        return await ReferenceFixtures.InitializeAsync(root, state, auth.RegisterFixturePrincipal, databases.SeedFixtureDatabase, documents);
+        return await ReferenceFixtures.InitializeAsync(root, state, workspace, auth.RegisterFixturePrincipal, databases.SeedFixtureDatabase, documents);
     }
 
     public WebApplication CreateHost(string root, int port, string origin, Action<WebApplicationBuilder>? configureScenario = null)
@@ -96,11 +99,13 @@ public sealed class DemoEnvironment
             builder.Services.Replace(ServiceDescriptor.Singleton<IPlatformRoleGateway>(auth));
             builder.Services.Replace(ServiceDescriptor.Singleton<IProjectAccessTokens>(auth));
             builder.Services.Replace(ServiceDescriptor.Singleton<IWorkspaceGateway>(workspace));
+            builder.Services.AddSingleton(workspace);
+            builder.Services.AddSingleton(organizationAccess);
             builder.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend>(databases));
             builder.Services.Replace(ServiceDescriptor.Singleton<IDocumentBackend>(documents));
             builder.Services.Replace(ServiceDescriptor.Singleton<IOrganizationAccess>(organizationAccess));
-            builder.Services.Replace(ServiceDescriptor.Singleton<IInvitationGateway>(new TestInvitationGateway()));
-            builder.Services.Replace(ServiceDescriptor.Singleton<IOrganizationLifecycle>(new TestOrganizationLifecycle()));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IInvitationGateway>(new TestInvitationGateway(organizationAccess)));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IOrganizationLifecycle>(new TestOrganizationLifecycle(workspace)));
             builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new TestMeasurements()));
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(reporting)));
             builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
@@ -307,18 +312,14 @@ sealed class TestState : IDashboardState
         binder: null, args: [HttpStatusCode.PreconditionFailed, "Test version precondition failed", null, null], culture: null)!;
 }
 
+// One provider registry per DemoEnvironment: its host pair shares it, other scenarios never do.
 sealed class TestWorkspace : IWorkspaceGateway
 {
-    public static readonly object Gate = new();
-    public static readonly Dictionary<string, OrganizationRecord> Organizations = [];
-    private static string globalRole = "owner";
-    // Root authorization tests deliberately override every role. Default owner
-    // means use the scoped provider registry, never grant an arbitrary caller.
-    public string Role { get => globalRole; set => globalRole = value; }
-    public string GlobalRole { get => Role; set => Role = value; }
-    public static string ScopedRole(string userId, string organizationId)
+    public object Gate { get; } = new();
+    public Dictionary<string, OrganizationRecord> Organizations { get; } = [];
+    public string ScopedRole(string userId, string organizationId)
     {
-        lock (Gate) return globalRole != "owner" ? globalRole : Organizations.GetValueOrDefault(organizationId)?.Members.GetValueOrDefault(userId)?.Role ?? "";
+        lock (Gate) return Organizations.GetValueOrDefault(organizationId)?.Members.GetValueOrDefault(userId)?.Role ?? "";
     }
     public static OrganizationRecord Clone(OrganizationRecord value) => JsonSerializer.Deserialize<OrganizationRecord>(JsonSerializer.Serialize(value))!;
     public Task<OrganizationRecord> EnsurePersonalAsync(SessionRecord session, CancellationToken cancellationToken)
@@ -362,8 +363,8 @@ sealed class TestWorkspace : IWorkspaceGateway
     { lock (Gate) { Manage(session.UserId, organizationId).Name = name; return Task.CompletedTask; } }
     public Task RenameProjectAsync(SessionRecord session, string organizationId, string projectId, string name, CancellationToken cancellationToken)
     { lock (Gate) { var org = Manage(session.UserId, organizationId); var project = org.Projects.GetValueOrDefault(projectId) ?? throw new AccountAccessException("Project is unavailable.", 404); project.Name = name; project.Slug = AccountService.Slug(name); return Task.CompletedTask; } }
-    public static OrganizationRecord Get(string id) => Organizations.GetValueOrDefault(id) ?? throw new AccountAccessException("Organization is unavailable.", 404);
-    public static OrganizationRecord Manage(string userId, string id)
+    public OrganizationRecord Get(string id) => Organizations.GetValueOrDefault(id) ?? throw new AccountAccessException("Organization is unavailable.", 404);
+    public OrganizationRecord Manage(string userId, string id)
     {
         var org = Get(id);
         if (ScopedRole(userId, id) is not ("owner" or "admin")) throw new AccountAccessException("Organization management is required.");
@@ -433,35 +434,35 @@ sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
     private ManagedDatabase Database(DatabaseScope scope, string id) => databases.TryGetValue(id, out var database) && database.ProjectId == scope.ProjectId ? database : throw new HttpRequestException("Test database missing.", null, HttpStatusCode.NotFound);
 }
 
-sealed class TestOrganizationAccess : IOrganizationAccess
+sealed class TestOrganizationAccess(TestWorkspace workspace) : IOrganizationAccess
 {
-    private static readonly Dictionary<string, (string OrganizationId, TerraBaseInvitation Invitation)> invitations = [];
-    private static readonly Dictionary<string, TerraBaseOwnershipTransfer> transfers = [];
-    public static void ExpireInvitation(AccountContext context, string id, DateTimeOffset expiresAt)
+    private readonly Dictionary<string, (string OrganizationId, TerraBaseInvitation Invitation)> invitations = [];
+    private readonly Dictionary<string, TerraBaseOwnershipTransfer> transfers = [];
+    public void ExpireInvitation(AccountContext context, string id, DateTimeOffset expiresAt)
     {
-        lock (TestWorkspace.Gate)
+        lock (workspace.Gate)
         {
-            var org = TestWorkspace.Get(context.Organization!.Id);
-            if (TestWorkspace.ScopedRole(context.UserId, org.Id) != "owner") throw new AccountAccessException("Organization ownership is required.");
+            var org = workspace.Get(context.Organization!.Id);
+            if (workspace.ScopedRole(context.UserId, org.Id) != "owner") throw new AccountAccessException("Organization ownership is required.");
             if (!invitations.TryGetValue(id, out var value) || value.OrganizationId != org.Id) throw new AccountAccessException("Invitation is unavailable.", 404);
             invitations[id] = (org.Id, value.Invitation with { ExpiresAt = expiresAt });
         }
     }
     public Task<OrganizationAccessView> ReadAsync(AccountContext context, CancellationToken cancellationToken)
     {
-        lock (TestWorkspace.Gate)
+        lock (workspace.Gate)
         {
-            var org = TestWorkspace.Get(context.Organization!.Id);
-            if (TestWorkspace.ScopedRole(context.UserId, org.Id).Length == 0) throw new AccountAccessException("Organization membership is required.");
+            var org = workspace.Get(context.Organization!.Id);
+            if (workspace.ScopedRole(context.UserId, org.Id).Length == 0) throw new AccountAccessException("Organization membership is required.");
             var members = org.Members.Values.Select(member => new MemberRecord { UserId = member.UserId, Role = member.Role, Name = context.Organization.Members.GetValueOrDefault(member.UserId)?.Name ?? member.Name, Email = member.Email, CreatedAt = member.CreatedAt, JoinedOn = context.Organization.Members.GetValueOrDefault(member.UserId)?.JoinedOn ?? member.JoinedOn }).ToArray();
             return Task.FromResult(new OrganizationAccessView(members, context.CanManage ? invitations.Values.Where(value => value.OrganizationId == org.Id).Select(value => value.Invitation).ToArray() : [], context.CanManage ? context.Organization.AuditEvents : [], transfers.GetValueOrDefault(org.Id), context.CanManage ? 90 : null));
         }
     }
     public Task<TerraBaseCreatedInvitation> InviteAsync(AccountContext context, string email, string role, CancellationToken cancellationToken)
     {
-        lock (TestWorkspace.Gate)
+        lock (workspace.Gate)
         {
-            var org = TestWorkspace.Manage(context.UserId, context.Organization!.Id);
+            var org = workspace.Manage(context.UserId, context.Organization!.Id);
             if (role is not ("member" or "admin")) throw new AccountAccessException("Choose an available role.", 422);
             var value = new TerraBaseInvitation(Guid.CreateVersion7().ToString(), email, role == "admin" ? TerraBaseRole.Admin : TerraBaseRole.Member, context.UserId, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddDays(7));
             invitations[value.Id] = (org.Id, value);
@@ -470,9 +471,9 @@ sealed class TestOrganizationAccess : IOrganizationAccess
     }
     public Task RevokeInvitationAsync(AccountContext context, string id, CancellationToken cancellationToken)
     {
-        lock (TestWorkspace.Gate)
+        lock (workspace.Gate)
         {
-            _ = TestWorkspace.Manage(context.UserId, context.Organization!.Id);
+            _ = workspace.Manage(context.UserId, context.Organization!.Id);
             if (!invitations.TryGetValue(id, out var value) || value.OrganizationId != context.Organization.Id) throw new AccountAccessException("Invitation is unavailable.", 404);
             invitations.Remove(id);
             return Task.CompletedTask;
@@ -480,9 +481,9 @@ sealed class TestOrganizationAccess : IOrganizationAccess
     }
     public Task ChangeRoleAsync(AccountContext context, string userId, string role, CancellationToken cancellationToken)
     {
-        lock (TestWorkspace.Gate)
+        lock (workspace.Gate)
         {
-            var org = TestWorkspace.Manage(context.UserId, context.Organization!.Id);
+            var org = workspace.Manage(context.UserId, context.Organization!.Id);
             if (role is not ("member" or "admin")) throw new AccountAccessException("Choose an available role.", 422);
             var member = org.Members.GetValueOrDefault(userId) ?? throw new AccountAccessException("Member is unavailable.", 404);
             if (userId == context.UserId || member.Role == "owner") throw new AccountAccessException("Choose another member than yourself or the owner.", 422);
@@ -492,9 +493,9 @@ sealed class TestOrganizationAccess : IOrganizationAccess
     }
     public Task RemoveMemberAsync(AccountContext context, string userId, CancellationToken cancellationToken)
     {
-        lock (TestWorkspace.Gate)
+        lock (workspace.Gate)
         {
-            var org = TestWorkspace.Manage(context.UserId, context.Organization!.Id);
+            var org = workspace.Manage(context.UserId, context.Organization!.Id);
             var member = org.Members.GetValueOrDefault(userId) ?? throw new AccountAccessException("Member is unavailable.", 404);
             if (userId == context.UserId || member.Role == "owner") throw new AccountAccessException("Choose another member than yourself or the owner.", 422);
             org.Members.Remove(userId);
@@ -503,10 +504,10 @@ sealed class TestOrganizationAccess : IOrganizationAccess
     }
     public Task TransferAsync(AccountContext context, string operation, string? userId, CancellationToken cancellationToken)
     {
-        lock (TestWorkspace.Gate)
+        lock (workspace.Gate)
         {
-            var org = TestWorkspace.Get(context.Organization!.Id);
-            var role = TestWorkspace.ScopedRole(context.UserId, org.Id);
+            var org = workspace.Get(context.Organization!.Id);
+            var role = workspace.ScopedRole(context.UserId, org.Id);
             if (operation == "start")
             {
                 if (role != "owner") throw new AccountAccessException("Organization ownership is required.");
@@ -527,13 +528,13 @@ sealed class TestOrganizationAccess : IOrganizationAccess
             return Task.CompletedTask;
         }
     }
-    public static TerraBaseMember Accept(SessionRecord session, string token)
+    public TerraBaseMember Accept(SessionRecord session, string token)
     {
-        lock (TestWorkspace.Gate)
+        lock (workspace.Gate)
         {
             const string prefix = "test-invitation-";
             if (!token.StartsWith(prefix, StringComparison.Ordinal) || !invitations.TryGetValue(token[prefix.Length..], out var found) || found.Invitation.ExpiresAt <= DateTimeOffset.UtcNow || !found.Invitation.Email.Equals(session.Email, StringComparison.OrdinalIgnoreCase)) throw new AccountAccessException("Invitation is unavailable.", 404);
-            var org = TestWorkspace.Get(found.OrganizationId);
+            var org = workspace.Get(found.OrganizationId);
             var role = found.Invitation.Role.ToString().ToLowerInvariant();
             if (org.Members.TryGetValue(session.UserId, out var existing)) role = existing.Role;
             else org.Members[session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = role, CreatedAt = DateTimeOffset.UtcNow };
@@ -811,18 +812,18 @@ sealed class TestStripeTransport : HttpMessageHandler
     private sealed record Invoice(string Id, string Number, string Status, long Amount, string Currency, DateTimeOffset Created, string HostedUrl, string PdfUrl);
 }
 
-sealed class TestInvitationGateway : IInvitationGateway
+sealed class TestInvitationGateway(TestOrganizationAccess access) : IInvitationGateway
 {
-    public Task<TerraBaseMember> AcceptAsync(SessionRecord session, string token, CancellationToken cancellationToken) => Task.FromResult(TestOrganizationAccess.Accept(session, token));
+    public Task<TerraBaseMember> AcceptAsync(SessionRecord session, string token, CancellationToken cancellationToken) => Task.FromResult(access.Accept(session, token));
 }
-sealed class TestOrganizationLifecycle : IOrganizationLifecycle
+sealed class TestOrganizationLifecycle(TestWorkspace workspace) : IOrganizationLifecycle
 {
     public Task LeaveAsync(AccountContext context, CancellationToken cancellationToken)
-    { lock (TestWorkspace.Gate) { var org = TestWorkspace.Get(context.Organization!.Id); if (TestWorkspace.ScopedRole(context.UserId, org.Id) == "owner") throw new AccountAccessException("Transfer ownership before leaving.", 409); if (!org.Members.Remove(context.UserId)) throw new AccountAccessException("Organization membership is required."); return Task.CompletedTask; } }
+    { lock (workspace.Gate) { var org = workspace.Get(context.Organization!.Id); if (workspace.ScopedRole(context.UserId, org.Id) == "owner") throw new AccountAccessException("Transfer ownership before leaving.", 409); if (!org.Members.Remove(context.UserId)) throw new AccountAccessException("Organization membership is required."); return Task.CompletedTask; } }
     public Task DeleteAsync(AccountContext context, CancellationToken cancellationToken)
-    { lock (TestWorkspace.Gate) { var org = TestWorkspace.Get(context.Organization!.Id); if (TestWorkspace.ScopedRole(context.UserId, org.Id) != "owner") throw new AccountAccessException("Organization ownership is required."); if (org.Projects.Count > 0) throw new AccountAccessException("Organization is not empty.", 409); TestWorkspace.Organizations.Remove(org.Id); return Task.CompletedTask; } }
+    { lock (workspace.Gate) { var org = workspace.Get(context.Organization!.Id); if (workspace.ScopedRole(context.UserId, org.Id) != "owner") throw new AccountAccessException("Organization ownership is required."); if (org.Projects.Count > 0) throw new AccountAccessException("Organization is not empty.", 409); workspace.Organizations.Remove(org.Id); return Task.CompletedTask; } }
     public Task DeleteProjectAsync(AccountContext context, string projectId, CancellationToken cancellationToken)
-    { lock (TestWorkspace.Gate) { var org = TestWorkspace.Manage(context.UserId, context.Organization!.Id); if (!org.Projects.TryGetValue(projectId, out var project)) throw new AccountAccessException("Project is unavailable.", 404); if (project.Databases.Count > 0) throw new AccountAccessException("Project is not empty.", 409); org.Projects.Remove(projectId); return Task.CompletedTask; } }
+    { lock (workspace.Gate) { var org = workspace.Manage(context.UserId, context.Organization!.Id); if (!org.Projects.TryGetValue(projectId, out var project)) throw new AccountAccessException("Project is unavailable.", 404); if (project.Databases.Count > 0) throw new AccountAccessException("Project is not empty.", 409); org.Projects.Remove(projectId); return Task.CompletedTask; } }
 }
 
 sealed class TestClientAddress(TestStripeTransport stripe) : IStartupFilter
