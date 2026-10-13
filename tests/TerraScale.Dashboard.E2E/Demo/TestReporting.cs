@@ -11,7 +11,7 @@ using TerraScale.Dashboard.Features.Auth;
 
 // Test-only producer protocol. Real dashboard HTTP endpoints, reporting
 // adapters, SDK retention requests and persisted CAS writes remain in use.
-sealed class TestReportingTransport(TestState state, Func<string, (string UserId, string Email)?> resolveToken, HttpMessageHandler stripe,
+sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Func<string, (string UserId, string Email)?> resolveToken, HttpMessageHandler stripe,
     Func<string, (string UserId, string OrganizationId, string ProjectId)?> resolveProjectToken) : HttpMessageHandler
 {
     private readonly HttpMessageInvoker vendor = new(stripe, false);
@@ -91,13 +91,13 @@ sealed class TestReportingTransport(TestState state, Func<string, (string UserId
         var actorUserId = sessionActor?.UserId ?? scopedActor!.Value.UserId;
         if (isScopedReporting && (sessionActor is not null || scopedActor is null || scopedActor.Value.ProjectId != id || scopedActor.Value.OrganizationId != org?.Id) ||
             !isScopedReporting && sessionActor is null) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
-        if (org is null || !org.ContainsMember(actorUserId) || TestWorkspace.ScopedRole(actorUserId, org.Id).Length == 0) return Json(new { error = "forbidden" }, HttpStatusCode.Forbidden);
+        if (org is null || !org.ContainsMember(actorUserId) || workspace.ScopedRole(actorUserId, org.Id).Length == 0) return Json(new { error = "forbidden" }, HttpStatusCode.Forbidden);
         if (request.Headers.TryGetValues("X-TerraBase-User-Id", out var users) && users.Single() != actorUserId ||
             request.Headers.TryGetValues("X-TerraBase-Organization-Id", out var organizations) && organizations.Single() != org.Id) return Json(new { error = "forbidden" }, HttpStatusCode.Forbidden);
         requests.Enqueue((actorUserId, uri.AbsolutePath, uri.Query));
         if (segments.Last() == "audit-retention")
         {
-            if (TestWorkspace.ScopedRole(actorUserId, org.Id) is not ("owner" or "admin")) return Json(new { error = "forbidden" }, HttpStatusCode.Forbidden);
+            if (workspace.ScopedRole(actorUserId, org.Id) is not ("owner" or "admin")) return Json(new { error = "forbidden" }, HttpStatusCode.Forbidden);
             if (request.Method == HttpMethod.Put)
             {
                 using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
