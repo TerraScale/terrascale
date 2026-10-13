@@ -43,6 +43,7 @@ public sealed class DemoEnvironment
     private readonly TestBillingCheckoutPersistence checkoutPersistence;
     private readonly TestReportingTransport reporting;
     private readonly TestAuthApiKeys apiKeys;
+    private readonly TestImports imports;
 
     public DemoEnvironment()
     {
@@ -52,6 +53,7 @@ public sealed class DemoEnvironment
         checkoutPersistence = new TestBillingCheckoutPersistence(state);
         apiKeys = new TestAuthApiKeys(auth.ResolveAccessToken, workspace.ProjectRole);
         reporting = new TestReportingTransport(state, workspace, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken, apiKeys);
+        imports = new TestImports(reporting, databases, documents, auth.ResolveProjectToken);
     }
 
     internal TestWorkspace Workspace => workspace;
@@ -107,7 +109,7 @@ public sealed class DemoEnvironment
             builder.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend>(databases));
             builder.Services.Replace(ServiceDescriptor.Singleton<IDocumentBackend>(documents));
             builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new TestMeasurements()));
-            builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(reporting)));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(imports)));
             builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
             builder.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(TimeProvider.System));
             builder.Logging.ClearProviders();
@@ -128,6 +130,7 @@ public sealed class DemoEnvironment
             : Results.BadRequest("Invalid test-only OIDC state."));
         app.MapGet("/__test/portal", () => Results.Content("<h1>Test-only Stripe customer portal</h1><p>The official Stripe SDK issued this portal session.</p><a href='/organization?tab=billing'>Return to billing</a>", "text/html"));
         reporting.MapRoutes(app);
+        imports.MapRoutes(app);
         billingPlans.MapRoutes(app);
         checkoutPersistence.MapRoutes(app);
         BillingWebhookScenario.MapRoutes(app);
