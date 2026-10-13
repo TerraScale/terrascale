@@ -1,7 +1,7 @@
 name: CI
 
 # One required check: "test". It passes when every area job that ran passed. The area jobs run in parallel, each
-# building one Dockerfile stage on a GitHub-hosted runner (format, Release build with analyzers as errors, the area's checks and Fast
+# building one Dockerfile stage on a CPU-limited alpha runner (format, Release build with analyzers as errors, the area's checks and Fast
 # suite): test-libs, test-auth, test-terrabase. On pull requests an area runs only when its files or the shared files
 # changed (`changes`); libs changes run every area. Pushes to main run every area. `make docker-test` runs all three.
 # Next to it, without waiting for it:
@@ -39,12 +39,10 @@ env:
   # ts-dotnet revision ts-auth builds against (TerraScale/ts-dotnet is private; read-only deploy key).
   TS_DOTNET_REV: bcd20603f11f3aa54dc54cec6e410b4fe9e24151
 
-# Repo variable CI_RUNNER=alpha selects the self-hosted alpha runners (persistent local
-# caches, so GitHub cache steps are skipped there); unset = GitHub-hosted.
 jobs:
   # Runs on every event: a skipped job would skip everything downstream of "test" (deploy, slow).
   changes:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -106,7 +104,7 @@ jobs:
   libs:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.libs == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 30
     steps:
       - &checkout
@@ -145,7 +143,10 @@ jobs:
           build-contexts: ts-dotnet=ts-dotnet
           target: test-${{ github.job }}
           # TerraBase's tests check that /healthz reports the exact commit (unused by the other areas' stages).
-          build-args: TERRABASE_REVISION=${{ github.sha }}
+          build-args: |
+            TERRABASE_REVISION=${{ github.sha }}
+            DOTNET_PROCESSOR_COUNT=8
+            DOTNET_GCHeapCount=8
           # The build stage is reused for identical inputs; the tests always run on the current head.
           no-cache-filters: test-${{ github.job }}
           push: false
@@ -156,7 +157,7 @@ jobs:
   auth:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.auth == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 30
     steps:
       - *checkout
@@ -167,7 +168,7 @@ jobs:
   terrabase:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.terrabase == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 30
     steps:
       - *checkout
@@ -178,7 +179,7 @@ jobs:
   test:
     needs: [changes, libs, auth, terrabase]
     if: ${{ !cancelled() }}
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 5
     permissions:
       contents: read
@@ -206,7 +207,7 @@ jobs:
       github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
       || contains(github.event.pull_request.labels.*.name, 'full-ci')
     continue-on-error: true
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 60
     permissions:
       contents: read
@@ -221,6 +222,9 @@ jobs:
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
           target: test-slow
+          build-args: |
+            DOTNET_PROCESSOR_COUNT=8
+            DOTNET_GCHeapCount=8
           # A rerun of the same commit runs the suites again instead of reusing the stored result.
           no-cache-filters: slow-run
           outputs: type=local,dest=slow
@@ -243,7 +247,7 @@ jobs:
             echo '```'
             grep -E '^Test run summary|^  (total|failed|succeeded|skipped|duration):' slow/log || true
             echo '```'
-            [[ ${#failed[@]} -eq 0 ]] || printf -- '- `%s`\n' "${failed[@]}"
+            [[ ${#failed[@]} -eq 0 ]] || printf -- '- %s\n' "${failed[@]}"
           } >> "$GITHUB_STEP_SUMMARY"
           (( code != 0 )) || exit 0
           # Issues track main only; a `full-ci` pull request or a dispatched branch reports in the summary.
@@ -259,10 +263,10 @@ jobs:
               | sed -E 's/(Bearer|Basic) [^ "]+/\1 [redacted]/g; s/((api[_-]?key|token|secret|password)["=: ]+)[^ ",]+/\1[redacted]/Ig')
             # The suite that reported it: its area's make target runs only that suite.
             target=$(awk -v t="failed $test " 'index($0, t) == 1 { on = 1 } on && /^Test run summary/ { print; exit }' slow/log)
-            case $target in *TerraBase.Slow*) target=terrabase-test-slow ;; *Authentication.Slow*) target=auth-test-slow ;; *) target=test-slow ;; esac
+            case $target in *TerraBase.Slow*) target="terrabase-test-slow" ;; *Authentication.Slow*) target="auth-test-slow" ;; *) target="test-slow" ;; esac
             body=$(printf '%s\n' \
               "Failed on \`$GITHUB_SHA\` in the Slow job: $RUN_URL" "" \
-              "Environment: \`slow\` job on ubuntu-latest, Dockerfile stage \`test-slow\`, Release build." \
+              "Environment: \`slow\` job on alpha, Dockerfile stage \`test-slow\`, Release build." \
               "Reproduce: \`nice -n 19 make $target TEST_ARGS=\"--treenode-filter '/*/*/*/${test%%(*}'\"\`" \
               "Expected: the test passes. Actual:" "" '```' "${excerpt:-see the run log}" '```')
             number=$(jq -r --arg t "$title" 'first(.[] | select(.title == $t) | .number) // empty' <<< "$open")
@@ -278,7 +282,7 @@ jobs:
     # OFF 2026-10-12 by the user's order: no PR preview environments until previews work again (Fly previews org
     # hit its 20-machine limit). Re-enable by deleting `false &&` in a reviewed PR.
     if: false && github.event_name == 'pull_request'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 20
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
@@ -295,11 +299,7 @@ jobs:
         uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Create the preview app
         run: terrascale/scripts/fly/preview.sh app ${{ github.event.pull_request.number }}
-      - uses: docker/setup-buildx-action@v3
-        with:
-          # On alpha, build on the shared persistent BuildKit daemon (layer + cache-mount reuse).
-          driver: ${{ vars.CI_RUNNER && 'remote' || 'docker-container' }}
-          endpoint: ${{ vars.CI_RUNNER && 'unix:///run/buildkit/buildkitd.sock' || '' }}
+      - *setup-builder
       - uses: docker/login-action@v3
         with:
           registry: registry.fly.io
@@ -329,7 +329,7 @@ jobs:
       - name: Start or update the preview machine
         run: >-
           terrascale/scripts/fly/preview.sh machine ${{ github.event.pull_request.number }}
-          registry.fly.io/$APP:terrabase-${{ github.sha }} registry.fly.io/$APP:ts-auth-${{ github.sha }}
+          "registry.fly.io/$APP:terrabase-${{ github.sha }}" "registry.fly.io/$APP:ts-auth-${{ github.sha }}"
       - name: Comment the preview URL
         env:
           GH_TOKEN: ${{ github.token }}
@@ -343,7 +343,7 @@ jobs:
     # PAUSED 2026-10-12 by the user's approval (containment 1C): merges to main must not deploy until the
     # three-region storage rebuild is done. Re-enable by deleting `false &&` in a reviewed PR.
     if: false && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 30
     concurrency:
       group: deploy
@@ -413,7 +413,7 @@ jobs:
   e2e:
     needs: deploy
     continue-on-error: true
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 30
     env:
       TERRABASE_E2E_FLY_URL: https://ts-terrabase.fly.dev
@@ -426,7 +426,7 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: terrascale/global.json
-          cache: ${{ !vars.CI_RUNNER }}
+          cache: true
           cache-dependency-path: terrascale/tests/TerraBase.E2E/packages.lock.json
       - name: Replication e2e against Fly
         working-directory: terrascale

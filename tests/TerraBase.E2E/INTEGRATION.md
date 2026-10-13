@@ -2,6 +2,10 @@
 
 Owner: the strict-test owner, the single integration owner and the single publisher of acceptance candidates (#108).
 
+**CI runner decision (2026-10-13):** keep self-hosted alpha, with 8 CPUs and 8 .NET server-GC heaps per test job
+across its five slots. [PR #212](https://github.com/TerraScale/terrascale/pull/212) tracks implementation and hosted
+qualification. The dated integration entries below retain their historical state.
+
 **Status:** local only. Nothing is pushed, merged or deployed: the COS global merge hold and preview push freeze apply,
 and the production deploy and previews stay paused.
 
@@ -20,8 +24,8 @@ A conflict in those lines is resolved to main's version.
 
 ## MERGE TRAIN PAUSED (17:30Z): CI is disabled
 
-**State:** the CI workflow 381575024 is `disabled_manually` by the user (the "Reduce Blacksmith CI Runner Costs" thread,
-to stop Blacksmith spend). #139 (merged 17:29Z → main `b25787f5`, outside this train) moved CI to GitHub-hosted
+**State:** the CI workflow 381575024 is `disabled_manually` by the user to stop paid CI runner spend.
+#139 (merged 17:29Z → main `b25787f5`, outside this train) moved CI to GitHub-hosted
 `ubuntu-latest`, but CI stays disabled, so `b25787f5` has **no run**, and no PR can get a `test` check on its exact
 head. Main's `ci.yml` still has both gates (preview L259, deploy L315, `if: false &&`).
 
