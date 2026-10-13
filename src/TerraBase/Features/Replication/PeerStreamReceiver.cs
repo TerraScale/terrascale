@@ -128,6 +128,8 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         Task<bool>? reading = null;
         try
         {
+            // Start the accepted response before a predecessor can delay it, so shutdown can end it without a welcome.
+            await context.WriteResponseHeadersAsync(Metadata.Empty).ConfigureAwait(false);
             if (precedingStop is not null)
             {
                 if (Replacing is { } replacing)

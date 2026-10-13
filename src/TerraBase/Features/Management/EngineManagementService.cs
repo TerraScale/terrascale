@@ -972,7 +972,7 @@ internal sealed partial class EngineManagementService(
         }
         else
         {
-            _ = await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
+            _ = await FinishDatabaseCleanupAsync(storage, CancellationToken.None, abandonedCreation: true).ConfigureAwait(false);
         }
     }
 

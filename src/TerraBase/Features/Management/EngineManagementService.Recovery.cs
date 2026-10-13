@@ -118,7 +118,8 @@ internal sealed partial class EngineManagementService
             await GetAsync(transaction, Databases(storage.ProjectId!), storage.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not null,
             static error => error, cancellationToken);
 
-    private async ValueTask<CatalogCheck> FinishDatabaseCleanupAsync(TenantContext storage, CancellationToken cancellationToken)
+    private async ValueTask<CatalogCheck> FinishDatabaseCleanupAsync(
+        TenantContext storage, CancellationToken cancellationToken, bool abandonedCreation = false)
     {
         // This also protects a create whose registration committed before a later error was reported.
         var registered = await HasDatabaseRowAsync(storage, cancellationToken).ConfigureAwait(false);
@@ -129,6 +130,12 @@ internal sealed partial class EngineManagementService
 
         if (registered is bool exists && exists)
         {
+            if (abandonedCreation)
+            {
+                // Replication can register the prepared copy before its local create is rejected.
+                return await ClearDatabaseCleanupAsync(storage, cancellationToken).ConfigureAwait(false);
+            }
+
             throw new InvalidOperationException("a database cleanup intent conflicts with the catalog");
         }
 

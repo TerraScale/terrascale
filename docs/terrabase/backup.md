@@ -691,3 +691,8 @@ its SQL), a segment is a change log, and replay applies rows instead of pages.
 - `GET /v1/backup` also shows, per file, whether this member ships it.
 - Scratch files (log waiting for upload, snapshots, sealed objects) live in `<data-directory>/.backup`, which is
   emptied at start.
+
+## Restore acceptance and catalog security
+
+See [the local restore drill](local-restore-drill.md) for the required Fast backup/wipe/restore test and
+Fly/Tigris acceptance requirements. The catalog security gate is held separately in [PR #213](https://github.com/TerraScale/terrascale/pull/213).
