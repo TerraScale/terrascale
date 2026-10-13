@@ -154,12 +154,15 @@ internal sealed partial class SqliteStorageTransaction
             : Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0, cancellationToken);
 
     /// <summary>
-    /// Retention without an acknowledgement (uncaptured): first a peer whose unacknowledged CDC rows pass 1 GiB stops holding
-    /// them (its <c>seen</c> goes to 0 until it is heard from again, and it refills when it returns), then what
-    /// <see cref="Retention"/> allows is deleted. Returns the CDC rows left, and the smallest acknowledged id of a peer still
-    /// holding rows.
+    /// Retention without an acknowledgement (uncaptured): first each peer's acknowledged id rises over the rows past it that
+    /// hold no group of <paramref name="self"/> (joined remote writes and repairs, which are never shipped, so a peer has
+    /// nothing there to acknowledge: a replica that only receives would otherwise keep every joined row), when every row
+    /// past it is still here (after a cut the peer refills instead), then a peer whose
+    /// unacknowledged CDC rows pass 1 GiB stops holding them (its <c>seen</c> goes to 0 until it is heard from again, and it
+    /// refills when it returns), then what <see cref="Retention"/> allows is deleted. Returns the CDC rows left, and the
+    /// smallest acknowledged id of a peer still holding rows.
     /// </summary>
-    internal async ValueTask<(long Left, long? Floor)> TrimAsync(long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
+    internal async ValueTask<(long Left, long? Floor)> TrimAsync(long? backupAnchor, DateTimeOffset now, ReplicaId self, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         return await RunAsync(() =>
@@ -176,6 +179,32 @@ internal sealed partial class SqliteStorageTransaction
                 while (reader.Read())
                 {
                     peers.Add((reader.GetInt64(0), reader.GetInt64(1)));
+                }
+            }
+
+            // Peers at one id share one read. Only an ack whose following rows are all still here can rise: past a cut, the
+            // deleted rows may have held groups the peer lacks, and it must refill instead. A damaged row past an ack leaves
+            // that ack where it is (the read refuses, section 7).
+            var oldest = Command("SELECT min(change_id) FROM turso_cdc;").ExecuteScalar() is long kept ? kept : newest + 1;
+            foreach (var at in peers.Select(peer => peer.Acked).Where(acked => acked < newest && oldest <= acked + 1).Distinct().ToList())
+            {
+                long quiet;
+                try
+                {
+                    (_, quiet, _) = ReadChangeGroups(at, 1, 1, self, cancellationToken);
+                }
+                catch (InvalidDataException)
+                {
+                    continue;
+                }
+
+                if (quiet > at)
+                {
+                    var raise = Command("UPDATE _tb_peers SET acked = $quiet WHERE seen > 0 AND acked = $acked;");
+                    raise.Parameters.AddWithValue("$quiet", quiet);
+                    raise.Parameters.AddWithValue("$acked", at);
+                    raise.ExecuteNonQuery();
+                    peers = [.. peers.Select(peer => peer.Acked == at ? (peer.Node, quiet) : peer)];
                 }
             }
 

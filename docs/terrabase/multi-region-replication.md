@@ -278,6 +278,12 @@ until the SDKs drop them). Create-only `If-None-Match: *` goes too. Client ULIDs
 - **`turso_cdc` is the outbox.** Groups are rebuilt from it on demand for each peer (`acked < change_id`), so there is
   no second log. A peer silent for more than 24 h, or more than 1 GiB behind, stops holding CDC rows. It must refill
   when it returns (section 10).
+- **Acks over joined rows.** Joined remote writes and repairs are never shipped, so a peer never acknowledges them. Each
+  5 s retention pass therefore raises a peer's `acked` to the last commit before the next local group past it (the read's
+  quiet point), but only while every row past that ack is still here: after a cut the peer may lack deleted local
+  groups and refills instead. Without this a replica that mostly receives keeps every joined row until the 1 GiB cut.
+- **Copies and restores.** `_tb_peers.acked` names rows of one file's `turso_cdc`; a copy's ids restart at 1, so a copy
+  (database copy, restore, backup snapshot) resets every peer's `acked` to 0. What the peers applied stays.
 - **Atomicity.** One Turso transaction → one group → one apply transaction at the receiver. Readers never see part of
   an operation, nor part of a lane batch.
 

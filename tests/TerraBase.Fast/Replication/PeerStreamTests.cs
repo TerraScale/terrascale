@@ -455,6 +455,113 @@ public sealed class PeerStreamTests
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
     }
 
+    // A replica that only joins another region's writes: its sender has no local group to ack past them, so retention raises
+    // the peer's ack over the joined rows itself (review of #106, M1); otherwise its CDC keeps every joined row.
+    [Test]
+    public async Task A_replica_that_only_joins_remote_writes_drops_their_cdc_rows()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var first = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":0}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(first, """{"n":0}""")).IsTrue();
+        var last = string.Empty;
+        for (var write = 1; write <= 50; write++)
+        {
+            last = EntityIds.New().ToString();
+            var id = last;
+            await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", id, Json($$"""{"n":{{write}}}"""), CancellationToken.None));
+        }
+
+        await Assert.That(await gru.UntilAsync(last, """{"n":50}""")).IsTrue();
+        clock.Offset = TimeSpan.FromMinutes(2);
+        var deadline = DateTime.UtcNow + Deadline;
+        long rows;
+        do
+        {
+            await Task.Delay(500);
+            rows = await gru.CdcRowsAsync();
+        }
+        while (rows >= 20 && DateTime.UtcNow < deadline);
+
+        await Assert.That(rows).IsLessThan(20);
+    }
+
+    // The other side of raising acks over joined rows: sjc's own write is joined on gru (rows sjc's ack may rise over), then
+    // sjc is away while gru writes. A retention pass may raise sjc's ack over the joined rows but never past gru's
+    // unshipped local group, so the group still ships when sjc returns.
+    [Test]
+    public async Task Retention_never_raises_an_ack_past_a_local_group_the_peer_lacks()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (first, joined, held) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        var sjcNode = sjc.Node;
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+        await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined, Json("""{"n":3}"""), CancellationToken.None));
+        await Assert.That(await gru.UntilAsync(joined, """{"n":3}""")).IsTrue();
+        await sjc.StopAsync();
+        var beforeHeld = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", held, Json("""{"n":2}"""), CancellationToken.None));
+
+        await gru.TrimAsync();
+        await Assert.That(await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None)).IsLessThanOrEqualTo(beforeHeld);
+        await sjc.StartAsync();
+        await Assert.That(await sjc.UntilAsync(held, """{"n":2}""")).IsTrue();
+    }
+
+    // A copy (and so a restore, which copies) must not inherit the source's _tb_peers.acked, an id of the source's
+    // turso_cdc: once the copy's own ids passed it, it would be taken as the peer's ack and the copy's groups at or below it
+    // never streamed (review of #106, M2). A copy's peer has acknowledged nothing of the copy.
+    [Test]
+    public async Task A_copied_database_does_not_inherit_its_sources_peer_acks()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        for (var write = 0; write < 5; write++)
+        {
+            var id = EntityIds.New().ToString();
+            await gru.WriteAsync(async transaction =>
+            {
+                _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+                _ = await transaction.PutAsync("items", id, Json("""{"n":1}"""), CancellationToken.None);
+            });
+        }
+
+        var sjcNode = sjc.Node;
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+        var stale = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+        await Assert.That(stale).IsGreaterThan(0);
+
+        var engine = gru.Api.Server.Services.GetRequiredService<IStorageEngine>();
+        var copy = cluster.Database with { DatabaseId = EntityIds.New().ToString() };
+        await Assert.That(await engine.CopyDatabaseAsync(cluster.Database, copy, CancellationToken.None)).IsTrue();
+        var store = (await engine.OpenDatabaseAsync(copy, CancellationToken.None))!;
+        for (var write = 0; write < 500 && await gru.Groups.HeadAsync(copy, CancellationToken.None) < stale; write++)
+        {
+            var id = EntityIds.New().ToString();
+            _ = await store.WriteAsync(async (transaction, token) =>
+            {
+                _ = await transaction.PutAsync("items", id, Json("""{"n":2}"""), CancellationToken.None);
+                return true;
+            }, static _ => true, CancellationToken.None);
+        }
+
+        await Assert.That(await gru.Groups.HeadAsync(copy, CancellationToken.None)).IsGreaterThanOrEqualTo(stale);
+        await Assert.That(await gru.Groups.AckedAsync(copy, sjcNode, CancellationToken.None)).IsEqualTo(0);
+    }
+
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
@@ -693,6 +800,32 @@ public sealed class PeerStreamTests
             }
 
             return false;
+        }
+
+        // One retention pass over the database, as the CDC source's 5 s loop runs it.
+        public async Task TrimAsync()
+        {
+            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+            var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+            var transaction = (TerraBase.Engine.Sqlite.SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None);
+            await using (transaction)
+            {
+                _ = await transaction.TrimAsync(store.BackupAnchor, engine.HostTime.GetUtcNow(), engine.ReplicaId, CancellationToken.None);
+                _ = await transaction.CommitAsync(CancellationToken.None);
+            }
+        }
+
+        // The rows of the database's turso_cdc.
+        public async Task<long> CdcRowsAsync()
+        {
+            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+            var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+            return await store.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT count(*) FROM turso_cdc;";
+                return (long)command.ExecuteScalar()!;
+            }, "a test counting CDC rows", CancellationToken.None);
         }
 
         public AntiEntropy AntiEntropy => Api.Server.Services.GetRequiredService<AntiEntropy>();

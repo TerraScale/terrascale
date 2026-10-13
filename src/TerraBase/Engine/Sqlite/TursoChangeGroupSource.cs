@@ -193,7 +193,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
                     var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, stoppingToken).ConfigureAwait(false);
                     await using (transaction.ConfigureAwait(false))
                     {
-                        (var left, floor) = await transaction.TrimAsync(store.BackupAnchor, _engine.HostTime.GetUtcNow(), stoppingToken).ConfigureAwait(false);
+                        (var left, floor) = await transaction.TrimAsync(store.BackupAnchor, _engine.HostTime.GetUtcNow(), _engine.ReplicaId, stoppingToken).ConfigureAwait(false);
                         _ = await transaction.CommitAsync(stoppingToken).ConfigureAwait(false);
                         _backlog[incarnation] = left;
                     }
@@ -210,14 +210,17 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     private async ValueTask RecordAsync(SqliteDatabaseStore store, ReplicaId peer, long changeId, CancellationToken cancellationToken)
     {
+        long? floor;
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            var (left, floor) = await transaction.RecordAckedAsync(peer, changeId, store.BackupAnchor, _engine.HostTime.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+            (var left, floor) = await transaction.RecordAckedAsync(peer, changeId, store.BackupAnchor, _engine.HostTime.GetUtcNow(), cancellationToken).ConfigureAwait(false);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             _backlog[store.Incarnation] = left;
-            await TailAsync(store, floor, cancellationToken).ConfigureAwait(false);
         }
+
+        // After the writer is released: the gauge's read must not hold it.
+        await TailAsync(store, floor, cancellationToken).ConfigureAwait(false);
     }
 
     // The oldest local group above the slowest live peer's ack, looked at no more than once a second per database.
