@@ -63,7 +63,7 @@ public sealed class AnalyticsContractJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(request.GetProperty("projectId").GetString()).IsEqualTo(projectId);
         await Assert.That(request.GetProperty("organizationId").GetString()).IsEqualTo(organizationId);
         await Assert.That(request.GetProperty("subject").GetString()).IsEqualTo(identity.RootElement.GetProperty("userId").GetString());
-        await Assert.That(request.GetProperty("audience").GetString()).IsEqualTo("https://gru.api.terrascale.tech");
+        await Assert.That(request.GetProperty("audience").GetString()).IsEqualTo("https://api.terrascale.tech");
         await Assert.That(request.GetProperty("scope").GetString()).IsEqualTo("databases:read");
         await Assert.That(request.GetProperty("tokenClass").GetString()).IsEqualTo("project");
 

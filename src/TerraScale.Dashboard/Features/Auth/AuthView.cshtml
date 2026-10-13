@@ -24,7 +24,6 @@
                 <form class="ts-form" method="post" action="@Model.Action" data-submit-once novalidate>
                     <input type="hidden" name="_csrf" value="@Model.CsrfToken" />
                     <input type="hidden" name="redirectTo" value="@Model.ReturnTo" />
-                    @if (Model.PromptLogin) { <input type="hidden" name="prompt" value="login" /> }
                     @if (Model.SignUp) { <input type="hidden" name="signUp" value="1" /><input type="hidden" name="name" value="@Model.Name" /> }
                     @if (Model.Mode is "code-verify" or "reset-complete")
                     {

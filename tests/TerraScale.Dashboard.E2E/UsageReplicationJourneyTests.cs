@@ -73,7 +73,7 @@ public sealed class UsageReplicationJourneyTests(DashboardE2EFixture fixture)
         var exchange = root.GetProperty("projectRequests").EnumerateArray().First();
         await Assert.That(exchange.GetProperty("path").GetString()).IsEqualTo("/v1/projects/" + projectId + "/replication");
         await Assert.That(exchange.GetProperty("projectId").GetString()).IsEqualTo(projectId);
-        await Assert.That(exchange.GetProperty("audience").GetString()).IsEqualTo("https://gru.api.terrascale.tech");
+        await Assert.That(exchange.GetProperty("audience").GetString()).IsEqualTo("https://api.terrascale.tech");
         await Assert.That(exchange.GetProperty("scope").GetString()).IsEqualTo("databases:read");
         await Assert.That(exchange.GetProperty("tokenClass").GetString()).IsEqualTo("project");
     }

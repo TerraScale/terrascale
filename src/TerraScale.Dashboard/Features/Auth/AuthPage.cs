@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Auth;
 public sealed record AuthPage(
     DocumentModel Document, string Mode, string CsrfToken, string Email = "", string ReturnTo = "/",
     string Error = "", string EmailError = "", string PasswordError = "", string Notice = "",
-    string CodeError = "", string ConfirmPasswordError = "", bool PromptLogin = false,
+    string CodeError = "", string ConfirmPasswordError = "",
     bool SignUp = false, string Name = "", int ResendSeconds = 0, bool ResendUnavailable = false)
 {
     public string Title => Mode switch
@@ -39,7 +39,7 @@ public sealed record AuthPage(
 
     public string LoginUrl => ReturnTo == "/" ? "/login" : "/login?returnTo=" + Uri.EscapeDataString(ReturnTo);
     public string CodeUrl => "/login/code" + Query(("email", Email), ("returnTo", ReturnTo == "/" ? "" : ReturnTo));
-    public string SsoUrl => "/login/sso" + Query(("returnTo", ReturnTo), ("prompt", PromptLogin ? "login" : ""));
+    public string SsoUrl => "/login/sso" + Query(("returnTo", ReturnTo));
     public string SignUpUrl => "/onboarding" + Query(("returnTo", ReturnTo == "/" ? "" : ReturnTo));
 
     private static string Query(params (string Key, string Value)[] fields)

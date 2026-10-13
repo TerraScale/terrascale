@@ -116,7 +116,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         {
             var uri = request.RequestUri!;
             if (uri.Scheme != "https" || !uri.IsDefaultPort || uri.UserInfo.Length != 0 || uri.Host is not
-                ("atlas.terrascale.tech" or "gru.api.terrascale.tech" or "sfo.api.terrascale.tech"))
+                ("api.terrascale.tech" or "gru.api.terrascale.tech" or "sfo.api.terrascale.tech"))
                 throw new HttpRequestException("Unexpected outbound origin in the test-only database producer.");
             request.Headers.Host = uri.Authority;
             request.RequestUri = new(origin, uri.PathAndQuery);
@@ -276,6 +276,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         public Func<string, (string UserId, string Email)?> ResolveAccessToken { get; set; } = null!;
         public Func<string, (string UserId, string OrganizationId, string ProjectId)?> ResolveProjectToken { get; set; } = null!;
         public Func<HttpContext, Task<IResult?>>? Extension { get; set; }
+        // The region that answers api.terrascale.tech, as Fly picks it for the dashboard's machine.
+        public string ApiRegion { get; set; } = "gru";
 
         public void Release() { listGate?.TrySetResult(); createGate?.TrySetResult(); State?.ReleaseQuotaCommits(); }
 
@@ -305,14 +307,14 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 if (Extension is not null && await Extension(http) is { } extensionResult) return extensionResult;
                 if (path == "/__test/control") return await ControlAsync(http);
                 if (path == "/__test/observations") return Observations();
-                if (http.Request.Host.Host == "atlas.terrascale.tech" && path == "/v1/discovery")
-                    return Results.Json(new
-                    {
-                        regions = new[] {
-                        new { id = "gru-1", name = "São Paulo", country = "BR", api = "https://gru.api.terrascale.tech", health = "ok" },
-                        new { id = "sfo-1", name = "San Francisco", country = "US", api = "https://sfo.api.terrascale.tech", health = "ok" } }
-                    });
-                Require(http.Request.Host.Host is "gru.api.terrascale.tech" or "sfo.api.terrascale.tech", "Trusted producer host");
+                Require(http.Request.Host.Host is "api.terrascale.tech" or "gru.api.terrascale.tech" or "sfo.api.terrascale.tech", "Trusted producer host");
+                // terrascale e30ffdc2 (region-identity.md): every answer names its region; api.terrascale.tech answers in ApiRegion.
+                var answering = http.Request.Host.Host switch { "sfo.api.terrascale.tech" => "sfo", "gru.api.terrascale.tech" => "gru", _ => ApiRegion };
+                http.Response.Headers["X-TerraBase-Region"] = answering;
+                if (http.Request.Headers.TryGetValue("X-TerraScale-Region-Pin", out var pin) && (pin.Count != 1 || pin[0] != answering))
+                    return Error(421, "misdirected_request");
+                if (path == "/healthz")
+                    return Results.Json(new { status = "ok", version = "test", region = answering, storageFormat = "test", revision = (string?)null, machine = "local" });
                 var token = http.Request.Headers.Authorization.ToString();
                 if (path.StartsWith("/v1/management/", StringComparison.Ordinal))
                 {
@@ -367,6 +369,14 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 case "credential-conflict": State.ConflictCredentials = body.GetProperty("value").GetBoolean(); break;
                 case "role": role = body.GetProperty("value").GetString()!; break;
                 case "backup-failure": backupFailure = body.GetProperty("value").GetString()!; break;
+                // Another TerraBase client placed a replica: the producer's placement is wider than the dashboard asked for.
+                case "api-region": ApiRegion = body.GetProperty("value").GetString()!; break;
+                case "add-replica":
+                    var added = body.GetProperty("value").GetString()!;
+                    lock (gate)
+                        foreach (var placed in databases.Values.ToArray())
+                            databases[placed.Id] = placed with { ReplicaRegions = [.. placed.ReplicaRegions ?? [], added] };
+                    break;
                 case "fail-database-metadata":
                 case "database-status":
                     var databaseOrgId = body.GetProperty("organizationId").GetString()!;
@@ -602,8 +612,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             {
                 Require(acting == subject, "The official branch SDK acts as its admitted user");
                 if (role is not ("owner" or "admin")) return Error(403, "role_too_low");
-                var home = current.HomeRegion == "sfo-1" ? "sfo.api.terrascale.tech" : "gru.api.terrascale.tech";
-                if (http.Request.Host.Host != home) return Error(421, "wrong_region");
+                var home = current.HomeRegion == "sfo" ? "sfo.api.terrascale.tech" : "gru.api.terrascale.tech";
+                if (http.Request.Host.Host != home) return WrongRegion(http, current);
                 var request = await JsonAsync(http);
                 Require(request.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "name" }),
                     "The frozen producer branch body accepts only its new database name");
@@ -632,13 +642,13 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             if (parts.Length == 8 && http.Request.Method == "PATCH")
             {
                 if (role is not ("owner" or "admin")) return Error(403, "role_too_low");
-                var home = current.HomeRegion == "sfo-1" ? "sfo.api.terrascale.tech" : "gru.api.terrascale.tech";
-                if (http.Request.Host.Host != home) return Error(421, "wrong_region");
+                var home = current.HomeRegion == "sfo" ? "sfo.api.terrascale.tech" : "gru.api.terrascale.tech";
+                if (http.Request.Host.Host != home) return WrongRegion(http, current);
                 var body = await JsonAsync(http);
                 Require(body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "replicaRegions" }),
                     "Placement updates send only the complete producer replicaRegions list");
                 var replicas = body.GetProperty("replicaRegions").EnumerateArray().Select(value => value.GetString()!).ToArray();
-                Require(replicas.All(value => value is "sfo-1" or "gru-1") && !replicas.Contains(current.HomeRegion, StringComparer.Ordinal) &&
+                Require(replicas.All(value => value is "sfo" or "gru") && !replicas.Contains(current.HomeRegion, StringComparer.Ordinal) &&
                     replicas.Distinct(StringComparer.Ordinal).Count() == replicas.Length, "Placement preserves its home and unique discovered replicas");
                 lock (gate)
                 {
@@ -748,7 +758,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 if (databases.Values.Any(database => database.ProjectId == project && database.Name == name)) return Error(409, "name_taken");
                 Interlocked.Increment(ref backupRestores);
                 var restored = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, source.Id,
-                    http.Request.Host.Host == "gru.api.terrascale.tech" ? "gru-1" : "sfo-1", null);
+                    http.Request.Host.Host == "gru.api.terrascale.tech" ? "gru" : "sfo", null);
                 if (backupFailure == "wrong-project") restored = restored with { ProjectId = ids.NewId() };
                 if (backupFailure == "same-id") restored = restored with { Id = source.Id };
                 if (backupFailure == "wrong-source") restored = restored with { BranchedFrom = ids.NewId() };
@@ -846,6 +856,14 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         }
 
         private void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+        // TerraBase DatabaseRegions.Misdirected: 421 wrong_region naming the home and every serving region.
+        private static IResult WrongRegion(HttpContext http, ManagedDatabase database)
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            http.Response.Headers["X-TerraBase-Database-Home"] = database.HomeRegion;
+            http.Response.Headers["X-TerraBase-Database-Regions"] = string.Join(',', (database.ReplicaRegions ?? []).Prepend(database.HomeRegion));
+            return Results.Json(new { error = new { code = "wrong_region", message = "the database is served in " + database.HomeRegion } }, statusCode: 421);
+        }
         private static IResult Error(int status, string code) => Results.Json(new { error = new { code, message = "Protocol producer rejected the request" } }, statusCode: status);
         private static async Task<JsonElement> JsonAsync(HttpContext http) { using var json = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted); return json.RootElement.Clone(); }
         private static JsonNode? Merge(JsonNode? current, JsonNode? patch)

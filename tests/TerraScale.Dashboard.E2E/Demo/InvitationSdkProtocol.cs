@@ -43,7 +43,7 @@ public sealed class InvitationSdkProtocol
         if (parts.Length is not (5 or 6) || parts[0] != "v1" || parts[1] != "management" || parts[2] != "organizations" || parts[4] != "invitations") return null;
         try
         {
-            if (http.Request.Host.Host is not ("gru.api.terrascale.tech" or "sfo.api.terrascale.tech")) return Error(403, "forbidden");
+            if (http.Request.Host.Host is not ("api.terrascale.tech" or "gru.api.terrascale.tech" or "sfo.api.terrascale.tech")) return Error(403, "forbidden");
             var bearer = http.Request.Headers.Authorization.ToString();
             var admitted = bearer.StartsWith("Bearer ", StringComparison.Ordinal) ? resolveAccessToken(bearer[7..]) : null;
             if (admitted is null) return Error(401, "unauthorized");

@@ -49,7 +49,8 @@ public sealed class DatabaseReadinessJourneyTests(DashboardE2EFixture fixture)
         Volatile.Write(ref rejectCreate, false);
         await ControlAsync(producer, new { command = "fail-database-metadata", organizationId, projectId, name });
         await ControlAsync(producer, new { command = "pause-database-creates" });
-        var pending = PostAsync(client, "/api/v1/dashboard/databases", csrf, new() { ["name"] = name }, ["GRU", "SFO"]);
+        // Only the answering region (GRU) is choosable; SFO joins below through the producer, outside the catalog.
+        var pending = PostAsync(client, "/api/v1/dashboard/databases", csrf, new() { ["name"] = name }, ["GRU"]);
         try
         {
             await WaitAsync(producer, "pausedCreates");
@@ -62,9 +63,11 @@ public sealed class DatabaseReadinessJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(observed.GetProperty("creates").GetInt32()).IsEqualTo(1);
         await Assert.That(observed.GetProperty("failedDatabaseMetadataWrites").GetInt32()).IsEqualTo(1);
         var actualId = observed.GetProperty("databases")[0].GetProperty("id").GetString()!;
+        await ControlAsync(producer, new { command = "add-replica", value = "sfo" });
         await Assert.That((await JsonAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
+        // A region the catalog does not list cannot be chosen as a new home.
         using (var wrongHome = await PostAsync(replica, "/api/v1/dashboard/databases", replicaCsrf, new() { ["name"] = name }, ["SFO"]))
-            await Assert.That(wrongHome.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because(await EvidenceAsync(wrongHome, producer));
+            await Assert.That(wrongHome.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity).Because(await EvidenceAsync(wrongHome, producer));
         await Assert.That((await JsonAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
         // The retry omits SFO. Recovery must retain the producer's actual SFO
         // replica rather than claim this new request changed placement.
@@ -126,8 +129,8 @@ public sealed class DatabaseReadinessJourneyTests(DashboardE2EFixture fixture)
                 ["projectId"] = mismatch == "project" ? "01K78000000000000000000001" : projectId,
                 ["name"] = mismatch == "name" ? "another-database" : name,
                 ["createdAt"] = DateTimeOffset.UtcNow,
-                ["homeRegion"] = mismatch == "home" ? "sfo-1" : "gru-1",
-                ["replicaRegions"] = mismatch == "replicas" ? Array.Empty<string>() : new[] { "sfo-1" }
+                ["homeRegion"] = mismatch == "home" ? "sfo" : "gru",
+                ["replicaRegions"] = mismatch == "replicas" ? new[] { "sfo" } : Array.Empty<string>()
             };
             if (mismatch == "missing-replicas") value.Remove("replicaRegions");
             return Task.FromResult<IResult?>(Results.Json(value));
@@ -141,7 +144,8 @@ public sealed class DatabaseReadinessJourneyTests(DashboardE2EFixture fixture)
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         id = await CreateAsync(client, csrf, name);
         Volatile.Write(ref invalid, true);
-        using (var response = await PostAsync(client, "/api/v1/dashboard/databases/regions", csrf, new() { ["databaseId"] = id }, ["GRU", "SFO"]))
+        // Only the answering region is listed (no TerraBase region catalog), so the placement keeps its home alone.
+        using (var response = await PostAsync(client, "/api/v1/dashboard/databases/regions", csrf, new() { ["databaseId"] = id }, ["GRU"]))
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(await EvidenceAsync(response, producer));
         var database = (await JsonAsync(client, "/api/v1/dashboard/databases"))[0];
         await Assert.That(database.GetProperty("id").GetString()).IsEqualTo(id);
@@ -153,34 +157,84 @@ public sealed class DatabaseReadinessJourneyTests(DashboardE2EFixture fixture)
         await Assert.That((await JsonAsync(producer, "/__test/observations")).GetProperty("failures").GetArrayLength()).IsEqualTo(0);
     }
 
+    // TerraBase DatabaseRegions.Misdirected (terrascale e30ffdc2): a region that does not manage the database answers
+    // 421 wrong_region with X-TerraBase-Database-Home/-Regions. The dashboard pins its request, reports the home, and
+    // neither retries nor redirects nor changes its record.
     [Test]
-    [Arguments("duplicate-id")]
-    [Arguments("code-collision")]
-    [Arguments("invalid-origin")]
-    [Arguments("invalid-health")]
-    [Arguments("missing-name")]
-    public async Task InvalidDiscoveryNeverSilentlyDropsAnEntryAndNeverProvisions(string defect)
+    public async Task WrongRegionAnswerIsReportedAndNeverRetried()
+    {
+        var misdirect = false;
+        var organizationId = "";
+        var projectId = "";
+        var id = "";
+        var attempts = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
+        {
+            if (!Volatile.Read(ref misdirect) || http.Request.Method != "PATCH" ||
+                http.Request.Path != "/v1/management/organizations/" + organizationId + "/projects/" + projectId + "/databases/" + id)
+                return Task.FromResult<IResult?>(null);
+            DemandScope(http, organizationId);
+            attempts.Enqueue(http.Request.Host.Host + " pin=" + http.Request.Headers["X-TerraScale-Region-Pin"]);
+            http.Response.Headers["X-TerraBase-Region"] = "gru";
+            http.Response.Headers["X-TerraBase-Database-Home"] = "sfo";
+            http.Response.Headers["X-TerraBase-Database-Regions"] = "sfo,gru";
+            http.Response.Headers.CacheControl = "no-store";
+            return Task.FromResult<IResult?>(Results.Json(new { error = new { code = "wrong_region", message = "the database is served in sfo" } }, statusCode: 421));
+        });
+        using var client = scenario.CreateClient();
+        using var producer = scenario.CreateProviderClient();
+        await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        var identity = await JsonAsync(client, "/api/v1/auth/me");
+        organizationId = identity.GetProperty("organizationId").GetString()!;
+        projectId = identity.GetProperty("projectId").GetString()!;
+        var csrf = await HttpJourney.CsrfAsync(client, "/databases");
+        const string name = "wrong-region";
+        id = await CreateAsync(client, csrf, name);
+        Volatile.Write(ref misdirect, true);
+        using (var response = await PostAsync(client, "/api/v1/dashboard/databases/regions", csrf, new() { ["databaseId"] = id }, ["GRU"]))
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because(await EvidenceAsync(response, producer));
+            var html = System.Net.WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync());
+            await Assert.That(html).Contains("The database is managed in SFO · San Francisco. Nothing was changed.");
+        }
+        await Assert.That(string.Join(";", attempts)).IsEqualTo("gru.api.terrascale.tech pin=gru").Because("one pinned request, no retry or redirect");
+        var database = (await JsonAsync(client, "/api/v1/dashboard/databases"))[0];
+        await Assert.That(database.GetProperty("region").GetString()).IsEqualTo("GRU");
+        await Assert.That(Regions(database)).IsEqualTo("GRU");
+        Volatile.Write(ref misdirect, false);
+        await DeleteAsync(client, csrf, id, name);
+        await Assert.That((await JsonAsync(producer, "/__test/observations")).GetProperty("failures").GetArrayLength()).IsEqualTo(0);
+    }
+
+    // terrascale e30ffdc2 HealthzEndpoint and region-identity.md: /healthz names its region in the body and the
+    // X-TerraBase-Region header. An answer that does not name one valid region, or a refused one, provisions nothing.
+    [Test]
+    [Arguments("missing-region")]
+    [Arguments("invalid-region")]
+    [Arguments("host-region")]
+    [Arguments("header-mismatch")]
+    [Arguments("missing-header")]
+    [Arguments("rate-limited")]
+    [Arguments("unavailable")]
+    public async Task InvalidRegionAnswerNeverProvisions(string defect)
     {
         var invalid = false;
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
         {
-            if (!Volatile.Read(ref invalid) || http.Request.Host.Host != "atlas.terrascale.tech" || http.Request.Path != "/v1/discovery")
+            if (!Volatile.Read(ref invalid) || http.Request.Host.Host != "api.terrascale.tech" || http.Request.Path != "/healthz")
                 return Task.FromResult<IResult?>(null);
-            var bad = new Dictionary<string, object?>
+            if (defect != "missing-header") http.Response.Headers["X-TerraBase-Region"] = defect == "header-mismatch" ? "sfo" : "gru";
+            if (defect == "rate-limited")
             {
-                ["id"] = defect switch { "duplicate-id" => "gru-1", "code-collision" => "gru-2", _ => "fra-1" },
-                ["name"] = "Frankfurt",
-                ["country"] = "DE",
-                ["api"] = defect == "invalid-origin" ? "https://attacker.example" : "https://fra.api.terrascale.tech",
-                ["health"] = defect == "invalid-health" ? "up" : "ok"
-            };
-            if (defect == "missing-name") bad.Remove("name");
-            return Task.FromResult<IResult?>(Results.Json(new
-            {
-                regions = new object[] {
-                new { id = "gru-1", name = "São Paulo", country = "BR", api = "https://gru.api.terrascale.tech", health = "ok" },
-                new { id = "sfo-1", name = "San Francisco", country = "US", api = "https://sfo.api.terrascale.tech", health = "ok" }, bad }
-            }));
+                http.Response.Headers.RetryAfter = "30";
+                return Task.FromResult<IResult?>(Results.Json(new { error = new { code = "rate_limited", message = "too many requests" } }, statusCode: 429));
+            }
+            if (defect == "unavailable")
+                return Task.FromResult<IResult?>(Results.Json(new { error = new { code = "region_unavailable", message = "no machine serves the region" } }, statusCode: 503));
+            var body = new Dictionary<string, object?> { ["status"] = "ok", ["version"] = "test", ["storageFormat"] = "test", ["revision"] = null, ["machine"] = "local" };
+            if (defect != "missing-region")
+                body["region"] = defect switch { "invalid-region" => "GRU", "host-region" => "gru.attacker.example", _ => "gru" };
+            return Task.FromResult<IResult?>(Results.Json(body));
         });
         using var client = scenario.CreateClient();
         using var producer = scenario.CreateProviderClient();

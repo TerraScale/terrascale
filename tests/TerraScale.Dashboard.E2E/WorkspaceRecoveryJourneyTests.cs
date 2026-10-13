@@ -28,7 +28,7 @@ public sealed class WorkspaceRecoveryJourneyTests(DashboardE2EFixture fixture)
                     return Task.FromResult<IResult?>(null);
                 var bearer = http.Request.Headers.Authorization.ToString();
                 var subject = bearer.StartsWith("Bearer ", StringComparison.Ordinal) ? resolveAccessToken(bearer[7..]) : null;
-                if (http.Request.Host.Host is not ("gru.api.terrascale.tech" or "sfo.api.terrascale.tech") || subject?.UserId != failureOwnerId ||
+                if (http.Request.Host.Host is not ("api.terrascale.tech" or "gru.api.terrascale.tech" or "sfo.api.terrascale.tech") || subject?.UserId != failureOwnerId ||
                     http.Request.Headers["X-TerraBase-Organization-Id"] != failureOrganizationId || http.Request.Headers["X-TerraBase-User-Id"] != failureOwnerId)
                     throw new InvalidOperationException("The delete dependency failure must target the exact admitted owner scope.");
                 Interlocked.Increment(ref unavailableDeleteRequests);

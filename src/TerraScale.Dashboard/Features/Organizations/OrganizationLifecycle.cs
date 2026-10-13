@@ -17,7 +17,7 @@ public sealed class TsOrganizationLifecycle(IHttpClientFactory http) : IOrganiza
     private TerraBaseManagementClient Client(AccountContext context)
     {
         var client = http.CreateClient("platform");
-        return new(client, new() { EndpointResolver = new TerraBaseDiscovery(client), AccessTokenProvider = _ => ValueTask.FromResult(context.Session.AccessToken) });
+        return new(client, new() { EndpointResolver = new TerraBaseDiscovery(), AccessTokenProvider = _ => ValueTask.FromResult(context.Session.AccessToken) });
     }
     public Task LeaveAsync(AccountContext context, CancellationToken cancellationToken) => Client(context).LeaveOrganizationAsync(context.UserId, context.Organization!.Id, cancellationToken);
     public Task DeleteAsync(AccountContext context, CancellationToken cancellationToken) => Client(context).DeleteOrganizationAsync(context.UserId, context.Organization!.Id, cancellationToken);

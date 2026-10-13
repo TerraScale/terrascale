@@ -22,7 +22,7 @@ public sealed class TsInvitationGateway(IHttpClientFactory http) : IInvitationGa
         var client = http.CreateClient("platform");
         return new TerraBaseManagementClient(client, new()
         {
-            EndpointResolver = new TerraBaseDiscovery(client),
+            EndpointResolver = new TerraBaseDiscovery(),
             AccessTokenProvider = _ => ValueTask.FromResult(session.AccessToken)
         }).AcceptInvitationAsync(session.UserId, token, cancellationToken);
     }

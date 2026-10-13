@@ -34,9 +34,9 @@ public sealed class DatabasePlacementJourneyTests(DashboardE2EFixture fixture)
                 throw new InvalidOperationException("The real replication adapter must request the current project reporting route with its scoped bearer.");
             var scenario = Volatile.Read(ref report);
             var items = scenario == "measured" ? new object[] {
-                new { databaseId, databaseName = "native-placement", region = "sfo-1", status = "diverged", replicatedOps = 12L, lagMs = (double?)12.5, divergence = (bool?)true, convergenceMs = (double?)30.5, lastApplied = (DateTimeOffset?)to,
-                    bandwidth = new[] { new { sourceRegion = "sfo-1", destinationRegion = "gru-1", kind = "delta", bytesSent = 111L, bytesReceived = 100L } }, series = Array.Empty<object>() },
-                new { databaseId, databaseName = "native-placement", region = "gru-1", status = "healthy", replicatedOps = 8L, lagMs = (double?)null, divergence = (bool?)null, convergenceMs = (double?)null, lastApplied = (DateTimeOffset?)null,
+                new { databaseId, databaseName = "native-placement", region = "sfo", status = "diverged", replicatedOps = 12L, lagMs = (double?)12.5, divergence = (bool?)true, convergenceMs = (double?)30.5, lastApplied = (DateTimeOffset?)to,
+                    bandwidth = new[] { new { sourceRegion = "sfo", destinationRegion = "gru", kind = "delta", bytesSent = 111L, bytesReceived = 100L } }, series = Array.Empty<object>() },
+                new { databaseId, databaseName = "native-placement", region = "gru", status = "healthy", replicatedOps = 8L, lagMs = (double?)null, divergence = (bool?)null, convergenceMs = (double?)null, lastApplied = (DateTimeOffset?)null,
                     bandwidth = Array.Empty<object>(), series = Array.Empty<object>() }
             } : Array.Empty<object>();
             return Task.FromResult<IResult?>(Results.Json(new
@@ -59,6 +59,8 @@ public sealed class DatabasePlacementJourneyTests(DashboardE2EFixture fixture)
         projectId = identity.GetProperty("projectId").GetString()!;
         var organizationId = identity.GetProperty("organizationId").GetString()!;
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
+        // Fly answers api.terrascale.tech in SFO for now, so SFO is the one region the dashboard can choose.
+        await Control(new { command = "api-region", value = "sfo" });
         using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
         { ["_csrf"] = csrf, ["name"] = "native-placement", ["region"] = "sfo" }))
         {
@@ -86,6 +88,11 @@ public sealed class DatabasePlacementJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
             await Assert.That(await RegionsAsync()).IsEqualTo("SFO");
         }
+        // Later GRU answers instead. The SFO home is outside the catalog now and must stay selected and addressable.
+        await Control(new { command = "api-region", value = "gru" });
+        var moved = Regex.Match(await PageAsync(client), "<input[^>]+type=\"checkbox\"[^>]+value=\"SFO\"[^>]*>").Value;
+        await Assert.That(moved).Contains("required");
+        await Assert.That(moved).Contains("checked");
         using (var changed = await ChangeRegionsAsync(["gru", "sfo"]))
         {
             await Assert.That(changed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther)
@@ -131,6 +138,12 @@ public sealed class DatabasePlacementJourneyTests(DashboardE2EFixture fixture)
         { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["confirmName"] = "native-placement" }))
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That((await ReadAsync(producer, "/__test/observations")).GetProperty("failures").GetArrayLength()).IsEqualTo(0);
+
+        async Task Control(object command)
+        {
+            using var response = await producer.PostAsJsonAsync("/__test/control", command);
+            await Assert.That(response.IsSuccessStatusCode).IsTrue();
+        }
 
         async Task<HttpResponseMessage> ChangeRegionsAsync(string[] regions)
         {

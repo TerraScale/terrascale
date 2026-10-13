@@ -6,7 +6,7 @@ namespace TerraScale.Dashboard.Features.Auth;
 
 public interface IProjectAccessTokens
 {
-    Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, Uri resourceOrigin, CancellationToken cancellationToken);
+    Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken);
 }
 
 // The served ts-auth RFC 8693 exchange supplies the caller's project authority.
@@ -14,25 +14,24 @@ public interface IProjectAccessTokens
 // Each request rechecks membership at ts-auth, without caching permissions.
 public sealed partial class TsAuthGateway : IProjectAccessTokens
 {
-    public async Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, Uri resourceOrigin, CancellationToken cancellationToken)
+    // ts-auth gives every organization and project token TerraBase's one audience, valid in every region.
+    private const string TerraBaseAudience = "https://api.terrascale.tech";
+
+    public async Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken)
     {
         if (!TerraScaleIds.IsValid(organizationId) || !TerraScaleIds.IsValid(projectId) ||
-            session.ExpiresAt <= time.GetUtcNow() || string.IsNullOrWhiteSpace(session.AccessToken) ||
-            !resourceOrigin.IsAbsoluteUri || resourceOrigin.Scheme != "https" || !resourceOrigin.IsDefaultPort ||
-            resourceOrigin.UserInfo.Length != 0 || resourceOrigin.AbsolutePath != "/" || resourceOrigin.Query.Length != 0 || resourceOrigin.Fragment.Length != 0 ||
-            !resourceOrigin.Host.EndsWith(".api.terrascale.tech", StringComparison.OrdinalIgnoreCase))
+            session.ExpiresAt <= time.GetUtcNow() || string.IsNullOrWhiteSpace(session.AccessToken))
             throw new HttpRequestException("Project authorization is unavailable.");
         var credentials = await identity.ReadAsync(cancellationToken);
         if (credentials.AuthInstanceSlug != "terrascale") throw new HttpRequestException("Project authorization is unavailable.");
-        var origin = await OriginAsync(cancellationToken);
+        var origin = AuthOrigin;
         var client = Client(credentials, origin);
         var discovery = await client.Oidc.GetDiscoveryDocumentAsync(cancellationToken);
         try
         {
             var issuer = TrustedIssuer(discovery.Issuer, origin, credentials.AuthInstanceSlug);
-            var endpoint = TrustedEndpoint(discovery.TokenEndpoint, origin, credentials.AuthInstanceSlug);
-            if (new Uri(endpoint).AbsolutePath != "/terrascale/oauth/token") throw new SignInRejectedException();
-            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+            // Credentials go to the fixed token endpoint, never to a URL taken from discovery.
+            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, "/terrascale/oauth/token"));
             Authenticate(request, credentials);
             request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
@@ -52,11 +51,12 @@ public sealed partial class TsAuthGateway : IProjectAccessTokens
             if (result.GetProperty("token_type").GetString() != "Bearer" ||
                 result.GetProperty("issued_token_type").GetString() != "urn:ietf:params:oauth:token-type:access_token" ||
                 result.GetProperty("expires_in").GetInt32() is <= 0 or > 900 ||
-                result.GetProperty("scope").GetString() != "databases:read" ||
+                // OpenIddict (ts-auth's 7.7.1) answers scope only when it differs from the request; the token's claim decides.
+                result.TryGetProperty("scope", out var granted) && granted.GetString() != "databases:read" ||
                 result.TryGetProperty("refresh_token", out _) || result.TryGetProperty("id_token", out _))
                 throw new SignInRejectedException();
             var now = time.GetUtcNow();
-            var claims = AuthJwtClaims.Read(token, issuer, resourceOrigin.GetLeftPart(UriPartial.Authority),
+            var claims = AuthJwtClaims.Read(token, issuer, TerraBaseAudience,
                 await client.Oidc.GetJwksAsync(cancellationToken), now, "at+jwt");
             if (claims.GetProperty("sub").GetString() != session.UserId ||
                 claims.GetProperty("client_id").GetString() != credentials.AuthClientId ||

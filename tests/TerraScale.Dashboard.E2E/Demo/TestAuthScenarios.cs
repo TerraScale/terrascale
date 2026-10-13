@@ -211,7 +211,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 return stripe!.SendAsync(request, cancellationToken);
             }
             if (original.Scheme != "https" || !original.IsDefaultPort || original.UserInfo.Length != 0 ||
-                original.Host is not ("atlas.terrascale.tech" or "auth.terrascale.tech" or "gru.auth.terrascale.tech" or "gru.api.terrascale.tech"))
+                original.Host is not ("auth.terrascale.tech" or "api.terrascale.tech" or "gru.api.terrascale.tech"))
                 throw new HttpRequestException("Unexpected outbound origin in the test-only auth producer.");
             // Preserve the trusted Host and all authorization headers. Only the
             // physical test transport changes; issuer/audience/signatures do not.
@@ -229,7 +229,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
 
     private sealed class ScenarioProvider(ScenarioClock clock, TestState state) : IDisposable
     {
-        private const string Issuer = "https://gru.auth.terrascale.tech/terrascale";
+        // ts-auth 6bb896bb: one global issuer, {PublicOrigin}/{tenant}, served from every region.
+        private const string Issuer = "https://auth.terrascale.tech/terrascale";
         private const string ClientId = "01M4EQ2FRJ8S8B29E8TQVWNW4J";
         private readonly ECDsa signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         private readonly ECDsa wrongKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -261,7 +262,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private int userinfoPauses;
         private int descendantIssuerGrants;
         private string fault = "";
-        private string CurrentIssuer => fault == "descendant-issuer" ? Issuer + "/descendant" : fault == "project-global-issuer" ? "https://auth.terrascale.tech/terrascale" : Issuer;
+        private string CurrentIssuer => fault == "descendant-issuer" ? Issuer + "/descendant" : Issuer;
         private string? platformRole;
         private string password = "test-password";
         private int tokenSeconds = 3600;
@@ -292,10 +293,13 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             if (path == "/__test/observations") return Observations();
             if (path == "/__test/ownership-sdk/probe" && Ownership is not null)
                 return await Ownership.DispatchAsync(http) ?? Results.NotFound();
-            if (path == "/v1/discovery" && http.Request.Host.Host == "atlas.terrascale.tech")
-                return Results.Json(new { regions = new[] { new { id = "sa-saopaulo-1", api = "https://gru.api.terrascale.tech/", health = "ok", name = "São Paulo", country = "BR" } } });
-            if (http.Request.Host.Host == "gru.api.terrascale.tech")
+            // terrascale e30ffdc2: api.terrascale.tech answers in the nearest region and <region>.api.terrascale.tech in its
+            // own; every answer names its region. There is no Atlas region catalog.
+            if (http.Request.Host.Host is "api.terrascale.tech" or "gru.api.terrascale.tech")
             {
+                http.Response.Headers["X-TerraBase-Region"] = "gru";
+                if (path == "/healthz")
+                    return Results.Json(new { status = "ok", version = "test", region = "gru", storageFormat = "test", revision = (string?)null, machine = "local" });
                 if (ReportingExtension is not null && path.StartsWith("/v1/projects/", StringComparison.Ordinal) &&
                     (path.EndsWith("/analytics", StringComparison.Ordinal) || path.EndsWith("/replication", StringComparison.Ordinal)))
                 {
@@ -309,7 +313,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                         projectGrant.OrganizationId,
                         projectGrant.ProjectId,
                         subject = projectGrant.Session.Subject,
-                        audience = "https://gru.api.terrascale.tech",
+                        audience = "https://api.terrascale.tech",
                         scope = "databases:read",
                         tokenClass = "project"
                     });
@@ -318,9 +322,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 if (Ownership is not null && await Ownership.DispatchAsync(http) is { } owned) return owned;
                 return await Billing.UsageAsync(http, Bearer(http, out var metered) ? metered.Subject : null);
             }
-            if (path == "/api/v1/auth/discovery")
-                return Results.Json(new { v = 1, endpoints = new[] { new { region = "GRU", url = fault == "untrusted-discovery" ? "https://untrusted.example" : "https://gru.auth.terrascale.tech" } } });
-            if (http.Request.Host.Host is not ("gru.auth.terrascale.tech" or "auth.terrascale.tech"))
+            if (http.Request.Host.Host != "auth.terrascale.tech")
             {
                 // The browser-equivalent authorize request uses the producer's
                 // physical URL and still supplies its public trusted Host.
@@ -341,6 +343,10 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                     query["state"].ToString().Length != 64 || query["code_challenge"].ToString().Length != 43 ||
                     !Uri.TryCreate(query["redirect_uri"], UriKind.Absolute, out var redirect) || redirect.Host != "127.0.0.1" || redirect.AbsolutePath != "/login/callback")
                     return ContractFailure("Invalid native SSO authorization request.");
+                // ts-auth AuthorizeEndpoint: prompt=login, consent and select_account are unsupported and answer the client.
+                foreach (var (prompt, error) in new[] { ("login", "login_required"), ("consent", "consent_required"), ("select_account", "account_selection_required") })
+                    if (query["prompt"].ToString().Split(' ').Contains(prompt))
+                        return Results.Redirect(redirect.AbsoluteUri + "?error=" + error + "&state=" + Uri.EscapeDataString(query["state"].ToString()));
                 var code = "authorization-" + Guid.NewGuid().ToString("N");
                 codes[code] = new(query["nonce"].ToString(), query["code_challenge"].ToString(), redirect.AbsoluteUri);
                 return Results.Redirect(redirect.AbsoluteUri + "?state=" + Uri.EscapeDataString(query["state"].ToString()) + "&code=" + code);
@@ -463,7 +469,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             var claims = new Dictionary<string, object>
             {
                 ["iss"] = CurrentIssuer,
-                ["aud"] = fault == "project-wrong-audience" ? "foreign-resource" : "https://gru.api.terrascale.tech",
+                // ts-auth PlatformGrants: organization and project tokens carry AccessTokenAudiences, TerraBase's global audience.
+                ["aud"] = fault == "project-wrong-audience" ? "foreign-resource" : "https://api.terrascale.tech",
                 ["sub"] = fault == "project-wrong-subject" ? foreignPrincipal.Subject : session.Subject,
                 ["client_id"] = fault == "project-wrong-client" ? "foreign-client" : ClientId,
                 ["org_id"] = fault == "project-foreign-organization" ? new TerraScaleIdGenerator().NewId() : organizationId,
@@ -485,9 +492,11 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 ["access_token"] = token,
                 ["token_type"] = "Bearer",
                 ["issued_token_type"] = "urn:ietf:params:oauth:token-type:access_token",
-                ["expires_in"] = (int)(expires - clock.GetUtcNow()).TotalSeconds,
-                ["scope"] = "databases:read"
+                ["expires_in"] = (int)(expires - clock.GetUtcNow()).TotalSeconds
             };
+            // OpenIddict 7.7.1 (OpenIddictServerHandlers.cs:5670): a token response names scope only when the granted
+            // scopes differ from the requested ones, and this exchange grants exactly what it requested.
+            if (fault == "project-response-scope") response["scope"] = "databases:read databases:write";
             if (fault == "project-refreshtoken") response["refresh_token"] = "unexpected-private-refresh-value";
             if (fault == "project-idtoken") response["id_token"] = "unexpected-private-identity-value";
             return Results.Json(response);
@@ -506,7 +515,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 using var payload = JsonDocument.Parse(UnB64(parts[1]));
                 var claims = payload.RootElement;
                 if (jwtHeader.RootElement.GetProperty("typ").GetString() != "at+jwt" || claims.GetProperty("iss").GetString() != CurrentIssuer ||
-                    claims.GetProperty("aud").GetString() != "https://gru.api.terrascale.tech" || claims.GetProperty("scope").GetString() != "databases:read" ||
+                    claims.GetProperty("aud").GetString() != "https://api.terrascale.tech" || claims.GetProperty("scope").GetString() != "databases:read" ||
                     claims.GetProperty("sub").GetString() != grant.Session.Subject || claims.GetProperty("client_id").GetString() != ClientId ||
                     claims.GetProperty("org_id").GetString() != grant.OrganizationId || claims.GetProperty("project_id").GetString() != grant.ProjectId ||
                     claims.GetProperty("exp").GetInt64() <= clock.GetUtcNow().ToUnixTimeSeconds()) return false;
@@ -520,7 +529,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private IResult Discovery() => Results.Json(new
         {
             issuer = CurrentIssuer,
-            authorization_endpoint = CurrentIssuer + "/oauth/authorize",
+            authorization_endpoint = (fault == "untrusted-endpoint" ? "https://untrusted.example/terrascale" : CurrentIssuer) + "/oauth/authorize",
             token_endpoint = CurrentIssuer + "/oauth/token",
             userinfo_endpoint = CurrentIssuer + "/oauth/userinfo",
             jwks_uri = CurrentIssuer + "/.well-known/jwks.json",
@@ -668,7 +677,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             var claims = new Dictionary<string, object>
             {
                 ["iss"] = fault == "access-wrong-issuer" ? "https://untrusted.example/terrascale" : CurrentIssuer,
-                ["aud"] = fault == "access-wrong-audience" ? "foreign-resource" : CurrentIssuer,
+                // ts-auth OidcIssuer.SignInAudiences: the issuer, then TerraBase's global audience.
+                ["aud"] = fault == "access-wrong-audience" ? "foreign-resource" : new[] { CurrentIssuer, "https://api.terrascale.tech" },
                 ["sub"] = grant.Subject,
                 ["email"] = grant.Email,
                 ["email_verified"] = true,
@@ -682,7 +692,6 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             };
             if (grant.PlatformRole == "admin") claims["platform_role"] = "admin";
             if (fault == "access-role-type") claims["platform_role"] = true;
-            if (fault == "access-multi-audience") claims["aud"] = new[] { CurrentIssuer, "https://api.terrascale.tech" };
             var header = new { alg = "ES256", kid = "test-signing-key", typ = fault == "access-identity-token" ? "JWT" : "at+jwt" };
             var unsigned = B64(JsonSerializer.SerializeToUtf8Bytes(header)) + "." + B64(JsonSerializer.SerializeToUtf8Bytes(claims));
             byte[] signature;

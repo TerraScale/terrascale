@@ -210,11 +210,10 @@ public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var controls = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
-        await Control(controls, new { command = "fault", value = "untrusted-discovery" });
-        using (var discovery = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me"))
-            Check(discovery.StatusCode == HttpStatusCode.ServiceUnavailable, "Untrusted discovery cannot receive confidential credentials");
-        Check((await Observations(controls)).GetProperty("passwordGrants").GetInt32() == 0,
-            "Invalid producer origin is rejected before a password request");
+        await Control(controls, new { command = "fault", value = "untrusted-endpoint" });
+        using (var untrusted = await browser.GetAsync("/login/sso?returnTo=%2Fapi%2Fv1%2Fauth%2Fme"))
+            Check(untrusted.StatusCode == HttpStatusCode.ServiceUnavailable && untrusted.Headers.Location is null,
+                "A discovery document naming another host is never followed");
         await Control(controls, new { command = "fault", value = "invalid-client" });
         using (var invalidClient = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me"))
             Check(invalidClient.StatusCode == HttpStatusCode.ServiceUnavailable, "Confidential client failure is an unavailable dependency rather than anonymous authorization");
@@ -640,10 +639,11 @@ public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
     private static async Task<Uri> Authorize(HttpClient browser, HttpClient producer)
     {
         using var started = await browser.GetAsync("/login/sso?returnTo=%2Fapi%2Fv1%2Fauth%2Fme&prompt=login");
-        Check(started.StatusCode == HttpStatusCode.SeeOther && started.Headers.Location is { Scheme: "https", Host: "gru.auth.terrascale.tech", AbsolutePath: "/terrascale/oauth/authorize" },
+        Check(started.StatusCode == HttpStatusCode.SeeOther && started.Headers.Location is { Scheme: "https", Host: "auth.terrascale.tech", AbsolutePath: "/terrascale/oauth/authorize" },
             "Native SSO selects the discovered trusted authorization endpoint");
         var target = started.Headers.Location!;
-        Check(target.Query.Contains("prompt=login", StringComparison.Ordinal), "Native SSO retains explicit reauthentication intent");
+        // ts-auth answers login_required to prompt=login, so a legacy /login/sso?prompt=login link must not forward it.
+        Check(!target.Query.Contains("prompt", StringComparison.Ordinal), "Native SSO sends no prompt ts-auth refuses");
         using var request = new HttpRequestMessage(HttpMethod.Get, target.PathAndQuery);
         request.Headers.Host = target.Authority;
         using var authorized = await producer.SendAsync(request);

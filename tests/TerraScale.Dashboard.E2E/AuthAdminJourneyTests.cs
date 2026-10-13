@@ -423,7 +423,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             await page.GetByRole(AriaRole.Status).Filter(new() { HasText = "This sign-in link expired or was started in another browser." }).WaitForAsync();
             await BrowserAudit.AssertAccessibleAsync(page, "SSO recovery accessibility");
             await page.GetByRole(AriaRole.Link, new() { Name = "Try again", Exact = true }).ClickAsync();
-            await Assert.That(QueryHelpers.ParseQuery(new Uri(page.Url).Query).GetValueOrDefault("prompt").ToString()).IsEqualTo("login");
+            await Assert.That(QueryHelpers.ParseQuery(new Uri(page.Url).Query).ContainsKey("prompt")).IsFalse().Because("ts-auth answers login_required to prompt=login");
             await GotoAsync(page, "/login?returnTo=%2Fapi%2Fv1%2Fauth%2Fme");
             var callbackRequest = page.WaitForRequestAsync(request => new Uri(request.Url).AbsolutePath == "/login/callback" &&
                 QueryHelpers.ParseQuery(new Uri(request.Url).Query).GetValueOrDefault("code") == "test-code");

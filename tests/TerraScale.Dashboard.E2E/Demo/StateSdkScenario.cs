@@ -134,7 +134,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri!;
-            var stateRequest = uri.Host is "atlas.terrascale.tech" or "gru.api.terrascale.tech";
+            var stateRequest = uri.Host == "api.terrascale.tech";
             if (stateRequest && (uri.Scheme != "https" || !uri.IsDefaultPort || uri.UserInfo.Length != 0))
                 throw new HttpRequestException("Invalid origin in the state SDK protocol fixture.");
             using var forwarded = new HttpRequestMessage(request.Method, stateRequest ? new Uri(origin, uri.PathAndQuery) : uri)
@@ -204,13 +204,10 @@ public sealed class StateSdkScenario : IAsyncDisposable
                 var path = http.Request.Path.Value!;
                 if (path == "/__test/observations") return Observe();
                 if (path == "/__test/control") return await ControlAsync(http);
-                if (http.Request.Host.Host == "atlas.terrascale.tech")
-                {
-                    Require(http.Request.Method == "GET" && path == "/v1/discovery" && http.Request.Headers.Authorization.Count == 0, "Atlas discovery must not receive state credentials.");
-                    if (Mode == "discovery-down") return Error(503, "unavailable");
-                    return Results.Json(new { regions = new[] { new { id = "gru", health = "healthy", api = "https://gru.api.terrascale.tech" } } });
-                }
-                Require(http.Request.Host.Host == "gru.api.terrascale.tech", "The SDK must preserve its discovered producer authority.");
+                // TerraBase's global origin; there is no Atlas discovery (terrascale e30ffdc2, region-identity.md).
+                Require(http.Request.Host.Host == "api.terrascale.tech", "The SDK must preserve TerraBase's global origin.");
+                http.Response.Headers["X-TerraBase-Region"] = "gru";
+                if (Mode == "region-unavailable") return Error(503, "region_unavailable");
                 if (Mode == "authorization") return Error(401, "unauthorized");
                 if (http.Request.Headers.Authorization != "Bearer " + Secret) return Error(401, "unauthorized");
                 if (rotated) Interlocked.Increment(ref rotatedRequests);

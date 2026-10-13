@@ -83,7 +83,7 @@ public sealed class HomeReportingJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(request.GetProperty("projectId").GetString()).IsEqualTo(identityRoot.GetProperty("projectId").GetString());
             await Assert.That(request.GetProperty("organizationId").GetString()).IsEqualTo(identityRoot.GetProperty("organizationId").GetString());
             await Assert.That(request.GetProperty("subject").GetString()).IsEqualTo(identityRoot.GetProperty("userId").GetString());
-            await Assert.That(request.GetProperty("audience").GetString()).IsEqualTo("https://gru.api.terrascale.tech");
+            await Assert.That(request.GetProperty("audience").GetString()).IsEqualTo("https://api.terrascale.tech");
             await Assert.That(request.GetProperty("scope").GetString()).IsEqualTo("databases:read");
             await Assert.That(request.GetProperty("tokenClass").GetString()).IsEqualTo("project");
             await Assert.That(request.GetProperty("path").GetString()).StartsWith($"/v1/projects/{projectId}/");

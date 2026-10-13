@@ -21,7 +21,7 @@ public sealed class TsWorkspaceGateway(IHttpClientFactory http) : IWorkspaceGate
         var client = http.CreateClient("platform");
         return new(client, new TerraBaseManagementClientOptions
         {
-            EndpointResolver = new TerraBaseDiscovery(client),
+            EndpointResolver = new TerraBaseDiscovery(),
             AccessTokenProvider = _ => ValueTask.FromResult(session.AccessToken)
         });
     }

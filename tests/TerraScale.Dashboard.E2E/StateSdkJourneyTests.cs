@@ -136,7 +136,7 @@ public sealed class StateSdkJourneyTests(DashboardE2EFixture fixture)
     [Arguments("authorization")]
     [Arguments("forbidden")]
     [Arguments("project-missing")]
-    [Arguments("discovery-down")]
+    [Arguments("region-unavailable")]
     [Arguments("vault-down")]
     [Arguments("invalid-project")]
     [Arguments("wrong-database")]
@@ -153,7 +153,7 @@ public sealed class StateSdkJourneyTests(DashboardE2EFixture fixture)
         var observation = await ObserveAsync(controls);
         Check(observation.GetProperty("documentWrites").GetInt32() == 0 && scenario.StartupError is not null,
             "Bootstrap failure cannot write user state, select a fallback store or silently admit traffic: " + failure);
-        if (failure is "authorization" or "forbidden" or "project-missing" or "discovery-down" or "vault-down" or "invalid-project" or "wrong-database" or "wrong-missing-code")
+        if (failure is "authorization" or "forbidden" or "project-missing" or "region-unavailable" or "vault-down" or "invalid-project" or "wrong-database" or "wrong-missing-code")
             Check(observation.GetProperty("collectionPosts").GetInt32() == 0, "Only a genuine missing collection in the validated fixed database can trigger schema creation.");
         CheckProtocol(observation);
     }

@@ -17,7 +17,7 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time) 
         deadline.CancelAfter(TimeSpan.FromSeconds(5));
         var client = factory.CreateClient("platform");
         Uri origin;
-        try { origin = await new TerraBaseDiscovery(client).ResolveAsync(deadline.Token); }
+        try { origin = await new TerraBaseDiscovery().ResolveAsync(deadline.Token); }
         catch (Exception error) when (Failure(error, cancellationToken))
         { return new(new(UsageSourceState.Unavailable), selection.Context.Organization!.Projects.Keys.ToDictionary(id => id, _ => new UsageObservation(UsageSourceState.Unavailable))); }
         var now = time.GetUtcNow();

@@ -38,7 +38,7 @@ public sealed class ProjectAuthorizationJourneyTests(DashboardE2EFixture fixture
         var projectIdFromDashboard = identity.RootElement.GetProperty("projectId").GetString()!;
         var organizationId = identity.RootElement.GetProperty("organizationId").GetString()!;
 
-        // A regional issuer response and its signed project token authorize
+        // The global issuer's signed project token authorizes
         // the selected project's report request through real HTTP.
         using (var page = await client.GetAsync("/analytics?range=24h"))
         {
@@ -56,6 +56,7 @@ public sealed class ProjectAuthorizationJourneyTests(DashboardE2EFixture fixture
         string[] invalidProjectResponses =
         [
             "project-missing-scope",
+            "project-response-scope",
             "project-foreign-project",
             "project-foreign-organization",
             "project-wrong-audience",
@@ -99,7 +100,7 @@ public sealed class ProjectAuthorizationJourneyTests(DashboardE2EFixture fixture
         await Assert.That(reportRequests[0].GetProperty("organizationId").GetString()).IsEqualTo(organizationId);
         await Assert.That(reportRequests[0].GetProperty("projectId").GetString()).IsEqualTo(projectIdFromDashboard);
         await Assert.That(reportRequests[0].GetProperty("scope").GetString()).IsEqualTo("databases:read");
-        await Assert.That(reportRequests[0].GetProperty("audience").GetString()).IsEqualTo("https://gru.api.terrascale.tech");
+        await Assert.That(reportRequests[0].GetProperty("audience").GetString()).IsEqualTo("https://api.terrascale.tech");
         await Assert.That(reportRequests[0].GetProperty("tokenClass").GetString()).IsEqualTo("project");
 
         // Clearing the issuer fault demonstrates recoverability without a new
@@ -115,33 +116,6 @@ public sealed class ProjectAuthorizationJourneyTests(DashboardE2EFixture fixture
         await Assert.That(reportReads).IsEqualTo(2);
         using var recoveredIdentity = await client.GetAsync("/api/v1/auth/me");
         await Assert.That(recoveredIdentity.StatusCode).IsEqualTo(HttpStatusCode.OK);
-
-        var globalReportReads = 0;
-        await using var globalScenario = await AuthProviderScenario.StartReportingAsync(fixture.Root, http =>
-        {
-            if (http.Request.Method != "GET" || !http.Request.Path.Value!.EndsWith("/analytics", StringComparison.Ordinal))
-                return Task.FromResult<IResult?>(null);
-            globalReportReads++;
-            var projectId = http.Request.Path.Value.Split('/', StringSplitOptions.RemoveEmptyEntries)[2];
-            var now = DateTimeOffset.UtcNow;
-            var to = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, 0, 0, TimeSpan.Zero).AddHours(1);
-            return Task.FromResult<IResult?>(Results.Json(new { projectId, range = "24h", from = to.AddHours(-24), to, bucketSeconds = 3600, items = Array.Empty<object>() }));
-        });
-        using var globalProvider = globalScenario.CreateProviderClient();
-        await SetFaultAsync(globalProvider, "project-global-issuer");
-        using var globalClient = globalScenario.CreateClient();
-        using var globalLogin = await HttpJourney.LoginAsync(globalClient);
-        await Assert.That(globalLogin.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-        using var globalPage = await globalClient.GetAsync("/analytics?range=24h");
-        await Assert.That(globalPage.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var globalHtml = await globalPage.Content.ReadAsStringAsync();
-        await Assert.That(globalHtml).Contains("No analytics measurements for these filters.");
-        await Assert.That(globalHtml).DoesNotContain("Analytics unavailable");
-        await Assert.That(globalReportReads).IsEqualTo(1);
-        using var globalObservationsResponse = await globalProvider.GetAsync("/__test/observations");
-        using var globalObservations = JsonDocument.Parse(await globalObservationsResponse.Content.ReadAsStringAsync());
-        await Assert.That(globalObservations.RootElement.GetProperty("projectExchanges").GetInt32()).IsEqualTo(1);
-        await Assert.That(globalObservations.RootElement.GetProperty("projectReportReads").GetInt32()).IsEqualTo(1);
     }
 
     private static async Task SetFaultAsync(HttpClient client, string value)

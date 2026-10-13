@@ -82,9 +82,10 @@ public static class DashboardApplication
                 path.StartsWith("/databases/", StringComparison.Ordinal) &&
                 (path.Contains("/documents", StringComparison.Ordinal) || path.EndsWith("/sql", StringComparison.Ordinal) || path.EndsWith("/schema", StringComparison.Ordinal));
             var styles = editorStyles ? $"style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'; worker-src 'self'" : "style-src 'self'";
+            // form-action covers the redirects that follow forms: sign-out to ts-auth, checkout and portal to Stripe.
             context.Response.Headers["Content-Security-Policy"] =
                 $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; {styles}; " +
-                "img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self' https://checkout.stripe.com https://billing.stripe.com; base-uri 'none'; frame-ancestors 'none'";
+                "img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self' https://auth.terrascale.tech https://checkout.stripe.com https://billing.stripe.com; base-uri 'none'; frame-ancestors 'none'";
             if (!context.Request.Path.StartsWithSegments("/js") &&
                 !context.Request.Path.StartsWithSegments("/css") &&
                 !context.Request.Path.StartsWithSegments("/fonts") &&

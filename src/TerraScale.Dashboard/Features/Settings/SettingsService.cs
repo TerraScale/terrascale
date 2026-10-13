@@ -16,7 +16,7 @@ public sealed class SettingsBackend(IHttpClientFactory factory) : ISettingsBacke
     private TerraBaseManagementClient Client(AccountContext context)
     {
         var http = factory.CreateClient("platform");
-        return new(http, new() { EndpointResolver = new TerraBaseDiscovery(http), AccessTokenProvider = _ => ValueTask.FromResult(context.Session.AccessToken) });
+        return new(http, new() { EndpointResolver = new TerraBaseDiscovery(), AccessTokenProvider = _ => ValueTask.FromResult(context.Session.AccessToken) });
     }
     public async Task<int> AuditRetentionAsync(AccountContext context, CancellationToken cancellationToken) =>
         (await Client(context).GetAuditRetentionAsync(context.UserId, context.Organization!.Id, cancellationToken)).Days;

@@ -23,7 +23,7 @@ secrets and no machines, and the image exits at startup without the file.
 | --- | --- | --- | --- |
 | `StateProjectId` | TerraScale ID | Project of the state database `dashboard`; the app creates it and its 20 collections at startup | TerraBase (project owned by the dashboard service) |
 | `StateApiKey` | non-empty | Documents API key for that project: database PUT, collection create/read, document get/put/delete | TerraBase |
-| `AuthInstanceSlug` | non-empty | ts-auth tenant: issuer and endpoint paths `/{slug}/...`. Must be `terrascale`: any other value still starts and signs in, but platform roles and project tokens are refused | fixed value |
+| `AuthInstanceSlug` | non-empty | ts-auth tenant: issuer and endpoint paths `/{slug}/...`. Must be `terrascale`: other slugs answer 404 or lack the dashboard client, so sign-in fails | fixed value |
 | `AuthClientId` | non-empty | ts-auth OAuth client of the dashboard (see below) | ts-auth |
 | `AuthClientSecret` | non-empty | `client_secret_basic` for that client | ts-auth |
 | `AuthManagementKey` | starts with `sk_` | ts-auth management API key for the `terrascale` tenant; the app uses it to update a signed-in user's password and revoke that user's sessions | ts-auth |
@@ -67,22 +67,36 @@ issuer and paths (other differences are listed below).
 - The CLI device flow (`urn:ietf:params:oauth:grant-type:device_code`) is
   served by the dashboard itself, not by ts-auth.
 
-Contract differences to settle with the ts-auth owner before live sign-in:
+Settled against ts-auth source at terrascale `e30ffdc2` (fail-first tests
+use these producer shapes):
 
-1. ts-auth answers `prompt=login` with `error=login_required` and no code.
-   The dashboard sends `prompt=login` after sign-out.
-2. Project tokens: the dashboard requires `client_id` and an `aud` equal to
-   the regional TerraBase origin it called (`https://<region>.api.terrascale.tech`).
-   ts-auth sets `aud` only from `TS_AUTH_ACCESS_TOKEN_AUDIENCES`, and open
-   PR #134 makes `https://api.terrascale.tech` the audience in every region.
-   After #134 the dashboard would refuse every project token until its
-   expected audience changes. Whether ts-auth sets `client_id` on project
-   tokens is unverified.
-3. Every token request comes from the dashboard's own IP, which shares
+1. ts-auth answers `prompt=login`, `consent` and `select_account` with
+   `login_required`, `consent_required` and `account_selection_required`
+   (`OidcEndpoints.cs`, `AuthorizeEndpoint`). The dashboard sends no `prompt`;
+   sign-out ends the ts-auth session through its end-session endpoint.
+   "Switch account" on an invitation signs out of the dashboard only, so a
+   live ts-auth session can sign the same account back in through single
+   sign-on; password and email-code sign-in are unaffected.
+2. Sign-in access tokens carry `aud = [issuer, https://api.terrascale.tech]`
+   (`OidcIssuer.SignInAudiences`). Organization and project tokens carry
+   `aud = https://api.terrascale.tech` in every region
+   (`AuthOptions.TerraBaseAudience`, `PlatformGrants.Identity`), `client_id`,
+   `org_id`, `project_id`, `scope`, and live at most 15 minutes. The
+   dashboard checks that audience; it no longer expects a regional origin.
+3. The token-exchange response has no `scope` when the granted scopes equal
+   the requested ones (OpenIddict 7.7.1, `OpenIddictServerHandlers.cs`
+   lines 5670-5678). The dashboard reads the token's `scope` claim and
+   checks the response `scope` only when present.
+4. Every token request comes from the dashboard's own IP, which shares
    ts-auth's per-peer token budget (1000/min by default).
-4. The deployed `55979ea3` predates #96 and `platform_role` in sign-in
+5. The deployed `55979ea3` predates #96 and `platform_role` in sign-in
    access tokens. Platform administrators are not recognized until ts-auth
    is redeployed from `6bb896bb` or later.
+6. Signed-in password change calls the ts-auth management API
+   (`PATCH /v1/terrascale/users/{id}` and revoke-all-sessions with
+   `AuthManagementKey`). ts-auth at `6bb896bb` serves no `/v1/{slug}/users`
+   routes, so live password change fails with a 503 page until ts-auth
+   serves them or the dashboard moves to the headless password reset.
 
 ## Delivery path (proposal, needs approval)
 
@@ -111,19 +125,58 @@ The values exist only after ts-auth is ready: its first signing key, the
 issue the dashboard's state project and API key. Producing and setting the
 secret happens outside this repository.
 
-## Code changes still required in the dashboard
+## TerraBase origin and regions
 
-These are separate from delivery:
+The dashboard calls ts-auth only at `https://auth.terrascale.tech/terrascale`
+and TerraBase at `https://api.terrascale.tech/`, which Fly answers in a
+serving region (`Platform/Persistence/TerraBaseDiscovery.cs`). Atlas
+`/v1/discovery` was never served and is not called.
 
-- **ts-auth origin.** The app finds ts-auth through
-  `https://atlas.terrascale.tech/api/v1/auth/discovery` and accepts only
-  `https://<region>.auth.terrascale.tech` origins
-  (`Features/Auth/TsAuthGateway.cs`). Current ts-auth source serves one
-  global issuer `https://auth.terrascale.tech/{tenant}` in every region, and
-  Atlas is NXDOMAIN. The app must move to the global issuer.
-- **Project-token audience.** `Features/Auth/ProjectAccessTokens.cs` expects
-  the regional TerraBase origin as `aud`; it must follow the audience the
-  ts-auth owner settles (#134 proposes `https://api.terrascale.tech`).
-- **TerraBase origin.** `Platform/Persistence/TerraBaseDiscovery.cs` reads
-  Atlas `/v1/discovery`, which does not exist. The direction is the SDK
-  `Region` contract (ts-dotnet PR #5) once a reviewed public 0.0.2 exists.
+No producer publishes a region catalog yet. The dashboard lists one region:
+the one named by both the `region` field of `GET https://api.terrascale.tech/healthz`
+and its `X-TerraBase-Region` header (`DatabaseBackend.RegionsAsync`). That
+region is only the one that answered, not necessarily the nearest, a
+database's home, or every serving region. A missing, malformed or
+disagreeing region, a 429 or a 503 lists nothing and provisions nothing.
+Adding replica regions shows as unavailable until TerraBase publishes a
+catalog; that catalog is an upstream dependency.
+
+### Existing home and replica regions
+
+A stored home or replica region is never re-resolved through the catalog
+alone. `DatabaseRegion.Resolve` takes the catalog's entry, else the region
+its own id names: a TerraBase region id (lowercase letter, then lowercase
+letters, digits or `-`, at most 63 characters, not ending in `-`) addresses
+`https://<id>.api.terrascale.tech/`, which serves only that region and fails
+closed elsewhere (`region-identity.md`). So:
+
+- A database keeps its recorded home whichever region answers
+  `api.terrascale.tech`; its management calls go to its own regional host.
+  The dashboard's direct HTTP calls also send `X-TerraScale-Region-Pin: <home>`;
+  calls through the vendored SDK, which predates the pin, rely on the
+  regional host failing closed.
+- An id that is not a region id derives no origin; the call fails closed
+  instead of moving to another region.
+- The placement form lists the database's own regions next to the catalog,
+  so saving never drops a replica the catalog does not name.
+- New databases and projects can still choose only catalog regions.
+
+### 421 wrong_region
+
+TerraBase's `DatabaseRegions.Misdirected` (terrascale `e30ffdc2`) answers a
+region that does not manage the database with:
+
+- status `421`, `Cache-Control: no-store`;
+- `X-TerraBase-Region`: the answering region (on every TerraBase answer);
+- `X-TerraBase-Database-Home`: the database's home region;
+- `X-TerraBase-Database-Regions`: the home, then every replica region,
+  comma-separated;
+- body `{"error":{"code":"wrong_region","message":"the database is served in <home>"}}`;
+- `fly-replay: region=<home>` behind Fly Proxy only.
+
+The dashboard reads these as ts-dotnet 0.0.2's `TerraBaseWrongRegionException`
+does (`DatabaseWrongRegionException`): region names that are not region ids
+are dropped. It sends the request once, never retries or redirects it,
+changes no stored record, and answers the user `409` with "The database is
+managed in <home>. Nothing was changed." (a browser treats `421` as a
+connection retry signal, so it is not passed through).

@@ -8,7 +8,7 @@ public interface IAuthEnrollmentGateway
 
 public interface IAuthOidcGateway
 {
-    Task<string> AuthorizationUrlAsync(OidcFlow flow, bool promptLogin, CancellationToken cancellationToken);
+    Task<string> AuthorizationUrlAsync(OidcFlow flow, CancellationToken cancellationToken);
     Task<SessionRecord> ExchangeAsync(string code, OidcFlow flow, CancellationToken cancellationToken);
 }
 

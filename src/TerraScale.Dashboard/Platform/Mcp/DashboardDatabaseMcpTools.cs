@@ -58,7 +58,7 @@ public sealed partial class DashboardMcpTools
     {
         var context = Scope(organizationId, projectId);
         var db = DatabaseService.Database(context, databaseId);
-        var placement = await databases.PlacementAsync(DatabaseService.Regions(db), Cancellation);
+        var placement = await databases.PlacementAsync(DatabaseService.Regions(db), Cancellation, DatabaseService.Regions(db));
         IReadOnlyList<CollectionStats>? contents = null;
         string? unavailable = null;
         try

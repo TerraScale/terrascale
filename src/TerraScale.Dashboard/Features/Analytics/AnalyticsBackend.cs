@@ -19,16 +19,15 @@ public sealed class AnalyticsBackend(IHttpClientFactory factory, IProjectAccessT
         deadline.CancelAfter(TimeSpan.FromSeconds(5));
         var token = deadline.Token;
         var client = factory.CreateClient("platform");
-        var origin = await new TerraBaseDiscovery(client).ResolveAsync(token);
+        var origin = await new TerraBaseDiscovery().ResolveAsync(token);
         var context = selection.Context;
         var project = context.Project!;
         var organization = context.Organization ?? throw new InvalidOperationException("Analytics requires an organization scope.");
         var regions = await databases.RegionsAsync(token);
         var regionCodes = regions.ToDictionary(region => region.Id, region => region.Code, StringComparer.Ordinal);
         var requestedRegion = selection.Region.Length == 0 ? "" :
-            regions.SingleOrDefault(region => region.Code == selection.Region)?.Id ?? throw new HttpRequestException("The selected region is unavailable.");
-        var resourceOrigin = new Uri(origin.GetLeftPart(UriPartial.Authority));
-        var scopedToken = await projectTokens.GetAsync(context.Session, organization.Id, project.Id, resourceOrigin, token);
+            DatabaseRegion.Resolve(regions, selection.Region)?.Id ?? throw new HttpRequestException("The selected region is unavailable.");
+        var scopedToken = await projectTokens.GetAsync(context.Session, organization.Id, project.Id, token);
         var query = $"?range={selection.Range}" +
             (selection.DatabaseId.Length > 0 ? "&database=" + Uri.EscapeDataString(selection.DatabaseId) : "") +
             (requestedRegion.Length > 0 ? "&region=" + Uri.EscapeDataString(requestedRegion) : "");
@@ -59,7 +58,7 @@ public sealed class AnalyticsBackend(IHttpClientFactory factory, IProjectAccessT
                     selection.DatabaseId.Length > 0 && databaseId != selection.DatabaseId ||
                     requestedRegion.Length > 0 && region != requestedRegion)
                     throw new JsonException("Analytics returned measurements outside the selected scope.");
-                var displayRegion = regionCodes.GetValueOrDefault(region, region);
+                var displayRegion = regionCodes.GetValueOrDefault(region) ?? DatabaseRegion.FromId(region)?.Code ?? region;
                 DateTimeOffset? previousStart = null;
                 foreach (var series in database.GetProperty("series").EnumerateArray())
                 {

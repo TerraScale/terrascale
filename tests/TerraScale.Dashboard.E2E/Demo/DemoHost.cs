@@ -173,7 +173,7 @@ sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, 
         if (fixturePrincipals.TryGetValue(email, out var principal)) return (principal.Subject, principal.Email);
         return (email == "user@example.com" ? "test-user" : "test-signup-" + email, email);
     }
-    public Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, Uri resourceOrigin, CancellationToken cancellationToken)
+    public Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (ResolveAccessToken(session.AccessToken) is not { } actor || actor.UserId != session.UserId)
@@ -265,7 +265,7 @@ sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, 
     public Task<SessionRecord> VerifySignUpAsync(string email, string code, string pendingToken, string ip, CancellationToken cancellationToken) => code == "123456"
         ? PasswordAsync(email, passwords.GetValueOrDefault(email, "test-password"), ip, cancellationToken)
         : Task.FromException<SessionRecord>(new SignInRejectedException());
-    public Task<string> AuthorizationUrlAsync(OidcFlow flow, bool promptLogin, CancellationToken cancellationToken) => Task.FromResult("/__test/oidc?state=" + Uri.EscapeDataString(flow.State));
+    public Task<string> AuthorizationUrlAsync(OidcFlow flow, CancellationToken cancellationToken) => Task.FromResult("/__test/oidc?state=" + Uri.EscapeDataString(flow.State));
     public Task<SessionRecord> ExchangeAsync(string code, OidcFlow flow, CancellationToken cancellationToken) => code == "test-code"
         ? PasswordAsync("user@example.com", passwords.GetValueOrDefault("user@example.com", "test-password"), "127.0.0.1", cancellationToken)
         : Task.FromException<SessionRecord>(new SignInRejectedException());
@@ -380,7 +380,7 @@ sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
     private readonly ConcurrentDictionary<string, ProjectCredential> credentials = new();
     private readonly ConcurrentDictionary<string, string> credentialRegions = new();
     private readonly ConcurrentDictionary<string, DatabaseIndex> indexes = new();
-    private static readonly IReadOnlyList<DatabaseRegion> regions = [new("GRU", "gru-1", "São Paulo", "br", new("https://gru.api.terrascale.tech"), true), new("SFO", "sfo-1", "San Francisco", "us", new("https://sfo.api.terrascale.tech"), true)];
+    private static readonly IReadOnlyList<DatabaseRegion> regions = [new("GRU", "gru", "São Paulo", "br", new("https://gru.api.terrascale.tech"), true), new("SFO", "sfo", "San Francisco", "us", new("https://sfo.api.terrascale.tech"), true)];
     public void SeedFixtureDatabase(ManagedDatabase database)
     {
         if (string.IsNullOrEmpty(database.Id) || string.IsNullOrEmpty(database.ProjectId) ||

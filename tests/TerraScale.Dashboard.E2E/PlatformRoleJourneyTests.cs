@@ -131,7 +131,7 @@ public sealed class PlatformRoleJourneyTests(DashboardE2EFixture fixture)
             Check(admin.StatusCode == HttpStatusCode.SeeOther && admin.Headers.Location?.OriginalString == "/login?returnTo=%2Fadmin%2Fusers",
                 "The descendant issuer grants no native platform authority");
         var observed = await Observe(producer);
-        Check(observed.GetProperty("publishedIssuer").GetString() == "https://gru.auth.terrascale.tech/terrascale/descendant" &&
+        Check(observed.GetProperty("publishedIssuer").GetString() == "https://auth.terrascale.tech/terrascale/descendant" &&
             observed.GetProperty("descendantIssuerGrants").GetInt32() == 1 && observed.GetProperty("issuedAdminRoleGrants").GetInt32() == 1,
             "Discovery, signed identity/access claims and the producer's UserInfo verifier consistently use the same descendant issuer and actual private admin role");
         Check(observed.GetProperty("refreshes").GetInt32() == 0 && observed.GetProperty("managementRequests").GetInt32() == 0,
@@ -300,7 +300,14 @@ public sealed class PlatformRoleJourneyTests(DashboardE2EFixture fixture)
         var pending = browser.GetAsync("/admin/users");
         await WaitForRotation(producer);
         using (var signedOut = await HttpJourney.PostFormAsync(browser, "/api/v1/auth/logout", new() { ["_csrf"] = csrf }))
+        {
             Check(signedOut.StatusCode == HttpStatusCode.SeeOther, "Native logout revokes the same token family and deletes its persistent browser record");
+            // Browsers apply form-action to the redirect that follows the sign-out form.
+            var formAction = signedOut.Headers.GetValues("Content-Security-Policy").Single().Split(';')
+                .Select(directive => directive.Trim()).Single(directive => directive.StartsWith("form-action ", StringComparison.Ordinal)).Split(' ');
+            Check(signedOut.Headers.Location is { IsAbsoluteUri: true, Scheme: "https", Host: "auth.terrascale.tech", AbsolutePath: "/terrascale/oauth/logout" } &&
+                formAction.Contains("https://auth.terrascale.tech"), "The sign-out form may follow its redirect to ts-auth's end-session endpoint");
+        }
         await Control(producer, new { command = "release-refresh" });
         using (var late = await pending)
             Check(late.StatusCode == HttpStatusCode.SeeOther, "The late operator response cannot resurrect a signed-out browser");

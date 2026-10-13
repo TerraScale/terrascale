@@ -68,18 +68,7 @@ sealed class TestReportingTransport(TestState state, Func<string, (string UserId
         cancellationToken.ThrowIfCancellationRequested();
         var uri = request.RequestUri!;
         if (uri.Host == "api.stripe.com") return await vendor.SendAsync(request, cancellationToken);
-        if (uri.Host == "atlas.terrascale.tech")
-        {
-            if (uri.AbsolutePath != "/v1/discovery" || request.Headers.Authorization is not null) throw new HttpRequestException("Discovery must receive no customer credential.");
-            return Json(new
-            {
-                regions = new[] {
-                new { id = "gru-1", api = "https://gru.api.terrascale.tech/", health = "ok", name = "Sao Paulo", country = "BR" },
-                new { id = "sfo-1", api = "https://sfo.api.terrascale.tech/", health = "ok", name = "San Francisco", country = "US" }
-            }
-            });
-        }
-        if (uri.Host != "gru.api.terrascale.tech" || request.Headers.Authorization is not { Scheme: "Bearer", Parameter: { } token }) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
+        if (uri.Host is not ("api.terrascale.tech" or "gru.api.terrascale.tech") || request.Headers.Authorization is not { Scheme: "Bearer", Parameter: { } token }) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
         var sessionActor = resolveToken(token);
         var scopedActor = resolveProjectToken(token);
         if (sessionActor is null && scopedActor is null) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
@@ -140,7 +129,7 @@ sealed class TestReportingTransport(TestState state, Func<string, (string UserId
         var rows = new List<object>();
         foreach (var database in selected)
         {
-            var code = regionId.Length > 0 ? regionId switch { "gru-1" => "GRU", "sfo-1" => "SFO", _ => regionId } : database.Region;
+            var code = regionId.Length > 0 ? regionId switch { "gru" => "GRU", "sfo" => "SFO", _ => regionId } : database.Region;
             if (!database.Regions.Prepend(database.Region).Contains(code)) return Json(new { error = "not_found" }, HttpStatusCode.NotFound);
             if (segments.Last() == "analytics")
                 rows.Add(new
@@ -211,5 +200,5 @@ sealed class TestReportingTransport(TestState state, Func<string, (string UserId
         return Json(Reading(databaseId, factor, false));
     }
     private static HttpResponseMessage Json(object value, HttpStatusCode status = HttpStatusCode.OK) => new(status) { Content = new StringContent(JsonSerializer.Serialize(value), new MediaTypeHeaderValue("application/json")) };
-    private static string RegionId(string code) => code switch { "GRU" => "gru-1", "SFO" => "sfo-1", _ => code };
+    private static string RegionId(string code) => code switch { "GRU" => "gru", "SFO" => "sfo", _ => code };
 }
