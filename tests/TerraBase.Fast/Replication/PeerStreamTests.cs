@@ -712,6 +712,66 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.ReadAsync(later)).IsEqualTo("""{"n":1}""");
     }
 
+    [Test]
+    public async Task Concurrent_replacements_of_one_origin_keep_only_the_latest_stream_and_its_refill_cut()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (lost, later) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", lost, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+        await sjc.LoseAsync("items", lost);
+        var peer = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name;
+        sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sjc.HeldRepairExit = exit;
+        using var older = await RawPush.StartAsync(sjc, peer);
+        await older.RefillAsync(cluster.Database, 1);
+        await sjc.RepairWaits.Task.WaitAsync(Deadline);
+
+        var replacing = 0;
+        var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var both = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sjc.Api.Server.Services.GetRequiredService<PeerStreamReceiver>().Replacing = origin =>
+        {
+            if (origin == ReplicaId.Of(1, 7, 0))
+            {
+                _ = Interlocked.Increment(ref replacing) == 1 ? first.TrySetResult() : both.TrySetResult();
+            }
+        };
+        try
+        {
+            using var middle = await RawPush.OpenAsync(sjc, peer);
+            await first.Task.WaitAsync(Deadline);
+            using var latest = await RawPush.OpenAsync(sjc, peer);
+            await both.Task.WaitAsync(Deadline);
+            exit.SetResult();
+
+            await Assert.That(await latest.WelcomeAsync()).IsTrue();
+            await Assert.That(await middle.WelcomeAsync()).IsFalse().Because("the latest replacement cancels its predecessor before either can join a batch");
+            await latest.BatchAsync(cluster.Database, 2, later);
+            await Assert.That(await latest.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), Refused = true });
+            await Assert.That(await sjc.ReadAsync(later)).IsNull();
+
+            sjc.HeldRepairs = null;
+            sjc.HeldRepairExit = null;
+            await latest.RefillAsync(cluster.Database, 1);
+            await Assert.That(await latest.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), ChangeId = 1 });
+            await Assert.That(await sjc.ReadAsync(lost)).IsEqualTo("""{"n":1}""");
+            await latest.BatchAsync(cluster.Database, 2, later);
+            await Assert.That((await latest.AckAsync()) is { ChangeId: 2, Refused: false }).IsTrue();
+            await Assert.That(await sjc.ReadAsync(later)).IsEqualTo("""{"n":1}""");
+        }
+        finally
+        {
+            _ = exit.TrySetResult();
+        }
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
@@ -810,6 +870,9 @@ public sealed class PeerStreamTests
 
         // While set, this machine's repairs wait for it before they join (a faulted one fails them): a test holds a refill open.
         public TaskCompletionSource? HeldRepairs { get; set; }
+
+        // A cancelled repair stays alive until this test releases its cleanup.
+        public TaskCompletionSource? HeldRepairExit { get; set; }
 
         // While set, this machine's sink refuses repairs, as when it stops holding the database.
         public bool RefusesRepairs { get; set; }
@@ -1140,7 +1203,15 @@ public sealed class PeerStreamTests
             if (machine.HeldRepairs is { } held)
             {
                 _ = machine.RepairWaits.TrySetResult();
-                await held.Task.WaitAsync(cancellationToken);
+                try
+                {
+                    await held.Task.WaitAsync(cancellationToken);
+                }
+                catch (OperationCanceledException) when (machine.HeldRepairExit is { } exit)
+                {
+                    await exit.Task;
+                    throw;
+                }
             }
 
             return machine.RefusesRepairs ? null : await sink.RepairAsync(database, states, cancellationToken);
@@ -1163,11 +1234,30 @@ public sealed class PeerStreamTests
         // Says hello and waits for the welcome.
         public static async Task<RawPush> StartAsync(Machine machine, string peer)
         {
+            var push = await OpenAsync(machine, peer);
+            try
+            {
+                await Assert.That(await push.WelcomeAsync()).IsTrue();
+                return push;
+            }
+            catch
+            {
+                push.Dispose();
+                throw;
+            }
+        }
+
+        public static async Task<RawPush> OpenAsync(Machine machine, string peer)
+        {
             var push = new RawPush(machine);
             await push._call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = Origin.Value, Region = "gru", Machine = peer } });
-            using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
-            await Assert.That(await push._call.ResponseStream.MoveNext(timeout.Token) && push._call.ResponseStream.Current.Welcome is not null).IsTrue();
             return push;
+        }
+
+        public async Task<bool> WelcomeAsync()
+        {
+            using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
+            return await _call.ResponseStream.MoveNext(timeout.Token) && _call.ResponseStream.Current.Welcome is not null;
         }
 
         public Task RefillAsync(TenantContext database, ulong changeId) =>
