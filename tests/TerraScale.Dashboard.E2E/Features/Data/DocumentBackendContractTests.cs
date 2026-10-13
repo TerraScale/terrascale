@@ -56,33 +56,48 @@ public sealed class DocumentBackendContractTests
     }
 
     [Test]
-    [Arguments(401)]
-    [Arguments(403)]
-    [Arguments(404)]
-    [Arguments(429)]
-    [Arguments(503)]
-    [Arguments(0)]
-    public async Task RefusedReadAndWriteExchangesPreserveStatusWithoutSendingOrClaimingUnknownWrites(int status)
+    [Arguments("collections", "documents:read")]
+    [Arguments("create-collection", "documents:write")]
+    [Arguments("query", "documents:read")]
+    [Arguments("list", "documents:read")]
+    [Arguments("get", "documents:read")]
+    [Arguments("schema", "databases:read")]
+    [Arguments("create", "documents:write")]
+    [Arguments("replace", "documents:write")]
+    [Arguments("patch", "documents:write")]
+    [Arguments("delete", "documents:write")]
+    public async Task EveryActionPreservesExchangeRefusalsWithOnlyItsProducerRequiredScope(string action, string permission)
     {
-        using var wire = new Wire();
-        var tokens = new Tokens { Refusal = status };
-        var backend = new DocumentBackend(wire, tokens);
         using var body = JsonDocument.Parse("{\"title\":\"kept\"}");
-        foreach (var write in new[] { false, true })
+        foreach (var status in new[] { 401, 403, 404, 429, 503, 0 })
         {
+            using var wire = new Wire();
+            var tokens = new Tokens { Refusal = status };
+            var backend = new DocumentBackend(wire, tokens);
+            var scope = Scope();
+            var region = DatabaseRegion.FromId("gru")!;
             HttpRequestException? denied = null;
             try
             {
-                if (write) await backend.WriteAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "create", "", body.RootElement, "", CancellationToken.None);
-                else await backend.GetAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "a", CancellationToken.None);
+                Task request = action switch
+                {
+                    "collections" => backend.CollectionsAsync(scope, region, "app", CancellationToken.None),
+                    "create-collection" => backend.CreateCollectionAsync(scope, region, "app", "items", CancellationToken.None),
+                    "query" => backend.DocumentsAsync(scope, region, "app", "items", new TerraBaseQuery(), CancellationToken.None),
+                    "list" => backend.ListAsync(scope, region, "app", "items", 10, null, CancellationToken.None),
+                    "get" => backend.GetAsync(scope, region, "app", "items", "a", CancellationToken.None),
+                    "schema" => backend.SchemaAsync(scope, region, "app", "items", CancellationToken.None),
+                    _ => backend.WriteAsync(scope, region, "app", "items", action, "a", body.RootElement, "", CancellationToken.None)
+                };
+                await request;
             }
             catch (HttpRequestException error) { denied = error; }
             await Assert.That(denied).IsNotNull();
             await Assert.That(denied is DocumentWriteOutcomeUnknownException).IsFalse();
             await Assert.That(denied!.StatusCode).IsEqualTo(status == 0 ? (HttpStatusCode?)null : (HttpStatusCode)status);
+            await Assert.That(tokens.Scopes.Single()).IsEqualTo(permission);
+            await Assert.That(wire.Requests).IsEqualTo(0);
         }
-        await Assert.That(tokens.Scopes).IsEquivalentTo(new[] { "documents:read", "documents:write" });
-        await Assert.That(wire.Requests).IsEqualTo(0);
     }
 
     [Test]
