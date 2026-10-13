@@ -130,7 +130,7 @@ jobs:
       - name: Verify CI path filters
         run: python3 terrascale/scripts/ci/path-filter-test.py terrascale/.github/workflows/ci.yml path-filter-action/dist/index.js
       - &test-cpus
-        name: Measure the alpha slot CPU budget
+        name: Measure the alpha slot CPU budget and delegate nested Docker CPUs
         id: test-cpus
         run: |
           # The live alpha broker has five slots; leave the indivisible CPUs to the shared host.
@@ -138,6 +138,19 @@ jobs:
           (( count > 0 ))
           echo "count=$count" >> "$GITHUB_OUTPUT"
           echo "quota=$(( count * 100000 ))" >> "$GITHUB_OUTPUT"
+          # cgroup v2 requires the runner's processes in a leaf before nested Docker can use CPU quotas.
+          sudo bash <<'CGROUP'
+          set -euo pipefail
+          mkdir -p /sys/fs/cgroup/runner
+          mapfile -t pids < /sys/fs/cgroup/cgroup.procs
+          while (( ${#pids[@]} )); do
+            for pid in "${pids[@]}"; do
+              printf '%s\n' "$pid" > /sys/fs/cgroup/runner/cgroup.procs || [[ ! -d /proc/$pid ]]
+            done
+            mapfile -t pids < /sys/fs/cgroup/cgroup.procs
+          done
+          printf '+cpu\n' > /sys/fs/cgroup/cgroup.subtree_control
+          CGROUP
       - &setup-builder
         uses: docker/setup-buildx-action@v3
         id: setup-builder
