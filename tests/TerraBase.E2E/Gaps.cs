@@ -100,6 +100,12 @@ internal static class Gaps
             Skip.Test($"BLOCKED on Fly: {blocked}");
         }
 
+        // A pinned run is acceptance evidence: only passing scenarios count, so a listed one fails before its cluster starts.
+        if (Cluster.FlyPinned && PinnedRefusal(id) is { } refusal)
+        {
+            throw new InvalidOperationException(refusal);
+        }
+
         if (!Waiting.TryGetValue(id, out var gap))
         {
             await scenario();
@@ -121,6 +127,11 @@ internal static class Gaps
             Outcomes.Mark("expected-failure", $"{gap.Waits}; failed as named: {failure.GetType().Name} with \"{gap.Fails}\"");
         }
     }
+
+    /// <summary>Why a machine-pinned run refuses <paramref name="id"/>: it is still listed here; null when it must pass.</summary>
+    public static string? PinnedRefusal(string id) => Waiting.TryGetValue(id, out var gap)
+        ? $"{id} is still a strict expected failure waiting on {gap.Waits}; a machine-pinned run counts only scenarios that must pass, so its Gaps row must be removed first"
+        : null;
 
     private static NotSupportedException? Unsupported(Exception? error) => error switch
     {
