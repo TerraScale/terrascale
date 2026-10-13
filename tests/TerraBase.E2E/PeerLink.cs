@@ -133,12 +133,17 @@ internal sealed class PeerLink : IAsyncDisposable
         }
     }
 
-    // A reset (RST), not an orderly close: what a dropped route looks like to gRPC.
-    private static void Abort(TcpClient client)
+    // A reset (RST), not an orderly close: what a dropped route looks like to gRPC. Reset and a connection's own pump can both
+    // abort one client; the second finds its socket already gone (TcpClient.Client is null after Close).
+    internal static void Abort(TcpClient client)
     {
         try
         {
-            client.Client.LingerState = new LingerOption(true, 0);
+            if (client.Client is { } socket)
+            {
+                socket.LingerState = new LingerOption(true, 0);
+            }
+
             client.Close();
         }
         catch (Exception error) when (error is SocketException or ObjectDisposedException)
