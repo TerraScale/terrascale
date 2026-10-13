@@ -56,20 +56,25 @@ public sealed class TerraScaleAuthOidcClient(TerraScaleAuthClient client)
             TokenRoute(),
             form,
             authorization: null,
-            TerraScaleAuthJsonContext.Default.TerraScaleAuthTokenResponse,
+            TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthTokenResponse,
             cancellationToken);
     }
 
     /// <summary>
     /// Requests a machine-to-machine access token for the client itself
-    /// (client credentials grant). The token's subject and audience are the client id.
+    /// (client credentials grant). API keys issue organization/project-scoped tokens;
+    /// the audience is the producer's configured resource audience, never the regional host.
     /// </summary>
     public Task<TerraScaleAuthTokenResponse> RequestClientCredentialsTokenAsync(
         string clientId,
         string clientSecret,
         string? scope = null,
+        string? project = null,
         CancellationToken cancellationToken = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientSecret);
+        if (project is not null) TerraScaleIds.Validate(project);
         var form = new List<KeyValuePair<string, string>>
         {
             new("grant_type", "client_credentials"),
@@ -81,11 +86,12 @@ public sealed class TerraScaleAuthOidcClient(TerraScaleAuthClient client)
             form.Add(new("scope", scope));
         }
 
+        if (project is not null) form.Add(new("project", project));
         return client.SendOAuthFormAsync(
             TokenRoute(),
             form,
             authorization: null,
-            TerraScaleAuthJsonContext.Default.TerraScaleAuthTokenResponse,
+            TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthTokenResponse,
             cancellationToken);
     }
 
@@ -109,13 +115,13 @@ public sealed class TerraScaleAuthOidcClient(TerraScaleAuthClient client)
                 new("refresh_token", refreshToken),
             ],
             authorization: null,
-            TerraScaleAuthJsonContext.Default.TerraScaleAuthTokenResponse,
+            TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthTokenResponse,
             cancellationToken);
     }
 
     /// <summary>
-    /// Revokes a token (only refresh tokens are actually revoked, scoped to the
-    /// calling client). Unknown or already-invalid tokens also succeed.
+    /// Revokes a token and its sign-in, scoped to the calling client. Unknown or
+    /// already-invalid tokens also succeed. Offline access tokens live until expiry.
     /// </summary>
     public Task RevokeTokenAsync(string clientId, string clientSecret, string token, CancellationToken cancellationToken = default)
     {
@@ -158,6 +164,29 @@ public sealed class TerraScaleAuthOidcClient(TerraScaleAuthClient client)
             accessToken,
             TerraScaleAuthJsonContext.Default.TerraScaleAuthUserInfo,
             cancellationToken);
+
+    /// <summary>RFC 8693 exchange of this client's live sign-in token for organization/project authority.
+    /// The producer rechecks the user's role. Scope is space-delimited; null requests the allowed scopes.
+    /// Database restriction is unsupported by this producer's exchange grant.</summary>
+    public Task<TerraScaleAuthTokenResponse> ExchangeTokenAsync(
+        string clientId, string clientSecret, string subjectToken, string organizationId,
+        string? projectId = null, string? scope = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(subjectToken);
+        TerraScaleIds.Validate(organizationId);
+        if (projectId is not null) TerraScaleIds.Validate(projectId);
+        var form = new List<KeyValuePair<string, string>>
+        {
+            new("grant_type", "urn:ietf:params:oauth:grant-type:token-exchange"),
+            new("subject_token", subjectToken),
+            new("subject_token_type", "urn:ietf:params:oauth:token-type:access_token"),
+            new("organization", organizationId),
+        };
+        if (projectId is not null) form.Add(new("project", projectId));
+        if (scope is not null) form.Add(new("scope", scope));
+        return client.SendOAuthFormAsync(TokenRoute(), form, TerraScaleAuthCredentials.Basic(clientId, clientSecret),
+            TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthTokenResponse, cancellationToken);
+    }
 
     private string InstanceRoute(string relative) =>
         "/" + TerraScaleAuthPaths.Escape(client.InstanceSlug) + relative;
@@ -204,9 +233,10 @@ public sealed record TerraScaleAuthTokenResponse(
     [property: JsonPropertyName("access_token")] string AccessToken,
     [property: JsonPropertyName("token_type")] string TokenType,
     [property: JsonPropertyName("expires_in")] long ExpiresIn,
-    [property: JsonPropertyName("scope")] string? Scope,
-    [property: JsonPropertyName("refresh_token")] string? RefreshToken,
-    [property: JsonPropertyName("id_token")] string? IdToken)
+    [property: JsonPropertyName("scope")] string? Scope = null,
+    [property: JsonPropertyName("refresh_token")] string? RefreshToken = null,
+    [property: JsonPropertyName("id_token")] string? IdToken = null,
+    [property: JsonPropertyName("issued_token_type")] string? IssuedTokenType = null)
 {
     /// <inheritdoc cref="object.ToString" />
     public override string ToString() =>
