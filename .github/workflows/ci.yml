@@ -21,7 +21,7 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
@@ -33,7 +33,13 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24.21.0 # .mise.toml
-      - run: echo "NUGET_PACKAGES=$RUNNER_TEMP/nuget" >> "$GITHUB_ENV"
+          cache: npm
+          cache-dependency-path: src/TerraScale.Dashboard/web/package-lock.json
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-
       - run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: src/TerraScale.Dashboard/web
       - run: make check
@@ -46,15 +52,25 @@ jobs:
 
   image:
     needs: check
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@v3
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: github.event_name == 'push'
+      - name: Authenticate the app-scoped Fly registry
+        if: github.event_name == 'push'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl auth docker
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: SOURCE_REVISION=${{ github.sha }}
-          push: false
+          push: ${{ github.event_name == 'push' }}
+          tags: registry.fly.io/ts-dashboard:${{ github.sha }}
+          cache-from: type=gha,scope=dashboard-image
+          cache-to: type=gha,scope=dashboard-image,mode=max

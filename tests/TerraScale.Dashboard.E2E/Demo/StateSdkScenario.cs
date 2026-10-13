@@ -172,7 +172,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
 
     private sealed class StateProducer
     {
-        public const string Project = "00000000000000000000000002";
+        public const string Project = "00000000000000000000000005";
         private readonly object gate = new();
         private readonly TerraScaleIdGenerator ids = new();
         private readonly Dictionary<string, Collection> collections = new(StringComparer.Ordinal);
@@ -210,8 +210,8 @@ public sealed class StateSdkScenario : IAsyncDisposable
                 if (Mode == "forbidden" && http.Request.Method != "GET") return Error(403, "forbidden");
                 var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
                 Require(parts.Length >= 5 && parts[0] == "v1" && parts[1] == "projects" && parts[2] == Project &&
-                    parts[3] == "databases" && parts[4] == "platform-dashboard", "State namespace must use only its delivered canonical project and fixed database.");
-                // TerraBase seeds platform-dashboard itself; the dashboard never creates it.
+                    parts[3] == "databases" && parts[4] == "ts-dashboard", "State namespace must use only its delivered canonical project and fixed database.");
+                // TerraBase seeds ts-dashboard itself; the dashboard never creates it.
                 if (parts.Length == 5) { Interlocked.Increment(ref databasePuts); Interlocked.Increment(ref databaseCreates); Require(false, "The dashboard must not create or replace its seeded database."); }
                 if (Mode == "project-missing") return Error(404, "unknown_database");
                 Require(parts.Length >= 6 && parts[5] == "collections", "Only genuine collection and by-key document routes are admitted.");

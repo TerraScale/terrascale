@@ -1,0 +1,59 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI, Slow]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+# Completion of either suite wakes this workflow; the second green suite releases the rollout.
+concurrency:
+  group: dashboard-production
+  cancel-in-progress: false
+
+jobs:
+  tested-head:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    outputs:
+      sha: ${{ steps.head.outputs.sha }}
+    steps:
+      - uses: actions/github-script@v8
+        id: head
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            if (run.event !== 'push' || run.head_branch !== 'main' || run.conclusion !== 'success') return;
+            const repo = context.repo;
+            const main = await github.rest.repos.getBranch({...repo, branch: 'main'});
+            if (main.data.commit.sha !== run.head_sha) return;
+            const runs = await github.rest.actions.listWorkflowRunsForRepo({...repo, head_sha: run.head_sha, per_page: 100});
+            for (const name of ['CI', 'Slow']) {
+              const latest = runs.data.workflow_runs.filter(r => r.name === name && r.event === 'push').sort((a,b) => b.id - a.id)[0];
+              if (latest?.conclusion !== 'success') return;
+            }
+            for (const prior of runs.data.workflow_runs.filter(r => r.name === 'Deploy' && r.conclusion === 'success')) {
+              const jobs = await github.rest.actions.listJobsForWorkflowRun({...repo, run_id: prior.id});
+              if (jobs.data.jobs.some(j => j.name === 'rollout' && j.conclusion === 'success')) return;
+            }
+            core.setOutput('sha', run.head_sha);
+
+  rollout:
+    needs: tested-head
+    if: needs.tested-head.outputs.sha != ''
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.tested-head.outputs.sha }}
+          persist-credentials: false
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Reuse the tested image in gru, sjc and fra
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ needs.tested-head.outputs.sha }}
+        run: bash scripts/fly-rollout.sh

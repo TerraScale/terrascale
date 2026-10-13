@@ -1,11 +1,10 @@
 # Stripe live cutover — TS-709
 
 The [zero-configuration contract](zero-configuration.md) requires billing to be
-always available, with vendor keys stored once in OCI Vault and delivered
-automatically. This document retains the authorization, data-integrity and
+always available, with vendor keys stored once as Fly secrets and delivered
+as environment variables. This document retains the authorization, data-integrity and
 financial acceptance boundaries; it does not introduce a billing enable switch.
-Automatic delivery and removal of current demo/mode gates are pending runtime
-work. Preparation alone does not authorize charges, refunds or destructive resets.
+The production binary has no demo or billing mode switches. Preparation alone does not authorize charges, refunds or destructive resets.
 
 ## Verify the serving target
 
@@ -23,32 +22,20 @@ curl -fsS https://dashboard.terrascale.tech/readyz
 scripts/smoke-native-login.sh https://dashboard.terrascale.tech
 ```
 
-On 2026-10-12 at 18:09 UTC the app had no Machines and no releases; the C#
-application is not deployed.
+The greenfield rebuild removed the old dashboard machine. The rollout creates
+one machine in each of gru, sjc and fra and checks the tested commit and region
+from `/health/ready`. State is in TerraBase, never a dashboard volume.
 
-Historical (Go application on `https://dash.terrascale.tech`): read-only
-inspection on 2026-10-09 at 07:10 UTC found Machine
-`d8d96000b74e78` started in `gru` on completed release `v135`, with its check
-passing. Readiness, native password login and email-code pages returned `200`;
-the login pages retain CSRF controls. Actual authentication was not exercised.
-Fly has ten deployed `Payments__Stripe__*` secrets, but no current `STRIPE_*`
-or `DASHBOARD_PUBLIC_ORIGIN` settings. The Go application ignored those legacy
-names, so that inspection found billing unconfigured. Do not add compatibility
-aliases or copy replacement keys by hand; automatic Vault delivery remains
-required and unqualified.
+Record machine/release IDs and Fly secret names/digests. Never record values.
+Database provisioning belongs to TerraBase startup; identity bootstrap belongs
+to ts-auth.
 
-Record Machine/release IDs and Vault secret OCIDs/version numbers in the
-ticket. Never record credential values. Reset obsolete application data and
-re-bootstrap through the SDK in the existing provisioned database when needed;
-do not replace the serving app, cell or volume. Do not touch Forgejo, ts-ops or
-homelab hosts.
-
-## Vault delivery and provider verification
+## Fly delivery and provider verification
 
 The vendor-issued Stripe account key and endpoint-specific signing secret are
-stored once in OCI Vault. Production automation must discover the correct
-versions and deliver them without operator extraction, dotenv assembly or Fly
-secret copying. This documentation does not implement that pipeline.
+`STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` on `ts-dashboard`. Fly injects
+them into the application. There is no identity file or external vault.
+See [identity-descriptor.md](identity-descriptor.md) for formats and ownership.
 
 Verify account authorization, restricted-key permissions, six distinct recurring
 prices, matching live products, the production webhook URL/API version/events
@@ -110,7 +97,7 @@ Verified Stripe sandbox deliveries remain required before live approval.
 ## Production acceptance
 
 Deploy the reviewed runtime through its normal quality and integrity gates.
-OCI Vault must deliver the verified credentials automatically; manual secret
+Fly must deliver the verified credentials automatically; manual secret
 import and demo-switch recipes are retired. Existing delivery and switch paths
 remain runtime gaps, so this document cannot certify a completed cutover.
 

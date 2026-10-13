@@ -144,7 +144,7 @@ public static class DashboardApplication
         app.MapGet("/health/ready", async (IDashboardState state, CancellationToken cancellationToken) =>
         {
             await state.CheckReadyAsync(cancellationToken);
-            return Results.Json(new { status = "ok", version = BuildVersion });
+            return Results.Json(new { status = "ok", version = BuildVersion, region = Environment.GetEnvironmentVariable("FLY_REGION") });
         });
         app.MapAuth();
         app.MapAccountFeatures();

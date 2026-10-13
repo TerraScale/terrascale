@@ -8,7 +8,7 @@ other options; key mode is inferred from the delivered key prefix.
 
 ## Run the read-only audit
 
-Run this from the dashboard checkout in an environment where OCI Vault has
+Run this from the dashboard checkout in an environment where Fly has
 delivered the dashboard identity:
 
 ```sh
