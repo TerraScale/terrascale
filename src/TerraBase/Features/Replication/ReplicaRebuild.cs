@@ -1,0 +1,256 @@
+using TerraBase.Tenancy;
+
+namespace TerraBase.Features.Replication;
+
+/// <summary>What a rebuild of a faulted copy came to (docs/terrabase/decisions/0013a, sections 1, 5 and 9).</summary>
+internal abstract record RebuildOutcome
+{
+    private RebuildOutcome()
+    {
+    }
+
+    /// <summary>The copy was rebuilt and certified as <paramref name="NewIncarnation"/>; the side copy is gone.</summary>
+    internal sealed record Completed(Ulid NewIncarnation) : RebuildOutcome;
+
+    /// <summary>Nothing certified; the pending record and the side copy stay, and a later run resumes.</summary>
+    internal sealed record Refused(string Reason) : RebuildOutcome;
+
+    /// <summary>Another rebuild runs on this host; nothing changed.</summary>
+    internal sealed record Busy : RebuildOutcome;
+}
+
+/// <summary>Where a rebuild stands, in the order it gets there.</summary>
+internal enum RebuildPhase
+{
+    /// <summary>Recorded; the faulted file may still be in place.</summary>
+    Pending,
+
+    /// <summary>The faulted file and its log are at the side path; a fresh file with a new incarnation is in place.</summary>
+    Swapped,
+
+    /// <summary>Refilled from a source, and every verified state of the side copy joined into the new incarnation.</summary>
+    Salvaged,
+
+    /// <summary>The completion barrier certified the new incarnation; only the side copy is left to delete.</summary>
+    Certified,
+}
+
+/// <summary>The one recovery record of a database's rebuild, kept next to its fault record.</summary>
+internal sealed record RebuildRecord(TenantContext Database, Ulid OldIncarnation, string SidePath, RebuildPhase Phase, Ulid? NewIncarnation);
+
+/// <summary>
+/// Where rebuild records persist: outside the suspect file, durable (FULL) before a call returns. Its storage belongs
+/// with the copy-fault record (R6-FIX, R10a) and is not built yet.
+/// </summary>
+internal interface IRebuildLedger
+{
+    ValueTask<RebuildRecord?> GetAsync(TenantContext database, CancellationToken cancellationToken);
+
+    ValueTask SaveAsync(RebuildRecord record, CancellationToken cancellationToken);
+
+    ValueTask RetireAsync(TenantContext database, Ulid oldIncarnation, CancellationToken cancellationToken);
+}
+
+/// <summary>R6-FIX's half of a rebuild: certified refill and the completion barrier (0013a section 1).</summary>
+internal interface IRebuildCertification
+{
+    /// <summary>
+    /// Refills exactly <paramref name="newIncarnation"/> from a listed source whose copy is not faulted, with a pinned
+    /// source incarnation, complete key-aware coverage and FULL commits; false when it could not.
+    /// </summary>
+    ValueTask<bool> RefillAsync(TenantContext database, Ulid newIncarnation, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The barrier after the salvage: publishes the certificate for (<paramref name="oldIncarnation"/>,
+    /// <paramref name="newIncarnation"/>), retires the fault and leaves the record at <see cref="RebuildPhase.Certified"/>;
+    /// false when it did not certify.
+    /// </summary>
+    ValueTask<bool> CompleteAsync(TenantContext database, Ulid oldIncarnation, Ulid newIncarnation, CancellationToken cancellationToken);
+}
+
+/// <summary>The storage half of a rebuild: the swap, the side copy and its verified states.</summary>
+internal interface IRebuildStorage
+{
+    /// <summary>Where the faulted file of <paramref name="incarnation"/> goes aside, next to the database's file.</summary>
+    string SidePath(TenantContext database, Ulid incarnation);
+
+    bool SideExists(string sidePath);
+
+    /// <summary>The incarnation of the database's file in place, or null when there is none.</summary>
+    ValueTask<Ulid?> IncarnationAsync(TenantContext database, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Drains the open copy of <paramref name="faultedIncarnation"/> (no writer of this process mid-transaction, the store
+    /// closed), moves its file and log to <paramref name="sidePath"/> unwritten, and publishes a fresh file with a new
+    /// incarnation in its place. Null, with the old file untouched in place, when the copy is another incarnation or does
+    /// not drain in time.
+    /// </summary>
+    ValueTask<Ulid?> SwapAsync(TenantContext database, Ulid faultedIncarnation, string sidePath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// After a swap interrupted once its file reached <paramref name="sidePath"/>: moves any log left behind after it, then
+    /// publishes the fresh file unless one is in place; returns the incarnation in place.
+    /// </summary>
+    ValueTask<Ulid?> PublishFreshAsync(TenantContext database, string sidePath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The side copy's states after (<paramref name="afterCollection"/>, <paramref name="afterId"/>), in that order, at most
+    /// <paramref name="max"/>; each one checked against its stored digest, read without writing the side copy. Throws
+    /// <see cref="InvalidDataException"/> for a state that does not verify.
+    /// </summary>
+    ValueTask<IReadOnlyList<RepairState>> ReadSideAsync(string sidePath, string afterCollection, string afterId, int max, CancellationToken cancellationToken);
+
+    ValueTask DeleteSideAsync(string sidePath, CancellationToken cancellationToken);
+}
+
+/// <summary>Rebuilds a faulted copy of a database into a new incarnation; one at a time per host.</summary>
+internal interface IReplicaRebuild
+{
+    ValueTask<RebuildOutcome> RebuildAsync(TenantContext database, Ulid faultedIncarnation, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// The R7 rebuild of a faulted receiver copy (docs/terrabase/decisions/0013a). A faulted copy acknowledges nothing again;
+/// it certifies only as a new incarnation rebuilt from peers, and never at the cost of the only copy of an acknowledged
+/// write (section 5). So, in order, each step recorded before the next: the faulted file and its log move aside
+/// unwritten and a fresh file takes their place; a certified refill fills it from a source; every state of the side copy
+/// that verifies against its stored digest joins it (whatever the source lacks survives); the completion barrier
+/// certifies; only then does the side copy go. Any step that cannot finish refuses, keeping the record and the side copy;
+/// a later run resumes from the record. Production wiring (who calls it, where records live) is R6-FIX's and R10a's.
+/// </summary>
+internal sealed class ReplicaRebuild(IRebuildStorage storage, IRebuildLedger ledger, IRebuildCertification certification, IChangeGroupSink sink)
+    : IReplicaRebuild
+{
+    private const int SalvagePage = ChangeGroups.MaxDeltas;
+
+    // 1 while a rebuild runs on this host: a second one answers busy, nothing queues in memory.
+    private int _active;
+
+    public async ValueTask<RebuildOutcome> RebuildAsync(TenantContext database, Ulid faultedIncarnation, CancellationToken cancellationToken)
+    {
+        if (Interlocked.CompareExchange(ref _active, 1, 0) != 0)
+        {
+            return new RebuildOutcome.Busy();
+        }
+
+        try
+        {
+            return await RunAsync(database, faultedIncarnation, cancellationToken).ConfigureAwait(false);
+        }
+        catch (IOException)
+        {
+            // A file could not move or publish: the record says where to resume, and the side copy (if any) stays.
+            return new RebuildOutcome.Refused("the rebuild could not move or publish a file");
+        }
+        finally
+        {
+            Volatile.Write(ref _active, 0);
+        }
+    }
+
+    private async ValueTask<RebuildOutcome> RunAsync(TenantContext database, Ulid faulted, CancellationToken cancellationToken)
+    {
+        var record = await ledger.GetAsync(database, cancellationToken).ConfigureAwait(false);
+        if (record is not null && record.OldIncarnation != faulted)
+        {
+            return new RebuildOutcome.Refused("a rebuild of another incarnation is pending");
+        }
+
+        if (record is null)
+        {
+            // A fresh request records nothing unless the faulted incarnation is the one in place.
+            if (await storage.IncarnationAsync(database, cancellationToken).ConfigureAwait(false) != faulted)
+            {
+                return new RebuildOutcome.Refused("the faulted incarnation is no longer in place");
+            }
+
+            record = new RebuildRecord(database, faulted, storage.SidePath(database, faulted), RebuildPhase.Pending, null);
+        }
+
+        if (record.Phase == RebuildPhase.Pending)
+        {
+            // Recorded before anything moves: a crash from here on resumes from the record.
+            await ledger.SaveAsync(record, cancellationToken).ConfigureAwait(false);
+            var fresh = storage.SideExists(record.SidePath)
+                ? await storage.PublishFreshAsync(database, record.SidePath, cancellationToken).ConfigureAwait(false)
+                : await storage.SwapAsync(database, faulted, record.SidePath, cancellationToken).ConfigureAwait(false);
+            if (fresh is not { } incarnation || incarnation == faulted)
+            {
+                return new RebuildOutcome.Refused("the faulted copy is another incarnation or did not drain");
+            }
+
+            record = record with { Phase = RebuildPhase.Swapped, NewIncarnation = incarnation };
+            await ledger.SaveAsync(record, cancellationToken).ConfigureAwait(false);
+        }
+
+        var rebuilt = record.NewIncarnation ?? throw new InvalidDataException("a swapped rebuild record has no new incarnation");
+        if (record.Phase is RebuildPhase.Swapped or RebuildPhase.Salvaged
+            && await storage.IncarnationAsync(database, cancellationToken).ConfigureAwait(false) != rebuilt)
+        {
+            return new RebuildOutcome.Refused("the rebuilt copy was replaced");
+        }
+
+        if (record.Phase == RebuildPhase.Swapped)
+        {
+            if (!await certification.RefillAsync(database, rebuilt, cancellationToken).ConfigureAwait(false))
+            {
+                return new RebuildOutcome.Refused("no certified refill from an intact source");
+            }
+
+            if (await SalvageAsync(database, record.SidePath, cancellationToken).ConfigureAwait(false) is { } failed)
+            {
+                return new RebuildOutcome.Refused(failed);
+            }
+
+            record = record with { Phase = RebuildPhase.Salvaged };
+            await ledger.SaveAsync(record, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (record.Phase == RebuildPhase.Salvaged)
+        {
+            if (!await certification.CompleteAsync(database, faulted, rebuilt, cancellationToken).ConfigureAwait(false)
+                || await ledger.GetAsync(database, cancellationToken).ConfigureAwait(false) is not { Phase: RebuildPhase.Certified } certified
+                || certified.OldIncarnation != faulted || certified.NewIncarnation != rebuilt)
+            {
+                return new RebuildOutcome.Refused("the completion barrier did not certify");
+            }
+
+            record = certified;
+        }
+
+        // Certified: the new incarnation durably contains or dominates the side copy, which may go now.
+        await storage.DeleteSideAsync(record.SidePath, cancellationToken).ConfigureAwait(false);
+        await ledger.RetireAsync(database, faulted, cancellationToken).ConfigureAwait(false);
+        return new RebuildOutcome.Completed(rebuilt);
+    }
+
+    // Joins every state of the side copy into the new incarnation as repairs, page by page; the reason it could not, or null.
+    private async ValueTask<string?> SalvageAsync(TenantContext database, string sidePath, CancellationToken cancellationToken)
+    {
+        var (collection, id) = (string.Empty, string.Empty);
+        while (true)
+        {
+            IReadOnlyList<RepairState> page;
+            try
+            {
+                page = await storage.ReadSideAsync(sidePath, collection, id, SalvagePage, cancellationToken).ConfigureAwait(false);
+            }
+            catch (InvalidDataException)
+            {
+                return "a state of the side copy does not verify against its digest";
+            }
+
+            if (page.Count == 0)
+            {
+                return null;
+            }
+
+            if (await sink.RepairAsync(database, page, cancellationToken).ConfigureAwait(false) is null)
+            {
+                return "the rebuilt copy is not held";
+            }
+
+            (collection, id) = (page[^1].Collection, page[^1].Id);
+        }
+    }
+}
