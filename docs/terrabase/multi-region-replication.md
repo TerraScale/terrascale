@@ -281,6 +281,22 @@ until the SDKs drop them). Create-only `If-None-Match: *` goes too. Client ULIDs
 - **Atomicity.** One Turso transaction → one group → one apply transaction at the receiver. Readers never see part of
   an operation, nor part of a lane batch.
 
+**Damaged change log rows.** The tailer refuses, never skips: a row of a change type Turso does not write (only 1, 0,
+-1 and 2), a row whose shape breaks its type (Turso's commit rows carry no table and no after-image, its delete rows no
+after-image, so a write whose type was damaged into 2 or -1 is caught), an insert or update without an after-image, a state
+that is not base64url or not a `DocumentState`, or a live state without its document row fails the read with
+`InvalidDataException`. Nothing past the peer's ack ships or is
+acknowledged: that database is held, logged as an error, counted (`terrabase.replication.unreadable_reads`) and visible in
+its `send_lag`, and read again from the same ack every 30 s; the other databases on the stream go on. Acks and first
+contacts never fail on it: the `tail_lag` gauge they refresh keeps its last value for a held database. Once the damage is
+gone the next read ships the held writes. If it stays, the peer's `seen` is refreshed by its own writes to that database
+(when it writes there), so the 24 h release never fires; only the 65,536-row / 1 GiB eviction ends the hold and leads to
+a refill. Either way the data converges through anti-entropy (60 s rounds; a bucket is repaired after two differing rounds). CDC rows
+carry no checksum of their own: they live in the same file as the states they come from, so a checksum would only cover
+the copy that ships. Torn writes are caught by the WAL's frame checksums, damage that breaks decoding is refused as above,
+and replicas that diverge silently show in anti-entropy's bucket digests (section 10), which cannot tell which replica is
+right. Revisit when Turso exposes page checksums.
+
 ## 8. Transport
 
 - **Peers.** Phase 3a's `FlyMachines` directory: TXT `vms.ts-terrabase.internal`, refreshed every 5 s. A database's

@@ -32,6 +32,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
     private readonly TerraBaseOptions _options;
     private readonly TimeProvider _time;
     private readonly ILogger<PeerStreams> _logger;
+    private readonly Counter<long> _unreadable;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Link> _links = [with(StringComparer.Ordinal)];
 
@@ -43,6 +44,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
         var meter = meters.Create(Telemetry.MeterName);
         meter.CreateObservableGauge("terrabase.replication.send_lag", () => Lags(cursor => cursor.BehindSince), "s",
             "Age of the oldest change group not yet acknowledged by the peer region's machines.");
+        _unreadable = meter.CreateCounter<long>("terrabase.replication.unreadable_reads", "{read}",
+            "Reads of a database's change log that failed (a damaged row is refused), by the peer region the batch was for.");
         meter.CreateObservableGauge("terrabase.replication.ack_lag", () => Lags(cursor => cursor.InFlight is null ? null : cursor.SentAt), "s",
             "Age of the oldest batch sent to the peer region's machines but not acknowledged.");
     }
@@ -277,7 +280,27 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                 continue;
             }
 
-            var groups = await _source.ReadAsync(database, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
+            IReadOnlyList<OriginGroup> groups;
+            try
+            {
+                groups = await _source.ReadAsync(database, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            {
+                // A change log this machine cannot read (a damaged row is refused, never skipped) holds back that database only:
+                // nothing after the peer's ack ships or is acknowledged, the other databases on the stream go on, and this one is
+                // read again from the same ack. Its send_lag grows meanwhile.
+                _logger.ZLogError(error, $"The change log of database {database.DatabaseId:@Database} could not be read for machine {link.Peer.Name:@Peer} in {link.Peer.Region:@Region}; that database is held and read again");
+                _unreadable.Add(1, new KeyValuePair<string, object?>("peer_region", link.Peer.Region));
+                lock (link.Gate)
+                {
+                    cursor.BehindSince ??= _time.GetTimestamp();
+                    cursor.RetryAt = _time.GetTimestamp() + (long)(MaxBackoff.TotalSeconds * _time.TimestampFrequency);
+                }
+
+                continue;
+            }
+
             if (groups.Count == 0)
             {
                 lock (link.Gate)

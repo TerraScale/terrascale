@@ -1,0 +1,6 @@
+{
+  "description": "The collection row of the transaction is gone: the live state has no document image to pair with.",
+  "row": "document",
+  "mutation": { "kind": "delete" },
+  "expect": "refused"
+}

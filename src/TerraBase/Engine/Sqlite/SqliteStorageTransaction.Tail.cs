@@ -74,6 +74,14 @@ internal sealed partial class SqliteStorageTransaction
                     rows++;
                     from = reader.GetInt64(0);
                     var type = reader.GetInt64(1);
+                    // Turso's commit rows carry no table and no after-image, its delete rows no after-image. A row whose type
+                    // was damaged into one of those values still has its own table or image: taking it at its type would drop
+                    // the write it captured, so the read is refused.
+                    if ((type == 2 && (!reader.IsDBNull(2) || !reader.IsDBNull(3))) || (type == -1 && !reader.IsDBNull(3)))
+                    {
+                        throw new InvalidDataException($"a captured change of type {type} has the shape of another type");
+                    }
+
                     if (type == 2)
                     {
                         if (transaction.Deltas.Count > 0)
@@ -101,11 +109,20 @@ internal sealed partial class SqliteStorageTransaction
                         continue;
                     }
 
+                    // Turso writes 1 (insert), 0 (update), -1 (delete) and 2 (commit). Any other type is a damaged row: skipping it
+                    // could leave an acknowledged write unshipped, so the read is refused instead.
+                    if (type is not (-1 or 0 or 1))
+                    {
+                        throw new InvalidDataException($"a captured change has change type {type}, which no capture writes");
+                    }
+
                     // A delete carries no after-image: a deleted document's state row says live = 0, so it needs none.
                     // The changes feed's own rows (R8) are bookkeeping of this machine, never shipped.
                     if (type is 0 or 1 && reader.GetString(2) is var table && !ChangeLog.EngineTable(table) && table is not ("_tb_feed" or "_tb_feed_floor"))
                     {
-                        transaction.Add(table, SqliteSession.Bytes(reader, 3), self);
+                        transaction.Add(table, reader.IsDBNull(3)
+                            ? throw new InvalidDataException("a captured insert or update has no after-image")
+                            : SqliteSession.Bytes(reader, 3), self);
                     }
                 }
             }
@@ -307,7 +324,17 @@ internal sealed partial class SqliteStorageTransaction
             var document = live == 0 ? null
                 : _documents.TryGetValue((collection, id), out var body) ? body
                 : throw new InvalidDataException("a captured live document state has no document row before it in its transaction");
-            var full = DocumentStateEncoding.DecodeStored(Base64Url.DecodeFromChars(state), document is null ? [] : Encoding.UTF8.GetBytes(document));
+            byte[] stored;
+            try
+            {
+                stored = Base64Url.DecodeFromChars(state);
+            }
+            catch (FormatException error)
+            {
+                throw new InvalidDataException("a captured state is not base64url", error);
+            }
+
+            var full = DocumentStateEncoding.DecodeStored(stored, document is null ? [] : Encoding.UTF8.GetBytes(document));
             var at = new Hlc(unchecked((ulong)stamp));
             Deltas.Add(new ChangeDelta(collection, id, at, full.DeltaAt(at)));
         }

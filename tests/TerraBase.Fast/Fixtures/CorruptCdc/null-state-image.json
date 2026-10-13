@@ -1,0 +1,6 @@
+{
+  "description": "The _tb_state insert has no after-image at all (NULL), as a lost page of turso_cdc would leave it.",
+  "row": "state",
+  "mutation": { "kind": "null" },
+  "expect": "refused"
+}

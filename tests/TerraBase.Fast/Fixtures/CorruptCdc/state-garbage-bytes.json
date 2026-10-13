@@ -1,0 +1,6 @@
+{
+  "description": "The state column is valid base64url of bytes that are no DocumentState (0x00..0x0F).",
+  "row": "state",
+  "mutation": { "kind": "column", "column": 3, "text": "AAECAwQFBgcICQoLDA0ODw" },
+  "expect": "refused"
+}

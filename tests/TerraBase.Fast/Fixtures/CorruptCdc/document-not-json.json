@@ -1,0 +1,6 @@
+{
+  "description": "The collection row's doc column is re-encoded as truncated JSON.",
+  "row": "document",
+  "mutation": { "kind": "column", "column": 1, "text": "{\"n\":" },
+  "expect": "refused"
+}
