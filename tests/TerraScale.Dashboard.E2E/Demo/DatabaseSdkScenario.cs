@@ -80,10 +80,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             application.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new ProducerFactory(transport)));
             application.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend, DatabaseBackend>());
             application.Services.Replace(ServiceDescriptor.Singleton<IDocumentBackend>(services => services.GetRequiredService<DocumentBackend>()));
-            application.Services.AddSingleton<TsWorkspaceGateway>();
-            application.Services.Replace(ServiceDescriptor.Singleton<IWorkspaceGateway>(services => services.GetRequiredService<TsWorkspaceGateway>()));
             application.Services.Replace(ServiceDescriptor.Singleton<IOrganizationAccess, TsOrganizationAccess>());
-            application.Services.Replace(ServiceDescriptor.Singleton<IOrganizationLifecycle, TsOrganizationLifecycle>());
             configureScenario?.Invoke(application);
         }
         first = environment.CreateHost(root, 0, "http://127.0.0.1", Configure);
