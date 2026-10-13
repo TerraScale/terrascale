@@ -134,7 +134,7 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 		return fail(fmt.Errorf("unknown target %q", st.Scenario))
 	}
 	b.target = targets[i]
-	if err := b.waitStreams(ctx, 0); err != nil {
+	if err := b.target.waitReady(b, ctx, 0); err != nil {
 		return fail(err)
 	}
 	before, err := get(ctx, metricsClient, b.metrics)
@@ -161,7 +161,7 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 	t0, deadline := time.Now(), time.After(admissionDeadline)
 	for i := range n {
 		sleep(ctx, time.Until(t0.Add(time.Duration(i)*time.Second/admitRate)))
-		wg.Go(func() { b.follow(fctx, m, outcomes) })
+		wg.Go(func() { b.target.follow(b, fctx, m, outcomes) })
 		select {
 		case o := <-outcomes:
 			status[o]++
@@ -176,7 +176,7 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 	if admitted == 0 {
 		return fail(fmt.Errorf("no follower of %d admitted", n))
 	}
-	if err := b.waitStreams(ctx, admitted); err != nil {
+	if err := b.target.waitReady(b, ctx, admitted); err != nil {
 		return fail(err)
 	}
 
@@ -275,8 +275,8 @@ func (m *measure) firstErr() error {
 	return m.err
 }
 
-// follow opens one feed stream and reports its admission on outcomes, then reads it until ctx ends.
-func (b *bench) follow(ctx context.Context, m *measure, outcomes chan<- string) {
+// followChanges opens one feed stream and reports its admission on outcomes, then reads it until ctx ends.
+func (b *bench) followChanges(ctx context.Context, m *measure, outcomes chan<- string) {
 	report := func(err error) {
 		m.fail(err)
 		outcomes <- ""

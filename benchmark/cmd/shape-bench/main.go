@@ -42,10 +42,13 @@ const (
 // target is one followed endpoint below the database URL; the report names its steps by name and transport.
 type target struct {
 	name, transport, path string
+	follow                func(*bench, context.Context, *measure, chan<- string)
+	waitReady             func(*bench, context.Context, int64) error
 }
 
 // targets is the fixed target list, each run at every follower count.
-var targets = []target{{name: "changes.fanout", transport: "sse-http1", path: "/changes"}}
+var targets = []target{{name: "changes.fanout", transport: "sse-http1", path: "/changes",
+	follow: (*bench).followChanges, waitReady: (*bench).waitStreams}}
 
 // followers are the follower counts: every N runs, even past the admission cap.
 var followers = []int{1, 10, 100, 1000}
@@ -195,6 +198,7 @@ func notes(results []apibench.Result, probes []probe, pid int, metricsURL, commi
 	fmt.Fprintf(&b, "\n## Fan-out notes\n\n")
 	fmt.Fprintf(&b, "- %s\n", commits)
 	fmt.Fprintf(&b, "- One local node (%s) in the tests/TerraBase.E2E BenchmarkClusterHost process, plain HTTP on loopback: no WAN, no Fly Proxy, no TLS. No network probe ran; the startup row is one host launch until its targets file appeared.\n", region)
+	fmt.Fprintln(&b, "- Shared reporter placeholders: network probe, startup max RSS, MB out, and auth ms are unmeasured here; their zeros are placeholders. The shared startup heading says 5 launches, but this run has one launch.")
 	fmt.Fprintf(&b, "- Writer: %d PUTs/s of %d-byte documents into one collection, open loop; every write must succeed. Followers: GET …/changes?cursor=now&collections=<that collection>, opened one at a time at %d/s, each awaiting its admission or rejection (the local tenant is on the Hobby QoS plan), then all read together through the measured window.\n", writeRate, payloadBytes, admitRate)
 	fmt.Fprintf(&b, "- Columns: conc = requested N; rate = writes/s; req/s = deliveries/s summed over admitted followers; p50…max = delivery lag from the write's send time (in the document) to the follower reading its change event; err %% = missed deliveries of in-window writes to admitted followers (grace %s); MB in = SSE response body bytes of admitted streams in the window; CPU %% and RSS MB = the host process (/proc/%d: the node plus the host's ts-auth stand-in and test runner), not this client.\n", grace, pid)
 	fmt.Fprintf(&b, "- Admission: the server admits at most 32 streams per database per machine and 1024 per machine (DatabaseChanges.cs). Above 32, only admitted followers are measured: req/s and MB in do not grow with requested N, and no gain past the cap is claimed.\n")

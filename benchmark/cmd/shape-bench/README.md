@@ -7,6 +7,9 @@ one N per step (5 s warmup, 30 s recorded, 5 s delivery grace). A step first ope
 2 minutes), then every admitted stream reads through the window together. It takes no flags: the target list
 (`targets` in `main.go`, today only `changes.fanout`) and the follower counts are fixed in code.
 
+A later shape target registers its endpoint, follower decoder and readiness check in `targets`. The writer,
+measurement window, delivery aggregation, resource sampling and reporting remain on the same path.
+
 ## Run
 
 From the repository root, after a Release build of the host (the build reads the ts-dotnet sibling checkout; set

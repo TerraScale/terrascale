@@ -21,11 +21,15 @@ import (
 func TestSweepRunsEveryFollowerCountUntilAnInvalidMeasurement(t *testing.T) {
 	t.Parallel()
 	var ran []int
+	var want []int
+	for range targets {
+		want = append(want, followers...)
+	}
 	startup, results, err := sweep(apibench.Startup{Type: "startup", InitMS: 12}, apibench.Ready{Client: "test"}, func(st apibench.Step) (apibench.Result, error) {
 		ran = append(ran, st.Concurrency)
 		return apibench.Result{Concurrency: st.Concurrency, ErrorRate: 0.5}, nil
 	})
-	if err != nil || startup.InitMS != 12 || !slices.Equal(ran, followers) || len(results) != len(targets)*len(followers) || results[0].Stopped != "error rate" {
+	if err != nil || startup.InitMS != 12 || !slices.Equal(ran, want) || len(results) != len(targets)*len(followers) || results[0].Stopped != "error rate" {
 		t.Fatalf("ran %v, %d results, err %v", ran, len(results), err)
 	}
 	ran = nil
@@ -163,7 +167,7 @@ func TestFollowClassifiesAdmission(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			b.follow(ctx, m, outcomes)
+			b.target.follow(b, ctx, m, outcomes)
 		}()
 		got := <-outcomes
 		cancel()
