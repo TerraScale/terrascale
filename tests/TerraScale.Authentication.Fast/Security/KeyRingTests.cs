@@ -29,6 +29,9 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
     private const string Audience = "test-audience";
     private const string AccessType = "at+jwt";
 
+    // The project tenants these tests sign for.
+    private static readonly string[] Projects = ["ins_a", "ins_b"];
+
     // Binds to the real TerraBase target; without one the server's storage is unreachable.
     private static Task<AuthTestServer> StartAsync(SharedStateTarget? target, string? masterKey = null, TimeProvider? clock = null, TimeSpan? refresh = null) => AuthTestServer.StartAsync(
         settings: values =>
@@ -107,6 +110,18 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
                     keys.ToList().ForEach(key => key.Dispose());
                 }
             });
+        },
+        // A project's key is stored only while its project exists.
+        beforeStart: target is null ? null : async services =>
+        {
+            var store = services.GetRequiredService<AuthStore>();
+            foreach (var project in Projects)
+            {
+                if (await store.GetAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, project) is null)
+                {
+                    await store.CreateAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, project, TerraBaseFixture.Json($$"""{"id":"{{project}}"}"""));
+                }
+            }
         });
 
     private static string Issuer(AuthOptions options, string instance) => new Uri(options.PublicOrigin, instance).ToString();

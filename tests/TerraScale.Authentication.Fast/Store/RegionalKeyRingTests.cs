@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
@@ -117,9 +118,13 @@ public sealed class RegionalKeyRingTests(TerraBaseFixture fixture)
         await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var auth = await StartAsync(tenant, own, other, gru, new SteppingClock(DateTimeOffset.UtcNow));
+        // The project replicated; its keys did not.
         var project = AuthStore.NewId();
-        await new AuthStore(local, TimeProvider.System).CreateAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, project,
-            TerraBaseFixture.Json($$"""{"instanceId":"terrascale","id":"{{project}}"}"""));
+        foreach (var copy in new[] { local, authority })
+        {
+            await new AuthStore(copy, TimeProvider.System).CreateAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, project,
+                TerraBaseFixture.Json($$"""{"instanceId":"terrascale","id":"{{project}}"}"""));
+        }
         var statuses = new List<int>();
         for (var attempt = 0; attempt < KeyRing.MaxKeys + 1; attempt++)
         {
@@ -156,6 +161,71 @@ public sealed class RegionalKeyRingTests(TerraBaseFixture fixture)
         await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         using var jwks = await auth.Client.GetAsync("/terrascale/.well-known/jwks.json");
         await Assert.That(jwks.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    [Test]
+    public async Task A_jwks_for_projects_deleted_at_gru_never_creates_keys()
+    {
+        // Project churn: each project replicated to this region, then was deleted at gru before the deletion replicated.
+        var (tenant, authority) = await fixture.CreateDatabaseAsync();
+        var local = await fixture.CreateCopyAsync(tenant, "auth-local");
+        await using var gru = TcpRelay.Start(fixture.Server.InternalAddress);
+        await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
+        await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
+        await using var auth = await StartAsync(tenant, own, other, gru, new SteppingClock(DateTimeOffset.UtcNow));
+        var projects = new List<string>();
+        for (var index = 0; index < 5; index++)
+        {
+            var project = AuthStore.NewId();
+            foreach (var copy in new[] { local, authority })
+            {
+                await new AuthStore(copy, TimeProvider.System).CreateAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, project,
+                    TerraBaseFixture.Json($$"""{"instanceId":"terrascale","id":"{{project}}"}"""));
+            }
+
+            var atGru = new AuthStore(authority, TimeProvider.System);
+            var record = await atGru.GetAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, project);
+            await Assert.That(await atGru.CompareAndDeleteAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, project, record!.Version)).IsTrue();
+            projects.Add(project);
+        }
+
+        // Several requests per project, concurrently.
+        var statuses = await Task.WhenAll(projects.SelectMany(project => Enumerable.Repeat(project, 3)).Select(async project =>
+        {
+            using var response = await auth.Client.GetAsync($"/{project}/.well-known/jwks.json");
+            return response.StatusCode;
+        }));
+
+        await Assert.That(statuses.All(status => status == HttpStatusCode.NotFound)).IsTrue();
+        await Assert.That((await authority.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items
+            .Count(key => projects.Contains(key.Document.GetProperty("instanceId").GetString()!))).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task A_key_read_that_completes_past_the_refresh_interval_is_refused()
+    {
+        var (tenant, _) = await fixture.CreateDatabaseAsync();
+        await fixture.CreateCopyAsync(tenant, "auth-local");
+        var clock = new SteppingClock(DateTimeOffset.UtcNow);
+        await using var gru = TcpRelay.Start(fixture.Server.InternalAddress);
+        await using var own = TcpRelay.Start(fixture.Server.InternalAddress);
+        await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
+        await using var auth = await StartAsync(tenant, own, other, gru, clock);
+        await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, TimeSpan.FromSeconds(15))).IsTrue();
+        var ring = auth.App.Services.GetRequiredService<KeyRing>();
+
+        // The verification read is sent now and answered 61 s later: what it read may have been removed at gru since.
+        clock.Advance(TimeSpan.FromSeconds(61));
+        gru.Hold();
+        var late = ring.GetPublicAsync(OidcIssuer.InstanceId, CancellationToken.None);
+        clock.Advance(TimeSpan.FromSeconds(61));
+        gru.Release();
+        var failure = await Assert.ThrowsAsync<ApiException>(() => late);
+
+        await Assert.That(failure!.Status).IsEqualTo(StatusCodes.Status503ServiceUnavailable);
+        var fresh = await ring.GetPublicAsync(OidcIssuer.InstanceId, CancellationToken.None);
+        await Assert.That(fresh.Count).IsGreaterThan(0);
+        fresh.ToList().ForEach(key => key.Dispose());
     }
 
     [Test]

@@ -6,6 +6,7 @@ using System.Text.Json;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet;
@@ -320,8 +321,22 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
         var key = Es256Key.Generate(AuthStore.NewId());
         try
         {
-            var record = this.Seal(instanceId, key, now.ToUnixTimeSeconds(), activatesAt);
-            await Guard(() => store.CreateAsync(AuthStore.SigningKeyCollection, instanceId, key.KeyId, JsonSerializer.SerializeToElement(record), cancellationToken), cancellationToken).ConfigureAwait(false);
+            var record = JsonSerializer.SerializeToElement(this.Seal(instanceId, key, now.ToUnixTimeSeconds(), activatesAt));
+            if (instanceId == OidcIssuer.InstanceId)
+            {
+                await Guard(() => store.CreateAsync(AuthStore.SigningKeyCollection, instanceId, key.KeyId, record, cancellationToken), cancellationToken).ConfigureAwait(false);
+            }
+            // A project tenant's key is stored only while its project exists at the authority, checked in the same
+            // transaction: a copy that still lists a deleted project never adds a key for it.
+            else if (await Guard(() => store.TransactAsync(
+            [
+                AuthStore.Require(AuthStore.ProjectCollection, OidcIssuer.InstanceId, instanceId, PlatformDirectory.Filter("exists", "/id")),
+                AuthStore.Create(AuthStore.SigningKeyCollection, instanceId, key.KeyId, record),
+            ], cancellationToken), cancellationToken).ConfigureAwait(false) is int failed)
+            {
+                throw failed == 0 ? new ApiException(404, "not_found", "The project does not exist.") : ApiException.Unavailable();
+            }
+
             this.authority.Cached.TryRemove(instanceId, out _);
             return key;
         }
@@ -339,7 +354,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     {
         if (fresh)
         {
-            return source.Cached[instanceId] = await this.LoadAsync(source, instanceId, cancellationToken).ConfigureAwait(false);
+            return this.Current(source.Cached[instanceId] = await this.LoadAsync(source, instanceId, cancellationToken).ConfigureAwait(false));
         }
 
         var limit = maxAge is { } age && age < this.refreshInterval ? age : this.refreshInterval;
@@ -374,8 +389,14 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
             }
         });
         var shared = source.Pending.GetOrAdd(instanceId, created);
-        return await shared.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return this.Current(await shared.Value.WaitAsync(cancellationToken).ConfigureAwait(false));
     }
+
+    // A read that took longer than the refresh interval (measured from when it was sent) is already older than any cached
+    // read may be, so it is refused, never served: a key removed at the authority is accepted for at most that interval,
+    // in-flight reads included. Zero rereads on every lookup and bounds nothing.
+    private Snapshot Current(Snapshot read) =>
+        this.refreshInterval > TimeSpan.Zero && clock.GetElapsedTime(read.Sent) >= this.refreshInterval ? throw ApiException.Unavailable() : read;
 
     private Task<Snapshot> LoadAsync(Reads source, string instanceId, CancellationToken cancellationToken) => Guard(async () =>
     {

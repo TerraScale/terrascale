@@ -95,7 +95,10 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
     own cache, in-flight reads and failure backoff, used only for publication, while signing, signature checks (ts-auth's
     own included), readiness, rotation and first keys read gru's. A JWKS read never becomes a security decision, and gru
     being down never fails a healthy JWKS. A copy without a tenant's keys yet publishes gru's, which creates a project's
-    first key there; a missing local key set never causes a create of its own. A point read the own copy lacks (a project
+    first key there; a missing local key set never causes a create of its own. A project tenant's key is stored only in
+    a gru transaction that also asserts the project still exists there, so a copy that still lists a deleted project
+    never adds a key for it (the JWKS answers 404). Instances that race to create a live project's first key each add
+    one, all kept and published: at most one per ts-auth instance. A point read the own copy lacks (a project
     created moments ago) is read from gru. When no machine of the own region answers a new connection (none is started,
     so the name does not resolve; it refuses; or it does not answer within 2 s), the connection goes to the nearest started
     machine (`top1.nearest.of.ts-terrabase.internal`), then to any (`ts-terrabase.internal`).
@@ -113,8 +116,10 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
     and changes. Discovery and the JWKS keep working from the own region, so relying parties (TerraBase) keep validating
     tokens already issued offline. R12 removes this limit.
   - **Key removal staleness.** ts-auth itself stops accepting a key removed at gru within one key-ring refresh interval
-    (60 s), as with one region: its signature checks read gru. Another region's JWKS keeps publishing the key for up to
-    the replication lag plus 60 s (its publication cache); during a partition there is no bound. TerraBase, which
+    (60 s): its signature checks read gru, and a key-ring read answered more than 60 s after it was sent is refused
+    (503), never served, so a read already in flight cannot extend the bound. Another region's JWKS keeps publishing the
+    key for up to the replication lag plus 60 s (its publication cache, under the same rule); during a partition there is
+    no bound. TerraBase, which
     validates tokens offline, refreshes the JWKS every 10 minutes and keeps the keys it has when a fetch fails, so it
     stops accepting the key within the replication lag plus about 11 minutes and the fetch time, and with no bound while
     its fetches fail; token expiry still applies. A scheduled retirement keeps a superseded key published for two days,
