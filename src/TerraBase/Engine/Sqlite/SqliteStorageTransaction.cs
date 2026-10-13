@@ -951,6 +951,7 @@ internal sealed partial class SqliteStorageTransaction(
                 cancellationToken.ThrowIfCancellationRequested();
                 committing = true;
                 transaction.Commit();
+                _committed = true;
             }
             catch
             {

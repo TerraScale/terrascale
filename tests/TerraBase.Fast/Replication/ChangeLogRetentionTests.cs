@@ -62,7 +62,7 @@ public sealed class ChangeLogRetentionTests
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None);
         await using (transaction)
         {
-            var (_, floor) = await transaction.RecordAckedAsync(peer, changeId, backupAnchor: null, now, CancellationToken.None);
+            var (_, floor) = await transaction.RecordAckedAsync(peer, changeId, default, backupAnchor: null, now, CancellationToken.None);
             _ = await transaction.CommitAsync(CancellationToken.None);
             return floor;
         }

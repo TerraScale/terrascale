@@ -136,7 +136,7 @@ public sealed class CorruptChangeLogTests
         var peer = ReplicaId.Of(99, 1, 0);
         for (var started = DateTime.UtcNow; DateTime.UtcNow - started < TimeSpan.FromSeconds(1.5); await Task.Delay(100))
         {
-            await node.Groups.AckAsync(node.Database, peer, before, CancellationToken.None);
+            await node.Groups.AckAsync(node.Database, peer, before, default, CancellationToken.None);
         }
 
         await Assert.That(await node.Groups.AckedAsync(node.Database, peer, CancellationToken.None)).IsEqualTo(before);

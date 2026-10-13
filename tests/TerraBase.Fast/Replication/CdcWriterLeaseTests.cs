@@ -64,7 +64,7 @@ public sealed class CdcWriterLeaseTests
             }
 
             // The ack commits, then queues its tail read behind the busy worker; a second writer must still get the writer.
-            ack = source.AckAsync(database, ReplicaId.Of(1, 7, 0), 0, deadline.Token).AsTask();
+            ack = source.AckAsync(database, ReplicaId.Of(1, 7, 0), 0, default, deadline.Token).AsTask();
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(10));
             while (engine.Io.Queued == 0)
             {

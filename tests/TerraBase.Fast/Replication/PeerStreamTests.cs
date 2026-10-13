@@ -1782,6 +1782,27 @@ public sealed class PeerStreamTests
             return false;
         }
 
+        public async Task<bool> UntilIndexAsync(string name, string collection, string[] fields)
+        {
+            var deadline = DateTime.UtcNow + Deadline;
+            while (DateTime.UtcNow < deadline)
+            {
+                var store = await StoreAsync();
+                await using (var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+                {
+                    if ((await transaction.ListIndexesAsync(CancellationToken.None)).FirstOrDefault(index => index.Name == name) is { } index
+                        && index.Collection == collection && index.Fields.Select(field => field.Path).SequenceEqual(fields))
+                    {
+                        return true;
+                    }
+                }
+
+                await Task.Delay(100);
+            }
+
+            return false;
+        }
+
         // Whether the document becomes a hidden uniqueness loser within the deadline.
         public async Task<bool> UntilUniqueLoserAsync(string id)
         {
@@ -2043,6 +2064,9 @@ public sealed class PeerStreamTests
     /// <summary>A machine's sink whose repairs wait while the test holds them.</summary>
     private sealed class HeldSink(IChangeGroupSink sink, Machine machine) : IChangeGroupSink
     {
+        public ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken) =>
+            sink.RecordFrontierAsync(database, origin, frontier, cancellationToken);
+
         public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken) =>
             sink.ApplyAsync(database, origin, groups, cancellationToken);
 
@@ -2068,6 +2092,13 @@ public sealed class PeerStreamTests
 
     private sealed class LosingStates(IReplicaStates states, Machine machine) : IReplicaStates
     {
+        public ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken) => states.StableAsync(database, cancellationToken);
+
+        public ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken) => states.HorizonAsync(database, cancellationToken);
+
+        public ValueTask<int> ForgetAsync(TenantContext database, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
+            states.ForgetAsync(database, keys, horizon, cancellationToken);
+
         private bool _lost;
 
         public async ValueTask<byte[]?> DigestAsync(TenantContext database, CancellationToken cancellationToken)
