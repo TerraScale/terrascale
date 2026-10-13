@@ -254,6 +254,12 @@ after each.
 
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
+**Outside the queue (COS, 03:30Z):** **#167** (`feat/postgres-turso-import-core`, `62f251f6`, one-time PostgreSQL and
+Turso import jobs; touches the TerraBase engine; opened 00:42Z by a thread COS does not own) is not on the list.
+- It must not merge before the freeze SHA's acceptance completes, whatever its CI says.
+- If it gets an approval, COS is told first.
+- The same applies to **any PR not on the f354ed91 / ea37fc59 list**, including #172 and #173.
+
 **THE FREEZE.** When the queue is merged, ONE combined main SHA is declared the release candidate. **No other merge**
 happens until its acceptance finishes. Acceptance on the freeze SHA, in this order:
 1. **Current-head reviews and checks** on the freeze SHA: build, analyzers, Fast for libs, auth and terrabase. Slow is
