@@ -222,6 +222,46 @@ Fast tests fail out of 1433:
 Not merged. The owner is asked to name the cause: this change, or pre-existing failures that main's runs could not show
 while Healthz failed first. Main stays red.
 
+## FREEZE PLAN (COS, coordinator-consolidated direction, ~03:00Z)
+
+**Release CI first.** The required release checks (libs, auth and terrabase Fast; build; analyzers) take priority over
+import and refactor suites. **#125** (CI cache; draft, conflicting) stays out.
+
+**The release-candidate queue.** Merged in order, same gates: exact-head required checks green over current main, an
+independent APPROVE on the exact head, no open must-fix, conflict-free, merge commits for stacked PRs, and main green
+after each.
+1. #166, plus **R8's SQL-400 fix** (main's second red cause; owned by R8 and the Sol worker).
+2. #165 (R8: B1).
+3. #117 (harness, register once).
+4. R10a: #116 (R10a-1), #121 (R10a-2, re-stacked on main), then the gate PR (`feat/r10a-3-catalog-gate`, base main).
+5. #119 (R8 e2e).
+6. #152, #162, #163 (R3).
+7. #169 (R3: #106 fix-forward; under review).
+8. **R3's #112 fix** (fix-forward).
+9. **R6-FIX's #114 fix** (fix-forward).
+10. **R6-FIX's synchronous second-region durable-commit contract** (new; user-approved). A write succeeds only after a
+    durable copy exists in at least one other region; ambiguous outcomes carry operation IDs.
+11. R8's repair-feed PR.
+12. #164 (owner: GPT-6.1-Sol).
+13. **#170** (auth regional), **reworked** so security-critical conditional writes (passcodes, authorization codes,
+    refresh tokens) stay single-region and **fail closed**. The rework replaces the earlier decision gate; the PR
+    still needs its review.
+
+**Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
+
+**THE FREEZE.** When the queue is merged, ONE combined main SHA is declared the release candidate. **No other merge**
+happens until its acceptance finishes. Acceptance on the freeze SHA, in this order:
+1. **Current-head reviews and checks** on the freeze SHA: build, analyzers, Fast for libs, auth and terrabase. Slow is
+   recorded, and must be green once the runner disk is fixed.
+2. **E2E-LIVE:**
+   - all **six pinned region paths** (gru→sjc, gru→fra, sjc→gru, sjc→fra, fra→gru, fra→sjc);
+   - **partition and rejoin**, and **restart**;
+   - **a successful non-empty backup restore.**
+3. **Only then:** the integrated auth and dashboard smoke test.
+
+The freeze SHA and all its evidence are recorded here and reported to COS. The local 3+3 E2E repeats under
+`flock -o` and `terrabase --storage-format` are recorded as well.
+
 ## USER ORDER (01:45Z): merge in order, automatically
 
 The integration owner merges every PR in the f354ed91 order **without asking COS**, the moment each is eligible:
@@ -249,7 +289,8 @@ to main.
   PR, item 14.
   - Its body says it **needs a security decision before merge**: single-use and uniqueness checks (passcodes,
     authorization codes, refresh tokens) become per-region until R12.
-  - That makes it a **user/COS decision gate**, on top of review and checks.
+  - That made it a user/COS decision gate. **Superseded by the freeze plan:** #170 is reworked so security-critical
+    conditional writes stay single-region and fail closed.
 
 ## MAIN RED HAS TWO CAUSES (02:00Z)
 
