@@ -4,6 +4,7 @@ using System.Text.Json;
 using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
@@ -487,6 +488,22 @@ public sealed class PeerStreamTests
         {
             silent.Stop();
         }
+    }
+
+    // Shutdown ends a push stream that has not finished its hello (F8): the handler returns at once and the call ends cleanly,
+    // rather than holding the host's graceful drain until its connection is aborted.
+    [Test]
+    public async Task Shutdown_ends_a_push_stream_still_waiting_for_its_hello()
+    {
+        await using var cluster = await Cluster.StartAsync("gru");
+        var gru = cluster["gru"];
+        using var channel = PeerChannel.Create(gru.Api.Server.BaseAddress);
+        using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push();
+        await Assert.That(await gru.UntilMetricAsync("http_server_active_requests", value => value >= 1, "http_request_method=\"POST\"")).IsTrue();
+
+        gru.Api.Server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await Assert.That(await call.ResponseStream.MoveNext(timeout.Token)).IsFalse();
     }
 
     // A batch that fails to apply (here the stored state of its document no longer decodes) refuses its database only: the

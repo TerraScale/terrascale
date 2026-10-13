@@ -57,9 +57,21 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         ArgumentNullException.ThrowIfNull(requestStream);
         ArgumentNullException.ThrowIfNull(responseStream);
         ArgumentNullException.ThrowIfNull(context);
-        if (!await requestStream.MoveNext(context.CancellationToken).ConfigureAwait(false) || requestStream.Current.Hello is not { } hello)
+        // Shutdown ends the stream, also one still waiting for its hello; the sender resumes from its last ack elsewhere or later.
+        using var stream = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, _lifetime.ApplicationStopping);
+        Hello hello;
+        try
         {
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "a push stream starts with a hello"));
+            if (!await requestStream.MoveNext(stream.Token).ConfigureAwait(false) || requestStream.Current.Hello is not { } first)
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "a push stream starts with a hello"));
+            }
+
+            hello = first;
+        }
+        catch (OperationCanceledException) when (stream.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested)
+        {
+            return;
         }
 
         var origin = new ReplicaId(hello.Node);
@@ -69,8 +81,6 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         }
 
         var region = TerraBaseOptions.IsRegion(hello.Region) ? hello.Region : "unknown";
-        // Shutdown ends the stream; the sender resumes from its last ack elsewhere or later.
-        using var stream = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, _lifetime.ApplicationStopping);
         var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (_streams.TryGetValue(origin, out var older))
         {
