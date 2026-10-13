@@ -314,6 +314,29 @@ deploy and preview skipped. Slow unverifiable.
   `6212e389`, past the `5252c120` that #175 carries.
 - **Main's run on `5043c1de`:** pending. It must be green before the next merge (#165).
 
+**Main GREEN on Fast at `5043c1de`** (run 38363729043: auth, terrabase, libs and test all success). **Slow ran for real:
+41/42.** The one failure, `An_idle_cold_node_reloads_a_retained_key_once_after_both_key_caches_expire`, is tracked in
+issue #147; the reporter commented. It is open for the freeze.
+
+**Queue as priority, not a strict barrier (the integration owner's call, 08:00Z).** A blocked item does not hold up the
+items after it that do not depend on it. Each skip is recorded.
+
+**Blocked:**
+- **#165:** the storage review was revised to CHANGES REQUESTED (B2, release-blocking); it also conflicts and is red.
+- **#117:** no independent review yet. #116 and #121 depend on it.
+- **#119:** no review.
+- **#169:** CHANGES REQUESTED in all three rounds.
+- **#178:** CHANGES REQUESTED.
+- **#162:** stacked on #152 and conflicting.
+
+**Eligible on review** (an APPROVE that names the current head): #152 `b2324769` (round 2, comment 6136706305), #163
+`f18784d6` (6135160734), #176 `c3cf4b1f` (6137875014), #164 `01ed6eba` (COS delta check, 6137226769) and #179 `34045b83`
+(6138287772).
+- All five were brought up to date with main `5043c1de` via update-branch, a clean merge of main and the same treatment
+  COS accepted for #134 and #146: #152 → `72c9d300`, #163 → `cec1e9f5`, #176 → `9811d04d`, #164 → `416cd5ed`,
+  #179 → `89988752`.
+- They merge one at a time in queue order, each after a green fresh run and with main green in between.
+
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
 **Outside the queue (COS, 03:30Z):** **#167** (`feat/postgres-turso-import-core`, `62f251f6`, one-time PostgreSQL and
