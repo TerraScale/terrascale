@@ -599,7 +599,7 @@ internal sealed partial class SqliteDatabaseStore(
         }
     }
 
-    public async ValueTask<(T Result, long Offset)> WriteAsync<T>(
+    public async ValueTask<(T Result, CommitResult Commit)> WriteAsync<T>(
         Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken)
     {
         // A queued write holds an admission like a transaction does, so storage-queue still bounds waiting writes.
@@ -681,7 +681,7 @@ internal sealed partial class SqliteDatabaseStore(
         List<IBatchedWrite> kept = [];
         List<IBatchedWrite> refused = [];
         List<IBatchedWrite> deferred = [];
-        long offset = 0;
+        var commit = default(CommitResult);
         SqliteStorageTransaction? transaction = null;
         try
         {
@@ -751,6 +751,7 @@ internal sealed partial class SqliteDatabaseStore(
 
                     if (keeps)
                     {
+                        write.Changed = transaction.SavepointHasChanges;
                         transaction.ReleaseSavepoint();
                         kept.Add(write);
                         continue;
@@ -762,7 +763,7 @@ internal sealed partial class SqliteDatabaseStore(
 
                 if (kept.Count > 0)
                 {
-                    offset = await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+                    commit = await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
                     AfterGroupCommit?.Invoke();
                 }
             }
@@ -772,7 +773,7 @@ internal sealed partial class SqliteDatabaseStore(
             // A client database's batch committed and changed no state readers see beside its documents: its writes are
             // answered as committed, not as a failure a client would retry. What failed is a wake-up or the cleanup after
             // the commit (disposing the transaction, releasing the writer).
-            offset = committedAt;
+            commit = committedAt;
             try
             {
                 logger?.ZLogError(error, $"A group commit of database {name:@Database} committed, but the work after its commit failed; its writes are answered as committed");
@@ -784,15 +785,14 @@ internal sealed partial class SqliteDatabaseStore(
         }
         catch (Exception error)
         {
-            // Nothing of this batch committed, or it is the catalog's, which fails closed: every write not answered yet
-            // fails with it.
+            // No usable commit result, including a failed marker read after COMMIT: never replay an ambiguous batch.
             batch.ForEach(write => write.Fail(error));
             return [];
         }
 
         // After the transaction released its session, as an admission's resource must be (SqliteIoPool).
-        refused.ForEach(write => write.Answer(0));
-        kept.ForEach(write => write.Answer(offset));
+        refused.ForEach(write => write.Answer(default));
+        kept.ForEach(write => write.Answer(write.Changed ? commit : commit with { Marker = null }));
         return deferred;
     }
 
@@ -800,9 +800,11 @@ internal sealed partial class SqliteDatabaseStore(
     {
         bool Cancelled { get; }
 
+        bool Changed { get; set; }
+
         ValueTask<bool> RunAsync(IStorageTransaction transaction);
 
-        void Answer(long offset);
+        void Answer(CommitResult commit);
 
         void Fail(Exception error);
 
@@ -812,13 +814,15 @@ internal sealed partial class SqliteDatabaseStore(
     private sealed class BatchedWrite<T>(
         Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken) : IBatchedWrite
     {
-        private readonly TaskCompletionSource<(T, long)> _done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<(T, CommitResult)> _done = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private T _result = default!;
         private readonly QosContext.Snapshot _context = QosContext.Capture();
 
-        public Task<(T Result, long Offset)> Task => _done.Task;
+        public Task<(T Result, CommitResult Commit)> Task => _done.Task;
 
         public bool Cancelled => cancellationToken.IsCancellationRequested;
+
+        public bool Changed { get; set; }
 
         public async ValueTask<bool> RunAsync(IStorageTransaction transaction)
         {
@@ -828,7 +832,7 @@ internal sealed partial class SqliteDatabaseStore(
             return keep(_result);
         }
 
-        public void Answer(long offset) => _done.TrySetResult((_result, offset));
+        public void Answer(CommitResult commit) => _done.TrySetResult((_result, commit));
 
         public void Fail(Exception error) => _done.TrySetException(error);
 
