@@ -3,7 +3,7 @@ using System.Net.Http.Headers;
 
 namespace TerraScale.DotNet.TerraBase;
 
-// Import contract v1 revision 3 (TerraScale/terrascale docs/terrabase/import.md at 54c0c4d9): a one-time bulk import of
+// Import contract v1 revision 3 (TerraScale/terrascale docs/terrabase/import.md on feat/postgres-turso-import-engine at 567bfd33): a one-time bulk import of
 // an uploaded PostgreSQL or Turso/SQLite export into a new, empty database. Polling JSON only; every request is sent once.
 public sealed partial class TerraBaseDatabase
 {
@@ -14,11 +14,14 @@ public sealed partial class TerraBaseDatabase
 
     /// <summary>
     /// Attaches an import to this new, empty database (<c>POST …/import</c>) in <see cref="TerraBaseImportState.AwaitingSource"/>.
-    /// Create the database for this import first, under a fresh name such as <c>import-&lt;lowercase ULID&gt;</c> and
-    /// without replicas; send every import call to its home region. Replaying the identical request returns the job; any
-    /// other request throws <see cref="TerraBaseConflictException"/> (<c>import_exists</c>), and a database with
-    /// collections <c>destination_not_empty</c>. Requires a ts-auth project access token with <c>databases:write</c> and
-    /// <c>documents:write</c>; TerraBase API keys get <see cref="TerraBaseNotFoundException"/>.
+    /// Create the database for this import first (TerraBase's <c>POST /v1/projects/{project}/databases</c> with the same
+    /// project access token), under a fresh name such as <c>import-&lt;lowercase ULID&gt;</c> and without replicas; send
+    /// every import call to its home region. Replaying the identical request returns the job; any other request throws
+    /// <see cref="TerraBaseConflictException"/> (<c>import_exists</c>), a database with collections
+    /// <c>destination_not_empty</c>, one with replica regions <c>destination_replicated</c>. Requires a ts-auth project
+    /// access token of this project with <c>databases:write</c> and <c>documents:write</c>: any other credential (a
+    /// TerraBase API key included) gets <see cref="TerraBaseAuthenticationException"/>, a token of another project or
+    /// database <see cref="TerraBaseNotFoundException"/>.
     /// </summary>
     /// <param name="format">Kind of export file.</param>
     /// <param name="sourceBytes">Exact size of the file, 1 byte to 1 GiB.</param>

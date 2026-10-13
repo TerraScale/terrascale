@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet.TerraBase;
 
-// Import contract v1 revision 3: TerraScale/terrascale docs/terrabase/import.md at 9cf7f4702889ad639e92e0a4c8a7a5d62f611224.
+// Import contract v1 revision 3: TerraScale/terrascale docs/terrabase/import.md on feat/postgres-turso-import-engine at 567bfd33fe1257a922c4f8df4e8217517fc06268.
 
 /// <summary>The kind of export file an import reads. TerraBase never connects to the source database.</summary>
 [JsonConverter(typeof(TerraBaseStringEnumConverter<TerraBaseImportFormat>))]
@@ -40,11 +40,14 @@ public enum TerraBaseImportMissingPrimaryKey
 [JsonConverter(typeof(TerraBaseStringEnumConverter<TerraBaseImportState>))]
 public enum TerraBaseImportState
 {
-    /// <summary>Waiting for the source parts; also after a SHA-256 mismatch discarded them (upload the same file again).</summary>
+    /// <summary>
+    /// Waiting for the source parts; also after a SHA-256 mismatch discarded them, or an upload idle for a day was dropped:
+    /// upload the same file again from offset 0.
+    /// </summary>
     [JsonStringEnumMemberName("awaiting_source")]
     AwaitingSource,
 
-    /// <summary>Checking the SHA-256 and mapping every row to build the preview.</summary>
+    /// <summary>Checking the SHA-256 and mapping every row to build the preview; also after a deploy changed the mapping of a confirmed preview (<c>preview_changed</c>).</summary>
     [JsonStringEnumMemberName("analyzing")]
     Analyzing,
 
@@ -206,20 +209,20 @@ public sealed record TerraBaseImportTablePlan(
 /// <param name="SourceType">Declared source type, for example <c>bigint</c>.</param>
 /// <param name="Mapping">
 /// JSON mapping, for example <c>integer</c>, <c>decimal_string</c>, <c>timestamptz</c> or <c>base64</c>. For SQLite, the
-/// non-NULL storage classes seen joined by <c>+</c> (for example <c>integer+string</c>, a warning), and
-/// <see langword="null"/> when every value is NULL.
+/// non-NULL storage classes seen joined by <c>+</c> (for example <c>integer+string</c>, a warning), and the string
+/// <c>null</c> when every value is NULL.
 /// </param>
 /// <param name="Nullable">Whether the source allows null.</param>
 /// <param name="Excluded">Whether the options leave the column out.</param>
-public sealed record TerraBaseImportColumn(string Name, string SourceType, string? Mapping, bool Nullable, bool Excluded);
+public sealed record TerraBaseImportColumn(string Name, string SourceType, string Mapping, bool Nullable, bool Excluded);
 
 /// <summary>A source constraint, recorded and never enforced.</summary>
 /// <param name="Kind">For example <c>foreign_key</c>; primary, unique and foreign keys and NOT NULL are recorded.</param>
-/// <param name="Name">Constraint name.</param>
+/// <param name="Name">Constraint name; <see langword="null"/> when the source names none.</param>
 /// <param name="Columns">Constrained columns.</param>
 /// <param name="References">Referenced <c>schema.table(columns)</c> of a foreign key; <see langword="null"/> when none.</param>
 /// <param name="Enforced">Always false in contract v1.</param>
-public sealed record TerraBaseImportConstraint(string Kind, string Name, IReadOnlyList<string> Columns, string? References, bool Enforced) : IJsonOnDeserialized
+public sealed record TerraBaseImportConstraint(string Kind, string? Name, IReadOnlyList<string> Columns, string? References, bool Enforced) : IJsonOnDeserialized
 {
     void IJsonOnDeserialized.OnDeserialized() => TerraBaseJsonContext.RequireNonNullItems(Columns);
 }

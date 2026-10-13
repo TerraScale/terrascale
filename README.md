@@ -99,12 +99,15 @@ TerraBaseDocument? current = await database.GetDocumentAsync("users", userId, ca
 
 `DeleteAsync` deletes the database and its data; it throws `TerraBaseConflictException` (`database_replicated`) while replica regions exist.
 
-One-time imports follow TerraBase's import contract v1 revision 3 (monorepo `docs/terrabase/import.md` at `54c0c4d9`;
-the server side is in progress and nothing here is live-qualified). The user exports with their own tools
+One-time imports follow TerraBase's import contract v1 revision 3 (monorepo `docs/terrabase/import.md` on
+`feat/postgres-turso-import-engine` at `567bfd33`; the engine is not merged or deployed, and nothing here is
+live-qualified). The user exports with their own tools
 (`pg_dump --format=plain`, or a rollback-journal SQLite/Turso file from `VACUUM INTO`) and uploads it: TerraBase never
-connects to the source or receives its credentials. Create a new, empty destination database for each import (for
-example `TerraBaseManagementClient.CreateDatabaseAsync` with a fresh `import-<lowercase ULID>` name and no replicas),
-then drive the import through it with a ts-auth project access token, on a client pinned to the database's home region:
+connects to the source or receives its credentials. Create a new, empty destination database for each import with
+TerraBase's `POST /v1/projects/{project}/databases`, a fresh `import-<lowercase ULID>` name, no replicas and the same
+ts-auth project access token (this SDK does not wrap that route yet; a database created through
+`TerraBaseManagementClient` is reachable by a project token only once TerraBase has verified its project binding). Then
+drive the import through it, on a client pinned to the database's home region:
 
 ```csharp
 TerraBaseDatabase import = regional.Database(projectId, destinationName); // a client with Region = the home region
@@ -125,7 +128,9 @@ job = await import.StartImportAsync(confirmedPreviewId, cancellationToken);
 Poll `GetImportAsync` for progress, validation and errors; `UpdateImportAsync`, `CancelImportAsync` and
 `ResumeImportAsync` follow the contract's state machine. Every request is sent once and TerraBase takes no
 `Idempotency-Key`: replaying an identical create or an already received part returns the job unchanged, and
-`offset_mismatch` means "read the job and continue from `Source.ReceivedBytes`". Deleting the destination database
+`offset_mismatch` means "read the job and continue from `Source.ReceivedBytes`" (an upload idle for a day restarts at
+0). TerraBase keeps a staged source at most 7 days after the job failed, was cancelled or its preview was left alone,
+and meters upload bytes and imported documents; tell users before a real upload. Deleting the destination database
 discards the import and its staged source.
 
 `GetDocumentAsync` returns `null` for an absent document. `CreateDocumentAsync`

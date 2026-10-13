@@ -5,8 +5,8 @@ using TerraScale.DotNet.TerraBase;
 namespace TerraScale.DotNet.Tests.TerraBase;
 
 /// <summary>
-/// Import contract v1 revision 3 wire boundaries (TerraScale/terrascale docs/terrabase/import.md at 54c0c4d9) over
-/// synthetic fixtures; no simulated server and no real export.
+/// Import contract v1 revision 3 wire boundaries (TerraScale/terrascale docs/terrabase/import.md and ImportModels.cs on
+/// feat/postgres-turso-import-engine at 567bfd33) over synthetic fixtures; no simulated server and no real export.
 /// </summary>
 public sealed class TerraBaseImportTests
 {
@@ -26,9 +26,9 @@ public sealed class TerraBaseImportTests
              "preview":{"id":"01JA00000000000000000000P1",
                "tables":[{"source":"main.users","collection":"users","excluded":false,"rows":2,"idPolicy":"rowid","primaryKey":[],
                  "columns":[{"name":"name","sourceType":"TEXT","mapping":"integer+string","nullable":true,"excluded":false},
-                            {"name":"notes","sourceType":"TEXT","mapping":null,"nullable":true,"excluded":true}],
+                            {"name":"notes","sourceType":"TEXT","mapping":"null","nullable":true,"excluded":true}],
                  "constraints":[{"kind":"foreign_key","name":"users_org_fk","columns":["org_id"],"references":"main.orgs(id)","enforced":false},
-                                {"kind":"not_null","name":"users_name_not_null","columns":["name"],"references":null,"enforced":false}],
+                                {"kind":"not_null","name":null,"columns":["name"],"references":null,"enforced":false}],
                  "issues":[{"severity":"warning","code":"mixed_storage_classes","column":"name","row":null,"message":"integer and text values"}]}],
                "skipped":[{"kind":"virtual_table","name":"main.docs_fts"},{"kind":"internal_table","name":"main.sqlite_sequence"}],
                "skippedTruncated":false,"blocking":0,"warnings":2},
@@ -50,7 +50,8 @@ public sealed class TerraBaseImportTests
         await Assert.That(table.IdPolicy).IsEqualTo("rowid");
         await Assert.That(table.Excluded).IsFalse();
         await Assert.That(table.Columns[0].Mapping).IsEqualTo("integer+string");
-        await Assert.That(table.Columns[1].Mapping).IsNull();
+        await Assert.That(table.Columns[1].Mapping).IsEqualTo("null");
+        await Assert.That(table.Constraints[1].Name).IsNull();
         await Assert.That(table.Constraints[1].References).IsNull();
         await Assert.That(table.Issues[0].Row).IsNull();
         await Assert.That(job.Preview.Skipped[1].Kind).IsEqualTo("internal_table");
@@ -135,6 +136,7 @@ public sealed class TerraBaseImportTests
     [Test]
     [Arguments(409, "import_exists", typeof(TerraBaseConflictException))]
     [Arguments(409, "destination_not_empty", typeof(TerraBaseConflictException))]
+    [Arguments(409, "destination_replicated", typeof(TerraBaseConflictException))]
     [Arguments(409, "offset_mismatch", typeof(TerraBaseConflictException))]
     [Arguments(409, "source_required", typeof(TerraBaseConflictException))]
     [Arguments(409, "invalid_state", typeof(TerraBaseConflictException))]
