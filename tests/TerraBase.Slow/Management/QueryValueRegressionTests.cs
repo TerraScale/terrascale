@@ -227,14 +227,12 @@ public sealed class QueryValueRegressionTests
         await using (var transaction = (await engine.BeginTransactionAsync(context, write: false, CancellationToken.None))!)
         {
             using var cancellation = new CancellationTokenSource();
-            await using (var rows = transaction.QuerySqlAsync(new SqlQuery("query_values", null, [], 100), cancellation.Token).GetAsyncEnumerator())
-            {
-                await Assert.That(await rows.MoveNextAsync()).IsTrue();
-                await Assert.That(rows.Current.Id).IsEqualTo("a");
-                // Cancel at a known consumer boundary, not after a timer or during a native call.
-                cancellation.Cancel();
-                await Assert.That(async () => await rows.MoveNextAsync()).Throws<OperationCanceledException>();
-            }
+            await using var rows = transaction.QuerySqlAsync(new SqlQuery("query_values", null, [], 100), cancellation.Token).GetAsyncEnumerator();
+            await Assert.That(await rows.MoveNextAsync()).IsTrue();
+            await Assert.That(rows.Current.Id).IsEqualTo("a");
+            // Cancel at a known consumer boundary, not after a timer or during a native call.
+            cancellation.Cancel();
+            await Assert.That(async () => await rows.MoveNextAsync()).Throws<OperationCanceledException>();
         }
 
         // Turso may abort the transaction when it drains a cancelled reader (docs/terrabase/turso-spike.md).
