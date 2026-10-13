@@ -77,12 +77,15 @@ public static class DocumentStateEncoding
     }
 
     /// <summary>
-    /// The digest of <paramref name="state"/> for anti-entropy: the first 128 bits of SHA-256 over its stored form
-    /// without bookkeeping and its materialized document. Equal states have equal digests on every node.
+    /// The digest for anti-entropy: the first 128 bits of SHA-256 over the length-prefixed UTF-8 collection and id,
+    /// then the stored state without bookkeeping and its materialized document. Equal keyed states hash equally on every node.
     /// </summary>
-    public static UInt128 Digest(DocumentState state)
+    public static UInt128 Digest(string collection, string id, DocumentState state)
     {
-        var hash = SHA256.HashData([.. Write(state, stored: true, hashing: true), .. state.Materialize() ?? []]);
+        var key = new Writer([], hashing: true);
+        key.Text(collection);
+        key.Text(id);
+        var hash = SHA256.HashData([.. key.ToArray(), .. Write(state, stored: true, hashing: true), .. state.Materialize() ?? []]);
         return new UInt128(BinaryPrimitives.ReadUInt64LittleEndian(hash), BinaryPrimitives.ReadUInt64LittleEndian(hash.AsSpan(8)));
     }
 

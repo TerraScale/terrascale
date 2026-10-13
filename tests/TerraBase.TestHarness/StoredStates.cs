@@ -30,7 +30,7 @@ public static class StoredStates
         ArgumentNullException.ThrowIfNull(connection);
         using var json = JsonDocument.Parse(system ? SystemBody(body) : body, DocumentState.JsonOptions);
         var state = DocumentState.Bottom.Put(new EntryVersion(new Hlc((ulong)version), Replica), json.RootElement);
-        var digest = DocumentStateEncoding.Digest(state);
+        var digest = DocumentStateEncoding.Digest(collection, id, state);
         await using var insert = connection.CreateCommand();
         insert.Transaction = transaction;
         insert.CommandText = (system

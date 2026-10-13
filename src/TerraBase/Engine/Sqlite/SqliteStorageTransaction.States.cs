@@ -154,7 +154,7 @@ internal sealed partial class SqliteStorageTransaction
     // after-images only.
     private void WriteState(string collection, string id, DocumentState state, EntryVersion at, byte[]? stored = null)
     {
-        var digest = DocumentStateEncoding.Digest(state);
+        var digest = DocumentStateEncoding.Digest(collection, id, state);
         var update = BodyCommand(SqliteStatements.UpdateState, collection, id);
         Bind(update);
         if (update.ExecuteNonQuery() == 0)

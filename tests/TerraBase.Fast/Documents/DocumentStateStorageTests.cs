@@ -32,7 +32,7 @@ public sealed class DocumentStateStorageTests
         await Assert.That(patched.State.Clear!.Value.Version.Stamp.Value).IsEqualTo((ulong)put.Stamp);
         await Assert.That(patched.Live).IsTrue();
         await Assert.That(patched.Bucket).IsEqualTo(SqliteStorageTransaction.Bucket(DocumentApi.Collection, id));
-        await Assert.That(patched.Digest).IsEqualTo(DocumentStateEncoding.Digest(patched.State));
+        await Assert.That(patched.Digest).IsEqualTo(DocumentStateEncoding.Digest(DocumentApi.Collection, id, patched.State));
     }
 
     [Test]

@@ -336,7 +336,7 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
                 throw new InvalidDataException("a state of the side copy does not decode", error);
             }
 
-            var digest = DocumentStateEncoding.Digest(state);
+            var digest = DocumentStateEncoding.Digest(row.Collection, row.Id, state);
             if (unchecked((long)(ulong)(digest >> 64)) != h1 || unchecked((long)(ulong)digest) != h2)
             {
                 throw new InvalidDataException("a state of the side copy does not match its stored digest");

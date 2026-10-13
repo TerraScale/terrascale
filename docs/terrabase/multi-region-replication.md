@@ -178,7 +178,8 @@ canonical order, minimal LEB128 and bounded counts. It is a trust boundary and a
 state node dictionary keeps it small. It is stored as base64url TEXT. It has two forms: the full form carries every
 value (deltas), and the stored form leaves out a plain field's value, which the collection row's `doc` already holds
 (`_tb_state.state`); decoding the stored form needs that `doc` and checks that it is the state's materialization. The
-digest is SHA-256 over the stored form with `changed` zeroed, then `doc`. A version is the type `EntryVersion` (the
+digest is the first 128 bits of SHA-256 over the collection and id (each UTF-8 with a minimal LEB128 byte length),
+then the stored form with `changed` zeroed, then `doc`. A version is the type `EntryVersion` (the
 name `Version` would collide with `System.Version`). `GCounter` and the old `AwSet` went with R1; `MvRegister`,
 `CausalContext`, `Dot` and `DocumentWrite` go with R2a, which removes their last callers (section 19). `Hlc`,
 `ReplicaId`, `ILattice`, `MaxLattice`, `LwwRegister`, `MapLattice` and `SetLattice` stay.
@@ -198,7 +199,7 @@ CREATE TABLE _tb_state (
   stamp  INTEGER NOT NULL,              -- the last operation applied to this row (bookkeeping, not merged)
   origin INTEGER NOT NULL,              -- that operation's node; 0 for an anti-entropy repair
   live   INTEGER NOT NULL,              -- 1 when "<collection>" holds the document
-  h1 INTEGER NOT NULL, h2 INTEGER NOT NULL,   -- 128-bit digest of (state without `changed`, doc)
+  h1 INTEGER NOT NULL, h2 INTEGER NOT NULL,   -- 128-bit digest of (collection, id, state without `changed`, doc)
   UNIQUE (collection, id));
 CREATE INDEX _tb_state_bucket ON _tb_state (bucket, collection, id);
 CREATE INDEX _tb_state_dead ON _tb_state (stamp) WHERE live = 0;
@@ -393,7 +394,8 @@ An accepted `Push` publishes its gRPC response headers before waiting for a pred
 
 ## 10. Anti-entropy and refill
 
-- **Digests.** A document's digest is the first 128 bits of SHA-256(state without `changed`, doc bytes), kept in
+- **Digests.** A document's digest is the first 128 bits of SHA-256 over the length-prefixed collection and id,
+  the state without `changed`, and the document bytes, kept in
   `_tb_state.h1/h2`. A bucket's digest is the XOR of its documents' digests, kept in `_tb_merkle` and updated from the
   lane's in-memory deltas at each tailer pass.
   - After an unclean start (the epoch rose), `_tb_merkle` is rebuilt by streaming `_tb_state (bucket, h1, h2)` before
@@ -416,6 +418,17 @@ An accepted `Push` publishes its gRPC response headers before waiting for a pred
   Refilling, not merging old state, is what keeps GC safe for a machine that was away.
 - Today's `MerkleTree` (16 leaves, full scan), `AntiEntropyService`, `AntiEntropyWorker`, `AntiEntropyState` and the
   alpha proto are replaced.
+
+**R8 key-aware digests** (storage format 7): `_tb_state.h1/h2` binds each state and materialized document to its
+collection and id. Swapping states between keys in one bucket no longer preserves the bucket XOR when those states
+are written under their new keys. Rebuild salvage verifies the same keyed digest and refuses a stored row moved to
+another key with its old digest. Format 6 directories are refused; there is no migration. The state encoding and
+public HTTP API are unchanged.
+
+Anti-entropy compares stored digests; it does not recompute them to find a physical row move that preserves the stored
+bucket and hashes. A detected divergence is repaired by lattice join: newer field versions win, so this does not
+reconstruct the original values of an arbitrary swapped pair. Rebuild salvage's keyed verification refuses misplaced
+rows before joining them.
 
 ## 11. Garbage collection
 

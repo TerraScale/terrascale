@@ -44,7 +44,7 @@ public sealed class DocumentStateEncodingTests
                 var fromStore = DocumentStateEncoding.DecodeStored(stored, document);
                 await Assert.That(fromStore).IsEqualTo(state).Because($"seed {seed}");
                 await Assert.That(DocumentStateEncoding.EncodeStored(fromStore).SequenceEqual(stored)).IsTrue().Because($"seed {seed}");
-                await Assert.That(DocumentStateEncoding.Digest(fromStore)).IsEqualTo(DocumentStateEncoding.Digest(state)).Because($"seed {seed}");
+                await Assert.That(DocumentStateEncoding.Digest("items", "document", fromStore)).IsEqualTo(DocumentStateEncoding.Digest("items", "document", state)).Because($"seed {seed}");
             }
         }
     }
@@ -74,8 +74,8 @@ public sealed class DocumentStateEncodingTests
         var rewritten = received.Join(DocumentState.Bottom.Put(V(1, node), Parse("""{"a":1}""")));
 
         await Assert.That(rewritten).IsEqualTo(written);
-        await Assert.That(DocumentStateEncoding.Digest(rewritten)).IsEqualTo(DocumentStateEncoding.Digest(written));
-        await Assert.That(DocumentStateEncoding.Digest(written.Set(V(3, node), "b", Parse("3")))).IsNotEqualTo(DocumentStateEncoding.Digest(written));
+        await Assert.That(DocumentStateEncoding.Digest("items", "document", rewritten)).IsEqualTo(DocumentStateEncoding.Digest("items", "document", written));
+        await Assert.That(DocumentStateEncoding.Digest("items", "document", written.Set(V(3, node), "b", Parse("3")))).IsNotEqualTo(DocumentStateEncoding.Digest("items", "document", written));
     }
 
     [Test]

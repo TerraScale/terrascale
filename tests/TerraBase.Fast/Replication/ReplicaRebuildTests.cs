@@ -104,6 +104,26 @@ public sealed class ReplicaRebuildTests
     }
 
     [Test]
+    public async Task A_side_copy_state_moved_to_another_key_with_its_digest_refuses_the_rebuild()
+    {
+        await using var pair = await Pair.StartAsync();
+        var (_, only) = await pair.SeedAsync();
+        var misplaced = EntityIds.New().ToString();
+        await pair.Sjc.MisplaceAsync(only, misplaced);
+        await Assert.That(await pair.Sjc.ReadAsync(misplaced)).IsEqualTo("""{"n":2}""");
+        var faulted = await pair.Sjc.IncarnationAsync();
+        var adapter = new StandIn(pair);
+
+        var outcome = await pair.Sjc.Rebuild(adapter).RebuildAsync(pair.Database, faulted, CancellationToken.None);
+
+        await Assert.That(outcome is RebuildOutcome.Refused).IsTrue().Because(outcome.ToString());
+        await Assert.That(adapter.Ledger.Get(pair.Database)?.Phase).IsEqualTo(RebuildPhase.Swapped);
+        await Assert.That(pair.Sjc.SideExists(faulted)).IsTrue();
+        await Assert.That(adapter.Certified).IsFalse();
+        await Assert.That(await pair.Sjc.ReadAsync(misplaced)).IsNull();
+    }
+
+    [Test]
     public async Task A_rebuild_stopped_after_the_swap_resumes_from_its_record_after_a_restart()
     {
         await using var pair = await Pair.StartAsync();
@@ -528,6 +548,11 @@ public sealed class ReplicaRebuildTests
         public Task CorruptDigestAsync(string id) =>
             OnWriterAsync("UPDATE _tb_state SET h1 = h1 + 1 WHERE collection = $collection AND id = $id;", "items", id);
 
+        // Moves a document and its state together, preserving the digest that belonged to the old key.
+        public Task MisplaceAsync(string id, string misplaced) =>
+            OnWriterAsync("UPDATE items SET id = $misplaced WHERE id = $id; UPDATE _tb_state SET id = $misplaced WHERE collection = $collection AND id = $id;",
+                "items", id, misplaced);
+
         public async Task<string?> IntegrityAsync()
         {
             var store = (SqliteDatabaseStore)await StoreAsync();
@@ -549,7 +574,7 @@ public sealed class ReplicaRebuildTests
             Directory.Delete(_directory, recursive: true);
         }
 
-        private async Task OnWriterAsync(string sql, string collection, string id)
+        private async Task OnWriterAsync(string sql, string collection, string id, string? misplaced = null)
         {
             var store = (SqliteDatabaseStore)await StoreAsync();
             _ = await store.WithWriterAsync(session =>
@@ -558,6 +583,11 @@ public sealed class ReplicaRebuildTests
                 command.CommandText = sql;
                 command.Parameters.AddWithValue("$id", id);
                 command.Parameters.AddWithValue("$collection", collection);
+                if (misplaced is not null)
+                {
+                    command.Parameters.AddWithValue("$misplaced", misplaced);
+                }
+
                 return command.ExecuteNonQuery();
             }, "a test editing rows directly", CancellationToken.None);
             store.ForgetCollections();
