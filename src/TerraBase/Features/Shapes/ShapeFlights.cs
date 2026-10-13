@@ -48,6 +48,17 @@ internal sealed class ShapeFlight<T>(T value, IDisposable memory) : IDisposable
 /// <summary>A flight's answer, or capacity (429 <c>shape_busy</c>), an unknown database (404) or a stuck seal (503).</summary>
 internal readonly union ShapeFlightResult<T>(ShapeFlight<T>, QuotaExceeded, NotFound, Unavailable);
 
+/// <summary>Bounded shared reads of sealed shape data, with commit wakeups for live tails.</summary>
+internal interface IShapeFlights<T>
+{
+    /// <summary>Returns the next live cursor bucket; the endpoint validates the input before calling.</summary>
+    long NextCursor(long? input);
+
+    /// <summary>Joins one shared read; dispose its returned lease after writing the response.</summary>
+    ValueTask<ShapeFlightResult<T>> ReadAsync(
+        ShapeFlightRequest request, ShapeHeadProbe probe, ShapeTailReader<T> read, CancellationToken cancellationToken);
+}
+
 /// <summary>
 /// Live tail and request collapsing (free-reads.md 3.6, shape-reads.md 4): one flight per (handle, offset, live,
 /// cursor), at most <see cref="MaxFlights"/> running and <see cref="MaxRequesters"/> joined, without a queue.
@@ -59,7 +70,7 @@ internal readonly union ShapeFlightResult<T>(ShapeFlight<T>, QuotaExceeded, NotF
 /// seals the database up to the head (one seal shared by every flight of that database). It reads its answer once.
 /// A committed tail the request did not wake on is the background sealer's (FR-12). Register one closed type.
 /// </remarks>
-internal sealed class ShapeFlights<T>
+internal sealed class ShapeFlights<T> : IShapeFlights<T>
 {
     /// <summary>Longest live wait.</summary>
     public static readonly TimeSpan LiveTimeout = TimeSpan.FromSeconds(20);

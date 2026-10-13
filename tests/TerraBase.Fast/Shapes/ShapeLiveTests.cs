@@ -531,18 +531,18 @@ public sealed class ShapeLiveTests
         {
             collection.AddSingleton<TimeProvider>(time);
             collection.AddSingleton<IShapeFlightSealer>(sealer);
-            collection.AddSingleton(provider => new ShapeFlights<ShapePage>(
+            collection.AddSingleton<IShapeFlights<ShapePage>>(provider => new ShapeFlights<ShapePage>(
                 provider.GetRequiredService<SqliteStorageEngine>(), sealer, provider.GetRequiredService<IMemoryBudget>(),
                 time, provider.GetRequiredService<IHostApplicationLifetime>()));
         });
 
-    private static ShapeFlights<ShapePage> Flights(DocumentApi api) => api.Server.Services.GetRequiredService<ShapeFlights<ShapePage>>();
+    private static IShapeFlights<ShapePage> Flights(DocumentApi api) => api.Server.Services.GetRequiredService<IShapeFlights<ShapePage>>();
 
     private static ShapeFlightRequest LiveRequest(TenantContext database, string handle = "h-live", long? cursor = 0) =>
         new(database, handle, "0", true, cursor);
 
     private static Task<ShapeFlightResult<ShapePage>> ReadFlightAsync(
-        ShapeFlights<ShapePage> flights, ShapeFlightRequest request, FakeShape shape, CancellationToken cancellationToken = default) =>
+        IShapeFlights<ShapePage> flights, ShapeFlightRequest request, FakeShape shape, CancellationToken cancellationToken = default) =>
         flights.ReadAsync(request, shape.Probe, shape.Read, cancellationToken).AsTask();
 
     private static ShapeFlight<ShapePage> Flight(ShapeFlightResult<ShapePage> result) =>
