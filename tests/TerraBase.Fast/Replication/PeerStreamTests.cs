@@ -917,7 +917,7 @@ public sealed class PeerStreamTests
 
     // R6's restore of an older copy, after a collection: sjc is restored to a copy taken before gru's deletion, once both
     // collected its tombstone. sjc applied less from gru than it once reported, so gru refills it before anything else applies
-    // there; the refill drops the document gru collected (and tells sjc's changes feed it went), and gru never pulls it back.
+    // there; the refill drops the document gru collected, and gru never pulls it back.
     [Test]
     public async Task A_region_restored_to_a_copy_from_before_a_collected_deletion_refills_and_never_brings_the_document_back()
     {
@@ -965,7 +965,6 @@ public sealed class PeerStreamTests
         }
 
         await Assert.That($"gru={await gru.ReadAsync(deleted) ?? "missing"} sjc={await sjc.ReadAsync(deleted) ?? "missing"}").IsEqualTo("gru=missing sjc=missing");
-        await Assert.That(await sjc.FeedDeletedAsync(deleted)).IsTrue().Because("the refill's drop is the document's last event on sjc");
     }
 
     // gru deletes a document while sjc is away; a day later gru and fra restart with sjc still away. sjc is silent and
@@ -1503,15 +1502,6 @@ public sealed class PeerStreamTests
             var bucket = TerraBase.Engine.Sqlite.SqliteStorageTransaction.Bucket(collection, id);
             var (page, _) = await states.ReadBucketsAsync(cluster.Database, [bucket], null, 4096, int.MaxValue, CancellationToken.None);
             return page.Single(state => state.Collection == collection && state.Id == id).State;
-        }
-
-        // Whether the document's newest changes feed event on this machine says it went; null when it has none.
-        public async Task<bool?> FeedDeletedAsync(string id)
-        {
-            var store = await StoreAsync();
-            await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-            var page = await transaction.ReadFeedAsync(new Dictionary<ReplicaId, Hlc>(), null, 4096, long.MaxValue, CancellationToken.None);
-            return page.Events.Where(feed => feed.Id == id).MaxBy(feed => feed.Stamp.Value)?.Deleted;
         }
 
         // Whether this machine's stable stamp of the database reaches `stamp` within the deadline.

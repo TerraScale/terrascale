@@ -179,7 +179,8 @@ internal sealed partial class SqliteStorageTransaction
     /// the peer once applied an entry (<paramref name="applied"/>, its applied stamp per origin): the peer held the document
     /// and dropped it with a deletion, which wins. A state the peer never held stays (it was made where the peer could not
     /// see it), and so does one above the watermark (the peer has not collected it, so it lost it, and anti-entropy gives it
-    /// back). A forgotten document goes from the changes feed as a deletion. Returns how many went.
+    /// back). Returns how many went. The changes feed does not see the drop yet: it waits for R8's local-only feed origin
+    /// (a drop filed under this machine's own node could be skipped silently by a reader resuming elsewhere, #120).
     /// </summary>
     internal ValueTask<int> ForgetAsync(
         IReadOnlyList<(string Collection, string Id)> keys, Hlc collectedBelow, IReadOnlyDictionary<ReplicaId, Hlc> applied, CancellationToken cancellationToken) =>
@@ -212,12 +213,6 @@ internal sealed partial class SqliteStorageTransaction
                     var delete = Command(sql, collection);
                     delete.Parameters.AddWithValue("$id", id);
                     delete.ExecuteNonQuery();
-                }
-
-                if (state.Exists)
-                {
-                    // Nobody's operation removed it here: this machine's own event at a fresh stamp, so feed readers see it go.
-                    AppendFeed(collection, id, new EntryVersion(Member.Clock.Tick(), Member.Id), live: false);
                 }
 
                 forgotten++;

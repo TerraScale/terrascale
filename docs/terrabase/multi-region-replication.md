@@ -806,8 +806,11 @@ ts-dotnet until R12 makes ts-auth lattice-native.
     partition alive;
   - a state above the sender's watermark, which the sender lost rather than collected. Anti-entropy gives it back.
 
-  A forgotten live document gets a deletion row in `_tb_feed`, as this machine's own event at a fresh stamp. Afterwards the
-  receiver raises its `applied` rows to the sender's vector and its watermark to the sender's (section 10, step 4).
+  Afterwards the receiver raises its `applied` rows to the sender's vector and its watermark to the sender's (section 10,
+  step 4). **Open dependency (R8):** the changes feed does not see a refill's drop yet. Filed under this machine's own
+  node at a fresh stamp, it could be skipped silently by a reader that resumes on another machine (R8, #120 comment
+  6138435513). The drop path will call R8's local-only feed origin (`AppendLocalOnlyFeedEvent`) in the same transaction
+  once it exists.
 - **Restored copies.**
   - Every `Batch` and `Frontier` carries `expect`: the receiver's highest stable stamp the sender recorded.
   - On a stream's first batch or frontier of a database, the receiver checks that it applied at least that much from the
