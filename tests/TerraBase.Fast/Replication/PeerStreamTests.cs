@@ -476,7 +476,8 @@ public sealed class PeerStreamTests
         try
         {
             cluster.Members.Join(new ClusterMember("zzzz-silent", $"http://127.0.0.1:{((IPEndPoint)silent.LocalEndpoint).Port}", "gru", ""));
-            await Task.Delay(DirectoryMembership.Heartbeat + TimeSpan.FromSeconds(1));
+            var view = await sjc.Api.Server.Services.GetRequiredService<IMembership>().RefreshAsync(CancellationToken.None);
+            await Assert.That(view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Any(member => member.Name == "zzzz-silent")).IsTrue();
 
             using var push = await RawPush.StartAsync(sjc, "zzzz-silent");
             var other = await sjc.CreateOtherDatabaseAsync();
@@ -959,7 +960,7 @@ public sealed class PeerStreamTests
             var commit = JsonSerializer.Serialize(new
             {
                 id = EntityIds.New().ToString(),
-                ops = new object[] { new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = $"other-{database.DatabaseId}", id = database.DatabaseId } },
+                ops = new object[] { new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = $"other-{database.DatabaseId.ToLowerInvariant()}", id = database.DatabaseId } },
             });
             using var service = Api.Service(Api.User);
             using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
