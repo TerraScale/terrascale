@@ -212,11 +212,11 @@ CREATE TABLE _tb_peers (node INTEGER PRIMARY KEY,     -- every origin and every 
   seen    INTEGER NOT NULL);  -- Unix ms last heard from
 CREATE TABLE _tb_feed (seq INTEGER NOT NULL UNIQUE, commit_offset INTEGER NOT NULL,
   origin INTEGER NOT NULL, stamp INTEGER NOT NULL,
-  collection TEXT NOT NULL, id TEXT NOT NULL, deleted INTEGER NOT NULL);
+  collection TEXT NOT NULL, id TEXT NOT NULL, deleted INTEGER NOT NULL, prefix BLOB NOT NULL);
 CREATE INDEX _tb_feed_order ON _tb_feed (origin, stamp);
 CREATE TABLE _tb_feed_sequence (id INTEGER PRIMARY KEY CHECK (id = 1), seq INTEGER NOT NULL);
 INSERT INTO _tb_feed_sequence (id, seq) VALUES (1, 0);
-CREATE TABLE _tb_feed_floor (origin INTEGER PRIMARY KEY, stamp INTEGER NOT NULL); -- index complete above this
+CREATE TABLE _tb_feed_floor (origin INTEGER PRIMARY KEY, stamp INTEGER NOT NULL, prefix BLOB NOT NULL); -- index complete above this
 CREATE TABLE _tb_merkle (bucket INTEGER PRIMARY KEY, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL);
 CREATE TABLE _tb_tail (id INTEGER PRIMARY KEY CHECK (id = 1), change_id INTEGER NOT NULL);
 -- plus the unique-constraint tables _tb_unique_keys, _tb_unique_invalid and _tb_unique_conflicts (rowid, UNIQUE keys),
@@ -1055,9 +1055,9 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   layout returns 410 `cursor_expired`; there are no alternate layouts or compatibility branches. No public API or
   schema version changes (`PRAGMA user_version` remains 1), nor changes to replication, authentication or lattice
   conflict semantics. Persisted prefix columns change the internal storage format; greenfield storage must be recreated
-  at the reviewed storage cutover, with no migration. The internal format-6 rollout uses
+  at the reviewed storage cutover, with no migration. The internal format-9 rollout uses
   `ops/fly/greenfield-no-customer-data` to authorize the existing gru → sjc → fra volume-reset path while only dogfood
-  data exists. **Delete that marker before go-public.** After reset, verify all three regions serve format 6 and that
+  data exists. **Delete that marker before go-public.** After reset, verify all three regions serve format 9 and that
   the empty platform-auth/platform-dashboard databases, organization, projects, owner and signing keys are seeded
   again by startup. The rollout must wait for the first deploy to be proven live.
   An issued cursor with no origin is not

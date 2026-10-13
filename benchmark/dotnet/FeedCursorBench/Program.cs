@@ -30,7 +30,8 @@ if (mode == "seed")
     _ = floor.ExecuteNonQuery();
     using var insert = connection.CreateCommand();
     insert.Transaction = transaction;
-    insert.CommandText = "INSERT INTO _tb_feed (origin, stamp, collection, id, deleted, prefix) VALUES (12345, $stamp, 'items', $id, 0, $prefix);";
+    insert.CommandText = "INSERT INTO _tb_feed (seq, commit_offset, origin, stamp, collection, id, deleted, prefix) VALUES ($seq, 1, 12345, $stamp, 'items', $id, 0, $prefix);";
+    var sequenceParameter = insert.Parameters.AddWithValue("$seq", 0L);
     var stampParameter = insert.Parameters.AddWithValue("$stamp", 0L);
     var idParameter = insert.Parameters.AddWithValue("$id", "");
     var prefixParameter = insert.Parameters.AddWithValue("$prefix", new byte[32]);
@@ -38,6 +39,7 @@ if (mode == "seed")
     var prefix = FeedPrefix.Empty(default);
     for (var i = 0; i < count; i++)
     {
+        sequenceParameter.Value = (long)i + 1;
         stampParameter.Value = (long)(start + (ulong)i);
         idParameter.Value = i.ToString("D26", CultureInfo.InvariantCulture);
         prefix = prefix.Append(new Hlc(start + (ulong)i), "items", (string)idParameter.Value, deleted: false);
@@ -45,6 +47,11 @@ if (mode == "seed")
         _ = insert.ExecuteNonQuery();
     }
 
+    using var counters = connection.CreateCommand();
+    counters.Transaction = transaction;
+    counters.CommandText = "UPDATE _tb_feed_sequence SET seq = $seq WHERE id = 1; UPDATE commit_offset SET value = 1 WHERE id = 1;";
+    counters.Parameters.AddWithValue("$seq", (long)count);
+    _ = counters.ExecuteNonQuery();
     transaction.Commit();
     Console.WriteLine($"Seeded {count} events.");
     return;

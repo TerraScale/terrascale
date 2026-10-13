@@ -5,6 +5,9 @@ Linux 7.2.10, AMD Ryzen 5 PRO 6650H. Each measured process had `MemoryMax=512M`,
 `CPUQuota=200%` and `taskset -c 0,1`, at nice 19. The executable recorded actual `memory.max=536870912`,
 `memory.swap.max=0`, `cpu.max=200000 100000` and `Cpus_allowed_list: 0-1` before measuring. These are local resource limits, not Fly shared-CPU measurements.
 
+These timings precede B1's persisted sequence and commit-offset columns. The current fixture includes those columns
+and advances their counters; performance of the combined storage tree has not been remeasured.
+
 | implementation | proof build ms | cross-machine validation median ms | validation range ms | peak process RSS MiB | allocated MiB per validation | systemd memory peak (displayed) | fixture file MiB |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | retained-prefix scan, `b93fc33a` | 1735.802 | 1543.213 | 1520.420–1562.402 | 116.574 | 495.940 | 88.7M | 72.773 |
