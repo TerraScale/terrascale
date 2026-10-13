@@ -146,4 +146,3 @@ internal sealed class PowerLossNode : IAsyncDisposable
         Directory.Delete(_root, recursive: true);
     }
 }
-}
