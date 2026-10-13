@@ -87,7 +87,14 @@ public sealed class TigrisBackupTests
             {
                 if (api is not null)
                 {
-                    await api.DisposeAsync();
+                    try
+                    {
+                        await api.DisposeAsync();
+                    }
+                    finally
+                    {
+                        await api.CleanupCompletion;
+                    }
                 }
                 else
                 {
@@ -98,7 +105,7 @@ public sealed class TigrisBackupTests
             {
                 foreach (var key in await ListAsync(s3, prefix, CancellationToken.None))
                 {
-                    await s3.DeleteObjectAsync(TigrisCiBucket.Bucket, key);
+                    await s3.DeleteObjectAsync(TigrisCiBucket.Bucket, key, CancellationToken.None);
                 }
             }
         }
@@ -190,6 +197,6 @@ internal static class TigrisCiBucket
         ForcePathStyle = true,
     });
 
-    private static string Variable(string name) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value
+    private static string Variable(string name) => Environment.GetEnvironmentVariable(name) is { } value && !string.IsNullOrWhiteSpace(value)
         ? value : throw new InvalidOperationException($"required Tigris CI credential {name} is missing");
 }
