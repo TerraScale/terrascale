@@ -649,6 +649,29 @@ convergence deadline).
 
 ## 21. Slice plan
 
+The focused regression matrix runs with `make terrabase-replication-matrix`: six write directions,
+six delete directions, a three-region same-field conflict, and each region stopped and restarted
+on its existing data. Every local case owns three real application nodes, ephemeral listeners and
+storage directories; TUnit runs them in parallel. Catch-up includes writes from both surviving
+regions, conflicts and deletes of documents that the stopped region still holds. Local delete
+cases also inspect the persisted tombstones. No matrix case is an expected failure.
+
+The required CI TerraBase test stage runs this local matrix. The post-deploy `e2e` job first
+selects `Category=replication-matrix-live`: 13 write, conflict and delete cases against gru, sjc
+and fra through `fly-prefer-region`; the harness rejects responses naming a different serving
+region. That step requires 13 actual passes on Fly machines; skips and expected failures cannot
+qualify it. The broader e2e suite still runs after the matrix. Convergence measurements appear in detailed
+test output, measured from write acknowledgement to the first matching pinned read. These are
+client-observed bounds including HTTP and polling overhead, rather than internal replication timings.
+Publish measured results in `benchmark/bench/`, distinguishing local results from Fly results.
+
+Local outage cases skip on Fly because parallel tests cannot each own a production machine.
+Live outage proof uses `make terrabase-e2e-fly-outage` on a pinned disposable three-region app
+(see [the disposable-app runbook](e2e-disposable-app.md)); its result must be reported separately.
+A skipped outage is never live catch-up evidence. The post-deploy job preserves the matrix and
+broader suite logs and per-test outcomes as the `replication-e2e-<commit>` artifact. Each write direction reports ten
+samples with minimum, median, p95 (nearest rank) and maximum latency.
+
 Ordered PRs, each at most 1,500 changed lines. Pure deletion slices are listed separately so they stay reviewable.
 Model: **Opus** = Opus 5.5 (complex, correctness-critical); **Haiku** = Haiku 5.5 (mechanical against this spec).
 Metrics: R3, R4a and R6 emit the replication instruments named in `ops/grafana/README.md` (Metrics); the Grafana
