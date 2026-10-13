@@ -137,7 +137,7 @@ body { font-size: var(--ts-fs-md); -webkit-font-smoothing: antialiased; }
   line-height: 16px;
   color: var(--ts-ink-3);
 }
-.docs-eyebrow { margin: 0 0 var(--ts-s3); color: var(--ts-ink-2); }
+.docs-eyebrow { margin: 0 0 var(--ts-s3); color: var(--ts-eyebrow); }
 
 /* ---- Frosted chrome. The bars carry the glass on ::before so their own menus can still blur the page. ---- */
 .VPNavBar::before, .VPLocalNav::before {
