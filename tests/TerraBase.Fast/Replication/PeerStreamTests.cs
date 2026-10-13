@@ -2064,6 +2064,9 @@ public sealed class PeerStreamTests
     /// <summary>A machine's sink whose repairs wait while the test holds them.</summary>
     private sealed class HeldSink(IChangeGroupSink sink, Machine machine) : IChangeGroupSink
     {
+        public ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken) =>
+            sink.RecordFrontierAsync(database, origin, frontier, cancellationToken);
+
         public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken) =>
             sink.ApplyAsync(database, origin, groups, cancellationToken);
 
@@ -2090,6 +2093,15 @@ public sealed class PeerStreamTests
     private sealed class LosingStates(IReplicaStates states, Machine machine) : IReplicaStates
     {
         private bool _lost;
+
+        public ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken) =>
+            states.StableAsync(database, cancellationToken);
+
+        public ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken) =>
+            states.HorizonAsync(database, cancellationToken);
+
+        public ValueTask<int> ForgetAsync(TenantContext database, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
+            states.ForgetAsync(database, keys, horizon, cancellationToken);
 
         public async ValueTask<byte[]?> DigestAsync(TenantContext database, CancellationToken cancellationToken)
         {

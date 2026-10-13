@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
 using System.Data;
 using System.Net;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Fast.Management;
@@ -567,10 +569,10 @@ public sealed class GroupCommitTests
         await Assert.That(store.Statistics).IsEqualTo(generation + 1);
     }
 
-    // Client databases keep their tenant's version scope; only a catalog follower's system database adopts an incarnation.
+    // System lattice replication keeps this file's own incarnation, including when an after-commit hook fails.
     // A system database of the test's own, outside the server's data directory, so no server service writes to it.
     [Test]
-    public async Task A_failure_right_after_a_catalog_replica_commit_still_adopts_its_incarnation()
+    public async Task A_failure_right_after_a_system_replica_commit_preserves_its_incarnation_and_document()
     {
         await using var server = await TerraBaseTestServer.StartAsync();
         var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
@@ -580,7 +582,7 @@ public sealed class GroupCommitTests
             var path = Path.Combine(directory.FullName, "_system.db");
             const string name = SqliteStorageEngine.SystemName;
             await SqliteDatabaseStore.InitializeAsync(name, path, engine.Io, string.Empty, CancellationToken.None);
-            var system = new SqliteDatabaseStore(name, path, engine.Pool, engine.Io, "PRAGMA busy_timeout = 30000;");
+            var system = new SqliteDatabaseStore(name, path, engine.Pool, engine.Io, "PRAGMA busy_timeout = 30000;") { Member = engine.Member };
             try
             {
                 await engine.Io.WithAdmissionAsync(async () =>
@@ -588,17 +590,23 @@ public sealed class GroupCommitTests
                     await system.BootstrapAsync(CancellationToken.None);
                     return true;
                 });
-                var origin = Ulid.NewUlid();
-                var replica = await system.BeginReplicaAsync(CancellationToken.None);
+                var origin = system.Incarnation;
+                var at = new EntryVersion(engine.Member.Clock.Tick(), ReplicaId.Of(99, 1, 0));
+                using var body = JsonDocument.Parse("""{"n":1}""");
+                var replica = await system.BeginDurableTransactionAsync(CancellationToken.None);
                 await using (replica)
                 {
-                    await replica.ResetReplicaAsync(origin.ToByteArray(), CancellationToken.None);
+                    _ = await replica.JoinAsync("items", "replicated", DocumentState.Bottom.Put(at, body.RootElement).DeltaAt(at.Stamp), at, CancellationToken.None);
                     system.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
-                    // The catalog fails closed, but its ETags already use the incarnation the committed file holds.
+                    // The hook failure is reported, but the replicated document already committed.
                     await Assert.ThrowsAsync<IOException>(async () => await replica.CommitAsync(CancellationToken.None));
                 }
 
                 await Assert.That(system.Incarnation).IsEqualTo(origin);
+                await using var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
+                var document = await read.GetAsync("items", "replicated", CancellationToken.None);
+                await Assert.That(document).IsNotNull();
+                await Assert.That(document!.Version).IsEqualTo(checked((long)at.Stamp.Value));
             }
             finally
             {

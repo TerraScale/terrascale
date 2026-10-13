@@ -55,7 +55,7 @@ internal sealed partial class SqliteDatabaseStore(
     // docs/terrabase/multi-region-replication.md): each document's DocumentState in _tb_state and its materialized JSON
     // beside it, captured and shipped by the same CDC tailer and peer streams. Its collections are paths
     // (projects/<id>/databases), one set per tenant, so its live documents share one documents table instead of a table
-    // per collection. collections, commit_offset, shape_history and change_log are the engine tables both kinds share.
+    // per collection. collections and commit_offset are the engine tables both kinds share.
     private const string SystemSchemaSql = """
         CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, body TEXT NOT NULL, UNIQUE (collection, id));
         CREATE TABLE _tb_state (

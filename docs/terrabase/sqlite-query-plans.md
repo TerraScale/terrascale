@@ -31,8 +31,7 @@ to.
 
 `_system` is a lattice database too (R10a, docs/terrabase/multi-region-replication.md section 15): its live documents of
 every collection share one `documents (collection, id, body)` table (`UNIQUE (collection, id)`), beside the same
-`_tb_state`, `_tb_peers`, `collections`, `commit_offset` and shape tables, which hold nothing for `_system`: it retains no
-shape history. Both shapes include the uniqueness tables `_tb_unique_keys`, `_tb_unique_invalid` and
+`_tb_state`, `_tb_peers`, `collections`, `commit_offset` tables; it retains no shape history. Both shapes include the uniqueness tables `_tb_unique_keys`, `_tb_unique_invalid` and
 `_tb_unique_conflicts`.
 
 | Statement | Hot path | Plan before | Plan after |
@@ -51,7 +50,7 @@ shape history. Both shapes include the uniqueness tables `_tb_unique_keys`, `_tb
 | `SystemGetState`, `SystemUpdateRow`, `SystemInsertRow`, `SystemDeleteRow` | every `_system` write and replicated join | — | `SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)` with a `LEFT-JOIN` on `sqlite_autoindex_documents_1`; updates and deletes seek `sqlite_autoindex_documents_1 (collection=? AND id=?)`; the insert has no plan rows |
 | `NextOffset`, `CurrentOffset` on `commit_offset WHERE id = 1` | first write of a transaction, commit without writes | — | `SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)` |
 | `Incarnation`, `RenewIncarnation` on `commit_offset WHERE id = 1` | store open, new database/copy publication | — | `SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)` |
-| `HasCollectionState` | fresh management catalog initialization (`_system`), collection state checks of either kind of database | — | three `EXISTS` range seeks: `SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>=? AND collection<?)`, `SEARCH collections …` and `SEARCH change_log USING COVERING INDEX change_log_by_offset …`; tombstones are `_tb_state` rows, so a deletion counts as state |
+| `HasCollectionState` | fresh management catalog initialization (`_system`), collection state checks of either kind of database | — | two `EXISTS` range seeks: `SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>=? AND collection<?)`, `SEARCH collections …`; tombstones are `_tb_state` rows, so a deletion counts as state |
 | `HasCollectionStateFrom` | collection prefixes with no Unicode successor | — | the same three indexed `EXISTS` seeks using only `collection>=?` or `name>=?`; a prefix composed entirely of maximum Unicode scalars has no upper bound |
 | `CreateCollection`, `GetCollection`, `DropCollection` | collection routes, every document request (existence check) | — | insert: no plan rows; others `SEARCH collections USING PRIMARY KEY (name=?)` |
 | `ListCollectionsFirst`, `ListCollectionsAfter` | collection listing | — | `SCAN collections` (primary-key order, stops at the limit); `SEARCH collections USING PRIMARY KEY (name>?)` |

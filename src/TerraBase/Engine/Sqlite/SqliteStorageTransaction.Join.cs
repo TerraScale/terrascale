@@ -114,7 +114,7 @@ internal sealed partial class SqliteStorageTransaction
                 DropTable(name);
                 Command(SqliteStatements.DropCollection, name).ExecuteNonQuery();
                 DropUniqueCollection(name, local: false);
-                _collectionsChanged = true;
+                ChangedReaderState = true;
             }
 
             return;
@@ -135,7 +135,7 @@ internal sealed partial class SqliteStorageTransaction
         update.Parameters.AddWithValue("$created", created);
         update.Parameters.AddWithValue("$entityId", entity);
         update.ExecuteNonQuery();
-        _collectionsChanged = true;
+        ChangedReaderState = true;
     }
 
     // Worker-only: the local DDL of an index's metadata document. A live one builds the index where it is missing, on its
@@ -237,6 +237,6 @@ internal sealed partial class SqliteStorageTransaction
             table.ExecuteNonQuery();
         }
 
-        _collectionsChanged = true;
+        ChangedReaderState = true;
     }
 }

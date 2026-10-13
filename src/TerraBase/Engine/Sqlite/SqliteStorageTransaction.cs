@@ -58,9 +58,6 @@ internal sealed partial class SqliteStorageTransaction(
     // This transaction's local commit offset, separate from document versions.
     private long? _offset;
 
-    // Whether this transaction created or dropped a collection: the store forgets its collection names on commit.
-    private bool _collectionsChanged;
-
     // Set by an index build, whose ANALYZE only connections opened after its commit plan with.
     private bool _statisticsChanged;
 
@@ -72,14 +69,13 @@ internal sealed partial class SqliteStorageTransaction(
     /// <summary>Whether a per-commit limit refused a write since the last savepoint: alone in a transaction, it could fit.</summary>
     internal bool LimitsReached { get; private set; }
 
-    /// <summary>The offset this transaction committed at, set as soon as its SQLite commit succeeded; null before.</summary>
+    /// <summary>The committed offset and marker, set once both are known; null before or after a failed marker read.</summary>
     internal CommitResult? Committed { get; private set; }
 
-    /// <summary>Whether this transaction changed state readers see beside its documents: collection names or the incarnation.</summary>
-    internal bool ChangedReaderState => _collectionsChanged;
+    /// <summary>Whether this transaction changed collection state that readers cache beside its documents.</summary>
+    internal bool ChangedReaderState { get; private set; }
 
-    // Taken when the transaction begins: a catalog follower adopting its primary's incarnation never mixes it into a
-    // snapshot read before.
+    // Taken when the transaction begins so each read keeps the database incarnation it opened with.
     public Guid Scope { get; } = store.Scope;
 
     public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
@@ -800,7 +796,7 @@ internal sealed partial class SqliteStorageTransaction(
             table.ExecuteNonQuery();
         }
 
-        _collectionsChanged = true;
+        ChangedReaderState = true;
         // Local metadata allocates immediately, so a failed allocation faults this mutation too.
         Offset();
 
@@ -893,8 +889,6 @@ internal sealed partial class SqliteStorageTransaction(
             ThrowIfReadOnly();
             if (store.IsSystem)
             {
-                Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
-                cancellationToken.ThrowIfCancellationRequested();
                 Command(SqliteStatements.DropDocuments, name).ExecuteNonQuery();
                 Command(SqliteStatements.DropStates, name).ExecuteNonQuery();
             }
@@ -911,7 +905,7 @@ internal sealed partial class SqliteStorageTransaction(
                 return false;
             }
 
-            _collectionsChanged = true;
+            ChangedReaderState = true;
 
             DropUniqueCollection(name, local: true);
 
@@ -961,12 +955,12 @@ internal sealed partial class SqliteStorageTransaction(
             {
                 _faulted = true;
                 // The driver can throw after the commit landed. Both only drop caches: safe whether or not it did.
-                if (committing && _collectionsChanged)
+                if (committing && ChangedReaderState)
                 {
                     store.ForgetCollections();
                 }
 
-                if (committing && (_offset is not null))
+                if (committing && _offset is not null)
                 {
                     store.MoveCommitCount();
                 }
@@ -984,22 +978,23 @@ internal sealed partial class SqliteStorageTransaction(
             }
             finally
             {
-                // Even a failed marker read must wake waiters for the committed write.
+                // A marker failure cannot skip cache invalidation or waking waiters for the committed write.
+                Follow("the after-commit hook", store.AfterSqliteCommit);
+                if (ChangedReaderState)
+                {
+                    Follow("forgetting the collection names", store.ForgetCollections);
+                }
+
+                if (_statisticsChanged)
+                {
+                    // Sessions opened before ANALYZE still use the old statistics.
+                    Follow("moving the statistics generation", store.StatisticsChanged);
+                }
+
                 if (_offset is not null)
                 {
                     Follow("the commit notification", committed);
                 }
-            }
-            Follow("the after-commit hook", store.AfterSqliteCommit);
-            if (_collectionsChanged)
-            {
-                Follow("forgetting the collection names", store.ForgetCollections);
-            }
-
-            if (_statisticsChanged)
-            {
-                // Only query plans depend on it: a session opened before the ANALYZE plans without the new statistics.
-                Follow("moving the statistics generation", store.StatisticsChanged);
             }
 
             return result;
@@ -1061,7 +1056,7 @@ internal sealed partial class SqliteStorageTransaction(
     internal void Savepoint()
     {
         ThrowIfReadOnly();
-        _savepoint = (_changeBytes, _captured, _writes, _writtenBytes, _offset, _collectionsChanged);
+        _savepoint = (_changeBytes, _captured, _writes, _writtenBytes, _offset, ChangedReaderState);
         _savepointPending = true;
         LimitsReached = false;
     }
@@ -1107,7 +1102,7 @@ internal sealed partial class SqliteStorageTransaction(
         (long ChangeBytes, int Captured, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged) saved)
     {
         _pending.Clear();
-        (_changeBytes, _captured, _writes, _writtenBytes, _offset, _collectionsChanged) =
+        (_changeBytes, _captured, _writes, _writtenBytes, _offset, ChangedReaderState) =
             (saved.ChangeBytes, saved.Captured, saved.Writes, saved.WrittenBytes, saved.Offset, saved.CollectionsChanged);
         _savepoint = null;
         _faulted = false;
@@ -1458,14 +1453,6 @@ internal sealed partial class SqliteStorageTransaction(
     private void ReserveJson(long size)
     {
         QosContext.ReserveResult(checked(size * 3 + 2048), store.IsSystem ? null : QosContext.Current);
-    }
-
-    private byte[] ReadShapeJson(SqliteDataReader reader, int ordinal, long size)
-    {
-        ReserveJson(size);
-        var json = SqliteSession.Bytes(reader, ordinal);
-        DocumentJson.ValidateStored(json);
-        return json;
     }
 
     private SqliteCommand Uncached(string collection)

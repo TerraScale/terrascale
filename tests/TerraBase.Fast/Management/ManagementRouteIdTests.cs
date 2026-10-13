@@ -57,7 +57,7 @@ public sealed class ManagementRouteIdTests
         {
             // A read transaction's commit answers the latest committed offset.
             await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken);
-            return await transaction.CommitAsync(cancellationToken);
+            return (await transaction.CommitAsync(cancellationToken)).Offset;
         }
     }
 
