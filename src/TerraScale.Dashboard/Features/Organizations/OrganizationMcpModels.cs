@@ -5,7 +5,7 @@ namespace TerraScale.Dashboard.Features.Organizations;
 public sealed record OrganizationDone(bool Ok);
 public sealed record OrganizationProjectResult(string Id, string OrganizationId, string Name, string Region, string BackupRegion, IReadOnlyList<string> Regions);
 public sealed record OrganizationMemberView(string Id, string Name, string Email, string Role, bool IsOwner, bool IsSelf, bool CanEdit, string JoinedAt);
-public sealed record OrganizationRoleCounts(int Owner, int Member, int Viewer);
+public sealed record OrganizationRoleCounts(int Owner, int Member, int Viewer, int Admin);
 public sealed record OrganizationMemberList(IReadOnlyList<OrganizationMemberView> Members,
     [property: Description("Active members by role across the whole organization.")] OrganizationRoleCounts RoleCounts);
 public sealed record OrganizationInvitationView(string Id, string Email, string Role, string Status, string ExpiresAt, bool Open);
@@ -20,9 +20,10 @@ public sealed record OrganizationAuditEventView(string Id, DateTimeOffset Occurr
     [property: Description("user or service.")] string ActorType,
     [property: Description("Raw action code, such as api_key.created.")] string Action, string ActionLabel, string Target,
     string TargetType, string Source,
-    [property: Description("info, warn, or critical.")] string Severity,
+    [property: Description("info, warn, critical, or unknown when the provider reports no severity.")] string Severity,
     [property: Description("success or failure.")] string Outcome);
 public sealed record OrganizationAuditEvents(IReadOnlyList<OrganizationAuditEventView> Events,
     [property: Description("Events matching the filters across all pages.")] int Matching, int Critical, int Warn, int Info,
+    [property: Description("Matching events whose severity the provider does not report.")] int Unknown,
     int Page, int PageCount, string Range, string Severity,
     [property: Description("Action codes present in the retained history, for the action filter.")] IReadOnlyList<string> Actions, int RetentionDays);

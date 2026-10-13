@@ -1,30 +1,12 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Organizations;
 
-public interface IOrganizationLifecycle
-{
-    Task LeaveAsync(AccountContext context, CancellationToken cancellationToken);
-    Task DeleteAsync(AccountContext context, CancellationToken cancellationToken);
-    Task DeleteProjectAsync(AccountContext context, string projectId, CancellationToken cancellationToken);
-}
-
-public sealed class TsOrganizationLifecycle(IHttpClientFactory http) : IOrganizationLifecycle
-{
-    private TerraBaseManagementClient Client(AccountContext context)
-    {
-        var client = http.CreateClient("platform");
-        return new(client, new() { EndpointResolver = new TerraBaseDiscovery(), AccessTokenProvider = _ => ValueTask.FromResult(context.Session.AccessToken) });
-    }
-    public Task LeaveAsync(AccountContext context, CancellationToken cancellationToken) => Client(context).LeaveOrganizationAsync(context.UserId, context.Organization!.Id, cancellationToken);
-    public Task DeleteAsync(AccountContext context, CancellationToken cancellationToken) => Client(context).DeleteOrganizationAsync(context.UserId, context.Organization!.Id, cancellationToken);
-    public Task DeleteProjectAsync(AccountContext context, string projectId, CancellationToken cancellationToken) => Client(context).DeleteProjectAsync(context.UserId, context.Organization!.Id, projectId, cancellationToken);
-}
-
-public sealed class OrganizationLifecycleService(IDashboardState state, AccountService accounts, IOrganizationLifecycle gateway, TimeProvider time)
+public sealed class OrganizationLifecycleService(IDashboardState state, AccountService accounts, ITsAuthPlatform platform, TimeProvider time)
 {
     public async Task LeaveAsync(AccountContext context, CancellationToken cancellationToken)
     {
@@ -32,7 +14,7 @@ public sealed class OrganizationLifecycleService(IDashboardState state, AccountS
         var org = context.Organization!;
         if (org.Kind == "personal" || context.Role == "owner") throw new AccountAccessException("Owners must transfer ownership before leaving a business organization.", 409);
         if (context.Organizations.Count < 2) throw new AccountAccessException("Keep another accessible organization before leaving.", 409);
-        await gateway.LeaveAsync(context, cancellationToken);
+        await platform.LeaveOrganizationAsync(context.Session, org.Id, cancellationToken);
         await ProjectAfterRemovalAsync(context, false, cancellationToken);
         await ForgetAsync(context, cancellationToken);
     }
@@ -63,17 +45,14 @@ public sealed class OrganizationLifecycleService(IDashboardState state, AccountS
         if (project.Name != confirmation.Trim()) throw new AccountAccessException("Type the project name to confirm deletion.", 422);
         if (project.IsDefault || context.Organization.Projects.Count <= 1) throw new AccountAccessException("The default or last project cannot be deleted.", 409);
         if (project.Databases.Count > 0) throw new AccountAccessException("Delete this project's databases before deleting the project.", 409);
-        try { await gateway.DeleteProjectAsync(context, projectId, cancellationToken); }
-        // A completed provider delete can outlive an interrupted canonical write.
-        // The exact owned project and current role were authorized above; the CAS
-        // projection below repeats those checks before reconciling its absence.
-        catch (TerraBaseNotFoundException) { }
+        try { await platform.DeleteProjectAsync(context.Session, context.Organization.Id, projectId, cancellationToken); }
+        // A completed provider delete can outlive an interrupted dashboard write;
+        // the exact project and current role were authorized above.
+        catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status404NotFound) { }
+        // ts-auth no longer lists the project, so this write drops its dashboard settings.
         await accounts.UpdateOrganizationAsync(context, org =>
         {
             if (!org.CanManage(context.UserId)) throw new AccountAccessException("Organization management is required.");
-            var current = org.Projects.GetValueOrDefault(projectId) ?? throw new AccountAccessException("Project is unavailable.", 404);
-            if (current.IsDefault || org.Projects.Count <= 1) throw new AccountAccessException("The default or last project cannot be deleted.", 409);
-            if (current.Name != confirmation.Trim() || current.Databases.Count > 0) throw new AccountAccessException("Project changed during deletion.", 409);
             org.Projects.Remove(projectId);
             org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "project.deleted", project.Name, "project", time.GetUtcNow()));
         }, cancellationToken);
