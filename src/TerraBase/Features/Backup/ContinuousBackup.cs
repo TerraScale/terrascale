@@ -480,12 +480,12 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                         file.RetryAt = DateTimeOffset.MinValue;
                     }
 
-                    // Ship the whole backlog, not one read of it, while the shutdown budget lasts.
+                    // Ship the whole backlog, not one read of it, while the shutdown budget lasts and passes succeed.
                     do
                     {
                         await ShipAsync(file, cancellationToken).ConfigureAwait(false);
                     }
-                    while (file.Behind && file.LastError is null && file.Generation is not null && !cancellationToken.IsCancellationRequested);
+                    while (file.Behind && file.Failures == 0 && file.Generation is not null && !cancellationToken.IsCancellationRequested);
                 }
                 catch (Exception error)
                 {
@@ -591,10 +591,12 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             // Admission already classified the catalog record. Only this job may switch or dispose its fixed target;
             // failed catalog reads fail closed: customer-only data never falls back to platform.
             var due = _time.GetUtcNow() >= file.RetryAt;
+            var switched = false;
             if (due)
             {
                 if (file.Target.Revision != (file.Configuration?.Revision ?? BackupDestinationNames.Platform))
                 {
+                    switched = true;
                     // A snapshot upload or drill beside shipping uses the old target.
                     file.Side?.Cancellation.Cancel();
                     await file.StopSideAsync().ConfigureAwait(false);
@@ -603,22 +605,28 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                     file.Target = target;
                     Abandon(file);
                     (file.LastShipped, file.LastSnapshot, file.RetainedAt, file.DrilledAt, file.SizeBytes, file.SizedAt) = (null, default, default, default, null, default);
+                    (file.SnapshotFailures, file.SnapshotRetryAt, file.SnapshotError) = (0, DateTimeOffset.MinValue, null);
                 }
             }
             if (file.Side is { Stored.Task.IsCompleted: true, Collected: false } side)
             {
                 side.Collected = true;
-                if (side.Snapshot.Generation == file.Generation)
+                // A cancelled upload (shutdown, removal, a new destination) did not fail: that snapshot is just not stored.
+                if (side.Snapshot.Generation == file.Generation && !side.Cancellation.IsCancellationRequested)
                 {
-                    // A daily snapshot stored beside shipping; a failed one fails this pass, and the generation goes on.
-                    await side.Stored.Task.ConfigureAwait(false);
-                    file.LastSnapshot = side.Snapshot.At;
-                    Prove(file, side.Snapshot.At);
+                    CollectSnapshot(file, side);
                 }
             }
 
             if (file.Generation is null)
             {
+                // Shutdown ships what generations hold and starts none, a full snapshot that would spend the budget other files
+                // need; only a file whose destination was just detached gets its final snapshot into the platform bucket.
+                if (_stopped && !switched)
+                {
+                    return;
+                }
+
                 if (due)
                 {
                     await StartGenerationAsync(file, cancellationToken).ConfigureAwait(false);
@@ -665,7 +673,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             if (!read.Continuous)
             {
                 Hole(file);
-                if (due)
+                if (due && !_stopped)
                 {
                     await StartGenerationAsync(file, cancellationToken).ConfigureAwait(false);
                 }
@@ -698,8 +706,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 file.BehindSince = null;
             }
 
-            // A snapshot reads what is left while it holds writers: never with a backlog. Its upload holds a snapshot slot.
-            if (now - file.LastSnapshot >= SnapshotInterval && !_stopped)
+            // A snapshot reads what is left while it holds writers: never with a backlog. Its upload holds a snapshot slot, and
+            // after a failed one the next waits out its own backoff.
+            if (now - file.LastSnapshot >= SnapshotInterval && now >= file.SnapshotRetryAt && !_stopped)
             {
                 if (file.Behind)
                 {
@@ -728,7 +737,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 }
             }
 
-            (file.LastError, file.Failures) = (null, 0);
+            // A daily snapshot that keeps failing stays visible while segments ship.
+            (file.LastError, file.Failures) = (file.SnapshotError, 0);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
@@ -744,6 +754,23 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
             file.PendingBytes = file.Buffered;
         }
+    }
+
+    // A daily snapshot's upload ended beside shipping. A failure counts, shows in lastError, and puts off the next snapshot by
+    // its own backoff, doubling like the shipping one, so a failing upload neither repeats every pass nor holds segments back.
+    private void CollectSnapshot(ShippedFile file, SideWork side)
+    {
+        if (side.Stored!.Task.Exception?.GetBaseException() is { } error)
+        {
+            _failures.Add(1);
+            file.SnapshotFailures++;
+            (file.SnapshotRetryAt, file.SnapshotError) = (_time.GetUtcNow() + Backoff(file.SnapshotFailures), error.GetType().Name);
+            _logger.ZLogWarning(error, $"The daily snapshot of {file.Prefix:@File} failed; it retries after a backoff while segments ship");
+            return;
+        }
+
+        (file.LastSnapshot, file.SnapshotFailures, file.SnapshotRetryAt, file.SnapshotError) = (side.Snapshot.At, 0, DateTimeOffset.MinValue, null);
+        Prove(file, side.Snapshot.At);
     }
 
     private void Failed(ShippedFile file, Exception error)
@@ -825,6 +852,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             _generations.Add(1);
             // The generation is stored: an earlier failure no longer stands (lag still shows what waits).
             (file.LastError, file.Failures) = (null, 0);
+            (file.SnapshotFailures, file.SnapshotRetryAt, file.SnapshotError) = (0, DateTimeOffset.MinValue, null);
             if (live is not null)
             {
                 // Segments of this generation ship from the next pass on, while the drill runs beside them.
@@ -1098,7 +1126,13 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     {
         file.PlatformProgress = null;
         file.Generation = null;
-        file.Side?.Cancellation.Cancel();
+        if (file.Side is { Completion.IsCompleted: false } side)
+        {
+            // A drill it cancels reports nothing, so the next generation's snapshot is drilled instead of a day later.
+            file.DrilledAt = DateTimeOffset.MinValue;
+            side.Cancellation.Cancel();
+        }
+
         file.Clear();
     }
 
@@ -1240,6 +1274,13 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public int Failures { get; set; }
 
         public DateTimeOffset RetryAt { get; set; } = DateTimeOffset.MinValue;
+
+        /// <summary>Daily snapshot uploads failed in a row, when the next may start, and the kind of the last failure.</summary>
+        public int SnapshotFailures { get; set; }
+
+        public DateTimeOffset SnapshotRetryAt { get; set; } = DateTimeOffset.MinValue;
+
+        public string? SnapshotError { get; set; }
 
         /// <summary><see cref="Buffered"/> after the last pass, for status readers on other threads.</summary>
         public long PendingBytes { get; set; }
