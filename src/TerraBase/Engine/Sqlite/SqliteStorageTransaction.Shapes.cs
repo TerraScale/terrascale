@@ -507,7 +507,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         }
     }
 
-    // The v6 state row has nine columns; other captured client/metadata rows have at most nine.
+    // The state row has nine columns; other captured client/metadata rows have at most nine.
     private static long MeasureShapeRecord(ReadOnlySpan<byte> image, string table, CancellationToken cancellationToken)
     {
         var size = ShapeRecordVarint(image, out var used);
@@ -525,7 +525,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         {
             if (++columns > 9)
             {
-                throw new InvalidDataException("a captured record exceeds the v6 column bound");
+                throw new InvalidDataException("a captured record exceeds the engine column bound");
             }
             var type = ShapeRecordVarint(header, out var read);
             header = header[read..];

@@ -3,7 +3,7 @@
 `IShapeSealer` seals a collection's local apply order into immutable bodies in
 `_tb_shape_chunk`. Its implementation and SQLite transaction operations live in
 `Features/Shapes/ShapeSealer.cs` and
-`Engine/Sqlite/SqliteStorageTransaction.Shapes.cs`. The storage format remains v6.
+`Engine/Sqlite/SqliteStorageTransaction.Shapes.cs`. The storage format remains v7.
 
 The caller supplies a `ShapeSealDefinition`: lineage-bound shape id and handle,
 collection and generation, 16-byte resume scope, and an optional predicate over
