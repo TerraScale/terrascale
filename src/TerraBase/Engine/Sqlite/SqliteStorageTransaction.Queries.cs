@@ -26,6 +26,7 @@ internal sealed partial class SqliteStorageTransaction
             using var command = Uncached(collection);
             // tb_qos_scan accounts each row against the plan and stops the count once its budget is spent.
             command.CommandText = $"SELECT count(*) FROM {rows.From} WHERE {rows.Live} AND tb_qos_scan(octet_length({rows.Json}));";
+            CountRead("query");
             return (long)command.ExecuteScalar()!;
         }, cancellationToken), cancellationToken);
 
