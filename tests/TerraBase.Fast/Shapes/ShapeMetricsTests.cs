@@ -157,9 +157,8 @@ public sealed class ShapeMetricsTests
     {
         await using var server = await StartAsync();
         var metrics = Metrics(server);
-        var faker = new Faker();
-        var tenant = new TenantContext(faker.Random.AlphaNumeric(24), PlanTier.Hobby);
-        var other = new TenantContext(faker.Random.AlphaNumeric(24), PlanTier.Hobby);
+        var tenant = new TenantContext(DocumentApi.NewId(), PlanTier.Hobby);
+        var other = new TenantContext(DocumentApi.NewId(), PlanTier.Hobby);
         var share = (long)(Budget * HobbyShare);
 
         using var first = metrics.TryReserve(share, tenant);
@@ -278,9 +277,8 @@ public sealed class ShapeMetricsTests
     public async Task Point_reads_count_a_storage_miss_and_skip_a_cache_hit()
     {
         await using var api = await DocumentApi.StartAsync();
-        var faker = new Faker();
-        var stored = faker.Random.AlphaNumeric(16);
-        var absent = faker.Random.AlphaNumeric(16);
+        var stored = DocumentApi.NewId();
+        var absent = DocumentApi.NewId();
         await Assert.That((await api.PutAsync(stored, new { a = 1 })).Status).IsEqualTo(HttpStatusCode.Created);
 
         // A missing document still runs its SELECT: misses and empty results count (docs/terrabase/shape-metrics.md).
