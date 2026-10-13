@@ -1,0 +1,221 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="65788a07-ea1d-462d-b675-f78ac6904381" name="@delta 2026-10-13 02:32:19.9048954" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-13T02:32:15.2693067Z" queuing="2026-10-13T02:32:15.2693067Z" start="2026-10-13T02:32:15.2693067Z" finish="2026-10-13T02:32:19.9052937Z" />
+  <TestSettings name="default" id="9927232c-2a7c-4eb5-9c9d-a94818852038">
+    <Deployment runDeploymentRoot="_delta_2026-10-13_02_32_19.9048954" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="15ea35c5-5f84-44b9-a96c-748902ff0197" testId="9df94367-fcf6-680c-82d3-060a3de9389b" testName="ConcurrentReplicasDiscardTheOlderCanonicalSnapshotAfterACasConflict" computerName="delta" duration="00:00:01.0360032" startTime="2026-10-13T02:32:15.4163611+00:00" endTime="2026-10-13T02:32:16.4523643+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="15ea35c5-5f84-44b9-a96c-748902ff0197" />
+    <UnitTestResult executionId="5fa10da5-bda6-4b4a-bbc7-e4c6dd545928" testId="4ae55000-8e36-eee1-a734-3d6eae4a7d24" testName="ReplayedAndOutOfOrderEventsUseCurrentStripeFactsAcrossReplicas" computerName="delta" duration="00:00:00.4454131" startTime="2026-10-13T02:32:16.4613485+00:00" endTime="2026-10-13T02:32:16.9067616+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="5fa10da5-bda6-4b4a-bbc7-e4c6dd545928" />
+    <UnitTestResult executionId="a7c133c7-0a03-4b2f-852a-183f5bebd6c5" testId="2480427d-1ba1-bbe7-79db-29f7752aec28" testName="InterruptedOrganizationProjectionIsRetryableAndReplayReadsNewCanonicalState" computerName="delta" duration="00:00:00.4486846" startTime="2026-10-13T02:32:16.9070958+00:00" endTime="2026-10-13T02:32:17.3557804+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="a7c133c7-0a03-4b2f-852a-183f5bebd6c5">
+      <Output>
+        <StdOut>warn: TerraScale.Dashboard.E2E[0]
+      Dashboard dependency failed (IOException)
+
+</StdOut>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="19a19fc9-b544-43f8-b1e5-e1ff6ffe34e1" testId="c08742ed-b870-4a56-3b62-bb8b7e0d7090" testName="ForeignCurrencyFractionalPricesAndMultipleQuantityInvalidateThePaidBinding" computerName="delta" duration="00:00:00.3134374" startTime="2026-10-13T02:32:17.3573912+00:00" endTime="2026-10-13T02:32:17.6708286+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="19a19fc9-b544-43f8-b1e5-e1ff6ffe34e1" />
+    <UnitTestResult executionId="8004608b-c444-4673-82fc-a4be1bed8dc2" testId="92d25fde-f047-303f-08cc-af57143d9522" testName="UnmappedActivePriceCannotRetainPaidDatabaseCapacity" computerName="delta" duration="00:00:00.3134776" startTime="2026-10-13T02:32:17.6711591+00:00" endTime="2026-10-13T02:32:17.9846367+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="8004608b-c444-4673-82fc-a4be1bed8dc2">
+      <Output>
+        <ErrorInfo>
+          <Message>AssertionException: Expected to be equal to Conflict, because An unqualified Stripe price must not retain Starter's five-database allowance above Personal Free's one database.
+but received Created
+
+at Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because("An unqualified Stripe price must not retain Starter's five-database allowance above Personal Free's one database.")</Message>
+          <StackTrace>   at TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests.UnmappedActivePriceCannotRetainPaidDatabaseCapacity() in /home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/payment-webhook-correctness/PaymentWebhookAuditJourneyTests.cs:line 150
+   at TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests.UnmappedActivePriceCannotRetainPaidDatabaseCapacity() in /home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/payment-webhook-correctness/PaymentWebhookAuditJourneyTests.cs:line 150
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="8c8e3054-cb54-49aa-a925-b69eb05d0be8" testId="cdb2f078-db0c-7c66-ea85-71000c39b618" testName="RepeatedCheckoutAndCancelKeepProviderKeysAndLateEventsCannotGrantAccess" computerName="delta" duration="00:00:00.3191836" startTime="2026-10-13T02:32:17.9899124+00:00" endTime="2026-10-13T02:32:18.3090960+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="8c8e3054-cb54-49aa-a925-b69eb05d0be8" />
+    <UnitTestResult executionId="fe2814d8-3094-49cc-b646-13ac85d84715" testId="3f585aa5-c98c-4093-f06a-e8096d44d22e" testName="CompletedFreeSetupAllowsImmediatePaidCheckout" computerName="delta" duration="00:00:00.3026545" startTime="2026-10-13T02:32:18.3093449+00:00" endTime="2026-10-13T02:32:18.6119994+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="fe2814d8-3094-49cc-b646-13ac85d84715">
+      <Output>
+        <ErrorInfo>
+          <Message>AssertionException: Expected to be equal to SeeOther, because A completed setup is no longer an unfinished checkout reservation.
+but received UnprocessableEntity
+
+at Assert.That(upgrade.StatusCode).IsEqualTo(HttpStatusCode.SeeOther).Because("A completed setup is no longer an unfinished checkout reservation.")</Message>
+          <StackTrace>   at TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests.CompletedFreeSetupAllowsImmediatePaidCheckout() in /home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/payment-webhook-correctness/PaymentWebhookAuditJourneyTests.cs:line 191
+   at TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests.CompletedFreeSetupAllowsImmediatePaidCheckout() in /home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/payment-webhook-correctness/PaymentWebhookAuditJourneyTests.cs:line 191
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="04b97905-26ad-46c3-bdff-c2b2864980bb" testId="98cd8ef1-83fa-c02a-eeb3-778997a28a7e" testName="FreeSetupPreservesTheFirstPaidSubscriptionTrial" computerName="delta" duration="00:00:00.3089702" startTime="2026-10-13T02:32:18.6126641+00:00" endTime="2026-10-13T02:32:18.9216343+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="04b97905-26ad-46c3-bdff-c2b2864980bb">
+      <Output>
+        <ErrorInfo>
+          <Message>AssertionException: Expected to be equal to "30", because A successful Free setup intent must not consume a paid subscription trial.
+but received ""
+
+at Assert.That(scenario.Stripe.LastTrialDays).IsEqualTo("30").Because("A successful Free setup intent must not consume a paid subscription trial.")</Message>
+          <StackTrace>   at TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests.FreeSetupPreservesTheFirstPaidSubscriptionTrial() in /home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/payment-webhook-correctness/PaymentWebhookAuditJourneyTests.cs:line 206
+   at TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests.FreeSetupPreservesTheFirstPaidSubscriptionTrial() in /home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/payment-webhook-correctness/PaymentWebhookAuditJourneyTests.cs:line 206
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="c3cae96f-5ab6-4a28-af66-1bf8920944da" testId="f6275d69-3a4c-a469-0f7a-fa00c7b440d1" testName="InvoiceHistoryUsesTheCurrencyMinorUnit(jpy, 1500, JPY 1500)" computerName="delta" duration="00:00:00.3053708" startTime="2026-10-13T02:32:18.9230799+00:00" endTime="2026-10-13T02:32:19.2284507+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="c3cae96f-5ab6-4a28-af66-1bf8920944da">
+      <Output>
+        <ErrorInfo>
+          <Message>AssertionException: Expected to be equal to "JPY 1500", because The amount returned by Stripe is an integer in this currency's smallest unit.
+but received "JPY 15.00"
+
+at Assert.That(displayed).IsEqualTo(expected).Because("The amount returned by Stripe is an integer in this currency's smallest unit.")</Message>
+          <StackTrace>   at TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests.InvoiceHistoryUsesTheCurrencyMinorUnit(String currency, Int64 amount, String expected) in /home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/payment-webhook-correctness/PaymentWebhookAuditJourneyTests.cs:line 226
+   at TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests.InvoiceHistoryUsesTheCurrencyMinorUnit(String currency, Int64 amount, String expected) in /home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/payment-webhook-correctness/PaymentWebhookAuditJourneyTests.cs:line 226
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="55a073c3-447f-455e-8992-6b5bf5211e71" testId="61570066-fab8-1623-7f73-266c363420ac" testName="InvoiceHistoryUsesTheCurrencyMinorUnit(clp, 1234, CLP 1234)" computerName="delta" duration="00:00:00.2951553" startTime="2026-10-13T02:32:19.2312581+00:00" endTime="2026-10-13T02:32:19.5264134+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="55a073c3-447f-455e-8992-6b5bf5211e71">
+      <Output>
+        <ErrorInfo>
+          <Message>AssertionException: Expected to be equal to "CLP 1234", because The amount returned by Stripe is an integer in this currency's smallest unit.
+but received "CLP 12.34"
+
+at Assert.That(displayed).IsEqualTo(expected).Because("The amount returned by Stripe is an integer in this currency's smallest unit.")</Message>
+          <StackTrace>   at TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests.InvoiceHistoryUsesTheCurrencyMinorUnit(String currency, Int64 amount, String expected) in /home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/payment-webhook-correctness/PaymentWebhookAuditJourneyTests.cs:line 226
+   at TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests.InvoiceHistoryUsesTheCurrencyMinorUnit(String currency, Int64 amount, String expected) in /home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/payment-webhook-correctness/PaymentWebhookAuditJourneyTests.cs:line 226
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="2ed73e4f-e5c7-4a5e-9bdc-5f42b26d2be7" testId="e7c6c7f4-457e-4152-8187-89171c330ba2" testName="InvoiceHistoryUsesTheCurrencyMinorUnit(usd, 501, USD 5·01)" computerName="delta" duration="00:00:00.3004909" startTime="2026-10-13T02:32:19.5376224+00:00" endTime="2026-10-13T02:32:19.8381133+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="2ed73e4f-e5c7-4a5e-9bdc-5f42b26d2be7" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ConcurrentReplicasDiscardTheOlderCanonicalSnapshotAfterACasConflict" storage="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/terrascale.dashboard.e2e/bin/release/net10.0/terrascale.dashboard.e2e.dll" id="9df94367-fcf6-680c-82d3-060a3de9389b">
+      <Execution id="15ea35c5-5f84-44b9-a96c-748902ff0197" />
+      <TestMethod codeBase="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/TerraScale.Dashboard.E2E.dll" adapterTypeName="executor://TUnitExtension/1.73.19.0" className="TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests" name="ConcurrentReplicasDiscardTheOlderCanonicalSnapshotAfterACasConflict" />
+    </UnitTest>
+    <UnitTest name="ReplayedAndOutOfOrderEventsUseCurrentStripeFactsAcrossReplicas" storage="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/terrascale.dashboard.e2e/bin/release/net10.0/terrascale.dashboard.e2e.dll" id="4ae55000-8e36-eee1-a734-3d6eae4a7d24">
+      <Execution id="5fa10da5-bda6-4b4a-bbc7-e4c6dd545928" />
+      <TestMethod codeBase="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/TerraScale.Dashboard.E2E.dll" adapterTypeName="executor://TUnitExtension/1.73.19.0" className="TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests" name="ReplayedAndOutOfOrderEventsUseCurrentStripeFactsAcrossReplicas" />
+    </UnitTest>
+    <UnitTest name="InterruptedOrganizationProjectionIsRetryableAndReplayReadsNewCanonicalState" storage="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/terrascale.dashboard.e2e/bin/release/net10.0/terrascale.dashboard.e2e.dll" id="2480427d-1ba1-bbe7-79db-29f7752aec28">
+      <Execution id="a7c133c7-0a03-4b2f-852a-183f5bebd6c5" />
+      <TestMethod codeBase="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/TerraScale.Dashboard.E2E.dll" adapterTypeName="executor://TUnitExtension/1.73.19.0" className="TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests" name="InterruptedOrganizationProjectionIsRetryableAndReplayReadsNewCanonicalState" />
+    </UnitTest>
+    <UnitTest name="ForeignCurrencyFractionalPricesAndMultipleQuantityInvalidateThePaidBinding" storage="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/terrascale.dashboard.e2e/bin/release/net10.0/terrascale.dashboard.e2e.dll" id="c08742ed-b870-4a56-3b62-bb8b7e0d7090">
+      <Execution id="19a19fc9-b544-43f8-b1e5-e1ff6ffe34e1" />
+      <TestMethod codeBase="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/TerraScale.Dashboard.E2E.dll" adapterTypeName="executor://TUnitExtension/1.73.19.0" className="TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests" name="ForeignCurrencyFractionalPricesAndMultipleQuantityInvalidateThePaidBinding" />
+    </UnitTest>
+    <UnitTest name="UnmappedActivePriceCannotRetainPaidDatabaseCapacity" storage="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/terrascale.dashboard.e2e/bin/release/net10.0/terrascale.dashboard.e2e.dll" id="92d25fde-f047-303f-08cc-af57143d9522">
+      <TestCategory>
+        <TestCategoryItem TestCategory="PaymentAuditDefect" />
+      </TestCategory>
+      <Execution id="8004608b-c444-4673-82fc-a4be1bed8dc2" />
+      <Properties>
+        <Property>
+          <Key>PaymentAuditDefect</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/TerraScale.Dashboard.E2E.dll" adapterTypeName="executor://TUnitExtension/1.73.19.0" className="TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests" name="UnmappedActivePriceCannotRetainPaidDatabaseCapacity" />
+    </UnitTest>
+    <UnitTest name="RepeatedCheckoutAndCancelKeepProviderKeysAndLateEventsCannotGrantAccess" storage="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/terrascale.dashboard.e2e/bin/release/net10.0/terrascale.dashboard.e2e.dll" id="cdb2f078-db0c-7c66-ea85-71000c39b618">
+      <Execution id="8c8e3054-cb54-49aa-a925-b69eb05d0be8" />
+      <TestMethod codeBase="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/TerraScale.Dashboard.E2E.dll" adapterTypeName="executor://TUnitExtension/1.73.19.0" className="TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests" name="RepeatedCheckoutAndCancelKeepProviderKeysAndLateEventsCannotGrantAccess" />
+    </UnitTest>
+    <UnitTest name="CompletedFreeSetupAllowsImmediatePaidCheckout" storage="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/terrascale.dashboard.e2e/bin/release/net10.0/terrascale.dashboard.e2e.dll" id="3f585aa5-c98c-4093-f06a-e8096d44d22e">
+      <TestCategory>
+        <TestCategoryItem TestCategory="PaymentAuditExpectation" />
+      </TestCategory>
+      <Execution id="fe2814d8-3094-49cc-b646-13ac85d84715" />
+      <Properties>
+        <Property>
+          <Key>PaymentAuditExpectation</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/TerraScale.Dashboard.E2E.dll" adapterTypeName="executor://TUnitExtension/1.73.19.0" className="TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests" name="CompletedFreeSetupAllowsImmediatePaidCheckout" />
+    </UnitTest>
+    <UnitTest name="FreeSetupPreservesTheFirstPaidSubscriptionTrial" storage="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/terrascale.dashboard.e2e/bin/release/net10.0/terrascale.dashboard.e2e.dll" id="98cd8ef1-83fa-c02a-eeb3-778997a28a7e">
+      <TestCategory>
+        <TestCategoryItem TestCategory="PaymentAuditExpectation" />
+      </TestCategory>
+      <Execution id="04b97905-26ad-46c3-bdff-c2b2864980bb" />
+      <Properties>
+        <Property>
+          <Key>PaymentAuditExpectation</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/TerraScale.Dashboard.E2E.dll" adapterTypeName="executor://TUnitExtension/1.73.19.0" className="TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests" name="FreeSetupPreservesTheFirstPaidSubscriptionTrial" />
+    </UnitTest>
+    <UnitTest name="InvoiceHistoryUsesTheCurrencyMinorUnit(jpy, 1500, JPY 1500)" storage="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/terrascale.dashboard.e2e/bin/release/net10.0/terrascale.dashboard.e2e.dll" id="f6275d69-3a4c-a469-0f7a-fa00c7b440d1">
+      <TestCategory>
+        <TestCategoryItem TestCategory="PaymentAuditDefect" />
+      </TestCategory>
+      <Execution id="c3cae96f-5ab6-4a28-af66-1bf8920944da" />
+      <Properties>
+        <Property>
+          <Key>PaymentAuditDefect</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/TerraScale.Dashboard.E2E.dll" adapterTypeName="executor://TUnitExtension/1.73.19.0" className="TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests" name="InvoiceHistoryUsesTheCurrencyMinorUnit" />
+    </UnitTest>
+    <UnitTest name="InvoiceHistoryUsesTheCurrencyMinorUnit(clp, 1234, CLP 1234)" storage="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/terrascale.dashboard.e2e/bin/release/net10.0/terrascale.dashboard.e2e.dll" id="61570066-fab8-1623-7f73-266c363420ac">
+      <TestCategory>
+        <TestCategoryItem TestCategory="PaymentAuditDefect" />
+      </TestCategory>
+      <Execution id="55a073c3-447f-455e-8992-6b5bf5211e71" />
+      <Properties>
+        <Property>
+          <Key>PaymentAuditDefect</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/TerraScale.Dashboard.E2E.dll" adapterTypeName="executor://TUnitExtension/1.73.19.0" className="TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests" name="InvoiceHistoryUsesTheCurrencyMinorUnit" />
+    </UnitTest>
+    <UnitTest name="InvoiceHistoryUsesTheCurrencyMinorUnit(usd, 501, USD 5·01)" storage="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/terrascale.dashboard.e2e/bin/release/net10.0/terrascale.dashboard.e2e.dll" id="e7c6c7f4-457e-4152-8187-89171c330ba2">
+      <TestCategory>
+        <TestCategoryItem TestCategory="PaymentAuditDefect" />
+      </TestCategory>
+      <Execution id="2ed73e4f-e5c7-4a5e-9bdc-5f42b26d2be7" />
+      <Properties>
+        <Property>
+          <Key>PaymentAuditDefect</Key>
+          <Value></Value>
+        </Property>
+      </Properties>
+      <TestMethod codeBase="/home/mariogk/.t3/worktrees/ts-dashboard/audit-payment-webhook-correctness-20261013/tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/TerraScale.Dashboard.E2E.dll" adapterTypeName="executor://TUnitExtension/1.73.19.0" className="TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness.PaymentWebhookAuditJourneyTests" name="InvoiceHistoryUsesTheCurrencyMinorUnit" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="9df94367-fcf6-680c-82d3-060a3de9389b" executionId="15ea35c5-5f84-44b9-a96c-748902ff0197" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="4ae55000-8e36-eee1-a734-3d6eae4a7d24" executionId="5fa10da5-bda6-4b4a-bbc7-e4c6dd545928" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="2480427d-1ba1-bbe7-79db-29f7752aec28" executionId="a7c133c7-0a03-4b2f-852a-183f5bebd6c5" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="c08742ed-b870-4a56-3b62-bb8b7e0d7090" executionId="19a19fc9-b544-43f8-b1e5-e1ff6ffe34e1" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="92d25fde-f047-303f-08cc-af57143d9522" executionId="8004608b-c444-4673-82fc-a4be1bed8dc2" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="cdb2f078-db0c-7c66-ea85-71000c39b618" executionId="8c8e3054-cb54-49aa-a925-b69eb05d0be8" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="3f585aa5-c98c-4093-f06a-e8096d44d22e" executionId="fe2814d8-3094-49cc-b646-13ac85d84715" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="98cd8ef1-83fa-c02a-eeb3-778997a28a7e" executionId="04b97905-26ad-46c3-bdff-c2b2864980bb" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="f6275d69-3a4c-a469-0f7a-fa00c7b440d1" executionId="c3cae96f-5ab6-4a28-af66-1bf8920944da" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="61570066-fab8-1623-7f73-266c363420ac" executionId="55a073c3-447f-455e-8992-6b5bf5211e71" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="e7c6c7f4-457e-4152-8187-89171c330ba2" executionId="2ed73e4f-e5c7-4a5e-9bdc-5f42b26d2be7" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="11" executed="11" passed="6" failed="5" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <RunInfos>
+      <RunInfo computerName="delta" outcome="Error" timestamp="2026-10-13T02:32:19.9128104">
+        <Text>Exit code indicates failure: '2'. Please refer to https://aka.ms/testingplatform/exitcodes for more information.</Text>
+      </RunInfo>
+    </RunInfos>
+    <CollectorDataEntries>
+      <Collector agentName="delta" uri="datacollector://TUnitExtensionHtmlReporter/1.73.19.0" collectorDisplayName="TUnit">
+        <UriAttachments>
+          <UriAttachment>
+            <A href="delta/TerraScale.Dashboard.E2E-linux-net10.0-report.html" />
+          </UriAttachment>
+        </UriAttachments>
+      </Collector>
+    </CollectorDataEntries>
+  </ResultSummary>
+</TestRun>
