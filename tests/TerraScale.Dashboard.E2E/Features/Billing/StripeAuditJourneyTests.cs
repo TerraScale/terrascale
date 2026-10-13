@@ -87,10 +87,7 @@ public sealed class StripeAuditJourneyTests(DashboardE2EFixture fixture)
         Protocol(scenario, 0);
 
         var completeIdentity = scenario.Identity();
-        var incomplete = new TerraScale.Dashboard.Platform.Persistence.DashboardCredentials(completeIdentity.StateProjectId,
-            completeIdentity.StateApiKey, completeIdentity.ManagementCredential, completeIdentity.AuthInstanceSlug,
-            completeIdentity.AuthClientId, completeIdentity.AuthClientSecret, completeIdentity.SessionEncryptionKey,
-            null, completeIdentity.AuthManagementKey);
+        var incomplete = completeIdentity with { Stripe = null! };
         var unavailable = await scenario.RunAsync(identity: incomplete);
         Safe(unavailable);
         Check(unavailable.ExitCode == 2 && unavailable.Output.Length == 0, $"An incomplete Vault identity fails closed (exit {unavailable.ExitCode}; stdout: {unavailable.Output}; stderr: {unavailable.Error})");
