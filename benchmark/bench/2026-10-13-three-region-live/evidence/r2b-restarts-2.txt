@@ -1,0 +1,45 @@
+== restart gru 68379eec015e58 01:37:37
+Machine 68379eec015e58 restarted successfully!
+readyz 200 after 15s; {"region":"gru","machine":"68379eec015e58","revision":"9667b7efa18ee99ef4614bfdad68aac78932dda3"}
+gates equal after ~50s: true/true/89bb87bb29fc true/true/89bb87bb29fc true/true/89bb87bb29fc
+gru/68379eec015e58: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+sjc/18556ddb9d2548: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+fra/7811155eb22568: count=3000 digest=301933980a9526cf64fe145e83ac2c514540ba0301400516fc99c5d9d50de19c
+AGREE
+hosting-failed lines in log buffer: 0
+== restart sjc 18556ddb9d2548 01:40:17
+Machine 18556ddb9d2548 restarted successfully!
+readyz 200 after 107s; {"region":"sjc","machine":"18556ddb9d2548","revision":"9667b7efa18ee99ef4614bfdad68aac78932dda3"}
+gates NOT equal in 120s: true/true/eaa148fda36d  true/true/5ffcb87a25d3
+Traceback (most recent call last):
+  File "/home/mariogk/Projects/TerraScale/.worktrees/e2e-live-scratch/counts.py", line 154, in <module>
+    ok, _ = verify(collection, int(sys.argv[3]) if len(sys.argv) > 3 else None)
+            ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mariogk/Projects/TerraScale/.worktrees/e2e-live-scratch/counts.py", line 60, in verify
+    views = {region: listing(region, collection) for region in MACHINES}
+                     ~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/mariogk/Projects/TerraScale/.worktrees/e2e-live-scratch/counts.py", line 47, in listing
+    _, page = call(region, "GET", f"{DB}/collections/{collection}/documents?{q}")
+              ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mariogk/Projects/TerraScale/.worktrees/e2e-live-scratch/counts.py", line 21, in call
+    r = conn.getresponse()
+  File "/home/mariogk/.local/share/mise/installs/python/latest/lib/python3.15/http/client.py", line 1490, in getresponse
+    response.begin()
+    ~~~~~~~~~~~~~~^^
+  File "/home/mariogk/.local/share/mise/installs/python/latest/lib/python3.15/http/client.py", line 350, in begin
+    version, status, reason = self._read_status()
+                              ~~~~~~~~~~~~~~~~~^^
+  File "/home/mariogk/.local/share/mise/installs/python/latest/lib/python3.15/http/client.py", line 306, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/home/mariogk/.local/share/mise/installs/python/latest/lib/python3.15/socket.py", line 738, in readinto
+    return self._sock.recv_into(b)
+           ~~~~~~~~~~~~~~~~~~~~^^^
+  File "/home/mariogk/.local/share/mise/installs/python/latest/lib/python3.15/ssl.py", line 1364, in recv_into
+    return self.read(nbytes, buffer)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/home/mariogk/.local/share/mise/installs/python/latest/lib/python3.15/ssl.py", line 1163, in read
+    return self._sslobj.read(len, buffer)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+TimeoutError: The read operation timed out
+hosting-failed lines in log buffer: 0
