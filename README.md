@@ -25,6 +25,8 @@ GitHub Actions builds and tests every PR and `main`. After all checks pass on
 `cloudflare.config.ts` serves the VitePress output on `docs.terrascale.tech`.
 CI verifies eight hosted pages/assets against the local build and the custom
 HTTP 404 page. Publication credentials come from GitHub's secret store.
+The hosted check retries once after five seconds while Cloudflare propagates a
+new publication; a repeated HTTP, content-type or content-hash failure fails CI.
 
 `cf` is pinned to `1.0.0-beta.10`. Its supported `CF_API_TOKEN` credential alias
 allows `CLOUDFLARE_API_TOKEN` to remain unset for every invocation. Cloudflare's
