@@ -1,0 +1,49 @@
+{
+  "run_url": "https://github.com/TerraScale/terrascale/actions/runs/38447780403/job/115470667881",
+  "runner": "alpha-s4-1791915955",
+  "configuration": "pid=323 cpus=44 server_gc=True latency_mode=Interactive total_available_memory_bytes=130456088576 tiered_pgo=configured:False ServerGC=True ConcurrentGC=True HeapCount=44 MaxHeapCount=0 GCDynamicAdaptationMode=1 GCHeapHardLimit=0 GCHeapHardLimitPercent=0 GCHeapHardLimitSOH=0 GCHeapHardLimitLOH=0 GCHeapHardLimitPOH=0 GCHeapHardLimitSOHPercent=0 GCHeapHardLimitLOHPercent=0 GCHeapHardLimitPOHPercent=0 GCConserveMem=0 NoAffinitize=False GCHeapAffinitizeMask=0 GCCpuGroup=False RetainVM=False",
+  "samples": [
+    {
+      "elapsed_s": 29.567,
+      "cpu_s": 83.739,
+      "gc_pause_s": 16.498,
+      "queued_work": 0,
+      "load1": 53.52
+    },
+    {
+      "elapsed_s": 59.28,
+      "cpu_s": 174.819,
+      "gc_pause_s": 37.356,
+      "queued_work": 0,
+      "load1": 46.47
+    },
+    {
+      "elapsed_s": 88.998,
+      "cpu_s": 225.252,
+      "gc_pause_s": 62.275,
+      "queued_work": 0,
+      "load1": 46.63
+    },
+    {
+      "elapsed_s": 119.076,
+      "cpu_s": 267.727,
+      "gc_pause_s": 88.947,
+      "queued_work": 17,
+      "load1": 47.07
+    },
+    {
+      "elapsed_s": 299.517,
+      "cpu_s": 685.007,
+      "gc_pause_s": 196.585,
+      "queued_work": 1,
+      "load1": 62.44
+    },
+    {
+      "elapsed_s": 708.645,
+      "cpu_s": 1672.556,
+      "gc_pause_s": 403.741,
+      "queued_work": 0,
+      "load1": 62.87
+    }
+  ]
+}
