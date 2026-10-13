@@ -20,13 +20,11 @@ internal sealed record UniqueClaim(string InstanceId, string Kind, string OwnerI
 /// No unconditional updates, automatic write retries, process-local coordination or memory fallback.
 /// Callers must authorize the instance before using this internal persistence boundary.
 /// Every write is conditional, so every write goes to <c>authority</c>, the one copy that orders them (TerraBase checks a
-/// precondition against the copy it is sent to), and so does every read a write may depend on. Only reads made under
-/// <see cref="ReadLocally"/> come from <c>local</c>, this region's copy.
+/// precondition against the copy it is sent to), and so does every read. Only <see cref="GetLocalAsync"/> and
+/// <see cref="QueryLocalAsync"/> read <c>local</c>, this region's copy.
 /// </summary>
 public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authority, TimeProvider clock)
 {
-    private static readonly AsyncLocal<bool> LocalReads = new();
-
     /// <summary>A store whose one copy is both <c>local</c> and <c>authority</c> (a single region, or off Fly).</summary>
     public AuthStore(TerraBaseDatabase database, TimeProvider clock)
         : this(database, database, clock)
@@ -147,21 +145,20 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         return email.Trim().ToLowerInvariant();
     }
 
-    /// <summary>
-    /// Until the calling async method returns, the reads it makes (and what it awaits) come from this region's copy: only for
-    /// reads that decide nothing about authorization and that no write depends on (discovery, the JWKS). A point read the
-    /// copy lacks (a write it has not replicated yet) asks the authority. Writes, and reads of read-then-write operations,
-    /// always go to the authority.
-    /// </summary>
-    public static void ReadLocally() => LocalReads.Value = true;
-
     /// <summary>Reads a document and its opaque ETag version. Missing parents and outages propagate.</summary>
     public Task<TerraBaseDocument?> GetAsync(string collection, string instanceId, string key, CancellationToken cancellationToken = default) =>
-        this.ReadAsync(collection, NaturalKeyId(instanceId, collection, key), cancellationToken);
-
-    /// <summary>Reads a document from the authority, for a conditional write that names its version.</summary>
-    public Task<TerraBaseDocument?> GetForWriteAsync(string collection, string instanceId, string key, CancellationToken cancellationToken = default) =>
         authority.GetDocumentAsync(collection, NaturalKeyId(instanceId, collection, key), cancellationToken);
+
+    /// <summary>
+    /// Reads a document from this region's copy, or from the authority when the copy lacks it (a write not replicated yet).
+    /// Only for reads that decide nothing about authorization and that no write depends on: discovery and the JWKS.
+    /// </summary>
+    public async Task<TerraBaseDocument?> GetLocalAsync(string collection, string instanceId, string key, CancellationToken cancellationToken = default)
+    {
+        var id = NaturalKeyId(instanceId, collection, key);
+        return await local.GetDocumentAsync(collection, id, cancellationToken).ConfigureAwait(false)
+            ?? await authority.GetDocumentAsync(collection, id, cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>Up to <paramref name="limit"/> documents matching a TerraBase query filter, in id order.</summary>
     public Task<IReadOnlyList<TerraBaseDocument>> QueryAsync(string collection, JsonElement filter, int limit, CancellationToken cancellationToken = default) =>
@@ -169,7 +166,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
 
     /// <summary>Up to <paramref name="limit"/> documents matching a TerraBase query filter, in <paramref name="sort"/> order, then id order.</summary>
     public async Task<IReadOnlyList<TerraBaseDocument>> QueryAsync(string collection, JsonElement filter, int limit, IReadOnlyList<TerraBaseSort>? sort, CancellationToken cancellationToken = default) =>
-        (await this.Reader.QueryAsync(collection, new TerraBaseQuery { Filter = filter, Limit = limit, Sort = sort }, cancellationToken).ConfigureAwait(false)).Items;
+        (await authority.QueryAsync(collection, new TerraBaseQuery { Filter = filter, Limit = limit, Sort = sort }, cancellationToken).ConfigureAwait(false)).Items;
 
     /// <summary>Creates only; a taken address throws a precondition failure.</summary>
     public Task<TerraBaseWriteResult> CreateAsync(string collection, string instanceId, string key, JsonElement record, CancellationToken cancellationToken = default)
@@ -257,7 +254,17 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
     /// Every document of the instance in <paramref name="collection"/> whose string fields at the JSON Pointers in
     /// <paramref name="equals"/> equal their values. Callers recheck what they read.
     /// </summary>
-    public async IAsyncEnumerable<TerraBaseDocument> QueryAsync(string collection, string instanceId, IReadOnlyList<(string Field, string Value)> equals, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<TerraBaseDocument> QueryAsync(string collection, string instanceId, IReadOnlyList<(string Field, string Value)> equals, CancellationToken cancellationToken = default) =>
+        QueryAsync(authority, collection, instanceId, equals, cancellationToken);
+
+    /// <summary>
+    /// Every document of the instance in <paramref name="collection"/>, from this region's copy. Only for the JWKS, which
+    /// decides nothing about authorization (<c>KeyRing.GetPublishedAsync</c>).
+    /// </summary>
+    public IAsyncEnumerable<TerraBaseDocument> QueryLocalAsync(string collection, string instanceId, CancellationToken cancellationToken = default) =>
+        QueryAsync(local, collection, instanceId, [], cancellationToken);
+
+    private static async IAsyncEnumerable<TerraBaseDocument> QueryAsync(TerraBaseDatabase copy, string collection, string instanceId, IReadOnlyList<(string Field, string Value)> equals, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(equals);
         var conditions = new JsonArray(new JsonObject { ["eq"] = new JsonArray("/instanceId", instanceId) });
@@ -271,7 +278,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         string? cursor = null;
         do
         {
-            var page = await this.Reader.QueryAsync(collection, new TerraBaseQuery { Filter = filter, Cursor = cursor, Limit = 100 }, cancellationToken).ConfigureAwait(false);
+            var page = await copy.QueryAsync(collection, new TerraBaseQuery { Filter = filter, Cursor = cursor, Limit = 100 }, cancellationToken).ConfigureAwait(false);
             foreach (var item in page.Items)
             {
                 yield return item;
@@ -341,7 +348,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
     /// <summary>The owner of a scoped natural key, or <see langword="null"/> when it is unclaimed.</summary>
     public async Task<string?> FindUniqueOwnerAsync(string instanceId, string kind, string normalizedKey, CancellationToken cancellationToken = default)
     {
-        var document = await this.ReadAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
+        var document = await authority.GetDocumentAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
         var claim = document?.Document.Deserialize(StoreJsonContext.Default.UniqueClaim);
         return claim is not null && claim.InstanceId == instanceId && claim.Kind == kind ? claim.OwnerId : null;
     }
@@ -474,7 +481,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
         }
 
         using var parsed = JsonDocument.Parse(new JsonObject { ["and"] = all }.ToJsonString());
-        return this.Reader.QueryAsync(collection, new TerraBaseQuery
+        return authority.QueryAsync(collection, new TerraBaseQuery
         {
             Filter = parsed.RootElement.Clone(),
             Sort = [.. sort.Select(path => new TerraBaseSort(path, descending ? "desc" : null))],
@@ -510,7 +517,7 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
     /// <summary>The owner and version of a scoped natural key, or <see langword="null"/> when it is unclaimed.</summary>
     public async Task<(string OwnerId, string Version)?> FindUniqueAsync(string instanceId, string kind, string normalizedKey, CancellationToken cancellationToken = default)
     {
-        var document = await this.ReadAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
+        var document = await authority.GetDocumentAsync(UniqueCollection, NaturalKeyId(instanceId, kind, normalizedKey), cancellationToken).ConfigureAwait(false);
         var claim = document?.Document.Deserialize(StoreJsonContext.Default.UniqueClaim);
         return claim is not null && claim.InstanceId == instanceId && claim.Kind == kind ? (claim.OwnerId, document!.Version) : null;
     }
@@ -557,14 +564,6 @@ public sealed class AuthStore(TerraBaseDatabase local, TerraBaseDatabase authori
             return null;
         }
     }
-
-    // The copy reads come from: this region's under ReadLocally, the authority otherwise.
-    private TerraBaseDatabase Reader => LocalReads.Value ? local : authority;
-
-    // A point read from Reader; under ReadLocally, a document this region's copy lacks is read from the authority.
-    private async Task<TerraBaseDocument?> ReadAsync(string collection, string id, CancellationToken cancellationToken) =>
-        await this.Reader.GetDocumentAsync(collection, id, cancellationToken).ConfigureAwait(false)
-            ?? (LocalReads.Value ? await authority.GetDocumentAsync(collection, id, cancellationToken).ConfigureAwait(false) : null);
 
     private static void RequireEntityCollection(string collection)
     {

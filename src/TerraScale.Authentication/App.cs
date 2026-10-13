@@ -40,7 +40,7 @@ public static class App
 
     /// <summary>
     /// TerraBase's internal listener on Fly's private network in this machine's region (<c>FLY_REGION</c>), for the reads of
-    /// discovery and the JWKS (<see cref="AuthStore.ReadLocally"/>): app <c>ts-terrabase</c>, which replicates the platform
+    /// discovery and the JWKS (<see cref="AuthStore.GetLocalAsync"/>, <c>KeyRing.GetPublishedAsync</c>): app <c>ts-terrabase</c>, which replicates the platform
     /// databases between regions; in a <c>ts-pr-&lt;n&gt;</c> preview, whose one machine (in another Fly org) runs TerraBase
     /// next to ts-auth, that machine. When it does not answer, <see cref="TerraBaseOtherRegions"/> do. Off Fly (local
     /// development), the TerraBase on this machine, whose internal listener is on loopback there, in Development only: a
@@ -209,17 +209,6 @@ public static class App
 
         app.UseAuthMetrics();
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
-        // Discovery and the JWKS decide nothing about authorization, so they may read this region's copy; every other
-        // read (sessions, tokens, revocations, memberships) and every write goes to the authority.
-        app.Use(async (context, next) =>
-        {
-            if ((context.Request.Path.Value ?? string.Empty).Split('/', 3) is [_, { Length: > 0 }, OidcIssuer.ConfigurationPath or OidcIssuer.JwksPath])
-            {
-                AuthStore.ReadLocally();
-            }
-
-            await next(context);
-        });
         TokenRateLimitMiddleware.UsePeerGuard(app);
         if (options.TrustedProxies.Count > 0)
         {

@@ -103,7 +103,6 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     [Arguments("CreateChallenge")]
     [Arguments("ConsumeChallenge")]
     [Arguments("Get")]
-    [Arguments("GetForWrite")]
     [Arguments("FindUniqueOwner")]
     [Arguments("FindUnique")]
     [Arguments("Query")]
@@ -270,7 +269,6 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         "CreateChallenge" => await Done(store.CreateChallengeAsync(Instance, "verify", new string('b', 64), "fresh", DateTimeOffset.UtcNow.AddHours(1))),
         "ConsumeChallenge" => await store.ConsumeChallengeAsync(Instance, "verify", Hash, "seeded"),
         "Get" => await store.GetAsync(AuthStore.UserCollection, Instance, "seeded"),
-        "GetForWrite" => await store.GetForWriteAsync(AuthStore.UserCollection, Instance, "seeded"),
         "FindUniqueOwner" => await store.FindUniqueOwnerAsync(Instance, "email", "seeded@example.test"),
         "FindUnique" => await store.FindUniqueAsync(Instance, "email", "seeded@example.test"),
         "Query" => await store.QueryAsync(AuthStore.UserCollection, TerraBaseFixture.Json($$"""{"eq":["/instanceId","{{Instance}}"]}"""), 10),

@@ -89,11 +89,16 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
     revocations and membership and role checks read the same copy, so a revocation or removal takes effect everywhere at
     once. When gru's TerraBase does not answer, these operations fail closed: 503 `temporarily_unavailable`, never
     another region. Replication slice R12 (lattice-native ts-auth) removes this limit.
-  - **Discovery and the JWKS read the own region** (`http://<FLY_REGION>.ts-terrabase.internal:8081`): they decide
-    nothing about authorization. A point read the own copy lacks (a project created moments ago) is read from gru. When
-    no machine of the own region answers a new connection (none is started, so the name does not resolve; it refuses; or
-    it does not answer within 2 s), the connection goes to the nearest started machine
-    (`top1.nearest.of.ts-terrabase.internal`), then to any (`ts-terrabase.internal`).
+  - **Discovery and the JWKS read the own region** (`http://<FLY_REGION>.ts-terrabase.internal:8081`), through two
+    explicit calls only (`AuthStore.GetLocalAsync` for a project tenant's existence, `KeyRing.GetPublishedAsync` for the
+    keys); they decide nothing about authorization. The key ring keeps the two sources apart: this region's copy has its
+    own cache, in-flight reads and failure backoff, used only for publication, while signing, signature checks (ts-auth's
+    own included), readiness, rotation and first keys read gru's. A JWKS read never becomes a security decision, and gru
+    being down never fails a healthy JWKS. A copy without a tenant's keys yet publishes gru's, which creates a project's
+    first key there; a missing local key set never causes a create of its own. A point read the own copy lacks (a project
+    created moments ago) is read from gru. When no machine of the own region answers a new connection (none is started,
+    so the name does not resolve; it refuses; or it does not answer within 2 s), the connection goes to the nearest started
+    machine (`top1.nearest.of.ts-terrabase.internal`), then to any (`ts-terrabase.internal`).
   - Only connections move; a request is never resent. Connections are replaced every 30 s and HTTP/2 pings (every 5 s)
     drop one to a machine that vanished, so these reads are back in the own region within about 30 s of it answering
     again. A TerraBase that cannot be reached answers 503 `temporarily_unavailable`. `/readyz` is ready only while gru
@@ -107,9 +112,13 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
     sign-in, passcodes, token issuance, refresh and introspection, session checks, userinfo, sign-out, platform reads
     and changes. Discovery and the JWKS keep working from the own region, so relying parties (TerraBase) keep validating
     tokens already issued offline. R12 removes this limit.
-  - The JWKS of another region may lag a key change at gru by the replication lag (sub-second when healthy; for as long
-    as a partition lasts). A key is published one key-ring refresh interval before it signs, which covers the lag when
-    replication is healthy; a retired key may stay published there that long.
+  - **Key removal staleness.** ts-auth itself stops accepting a key removed at gru within one key-ring refresh interval
+    (60 s), as with one region: its signature checks read gru. Another region's JWKS keeps publishing the key for up to
+    the replication lag plus 60 s (its publication cache); during a partition there is no bound. TerraBase, which
+    validates tokens offline, refreshes the JWKS every 10 minutes and keeps the keys it has when a fetch fails, so it
+    stops accepting the key within the replication lag plus about 11 minutes and the fetch time, and with no bound while
+    its fetches fail; token expiry still applies. A scheduled retirement keeps a superseded key published for two days,
+    longer than any token it signed; the bound matters for the emergency removal of a compromised key.
 - **Listeners.** The public API listens on `0.0.0.0:8090` (`TS_AUTH_LISTEN`)
   behind Fly Proxy, which terminates TLS. Prometheus `GET /metrics` is served
   only on a second listener, `0.0.0.0:9092` (`TS_AUTH_METRICS_LISTEN`), which
