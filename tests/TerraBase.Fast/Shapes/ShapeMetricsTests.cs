@@ -244,12 +244,12 @@ public sealed class ShapeMetricsTests
         await Assert.That(paths).Contains("feed");
         await Assert.That(paths.All(path => path is "point" or "query" or "feed" or "shape")).IsTrue();
 
-        foreach (var item in measured)
+        foreach (var (name, keys, values) in measured)
         {
             // Shape instruments take no tags at all. Storage reads may carry only the bounded `path` tag.
-            var allowed = item.Name == "terrabase.storage.reads" ? "path" : string.Empty;
-            await Assert.That(item.Keys).IsEqualTo(allowed);
-            await Assert.That(item.Values).DoesNotContain(tenant.OrganizationId);
+            var allowed = name == "terrabase.storage.reads" ? "path" : string.Empty;
+            await Assert.That(keys).IsEqualTo(allowed);
+            await Assert.That(values).DoesNotContain(tenant.OrganizationId);
         }
     }
 
