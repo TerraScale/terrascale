@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Net.Http.Headers;
 using Microsoft.OpenApi;
 using TerraBase.Engine;
@@ -215,7 +216,7 @@ internal sealed class GetShapeEndpoint(
         return tags.Any(candidate => candidate.Equals(EntityTagHeaderValue.Any) || candidate.Tag.Value![1..^1] == tag);
     }
 
-    private IResult Redirect(ShapeRequest request, ShapeLineage lineage, string offset, string cacheControl)
+    private RedirectHttpResult Redirect(ShapeRequest request, ShapeLineage lineage, string offset, string cacheControl)
     {
         var headers = HttpContext.Response.Headers;
         headers.CacheControl = cacheControl;
@@ -225,7 +226,7 @@ internal sealed class GetShapeEndpoint(
         return TypedResults.Redirect(Location(request, lineage.Handle.Length, offset, lineage.Handle), permanent: false, preserveMethod: true);
     }
 
-    private IResult Refetch(ShapeLineage lineage, string message)
+    private JsonHttpResult<ShapeErrorBody> Refetch(ShapeLineage lineage, string message)
     {
         HttpContext.Response.Headers.CacheControl = "no-store";
         HttpContext.Response.Headers["TB-Shape-Handle"] = lineage.Handle;
@@ -248,7 +249,10 @@ internal sealed class GetShapeEndpoint(
         }
 
         var query = HttpContext.Request.Query;
-        string? Parameter(string name) => query.TryGetValue(name, out var value) ? value.ToString() : null;
+        string? Parameter(string name)
+        {
+            return query.TryGetValue(name, out var value) ? value.ToString() : null;
+        }
         var offsetText = Parameter("offset");
         if (offsetText is null || CheckOffset(offsetText) is not Offset offset)
         {
