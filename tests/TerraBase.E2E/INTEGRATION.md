@@ -362,6 +362,8 @@ review yet.
 
 **#190 is outside the list:** MarioGK, SQL Server offline export adapter, opened 09:13Z. It is not merged before the freeze acceptance; COS is told first if it is approved.
 
+**#191 belongs to queue item 10** (R6-FIX durable-commit contract): `fix/r6-b4-own-commit-marker` → main, opened 09:54Z. It is the B4 own-commit-marker prerequisite and includes B2 #180 (`c06242bd`) and B1 #181 (`924f81df`) through merges. Its body says B4 still lacks the remote-ACK barrier and `outcome_unknown`. It merges in its contract order, once it has an approving review and a green run.
+
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
 **Outside the queue (COS, 03:30Z):** **#167** (`feat/postgres-turso-import-core`, `62f251f6`, one-time PostgreSQL and
