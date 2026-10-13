@@ -106,9 +106,10 @@ public sealed class PeerStreamDeadlineTests
     public async Task The_sender_ends_an_idle_stream_whose_peer_reads_heartbeats_but_never_answers_and_reconnects()
     {
         var time = new ObservedTime();
+        var warnings = new PeerWarnings(time);
         await using var peer = await FakePeer.StartAsync(silentStreams: 0, unansweredStreams: 1);
         var source = new FakeChangeGroupSource();
-        await using var api = await StartSenderAsync(peer, source, time);
+        await using var api = await StartSenderAsync(peer, source, time, warnings: warnings);
 
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
         await time.UntilTimerAsync(Idle, after: 0, period: Idle);
@@ -118,11 +119,13 @@ public sealed class PeerStreamDeadlineTests
         await Assert.That((await peer.NextAsync()).KindCase).IsEqualTo(PushFrame.KindOneofCase.Heartbeat);
         await Assert.That(peer.FirstEnded.Task.IsCompleted).IsFalse();
         await Assert.That(peer.Streams).IsEqualTo(1);
-        var timers = time.Timers;
         time.Advance(ReplicationProtocol.ProgressTimeout - Idle);
         await peer.FirstEnded.Task.WaitAsync(Deadline);
         await Assert.That(time.GetUtcNow() - started).IsEqualTo(ReplicationProtocol.ProgressTimeout);
-        // Earlier idle passes also create one-shot timers; only the timer created at the deadline is reconnect backoff.
+        var failure = await warnings.Failure.Task.WaitAsync(Deadline);
+        await Assert.That(failure).IsTypeOf<TimeoutException>();
+        await Assert.That(failure!.Message).IsEqualTo("the peer did not answer in time");
+        var timers = await warnings.BackoffBoundary.Task.WaitAsync(Deadline);
         await time.UntilTimerAsync(Idle, timers, period: Timeout.InfiniteTimeSpan, createdAt: started + ReplicationProtocol.ProgressTimeout);
         time.Advance(Idle);
         // Heartbeats read during the clock advance can precede the replacement, but no database frame may do so.
@@ -301,7 +304,7 @@ public sealed class PeerStreamDeadlineTests
     public async Task An_unacknowledged_batch_expires_while_another_database_read_is_held_despite_live_heartbeats()
     {
         var time = new ObservedTime();
-        var warnings = new PeerWarnings();
+        var warnings = new PeerWarnings(time);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var peer = await FakePeer.StartAsync(silentStreams: 0, batchRelease: release);
         var source = new FakeChangeGroupSource();
@@ -609,9 +612,11 @@ public sealed class PeerStreamDeadlineTests
         }
     }
 
-    private sealed class PeerWarnings : ILogger<PeerStreams>
+    private sealed class PeerWarnings(ObservedTime time) : ILogger<PeerStreams>
     {
         public TaskCompletionSource<Exception?> Failure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<int> BackoffBoundary { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull => null;
@@ -622,6 +627,8 @@ public sealed class PeerStreamDeadlineTests
         {
             if (logLevel == LogLevel.Warning)
             {
+                // RunAsync logs after stream cleanup and before scheduling its reconnect backoff.
+                _ = BackoffBoundary.TrySetResult(time.Timers);
                 _ = Failure.TrySetResult(exception);
             }
         }
