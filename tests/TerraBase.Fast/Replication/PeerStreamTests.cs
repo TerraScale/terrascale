@@ -1270,7 +1270,7 @@ public sealed class PeerStreamTests
         await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
         gru.Source.RequireRefill(cluster.Database, peer);
         await gru.CommitAsync(Put(gru, stamp + 1, pending, """{"n":2}"""));
-        await Assert.That(await gru.Source.RetainsAsync(cluster.Database, await gru.IncarnationAsync(), 1, CancellationToken.None)).IsEqualTo(true);
+        await Assert.That(await gru.Source.RetainsAsync(cluster.Database, await gru.IncarnationAsync(), 1, CancellationToken.None)).IsTrue();
 
         // The refill comes first: its repair is held, and while it is in flight no batch has brought the newer group.
         var held = sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
