@@ -1,20 +1,20 @@
 ---
-title: Import from PostgreSQL
-description: Prepare a read-only role, a consistent snapshot and a type review for a pending one-time PostgreSQL import.
+title: Export from PostgreSQL
+description: Create a pg_dump export for the proposed one-time PostgreSQL import, with a read-only role and the type mapping.
 head: [['meta', { name: 'robots', content: 'noindex' }]]
 ---
 
-# Import from PostgreSQL
+# Export from PostgreSQL
 
-Prepare a PostgreSQL database for a one-time import into TerraScale. Read the [import overview](/guides/import) first for the workflow, credential handoff and recovery.
+Create a plain-text `pg_dump` export, check it and upload it with the [import steps](/guides/import#import-step-by-step).
 
 ::: warning Pending feature
-PostgreSQL import is not available yet. The SQL on this page runs in your own PostgreSQL with `psql` and was checked against PostgreSQL 17. TerraScale handling marked **pending** awaits the import contract.
+Import follows the proposed import contract v1 and is not available on any serving release yet. The SQL and `pg_dump` commands on this page run on your own machine and were checked with PostgreSQL 17. TerraBase never connects to your database.
 :::
 
 ## 1. Rehearse with synthetic data
 
-Create a throwaway database and load this fixture before you touch a real source. It contains values that commonly lose fidelity in a copy.
+Create a throwaway database, load this fixture, then export and import it before you touch real data.
 
 ```sql
 CREATE TABLE customers (
@@ -44,55 +44,48 @@ INSERT INTO customers (email, balance, profile) VALUES
   ('lin@example.com', 0, NULL);
 
 INSERT INTO orders VALUES
-  (1, 1, 19.99, 9007199254740993, 'NaN', '{a,NULL,c}', '\x00ff', 'infinity'),
-  (1, 2, 0, NULL, '-Infinity', '{}', NULL, '2026-01-31 23:59:59.123456'),
-  (2, 1, 5.00, -1, 0.1, NULL, '', NULL);
+  (1, 1, 19.99, 9007199254740993, 0.1, '{a,NULL,c}', '\x00ff', '2026-01-31 23:59:59.123456'),
+  (1, 2, 0, NULL, -2.5, '{}', NULL, NULL),
+  (2, 1, 5.00, -1, NULL, NULL, '', NULL);
 
 INSERT INTO audit_log VALUES ('created', '2026-01-01'), ('created', '2026-01-01');
 ```
 
-Check how the preview handles the integer above 2<sup>53</sup> − 1, the `NaN` and infinite values, the array with a `NULL` element, the binary column and the duplicate rows in a table without a primary key.
+Expect two blocking issues: `public.orders` column `tags` is an array (`unsupported_type`), and `public.audit_log` has no primary key (`missing_primary_key`). Resolve them with `exclude: ["public.orders.tags"]` and `missingPrimaryKey: "generate"`. The order with key `(1, 2)` becomes document `1:2`, and `9007199254740993` stays exact.
 
 ## 2. Create a read-only role
 
-Connect with `psql` as the database owner. Replace `app` with your database name and repeat the schema grants for each schema you import. Set `VALID UNTIL` a few days after your planned import.
+The export runs with your own credentials. A dedicated read-only role keeps the source unchanged even if those credentials leak. Connect with `psql` as the database owner, replace `app` with your database name and repeat the schema grants for each schema you export. Set `VALID UNTIL` a few days after your planned export.
 
 ```sql
-CREATE ROLE terrascale_import LOGIN VALID UNTIL '2026-11-01';
-GRANT CONNECT ON DATABASE app TO terrascale_import;
-GRANT USAGE ON SCHEMA public TO terrascale_import;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO terrascale_import;
-GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO terrascale_import;
-ALTER ROLE terrascale_import SET default_transaction_read_only = on;
-\password terrascale_import
+CREATE ROLE terrascale_export LOGIN VALID UNTIL '2026-11-01';
+GRANT CONNECT ON DATABASE app TO terrascale_export;
+GRANT USAGE ON SCHEMA public TO terrascale_export;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO terrascale_export;
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO terrascale_export;
+ALTER ROLE terrascale_export SET default_transaction_read_only = on;
+\password terrascale_export
 ```
 
 `\password` prompts for the password and sends only its hash, so the password stays out of the SQL text, server logs and shell history.
 
-- The grants cover tables that exist now. A table created later is not readable by this role.
-- `default_transaction_read_only` blocks accidental writes, but a session can turn it off. The grants are what keep the source unchanged. In a database created on PostgreSQL 14 or earlier, including one upgraded since, every role can create objects in schema `public` unless that privilege was revoked from `PUBLIC`.
+- The grants cover tables that exist now.
+- `default_transaction_read_only` blocks accidental writes, but a session can turn it off; the grants are what keep the source unchanged. In a database created on PostgreSQL 14 or earlier, including one upgraded since, every role can create objects in schema `public` unless that privilege was revoked from `PUBLIC`.
 - Managed PostgreSQL services can restrict role options. Use your provider's read-only user flow with the same grants.
+- **Row-level security:** `pg_dump` stops with an error rather than export a table whose policies would hide rows from this role. Export such tables with a role that bypasses row security, or exclude them.
 
-Remove the role when the import is accepted. Run `DROP OWNED BY` in each database where you granted it access; it revokes those grants.
-
-```sql
-DROP OWNED BY terrascale_import;
-DROP ROLE terrascale_import;
-```
-
-## 3. Check what the import will read
-
-Run these as the database owner.
-
-**Row-level security.** The import role sees only rows its policies allow, which is no rows when no policy applies to it. Any table listed here needs a policy for the import role, or a role with `BYPASSRLS` where your provider allows it.
+Remove the role after you accept the import. Run `DROP OWNED BY` in each database where you granted it access; it revokes those grants.
 
 ```sql
-SELECT oid::regclass AS table_name, relforcerowsecurity AS forced
-FROM pg_class
-WHERE relkind IN ('r', 'p') AND relrowsecurity;
+DROP OWNED BY terrascale_export;
+DROP ROLE terrascale_export;
 ```
 
-**Tables without a primary key.** Their record identity is **pending** in the [keys policy](/guides/import#keys-constraints-and-schema-objects).
+## 3. Check what the export will contain
+
+Run these as the database owner to plan your [options](/guides/import#options) before the preview reports them.
+
+**Tables without a primary key** need `missingPrimaryKey: "generate"` or an `exclude` entry.
 
 ```sql
 SELECT c.oid::regclass AS table_name
@@ -107,7 +100,7 @@ WHERE c.relkind IN ('r', 'p')
 ORDER BY 1;
 ```
 
-**Column types in use.** Compare the result with the [type matrix](#type-compatibility).
+**Column types in use.** Any type missing from the [type mapping](#type-mapping) blocks its table until you exclude the column.
 
 ```sql
 SELECT format_type(a.atttypid, a.atttypmod) AS column_type, count(*) AS columns
@@ -123,67 +116,50 @@ GROUP BY 1
 ORDER BY 2 DESC, 1;
 ```
 
-**Large objects.** A table column of type `oid` that refers to a large object holds only the reference. The content lives in `pg_largeobject` and is not a table row.
+**Row-level security.** Tables listed here need the role handling described in step 2.
 
 ```sql
-SELECT count(*) AS large_objects FROM pg_largeobject_metadata;
+SELECT oid::regclass AS table_name, relforcerowsecurity AS forced
+FROM pg_class
+WHERE relkind IN ('r', 'p') AND relrowsecurity;
 ```
 
-**Partitions and inheritance.** A query on a parent table also returns its partitions' or children's rows. Count with `FROM ONLY` to avoid counting a row twice.
+## Export the database
 
-## 4. Keep the snapshot consistent
+Run `pg_dump` from a machine that can reach the database. Prompting for the password, or a `~/.pgpass` file with mode `0600`, keeps it out of the command line. Require TLS with certificate verification.
 
-PostgreSQL gives one consistent view inside a single `REPEATABLE READ` transaction. Parallel readers can share it with `pg_export_snapshot()` and `SET TRANSACTION SNAPSHOT`, as `pg_dump --jobs` does. **Pending:** which mechanism the import uses.
+```bash
+pg_dump --format=plain --no-owner --no-privileges --encoding=UTF8 -f dump.sql \
+  "host=db.example.com dbname=app user=terrascale_export sslmode=verify-full"
+chmod 600 dump.sql
+```
 
-Any long snapshot has costs on the source:
+- **Snapshot.** `pg_dump` reads every table from one transaction snapshot, so the export is consistent without stopping writes. It holds a lock that blocks schema changes on each exported table until it finishes, and a long export holds back vacuum cleanup on the server.
+- **Lower the load.** Export from a read replica, a restored backup or a provider branch when you can.
+- **Limit the size.** The file must be at most 1 GiB. Use `--table`, `--exclude-table` or `--schema` to split a large database into several imports.
+- **Accepted format.** Plain-text UTF-8 SQL with `COPY` data, which is `pg_dump`'s default output. Custom, directory and tar archives, compressed files and `--inserts` or `--column-inserts` dumps are refused. Convert a custom archive offline with `pg_restore -f dump.sql archive.dump`.
 
-- On a primary, it holds back vacuum cleanup until it ends, so dead rows accumulate. Watch `pg_stat_activity` for the import's transaction age.
-- On a hot standby, a long read can be cancelled by a recovery conflict. `hot_standby_feedback` and `max_standby_streaming_delay` reduce this.
-- `TRUNCATE` and table-rewriting `ALTER TABLE` are not MVCC-safe. A snapshot taken before them can see a not-yet-read table as empty once they commit. Do not run DDL or `TRUNCATE` on the source during the import.
+Upload `dump.sql` with `FORMAT=postgres_plain`. TerraBase reads only table definitions, enum types, primary key, unique and foreign key constraints, and `COPY` data. Functions, triggers, extensions, `DO` blocks, grants and `\` commands are listed as skipped and never run.
 
-The safest source is a point-in-time copy: a restored backup, a provider branch or a promoted replica. It keeps the import's load off production and gives a resumed job the same data.
+## Type mapping
 
-## 5. Supply connection details
+`\N` (SQL `NULL`) becomes JSON `null` for every type. A type not listed here is `unsupported_type` and blocks its table until you exclude the column.
 
-The import needs host, port, database name, user name and password. Require TLS with certificate verification, `sslmode=verify-full`, using your provider's CA certificate. Enter the password only in the import's credential input (**pending**). Do not paste a connection URI that contains the password anywhere.
-
-## Type compatibility
-
-The TerraScale column fills in when the import contract confirms each mapping. Until then, treat a type as unsupported unless the dry-run preview shows a mapping for it. Extension types (for example PostGIS, `hstore` or `vector`) are unsupported until listed.
-
-| PostgreSQL type | What can lose fidelity | TerraScale handling |
+| PostgreSQL type | `mapping` | JSON value |
 | --- | --- | --- |
-| `smallint`, `integer` | Nothing within 32 bits | **Pending** |
-| `bigint`, `bigserial` | JSON readers such as JavaScript lose precision above 2<sup>53</sup> − 1 | **Pending** |
-| `numeric`, `decimal` | Exact precision and scale; `NaN` and, from PostgreSQL 14, `Infinity` | **Pending** |
-| `real`, `double precision` | `NaN`, `Infinity`, `-Infinity` and `-0` have no JSON number form | **Pending** |
-| `money` | Text form depends on `lc_monetary` | **Pending** |
-| `text`, `varchar(n)`, `char(n)` | `char(n)` pads with trailing spaces; length limits | **Pending** |
-| `boolean` | Nothing | **Pending** |
-| `bytea` | Raw bytes need a binary encoding | **Pending** |
-| `timestamptz` | Microsecond precision; `infinity`, `-infinity` and BC dates | **Pending** |
-| `timestamp`, `date`, `time`, `timetz`, `interval` | `timestamp` has no time zone; `interval` mixes months, days and time | **Pending** |
-| `uuid` | Nothing | **Pending** |
-| `json`, `jsonb` | `json` keeps key order, duplicate keys and whitespace; `jsonb` does not | **Pending** |
-| Arrays | Multiple dimensions, non-default lower bounds and `NULL` elements | **Pending** |
-| Enums and domains | Allowed labels and domain checks | **Pending** |
-| Composite, range and multirange types | Structure and bound inclusivity | **Pending** |
-| `inet`, `cidr`, `macaddr`, `bit`, `varbit`, `xml`, `tsvector`, geometric types | Type-specific semantics | **Pending** |
-| Large objects (`oid` references) | Content stored outside the table | **Pending** |
+| `smallint`, `integer`, `bigint` and `serial` forms | `integer` | Number with exact 64-bit digits |
+| `real`, `double precision` | `float` | Number as dumped; `NaN` and `±Infinity` fail with `invalid_value` |
+| `numeric`, `decimal` | `decimal_string` | String with the exact digits, never rounded; `NaN` stays `"NaN"` |
+| `boolean` | `boolean` | `true` or `false` |
+| `text`, `varchar`, `char`, `name`, `citext`, enums | `string` | String; `char` padding is kept |
+| `uuid` | `string` | Lowercase canonical string |
+| `json`, `jsonb` | `json` | The embedded JSON value |
+| `bytea` | `base64` | Standard base64 string |
+| `date` | `date` | `"YYYY-MM-DD"`; BC dates and `±infinity` fail with `invalid_value` |
+| `timestamp` | `timestamp` | `"YYYY-MM-DDThh:mm:ss[.ffffff]"`, no offset |
+| `timestamptz` | `timestamptz` | RFC 3339 UTC ending in `Z`, microseconds kept |
+| `time`, `timetz`, `interval`, `inet`, `cidr`, `macaddr`, `bit`, `varbit`, `xml` | `text` | String with the exact dumped text |
 
-## Count rows for validation
+Unsupported in contract v1: arrays, composite, range and multirange types, domains, geometric types, `money`, `tsvector`, `tsquery`, `pg_lsn` and extension types other than `citext`.
 
-Run in `psql` with writes frozen or against the point-in-time copy the import read. `\gexec` runs each generated statement and prints one count per table.
-
-```sql
-SELECT format('SELECT %L AS table_name, count(*) AS row_count FROM ONLY %s',
-              c.oid::regclass, c.oid::regclass)
-FROM pg_class c
-JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE c.relkind = 'r'
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-  AND n.nspname NOT LIKE 'pg_toast%'
-ORDER BY 1 \gexec
-```
-
-Compare each count with the import's validation report, then follow the remaining [validation steps](/guides/import#validate-the-result).
+JSON readers such as JavaScript lose precision above 2<sup>53</sup> − 1. Read large `integer` values with a parser that keeps 64-bit integers, or keep them as strings in your application.

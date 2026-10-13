@@ -16,7 +16,7 @@ Use the [quickstart](/ja/getting-started/) to establish one working application 
 - [Queries and pagination](/ja/guides/queries): filters, projection, cursors and version preconditions.
 - [Errors and safe retries](/ja/guides/errors): typed failures and uncertain write outcomes.
 - [Dashboard usage](/ja/guides/dashboard): customer account and database workflow.
-- [Import an existing database](/ja/guides/import) (pending): one-time PostgreSQL or Turso import with dry-run preview and validation.
+- [Import an existing database](/ja/guides/import) (pending): one-time import of a PostgreSQL or Turso export with dry-run preview and validation.
 
 The [zero-configuration contract](/ja/guides/zero-configuration) explains the platform's intended operating behavior without disclosing deployment internals.
 

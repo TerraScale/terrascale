@@ -15,7 +15,7 @@ title: Documentation changelog
 - Documented authentication, errors, pagination and conditional writes against the current Documents contract.
 - Distinguished candidate SDKs and multi-region requirements from verified public releases.
 - Aligned the documentation with TerraScale's shared visual design.
-- Added preparation guides for the pending PostgreSQL and Turso import. Import is not yet available.
+- Added guides for the proposed one-time PostgreSQL and Turso import (import contract v1). Import is not yet available.
 
 Documentation changes are not a service release or a production-readiness announcement.
 

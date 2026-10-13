@@ -1,6 +1,6 @@
 ---
-title: Import from Turso
-description: Prepare a read-only token, a consistent snapshot and a type review for a pending one-time Turso import.
+title: Export from Turso
+description: Create a single-file SQLite export of a Turso or libSQL database for the proposed one-time import, with the storage-class mapping.
 head: [['meta', { name: 'robots', content: 'noindex' }]]
 ---
 
@@ -9,17 +9,17 @@ head: [['meta', { name: 'robots', content: 'noindex' }]]
 
 <div lang="en" dir="ltr">
 
-# Import from Turso
+# Export from Turso
 
-Prepare a Turso (libSQL) database for a one-time import into TerraScale. Read the [import overview](/zh-cn/guides/import) first for the workflow, credential handoff and recovery.
+Create one consistent SQLite file from a Turso, libSQL or SQLite database, check it and upload it with the [import steps](/zh-cn/guides/import#import-step-by-step).
 
 ::: warning Pending feature
-Turso import is not available yet. The SQL on this page is standard SQLite and was checked with SQLite 3.51. Turso CLI flags can change between versions; confirm them with `--help` before you run them. TerraScale handling marked **pending** awaits the import contract.
+Import follows the proposed import contract v1 and is not available on any serving release yet. The commands on this page run on your own machine. SQLite commands were checked with SQLite 3.51 and Turso CLI flags with Turso CLI 1.0.26; confirm flags with `--help` for your version. TerraBase never connects to your database.
 :::
 
 ## 1. Rehearse with synthetic data
 
-Load this fixture into a local SQLite file, for example `sqlite3 rehearsal.db < fixture.sql`. The Turso CLI can create a throwaway database from that file with `turso db create --from-file`. Delete the rehearsal database when you finish.
+Load this fixture into a local file with `sqlite3 rehearsal.db < fixture.sql`, then upload `rehearsal.db` with `FORMAT=sqlite`. To rehearse the Turso export as well, create a throwaway database from the file with `turso db create import-rehearsal --from-file rehearsal.db`, export it as below, and destroy it afterwards.
 
 ```sql
 CREATE TABLE customers (
@@ -39,7 +39,7 @@ CREATE TABLE orders (
   PRIMARY KEY (customer_id, order_no)
 ) WITHOUT ROWID;
 
-CREATE TABLE audit_log (message TEXT, logged_at); -- no primary key
+CREATE TABLE audit_log (message TEXT, logged_at); -- no primary key: IDs come from rowid
 
 INSERT INTO customers VALUES
   (1, 'ada@example.com', 10.25, '2026-01-31T23:59:59Z', 1),
@@ -47,33 +47,49 @@ INSERT INTO customers VALUES
 
 INSERT INTO orders VALUES
   (1, 1, 19.99, 9007199254740993, x'00ff'),
-  (1, 2, 9e999, NULL, NULL),
+  (1, 2, 0.5, NULL, NULL),
   (2, 1, 5.0, -1, x'');
 
 INSERT INTO audit_log VALUES ('created', 1767225599), ('created', '2026-01-01');
 ```
 
-Check how the preview handles the integer above 2<sup>53</sup> − 1, the infinite `REAL`, the text stored in a `NUMERIC` and a `BOOLEAN` column, the two date formats, the binary column and the table without a primary key.
+Expect no blocking issues, and `mixed_storage_classes` warnings because `customers.balance` holds a number and the text `'12.50 EUR'`, `customers.active` holds `1` and `'yes'`, and `audit_log.logged_at` holds a Unix time and a date string. The order with key `(1, 2)` becomes document `1:2`, and the `audit_log` rows become documents `1` and `2`.
 
-## 2. Create a read-only token
+## 2. Export one consistent file
 
-Get the database URL, then create a token that can only read and expires on its own:
+The import accepts exactly one SQLite database file. Leftover WAL data is not read, so a file uploaded without folding in its `-wal` companion silently loses the newest writes.
+
+**From Turso.** `turso db export` writes a snapshot as `<name>.db` plus a `<name>.db-wal` file beside it. Fold both into one file with SQLite's online backup:
 
 ```bash
-turso db show YOUR_DATABASE --url
-turso db tokens create YOUR_DATABASE --read-only --expiration 1d
+turso db export YOUR_DATABASE --output-file turso-export.db
+sqlite3 turso-export.db ".backup export.db"
+chmod 600 export.db
 ```
 
-The second command prints the token once. Copy it straight into the import's credential input (**pending**). Do not save it to a file, an `.env` file, a chat or a ticket.
+Keep `turso-export.db` and `turso-export.db-wal` together until the backup finishes, then delete them. The export uses your own Turso CLI login; TerraBase never receives a Turso token. You do not need `--with-metadata`.
 
-- Use a database token, not a group token. A group token reaches every database in the group.
-- Let the token expire rather than revoking it early. `turso db tokens invalidate` invalidates every token for the database, including your application's.
+**From a local SQLite or libSQL file:**
 
-## 3. Check what the import will read
+```bash
+sqlite3 local.db ".backup export.db"
+```
 
-Run these with `turso db shell YOUR_DATABASE` or `sqlite3` on a local copy.
+`.backup` produces one consistent copy even while the database is in use. Never copy a live database file directly. `VACUUM INTO 'export.db'` also creates a consistent single file, but SQLite documents that a vacuum can renumber the `rowid` of tables without an `INTEGER PRIMARY KEY`, and those rowids become document IDs.
 
-**Declared columns.** SQLite stores a declared type only as an affinity. `hidden` is `2` or `3` for generated columns.
+Check the result before you upload it:
+
+```bash
+sqlite3 export.db "PRAGMA quick_check"
+```
+
+It must print `ok`. A file that fails this check, an encrypted file or a schema SQLite cannot parse, such as libSQL-only syntax, is refused with `unsupported_source_format`. Upload `export.db` with `FORMAT=sqlite`; it must be at most 1 GiB.
+
+## 3. Check what the export will contain
+
+Run these with `sqlite3 export.db` to plan your [options](/zh-cn/guides/import#options). The preview reports the same findings.
+
+**Columns.** Use the names in `exclude` entries as `main.table.column`. `hidden` is `2` or `3` for generated columns.
 
 ```sql
 SELECT m.name AS table_name, p.name AS column_name, p.type AS declared_type,
@@ -84,7 +100,7 @@ WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'
 ORDER BY m.name, p.cid;
 ```
 
-**Stored values.** Except in `STRICT` tables, one column can hold several storage classes. Check each column whose values matter:
+**Stored values.** Except in `STRICT` tables, one column can hold several storage classes, and each value maps by its own class. Check columns whose values matter:
 
 ```sql
 SELECT typeof(balance) AS storage_class, count(*) AS row_count
@@ -92,7 +108,7 @@ FROM customers
 GROUP BY 1;
 ```
 
-**Tables without a primary key.** Their implicit `rowid` is not a stable identity: `VACUUM` can renumber it. Their record identity is **pending** in the [keys policy](/zh-cn/guides/import#keys-constraints-and-schema-objects).
+**Tables without a primary key.** A rowid table without a declared primary key uses its `rowid` as the document ID. A `WITHOUT ROWID` table always has a primary key.
 
 ```sql
 SELECT m.name AS table_name
@@ -102,56 +118,38 @@ WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'
 ORDER BY 1;
 ```
 
-**Foreign key violations.** SQLite enforces foreign keys only on connections that enable them, so a source can contain orphan rows. This lists them:
+**Foreign key violations.** SQLite enforces foreign keys only on connections that enable them, so a database can contain orphan rows. The import records foreign keys without enforcing them and copies orphans unchanged.
 
 ```sql
 PRAGMA foreign_key_check;
 ```
 
-**Virtual tables.** Full-text (FTS5) and R*Tree tables keep their data in shadow tables, such as `name_data`, that look like ordinary tables. Exclude shadow tables and rebuild the index from its content instead.
+**Virtual tables.** Views, triggers and virtual tables are skipped. A full-text (FTS5) or R*Tree table stores its index in ordinary shadow tables named after it, such as `notes_fts_data` and `notes_fts_idx`. Exclude those shadow tables, then rebuild the search index from your content.
 
 ```sql
 SELECT name FROM sqlite_schema WHERE sql LIKE 'CREATE VIRTUAL TABLE%';
 ```
 
-## 4. Keep the snapshot consistent
+## Type mapping
 
-A single SQLite read transaction sees one consistent snapshot. Turso serves the database remotely, so the import must keep every read in one transaction or read from a copy. **Pending:** which mechanism the import uses and how long it can hold a remote read transaction.
+Each value maps by its **storage class**, never by the column's declared type.
 
-The safest source is a point-in-time copy. Where your Turso plan supports branching, `turso db create --from-db` creates one, and `--timestamp` selects an earlier point in time. Otherwise, stop writes to the database during the import. If your application uses embedded replicas, import from the primary database, not from a local replica file.
-
-## Type compatibility
-
-The TerraScale column fills in when the import contract confirms each mapping. Until then, treat a value as unsupported unless the dry-run preview shows a mapping for it.
-
-| Stored value or declared type | What can lose fidelity | TerraScale handling |
+| Storage class | `mapping` | JSON value |
 | --- | --- | --- |
-| `INTEGER` | 64-bit signed; JSON readers such as JavaScript lose precision above 2<sup>53</sup> − 1 | **Pending** |
-| `REAL` | IEEE 754 double, including ±Infinity; SQLite stores `NaN` as `NULL` | **Pending** |
-| `TEXT` | SQLite does not validate UTF-8, so text can contain invalid sequences or `NUL` characters | **Pending** |
-| `BLOB` | Raw bytes need a binary encoding | **Pending** |
-| `NULL` | Distinct from an absent column and an empty string | **Pending** |
-| Mixed storage classes in one column | The declared type does not constrain non-`STRICT` tables | **Pending** |
-| `BOOLEAN` | Stored as `INTEGER` 0 or 1 by convention only | **Pending** |
-| Dates and times | No native type: ISO 8601 `TEXT`, Julian-day `REAL` or Unix-time `INTEGER` | **Pending** |
-| `NUMERIC`, `DECIMAL` | Non-integers are already stored as `REAL`, so exact decimals can be lost in the source | **Pending** |
-| JSON | `TEXT`, or SQLite's binary JSONB stored as `BLOB` | **Pending** |
-| libSQL vectors (`F32_BLOB` and related) | Vector encoding and vector indexes | **Pending** |
+| `INTEGER` | `integer` | Number with exact 64-bit digits |
+| `REAL` | `float` | Number; `±Infinity` fails with `invalid_value` |
+| `TEXT` | `string` | String |
+| `BLOB` | `base64` | Standard base64 string |
+| `NULL` | | `null` |
+| More than one class in a column | `mixed` | Each value by its own class; reported as a `mixed_storage_classes` warning |
 
-Also check for `AUTOINCREMENT` counters in `sqlite_sequence`, triggers and views. Their handling is in the [keys policy](/zh-cn/guides/import#keys-constraints-and-schema-objects).
+What this means for common column conventions:
 
-## Count rows for validation
-
-Run against the same frozen database or copy the import read. The query prints one `SELECT` per table; run the statements it prints.
-
-```sql
-SELECT 'SELECT ' || quote(name) || ' AS table_name, count(*) AS row_count FROM "'
-       || replace(name, '"', '""') || '";'
-FROM sqlite_schema
-WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-ORDER BY name;
-```
-
-Compare each count with the import's validation report, then follow the remaining [validation steps](/zh-cn/guides/import#validate-the-result).
+- **Booleans** stay numbers `0` and `1`; they do not become JSON `true` and `false`.
+- **Dates and times** keep their stored form: ISO 8601 text stays a string, and Unix or Julian-day numbers stay numbers.
+- **`NUMERIC` and `DECIMAL`** columns already store non-integers as `REAL`, so exact decimals may have been lost in the source before the export.
+- **JSON** stored as `TEXT` becomes a JSON string, not a parsed object. SQLite's binary JSONB becomes a base64 string.
+- **libSQL vectors** (`F32_BLOB` and related) are `BLOB`s and become base64 strings. Indexes, including vector indexes, are not imported.
+- SQLite stores `NaN` as `NULL`, so it arrives as `null`. JSON readers such as JavaScript lose precision for integers above 2<sup>53</sup> − 1.
 
 </div>
