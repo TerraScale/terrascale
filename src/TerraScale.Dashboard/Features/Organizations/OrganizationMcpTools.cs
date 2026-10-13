@@ -63,7 +63,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
     public Task<OrganizationDone> RequestOwnershipTransfer([Description("Member user ID from list_members.")] string userId,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Member("start", userId, organizationId, projectId);
 
-    [McpServerTool(Name = "confirm_ownership_transfer", Title = "Confirm ownership transfer", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Accept a pending ownership transfer nominated to the caller. The previous owner becomes a member.")]
+    [McpServerTool(Name = "confirm_ownership_transfer", Title = "Confirm ownership transfer", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Accept a pending ownership transfer nominated to the caller. The previous owner becomes an admin.")]
     public Task<OrganizationDone> ConfirmOwnershipTransfer([Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Member("confirm", "", organizationId, projectId);
 
     [McpServerTool(Name = "list_members", Title = "List members", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("List an organization's active members with their roles, optionally filtered by name, email, or role.")]

@@ -74,8 +74,9 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
         if (remote.ProjectId is { } projectId && (!TerraScaleIds.IsValid(projectId) ||
             !(await platform.ListProjectsAsync(context.Session, context.Organization!.Id, cancellationToken)).Any(project => project.Id == projectId)))
             throw new AccountAccessException("This invitation's project is unavailable, so it cannot be resent.", 409);
-        // An expired invitation is no longer revocable at ts-auth; its replacement is still allowed.
-        if (remote.Status == "pending") await access.RevokeInvitationAsync(context, id, cancellationToken);
+        // ts-auth lists an invitation past its expiry as expired but still stores it pending, so it could still be
+        // accepted: store a revoke before creating the replacement.
+        await access.RevokeInvitationAsync(context, id, cancellationToken);
         return await CreateAsync(context, remote.Email, remote.Role, remote.ProjectId, cancellationToken);
     }
 
@@ -131,7 +132,8 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
 
     // ts-auth has no idempotency key or cancellation for invitation creation, so a request with an unknown outcome
     // may commit at any later time, and neither elapsed time, clocks nor an absent entry end its reservation. A
-    // reservation ends only when ts-auth lists its invitation as decided (accepted, declined, revoked or expired):
+    // reservation ends only when ts-auth lists its invitation with a stored decision (accepted, declined or revoked);
+    // ts-auth derives expired from its clock without storing it, and that invitation can still be accepted:
     // its recorded id or, for a lost response, an invitation for its email and target that it did not know and
     // that no other reservation records. Each listed invitation ends at most one reservation, within this
     // compare-and-set, so the reservations left for an email cover every request for it that may still commit.
@@ -141,7 +143,7 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
         {
             var reservation = org.InvitationReservations[key];
             var recorded = org.InvitationReservations.Values.Select(other => other.InvitationId).ToHashSet(StringComparer.Ordinal);
-            var invitation = invitations.FirstOrDefault(invitation => invitation.Status is "accepted" or "declined" or "revoked" or "expired" && (reservation.InvitationId.Length > 0
+            var invitation = invitations.FirstOrDefault(invitation => invitation.Status is "accepted" or "declined" or "revoked" && (reservation.InvitationId.Length > 0
                 ? invitation.Id == reservation.InvitationId
                 : Same(invitation, reservation) && !reservation.Known.Contains(invitation.Id) && !recorded.Contains(invitation.Id)));
             if (invitation is null) continue;
@@ -155,18 +157,19 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
     private static bool Same(TerraScaleAuthPlatformInvitation invitation, InvitationReservation reservation) =>
         invitation.Email.Equals(reservation.Email, StringComparison.OrdinalIgnoreCase) && invitation.ProjectId == reservation.ProjectId;
 
-    // Occupied slots are distinct emails across members, ts-auth's pending invitations and open reservations,
-    // so an invitee who just accepted counts once. ts-auth decides expiry by its own clock.
+    // Occupied slots are distinct emails across members, ts-auth's pending and expired invitations (both still
+    // stored pending, so either can be accepted until a revoke is stored) and open reservations, so an invitee who
+    // just accepted counts once. No clock decides anything here.
     // An email that already holds a reservation is invited again on that slot: ts-auth keeps one pending
     // invitation per email and target, so a retry and the request it replaces never both hold an invitation.
     private static void Capacity(OrganizationRecord org, IReadOnlyList<TerraScaleAuthPlatformMember> members, IReadOnlyList<TerraScaleAuthPlatformInvitation> invitations, string email)
     {
         if (org.DeletionRequested) throw new AccountAccessException("Organization deletion has been requested.", 409);
         var memberEmails = members.Select(member => member.Email.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
-        var pending = invitations.Where(invitation => invitation.Status == "pending").Select(invitation => invitation.Email.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
+        var pending = invitations.Where(invitation => invitation.Status is "pending" or "expired").Select(invitation => invitation.Email.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
         var reserved = org.InvitationReservations.Values.Select(reservation => reservation.Email).ToHashSet(StringComparer.Ordinal);
         if (memberEmails.Contains(email)) throw new AccountAccessException("This email is already an active member.", 409);
-        if (pending.Contains(email)) throw new AccountAccessException("This email already has a pending invitation.", 409);
+        if (pending.Contains(email)) throw new AccountAccessException("This email already has an open invitation; resend or revoke it.", 409);
         var plan = PlanCatalog.For(org)
             ?? throw new AccountAccessException("The organization's member allowance is unavailable.", 409);
         var limit = PlanCatalog.ResourceLimits(org).Members;

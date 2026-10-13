@@ -97,6 +97,64 @@ public sealed class InvitationCapacityJourneyTests
         await Assert.That(pending).IsEqualTo(4);
     }
 
+    // Round-4 review probe, verbatim.
+    // ts-auth Status() derives expired from the listing replica's clock; it does not close the stored pending
+    // invitation. An accept already validated, or a slower provider clock, can still commit that invitation.
+    [Test]
+    public async Task AProviderClockExpiryIsNotATerminalInvitationDecision()
+    {
+        await using var scenario = await CapacityScenario.StartAsync();
+        const string email = "clock-expired@example.test";
+        using (var original = await scenario.InviteAsync(0, email))
+            await Assert.That(original.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        scenario.Platform.ReportedExpiredEmail = email;
+        using var replacement = await scenario.InviteAsync(1, "replacement-after-provider-expiry@example.test");
+        // The accept validated while the stored invitation was pending; listing expired wrote no version.
+        await scenario.Platform.AcceptAsync(scenario.Platform.Tokens[email]);
+        scenario.Platform.ReportedExpiredEmail = "";
+        var occupied = await scenario.OccupiedAsync();
+        Console.WriteLine($"PROVIDER-EXPIRY replacement={(int)replacement.StatusCode}, occupied={occupied}, limit=5");
+        await Assert.That(replacement.StatusCode).IsEqualTo(HttpStatusCode.Conflict)
+            .Because("a derived expired status is not a stored terminal decision");
+        await Assert.That(occupied).IsEqualTo(5);
+    }
+
+    // An invitation ts-auth lists as expired is still stored pending and can be accepted, so it keeps its slot;
+    // the owner frees it with a revoke, which ts-auth stores, and the revoked invitation can no longer be accepted.
+    [Test]
+    public async Task AnExpiredInvitationHoldsItsSlotUntilARevokeIsStored()
+    {
+        await using var scenario = await CapacityScenario.StartAsync();
+        scenario.Platform.ReportedExpiredEmail = "existing-0@example.test";
+        using (var last = await scenario.InviteAsync(0, "last-slot@example.test"))
+            await Assert.That(last.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using (var blocked = await scenario.InviteAsync(1, "while-expired@example.test"))
+            await Assert.That(blocked.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because("expired is not a stored decision");
+        using (var revoked = await scenario.InvitationActionAsync(0, "existing-0@example.test", "revoke"))
+            await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        using (var freed = await scenario.InviteAsync(1, "after-revoke@example.test"))
+            await Assert.That(freed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(async () => await scenario.Platform.AcceptAsInviteeAsync("existing-0@example.test", scenario.Pending[0])).Throws<AccountAccessException>();
+        scenario.Platform.ReportedExpiredEmail = "";
+        await Assert.That(await scenario.OccupiedAsync()).IsEqualTo(5);
+    }
+
+    // Resending an invitation ts-auth lists as expired stores a revoke first, so the old one can no longer be accepted.
+    [Test]
+    public async Task ResendingAnExpiredInvitationRevokesItFirst()
+    {
+        await using var scenario = await CapacityScenario.StartAsync();
+        scenario.Platform.ReportedExpiredEmail = "existing-0@example.test";
+        var original = await scenario.InvitationIdAsync("existing-0@example.test");
+        using (var resent = await scenario.InvitationActionAsync(0, "existing-0@example.test", "resend"))
+            await Assert.That(resent.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        scenario.Platform.ReportedExpiredEmail = "";
+        var invitations = await scenario.InvitationsAsync("existing-0@example.test");
+        await Assert.That(invitations.Single(invitation => invitation.Id == original).Status).IsEqualTo("revoked");
+        await Assert.That(invitations.Count(invitation => invitation.Status == "pending")).IsEqualTo(1);
+        await Assert.That(async () => await scenario.Platform.AcceptAsInviteeAsync("existing-0@example.test", scenario.Pending[0])).Throws<AccountAccessException>();
+    }
+
     // A decision reads ts-auth inside its compare-and-set: an invitation accepted after an older read, whose
     // reservation another decision already ended, still occupies its slot.
     [Test]
@@ -323,6 +381,16 @@ public sealed class InvitationCapacityJourneyTests
             return members.Select(member => member.Email).Union(invitations.Where(invitation => invitation.Status == "pending").Select(invitation => invitation.Email), StringComparer.OrdinalIgnoreCase).Count();
         }
 
+        public async Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> InvitationsAsync(string email) =>
+            [.. (await Platform.ListInvitationsAsync(owner, organizationId, default)).Where(invitation => invitation.Email == email)];
+
+        public async Task<string> InvitationIdAsync(string email) => (await InvitationsAsync(email)).Single().Id;
+
+        // The owner's revoke or resend through the dashboard's invitations tab.
+        public async Task<HttpResponseMessage> InvitationActionAsync(int replica, string email, string action) =>
+            await HttpJourney.PostFormAsync(clients[replica].Client, "/api/v1/access/invitations/" + await InvitationIdAsync(email) + "/" + action + "?tab=invitations",
+                new() { ["_csrf"] = clients[replica].Csrf });
+
         public async Task RevokeAsync(string email)
         {
             var invitation = (await Platform.ListInvitationsAsync(owner, organizationId, default)).Single(invitation => invitation.Email == email && invitation.Status == "pending");
@@ -374,6 +442,8 @@ public sealed class InvitationCapacityJourneyTests
         // Pauses the member read that follows the next invitation read, after both have answered.
         public void PauseMembersAfterNextInvitationRead() => Volatile.Write(ref pauseMembers, 1);
         public string PauseAfterCreateEmail { get; set; } = "";
+        // ts-auth's Status() lists a stored pending invitation past its expiry as expired without storing anything.
+        public string ReportedExpiredEmail { get; set; } = "";
         public TaskCompletionSource CreatedPaused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ContinueCreate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -389,12 +459,15 @@ public sealed class InvitationCapacityJourneyTests
             var lookup = await inner.LookupInvitationAsync(Invitee, token, default) ?? throw new InvalidOperationException("Unknown fixture invitation.");
             await inner.AcceptInvitationAsync(Invitee with { Email = lookup.Email, UserId = new TerraScaleIdGenerator().NewId() }, token, default);
         }
+        public Task AcceptAsInviteeAsync(string email, string token) =>
+            inner.AcceptInvitationAsync(Invitee with { Email = email, UserId = new TerraScaleIdGenerator().NewId() }, token, default);
         private static SessionRecord Invitee => new("invitee", "Invitee", "", "", null, DateTimeOffset.UtcNow.AddHours(1));
 
         public async Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
         {
             var result = await inner.ListInvitationsAsync(session, organizationId, cancellationToken);
             Interlocked.CompareExchange(ref pauseMembers, 2, 1);
+            result = [.. result.Select(invitation => invitation.Email == ReportedExpiredEmail && invitation.Status == "pending" ? invitation with { Status = "expired", ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1) } : invitation)];
             var index = Interlocked.Increment(ref reads) - 1;
             if (index < Arrived.Length) { Arrived[index].TrySetResult(); await Release[index].Task.WaitAsync(cancellationToken); }
             return ListedExpiry is { } expiry ? [.. result.Select(invitation => invitation with { ExpiresAt = DateTimeOffset.UtcNow + expiry })] : result;

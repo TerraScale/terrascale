@@ -73,14 +73,16 @@ the invitations the dashboard sends. ts-auth does not enforce it.
 
 1. Each dashboard invitation takes a reservation in the organization's state
    document, in the same compare-and-set that reads ts-auth's current members
-   and invitations. Occupied slots are distinct emails across members, pending
-   invitations and reservations. ts-auth's status decides expiry, never a
-   replica clock.
+   and invitations. Occupied slots are distinct emails across members,
+   invitations ts-auth lists as pending or expired, and reservations. ts-auth
+   derives "expired" from its clock without storing it, so an expired
+   invitation can still be accepted and keeps its slot until the owner revokes
+   or resends it (both store a revoke). No replica clock decides anything.
 2. ts-auth has no idempotency key or cancellation for invitation creation, so
    a request with an unknown outcome (timeout, lost response, 5xx) may still
    commit later. Its reservation ends only when ts-auth lists that request's
-   invitation as accepted, declined, revoked or expired. Elapsed time, clocks
-   and an absent entry never end it.
+   invitation with a stored decision: accepted, declined or revoked. Expired,
+   elapsed time, clocks and an absent entry never end it.
 3. Cost and recovery: an unknown outcome that never commits keeps its email's
    slot counted, with no time limit or manual release. The email can still be
    invited: the retry uses the same slot, and ts-auth holds one pending
@@ -93,9 +95,9 @@ the invitations the dashboard sends. ts-auth does not enforce it.
    global guarantee. A hard allowance needs ts-auth to hold it and check it in
    its own invitation and membership transaction; that producer change is not
    part of this release.
-5. Resending an invitation copies ts-auth's project and role exactly. A
-   project, role or invitation the dashboard cannot confirm refuses the resend
-   before the original is revoked.
+5. Resending an invitation revokes the original, pending or expired, then
+   copies ts-auth's project and role exactly. A project, role or invitation the
+   dashboard cannot confirm refuses the resend before the original is revoked.
 
 ## State database
 
