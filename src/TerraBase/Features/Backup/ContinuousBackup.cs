@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -70,6 +71,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private readonly IWalBackup _engine;
     private readonly IStorageEngine _storage;
     private readonly BackupTargets _targets;
+    private readonly Lazy<ICatalogGate> _catalogGate;
     private readonly TimeProvider _time;
     private readonly ILogger<ContinuousBackup> _logger;
     private readonly IShipperLeases _shippers;
@@ -106,12 +108,14 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     public ContinuousBackup(
         IWalBackup engine, IStorageEngine storage, BackupTargets targets, TerraBaseOptions options, TimeProvider time,
-        IMeterFactory meters, ILogger<ContinuousBackup> logger, IShipperLeases shippers, ITenantDirectory tenants, BackupSettings settings, S3ObjectStore bucket)
+        IMeterFactory meters, ILogger<ContinuousBackup> logger, IShipperLeases shippers, ITenantDirectory tenants, BackupSettings settings, S3ObjectStore bucket,
+        Lazy<ICatalogGate> catalogGate)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(meters);
         (_engine, _storage, _targets, _time, _logger, _shippers) = (engine, storage, targets, time, logger, shippers);
         (_tenants, _settings, _node, _bucket) = (tenants, settings, options.MachineId, bucket);
+        _catalogGate = catalogGate;
         _scratch = Scratch(options);
         var meter = meters.Create(Telemetry.MeterName);
         _uploaded = meter.CreateCounter<long>("terrabase.backup.uploaded", "By", "Sealed backup bytes stored in the bucket, by kind (snapshot, segment).");
@@ -193,7 +197,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         await _pass.WaitAsync(schedulingToken).ConfigureAwait(false);
         try
         {
-            if (_stopped)
+            if (_stopped || !_catalogGate.Value.IsOpen)
             {
                 return pass ?? _scheduleCounter;
             }
@@ -446,7 +450,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         {
             foreach (var (_, file) in _files)
             {
-                if (file.Removed || cancellationToken.IsCancellationRequested)
+                if (file.Removed || cancellationToken.IsCancellationRequested || !_catalogGate.Value.IsOpen)
                 {
                     continue;
                 }

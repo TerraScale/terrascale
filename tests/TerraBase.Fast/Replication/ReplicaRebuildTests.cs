@@ -377,6 +377,8 @@ public sealed class ReplicaRebuildTests
     {
         public FakeMemberStore Members { get; } = new();
 
+        public string User { get; } = EntityIds.New().ToString();
+
         public TenantContext Database { get; } = new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
 
         public Machine Gru { get; private set; } = null!;
@@ -450,7 +452,7 @@ public sealed class ReplicaRebuildTests
                 settings["region"] = region;
                 settings["node-name"] = Name;
                 settings["data-directory"] = _directory;
-            }, services => services.AddSingleton<IMemberDirectory>(pair.Members));
+            }, services => services.AddSingleton<IMemberDirectory>(pair.Members), userId: pair.User);
             if (first)
             {
                 await RegisterAsync();

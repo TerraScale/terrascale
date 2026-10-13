@@ -1,5 +1,6 @@
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -12,6 +13,7 @@ public sealed class DeleteSavedQueryEndpoint(IManagementService management, IQue
     public override void Configure()
     {
         Delete(ProjectApiRoute.SavedQuery);
+        Metadata(AnchoredRevocation.Instance);
         Name("deleteSavedQuery");
         Summary("Deletes a saved query");
         Description(ProjectApiRoute.IdentityDescription);

@@ -1,6 +1,7 @@
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -13,6 +14,7 @@ public sealed class DeleteBackupDestinationEndpoint(IProjectBackupDestinations d
     public override void Configure()
     {
         Delete(BackupDestinationRoute.Path);
+        Metadata(AnchoredRevocation.Instance);
         Name("deleteBackupDestination");
         Summary("Delete a project's customer backup destination");
         Description(BackupDestinationRoute.Description);

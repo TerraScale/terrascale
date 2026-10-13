@@ -99,6 +99,9 @@ internal sealed class AntiEntropy : BackgroundService
         return peer is null ? null : await CompareAsync(database, peer, force: true, cancellationToken, horizon).ConfigureAwait(false);
     }
 
+    internal Task<int?> PullAsync(TenantContext database, ClusterMember peer, CancellationToken cancellationToken) =>
+        CompareAsync(database, peer, force: true, cancellationToken);
+
     private List<ClusterMember> Peers(ClusterView view) =>
         [.. view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Where(member => member.Name != _membership.Self.Name && member.PeerAddress.Length > 0)];
 
@@ -114,8 +117,9 @@ internal sealed class AntiEntropy : BackgroundService
 
         using var channel = PeerChannel.Create(new Uri(peer.PeerAddress));
         var client = new V1.Replication.ReplicationClient(channel);
+        // gRPC evaluates absolute deadlines against the real clock, independently of scheduling and HLC clocks.
         var reply = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(database) },
-            deadline: _time.GetUtcNow().UtcDateTime + DigestTimeout, cancellationToken: cancellationToken).ConfigureAwait(false);
+            deadline: TimeProvider.System.GetUtcNow().UtcDateTime + DigestTimeout, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (!reply.Held)
         {
             // Nothing to compare with: a round has nothing to repair, but a refill covered nothing.
@@ -139,7 +143,7 @@ internal sealed class AntiEntropy : BackgroundService
 
         var request = new BucketRequest { Database = ChangeGroups.Wire(database) };
         request.Buckets.AddRange(repair.Order().Select(bucket => (uint)bucket));
-        using var call = client.ReadBucket(request, deadline: _time.GetUtcNow().UtcDateTime + ReadTimeout, cancellationToken: cancellationToken);
+        using var call = client.ReadBucket(request, deadline: TimeProvider.System.GetUtcNow().UtcDateTime + ReadTimeout, cancellationToken: cancellationToken);
         var changed = 0;
         var theirKeys = new HashSet<(string Collection, string Id)>();
         while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))

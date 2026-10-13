@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -12,6 +13,7 @@ public sealed class ConfirmOwnershipTransferEndpoint(IAccessService access) : En
     public override void Configure()
     {
         Post(ManagementRoute.OwnershipTransfer + "/confirm");
+        Metadata(AnchoredRevocation.Instance);
         Name("confirmOwnershipTransfer");
         Summary("Accepts a pending ownership transfer");
         Description($"Only the nominee may confirm. It becomes an owner and the owner who started the transfer becomes a member. 404 when none is pending, it expired, or its starter is no longer an owner. {ManagementRoute.IdentityDescription}");
