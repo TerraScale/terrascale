@@ -17,6 +17,9 @@ internal sealed class PowerLossNode : IAsyncDisposable
     private readonly string _machine = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
     private Process? _process;
 
+    // The child's last lines of error output, for a startup failure's message.
+    private readonly Queue<string> _errors = new();
+
     private PowerLossNode()
     {
         Faults = new WalSyncFaults(Data + ".walfaults");
@@ -73,10 +76,27 @@ internal sealed class PowerLossNode : IAsyncDisposable
         start.Environment[RegionProcessHost.MachineVariable] = _machine;
         start.Environment[RegionProcessHost.DataVariable] = Data;
         start.Environment[RegionProcessHost.MembersVariable] = Path.Combine(_root, "members");
+        // The child's own temporary files (its test server's directories) stay under this node's root, which a SIGKILL leaves
+        // behind and DisposeAsync deletes.
+        start.Environment["TMPDIR"] = Directory.CreateDirectory(Path.Combine(_root, "tmp")).FullName;
         Faults.AddTo(start.Environment);
+        _process?.Dispose();
         _process = Process.Start(start) ?? throw new InvalidOperationException("the node process did not start");
         _process.OutputDataReceived += static (_, _) => { };
-        _process.ErrorDataReceived += static (_, _) => { };
+        _process.ErrorDataReceived += (_, line) =>
+        {
+            if (line.Data is { } text)
+            {
+                lock (_errors)
+                {
+                    _errors.Enqueue(text);
+                    while (_errors.Count > 20)
+                    {
+                        _ = _errors.Dequeue();
+                    }
+                }
+            }
+        };
         _process.BeginOutputReadLine();
         _process.BeginErrorReadLine();
         var clock = Stopwatch.StartNew();
@@ -84,7 +104,13 @@ internal sealed class PowerLossNode : IAsyncDisposable
         {
             if (_process.HasExited || clock.Elapsed > TimeSpan.FromSeconds(120))
             {
-                throw new InvalidOperationException($"the node did not start (exited: {_process.HasExited})");
+                string errors;
+                lock (_errors)
+                {
+                    errors = string.Join('\n', _errors);
+                }
+
+                throw new InvalidOperationException($"the node did not start (exited: {_process.HasExited}):\n{errors}");
             }
 
             await Task.Delay(100);
@@ -124,6 +150,12 @@ internal sealed class PowerLossNode : IAsyncDisposable
         using var response = await Client.SendAsync(request);
         return response.StatusCode;
     }
+
+    /// <summary>Every log sync of the node waits <paramref name="delay"/> first, from now on.</summary>
+    public void DelaySyncs(TimeSpan delay) => Faults.Delay(delay);
+
+    /// <summary>Log syncs run normally again.</summary>
+    public void ClearFaults() => Faults.Clear();
 
     // SIGKILL, then every write-ahead log back to its length at its last sync.
     public async Task PowerLossAsync()

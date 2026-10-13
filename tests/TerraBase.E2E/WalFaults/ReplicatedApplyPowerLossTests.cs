@@ -9,8 +9,9 @@ using TerraBase.Tenancy;
 namespace TerraBase.E2E.WalFaults;
 
 /// <summary>
-/// A receiver's acknowledgement on a peer stream is a remote durable commit: the change groups' transaction committed and
-/// its write-ahead log synced (<c>synchronous = FULL</c>) before the ack went out. So every group a node acknowledged is
+/// A receiver's acknowledgement on a peer stream is a remote durable commit: every transaction that joined the batch's change
+/// groups committed and synced its write-ahead log (<c>synchronous = FULL</c>) before the ack went out, also when the batch
+/// is split into several transactions. So the ack waits for every one of those syncs, and every group a node acknowledged is
 /// still there after a power loss of that node drops every unsynced byte of every log.
 /// </summary>
 public sealed class ReplicatedApplyPowerLossTests
@@ -32,33 +33,44 @@ public sealed class ReplicatedApplyPowerLossTests
                 new JsonObject { ["op"] = "create_database", ["organization"] = database.OrganizationId, ["project"] = database.ProjectId, ["name"] = "canary", ["id"] = database.DatabaseId }),
         });
 
-        // Three groups of another region's machine in one batch, acknowledged up to the last.
+        // Three groups of another region's machine in one batch, of 1,000, 100 and 1 documents: more than one transaction's
+        // 1,024, so the receiver joins them in two transactions (groups never split). Every log sync is held 300 ms, so
+        // the ack can only come after both transactions' syncs.
         var origin = ReplicaId.Of(1, 7, 0);
         var stamp = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
-        string[] ids = [EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString()];
+        int[] sizes = [1000, 100, 1];
+        var ids = sizes.Select(size => Enumerable.Range(0, size).Select(_ => EntityIds.New().ToString()).ToArray()).ToArray();
+        var delay = TimeSpan.FromMilliseconds(300);
         using (var channel = PeerChannel.Create(node.Address))
         {
             using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push();
             await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = origin.Value, Region = "sjc", Machine = "zzzz-sender" } });
             await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None) && call.ResponseStream.Current.Welcome is not null).IsTrue();
+            node.DelaySyncs(delay);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             await call.RequestStream.WriteAsync(new PushFrame
             {
                 Batch = new Batch
                 {
                     Database = ChangeGroups.Wire(database),
                     LastChangeId = (ulong)ids.Length,
-                    Groups = ChangeGroups.Encode([.. ids.Select((id, index) => new OriginGroup(index + 1, [Put(origin, stamp + (ulong)index, id, index)]))]),
+                    Groups = ChangeGroups.Encode([.. ids.Select((group, index) => new OriginGroup(
+                        index + 1, [.. group.Select((id, n) => Put(origin, stamp + (ulong)(index * 2048 + n), id, index))]))]),
                 },
             });
             using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
             await Assert.That(await call.ResponseStream.MoveNext(timeout.Token)).IsTrue();
+            var acked = clock.Elapsed;
+            node.ClearFaults();
             await Assert.That(call.ResponseStream.Current.Ack is { ChangeId: 3, Refused: false }).IsTrue().Because(call.ResponseStream.Current.ToString());
+            await Assert.That(acked).IsGreaterThanOrEqualTo(delay * 2).Because("the ack waits for both transactions' log syncs");
         }
 
         await node.PowerLossAsync();
         await node.StartAgainAsync();
 
-        foreach (var (index, id) in ids.Index())
+        // The first and last document of each group: both transactions survived.
+        foreach (var (index, id) in ids.Index().SelectMany(group => new[] { (group.Index, group.Item[0]), (group.Index, group.Item[^1]) }))
         {
             var read = new Uri($"/v1/projects/{database.ProjectId}/databases/canary/collections/items/documents/by-key?id={id}", UriKind.Relative);
             var document = await Docs.ReadAsync(node.Client, read);
