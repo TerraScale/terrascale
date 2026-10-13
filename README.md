@@ -12,13 +12,24 @@ nice -n 19 npm run dev -- --host 0.0.0.0 --port 5176
 nice -n 19 npm run build
 ```
 
-There is no CI and no test suite.
+Run `nice -n 19 npm test` after building. CI checks public output and local links,
+published catalog parity, generated pricing and locale copies, SDK examples,
+starter authentication and connection validation. It never downloads or runs a
+TerraBase engine; engine qualification belongs in the monorepo.
 
 ## Deploy
 
-Cloudflare Workers Builds builds `main` from Git (`npm run build`, then
-`npx wrangler deploy`). `wrangler.jsonc` serves `docs/.vitepress/dist` as static
-assets only on `docs.terrascale.tech`.
+GitHub Actions builds and tests every PR and `main`. After all checks pass on
+`main`, that same job publishes the checked static assets with
+`env -u CLOUDFLARE_API_TOKEN cf deploy --prebuilt`; it does not rebuild the site.
+`cloudflare.config.ts` serves the VitePress output on `docs.terrascale.tech`.
+CI verifies eight hosted pages/assets against the local build and the custom
+HTTP 404 page. Publication credentials come from GitHub's secret store.
+
+`cf` is pinned to `1.0.0-beta.10`. Its supported `CF_API_TOKEN` credential alias
+allows `CLOUDFLARE_API_TOKEN` to remain unset for every invocation. Cloudflare's
+required `workersDev`, `previewUrls` and `buildContext.isPreview` fields describe
+hosting/output semantics; they are fixed values, not application switches.
 
 ## Edit public content
 

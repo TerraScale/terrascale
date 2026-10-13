@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  ci:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: useblacksmith/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - name: Verify Workers publication credentials
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          env -u CLOUDFLARE_API_TOKEN cf auth whoami > "$RUNNER_TEMP/cloudflare-auth.json"
+          node --input-type=module -e 'import fs from "node:fs"; import assert from "node:assert/strict"; assert.equal(JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/cloudflare-auth.json")).authenticated, true)'
+          env -u CLOUDFLARE_API_TOKEN cf deploy --prebuilt --dry-run
+        env:
+          # cf supports this credential alias while CLOUDFLARE_API_TOKEN stays unset.
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Deploy the checked site to Workers
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: npm run deploy:site -- --message "$GITHUB_SHA"
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Check hosted output
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: node scripts/check-hosted.mjs
