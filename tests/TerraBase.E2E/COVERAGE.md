@@ -229,6 +229,7 @@ The candidates on #108 run on them.
 | --- | --- | --- |
 | FlyOutageE2ETests: `Sjc_machine_stopped_then_started…` | locally, or on Fly without `TERRABASE_E2E_FLY_OUTAGE=1` | It stops a machine, so it runs alone through `make terrabase-e2e-fly-outage`, and only on a pinned disposable app (`Cluster.FlyMachineFaults`), never production |
 | BenchmarkClusterHost: `Hosts_three_local_regions…` | always, unless `TERRABASE_BENCH_CLUSTER_FILE` is set | It is the benchmark's local cluster host, not a scenario |
+| PitrLabHost: `Runs_the_PitrLab_job…` | always, unless `TERRABASE_PITR_JOB` is set | It is the PitrLab backup/PITR harness host (benchmark/docs/pitr-100m.md), not a scenario |
 | ThreeRegionFaultE2ETests: partition, backlog, both skew tests | on Fly | Fly has no switch for a partition or a clock skew between machines |
 | ThreeRegionFaultE2ETests: region down, restart, ack-then-stop, restarted backlog; RepairAndContractE2ETests: deleted database | on Fly without `TERRABASE_E2E_FLY_OUTAGE=1` | They stop Fly machines |
 | CrashAndStallE2ETests (all but the proxy self-check); RepairAndContractE2ETests: anti-entropy repair, restore, unique under partition | on Fly | They kill local processes, lock or edit local files, or partition; Fly has no such switch |
