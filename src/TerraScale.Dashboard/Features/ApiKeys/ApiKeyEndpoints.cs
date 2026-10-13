@@ -64,7 +64,7 @@ public static class ApiKeyEndpoints
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             if (!context.CanManage) return Results.StatusCode(403);
-            const string message = "TerraBase keys cannot be rotated, and machine clients are not issued yet. Create a new key and revoke the old one instead.";
+            const string message = "Key rotation is unavailable in this view. Create a new key and revoke the old one instead. Already issued tokens remain valid until expiry.";
             return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, message, status: 503) : Results.Problem(message, statusCode: 503);
         });
         return endpoints;

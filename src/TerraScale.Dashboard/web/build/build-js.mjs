@@ -202,6 +202,7 @@ async function build() {
     entryPoints: {
       'code-editor': resolve(source, 'code-editor/index.js'),
       'button-loading': resolve(source, 'button-loading.js'),
+      'document-changes': resolve(source, 'document-changes.js'),
     },
     entryNames: '[name]',
     chunkNames: '[name].[hash]',

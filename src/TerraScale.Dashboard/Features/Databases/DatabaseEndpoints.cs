@@ -17,7 +17,7 @@ public static class DatabaseEndpoints
     public static IServiceCollection AddDatabaseFeatures(this IServiceCollection services) => services
         .AddSingleton<IDatabaseBackend, DatabaseBackend>().AddSingleton<DatabaseService>()
         .AddSingleton<DocumentBackend>().AddSingleton<IDocumentBackend>(services => services.GetRequiredService<DocumentBackend>())
-        .AddSingleton<IDataCredentialRegistry>(services => services.GetRequiredService<DocumentBackend>()).AddSingleton<DataService>().AddSingleton<SavedQueryService>()
+        .AddSingleton<DataService>().AddSingleton<SavedQueryService>().AddSingleton<DocumentChangesService>()
         .AddSingleton<ApiKeyService>().AddSingleton<IWorkspacePlacement, WorkspacePlacement>()
         .AddSingleton<IOnboardingProjectProvisioner, OnboardingProjectProvisioner>()
         .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>();
@@ -161,6 +161,12 @@ public static class DatabaseEndpoints
     internal static bool WantsHtml(HttpContext http) => http.Request.GetTypedHeaders().Accept?.Any(value => value.MediaType.Value == "text/html") == true;
     internal static bool KnownFailure(Exception error) => error is AccountAccessException or TerraBaseValidationException or TerraBaseAuthenticationException or TerraBaseForbiddenException or TerraBaseNotFoundException or TerraBaseConflictException or TerraBasePreconditionFailedException or TerraBaseUnavailableException or DatabaseProviderException;
     internal static int Status(Exception error) => error switch { AccountAccessException access => access.StatusCode, DatabaseWrongRegionException => 409, HttpRequestException { StatusCode: { } status } => (int)status, _ => 503 };
-    internal static string Message(Exception error) => error is AccountAccessException or DatabaseWrongRegionException ? error.Message : Status(error) switch { 401 => "The data plane requires valid authentication.", 404 => "The requested resource is unavailable.", 403 => "Organization access is required.", 409 => "The request conflicts with the current database state.", 412 => "The document changed. Reload it before saving again.", 400 or 422 => "The data plane refused the submitted input.", _ => "The data plane could not complete the request. Try again shortly." };
-    internal static IResult Failure(Exception error) => Results.Problem(Message(error), statusCode: Status(error));
+    internal static string Message(Exception error) => error is AccountAccessException or DatabaseWrongRegionException or DocumentWriteOutcomeUnknownException ? error.Message : Status(error) switch { 401 => "The data plane requires valid authentication.", 404 => "The requested resource is unavailable.", 403 => "Organization access is required.", 409 => "The request conflicts with the current database state.", 412 => "The document changed. Reload it before saving again.", 400 or 422 => "The data plane refused the submitted input.", _ => "The data plane could not complete the request. Try again shortly." };
+    internal static IResult Failure(Exception error) => Results.Problem(Message(error), statusCode: Status(error),
+        extensions: error is DocumentWriteOutcomeUnknownException unknown ? new Dictionary<string, object?>
+        {
+            ["operationId"] = unknown.OperationId,
+            ["documentId"] = unknown.DocumentId,
+            ["outcome"] = "unknown"
+        } : null);
 }
