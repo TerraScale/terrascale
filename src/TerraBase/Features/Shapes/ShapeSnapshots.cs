@@ -56,7 +56,7 @@ internal interface IShapeSnapshotTransactions
 /// <summary>Persisted, immutable snapshots; registration and scheduling belong to FR-10/FR-20.</summary>
 internal sealed class ShapeSnapshots(IMemoryBudget memory, TimeProvider time, IShapeSnapshotTransactions transactions) : IShapeSnapshotSealer
 {
-    // One admitted seal per singleton; flights share bootstrap work rather than queueing unbounded scans.
+    // One admitted seal per singleton; callers retry rather than queueing unbounded scans.
     private int _sealing;
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
     internal const int PageDocuments = 1000;

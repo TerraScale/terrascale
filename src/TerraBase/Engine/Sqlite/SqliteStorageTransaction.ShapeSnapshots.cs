@@ -127,7 +127,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
             var started = time.GetTimestamp();
             var envelopeBytes = ShapeSnapshots.EncodePage(shape, offset, afterId, "", cursor, "[]"u8).Length;
             var more = false;
-            while (true)
+            while (!more)
             {
                 // Turso drains a reader when closed; small metadata batches bound unused lookahead work.
                 var batch = ShapeSnapshotRows(shape.Collection, last,
@@ -144,7 +144,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
                         || (examined > 0 && time.GetElapsedTime(started) >= ShapeSnapshots.PageDeadline))
                     {
                         more = true;
-                        goto Finish;
+                        break;
                     }
 
                     using var rowMemory = memory.TryReserve(MemoryLane.Bulk, checked(size * 8 + 32 * 1024), store.Tenant) ?? throw new StorageBusyException();
@@ -173,7 +173,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
                     if (count > 0 && candidateBytes > ShapeSnapshots.PageBytes)
                     {
                         more = true;
-                        goto Finish;
+                        break;
                     }
 
                     if (matches)
@@ -203,7 +203,6 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
                 }
             }
 
-        Finish:
             operations.Write("]"u8);
             var next = more ? last : null;
             var bytes = ShapeSnapshots.EncodePage(shape, offset, afterId, next, cursor, "[]"u8).Length + operations.WrittenCount - 2;

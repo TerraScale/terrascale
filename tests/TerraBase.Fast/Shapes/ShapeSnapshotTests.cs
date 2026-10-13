@@ -3,7 +3,6 @@ using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Bogus;
@@ -220,6 +219,11 @@ public sealed class ShapeSnapshotTests
         await Assert.That(await OpsAsync(pages, shape, snapshot.Offset)).IsEmpty();
 
         await Assert.That(await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None)).IsEqualTo(snapshot);
+        fixture.Time.Advance(ShapeSnapshots.ResealAge);
+        await Assert.That(await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None)).IsEqualTo(snapshot)
+            .Because("an unchanged head cannot be rewritten at the same page URL after an hour");
+        var (again, _) = await PagesAsync(fixture.Snapshots, fixture.Store, shape.Handle, snapshot.Offset);
+        await Assert.That(again[0].SequenceEqual(pages[0])).IsTrue();
         await Assert.That(await ScalarAsync(fixture.Raw, $"SELECT COUNT(*) FROM _tb_shape_snapshot WHERE handle = '{shape.Handle}';")).IsEqualTo(1L);
     }
 
@@ -340,6 +344,39 @@ public sealed class ShapeSnapshotTests
     }
 
     [Test]
+    public async Task A_filtered_out_long_id_cannot_push_the_continuation_past_the_page_byte_limit()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await using var fixture = await Fixture.OpenAsync(api);
+        var ids = Ids(3);
+        var excluded = ids[1] + new string('b', 200);
+        var model = Model();
+        _ = await WriteAsync(api, model, (ids[0], Doc(0, "")), (excluded, Doc(1)), (ids[2], Doc(2)));
+        var shape = Shape(document => document.Id != excluded);
+        int framing;
+        await using (var reader = await fixture.Transactions.BeginAsync(fixture.Store, write: false, CancellationToken.None))
+        {
+            var (offset, cursor) = await ((IShapeSnapshotStorage)reader).ShapeSnapshotHeadAsync(shape.ResumeScope, Start, CancellationToken.None);
+            var document = await reader.GetAsync(DocumentApi.Collection, ids[0], CancellationToken.None);
+            var operation = ShapeSnapshots.Upsert(DocumentApi.Collection, document!);
+            var operations = new byte[operation.Length + 2];
+            operations[0] = (byte)'[';
+            operation.CopyTo(operations, 1);
+            operations[^1] = (byte)']';
+            framing = ShapeSnapshots.EncodePage(shape, offset, null, ids[0], cursor, operations).Length;
+        }
+
+        _ = await WriteAsync(api, model, (ids[0], Doc(0, new string('x', ShapeSnapshots.PageBytes - framing - 10))));
+        _ = model.Remove(excluded);
+        var snapshot = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
+        var (pages, nextIds) = await PagesAsync(fixture.Snapshots, fixture.Store, shape.Handle, snapshot.Offset);
+        await Assert.That(pages.Count).IsEqualTo(2);
+        await Assert.That(pages[0].Length).IsLessThanOrEqualTo(ShapeSnapshots.PageBytes);
+        await Assert.That(nextIds[0]).IsEqualTo(ids[0]).Because("the longer excluded id cannot fit in this page's continuation");
+        await AssertMatchesAsync(await OpsAsync(pages, shape, snapshot.Offset), model);
+    }
+
+    [Test]
     public async Task A_document_too_large_to_share_a_page_travels_alone_past_1_MiB()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -394,7 +431,10 @@ public sealed class ShapeSnapshotTests
         await using var fixture = await Fixture.OpenAsync(api);
         var ids = Ids(2);
         _ = await WriteAsync(api, Model(), (ids[0], Doc(0)), (ids[1], Doc(1)));
-        await RawWriteAsync(fixture.Raw, $"UPDATE \"{DocumentApi.Collection}\" SET doc = CAST(X'{damaged}' AS TEXT) WHERE id = '{ids[1]}';");
+        // Keep the corruption as bytes: a TEXT cast can replace invalid UTF-8 before the snapshot reads it.
+        await RawWriteAsync(fixture.Raw, $"UPDATE \"{DocumentApi.Collection}\" SET doc = X'{damaged}' WHERE id = '{ids[1]}';");
+        await Assert.That(await ScalarAsync(fixture.Raw, $"SELECT hex(CAST(doc AS BLOB)) = '{damaged}' FROM \"{DocumentApi.Collection}\" WHERE id = '{ids[1]}';"))
+            .IsEqualTo(1L).Because("the stored damage must reach the snapshot validator unchanged");
         var shape = Shape();
 
         await Assert.That(async () => await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None)).Throws<InvalidDataException>();
@@ -514,7 +554,7 @@ public sealed class ShapeSnapshotTests
     private static async Task<Dictionary<string, string>> WriteAsync(
         DocumentApi api, SortedDictionary<string, JsonObject> model, params (string Id, JsonObject? Document)[] writes)
     {
-        Dictionary<string, string> versions = new(StringComparer.Ordinal);
+        Dictionary<string, string> versions = [];
         foreach (var batch in writes.Chunk(250))
         {
             object[] ops = [.. batch.Select(write => write.Document is { } document
@@ -560,7 +600,7 @@ public sealed class ShapeSnapshotTests
     }
 
     /// <summary>Checks every page against section 6 and the chain's contiguity, and returns the ops in page order.</summary>
-    private static async Task<List<JsonElement>> OpsAsync(IReadOnlyList<byte[]> pages, ShapeSnapshotDefinition shape, long offset)
+    private static async Task<List<JsonElement>> OpsAsync(List<byte[]> pages, ShapeSnapshotDefinition shape, long offset)
     {
         var at = offset.ToString(CultureInfo.InvariantCulture);
         var expectedOffset = ShapeSnapshots.PageOffset(offset, null);
@@ -637,7 +677,7 @@ public sealed class ShapeSnapshotTests
         using var command = session.Connection.CreateCommand();
         command.CommandText = $"SELECT id, deleted FROM _tb_feed WHERE collection = '{DocumentApi.Collection}' AND seq <= {offset} ORDER BY seq;";
         using var reader = command.ExecuteReader();
-        Dictionary<string, bool> live = new(StringComparer.Ordinal);
+        Dictionary<string, bool> live = [];
         while (reader.Read())
         {
             live[reader.GetString(0)] = reader.GetInt64(1) == 0;
