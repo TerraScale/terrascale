@@ -154,13 +154,23 @@ internal sealed class PowerLossNode : IAsyncDisposable
     /// <summary>Every log sync of the node waits <paramref name="delay"/> first, from now on.</summary>
     public void DelaySyncs(TimeSpan delay) => Faults.Delay(delay);
 
+    /// <summary>
+    /// From now on the next log sync ends the process before it syncs anything: a power loss at this instant, whatever the
+    /// node does next. Call <see cref="PowerLossAsync"/> after it.
+    /// </summary>
+    public void KillAtNextSync() => Faults.KillAtSync(1);
+
     /// <summary>Log syncs run normally again.</summary>
     public void ClearFaults() => Faults.Clear();
 
     // SIGKILL, then every write-ahead log back to its length at its last sync.
     public async Task PowerLossAsync()
     {
-        _process!.Kill(entireProcessTree: true);
+        if (!_process!.HasExited)
+        {
+            _process.Kill(entireProcessTree: true);
+        }
+
         await _process.WaitForExitAsync();
         Faults.DropUnsynced(Data);
     }

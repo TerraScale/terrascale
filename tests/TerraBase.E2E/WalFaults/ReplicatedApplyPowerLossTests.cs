@@ -71,13 +71,15 @@ public sealed class ReplicatedApplyPowerLossTests
             });
             using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
             await Assert.That(await call.ResponseStream.MoveNext(timeout.Token)).IsTrue();
+            // The power fails at the ack: any later sync ends the process unsynced, so only syncs made before the ack count.
+            node.KillAtNextSync();
             var acked = clock.Elapsed;
-            node.ClearFaults();
             await Assert.That(call.ResponseStream.Current.Ack is { ChangeId: 4, Refused: false }).IsTrue().Because(call.ResponseStream.Current.ToString());
             await Assert.That(acked).IsGreaterThanOrEqualTo(delay * 2).Because("the ack waits for both transactions' log syncs");
         }
 
         await node.PowerLossAsync();
+        node.ClearFaults();
         await node.StartAgainAsync();
 
         // The first and last document of each group: both transactions survived.
