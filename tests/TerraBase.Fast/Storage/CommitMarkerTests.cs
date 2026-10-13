@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
@@ -36,6 +37,7 @@ public sealed class CommitMarkerTests
             .Single(group => group.Deltas.Any(delta => delta.Id == id)).ChangeId);
         await Assert.That(firstCommit.Offset).IsGreaterThan(0);
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.OK);
+        await AssertValueAsync(data, managed, id, 1, token);
 
         var later = EntityIds.New().ToString();
         using (var response = await data.PutAsJsonAsync(Document(managed, later), new { n = 2 }, token))
@@ -44,6 +46,7 @@ public sealed class CommitMarkerTests
         }
 
         await Assert.That(await source.HeadAsync(tenant, token)).IsGreaterThan(marker.ChangeId);
+        await AssertValueAsync(data, managed, later, 2, token);
         var (asserted, assertionCommit) = await store.WriteAsync((transaction, inner) => transaction.GetAsync("items", id, inner), document => document is not null, token);
         await Assert.That(asserted).IsNotNull();
         await Assert.That(assertionCommit.Marker).IsNull();
@@ -89,6 +92,7 @@ public sealed class CommitMarkerTests
         var (checkedOnly, assertionCommit) = await assertion;
         var (_, rejectedCommit) = await rejected;
         await Assert.That(writtenCommit.Marker).IsNotNull();
+        await Assert.That(writtenCommit.Marker!.Value.Incarnation).IsEqualTo(store.Incarnation);
         await Assert.That(otherCommit).IsEqualTo(writtenCommit).Because("both mutations share their batch's own CDC commit row");
         await Assert.That(checkedOnly).IsNotNull();
         await Assert.That(assertionCommit.Offset).IsEqualTo(writtenCommit.Offset);
@@ -96,6 +100,8 @@ public sealed class CommitMarkerTests
         await Assert.That(rejectedCommit).IsEqualTo(default);
         await Assert.That(await StatusAsync(data, managed, kept, token)).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(await StatusAsync(data, managed, alsoKept, token)).IsEqualTo(HttpStatusCode.OK);
+        await AssertValueAsync(data, managed, kept, 1, token);
+        await AssertValueAsync(data, managed, alsoKept, 1, token);
         await Assert.That(await StatusAsync(data, managed, refused, token)).IsEqualTo(HttpStatusCode.NotFound);
         var groups = await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token);
         await Assert.That(groups.Single(group => group.Deltas.Any(delta => delta.Id == kept)).ChangeId).IsEqualTo(writtenCommit.Marker!.Value.ChangeId);
@@ -148,6 +154,7 @@ public sealed class CommitMarkerTests
         await Assert.That(store.CommitSequence).IsGreaterThan(sequence).Because("the successful COMMIT must notify waiters even when its marker read fails");
         await Assert.That(store.Incarnation).IsEqualTo(incarnation);
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.OK);
+        await AssertValueAsync(data, managed, id, 1, token);
         await Assert.That((await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token))
             .Count(group => group.Deltas.Any(delta => delta.Id == id))).IsEqualTo(1);
         await Assert.That((await PutAsync(store, EntityIds.New().ToString(), token)).Commit.Marker).IsNotNull();
@@ -195,11 +202,46 @@ public sealed class CommitMarkerTests
         await Assert.That(Volatile.Read(ref armed)).IsEqualTo(0).Because("the requested post-commit failure actually executed");
         await Assert.That(store.Incarnation).IsEqualTo(incarnation);
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.OK);
+        await AssertValueAsync(data, managed, id, 1, token);
         await Assert.That((await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token))
             .Count(group => group.Deltas.Any(delta => delta.Id == id))).IsEqualTo(1).Because("a failed response never replays the ambiguous mutation");
 
-        using var next = await data.PutAsJsonAsync(Document(managed, EntityIds.New().ToString()), new { n = 2 }, token);
+        var nextId = EntityIds.New().ToString();
+        using var next = await data.PutAsJsonAsync(Document(managed, nextId), new { n = 2 }, token);
         await Assert.That(next.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        await AssertValueAsync(data, managed, nextId, 2, token);
+    }
+
+    [Test]
+    public async Task A_cancelled_commit_has_no_result_and_rolls_back_its_document_and_capture()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var token = deadline.Token;
+        await using var api = await ManagementApi.StartAsync(cancellationToken: token);
+        var managed = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(managed.Organization, "documents:write", "documents:read");
+        await ManagementApi.CreateCollectionAsync(data, managed, "items");
+        var (store, source, tenant) = await OpenAsync(api, managed, token);
+        var before = await source.HeadAsync(tenant, token);
+        var incarnation = store.Incarnation;
+        var sequence = store.CommitSequence;
+        var id = EntityIds.New().ToString();
+        CommitResult? result = null;
+        await using (var transaction = await store.BeginTransactionAsync(write: true, token))
+        {
+            _ = await transaction.PutAsync("items", id, Body, token);
+            await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+            {
+                result = await transaction.CommitAsync(new CancellationToken(canceled: true));
+            });
+        }
+
+        await Assert.That(result).IsNull().Because("a rolled-back attempt has no committed outcome or marker");
+        await Assert.That(store.CommitSequence).IsEqualTo(sequence);
+        await Assert.That(store.Incarnation).IsEqualTo(incarnation);
+        await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That((await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token))
+            .Any(group => group.Deltas.Any(delta => delta.Id == id))).IsFalse();
     }
 
     private static ValueTask<(long Result, CommitResult Commit)> PutAsync(SqliteDatabaseStore store, string id, CancellationToken token) =>
@@ -220,6 +262,14 @@ public sealed class CommitMarkerTests
     {
         using var response = await data.GetAsync(Document(managed, id), token);
         return response.StatusCode;
+    }
+
+    private static async Task AssertValueAsync(HttpClient data, ManagedDatabaseRef managed, string id, int expected, CancellationToken token)
+    {
+        using var response = await data.GetAsync(Document(managed, id), token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var body = JsonElement.Parse(await response.Content.ReadAsStringAsync(token));
+        await Assert.That(body.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(expected);
     }
 
     private static async Task UntilAsync(Func<bool> condition, CancellationToken token)
