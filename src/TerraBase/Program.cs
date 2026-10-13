@@ -66,6 +66,8 @@ builder.Logging.AddTerraBaseLogging();
 
 var runCompletion = new ApplicationRunCompletion();
 builder.Services.AddSingleton(runCompletion);
+builder.Services.AddSingleton<Shutdown>();
+builder.Services.Configure<HostOptions>(host => host.ShutdownTimeout = Shutdown.HostedBudget);
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(TimeProvider.System);
 // Outbound clients keep one handler for the host's lifetime and recycle its connections instead (DNS changes still
@@ -120,6 +122,18 @@ try
         return 2;
     }
 
+    var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+    // Refuse new work on existing connections as soon as SIGTERM arrives; Kestrel closes the listeners first.
+    app.Use((context, next) =>
+    {
+        if (lifetime.ApplicationStopping.IsCancellationRequested)
+        {
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            return Task.CompletedTask;
+        }
+
+        return next(context);
+    });
     // Forwarded requests run through everything after it. Error bodies first, so they also cover the listener check's 404.
     app.UseTerraBaseForwardedRequests();
     app.UseTerraBasePressure();
