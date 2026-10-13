@@ -36,6 +36,7 @@ the targets file at the end stops the host.
   Prometheus scrape (identified by opening one calibration stream on gru and finding the host TCP listener whose
   scoped `/metrics` reports that stream, then closing it before measurement). It is document accounting
   (GETs and queries), published per closed 5 s window, and the feed does not add to it. The raw lines are in the report.
+  Both accounting reads and inferred document SELECTs cover gru only; sjc reads are not included.
 
 ## Limits
 

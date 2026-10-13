@@ -83,8 +83,10 @@ func startHost(ctx context.Context, work string) (*host, error) {
 	if err != nil {
 		return fail(err)
 	}
-	if _, ok := t.Regions[region]; !ok || t.Kind != "local" || t.PID <= 0 {
-		return fail(fmt.Errorf("targets: want a local host with region %s and its pid", region))
+	_, gru := t.Regions[region]
+	_, sjc := t.Regions["sjc"]
+	if !gru || !sjc || len(t.Regions) != 2 || t.Kind != "local" || t.PID <= 0 {
+		return fail(fmt.Errorf("targets: want a local host with regions %s and its pid", hostRegions))
 	}
 	h.targets = t
 	return h, nil
@@ -121,15 +123,31 @@ func metricsURL(ctx context.Context, pid int) (string, error) {
 	slices.Sort(ports)
 	ports = slices.Compact(ports)
 	c := &http.Client{Timeout: 2 * time.Second}
+	var matches []string
 	for _, p := range ports {
 		u := fmt.Sprintf("http://127.0.0.1:%d/metrics", p)
 		if body, err := get(ctx, c, u); err == nil && strings.Contains(body, "terrabase_stats_operations") {
-			if streams, ok := promValue(body, "terrabase_changes_streams", ""); ok && streams == 1 {
-				return u, nil
+			if streams, ok := streamCount(body); ok && streams == 1 {
+				matches = append(matches, u)
 			}
 		}
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("metrics discovery: %w", err)
+		}
 	}
-	return "", fmt.Errorf("no TCP listener of process %d answers /metrics with terrabase_stats_operations and one calibration stream (ports %v)", pid, ports)
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	return "", fmt.Errorf("want exactly one scoped metrics listener of process %d with one calibration stream, found %v (ports %v)", pid, matches, ports)
+}
+
+// streamCount accepts the feed's single unlabelled gauge, avoiding a first-series choice if its format changes.
+func streamCount(body string) (float64, bool) {
+	lines := promLines(body, "terrabase_changes_streams")
+	if len(lines) != 1 {
+		return 0, false
+	}
+	return promValue(lines[0], "terrabase_changes_streams", "")
 }
 
 // listenPorts are the ports of the LISTEN sockets of a /proc/net/tcp{,6} table whose inode is in inodes.

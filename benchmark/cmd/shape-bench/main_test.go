@@ -118,6 +118,17 @@ func TestListenPortsKeepsTheProcessListeners(t *testing.T) {
 	}
 }
 
+func TestStreamCountRejectsAmbiguousSeries(t *testing.T) {
+	t.Parallel()
+	const line = "terrabase_changes_streams{otel_scope_name=\"TerraScale.TerraBase\"} 1\n"
+	if v, ok := streamCount(line); !ok || v != 1 {
+		t.Fatalf("one stream: %v %v", v, ok)
+	}
+	if _, ok := streamCount(line + line); ok {
+		t.Fatal("ambiguous stream series accepted")
+	}
+}
+
 func TestDocumentIsPayloadSizedJSONWithItsSendTime(t *testing.T) {
 	t.Parallel()
 	sent := time.Unix(1_800_000_000, 123)

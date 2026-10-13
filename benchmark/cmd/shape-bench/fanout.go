@@ -410,7 +410,11 @@ func (b *bench) waitStreams(ctx context.Context, want int64) error {
 		if err != nil {
 			return err
 		}
-		got, _ = promValue(body, "terrabase_changes_streams", "")
+		var ok bool
+		got, ok = streamCount(body)
+		if !ok && len(promLines(body, "terrabase_changes_streams")) != 0 {
+			return fmt.Errorf("metrics: want one terrabase_changes_streams series")
+		}
 		if int64(got) == want {
 			return nil
 		}
