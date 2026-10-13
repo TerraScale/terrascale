@@ -76,9 +76,6 @@ internal sealed partial class SqliteStorageTransaction(
     /// <summary>The offset this transaction committed at, set as soon as its SQLite commit succeeded; null before.</summary>
     internal long? Committed { get; private set; }
 
-    /// <summary>Whether the state readers see (collection names, the incarnation) followed the commit; false before it.</summary>
-    internal bool Settled { get; private set; }
-
     // Taken when the transaction begins: a catalog follower adopting its primary's incarnation never mixes it into a
     // snapshot read before.
     public Guid Scope { get; } = store.Scope;
@@ -993,62 +990,75 @@ internal sealed partial class SqliteStorageTransaction(
                 throw new InvalidOperationException("an operation of this transaction failed, so it can only be rolled back");
             }
 
+            long offset;
+            var committing = false;
             try
             {
                 FlushStates();
                 DropUniqueAffected();
-                var offset = _offset ?? GetOffset();
+                offset = _offset ?? GetOffset();
                 if (_changes is { Count: > 0 })
                 {
                     sequence = AppendChanges(_changes, cancellationToken);
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
+                committing = true;
                 transaction.Commit();
-                Committed = offset;
-                return offset;
             }
             catch
             {
                 _faulted = true;
+                // The driver can throw after the commit landed. Both only drop caches: safe whether or not it did.
+                if (committing && _collectionsChanged)
+                {
+                    store.ForgetCollections();
+                }
+
+                if (committing && (_offset is not null || _replicaChanged))
+                {
+                    store.MoveCommitCount();
+                }
+
                 throw;
             }
+
+            // On the write thread right after the commit, so readers see stale collection names or incarnation only
+            // briefly. Every step runs, each even when one before it failed.
+            Committed = offset;
+            Follow("the after-commit hook", store.AfterSqliteCommit);
+            if (_collectionsChanged)
+            {
+                Follow("forgetting the collection names", store.ForgetCollections);
+            }
+
+            if (_statisticsChanged)
+            {
+                // Only query plans depend on it: a session opened before the ANALYZE plans without the new statistics.
+                Follow("moving the statistics generation", store.StatisticsChanged);
+            }
+
+            if (_adoptedIncarnation is { } adopted)
+            {
+                // Before the commit wakes waiters: readers see the adopted documents with their incarnation.
+                Follow("adopting the incarnation", () => store.AdoptIncarnation(adopted));
+            }
+
+            return offset;
         }, cancellationToken).ConfigureAwait(false);
 
-        // The write is in the database: every step below runs, each even when one before it failed.
-        // Rule: a failed wake-up still answers committed; reader state that could not follow the commit answers unknown.
-        Exception? failure = null;
-        Follow(store.AfterSqliteCommit, ref failure);
-        var settled = true;
-        if (_collectionsChanged)
-        {
-            settled &= Follow(store.ForgetCollections, ref failure);
-        }
-
-        if (_adoptedIncarnation is { } adopted)
-        {
-            // Before the commit wakes waiters: readers see the adopted documents with their incarnation.
-            settled &= Follow(() => store.AdoptIncarnation(adopted), ref failure);
-        }
-
-        Settled = settled;
-        if (_statisticsChanged)
-        {
-            // Only query plans depend on it: a session opened before the ANALYZE plans without the new statistics.
-            Follow(store.StatisticsChanged, ref failure);
-        }
-
+        // A failed wake-up only delays its waiter, which also wakes on its own timeout.
         if (_offset is not null || _replicaChanged)
         {
-            Follow(committed, ref failure);
+            Follow("the commit notification", committed);
         }
 
         if (sequence is { } appended)
         {
-            Follow(() => changesCommitted!(appended), ref failure);
+            Follow("the change notification", () => changesCommitted!(appended));
         }
 
-        if (failure is not null)
+        if (_followFailure is { } failure)
         {
             ExceptionDispatchInfo.Throw(failure);
         }
@@ -1056,18 +1066,20 @@ internal sealed partial class SqliteStorageTransaction(
         return offset;
     }
 
-    // Runs one step after the commit; its failure is kept for the caller instead of skipping the steps after it.
-    private static bool Follow(Action? step, ref Exception? failure)
+    // The first step after the commit that failed: CommitAsync throws it once every step ran.
+    private Exception? _followFailure;
+
+    // Runs one step after the commit landed; its failure is logged and kept instead of skipping the steps after it.
+    private void Follow(string step, Action? action)
     {
         try
         {
-            step?.Invoke();
-            return true;
+            action?.Invoke();
         }
         catch (Exception error)
         {
-            failure ??= error;
-            return false;
+            _followFailure ??= error;
+            store.LogAfterCommit(step, error);
         }
     }
 

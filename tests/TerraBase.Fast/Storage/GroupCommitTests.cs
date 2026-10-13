@@ -8,7 +8,6 @@ using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Fast.Management;
-using TerraBase.Features.Replication;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Storage;
@@ -383,6 +382,10 @@ public sealed class GroupCommitTests
         await Assert.That(read.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
         await Assert.That((await api.GetAsync(transacted)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(3);
         await Assert.That(logs.Messages.Any(message => message.Contains("committed, but the work after its commit failed", StringComparison.Ordinal))).IsTrue();
+        // A failure inside CommitAsync is logged where it happens too, so a later cleanup failure cannot hide it.
+        const string step = "the after-commit hook after its commit failed";
+        var logged = logs.Messages.Any(message => message.Contains(step, StringComparison.Ordinal));
+        await Assert.That(logged).IsEqualTo(insideCommit);
 
         // The writer keeps working.
         store.AfterSqliteCommit = store.AfterGroupCommit = null;
@@ -421,8 +424,8 @@ public sealed class GroupCommitTests
         await Assert.ThrowsAsync<IOException>(async () => await system.WriteAsync(
             (transaction, token) => transaction.PutAsync("group_commit_probe", id, """{"n":1}"""u8.ToArray(), token), _ => true, CancellationToken.None));
 
-        // It stays consistent: the commit count and the catalog feed's wake-up follow the commit. Every other catalog commit
-        // meanwhile fails at the hook too, so none of them can stand in for this one.
+        // It stays consistent: the commit count and the catalog feed's wake-up follow the commit. Only insideCommit proves
+        // it: every other catalog commit meanwhile fails at that hook too, while the hook after CommitAsync runs once they moved.
         await feed.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(system.CommitSequence).IsGreaterThan(sequence);
         system.AfterSqliteCommit = system.AfterGroupCommit = null;
@@ -440,15 +443,14 @@ public sealed class GroupCommitTests
         var store = await StoreAsync(api);
         var sequence = store.CommitSequence;
         var committed = store.WaitForCommitAsync(sequence, CancellationToken.None);
-        var tail = api.Server.Services.GetRequiredService<IChangeGroupSource>().ChangedAsync(CancellationToken.None);
         store.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
 
         var written = await api.PutAsync(DocumentApi.NewId(), new { n = 1 });
 
-        // No later commit: the database's commit count and the peer streams' wake-up still follow this one.
+        // No later commit: the database's commit count and its waiters still follow this one. Only this database's
+        // commits move it, and every one of them meanwhile fails at the hook.
         await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
         await committed.WaitAsync(TimeSpan.FromSeconds(10));
-        await tail.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(store.CommitSequence).IsGreaterThan(sequence);
         store.AfterSqliteCommit = null;
     }
@@ -493,24 +495,47 @@ public sealed class GroupCommitTests
     }
 
     // Client databases keep their tenant's version scope; only a catalog follower's system database adopts an incarnation.
+    // A system database of the test's own, outside the server's data directory, so no server service writes to it.
     [Test]
     public async Task A_failure_right_after_a_catalog_replica_commit_still_adopts_its_incarnation()
     {
         await using var server = await TerraBaseTestServer.StartAsync();
         var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
-        var system = (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(CancellationToken.None);
-        var origin = Ulid.NewUlid();
-        var replica = await system.BeginReplicaAsync(CancellationToken.None);
-        await using (replica)
+        var directory = Directory.CreateTempSubdirectory("terrabase-incarnation-");
+        try
         {
-            await replica.ResetReplicaAsync(origin.ToByteArray(), CancellationToken.None);
-            system.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
-            // The catalog fails closed, but its ETags already use the incarnation the committed file holds.
-            await Assert.ThrowsAsync<IOException>(async () => await replica.CommitAsync(CancellationToken.None));
-            system.AfterSqliteCommit = null;
-        }
+            var path = Path.Combine(directory.FullName, "_system.db");
+            const string name = SqliteStorageEngine.SystemName;
+            await SqliteDatabaseStore.InitializeAsync(name, path, engine.Io, string.Empty, CancellationToken.None);
+            var system = new SqliteDatabaseStore(name, path, engine.Pool, engine.Io, "PRAGMA busy_timeout = 30000;");
+            try
+            {
+                await engine.Io.WithAdmissionAsync(async () =>
+                {
+                    await system.BootstrapAsync(CancellationToken.None);
+                    return true;
+                });
+                var origin = Ulid.NewUlid();
+                var replica = await system.BeginReplicaAsync(CancellationToken.None);
+                await using (replica)
+                {
+                    await replica.ResetReplicaAsync(origin.ToByteArray(), CancellationToken.None);
+                    system.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
+                    // The catalog fails closed, but its ETags already use the incarnation the committed file holds.
+                    await Assert.ThrowsAsync<IOException>(async () => await replica.CommitAsync(CancellationToken.None));
+                }
 
-        await Assert.That(system.Incarnation).IsEqualTo(origin);
+                await Assert.That(system.Incarnation).IsEqualTo(origin);
+            }
+            finally
+            {
+                await engine.Io.RunAsync(system.Dispose, CancellationToken.None);
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
     }
 
     [Test]

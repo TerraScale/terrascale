@@ -322,18 +322,31 @@ internal sealed partial class SqliteDatabaseStore(
         }
         finally
         {
-            // The count (a cache key of StorageQuota) moves and waiters wake even when the engine's notification failed.
-            TaskCompletionSource signal;
-            lock (_commits)
-            {
-                _sequence++;
-                signal = _signal;
-                _signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            }
-
-            signal.SetResult();
+            // Even when the engine's notification failed.
+            MoveCommitCount();
         }
     }
+
+    /// <summary>
+    /// Moves the commit count, a cache key of StorageQuota, and wakes its waiters. Only invalidates, so it is also safe after
+    /// a commit that may not have landed.
+    /// </summary>
+    internal void MoveCommitCount()
+    {
+        TaskCompletionSource signal;
+        lock (_commits)
+        {
+            _sequence++;
+            signal = _signal;
+            _signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        signal.SetResult();
+    }
+
+    /// <summary>Logs a step after a landed commit that failed; the commit's other steps still ran.</summary>
+    internal void LogAfterCommit(string step, Exception error) =>
+        logger?.ZLogError(error, $"Database {name:@Database} committed, but {step:@Step} after its commit failed");
 
     // Takes the writer, waiting at most 30 s as busy_timeout did before this wait replaced it in-process. A wait of
     // SlowWriterWait or more, whatever its outcome, logs what held the writer, for how long, and whether it was running a
@@ -749,18 +762,18 @@ internal sealed partial class SqliteDatabaseStore(
                 }
             }
         }
-        catch (Exception error) when (!IsSystem && transaction is { Committed: { } committedAt, Settled: true })
+        catch (Exception error) when (!IsSystem && transaction?.Committed is { } committedAt)
         {
-            // A client database's batch committed and what readers see followed it: its writes are answered as committed,
-            // not as a failure a client would retry. What failed is other work after the SQLite commit (a wake-up, disposing
-            // the transaction, releasing the writer).
+            // A client database's batch committed: its writes are answered as committed, not as a failure a client would
+            // retry. A batch never changes collection names or the incarnation, so what failed is a wake-up or the cleanup
+            // after the commit (disposing the transaction, releasing the writer).
             offset = committedAt;
             logger?.ZLogError(error, $"A group commit of database {name:@Database} committed, but the work after its commit failed; its writes are answered as committed");
         }
         catch (Exception error)
         {
-            // Nothing of this batch committed, what readers see is unknown, or it is the catalog's, which fails closed: every
-            // write not answered yet fails with it.
+            // Nothing of this batch committed, or it is the catalog's, which fails closed: every write not answered yet
+            // fails with it.
             batch.ForEach(write => write.Fail(error));
             return [];
         }
