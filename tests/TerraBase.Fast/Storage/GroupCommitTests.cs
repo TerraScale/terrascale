@@ -456,6 +456,24 @@ public sealed class GroupCommitTests
     }
 
     [Test]
+    public async Task A_log_call_that_throws_after_the_commit_skips_no_step_and_keeps_the_write_queue_working()
+    {
+        var logs = new CapturedLogs { ThrowOn = "after its commit failed" };
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<ILoggerProvider>(logs));
+        var store = await StoreAsync(api);
+        var sequence = store.CommitSequence;
+        store.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
+
+        // Both log calls after the commit throw: the write is still answered, and the commit count still moved.
+        var written = await api.PutAsync(DocumentApi.NewId(), new { n = 1 }).WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(store.CommitSequence).IsGreaterThan(sequence);
+        store.AfterSqliteCommit = null;
+        var next = await api.PutAsync(DocumentApi.NewId(), new { n = 2 }).WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(next.Status).IsEqualTo(HttpStatusCode.Created);
+    }
+
+    [Test]
     public async Task A_failure_right_after_creating_a_collection_still_serves_the_new_collection()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -574,21 +592,31 @@ public sealed class GroupCommitTests
     {
         public ConcurrentQueue<string> Messages { get; } = new();
 
-        public ILogger CreateLogger(string categoryName) => new Logger(Messages);
+        /// <summary>Text whose log calls throw once captured, like a failing log sink.</summary>
+        public string? ThrowOn { get; init; }
+
+        public ILogger CreateLogger(string categoryName) => new Logger(this);
 
         public void Dispose()
         {
         }
 
-        private sealed class Logger(ConcurrentQueue<string> messages) : ILogger
+        private sealed class Logger(CapturedLogs logs) : ILogger
         {
             public IDisposable? BeginScope<TState>(TState state)
                 where TState : notnull => null;
 
             public bool IsEnabled(LogLevel logLevel) => true;
 
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-                messages.Enqueue(formatter(state, exception));
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                var message = formatter(state, exception);
+                logs.Messages.Enqueue(message);
+                if (logs.ThrowOn is { } text && message.Contains(text, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("the test fails this log call");
+                }
+            }
         }
     }
 }

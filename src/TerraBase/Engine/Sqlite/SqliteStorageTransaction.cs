@@ -76,6 +76,9 @@ internal sealed partial class SqliteStorageTransaction(
     /// <summary>The offset this transaction committed at, set as soon as its SQLite commit succeeded; null before.</summary>
     internal long? Committed { get; private set; }
 
+    /// <summary>Whether this transaction changed state readers see beside its documents: collection names or the incarnation.</summary>
+    internal bool ChangedReaderState => _collectionsChanged || _adoptedIncarnation is not null;
+
     // Taken when the transaction begins: a catalog follower adopting its primary's incarnation never mixes it into a
     // snapshot read before.
     public Guid Scope { get; } = store.Scope;
