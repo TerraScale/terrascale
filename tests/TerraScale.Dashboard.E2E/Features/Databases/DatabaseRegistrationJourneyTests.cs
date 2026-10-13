@@ -2,7 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 
-namespace TerraScale.Dashboard.E2E;
+namespace TerraScale.Dashboard.E2E.Features.Databases;
 
 [ClassDataSource<DashboardRootFixture>]
 public sealed class DatabaseRegistrationJourneyTests(DashboardRootFixture fixture)

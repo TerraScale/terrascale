@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 
-namespace TerraScale.Dashboard.E2E;
+namespace TerraScale.Dashboard.E2E.Features.Auth;
 
 [ClassDataSource<DashboardRootFixture>]
 public sealed class ProjectAuthorizationJourneyTests(DashboardRootFixture fixture)

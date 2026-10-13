@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Playwright;
 
-namespace TerraScale.Dashboard.E2E;
+namespace TerraScale.Dashboard.E2E.Platform;
 
 [ClassDataSource<DashboardRootFixture>]
 // Needs this machine's tailnet name and dotnet watch, so it runs on a dev machine: make test-hot-reload.

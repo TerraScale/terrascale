@@ -9,7 +9,7 @@ using Microsoft.Playwright;
 using TUnit.Assertions.Enums;
 using TUnit.Core;
 
-namespace TerraScale.Dashboard.E2E;
+namespace TerraScale.Dashboard.E2E.Features.Auth;
 
 [ClassDataSource<DashboardE2EFixture>]
 [Category("Slow")]

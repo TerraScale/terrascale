@@ -4,7 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using TUnit.Core;
 
-namespace TerraScale.Dashboard.E2E;
+namespace TerraScale.Dashboard.E2E.Features.Accounts;
 
 [ClassDataSource<DashboardRootFixture>]
 public sealed class AccountIdentityJourneyTests(DashboardRootFixture fixture)

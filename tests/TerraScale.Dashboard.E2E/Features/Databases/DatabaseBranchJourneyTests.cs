@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using TerraScale.Dashboard.Features.Accounts;
 
-namespace TerraScale.Dashboard.E2E;
+namespace TerraScale.Dashboard.E2E.Features.Databases;
 
 [ClassDataSource<DashboardRootFixture>]
 public sealed class DatabaseBranchJourneyTests(DashboardRootFixture fixture)

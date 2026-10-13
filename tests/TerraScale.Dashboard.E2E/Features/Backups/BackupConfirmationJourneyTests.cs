@@ -3,10 +3,11 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
+using TerraScale.Dashboard.E2E.Features.Databases;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 
-namespace TerraScale.Dashboard.E2E;
+namespace TerraScale.Dashboard.E2E.Features.Backups;
 
 [ClassDataSource<DashboardRootFixture>]
 public sealed class BackupConfirmationJourneyTests(DashboardRootFixture fixture)

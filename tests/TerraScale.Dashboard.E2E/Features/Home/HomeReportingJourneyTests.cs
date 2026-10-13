@@ -3,7 +3,7 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 
-namespace TerraScale.Dashboard.E2E;
+namespace TerraScale.Dashboard.E2E.Features.Home;
 
 [ClassDataSource<DashboardRootFixture>]
 public sealed class HomeReportingJourneyTests(DashboardRootFixture fixture)

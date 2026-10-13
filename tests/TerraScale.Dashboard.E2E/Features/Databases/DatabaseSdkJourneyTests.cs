@@ -11,7 +11,7 @@ using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 using TUnit.Core;
 
-namespace TerraScale.Dashboard.E2E;
+namespace TerraScale.Dashboard.E2E.Features.Databases;
 
 [ClassDataSource<DashboardRootFixture>]
 public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
