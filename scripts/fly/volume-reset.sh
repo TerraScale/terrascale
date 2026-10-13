@@ -46,6 +46,12 @@ if [[ -z $image ]]; then
 fi
 
 echo "Plan: snapshot $volume, move $app $region ($id) onto a new empty volume${image:+ with $image}, then delete $volume."
+# Dogfooding: the region's platform databases are on this volume too (docs/terrabase/platform-databases.md).
+lost="everything stored in $region's TerraBase: customer databases (none while the guard file exists) and the platform
+databases platform-auth (ts-auth's signing keys, users, sessions, organizations, API keys) and platform-dashboard.
+TerraBase re-seeds them empty on start; ts-auth then bootstraps new signing keys, so tokens signed before stop verifying.
+Recoverable only from snapshot of $volume"
+echo "Data lost: $lost."
 echo "Cost: a new ${size} GB volume replaces $volume; the snapshot is billed until Fly's retention expires."
 if [[ -n $dry_run ]]; then
   echo "Dry run: nothing changed."
@@ -80,4 +86,5 @@ flyctl machine destroy "$id" -a "$app" --force
 flyctl volumes destroy "$volume" -a "$app" --yes
 line="$app $region volume reset: machine $id -> ${new% *}, volume $volume (deleted) -> ${new#* } (${size} GB), snapshot $snapshot"
 echo "$line"
-if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then echo "- $line" >>"$GITHUB_STEP_SUMMARY"; fi
+echo "Data lost: $lost $snapshot."
+if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then printf -- '- %s\n  - Data lost: %s %s.\n' "$line" "${lost//$'\n'/ }" "$snapshot" >>"$GITHUB_STEP_SUMMARY"; fi
