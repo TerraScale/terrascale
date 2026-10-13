@@ -272,7 +272,6 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private int passwordGrants;
         private int codeExchanges;
         private int signupGrantBindings;
-        private int managementMutations;
         private int managementRequests;
         private int revocations;
         private int contractFailures;
@@ -375,7 +374,11 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 Interlocked.Increment(ref unsupportedIntrospectionRequests);
                 return Results.NotFound();
             }
-            if (path.StartsWith("/v1/terrascale/users/", StringComparison.Ordinal)) return await ManagementAsync(http, path);
+            if (path.StartsWith("/v1/terrascale/users/", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref managementRequests);
+                return Results.NotFound();
+            }
             if (path.Contains("/headless/v1/", StringComparison.Ordinal)) return await HeadlessAsync(http, path);
             if (!http.Request.HasFormContentType) return ContractFailure("Missing form-encoded auth operation.");
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
@@ -563,7 +566,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             var action = path.Split("/headless/v1/", StringSplitOptions.None)[1];
             actions.Enqueue(action);
             if (action == "password-reset/start" && fault == "reset-start-missing")
-                return OAuthError("not_found", 404);
+                return Results.NotFound();
             if (fault == "signup-policy" && action == "sign-up")
                 return Results.Json(new { error = new { code = "invalid_password", message = "That password is too common." } }, statusCode: 400);
             if (action == "sign-up")
@@ -574,61 +577,29 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 {
                     password = proposedPassword;
                     signupPending = true;
-                    return Results.Json(new { pending_token = "pending-enrollment" });
+                    return Results.Json(new { pending_token = "pending-enrollment" }, statusCode: StatusCodes.Status202Accepted);
                 }
                 var identity = pendingEnrollments.GetValueOrDefault(email)?.Principal.Subject ?? new TerraScaleIdGenerator().NewId();
                 var pending = new PendingEnrollment(new(identity, email, email, proposedPassword, 0, null),
                     B64(RandomNumberGenerator.GetBytes(32)), clock.GetUtcNow().AddMinutes(10));
                 pendingEnrollments[email] = pending;
                 enrollmentSecrets.Add(pending.Token);
-                return Results.Json(new { pending_token = pending.Token });
+                return Results.Json(new { pending_token = pending.Token }, statusCode: StatusCodes.Status202Accepted);
             }
             if (action == "password-reset/complete")
             {
-                if (body.RootElement.GetProperty("code").GetString() != "123456") return OAuthError("invalid_code", 400);
+                if (body.RootElement.GetProperty("code").GetString() != "123456") return HeadlessError("invalid_code");
                 var nextPassword = body.RootElement.GetProperty("new_password").GetString()!;
                 enrollmentSecrets.Add(nextPassword);
                 if (email == "user@example.com") { password = nextPassword; authEpoch++; }
                 else if (principals.TryGetValue(email, out var principal))
                     principals[email] = principal with { Password = nextPassword, AuthEpoch = checked(principal.AuthEpoch + 1) };
-                else return OAuthError("invalid_code", 400);
+                else return HeadlessError("invalid_code");
                 foreach (var grant in access.Values.Where(grant => grant.Email == email)) grant.Revoked = true;
                 if (fault == "reset-drop-completion-response") { http.Abort(); return Results.Empty; }
-            }
-            return action is "email-code/start" or "password-reset/start" or "password-reset/complete" ? Results.Ok(new { }) : ContractFailure("Unknown headless operation.");
-        }
-
-        private async Task<IResult> ManagementAsync(HttpContext http, string path)
-        {
-            Interlocked.Increment(ref managementRequests);
-            if (http.Request.Headers.Authorization != "Bearer sk_management-key") return ContractFailure("Password management did not use its distinct admitted service key.");
-            if (path == "/v1/terrascale/users/" + subject && http.Request.Method == "PATCH")
-            {
-                using var body = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
-                if (body.RootElement.EnumerateObject().Count() != 1 || !body.RootElement.TryGetProperty("password", out var value))
-                    return ContractFailure("Password patch changed unrelated user fields.");
-                if (fault == "management-policy") return Results.Json(new { error = new { code = "invalid_password", message = "Secret vendor payload must never be shown." } }, statusCode: 400);
-                // The current owning producer does not register this SDK route.
-                if (fault == "management-missing") return Results.NotFound();
-                password = value.GetString()!;
-                enrollmentSecrets.Add(password);
-                Interlocked.Increment(ref managementMutations);
-                actions.Enqueue("management/password");
-                if (fault == "management-drop-password-response") { http.Abort(); return Results.Empty; }
-                return Results.Json(new { id = subject, email = "user@example.com", name = "Protocol User", email_verified = true });
-            }
-            if (path == "/v1/terrascale/users/" + subject + "/sessions/revoke-all" && http.Request.Method == "POST")
-            {
-                // A deliberately partial external provider must never be
-                // interpreted as successful authoritative revoke-all.
-                if (fault == "management-revoke-all-missing") return Results.NotFound();
-                authEpoch++;
-                foreach (var grant in access.Values.Where(grant => grant.Subject == subject)) grant.Revoked = true;
-                Interlocked.Increment(ref managementMutations);
-                actions.Enqueue("management/revoke-all");
                 return Results.NoContent();
             }
-            return ContractFailure("Management mutation targeted another subject.");
+            return action is "email-code/start" or "password-reset/start" ? Results.StatusCode(StatusCodes.Status202Accepted) : ContractFailure("Unknown headless operation.");
         }
 
         private Principal DefaultPrincipal => new(subject, "user@example.com", "Protocol User", password, authEpoch, platformRole);
@@ -853,7 +824,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 projectReportReads,
                 projectRequests = projectRequests.ToArray(),
                 signupGrantBindings,
-                managementMutations,
+                managementMutations = 0,
                 managementRequests,
                 revocations,
                 contractFailures,
@@ -930,6 +901,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private static bool Confidential(HttpContext http, IFormCollection form) => Basic(http) || form["client_id"] == ClientId && form["client_secret"] == "test-dashboard-client-secret-0123456789abcdef";
         private IResult ContractFailure(string message) { Interlocked.Increment(ref contractFailures); return Results.Json(new { error = "contract_failure", message }, statusCode: 400); }
         private static IResult OAuthError(string code, int status) => Results.Json(new { error = code }, statusCode: status);
+        private static IResult HeadlessError(string code) => Results.Json(new { error = new { code, message = "The code is wrong or has expired. Request a new one if needed." } }, statusCode: 400);
         private static string B64(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         private static byte[] UnB64(string text) => Convert.FromBase64String(text.Replace('-', '+').Replace('_', '/') + new string('=', (4 - text.Length % 4) % 4));
         public void ReleaseRefresh() => refreshGate?.TrySetResult();
