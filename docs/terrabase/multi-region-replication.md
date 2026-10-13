@@ -956,6 +956,23 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   400 `invalid_cursor`: clients must resync after this explicit opaque-cursor format change. No storage schema,
   replication protocol, authentication or lattice conflict semantics change. An issued cursor with no origin is not
   "no cursor": it is expired by the retention rules above.
+- **410 frequency and recovery impact.** Matching retained prefixes resume with 200 in all six directed gru/sjc/fra
+  pairs in Fast, including collection-filtered events sharing a stamp. This is controlled integration coverage, not a
+  measured production error rate. Prefix verification is conservative: a destination behind the consumed prefix,
+  different events omitted by dominated joins, or different within-stamp ordering can produce 410 without a repair.
+  A newer destination retention floor also expires the proof even if only already-consumed events were trimmed;
+  hourly feed retention can therefore invalidate cross-machine resumes of an ongoing consumer's older proof.
+  Same-machine resumes bypass prefix comparison and keep the existing retention checks.
+  A repair whose join changes no state adds no feed event. A repair that changes a document adds a machine-specific
+  event: once a cursor passes it (even via a collection filter or a later local write), another machine normally lacks
+  that event and rejects the proof. A cursor issued before repair may also differ from a machine holding the original
+  history, as the regression demonstrates. Consequently **every affected client switching away from a repaired
+  machine after an outage can receive 410**; this is not limited to one pre-repair cursor. Catch-up through retained
+  ordered CDC groups alone does not introduce repair events. Resync recovers state but does not make that machine's
+  repair history portable: repeated switches can cause repeated 410 until the incompatible prefix is no longer named,
+  or its repair rows age out (7 days) and a new proof starts beyond them. Existing proofs retain their old baseline.
+  There is no fixed 410 percentage or guaranteed low frequency: it depends on repair/refill incidence, join histories,
+  retention advancement and client region switches. The production rate has not been measured.
 - **Stream.** One page at a time, no queue per connection: after a page that left nothing waiting, the stream waits for
   the database's next commit (`IDatabaseStore.WaitForCommitAsync`, joins included) or the 15 s heartbeat (`event:
   cursor`). A client that takes no bytes for 10 s is dropped. Limits: 32 streams per database and 1024 per machine

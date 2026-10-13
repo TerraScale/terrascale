@@ -381,12 +381,20 @@ public sealed class DatabaseChangesTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task A_portable_cursor_requires_the_same_origin_prefix_not_just_the_same_event_count(bool differentPrefix)
+    [Arguments("gru", "sjc", false)]
+    [Arguments("gru", "fra", false)]
+    [Arguments("sjc", "gru", false)]
+    [Arguments("sjc", "fra", false)]
+    [Arguments("fra", "gru", false)]
+    [Arguments("fra", "sjc", false)]
+    [Arguments("fra", "gru", true)]
+    public async Task A_portable_cursor_requires_the_same_origin_prefix_not_just_the_same_event_count(string from, string to, bool differentPrefix)
     {
-        await using var fra = await DocumentApi.StartAsync(values => values["region"] = "fra");
-        await using var gru = await DocumentApi.StartAsync(values => values["region"] = "gru");
+        await using var source = await DocumentApi.StartAsync(values => values["region"] = from);
+        await using var destination = await DocumentApi.StartAsync(values => values["region"] = to);
+        var (sourceRegion, _) = await IdentityAsync(source);
+        var (destinationRegion, _) = await IdentityAsync(destination);
+        await Assert.That((sourceRegion, destinationRegion)).IsEqualTo((from, to));
         var origin = ReplicaId.Of(4518, 21, 1);
         var now = DateTimeOffset.UtcNow;
         var first = DocumentApi.NewId();
@@ -394,28 +402,28 @@ public sealed class DatabaseChangesTests
         var firstStamp = Stamp(now - TimeSpan.FromMinutes(2));
         var excluded = DocumentApi.NewId();
         var secondStamp = Stamp(now - TimeSpan.FromMinutes(1));
-        foreach (var api in new[] { fra, gru })
+        foreach (var api in new[] { source, destination })
         {
             (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "other" })).Status.ShouldBe(HttpStatusCode.Created);
-            var id = differentPrefix && api == gru ? DocumentApi.NewId() : first;
+            var id = differentPrefix && api == destination ? DocumentApi.NewId() : first;
             var delta = Group(1, id, firstStamp, origin).Deltas[0];
             _ = await api.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await api.TenantOfAsync(), origin,
                 [new OriginGroup(1, [delta, delta with { Collection = "other", Id = excluded }]), Group(2, second, secondStamp, origin)], CancellationToken.None);
         }
 
         string cursor;
-        using (var stream = await Sse.OpenAsync(fra.Client, $"{fra.DatabasePath()}/changes?collections={DocumentApi.Collection}"))
+        using (var stream = await Sse.OpenAsync(source.Client, $"{source.DatabasePath()}/changes?collections={DocumentApi.Collection}"))
         {
             _ = await stream.NextAsync();
             cursor = (await stream.ChangesAsync(1))[0].Id;
         }
 
-        var uri = $"{gru.DatabasePath()}/changes?collections={DocumentApi.Collection}&cursor={Uri.EscapeDataString(cursor)}";
-        using var response = await gru.Client.GetAsync(new Uri(uri, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead);
+        var uri = $"{destination.DatabasePath()}/changes?collections={DocumentApi.Collection}&cursor={Uri.EscapeDataString(cursor)}";
+        using var response = await destination.Client.GetAsync(new Uri(uri, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead);
         await Assert.That(response.StatusCode).IsEqualTo(differentPrefix ? HttpStatusCode.Gone : HttpStatusCode.OK);
         if (!differentPrefix)
         {
-            using var resumed = await Sse.OpenAsync(gru.Client, uri);
+            using var resumed = await Sse.OpenAsync(destination.Client, uri);
             _ = await resumed.NextAsync();
             await Assert.That((await resumed.ChangesAsync(1))[0].Data.GetProperty("id").GetString()).IsEqualTo(second);
         }
