@@ -236,6 +236,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         {
             while (true)
             {
+                activity.Token.ThrowIfCancellationRequested();
                 // Asked for before the pass reads, so a commit during the pass wakes the next one.
                 changed = changed is null || changed.IsCompleted ? _source.ChangedAsync(activity.Token) : changed;
                 _ = await ShipAsync(link, writer, peer, DrainAsync, activity.Token).ConfigureAwait(false);
