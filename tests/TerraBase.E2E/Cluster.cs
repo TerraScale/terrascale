@@ -176,7 +176,7 @@ public sealed class Cluster : IAsyncDisposable
     {
         if (_local is null)
         {
-            await Flyctl.RunAsync("machine", "start", Disposable.Machines[region], "--app", Disposable.App);
+            await Flyctl.StartStoppedAsync(Disposable.App, Disposable.Machines[region]);
             return;
         }
 
