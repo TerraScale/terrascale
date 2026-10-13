@@ -3,7 +3,7 @@
 Pages are server-rendered [RazorSlices](https://github.com/DamianEdwards/RazorSlices)
 `.cshtml` slices enhanced with Datastar. Paths below are relative to
 `src/TerraScale.Dashboard` unless they start with `scripts/`. Readable CSS
-lives in `web/assets/css/` (shared) and `web/assets/Features/<Feature>/`
+lives in `web/assets/css/` (shared) and `Features/<Feature>/`
 (page-specific); `make css` (`npm run build:css` in `web/`, the asset build's
 npm project) bundles it with Lightning CSS into the single stylesheet
 `web/static/css/terrascale.css`.

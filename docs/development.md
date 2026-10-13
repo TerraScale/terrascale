@@ -95,8 +95,8 @@ origin, changes C# copy and CSS, verifies both in the browser, restores the
 files and verifies the original rendering. Run it with the worktree's demo
 port free and without concurrent edits to the auth copy or CSS fixtures.
 
-Lint checks that the committed stylesheet matches `web/assets`, then verifies
-SDK package provenance, the E2E-only test boundary and formatting of the
+Lint checks that the committed stylesheet matches `web/assets` and
+`Features/**/*.css`, then verifies SDK package provenance, the E2E-only test boundary and formatting of the
 application and test project. The live account-to-ts-typescript-SDK
 journey and persistent restart qualification remain required; a passing
 demo cannot substitute for either.
@@ -126,7 +126,7 @@ is no separate unit-test runner.
 ## Assets and production integration
 
 Paths below are relative to `src/TerraScale.Dashboard`. Lightning CSS
-bundles `web/assets` into the single stylesheet
+bundles `web/assets` and `Features/**/*.css` into the single stylesheet
 `web/static/css/terrascale.css`. esbuild bundles the self-hosted Datastar and
 Monaco scripts under `web/static/js`. The project build runs both bundlers.
 Datastar version, source map and license are pinned together; the build

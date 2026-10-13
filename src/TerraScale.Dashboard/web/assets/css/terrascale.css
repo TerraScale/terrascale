@@ -1,6 +1,6 @@
 /* Dashboard stylesheet entry point, bundled by web/build/build-css.mjs into the
    single file served at /css/terrascale.css. Feature styles live next to
-   their feature under web/assets/Features/. */
+   their feature under src/TerraScale.Dashboard/Features/. */
 
 @layer base, layout, components, features, utilities;
 
@@ -16,19 +16,19 @@
 @import "auth.css" layer(components);
 
 /* Feature styles. */
-@import "../Features/Home/home.css" layer(features);
-@import "../Features/Databases/databases.css" layer(features);
-@import "../Features/Data/data.css" layer(features);
-@import "../Features/Access/access.css" layer(features);
-@import "../Features/ApiKeys/api-keys.css" layer(features);
-@import "../Features/Authentication/authentication.css" layer(features);
-@import "../Features/Audit/audit.css" layer(features);
-@import "../Features/Usage/usage.css" layer(features);
-@import "../Features/Subscriptions/subscriptions.css" layer(features);
-@import "../Features/Notifications/notifications.css" layer(features);
-@import "../Features/Organization/organization.css" layer(features);
-@import "../Features/Profile/profile.css" layer(features);
-@import "../Features/Admin/admin.css" layer(features);
-@import "../Features/Auth/auth.css" layer(features);
-@import "../Features/Onboarding/onboarding.css" layer(features);
-@import "../Features/NotFound/not-found.css" layer(features);
+@import "../../../Features/Home/home.css" layer(features);
+@import "../../../Features/Databases/databases.css" layer(features);
+@import "../../../Features/Data/data.css" layer(features);
+@import "../../../Features/Organizations/access.css" layer(features);
+@import "../../../Features/ApiKeys/api-keys.css" layer(features);
+@import "../../../Features/AuthenticationManagement/authentication.css" layer(features);
+@import "../../../Features/Organizations/audit.css" layer(features);
+@import "../../../Features/Usage/usage.css" layer(features);
+@import "../../../Features/QuerySubscriptions/subscriptions.css" layer(features);
+@import "../../../Features/Notifications/notifications.css" layer(features);
+@import "../../../Features/Organizations/organization.css" layer(features);
+@import "../../../Features/Profile/profile.css" layer(features);
+@import "../../../Features/Admin/admin.css" layer(features);
+@import "../../../Features/Auth/auth.css" layer(features);
+@import "../../../Features/Onboarding/onboarding.css" layer(features);
+@import "../../../Features/NotFound/not-found.css" layer(features);

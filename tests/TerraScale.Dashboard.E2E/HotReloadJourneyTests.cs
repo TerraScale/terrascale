@@ -67,7 +67,7 @@ public sealed class HotReloadJourneyTests(DashboardE2EFixture fixture)
     private async Task AssertHotReloadAsync(string origin)
     {
         var source = Path.Combine(fixture.Root, "src/TerraScale.Dashboard/Features/Auth/AuthPage.cs");
-        var css = Path.Combine(fixture.Root, "src/TerraScale.Dashboard/web/assets/Features/Auth/auth.css");
+        var css = Path.Combine(fixture.Root, "src/TerraScale.Dashboard/Features/Auth/auth.css");
         var originalSource = await File.ReadAllTextAsync(source);
         var originalCss = await File.ReadAllTextAsync(css);
         const string originalCopy = "Access your databases and cloud operations.";

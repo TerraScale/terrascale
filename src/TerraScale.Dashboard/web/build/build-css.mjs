@@ -127,8 +127,8 @@ if (watchMode) {
       }
     }, 30);
   };
-  for (const dir of ['css', 'Features']) {
-    watch(resolve(source, dir), { recursive: true }, (_, file) => file?.endsWith('.css') && rebuild());
+  for (const dir of [resolve(source, 'css'), resolve(web, '../Features')]) {
+    watch(dir, { recursive: true }, (_, file) => file?.endsWith('.css') && rebuild());
   }
-  console.log('CSS: watching web/assets/css/ and web/assets/Features/');
+  console.log('CSS: watching web/assets/css/ and src/TerraScale.Dashboard/Features/');
 }
