@@ -479,6 +479,12 @@ Limits:
   and its query is not covered by that mark; no T at or before the mark needs it.
 - A log written before timed commits and read marks restores only at snapshot times and at times its generation's next
   snapshot closes.
+- A read mark rests on Turso showing a commit that returned on the writer's connection to the tap's next autocommit read
+  on its own connection (`TursoChangeTimeTests` checks it under concurrent commits); the tap's connection must not hold a
+  read transaction open across reads (only a snapshot opens one, and rolls it back).
+- `_system.db` restores only at its snapshot times. A catalog follower applies the leader's writes without capture, so
+  neither its log nor a later snapshot at the same position shows what was written after a snapshot. No point-in-time
+  restore of `_system` exists yet; the reader refuses any other time for it.
 - Integration tests run TerraBase on a test clock while Turso stamps rows with the machine's clock; tests that place T
   between transactions set the recorded `change_time` themselves.
 
@@ -518,8 +524,9 @@ restore can answer `409` `restore_point_unproven` where the plan succeeds. `wind
 
 The request needs a ts-auth project token granting `databases:read`; `{database}` is its name.
 The hidden legacy management alias retains membership checks, including organization viewers. Access is checked
-before time validation: another tenant's database returns `404`. Missing time, a time
-outside the inclusive `window.earliest` and `window.latest` bounds returns `400`;
+before time validation: another tenant's database returns `404`. A missing time, or a time after now or before the
+plan's retention window, returns `400`; any other time outside the restore window returns `409`
+`backup_history_incomplete`, exactly as the restore answers it;
 disabled/empty backup, a wholly expired retention window or no applicable snapshot returns `404`;
 a history the object names show incomplete returns `409` `backup_history_incomplete`.
 Preview uses the same restore-window bounds as restore. Metadata scanning is bounded to 10,000 items and 10 seconds;

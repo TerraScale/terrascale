@@ -45,12 +45,21 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
     /// transactions that ran before it, reach a transaction committed at or after it, a read mark at or after it, or
     /// exactly the log <paramref name="next"/>, the generation's following snapshot, holds.
     /// </summary>
-    /// <exception cref="BackupHistoryIncompleteException">A segment is missing, or the history up to the time is unproven.</exception>
+    /// <exception cref="BackupHistoryIncompleteException">
+    /// A segment is missing, or the history up to the time is unproven; for the system database, any time but a snapshot's.
+    /// </exception>
     /// <exception cref="RestorePointUnprovenException">The time cannot be placed between two transactions.</exception>
     /// <exception cref="InvalidDataException">The backup fails authentication or its integrity check.</exception>
     public async Task<(string Path, long Position)> BuildAsync(
         string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, SnapshotKey? next, CancellationToken cancellationToken)
     {
+        if (until is null && file == BackupLayout.File(null) && !PointInTimeRestore.Covers(snapshot.At, at))
+        {
+            // A catalog follower applies the leader's writes to its system database without capture, so neither its log
+            // nor a later snapshot at the same position shows what was written after a snapshot: only snapshot times hold.
+            throw new BackupHistoryIncompleteException("the system database's backup proves only its snapshot times");
+        }
+
         Directory.CreateDirectory(_scratch);
         var restored = Path.Combine(_scratch, EntityIds.New().ToString() + ".db");
         try
