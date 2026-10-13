@@ -8,7 +8,7 @@
     {
       "file": "screenshots/profile-draft-desktop.png",
       "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
-      "source_file": "evidence/profile-draft-1366.png",
+      "source_file": "evidence/original-capture-7ab7352c/profile-draft-1366.png",
       "source_sha256": "e4763a557f476442122b1c5ba12de168a85c103c03a721dcb537250a10ae869f",
       "source_dimensions_px": [
         1366,
@@ -51,7 +51,7 @@
     {
       "file": "screenshots/profile-error-desktop.png",
       "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
-      "source_file": "evidence/profile-error-1366.png",
+      "source_file": "evidence/original-capture-7ab7352c/profile-error-1366.png",
       "source_sha256": "858420fce7eef54a0a3a425538586ed5d473925a368f4e76e5fecf38d0a86d8f",
       "source_dimensions_px": [
         1366,
@@ -88,7 +88,7 @@
     {
       "file": "screenshots/profile-draft-mobile.png",
       "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
-      "source_file": "evidence/profile-draft-320.png",
+      "source_file": "evidence/original-capture-7ab7352c/profile-draft-320.png",
       "source_sha256": "3c7b4b163ef643bbc0b744850986a8aa14047a974284c3194b2b0cb6fa6f1dd5",
       "source_dimensions_px": [
         320,
@@ -108,7 +108,7 @@
     {
       "file": "screenshots/profile-error-mobile.png",
       "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
-      "source_file": "evidence/profile-error-320.png",
+      "source_file": "evidence/original-capture-7ab7352c/profile-error-320.png",
       "source_sha256": "077170c5130c095d7958073e5626e1c7916fb3158f44191312956ec62f3f3695",
       "source_dimensions_px": [
         320,
@@ -128,7 +128,7 @@
     {
       "file": "screenshots/viewer-rejection-desktop.png",
       "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
-      "source_file": "evidence/native-viewer-rejection-1366-7ab7352c.png",
+      "source_file": "evidence/original-capture-7ab7352c/native-viewer-rejection-1366-7ab7352c.png",
       "source_sha256": "ef3619a79ad93a0ae468837799a4448329cf5bb1761cc49c5a4d225974f2359e",
       "source_dimensions_px": [
         1280,
@@ -153,7 +153,7 @@
     {
       "file": "screenshots/viewer-rejection-mobile.png",
       "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
-      "source_file": "evidence/native-viewer-rejection-320-7ab7352c.png",
+      "source_file": "evidence/original-capture-7ab7352c/native-viewer-rejection-320-7ab7352c.png",
       "source_sha256": "c4cdd9e1c86617509e49b3233eef6cc4360e7f0b5d9dbdb30be972c8f1415860",
       "source_dimensions_px": [
         640,
@@ -178,7 +178,7 @@
   ],
   "committed_png_total_bytes": 177114,
   "local_only_video": {
-    "file": "evidence/native-forms-desktop-mobile-7ab7352c.mp4",
+    "file": "evidence/original-capture-7ab7352c/native-forms-desktop-mobile-7ab7352c.mp4",
     "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
     "sha256": "7bdb56baa3b4eec567205f89444f632b880e8af1087c3a9077874a2186b35c1c",
     "bytes": 1371555,
@@ -286,5 +286,5 @@
       ]
     }
   },
-  "browser_rerun_at_evidence_commit": "Not run: browser audit requires signing in, prohibited by latest user direction. HTTP/build/focused lint checks are rerun independently after the evidence commit."
+  "final_head_verification": "Existing synthetic local HTTP/browser cases rerun at the final report head; commands, outcomes and new raw capture hashes recorded separately in ignored evidence/current-head-checks.json. Committed PNGs still show original capture head 7ab7352c."
 }
