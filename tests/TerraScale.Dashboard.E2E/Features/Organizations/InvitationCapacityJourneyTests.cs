@@ -43,6 +43,23 @@ public sealed class InvitationCapacityJourneyTests
     }
 
     [Test]
+    public async Task AnUnknownOutcomeKeepsItsSlotUntilTsAuthListsIt()
+    {
+        await using var scenario = await CapacityScenario.StartAsync();
+        // The dashboard sees a failure while ts-auth has not committed yet; only the reservation holds the slot.
+        scenario.Platform.DeferredEmail = "in-flight@example.test";
+        using (var failed = await scenario.InviteAsync(0, scenario.Platform.DeferredEmail))
+            await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        using (var blocked = await scenario.InviteAsync(1, "while-in-flight@example.test"))
+            await Assert.That(blocked.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        scenario.Platform.CommitDeferred.TrySetResult();
+        await scenario.Platform.DeferredCommitted.WaitAsync(TimeSpan.FromSeconds(10));
+        using (var after = await scenario.InviteAsync(1, "after-commit@example.test"))
+            await Assert.That(after.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(await scenario.PendingAsync()).IsEqualTo(4);
+    }
+
+    [Test]
     public async Task ADuplicateEmailLoserNeverFreesTheWinnersSlot()
     {
         await using var scenario = await CapacityScenario.StartAsync(replicas: 3);
@@ -157,7 +174,7 @@ public sealed class InvitationCapacityJourneyTests
 
         public async ValueTask DisposeAsync()
         {
-            if (Platform is not null) foreach (var gate in Platform.Release) gate.TrySetResult();
+            if (Platform is not null) { foreach (var gate in Platform.Release) gate.TrySetResult(); Platform.CommitDeferred.TrySetResult(); }
             foreach (var (client, _) in clients) client.Dispose();
             foreach (var host in hosts) { await host.StopAsync(); await host.DisposeAsync(); }
         }
@@ -186,6 +203,9 @@ public sealed class InvitationCapacityJourneyTests
         public TaskCompletionSource[] Arrived { get; private set; } = [];
         public TaskCompletionSource[] Release { get; private set; } = [];
         public string LostResponseEmail { get; set; } = "";
+        public string DeferredEmail { get; set; } = "";
+        public TaskCompletionSource CommitDeferred { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task DeferredCommitted { get; private set; } = Task.CompletedTask;
 
         public void Arm(int count)
         {
@@ -211,6 +231,11 @@ public sealed class InvitationCapacityJourneyTests
 
         public async Task<TerraScaleAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, CancellationToken cancellationToken)
         {
+            if (email == DeferredEmail)
+            {
+                DeferredCommitted = Task.Run(async () => { await CommitDeferred.Task; await inner.CreateInvitationAsync(session, organizationId, email, role, default); });
+                throw new HttpRequestException("Synthetic timeout before ts-auth committed the invitation.");
+            }
             var created = await inner.CreateInvitationAsync(session, organizationId, email, role, cancellationToken);
             if (email == LostResponseEmail) throw new HttpRequestException("Synthetic response loss after ts-auth committed the invitation.");
             return created;
