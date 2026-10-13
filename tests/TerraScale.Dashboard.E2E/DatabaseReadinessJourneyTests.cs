@@ -5,8 +5,7 @@ using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class DatabaseReadinessJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
@@ -16,12 +15,12 @@ public sealed class DatabaseReadinessJourneyTests(DashboardE2EFixture fixture)
         var organizationId = "";
         var projectId = "";
         var refusedCreates = 0;
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
+        TestAuth auth = null!;
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), http =>
         {
-            if (!Volatile.Read(ref rejectCreate) || http.Request.Method != "POST" ||
-                http.Request.Path != "/v1/management/organizations/" + organizationId + "/projects/" + projectId + "/databases")
+            if (!Volatile.Read(ref rejectCreate) || http.Request.Method != "POST" || http.Request.Path != "/v1/projects/" + projectId + "/databases")
                 return Task.FromResult<IResult?>(null);
-            DemandScope(http, organizationId);
+            DatabaseSdkJourneyTests.DemandProjectToken(auth, http, organizationId, projectId, "databases:write");
             Interlocked.Increment(ref refusedCreates);
             return Task.FromResult<IResult?>(Results.Json(new { error = new { code = "unavailable", message = "Scoped test-only producer outage", fix = "retry" } }, statusCode: 503));
         });
@@ -117,18 +116,20 @@ public sealed class DatabaseReadinessJourneyTests(DashboardE2EFixture fixture)
         var projectId = "";
         var id = "";
         var name = "confirmed-placement";
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
+        TestAuth auth = null!;
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), http =>
         {
-            if (!Volatile.Read(ref invalid) || http.Request.Method != "PATCH" ||
-                http.Request.Path != "/v1/management/organizations/" + organizationId + "/projects/" + projectId + "/databases/" + id)
+            if (!Volatile.Read(ref invalid) || http.Request.Method != "PATCH" || http.Request.Path != "/v1/projects/" + projectId + "/databases/" + name)
                 return Task.FromResult<IResult?>(null);
-            DemandScope(http, organizationId);
+            DatabaseSdkJourneyTests.DemandProjectToken(auth, http, organizationId, projectId, "databases:write");
+            http.Response.Headers["X-TerraBase-Region"] = "gru";
             var value = new Dictionary<string, object?>
             {
                 ["id"] = mismatch == "id" ? "01K78000000000000000000000" : id,
                 ["projectId"] = mismatch == "project" ? "01K78000000000000000000001" : projectId,
                 ["name"] = mismatch == "name" ? "another-database" : name,
                 ["createdAt"] = DateTimeOffset.UtcNow,
+                ["region"] = "gru",
                 ["homeRegion"] = mismatch == "home" ? "sfo" : "gru",
                 ["replicaRegions"] = mismatch == "replicas" ? new[] { "sfo" } : Array.Empty<string>()
             };
@@ -168,12 +169,13 @@ public sealed class DatabaseReadinessJourneyTests(DashboardE2EFixture fixture)
         var projectId = "";
         var id = "";
         var attempts = new System.Collections.Concurrent.ConcurrentQueue<string>();
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
+        const string name = "wrong-region";
+        TestAuth auth = null!;
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), http =>
         {
-            if (!Volatile.Read(ref misdirect) || http.Request.Method != "PATCH" ||
-                http.Request.Path != "/v1/management/organizations/" + organizationId + "/projects/" + projectId + "/databases/" + id)
+            if (!Volatile.Read(ref misdirect) || http.Request.Method != "PATCH" || http.Request.Path != "/v1/projects/" + projectId + "/databases/" + name)
                 return Task.FromResult<IResult?>(null);
-            DemandScope(http, organizationId);
+            DatabaseSdkJourneyTests.DemandProjectToken(auth, http, organizationId, projectId, "databases:write");
             attempts.Enqueue(http.Request.Host.Host + " pin=" + http.Request.Headers["X-TerraScale-Region-Pin"]);
             http.Response.Headers["X-TerraBase-Region"] = "gru";
             http.Response.Headers["X-TerraBase-Database-Home"] = "sfo";
@@ -188,7 +190,6 @@ public sealed class DatabaseReadinessJourneyTests(DashboardE2EFixture fixture)
         organizationId = identity.GetProperty("organizationId").GetString()!;
         projectId = identity.GetProperty("projectId").GetString()!;
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
-        const string name = "wrong-region";
         id = await CreateAsync(client, csrf, name);
         Volatile.Write(ref misdirect, true);
         using (var response = await PostAsync(client, "/api/v1/dashboard/databases/regions", csrf, new() { ["databaseId"] = id }, ["GRU"]))
@@ -288,12 +289,6 @@ public sealed class DatabaseReadinessJourneyTests(DashboardE2EFixture fixture)
         await Assert.That((await JsonAsync(producer, "/__test/observations")).GetProperty("failures").GetArrayLength()).IsEqualTo(0);
     }
 
-    private static void DemandScope(HttpContext http, string organization)
-    {
-        if (http.Request.Host.Host != "gru.api.terrascale.tech" || http.Request.Headers["X-TerraBase-Organization-Id"] != organization ||
-            !http.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.Ordinal))
-            throw new InvalidOperationException("A producer response fault must remain scoped to the actual home, organization and authenticated request.");
-    }
     private static async Task<string> CreateAsync(HttpClient client, string csrf, string name)
     {
         using var response = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new() { ["_csrf"] = csrf, ["name"] = name, ["region"] = "GRU" });
