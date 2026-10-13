@@ -10,6 +10,16 @@ Group commit records each request's own captured-mutation bit after flushing its
 
 After a known successful COMMIT, a marker-read failure propagates once without automatic mutation replay and still notifies storage waiters. A later writer-session reset failure preserves the already obtained committed result and discards that session under B1's contract. The real HTTP controls require a marker-read failure to return 500 while the committed JSON remains present exactly once; a reset failure after marker acquisition preserves 201 Created. Following independent writes must succeed. The future structured `outcome_unknown` HTTP result and remote durability classification are not implemented here; current API answers remain local-only.
 
+## Independent review follow-ups
+
+The independent review approved the local marker prerequisite only at `1ea3d2b3e66a601cc2b38d35278b88b14d484050` ([review](https://github.com/TerraScale/terrascale/pull/191#issuecomment-6143334904)). Its successful fresh build supplied 7 marker cases, 1 persistent-reset case and 1 grouped-running-cancellation case, with 573/573 available PDB/source checks and unchanged source/runtime manifests. Author mutations were inspected, not independently reproduced. This approval does not extend to later fixture changes or B4 integration.
+
+The fixture follow-up gates the first mutation at the post-COMMIT marker checkpoint, queues a competing writer before releasing that checkpoint, and observes the first commit result only after the later writer commits. Both markers must still identify their own CDC groups and incarnation. Reset faults are armed only for the session observed at the intended captured commit's marker checkpoint. An explicitly committed uncaptured cleanup runs while the fault is armed and must leave it armed; the target mutation must consume it and discard that exact session when reset fails. These additions require fresh validation and receive no inherited test credit.
+
+The present batch exception contract fails all requests when the final marker read fails, including assertion-only, refused and deferred siblings. The failure of a committed mutation is ambiguous to its client, while rolled-back/refused/deferred siblings are known uncommitted. The future structured outcome path must preserve that per-request distinction without replaying ambiguous mutations or giving assertions a sibling marker. This classification is unimplemented; the common batch exception must not be treated as evidence that every sibling committed.
+
+Best-effort write/operation counters currently miss the known committed attempt when marker acquisition throws. Commit notification still advances, invalidating the quota cache so it remeasures committed storage; the counter gap is separate from quota enforcement. Counter handling and grouped marker-failure controls remain B4 integration work.
+
 ## Fixture ownership
 
 R6 owns the new isolated `tests/TerraBase.Fast/Storage/CommitMarkerTests.cs`. It starts a real host with private resources, drives authenticated HTTP writes and reads, and compares native storage commit results against the real CDC source. It changes no shared test-harness implementation.
