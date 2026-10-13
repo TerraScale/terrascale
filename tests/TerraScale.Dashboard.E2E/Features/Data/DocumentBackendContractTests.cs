@@ -18,7 +18,10 @@ public sealed class DocumentBackendContractTests
         var tokens = new Tokens();
         var backend = new DocumentBackend(wire, tokens);
         for (var index = 0; index < 2; index++)
-            await backend.GetAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "a", CancellationToken.None);
+        {
+            var document = await backend.GetAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "a", CancellationToken.None);
+            await Assert.That(document).IsNull();
+        }
         await Assert.That(tokens.Scopes).IsEquivalentTo(new[] { "documents:read", "documents:read" });
         await Assert.That(wire.Requests).IsEqualTo(2);
         await Assert.That(wire.Bearers).IsEquivalentTo(new[] { "project-1", "project-2" });
@@ -179,7 +182,7 @@ public sealed class DocumentBackendContractTests
             }
             if (Failure == 0) throw new HttpRequestException("Connection reset after send.");
             if (Failure > 0) return new((HttpStatusCode)Failure) { Content = new StringContent("{\"error\":\"unavailable\"}", Encoding.UTF8, "application/json") };
-            return new(HttpStatusCode.NotFound) { Content = new StringContent("{\"error\":\"not_found\"}", Encoding.UTF8, "application/json") };
+            return new(HttpStatusCode.NotFound) { Content = new StringContent("{\"error\":{\"code\":\"not_found\",\"message\":\"Document not found.\"}}", Encoding.UTF8, "application/json") };
         }
     }
 }
