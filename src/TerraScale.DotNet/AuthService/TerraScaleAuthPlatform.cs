@@ -313,14 +313,131 @@ public sealed class TerraScaleAuthPlatformClient(TerraScaleAuthClient client)
             TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformApiKeySecret,
             TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
 
+    /// <summary>create_invitation: POST /v1/terrascale/organizations/{organization}/invitations.</summary>
+    public Task<TerraScaleAuthPlatformCreatedInvitation> CreateInvitationAsync(
+        string accessToken,
+        string organizationId,
+        TerraScaleAuthPlatformCreateInvitation request,
+        CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedJsonAsync(HttpMethod.Post, $"/v1/terrascale/organizations/{Id(organizationId)}/invitations",
+            request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreateInvitation,
+            TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreatedInvitation,
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
+
+    /// <summary>list_invitations: GET /v1/terrascale/organizations/{organization}/invitations.</summary>
+    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(
+        string accessToken,
+        string organizationId,
+        int? limit = null,
+        string? after = null,
+        string? projectId = null,
+        CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedJsonAsync(HttpMethod.Get, $"/v1/terrascale/organizations/{Id(organizationId)}/invitations" + PageQuery(limit, after, projectId),
+            null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
+            TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformPageTerraScaleAuthPlatformInvitation,
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
+
+    /// <summary>revoke_invitation: DELETE /v1/terrascale/organizations/{organization}/invitations/{invitation}.</summary>
+    public Task RevokeInvitationAsync(
+        string accessToken,
+        string organizationId,
+        string invitationId,
+        CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, $"/v1/terrascale/organizations/{Id(organizationId)}/invitations/{Id(invitationId)}",
+            null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
+
+    /// <summary>lookup_invitation: POST /v1/terrascale/invitations/lookup.</summary>
+    public Task<TerraScaleAuthPlatformInvitationLookup> LookupInvitationAsync(
+        string accessToken,
+        TerraScaleAuthPlatformInvitationToken request,
+        CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedJsonAsync(HttpMethod.Post, "/v1/terrascale/invitations/lookup",
+            request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformInvitationToken,
+            TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformInvitationLookup,
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
+
+    /// <summary>accept_invitation: POST /v1/terrascale/invitations/accept.</summary>
+    public Task<TerraScaleAuthPlatformAcceptedInvitation> AcceptInvitationAsync(
+        string accessToken,
+        TerraScaleAuthPlatformInvitationToken request,
+        CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedJsonAsync(HttpMethod.Post, "/v1/terrascale/invitations/accept",
+            request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformInvitationToken,
+            TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformAcceptedInvitation,
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
+
+    /// <summary>decline_invitation: POST /v1/terrascale/invitations/decline.</summary>
+    public Task DeclineInvitationAsync(
+        string accessToken,
+        TerraScaleAuthPlatformInvitationToken request,
+        CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedForStatusAsync(HttpMethod.Post, "/v1/terrascale/invitations/decline",
+            request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformInvitationToken,
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
+
+    /// <summary>start_ownership_transfer: POST /v1/terrascale/organizations/{organization}/ownership-transfer.</summary>
+    public Task<TerraScaleAuthPlatformOwnershipTransfer> StartOwnershipTransferAsync(
+        string accessToken,
+        string organizationId,
+        TerraScaleAuthPlatformStartOwnershipTransfer request,
+        CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedJsonAsync(HttpMethod.Post, $"/v1/terrascale/organizations/{Id(organizationId)}/ownership-transfer",
+            request ?? throw new ArgumentNullException(nameof(request)), TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformStartOwnershipTransfer,
+            TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformOwnershipTransfer,
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)201, 16 * 1024, cancellationToken);
+
+    /// <summary>get_ownership_transfer: GET /v1/terrascale/organizations/{organization}/ownership-transfer.</summary>
+    public Task<TerraScaleAuthPlatformOwnershipTransfer> GetOwnershipTransferAsync(
+        string accessToken,
+        string organizationId,
+        CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedJsonAsync(HttpMethod.Get, $"/v1/terrascale/organizations/{Id(organizationId)}/ownership-transfer",
+            null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
+            TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformOwnershipTransfer,
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
+
+    /// <summary>cancel_ownership_transfer: DELETE /v1/terrascale/organizations/{organization}/ownership-transfer.</summary>
+    public Task CancelOwnershipTransferAsync(
+        string accessToken,
+        string organizationId,
+        CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedForStatusAsync(HttpMethod.Delete, $"/v1/terrascale/organizations/{Id(organizationId)}/ownership-transfer",
+            null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)204, 16 * 1024, cancellationToken);
+
+    /// <summary>confirm_ownership_transfer: POST /v1/terrascale/organizations/{organization}/ownership-transfer/confirm.</summary>
+    public Task<TerraScaleAuthPlatformMember> ConfirmOwnershipTransferAsync(
+        string accessToken,
+        string organizationId,
+        CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedJsonAsync(HttpMethod.Post, $"/v1/terrascale/organizations/{Id(organizationId)}/ownership-transfer/confirm",
+            null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
+            TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformMember,
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
+
+    /// <summary>list_audit_events: GET /v1/terrascale/organizations/{organization}/audit-events.</summary>
+    public Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformAuditEvent>> ListAuditEventsAsync(
+        string accessToken,
+        string organizationId,
+        int? limit = null,
+        string? after = null,
+        CancellationToken cancellationToken = default) =>
+        client.SendAuthenticatedJsonAsync(HttpMethod.Get, $"/v1/terrascale/organizations/{Id(organizationId)}/audit-events" + PageQuery(limit, after),
+            null, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformName,
+            TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformPageTerraScaleAuthPlatformAuditEvent,
+            TerraScaleAuthCredentials.Bearer(accessToken), (HttpStatusCode)200, 16 * 1024, cancellationToken);
+
     private static string Id(string value) => TerraScaleIds.Validate(value);
 
-    private static string PageQuery(int? limit, string? after)
+    private static string PageQuery(int? limit, string? after, string? projectId = null)
     {
         if (limit is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(limit), "Page limit must be 1 to 100.");
+        if (after is not null) ArgumentException.ThrowIfNullOrEmpty(after);
         var parameters = new List<string>();
         if (limit is { } size) parameters.Add("limit=" + size.ToString(CultureInfo.InvariantCulture));
         if (after is not null) parameters.Add("after=" + Uri.EscapeDataString(after));
+        if (projectId is not null) parameters.Add("project_id=" + Id(projectId));
         return parameters.Count == 0 ? string.Empty : "?" + string.Join('&', parameters);
     }
 }

@@ -2,7 +2,8 @@ using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet;
 
-[JsonSourceGenerationOptions(RespectNullableAnnotations = true, RespectRequiredConstructorParameters = true)]
+[JsonSourceGenerationOptions(RespectNullableAnnotations = true, RespectRequiredConstructorParameters = true,
+    Converters = new[] { typeof(TerraScaleAuthIpAddressConverter) })]
 [JsonSerializable(typeof(TerraScaleAuthPlatformName))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformRole))]
 [JsonSerializable(typeof(TerraScaleAuthPlatformOrganization))]
@@ -23,5 +24,17 @@ namespace TerraScale.DotNet;
 [JsonSerializable(typeof(TerraScaleAuthHeadlessSignUp))]
 [JsonSerializable(typeof(TerraScaleAuthHeadlessPendingSignUp))]
 [JsonSerializable(typeof(TerraScaleAuthHeadlessPasswordReset))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformCreateInvitation))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformInvitationToken))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformStartOwnershipTransfer))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformInvitation))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformCreatedInvitation))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformPage<TerraScaleAuthPlatformInvitation>))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformNamed))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformInvitationLookup))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformAcceptedInvitation))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformOwnershipTransfer))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformAuditEvent))]
+[JsonSerializable(typeof(TerraScaleAuthPlatformPage<TerraScaleAuthPlatformAuditEvent>))]
 [JsonSerializable(typeof(TerraScaleAuthTokenResponse))]
 internal sealed partial class TerraScaleAuthIntegrationJsonContext : JsonSerializerContext;

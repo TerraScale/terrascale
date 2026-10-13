@@ -37,6 +37,31 @@ public sealed class TerraScaleAuthIntegrationSafetyTests
     }
 
     [Test]
+    [Arguments(429)]
+    [Arguments(503)]
+    public async Task ExplicitBearerReadsNeverRetryEvenWithZeroRetryAfter(int status)
+    {
+        using var handler = new Handler((_, _) =>
+        {
+            var response = Response("{\"error\":{\"code\":\"temporarily_unavailable\"}}", (HttpStatusCode)status);
+            response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.Zero);
+            return Task.FromResult(response);
+        });
+        using var http = new HttpClient(handler);
+        await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Platform.ListOrganizationsAsync("fixture-sign-in"));
+        await Assert.That(handler.Calls).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ExplicitBearerReadsNeverRetryTransportFailures()
+    {
+        using var handler = new Handler((_, _) => throw new HttpRequestException("controlled transport failure"));
+        using var http = new HttpClient(handler);
+        await Assert.ThrowsAsync<HttpRequestException>(() => Client(http).Platform.ListOrganizationsAsync("fixture-sign-in"));
+        await Assert.That(handler.Calls).IsEqualTo(1);
+    }
+
+    [Test]
     [Arguments("{}")]
     [Arguments("{\"items\":null,\"next\":null}")]
     [Arguments("{\"items\":[{\"id\":null}],\"next\":null}")]
@@ -71,7 +96,7 @@ public sealed class TerraScaleAuthIntegrationSafetyTests
         using var handler = new Handler((_, _) => Task.FromResult(Response("{}")));
         using var http = new HttpClient(handler);
         var client = Client(http);
-        await Assert.ThrowsAsync<ArgumentException>(() => client.Headless.SignUpAsync("fixture-id", "fixture-secret", new("synthetic@example.test", new string('x', 8192), "192.0.2.1")));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Headless.SignUpAsync("fixture-id", "fixture-secret", new("synthetic@example.test", new string('x', 8192), IPAddress.Parse("192.0.2.1"))));
         await Assert.ThrowsAsync<ArgumentException>(() => client.Oidc.RefreshTokenAsync("fixture-id", "fixture-secret", new string('x', 1_048_576)));
         await Assert.That(handler.Calls).IsEqualTo(0);
     }
@@ -84,6 +109,7 @@ public sealed class TerraScaleAuthIntegrationSafetyTests
         var client = Client(http);
         await Assert.ThrowsAsync<ArgumentException>(() => client.Platform.GetOrganizationAsync("fixture-sign-in", "../foreign"));
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.Platform.ListOrganizationsAsync("fixture-sign-in", 101));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Platform.ListOrganizationsAsync("fixture-sign-in", after: ""));
         await Assert.ThrowsAsync<ArgumentException>(() => client.Platform.ListOrganizationsAsync("fixture\r\nInjected: secret"));
         await Assert.That(handler.Calls).IsEqualTo(0);
     }
@@ -150,9 +176,9 @@ public sealed class TerraScaleAuthIntegrationSafetyTests
     {
         using var handler = new Handler((_, _) => Task.FromResult(Response("{}")));
         using var http = new HttpClient(handler);
-        var failure = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Headless.StartPasswordResetAsync("fixture-id", "fixture-secret", new("synthetic@example.test", "192.0.2.1")));
+        var failure = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Headless.StartPasswordResetAsync("fixture-id", "fixture-secret", new("synthetic@example.test", IPAddress.Parse("192.0.2.1"))));
         await Assert.That(failure!.ErrorCode).IsEqualTo("invalid_response");
-        await Assert.That(new TerraScaleAuthHeadlessSignUp("synthetic@example.test", "fixture-canary", "192.0.2.1").ToString()).DoesNotContain("fixture-canary");
+        await Assert.That(new TerraScaleAuthHeadlessSignUp("synthetic@example.test", "fixture-canary", IPAddress.Parse("192.0.2.1")).ToString()).DoesNotContain("fixture-canary");
         await Assert.That(new TerraScaleAuthHeadlessPendingSignUp("fixture-canary").ToString()).DoesNotContain("fixture-canary");
         await Assert.That(new TerraScaleAuthPlatformApiKeySecret(null!, "fixture-canary").ToString()).DoesNotContain("fixture-canary");
     }
@@ -192,7 +218,7 @@ public sealed class TerraScaleAuthIntegrationSafetyTests
             return Task.FromResult(response);
         });
         using var http = new HttpClient(handler);
-        var failure = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Headless.SignUpAsync("fixture-id", "fixture-secret", new("synthetic@example.test", "fixture-password", "192.0.2.1")));
+        var failure = await Assert.ThrowsAsync<TerraScaleAuthException>(() => Client(http).Headless.SignUpAsync("fixture-id", "fixture-secret", new("synthetic@example.test", "fixture-password", IPAddress.Parse("192.0.2.1"))));
         await Assert.That(failure!.StatusCode).IsEqualTo(HttpStatusCode.TemporaryRedirect);
         await Assert.That(handler.Calls).IsEqualTo(1);
     }

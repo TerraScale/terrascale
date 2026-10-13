@@ -657,6 +657,246 @@
       "pagination": null,
       "retry": "none; no idempotency contract",
       "sdk_method": "Headless.CompletePasswordResetAsync"
+    },
+    {
+      "operation_id": "create_invitation",
+      "method": "POST",
+      "path": "/v1/terrascale/organizations/{organization}/invitations",
+      "request_dto": "CreateInvitationRequest",
+      "response_dto": "InvitationCreatedBody",
+      "success_status": 201,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        429,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.CreateInvitationAsync"
+    },
+    {
+      "operation_id": "list_invitations",
+      "method": "GET",
+      "path": "/v1/terrascale/organizations/{organization}/invitations",
+      "request_dto": null,
+      "response_dto": "InvitationPageBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": {
+        "limit": "integer 1..100, default 20",
+        "after": "opaque same-list cursor; response next or null"
+      },
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.ListInvitationsAsync",
+      "query_parameters": {
+        "project_id": "optional canonical project ULID; creation-order list filtered by project"
+      }
+    },
+    {
+      "operation_id": "revoke_invitation",
+      "method": "DELETE",
+      "path": "/v1/terrascale/organizations/{organization}/invitations/{invitation}",
+      "request_dto": null,
+      "response_dto": null,
+      "success_status": 204,
+      "errors": [
+        401,
+        403,
+        404,
+        409,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.RevokeInvitationAsync"
+    },
+    {
+      "operation_id": "lookup_invitation",
+      "method": "POST",
+      "path": "/v1/terrascale/invitations/lookup",
+      "request_dto": "InvitationTokenRequest",
+      "response_dto": "InvitationLookupBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.LookupInvitationAsync"
+    },
+    {
+      "operation_id": "accept_invitation",
+      "method": "POST",
+      "path": "/v1/terrascale/invitations/accept",
+      "request_dto": "InvitationTokenRequest",
+      "response_dto": "AcceptedInvitationBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.AcceptInvitationAsync"
+    },
+    {
+      "operation_id": "decline_invitation",
+      "method": "POST",
+      "path": "/v1/terrascale/invitations/decline",
+      "request_dto": "InvitationTokenRequest",
+      "response_dto": null,
+      "success_status": 204,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.DeclineInvitationAsync"
+    },
+    {
+      "operation_id": "start_ownership_transfer",
+      "method": "POST",
+      "path": "/v1/terrascale/organizations/{organization}/ownership-transfer",
+      "request_dto": "StartTransferRequest",
+      "response_dto": "OwnershipTransferBody",
+      "success_status": 201,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.StartOwnershipTransferAsync"
+    },
+    {
+      "operation_id": "get_ownership_transfer",
+      "method": "GET",
+      "path": "/v1/terrascale/organizations/{organization}/ownership-transfer",
+      "request_dto": null,
+      "response_dto": "OwnershipTransferBody",
+      "success_status": 200,
+      "errors": [
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.GetOwnershipTransferAsync"
+    },
+    {
+      "operation_id": "cancel_ownership_transfer",
+      "method": "DELETE",
+      "path": "/v1/terrascale/organizations/{organization}/ownership-transfer",
+      "request_dto": null,
+      "response_dto": null,
+      "success_status": 204,
+      "errors": [
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.CancelOwnershipTransferAsync"
+    },
+    {
+      "operation_id": "confirm_ownership_transfer",
+      "method": "POST",
+      "path": "/v1/terrascale/organizations/{organization}/ownership-transfer/confirm",
+      "request_dto": null,
+      "response_dto": "MemberBody",
+      "success_status": 200,
+      "errors": [
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.ConfirmOwnershipTransferAsync"
+    },
+    {
+      "operation_id": "list_audit_events",
+      "method": "GET",
+      "path": "/v1/terrascale/organizations/{organization}/audit-events",
+      "request_dto": null,
+      "response_dto": "AuditEventPageBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": {
+        "limit": "integer 1..100, default 20",
+        "after": "opaque same-list cursor; response next or null"
+      },
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.ListAuditEventsAsync"
     }
   ],
   "oauth_operations": [

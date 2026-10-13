@@ -8,13 +8,13 @@ Producer: TerraScale/terrascale `e30ffdc287530551b161b0130220be53d3c0475e` (fres
 
 Use `TerraScaleAuthClient` with `InstanceSlug = "terrascale"` and the trusted auth origin. No management API key is needed for this slice. `AddTerraScaleAuthClient` registers it with redirects and cookies disabled. Caller-owned HttpClient handlers must also disable both; the SDK cannot inspect arbitrary handlers. Requests stay on the validated configured origin even if HttpClient.BaseAddress changes. Do not set a default Authorization header for OAuth forms/discovery.
 
-`auth.Platform` is `TerraScaleAuthPlatformClient`. Every method takes `string accessToken` FIRST (the user's **sign-in** token, not the exchanged project token). IDs are canonical ULIDs. All methods end in an optional `CancellationToken`. Page methods take `int? limit = null, string? after = null` and return `TerraScaleAuthPlatformPage<T>(Items, Next)`. Pass Next unchanged to the SAME list. No auto-pagination/background work, no retries. The producer enforces authorization/roles/tenant isolation; the SDK does not infer user authority.
+`auth.Platform` is `TerraScaleAuthPlatformClient`. Every method takes `string accessToken` FIRST (the user's **sign-in** token, not the exchanged project token). IDs are canonical ULIDs. All methods end in an optional `CancellationToken`. Page methods take `int? limit = null, string? after = null` and return `TerraScaleAuthPlatformPage<T>(Items, Next)`. Pass Next unchanged to the SAME list; null starts a list, and empty `after` is rejected before dispatch. No auto-pagination/background work, no retries. The producer enforces authorization/roles/tenant isolation; the SDK does not infer user authority.
 
 - Organization methods: Create/List/Get/Rename/DeleteOrganizationAsync, LeaveOrganizationAsync; ListMembersAsync, ChangeMemberRoleAsync, RemoveMemberAsync.
 - Project methods: Create/List/Get/Rename/DeleteProjectAsync; ListProjectMembersAsync, SetProjectMemberRoleAsync, RemoveProjectMemberAsync.
 - Key methods: Create/List/Get/Revoke/RotateOrganizationApiKey(s)Async and the equivalent Project methods. Create takes `TerraScaleAuthPlatformCreateApiKey`; rotate takes optional `TerraScaleAuthPlatformRotateApiKey`. Create/rotate return `TerraScaleAuthPlatformApiKeySecret(ApiKey, Key)`. Never persist/log Key as a DTO; display the secret once. Revocation prevents new issuance; already-issued offline tokens retain their lifetime.
 
-`auth.Headless` is `TerraScaleAuthHeadlessClient`. JSON methods take `(string clientId, string clientSecret, request, CancellationToken)` and use form-encoded Basic authentication: SignUpAsync with `TerraScaleAuthHeadlessSignUp` returns `TerraScaleAuthHeadlessPendingSignUp`; StartEmailCodeAsync with `TerraScaleAuthHeadlessEmailCode` and StartPasswordResetAsync with `TerraScaleAuthHeadlessEmail` require 202; CompletePasswordResetAsync with `TerraScaleAuthHeadlessPasswordReset` requires 204. PendingToken and request secrets redact ToString. IP strings in JSON DTOs are the producer wire values; callers must supply proxy-validated end-user IPs.
+`auth.Headless` is `TerraScaleAuthHeadlessClient`. JSON methods take `(string clientId, string clientSecret, request, CancellationToken)` and use form-encoded Basic authentication: SignUpAsync with `TerraScaleAuthHeadlessSignUp` returns `TerraScaleAuthHeadlessPendingSignUp`; StartEmailCodeAsync with `TerraScaleAuthHeadlessEmailCode` and StartPasswordResetAsync with `TerraScaleAuthHeadlessEmail` require 202; CompletePasswordResetAsync with `TerraScaleAuthHeadlessPasswordReset` requires 204. PendingToken and request secrets redact ToString. JSON DTOs and password/email-code grants consistently accept `IPAddress` (`IPAddress?` in nullable wire DTOs); source-generated JSON metadata writes the producer's string wire field. Callers must supply proxy-validated end-user IPs. Existing DTO construction with a string now needs `IPAddress.Parse` or `TryParse`.
 
 Token methods:
 
@@ -37,6 +37,39 @@ Task<TerraScaleAuthTokenResponse> auth.Oidc.RequestClientCredentialsTokenAsync(
 Exchange uses the same confidential client that owns SubjectToken. **No database parameter exists in this producer's exchange grant.** A project API key can carry a database restriction; an organization API key optionally selects one project at token issuance. Key ID is a 26-character ULID (the producer ApiKeySecretBody comment incorrectly says 24). Full key string is client secret. The new optional project argument precedes CancellationToken in RequestClientCredentialsTokenAsync: existing positional fourth-argument cancellation callers must name that argument or supply project first. This is an explicit source API compatibility change in the 0.0.X candidate. Scope may be omitted from token responses. `IssuedTokenType` is optional RFC 8693 metadata. Sign-in scopes are only openid/email/profile/offline_access; action scopes come from exchange, never from password/code sign-in.
 
 Use existing Oidc.RefreshTokenAsync, RevokeTokenAsync and GetUserInfoAsync for restoration/logout. Revocation ends the whole sign-in in ts-auth; offline validation still accepts issued tokens until expiry. Retained IntrospectTokenAsync is **not supported** by this C# producer. Retained instance Organizations/ApiKeys clients represent an older contract and must not be used for platform management.
+
+## Dashboard collaboration operation map
+
+These eleven existing producer operations were missing from the initial `d6fbd4f`. I3's invitation, organization-access, ownership-transfer and audit services consume them, so I1 implements them in this same SDK scope with serializer metadata, manifests and HTTP-fake fixtures. I3 replaces its temporary HTTP calls with `.Platform` methods; I5 supplies the qualified package/composition and uses the corrected exact-head fixtures. Current-head CI, independent re-review, combined-package consumer qualification and producer parity remain acceptance dependencies.
+
+All methods take the original user sign-in `accessToken` first and optional `CancellationToken` last. Organization-scoped methods next take `organizationId`. DTO names below omit the `TerraScaleAuthPlatform` prefix; lists return `TerraScaleAuthPlatformPage<T>`.
+
+| Producer operation | SDK method | Request / result |
+|---|---|---|
+| `create_invitation` | `CreateInvitationAsync` | `CreateInvitation(Email, Role, ProjectId?)` / `CreatedInvitation(Invitation, Token)` |
+| `list_invitations` | `ListInvitationsAsync` | `limit?, after?, projectId?` / page of `Invitation` |
+| `revoke_invitation` | `RevokeInvitationAsync` | `invitationId` / 204 |
+| `lookup_invitation` | `LookupInvitationAsync` | `InvitationToken(Token)` (no organizationId) / `InvitationLookup` |
+| `accept_invitation` | `AcceptInvitationAsync` | `InvitationToken(Token)` (no organizationId) / `AcceptedInvitation` |
+| `decline_invitation` | `DeclineInvitationAsync` | `InvitationToken(Token)` (no organizationId) / 204 |
+| `start_ownership_transfer` | `StartOwnershipTransferAsync` | `StartOwnershipTransfer(UserId)` / `OwnershipTransfer` |
+| `get_ownership_transfer` | `GetOwnershipTransferAsync` | no body / `OwnershipTransfer`; missing transfer throws typed 404 |
+| `confirm_ownership_transfer` | `ConfirmOwnershipTransferAsync` | no body / `Member` with owner role |
+| `cancel_ownership_transfer` | `CancelOwnershipTransferAsync` | no body / 204 |
+| `list_audit_events` | `ListAuditEventsAsync` | `limit?, after?` / newest-first page of `AuditEvent` |
+
+Invitation tokens redact `ToString`; never log/persist creation tokens or token requests. Lookup is signed-in and token-bearing; accept/decline additionally require matching verified email. Invitation project filtering uses the producer query name `project_id`. Creation may return 429; mutations never retry. Ownership/audit authority and membership updates remain ts-auth-owned.
+
+## Fixture behavior derivation
+
+`fixtures/platform-headless.json` uses a fixed synthetic clock of `2026-10-13T00:00:00+00:00` for creation and rotation, independent of the test runner's clock. Source extraction verified the pinned `provenance.json` hashes before generating the affected values; no producer binaries ran. Producer expressions and fixture checks:
+
+- `PlatformEndpoints.cs`: `Map(organization, Roles.Owner)` and `Map(project, Roles.Admin)` determine creation roles. `PlatformDirectory.cs` requires admin for both rename operations; rename fixtures use admin.
+- `ApiKeyEndpoints.cs`: `ProjectId()` is null for organization endpoints; non-null database is rejected for organization creation. Organization-key request database and response project/database fields are null.
+- `ApiKeys.cs`: `PreviousSecretExpiresAt = previousTtl > TimeSpan.Zero ? now + previousTtl : null`; the endpoint exposes this only while it is in the future. Both 60-second rotation fixtures expose `2026-10-13T00:01:00+00:00`.
+- `Invitations.cs` / `PlatformDirectory.cs`: creation/transfer expiry is fixed clock + seven days, invitation status is pending, confirmation grants owner. Invitation tokens use the producer `tsi_` prefix and 52 synthetic alphabet characters. Test ID placeholders are replaced by independent ULIDs.
+
+Contract tests verify these invariants, recursively compare exported operation fixtures to `dtos.json`, and check `security.json` error lists against the admitted vocabulary. Opaque pagination cursors and secrets are controlled HTTP-fake values; fake success does not prove a connected producer journey.
 
 ## Bounds and safety
 

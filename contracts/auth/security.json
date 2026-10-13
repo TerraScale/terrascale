@@ -45,15 +45,21 @@
     "oauth": "{error,error_description?}",
     "safe_metadata": "StatusCode, admitted ErrorCode, RetryAfter only; unknown code, server descriptions and bodies omitted.",
     "platform_codes": [
-      "invalid_request",
-      "unauthorized",
+      "already_member",
+      "email_mismatch",
       "forbidden_role",
-      "not_found",
-      "not_empty",
+      "invalid_request",
+      "invitation_expired",
+      "invitation_pending",
       "last_owner",
       "name_taken",
+      "not_empty",
+      "not_found",
+      "not_pending",
+      "rate_limited",
       "rotation_pending",
-      "temporarily_unavailable"
+      "temporarily_unavailable",
+      "unauthorized"
     ],
     "headless_codes": [
       "invalid_request",
@@ -104,6 +110,16 @@
       "code",
       "new_password",
       "ip_address"
+    ],
+    "CreateInvitationRequest": [
+      "email",
+      "role"
+    ],
+    "InvitationTokenRequest": [
+      "token"
+    ],
+    "StartTransferRequest": [
+      "user_id"
     ]
   },
   "limits": {
@@ -124,5 +140,14 @@
     "secret_alphabet": "0123456789abcdefghjkmnpqrstvwxyz",
     "prefix_or_last4_metadata": "absent",
     "one_time_display": "Only creation/rotation returns key; listings/get return metadata."
-  }
+  },
+  "invitations": {
+    "token": "tsi_ followed by 52 lowercase base32 characters; shown once and emailed by producer; never log or persist in dashboard",
+    "lifetime_days": 7,
+    "security": "User sign-in bearer; verified invitee email must match for accept/decline; token alone is not authorization",
+    "roles": "Organization admin creates/lists/revokes; owner required when inviting owner. Project admin can target/list project_id. Producer checks current authority.",
+    "rate_limit": "Create only: 100 invitations per organization per hour; 429 rate_limited, no retry by SDK."
+  },
+  "ownership_transfer": "Owner nominates a current non-owner member for seven days; nominee confirms, becoming owner while initiating owner becomes admin. Owner or nominee cancels; absent/expired transfer is 404.",
+  "audit_events": "Organization admin reads newest-first items/next; producer retains at least 90 days."
 }

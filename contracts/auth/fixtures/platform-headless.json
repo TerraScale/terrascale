@@ -8,7 +8,7 @@
       "name": "Synthetic project",
       "created_by": "{user}",
       "created_at": "2026-10-13T00:00:00+00:00",
-      "role": "member"
+      "role": "owner"
     }
   },
   "list_organizations": {
@@ -45,7 +45,7 @@
       "name": "Synthetic project",
       "created_by": "{user}",
       "created_at": "2026-10-13T00:00:00+00:00",
-      "role": "member"
+      "role": "admin"
     }
   },
   "delete_organization": {
@@ -96,7 +96,7 @@
       "issuer": "https://auth.example.test/{project}",
       "created_by": "{user}",
       "created_at": "2026-10-13T00:00:00+00:00",
-      "role": "member"
+      "role": "admin"
     }
   },
   "list_projects": {
@@ -139,7 +139,7 @@
       "issuer": "https://auth.example.test/{project}",
       "created_by": "{user}",
       "created_at": "2026-10-13T00:00:00+00:00",
-      "role": "member"
+      "role": "admin"
     }
   },
   "delete_project": {
@@ -181,7 +181,7 @@
       "scopes": [
         "documents:read"
       ],
-      "database": "example-db",
+      "database": null,
       "expires_at": null
     },
     "response": {
@@ -189,8 +189,8 @@
         "id": "{key}",
         "name": "Synthetic project",
         "organization_id": "{organization}",
-        "project_id": "{project}",
-        "database": "example-db",
+        "project_id": null,
+        "database": null,
         "scopes": [
           "documents:read"
         ],
@@ -210,8 +210,8 @@
           "id": "{key}",
           "name": "Synthetic project",
           "organization_id": "{organization}",
-          "project_id": "{project}",
-          "database": "example-db",
+          "project_id": null,
+          "database": null,
           "scopes": [
             "documents:read"
           ],
@@ -230,8 +230,8 @@
       "id": "{key}",
       "name": "Synthetic project",
       "organization_id": "{organization}",
-      "project_id": "{project}",
-      "database": "example-db",
+      "project_id": null,
+      "database": null,
       "scopes": [
         "documents:read"
       ],
@@ -254,15 +254,15 @@
         "id": "{key}",
         "name": "Synthetic project",
         "organization_id": "{organization}",
-        "project_id": "{project}",
-        "database": "example-db",
+        "project_id": null,
+        "database": null,
         "scopes": [
           "documents:read"
         ],
         "created_by": "{user}",
         "created_at": "2026-10-13T00:00:00+00:00",
         "expires_at": null,
-        "previous_secret_expires_at": null
+        "previous_secret_expires_at": "2026-10-13T00:01:00+00:00"
       },
       "key": "{key}_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
@@ -354,7 +354,7 @@
         "created_by": "{user}",
         "created_at": "2026-10-13T00:00:00+00:00",
         "expires_at": null,
-        "previous_secret_expires_at": null
+        "previous_secret_expires_at": "2026-10-13T00:01:00+00:00"
       },
       "key": "{key}_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
@@ -392,5 +392,127 @@
       "ip_address": "192.0.2.1"
     },
     "response": null
+  },
+  "create_invitation": {
+    "request": {
+      "email": "invitee@example.test",
+      "role": "member",
+      "project_id": null
+    },
+    "response": {
+      "invitation": {
+        "id": "{invitation}",
+        "email": "invitee@example.test",
+        "role": "member",
+        "project_id": null,
+        "invited_by": "{user}",
+        "created_at": "2026-10-13T00:00:00+00:00",
+        "expires_at": "2026-10-20T00:00:00+00:00",
+        "status": "pending"
+      },
+      "token": "tsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "list_invitations": {
+    "request": null,
+    "response": {
+      "items": [
+        {
+          "id": "{invitation}",
+          "email": "invitee@example.test",
+          "role": "member",
+          "project_id": null,
+          "invited_by": "{user}",
+          "created_at": "2026-10-13T00:00:00+00:00",
+          "expires_at": "2026-10-20T00:00:00+00:00",
+          "status": "pending"
+        }
+      ],
+      "next": "opaque+/cursor="
+    }
+  },
+  "revoke_invitation": {
+    "request": null,
+    "response": null
+  },
+  "lookup_invitation": {
+    "request": {
+      "token": "tsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "response": {
+      "organization": {
+        "id": "{organization}",
+        "name": "Synthetic project"
+      },
+      "project": null,
+      "email": "invitee@example.test",
+      "role": "member",
+      "expires_at": "2026-10-20T00:00:00+00:00"
+    }
+  },
+  "accept_invitation": {
+    "request": {
+      "token": "tsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "response": {
+      "organization_id": "{organization}",
+      "project_id": null,
+      "role": "member"
+    }
+  },
+  "decline_invitation": {
+    "request": {
+      "token": "tsi_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "response": null
+  },
+  "start_ownership_transfer": {
+    "request": {
+      "user_id": "{nominee}"
+    },
+    "response": {
+      "from_user_id": "{user}",
+      "to_user_id": "{nominee}",
+      "created_at": "2026-10-13T00:00:00+00:00",
+      "expires_at": "2026-10-20T00:00:00+00:00"
+    }
+  },
+  "get_ownership_transfer": {
+    "request": null,
+    "response": {
+      "from_user_id": "{user}",
+      "to_user_id": "{nominee}",
+      "created_at": "2026-10-13T00:00:00+00:00",
+      "expires_at": "2026-10-20T00:00:00+00:00"
+    }
+  },
+  "cancel_ownership_transfer": {
+    "request": null,
+    "response": null
+  },
+  "confirm_ownership_transfer": {
+    "request": null,
+    "response": {
+      "user_id": "{nominee}",
+      "email": "invitee@example.test",
+      "role": "owner",
+      "joined_at": "2026-10-13T00:00:00+00:00"
+    }
+  },
+  "list_audit_events": {
+    "request": null,
+    "response": {
+      "items": [
+        {
+          "id": "{event}",
+          "actor": "{user}",
+          "action": "api_key.created",
+          "target": "{key}",
+          "detail": "documents:read",
+          "occurred_at": "2026-10-13T00:00:00+00:00"
+        }
+      ],
+      "next": "opaque+/cursor="
+    }
   }
 }

@@ -14,7 +14,9 @@
     "src/TerraScale.Authentication/Features/Oidc/OidcServer.cs": "cce1dd8dd7f51730b9b8e4a62a277514669370327bb5e32bd81487182e091ac7",
     "src/TerraScale.Authentication.Contracts/ApiException.cs": "f9e95914f00e00979271e2c1326e317f26c559305d26f710864a44e4492b45d4",
     "src/TerraScale.Authentication/Hosting/OpenApiSetup.cs": "924cc3e3a4af7c454ab16be936d7dfbbca0fa31a601d8f929fad56a30fb085e7",
-    "src/TerraScale.Authentication/Configuration/AuthOptions.cs": "240626568db2efe04a17b894e7dfc9937bf0787b1bb4e062173dd98337738c75"
+    "src/TerraScale.Authentication/Configuration/AuthOptions.cs": "240626568db2efe04a17b894e7dfc9937bf0787b1bb4e062173dd98337738c75",
+    "src/TerraScale.Authentication/Features/Platform/InvitationEndpoints.cs": "f04adbbea517d59033d759f08cfd02cd016e7b4995a3f834fd9d8bc09c3cd45e",
+    "src/TerraScale.Authentication/Features/Platform/Invitations.cs": "c2c25fb0e3ac58a282a9401a8c56c4aa5d8d4777db048b6e4799429a001564b3"
   },
   "qualification": "Source-derived contracts; HTTP fakes only. Producer parity and live qualification remain unproven."
 }

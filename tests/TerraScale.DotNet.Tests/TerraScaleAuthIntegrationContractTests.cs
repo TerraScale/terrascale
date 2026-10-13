@@ -44,15 +44,28 @@ public sealed class TerraScaleAuthIntegrationContractTests
     [Arguments("headless_sign_up")]
     [Arguments("headless_password_reset_start")]
     [Arguments("headless_password_reset_complete")]
+    [Arguments("create_invitation")]
+    [Arguments("list_invitations")]
+    [Arguments("revoke_invitation")]
+    [Arguments("lookup_invitation")]
+    [Arguments("accept_invitation")]
+    [Arguments("decline_invitation")]
+    [Arguments("start_ownership_transfer")]
+    [Arguments("get_ownership_transfer")]
+    [Arguments("cancel_ownership_transfer")]
+    [Arguments("confirm_ownership_transfer")]
+    [Arguments("list_audit_events")]
     public async Task SourcePinnedPlatformAndHeadlessRoutesMatch(string operation)
     {
         var ids = new TerraScaleIdGenerator();
         var organizationId = ids.NewId(); var projectId = ids.NewId(); var userId = ids.NewId(); var keyId = ids.NewId();
+        var invitationId = ids.NewId(); var nomineeId = ids.NewId(); var eventId = ids.NewId();
         using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("routes.json")));
         var contract = manifest.RootElement.GetProperty("operations").EnumerateArray().Single(item => item.GetProperty("operation_id").GetString() == operation);
         var fixtureJson = await File.ReadAllTextAsync(ContractPath("fixtures/platform-headless.json"));
         fixtureJson = fixtureJson.Replace("{organization}", organizationId, StringComparison.Ordinal).Replace("{project}", projectId, StringComparison.Ordinal)
-            .Replace("{user}", userId, StringComparison.Ordinal).Replace("{key}", keyId, StringComparison.Ordinal);
+            .Replace("{user}", userId, StringComparison.Ordinal).Replace("{key}", keyId, StringComparison.Ordinal)
+            .Replace("{invitation}", invitationId, StringComparison.Ordinal).Replace("{nominee}", nomineeId, StringComparison.Ordinal).Replace("{event}", eventId, StringComparison.Ordinal);
         using var fixtures = JsonDocument.Parse(fixtureJson);
         var fixture = fixtures.RootElement.GetProperty(operation);
         var requestJson = fixture.GetProperty("request").ValueKind == JsonValueKind.Null ? null : fixture.GetProperty("request").GetRawText();
@@ -94,6 +107,17 @@ public sealed class TerraScaleAuthIntegrationContractTests
             "headless_sign_up" => client.Headless.SignUpAsync(ClientId, ClientSecret, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthHeadlessSignUp)!, cancellationToken: cancellationToken),
             "headless_password_reset_start" => client.Headless.StartPasswordResetAsync(ClientId, ClientSecret, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthHeadlessEmail)!, cancellationToken: cancellationToken),
             "headless_password_reset_complete" => client.Headless.CompletePasswordResetAsync(ClientId, ClientSecret, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthHeadlessPasswordReset)!, cancellationToken: cancellationToken),
+            "create_invitation" => client.Platform.CreateInvitationAsync("fixture-sign-in", organizationId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreateInvitation)!, cancellationToken: cancellationToken),
+            "list_invitations" => client.Platform.ListInvitationsAsync("fixture-sign-in", organizationId, limit: 2, after: "opaque+/cursor=", cancellationToken: cancellationToken),
+            "revoke_invitation" => client.Platform.RevokeInvitationAsync("fixture-sign-in", organizationId, invitationId, cancellationToken: cancellationToken),
+            "lookup_invitation" => client.Platform.LookupInvitationAsync("fixture-sign-in", JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformInvitationToken)!, cancellationToken: cancellationToken),
+            "accept_invitation" => client.Platform.AcceptInvitationAsync("fixture-sign-in", JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformInvitationToken)!, cancellationToken: cancellationToken),
+            "decline_invitation" => client.Platform.DeclineInvitationAsync("fixture-sign-in", JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformInvitationToken)!, cancellationToken: cancellationToken),
+            "start_ownership_transfer" => client.Platform.StartOwnershipTransferAsync("fixture-sign-in", organizationId, JsonSerializer.Deserialize(requestJson!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformStartOwnershipTransfer)!, cancellationToken: cancellationToken),
+            "get_ownership_transfer" => client.Platform.GetOwnershipTransferAsync("fixture-sign-in", organizationId, cancellationToken: cancellationToken),
+            "cancel_ownership_transfer" => client.Platform.CancelOwnershipTransferAsync("fixture-sign-in", organizationId, cancellationToken: cancellationToken),
+            "confirm_ownership_transfer" => client.Platform.ConfirmOwnershipTransferAsync("fixture-sign-in", organizationId, cancellationToken: cancellationToken),
+            "list_audit_events" => client.Platform.ListAuditEventsAsync("fixture-sign-in", organizationId, limit: 2, after: "opaque+/cursor=", cancellationToken: cancellationToken),
             _ => throw new ArgumentException("Unknown contract operation.", nameof(operation))
         };
         await call;
@@ -102,7 +126,8 @@ public sealed class TerraScaleAuthIntegrationContractTests
             await Assert.That(JsonNode.DeepEquals(JsonNode.Parse(resultJson), JsonNode.Parse(responseJson))).IsTrue();
         var path = contract.GetProperty("path").GetString()!.Replace("{slug}", "terrascale", StringComparison.Ordinal)
             .Replace("{organization}", organizationId, StringComparison.Ordinal).Replace("{project}", projectId, StringComparison.Ordinal)
-            .Replace("{user}", userId, StringComparison.Ordinal).Replace("{key}", keyId, StringComparison.Ordinal);
+            .Replace("{user}", userId, StringComparison.Ordinal).Replace("{key}", keyId, StringComparison.Ordinal)
+            .Replace("{invitation}", invitationId, StringComparison.Ordinal).Replace("{nominee}", nomineeId, StringComparison.Ordinal).Replace("{event}", eventId, StringComparison.Ordinal);
         if (contract.GetProperty("pagination").ValueKind != JsonValueKind.Null) path += "?limit=2&after=opaque%2B%2Fcursor%3D";
         await Assert.That(handler.Uri!.PathAndQuery).IsEqualTo(path);
         await Assert.That(handler.Method).IsEqualTo(contract.GetProperty("method").GetString());
@@ -124,6 +149,143 @@ public sealed class TerraScaleAuthIntegrationContractTests
         else await Assert.That(handler.Body).IsNull();
     }
 
+    [Test]
+    public async Task ExportedFixtureShapesMatchDtoManifestRecursively()
+    {
+        using var schemas = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("dtos.json")));
+        using var routes = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("routes.json")));
+        using var fixtures = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("fixtures/platform-headless.json")));
+        var dtos = schemas.RootElement.GetProperty("dtos");
+        foreach (var operation in routes.RootElement.GetProperty("operations").EnumerateArray())
+        {
+            var fixture = fixtures.RootElement.GetProperty(operation.GetProperty("operation_id").GetString()!);
+            foreach (var kind in new[] { "request", "response" })
+            {
+                var dto = operation.GetProperty(kind + "_dto");
+                if (dto.ValueKind != JsonValueKind.Null) await AssertFixtureShapeAsync(fixture.GetProperty(kind), dtos, dto.GetString()!);
+                else await Assert.That(fixture.GetProperty(kind).ValueKind).IsEqualTo(JsonValueKind.Null);
+            }
+        }
+        using var oauth = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("fixtures/oauth.json")));
+        await AssertFixtureShapeAsync(oauth.RootElement.GetProperty("nested_error"), dtos, "ErrorBody");
+        await AssertFixtureShapeAsync(oauth.RootElement.GetProperty("oauth_error"), dtos, "OAuthErrorBody");
+    }
+
+    [Test]
+    public async Task SecurityErrorListsStayInsideAdmittedVocabulary()
+    {
+        using var security = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("security.json")));
+        using var vocabulary = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("error-codes.json")));
+        var codes = vocabulary.RootElement.GetProperty("codes").EnumerateArray().Select(code => code.GetString()!).ToHashSet(StringComparer.Ordinal);
+        foreach (var list in new[] { "platform_codes", "headless_codes", "token_codes" })
+            foreach (var code in security.RootElement.GetProperty("errors").GetProperty(list).EnumerateArray())
+                await Assert.That(codes.Contains(code.GetString()!)).IsTrue();
+    }
+
+    [Test]
+    public async Task FixturesRespectProducerRolesKeyScopeAndRotationClock()
+    {
+        using var fixtures = JsonDocument.Parse(await File.ReadAllTextAsync(ContractPath("fixtures/platform-headless.json")));
+        var root = fixtures.RootElement;
+        // PlatformEndpoints.Map(..., Roles.Owner/Admin); rename authority is Roles.Admin.
+        await Assert.That(root.GetProperty("create_organization").GetProperty("response").GetProperty("role").GetString()).IsEqualTo("owner");
+        await Assert.That(root.GetProperty("create_project").GetProperty("response").GetProperty("role").GetString()).IsEqualTo("admin");
+        foreach (var operation in new[] { "rename_organization", "rename_project" })
+            await Assert.That(root.GetProperty(operation).GetProperty("response").GetProperty("role").GetString()).IsEqualTo("admin");
+        // ApiKeyEndpoint.ProjectId() is null and its creation guard refuses database for organization keys.
+        await Assert.That(root.GetProperty("create_organization_api_key").GetProperty("request").GetProperty("database").ValueKind).IsEqualTo(JsonValueKind.Null);
+        foreach (var action in new[] { "create", "list", "get", "rotate" })
+        {
+            var response = root.GetProperty(action + "_organization_api_key" + (action == "list" ? "s" : "")).GetProperty("response");
+            var keys = action == "list" ? response.GetProperty("items").EnumerateArray().ToArray()
+                : new[] { action == "get" ? response : response.GetProperty("api_key") };
+            foreach (var key in keys)
+            {
+                await Assert.That(key.GetProperty("project_id").ValueKind).IsEqualTo(JsonValueKind.Null);
+                await Assert.That(key.GetProperty("database").ValueKind).IsEqualTo(JsonValueKind.Null);
+            }
+        }
+        var now = new DateTimeOffset(2026, 10, 13, 0, 0, 0, TimeSpan.Zero);
+        foreach (var scope in new[] { "organization", "project" })
+        {
+            var rotation = root.GetProperty("rotate_" + scope + "_api_key");
+            // ApiKeys.RotateAsync sets now + previousTtl; ApiKeyEndpoint.Map exposes active grace only.
+            var ttl = rotation.GetProperty("request").GetProperty("previous_secret_ttl").GetInt32();
+            await Assert.That(rotation.GetProperty("response").GetProperty("api_key").GetProperty("previous_secret_expires_at").GetDateTimeOffset()).IsEqualTo(now.AddSeconds(ttl));
+        }
+        var invitation = root.GetProperty("create_invitation").GetProperty("response").GetProperty("invitation");
+        await Assert.That(invitation.GetProperty("status").GetString()).IsEqualTo("pending");
+        await Assert.That(invitation.GetProperty("expires_at").GetDateTimeOffset()).IsEqualTo(now.AddDays(7));
+        var transfer = root.GetProperty("start_ownership_transfer").GetProperty("response");
+        await Assert.That(transfer.GetProperty("expires_at").GetDateTimeOffset()).IsEqualTo(now.AddDays(7));
+        await Assert.That(transfer.GetProperty("from_user_id").GetString() == transfer.GetProperty("to_user_id").GetString()).IsFalse();
+        await Assert.That(root.GetProperty("confirm_ownership_transfer").GetProperty("response").GetProperty("role").GetString()).IsEqualTo("owner");
+    }
+
+    [Test]
+    public async Task ProjectInvitationFilterUsesCanonicalQueryWithoutRestartingPagination()
+    {
+        var ids = new TerraScaleIdGenerator(); var organization = ids.NewId(); var project = ids.NewId();
+        using var handler = new CaptureHandler(HttpStatusCode.OK, "{\"items\":[],\"next\":null}");
+        using var http = new HttpClient(handler);
+        await Client(http).Platform.ListInvitationsAsync("fixture-sign-in", organization, after: "opaque+/cursor=", projectId: project);
+        await Assert.That(handler.Uri!.PathAndQuery).IsEqualTo($"/v1/terrascale/organizations/{organization}/invitations?after=opaque%2B%2Fcursor%3D&project_id={project}");
+        await Assert.ThrowsAsync<ArgumentException>(() => Client(http).Platform.ListInvitationsAsync("fixture-sign-in", organization, projectId: "not-an-id"));
+        await Assert.That(handler.Calls).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments("192.0.2.1")]
+    [Arguments("2001:db8::1")]
+    public async Task TypedHeadlessIpAddressesRemainStringWireValues(string address)
+    {
+        using var handler = new CaptureHandler(HttpStatusCode.Accepted, "");
+        using var http = new HttpClient(handler);
+        await Client(http).Headless.StartEmailCodeAsync(ClientId, ClientSecret, new("synthetic@example.test", IPAddress.Parse(address)));
+        using var body = JsonDocument.Parse(handler.Body!);
+        await Assert.That(body.RootElement.GetProperty("ip_address").GetString()).IsEqualTo(address);
+        var decoded = JsonSerializer.Deserialize(handler.Body!, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthHeadlessEmailCode)!;
+        await Assert.That(decoded.IpAddress).IsEqualTo(IPAddress.Parse(address));
+    }
+
+    [Test]
+    public async Task InvitationTokensRedactFormatting()
+    {
+        const string token = "fixture-invitation-canary";
+        var request = new TerraScaleAuthPlatformInvitationToken(token);
+        var created = new TerraScaleAuthPlatformCreatedInvitation(new("fixture-id", "synthetic@example.test", "member", null,
+            "fixture-user", DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddDays(7), "pending"), token);
+        await Assert.That(request.ToString()).DoesNotContain(token);
+        await Assert.That(created.ToString()).DoesNotContain(token);
+    }
+
+    private static async Task AssertFixtureShapeAsync(JsonElement fixture, JsonElement dtos, string dtoName)
+    {
+        var fields = dtos.GetProperty(dtoName).GetProperty("fields").EnumerateArray().ToArray();
+        await Assert.That(fixture.ValueKind).IsEqualTo(JsonValueKind.Object);
+        await Assert.That(fixture.EnumerateObject().Select(field => field.Name).ToArray())
+            .IsEquivalentTo(fields.Select(field => field.GetProperty("name").GetString()!).ToArray());
+        foreach (var field in fields)
+        {
+            var value = fixture.GetProperty(field.GetProperty("name").GetString()!);
+            if (value.ValueKind == JsonValueKind.Null)
+            {
+                await Assert.That(field.GetProperty("nullable").GetBoolean()).IsTrue();
+                continue;
+            }
+            var type = field.GetProperty("type").GetString()!.TrimEnd('?');
+            if (type.StartsWith("IReadOnlyList<", StringComparison.Ordinal))
+            {
+                await Assert.That(value.ValueKind).IsEqualTo(JsonValueKind.Array);
+                var itemType = type[14..^1];
+                if (dtos.TryGetProperty(itemType, out _))
+                    foreach (var item in value.EnumerateArray()) await AssertFixtureShapeAsync(item, dtos, itemType);
+            }
+            else if (dtos.TryGetProperty(type, out _)) await AssertFixtureShapeAsync(value, dtos, type);
+            else await Assert.That(value.ValueKind).IsEqualTo(type is "int" or "long" ? JsonValueKind.Number : JsonValueKind.String);
+        }
+    }
+
     private static async Task<string?> ResultJsonAsync(Task call) => call switch
     {
         Task<TerraScaleAuthPlatformOrganization> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformOrganization),
@@ -138,6 +300,12 @@ public sealed class TerraScaleAuthIntegrationContractTests
         Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProject>> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformPageTerraScaleAuthPlatformProject),
         Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformProjectMember>> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformPageTerraScaleAuthPlatformProjectMember),
         Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformApiKey>> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformPageTerraScaleAuthPlatformApiKey),
+        Task<TerraScaleAuthPlatformCreatedInvitation> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformCreatedInvitation),
+        Task<TerraScaleAuthPlatformInvitationLookup> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformInvitationLookup),
+        Task<TerraScaleAuthPlatformAcceptedInvitation> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformAcceptedInvitation),
+        Task<TerraScaleAuthPlatformOwnershipTransfer> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformOwnershipTransfer),
+        Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformInvitation>> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformPageTerraScaleAuthPlatformInvitation),
+        Task<TerraScaleAuthPlatformPage<TerraScaleAuthPlatformAuditEvent>> typed => JsonSerializer.Serialize(await typed, TerraScaleAuthIntegrationJsonContext.Default.TerraScaleAuthPlatformPageTerraScaleAuthPlatformAuditEvent),
         _ => null
     };
 
