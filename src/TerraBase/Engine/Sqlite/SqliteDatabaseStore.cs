@@ -225,12 +225,6 @@ internal sealed partial class SqliteDatabaseStore(
     /// </summary>
     internal bool Replica { get; init; }
 
-    /// <summary>
-    /// Whether every write transaction syncs the write-ahead log at its commit (<c>synchronous = FULL</c>), as a durable one
-    /// does: the system database, whose acknowledged catalog and API keys survive an OS crash (docs/terrabase/decisions/0012).
-    /// </summary>
-    internal bool SyncsEveryCommit { get; init; }
-
     public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken) =>
         write && Replica ? throw new CatalogFollowerException() : await BeginAsync(write, capture: true, durable: false, cancellationToken).ConfigureAwait(false);
 
@@ -247,7 +241,9 @@ internal sealed partial class SqliteDatabaseStore(
     private async ValueTask<SqliteStorageTransaction> BeginAsync(
         bool write, bool capture, bool durable, CancellationToken cancellationToken, string writer = "a write transaction")
     {
-        durable |= write && SyncsEveryCommit;
+        // Every write transaction syncs the write-ahead log at its commit (synchronous = FULL): what a write answers, the
+        // system database's catalog and keys (decision 0012) and a client database's documents (0013), survives a power loss.
+        durable |= write;
         var ownsAdmission = !io.HasAdmission;
         if (ownsAdmission)
         {
