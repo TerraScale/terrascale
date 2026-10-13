@@ -1,7 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Http.Features;
 
-namespace TerraScale.Dashboard.Features.Billing.Stripe;
+namespace TerraScale.Dashboard.Features.Billing.Webhooks;
 
 public static class StripeWebhookEndpoints
 {

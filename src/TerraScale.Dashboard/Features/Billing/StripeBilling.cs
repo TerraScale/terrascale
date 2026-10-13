@@ -97,7 +97,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
             if (pending.Status == "complete") return CheckoutReturnUrl(pending.Id);
             throw new OnboardingValidationException("This checkout expired. Start a new checkout.");
         }
-        var options = new global::Stripe.Checkout.SessionCreateOptions
+        var options = new Stripe.Checkout.SessionCreateOptions
         {
             Customer = binding.CustomerId,
             ClientReferenceId = org.Id,
@@ -177,7 +177,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         if (!WebhookEvents.Contains(@event.Type)) return;
         var customerId = @event.Data.Object switch
         {
-            global::Stripe.Checkout.Session checkout => checkout.CustomerId,
+            Stripe.Checkout.Session checkout => checkout.CustomerId,
             Subscription subscription => subscription.CustomerId,
             Invoice invoice => invoice.CustomerId,
             _ => null
@@ -207,7 +207,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
                 ?? throw new IOException("Billing organization is unavailable.");
             var org = AccountService.Read<OrganizationRecord>(organizationDocument);
             if (org.Id != orgId) throw new IOException("Billing organization changed.");
-            global::Stripe.Checkout.Session? checkout = null;
+            Stripe.Checkout.Session? checkout = null;
             if (binding.SubscriptionId.Length == 0 && binding.CheckoutId.Length > 0)
             {
                 checkout = await client.V1.Checkout.Sessions.GetAsync(binding.CheckoutId,
@@ -420,7 +420,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
 
     private static RequestOptions Idempotent(string key) => new() { IdempotencyKey = "TerraScale.Dashboard/" + key };
 
-    private static void ValidateCheckout(BillingBinding binding, global::Stripe.Checkout.Session checkout)
+    private static void ValidateCheckout(BillingBinding binding, Stripe.Checkout.Session checkout)
     {
         if (binding.CheckoutId.Length > 0 && checkout.Id != binding.CheckoutId || checkout.CustomerId != binding.CustomerId || checkout.ClientReferenceId != binding.OrganizationId ||
             checkout.Metadata.GetValueOrDefault("organization_id") != binding.OrganizationId ||

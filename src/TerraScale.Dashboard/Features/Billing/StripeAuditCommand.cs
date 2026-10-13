@@ -83,7 +83,7 @@ public sealed class StripeAuditCommand
             checks["invoice_event_mode"] = recentEvents.All(stripeEvent => stripeEvent.Livemode == live);
             details["recent_invoice_created_with_pending_webhooks"] = recentEvents.Count(stripeEvent => stripeEvent.PendingWebhooks > 0);
 
-            var portals = new List<global::Stripe.BillingPortal.Configuration>();
+            var portals = new List<Stripe.BillingPortal.Configuration>();
             await foreach (var portal in client.V1.BillingPortal.Configurations.ListAutoPagingAsync(new() { Limit = 100 }, cancellationToken: cancellationToken))
                 portals.Add(portal);
             checks["portal_payment_and_invoices"] = portals.Any(portal => portal.IsDefault && portal.Active && portal.Livemode == live &&

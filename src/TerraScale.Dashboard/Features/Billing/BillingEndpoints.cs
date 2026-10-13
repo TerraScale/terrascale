@@ -3,7 +3,7 @@ using AccountService = TerraScale.Dashboard.Shared.Accounts.AccountService;
 using TerraScale.Dashboard.UI;
 using TerraScale.Dashboard.Features.Billing.Invoices;
 using TerraScale.Dashboard.Features.Billing.Plans;
-using TerraScale.Dashboard.Features.Billing.Stripe;
+using TerraScale.Dashboard.Features.Billing.Webhooks;
 using TerraScale.Dashboard.Shared.Validation;
 
 namespace TerraScale.Dashboard.Features.Billing;
