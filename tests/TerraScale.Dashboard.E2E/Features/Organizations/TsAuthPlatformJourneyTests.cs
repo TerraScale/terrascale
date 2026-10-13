@@ -210,6 +210,125 @@ public sealed class TsAuthPlatformJourneyTests
         await Assert.That(platform.Producer.Failures).IsEmpty();
     }
 
+    // Round-3 review probes, verbatim.
+    [Test]
+    public async Task InviteAndRevokeRefuseADemotedCallerFromLiveTsAuth()
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var owner = platform.Principal("live-invite-owner");
+        using var client = platform.Client();
+        using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password))
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var business = platform.Producer.AddOrganization("Live invitation authority", owner.Subject, owner.Email);
+        var token = platform.Producer.AddInvitation(business, "invitee@example.test", "member", owner.Subject);
+        var invitation = platform.Producer.InvitationId(business, token);
+        var csrf = await HttpJourney.CsrfAsync(client, "/organization");
+        using (var switched = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-organization", new()
+        { ["_csrf"] = csrf, ["organizationId"] = business, ["returnUrl"] = "/organization" }))
+            await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=invitations");
+        platform.Producer.AddMember(business, owner.Subject, owner.Email, "viewer");
+        using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/access/invitations?tab=invitations", new()
+        { ["_csrf"] = csrf, ["email"] = "unauthorized@example.test", ["role"] = "admin" }))
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        using (var revoked = await HttpJourney.PostFormAsync(client, "/api/v1/access/invitations/" + invitation + "/revoke?tab=invitations", new()
+        { ["_csrf"] = csrf }))
+            await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(platform.Producer.Count("POST", "/v1/terrascale/organizations/" + business + "/invitations", owner.Subject)).IsEqualTo(0);
+        await Assert.That(platform.Producer.Count("DELETE", "/v1/terrascale/organizations/" + business + "/invitations/" + invitation, owner.Subject)).IsEqualTo(0);
+        await Assert.That(platform.Producer.Failures).IsEmpty();
+    }
+
+    [Test]
+    public async Task ResendMustNotWidenAProjectAdminInvitationToOrganizationAdmin()
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var owner = platform.Principal("project-invite-owner");
+        using var client = platform.Client();
+        using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password))
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var business = platform.Producer.AddOrganization("Project invitation scope", owner.Subject, owner.Email);
+        var project = platform.Producer.AddProject(business, "Limited project", owner.Subject);
+        var token = platform.Producer.AddInvitation(business, "project-admin@example.test", "admin", owner.Subject, project);
+        var invitation = platform.Producer.InvitationId(business, token);
+        var csrf = await HttpJourney.CsrfAsync(client, "/organization");
+        using (var switched = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-organization", new()
+        { ["_csrf"] = csrf, ["organizationId"] = business, ["returnUrl"] = "/organization" }))
+            await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=invitations");
+        using var resent = await HttpJourney.PostFormAsync(client, "/api/v1/access/invitations/" + invitation + "/resend?tab=invitations", new()
+        { ["_csrf"] = csrf });
+        await Assert.That(resent.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var body = platform.Producer.Bodies("POST", "/v1/terrascale/organizations/" + business + "/invitations").Single();
+        using var created = JsonDocument.Parse(body);
+        var scope = created.RootElement.TryGetProperty("project_id", out var scoped) ? scoped.GetString() : null;
+        Console.WriteLine($"PROJECT-RESEND role={created.RootElement.GetProperty("role").GetString()}, old-project={project}, new-project={scope ?? "null (organization)"}");
+        await Assert.That(platform.Producer.Failures).IsEmpty();
+        await Assert.That(scope).IsEqualTo(project).Because("resending a project invitation must preserve its grant boundary");
+    }
+
+    // A resend keeps a project invitation's project and role; it never becomes an organization invitation.
+    [Test]
+    public async Task ResendKeepsAProjectInvitationsProjectAndRole()
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var owner = platform.Principal("project-resend-owner");
+        using var client = platform.Client(replica: true);
+        using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password))
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var business = platform.Producer.AddOrganization("Project resend", owner.Subject, owner.Email);
+        var project = platform.Producer.AddProject(business, "Scoped project", owner.Subject);
+        var invitation = platform.Producer.InvitationId(business, platform.Producer.AddInvitation(business, "project-member@example.test", "member", owner.Subject, project));
+        var csrf = await SwitchAsync(client, business);
+        using (var resent = await HttpJourney.PostFormAsync(client, "/api/v1/access/invitations/" + invitation + "/resend?tab=invitations", new() { ["_csrf"] = csrf }))
+            await Assert.That(resent.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var created = JsonDocument.Parse(platform.Producer.Bodies("POST", "/v1/terrascale/organizations/" + business + "/invitations").Single());
+        await Assert.That(created.RootElement.GetProperty("role").GetString()).IsEqualTo("member");
+        await Assert.That(created.RootElement.GetProperty("project_id").GetString()).IsEqualTo(project);
+        await Assert.That(platform.Producer.InvitationStatus(business, invitation)).IsEqualTo("revoked");
+        await Assert.That(platform.Producer.Failures).IsEmpty();
+    }
+
+    // A project identity or role the dashboard cannot confirm refuses the resend before anything changes at
+    // ts-auth: the old invitation stays pending and nothing is created from defaults in its place.
+    [Test]
+    public async Task ResendRefusesAProjectInvitationWithoutAKnownProjectOrRole()
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var owner = platform.Principal("project-identity-owner");
+        using var client = platform.Client();
+        using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password))
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var business = platform.Producer.AddOrganization("Project identity", owner.Subject, owner.Email);
+        var csrf = await SwitchAsync(client, business);
+        var deleted = new TerraScaleIdGenerator().NewId();
+        var project = platform.Producer.AddProject(business, "Known project", owner.Subject);
+        foreach (var (email, scope, role, status) in new[]
+        {
+            ("empty@example.test", "", "admin", HttpStatusCode.Conflict), ("malformed@example.test", "../projects/other", "admin", HttpStatusCode.Conflict),
+            ("deleted@example.test", deleted, "admin", HttpStatusCode.Conflict), ("blank-role@example.test", project, "", HttpStatusCode.UnprocessableEntity),
+            ("unknown-role@example.test", project, "superadmin", HttpStatusCode.UnprocessableEntity),
+        })
+        {
+            var invitation = platform.Producer.InvitationId(business, platform.Producer.AddInvitation(business, email, role, owner.Subject, scope));
+            using var resent = await HttpJourney.PostFormAsync(client, "/api/v1/access/invitations/" + invitation + "/resend?tab=invitations", new() { ["_csrf"] = csrf });
+            await Assert.That(resent.StatusCode).IsEqualTo(status).Because(email);
+            await Assert.That(platform.Producer.InvitationStatus(business, invitation)).IsEqualTo("pending").Because(email);
+            await Assert.That(platform.Producer.Count("DELETE", "/v1/terrascale/organizations/" + business + "/invitations/" + invitation, owner.Subject)).IsEqualTo(0).Because(email);
+        }
+        await Assert.That(platform.Producer.Bodies("POST", "/v1/terrascale/organizations/" + business + "/invitations")).IsEmpty();
+        await Assert.That(platform.Producer.Failures).IsEmpty();
+    }
+
+    private static async Task<string> SwitchAsync(HttpClient client, string organizationId)
+    {
+        var csrf = await HttpJourney.CsrfAsync(client, "/organization");
+        using (var switched = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-organization", new()
+        { ["_csrf"] = csrf, ["organizationId"] = organizationId, ["returnUrl"] = "/organization" }))
+            await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        return await HttpJourney.CsrfAsync(client, "/organization?tab=invitations");
+    }
+
     private static async Task<JsonElement> Me(HttpClient client) => JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me")).RootElement.Clone();
     private static async Task<JsonElement> Context(HttpClient client) => JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/context")).RootElement.Clone();
 
@@ -329,12 +448,14 @@ public sealed class TsAuthPlatformJourneyTests
         public void AddCollaborator(string organizationId, string userId) { lock (gate) Find(organizationId)!.Collaborators.Add(userId); }
         public void RemoveMember(string organizationId, string userId) { lock (gate) Find(organizationId)!.Members.Remove(userId); }
         public string? Role(string organizationId, string userId) { lock (gate) return Find(organizationId)!.Members.GetValueOrDefault(userId)?.Role; }
-        public string AddInvitation(string organizationId, string email, string role, string invitedBy)
+        public string InvitationId(string organizationId, string token) { lock (gate) return Find(organizationId)!.Invitations.Single(invitation => invitation.Token == token).Id; }
+        public string? InvitationStatus(string organizationId, string invitationId) { lock (gate) return Find(organizationId)!.Invitations.SingleOrDefault(invitation => invitation.Id == invitationId)?.Status; }
+        public string AddInvitation(string organizationId, string email, string role, string invitedBy, string? projectId = null)
         {
             lock (gate)
             {
                 var token = "tsi_" + Convert.ToHexStringLower(Guid.NewGuid().ToByteArray()) + Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..20];
-                Find(organizationId)!.Invitations.Add(new(ids.NewId(), token, email, role, invitedBy, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddDays(7)));
+                Find(organizationId)!.Invitations.Add(new(ids.NewId(), token, email, role, invitedBy, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddDays(7), projectId));
                 return token;
             }
         }
@@ -424,10 +545,36 @@ public sealed class TsAuthPlatformJourneyTests
                     var created = new Project(ids.NewId(), Field("name"), caller.UserId, DateTimeOffset.UtcNow);
                     organization.Projects.Add(created);
                     return Json(Wire(organization, created, caller.UserId), HttpStatusCode.Created);
+                case (["invitations"], "POST"):
+                    if (!admin) return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs admin.");
+                    var projectId = Field("project_id");
+                    var token = AddInvitation(organization.Id, Field("email"), Field("role"), caller.UserId, projectId.Length == 0 ? null : projectId);
+                    var createdInvitation = organization.Invitations.Single(invitation => invitation.Token == token);
+                    return Json(new
+                    {
+                        invitation = new
+                        {
+                            id = createdInvitation.Id,
+                            email = createdInvitation.Email,
+                            role = createdInvitation.Role,
+                            project_id = createdInvitation.ProjectId,
+                            invited_by = createdInvitation.InvitedBy,
+                            created_at = createdInvitation.CreatedAt,
+                            expires_at = createdInvitation.ExpiresAt,
+                            status = createdInvitation.Status
+                        },
+                        token
+                    }, HttpStatusCode.Created);
+                case (["invitations", var invitationId], "DELETE"):
+                    if (!admin) return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs admin.");
+                    var revokedInvitation = organization.Invitations.SingleOrDefault(invitation => invitation.Id == invitationId);
+                    if (revokedInvitation is null) return Error(HttpStatusCode.NotFound, "not_found", "Invitation unavailable.");
+                    revokedInvitation.Status = "revoked";
+                    return new(HttpStatusCode.NoContent);
                 case (["invitations"], "GET"):
                     if (!admin) return Error(HttpStatusCode.Forbidden, "forbidden_role", "Needs admin.");
                     return Page(organization.Invitations.Select(invite => (object)new
-                    { id = invite.Id, email = invite.Email, role = invite.Role, project_id = (string?)null, invited_by = invite.InvitedBy, created_at = invite.CreatedAt, expires_at = invite.ExpiresAt, status = invite.Status }), query);
+                    { id = invite.Id, email = invite.Email, role = invite.Role, project_id = invite.ProjectId, invited_by = invite.InvitedBy, created_at = invite.CreatedAt, expires_at = invite.ExpiresAt, status = invite.Status }), query);
                 case (["ownership-transfer"], "GET"):
                     return organization.Transfer is { } transfer
                         ? Json(new { from_user_id = transfer.From, to_user_id = transfer.To, created_at = transfer.CreatedAt, expires_at = transfer.ExpiresAt })
@@ -492,8 +639,9 @@ public sealed class TsAuthPlatformJourneyTests
         }
         private sealed record Member(string Email, string Role, DateTimeOffset JoinedAt);
         private sealed record Project(string Id, string Name, string CreatedBy, DateTimeOffset CreatedAt);
-        private sealed class Invitation(string id, string token, string email, string role, string invitedBy, DateTimeOffset createdAt, DateTimeOffset expiresAt)
+        private sealed class Invitation(string id, string token, string email, string role, string invitedBy, DateTimeOffset createdAt, DateTimeOffset expiresAt, string? projectId = null)
         {
+            public string? ProjectId { get; } = projectId;
             public string Id { get; } = id;
             public string Token { get; } = token;
             public string Email { get; } = email;

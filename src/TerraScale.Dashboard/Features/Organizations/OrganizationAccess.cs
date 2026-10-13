@@ -10,7 +10,7 @@ public sealed record OrganizationAccessView(IReadOnlyList<MemberRecord> Members,
 public interface IOrganizationAccess
 {
     Task<OrganizationAccessView> ReadAsync(AccountContext context, CancellationToken cancellationToken);
-    Task<CreatedInvitation> InviteAsync(AccountContext context, string email, string role, CancellationToken cancellationToken);
+    Task<CreatedInvitation> InviteAsync(AccountContext context, string email, string role, string? projectId, CancellationToken cancellationToken);
     Task RevokeInvitationAsync(AccountContext context, string id, CancellationToken cancellationToken);
     Task ChangeRoleAsync(AccountContext context, string userId, string role, CancellationToken cancellationToken);
     Task RemoveMemberAsync(AccountContext context, string userId, CancellationToken cancellationToken);
@@ -50,11 +50,11 @@ public sealed class TsOrganizationAccess(ITsAuthPlatform platform) : IOrganizati
         return new(members, invitations, audit.Concat(context.Organization!.AuditEvents).OrderByDescending(item => item.OccurredAt).ToArray(),
             transfer is null ? null : new(transfer.FromUserId, transfer.ToUserId, transfer.CreatedAt, transfer.ExpiresAt), context.CanManage ? 90 : null);
     }
-    public async Task<CreatedInvitation> InviteAsync(AccountContext context, string email, string role, CancellationToken cancellationToken)
+    public async Task<CreatedInvitation> InviteAsync(AccountContext context, string email, string role, string? projectId, CancellationToken cancellationToken)
     {
         Manage(context);
         if (!MailAddress.TryCreate(email, out var parsed) || !string.Equals(parsed.Address, email, StringComparison.OrdinalIgnoreCase)) throw new AccountAccessException("Enter a valid email address.", 422);
-        var created = await platform.CreateInvitationAsync(context.Session, Organization(context), email, Role(role), cancellationToken);
+        var created = await platform.CreateInvitationAsync(context.Session, Organization(context), email, Role(role), projectId, cancellationToken);
         return new(Invitation(Organization(context), created.Invitation), created.Token);
     }
     public Task RevokeInvitationAsync(AccountContext context, string id, CancellationToken cancellationToken)
@@ -87,6 +87,7 @@ public sealed class TsOrganizationAccess(ITsAuthPlatform platform) : IOrganizati
         OrganizationId = organizationId,
         Email = remote.Email,
         Role = remote.Role,
+        ProjectId = remote.ProjectId,
         Status = remote.Status,
         CreatedAt = remote.CreatedAt,
         ExpiresAt = remote.ExpiresAt

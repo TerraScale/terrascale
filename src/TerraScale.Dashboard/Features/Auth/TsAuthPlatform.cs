@@ -22,6 +22,11 @@ public interface ITsAuthPlatform
     Task DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken);
     Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken);
     Task<TerraScaleAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, CancellationToken cancellationToken);
+    // With a project id, an invitation to that project only. A platform without project invitations refuses one
+    // rather than send it as an organization invitation.
+    Task<TerraScaleAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, string? projectId, CancellationToken cancellationToken) =>
+        projectId is null ? CreateInvitationAsync(session, organizationId, email, role, cancellationToken)
+            : throw new AccountAccessException("Project invitations are unavailable.", 409);
     Task RevokeInvitationAsync(SessionRecord session, string organizationId, string invitationId, CancellationToken cancellationToken);
     Task<TerraScaleAuthPlatformInvitationLookup?> LookupInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken);
     Task<TerraScaleAuthPlatformAcceptedInvitation> AcceptInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken);
@@ -78,11 +83,15 @@ public sealed partial class TsAuthGateway : ITsAuthPlatform
     public Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) =>
         PagesAsync(after => Client().Platform.ListInvitationsAsync(Bearer(session), Id(organizationId), 100, after, null, cancellationToken));
 
-    public async Task<TerraScaleAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, CancellationToken cancellationToken)
+    public Task<TerraScaleAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, CancellationToken cancellationToken) =>
+        CreateInvitationAsync(session, organizationId, email, role, null, cancellationToken);
+
+    public async Task<TerraScaleAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, string? projectId, CancellationToken cancellationToken)
     {
-        var created = await PlatformAsync(() => Client().Platform.CreateInvitationAsync(Bearer(session), Id(organizationId), new(email, role), cancellationToken));
+        var created = await PlatformAsync(() => Client().Platform.CreateInvitationAsync(Bearer(session), Id(organizationId), new(email, role, projectId is null ? null : Id(projectId)), cancellationToken));
+        // An answer for another scope or role is not the invitation asked for.
         if (created.Invitation is null || !TerraScaleIds.IsValid(created.Invitation.Id) || created.Token is not { Length: > 0 and <= 4096 } ||
-            !created.Invitation.Email.Equals(email, StringComparison.OrdinalIgnoreCase))
+            !created.Invitation.Email.Equals(email, StringComparison.OrdinalIgnoreCase) || created.Invitation.ProjectId != projectId || created.Invitation.Role != role)
             throw new IOException("ts-auth returned an invalid invitation.");
         return created;
     }

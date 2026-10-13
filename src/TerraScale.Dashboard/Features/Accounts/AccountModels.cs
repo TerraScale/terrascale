@@ -179,6 +179,8 @@ public sealed class InvitationRecord
     public string OrganizationId { get; set; } = "";
     public string Email { get; set; } = "";
     public string Role { get; set; } = "member";
+    // The project a project invitation grants; none for an organization invitation.
+    public string? ProjectId { get; set; }
     public string Status { get; set; } = "pending";
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
@@ -194,7 +196,14 @@ public sealed record AccountContext(SessionRecord Session, AccountRecord Account
 }
 
 // One in-flight invitation: its email, when the slot was taken and, once ts-auth answered, its id.
-public sealed record InvitationReservation(string Email, DateTimeOffset ReservedAt, string InvitationId = "");
+public sealed record InvitationReservation(string Email, DateTimeOffset ReservedAt, string InvitationId = "")
+{
+    // The project of a project invitation; none for an organization invitation.
+    public string? ProjectId { get; init; }
+    // ts-auth invitation ids for the email that cannot be this reservation's: listed when it was taken, or since
+    // accounted for by another reservation.
+    public IReadOnlyList<string> Known { get; init; } = [];
+}
 
 public sealed record CreatedInvitation(InvitationRecord Invitation, string Token)
 {
