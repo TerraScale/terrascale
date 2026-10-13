@@ -58,6 +58,51 @@ public sealed class DocumentChangesContractTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TransactionChangesSharingVersionRetainPriorCheckpointUntilFinalChange(bool hasCheckpoint)
+    {
+        var change = "{\"collection\":\"items\",\"id\":\"a\",\"op\":\"upsert\",\"version\":\"2\",\"origin\":\"0000000000000001\",\"document\":null}";
+        var second = change.Replace("\"a\"", "\"b\"", StringComparison.Ordinal);
+        using var wire = new Wire
+        {
+            Payload = $"event: change\ndata: {change}\n\nevent: change\nid: {Next}\ndata: {second}\n\n"
+        };
+        var updates = new List<DocumentChangesUpdate>();
+        await foreach (var update in Service(wire).ReadAsync(Context(), "01JA0000000000000000000004", "items", hasCheckpoint ? First : "now")) updates.Add(update);
+        await Assert.That(updates.Select(update => update.State)).IsEquivalentTo(new[] { "change", "change", "reconnect" }, CollectionOrdering.Matching);
+        await Assert.That(updates[0].Cursor).IsEqualTo(hasCheckpoint ? First : null);
+        await Assert.That(updates[1].Cursor).IsEqualTo(Next);
+        await Assert.That(updates[0].Change!.Id).IsEqualTo("a");
+        await Assert.That(updates[1].Change!.Id).IsEqualTo("b");
+        await Assert.That(updates[2].Cursor).IsEqualTo(Next);
+        await Assert.That(wire.Content!.Disposed).IsTrue();
+    }
+
+    [Test]
+    public async Task HalfTransactionDisposalKeepsAcceptedCheckpointAndPermitsReplay()
+    {
+        var change = "{\"collection\":\"items\",\"id\":\"a\",\"op\":\"upsert\",\"version\":\"2\",\"origin\":\"0000000000000001\",\"document\":null}";
+        var second = change.Replace("\"a\"", "\"b\"", StringComparison.Ordinal);
+        var payload = $"event: change\ndata: {change}\n\nevent: change\nid: {Next}\ndata: {second}\n\n";
+        using var wire = new Wire { Payload = payload };
+        await using (var stream = Service(wire).ReadAsync(Context(), "01JA0000000000000000000004", "items", First).GetAsyncEnumerator())
+        {
+            await Assert.That(await stream.MoveNextAsync()).IsTrue();
+            await Assert.That(stream.Current.Cursor).IsEqualTo(First);
+            await Assert.That(stream.Current.Change!.Id).IsEqualTo("a");
+        }
+        await Assert.That(wire.Content!.Disposed).IsTrue();
+        var replay = new List<DocumentChangesUpdate>();
+        await foreach (var update in Service(wire).ReadAsync(Context(), "01JA0000000000000000000004", "items", First)) replay.Add(update);
+        await Assert.That(replay.Where(update => update.State == "change").Select(update => update.Change!.Id))
+            .IsEquivalentTo(new[] { "a", "b" }, CollectionOrdering.Matching);
+        await Assert.That(replay.Last().Cursor).IsEqualTo(Next);
+        await Assert.That(wire.StreamRequests).IsEqualTo(2);
+        await Assert.That(wire.Content!.Disposed).IsTrue();
+    }
+
+    [Test]
     public async Task PartialEnumerationDisposesConnection()
     {
         using var wire = new Wire();
@@ -101,6 +146,7 @@ public sealed class DocumentChangesContractTests
     {
         public bool Expired { get; init; }
         public bool Checkpointless { get; init; }
+        public string? Payload { get; init; }
         public int StreamRequests { get; private set; }
         public string? LastEventId { get; private set; }
         public string? Query { get; private set; }
@@ -123,7 +169,7 @@ public sealed class DocumentChangesContractTests
             var change = "{\"collection\":\"items\",\"id\":\"a\",\"op\":\"upsert\",\"version\":\"2\",\"origin\":\"0000000000000001\",\"document\":null}";
             var initial = Checkpointless ? "event: change\ndata: " + change.Replace("\"a\"", "\"txn\"", StringComparison.Ordinal) + "\n\n" : "";
             Content = Expired ? new("{\"error\":{\"code\":\"cursor_expired\",\"message\":\"expired\"}}", "application/json") :
-                new(initial + $"event: change\nid: {First}\ndata: {change}\n\nevent: change\nid: {Next}\ndata: {change}\n\nevent: cursor\nid: {Next}\ndata: {{\"cursor\":\"{Next}\"}}\n\n", "text/event-stream");
+                new(Payload ?? initial + $"event: change\nid: {First}\ndata: {change}\n\nevent: change\nid: {Next}\ndata: {change}\n\nevent: cursor\nid: {Next}\ndata: {{\"cursor\":\"{Next}\"}}\n\n", "text/event-stream");
             var response = new HttpResponseMessage(Expired ? HttpStatusCode.Gone : HttpStatusCode.OK) { Content = Content };
             response.Headers.Add("X-TerraBase-Region", "gru");
             return Task.FromResult(response);
