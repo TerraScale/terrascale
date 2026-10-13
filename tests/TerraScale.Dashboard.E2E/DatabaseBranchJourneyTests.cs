@@ -7,8 +7,7 @@ using TerraScale.Dashboard.Features.Accounts;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class DatabaseBranchJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
@@ -16,39 +15,42 @@ public sealed class DatabaseBranchJourneyTests(DashboardE2EFixture fixture)
     {
         var organizationId = "";
         var projectId = "";
-        var sourceId = "";
         var mode = "";
         var bearer = "";
-        var actingUser = "";
         var calls = 0;
         var lists = 0;
-        JsonElement pendingBranch = default;
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
+        const string sourceName = "snapshot-source";
+        const string retryName = "snapshot-recovered";
+        TestAuth auth = null!;
+        Uri origin = null!;
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), async http =>
         {
-            var projectPath = "/v1/management/organizations/" + organizationId + "/projects/" + projectId;
-            if (http.Request.Method == "POST" && http.Request.Path == projectPath + "/databases/" + sourceId + "/branches")
+            if (http.Request.Headers.ContainsKey(DatabaseSdkJourneyTests.Forwarded)) return null;
+            var databases = "/v1/projects/" + projectId + "/databases";
+            if (http.Request.Method == "POST" && http.Request.Path == databases + "/" + sourceName + "/branches")
             {
-                DemandScope(http, organizationId);
+                DatabaseSdkJourneyTests.DemandProjectToken(auth, http, organizationId, projectId, "databases:write");
                 Interlocked.Increment(ref calls);
                 bearer = http.Request.Headers.Authorization.ToString();
-                actingUser = http.Request.Headers["X-TerraBase-User-Id"].ToString();
                 if (Volatile.Read(ref mode) == "unsupported-conflict")
-                    return Task.FromResult<IResult?>(Results.Json(new { error = new { code = "database_busy", message = "Unsupported scoped conflict", fix = "retry" } }, statusCode: 409));
+                    return Results.Json(new { error = new { code = "database_busy", message = "Unsupported scoped conflict", fix = "retry" } }, statusCode: 409);
             }
-            if (http.Request.Method == "GET" && http.Request.Path == projectPath + "/databases")
+            if (http.Request.Method == "GET" && http.Request.Path == databases)
             {
-                DemandScope(http, organizationId);
+                DatabaseSdkJourneyTests.DemandProjectToken(auth, http, organizationId, projectId, "databases:read");
                 Interlocked.Increment(ref lists);
                 if (Volatile.Read(ref mode) is "list-home" or "list-source")
                 {
-                    var row = JsonNode.Parse(pendingBranch.GetRawText())!.AsObject();
-                    if (mode == "list-home") row["homeRegion"] = "sfo";
-                    else row["branchedFrom"] = "01K78000000000000000000000";
-                    return Task.FromResult<IResult?>(Results.Json(new { items = new[] { row }, next = (string?)null }));
+                    // The real listing, with only the interrupted branch's placement or provenance changed.
+                    var (status, body) = await DatabaseSdkJourneyTests.ForwardAsync(http, origin);
+                    foreach (var row in body!["items"]!.AsArray().Select(item => item!.AsObject()).Where(item => (string?)item["name"] == retryName))
+                        if (mode == "list-home") row["homeRegion"] = "sfo"; else row["branchedFrom"] = "01K78000000000000000000000";
+                    return Results.Json(body, statusCode: status);
                 }
             }
-            return Task.FromResult<IResult?>(null);
+            return null;
         });
+        origin = scenario.ProviderOrigin;
         using var client = scenario.CreateClient();
         using var replica = scenario.CreateClient(replica: true);
         using var producer = scenario.CreateProviderClient();
@@ -63,8 +65,7 @@ public sealed class DatabaseBranchJourneyTests(DashboardE2EFixture fixture)
         await ControlAsync(producer, new { command = "plan", organizationId, value = OrganizationRecord.StarterPlanId });
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         var replicaCsrf = await HttpJourney.CsrfAsync(replica, "/databases");
-        const string sourceName = "snapshot-source";
-        sourceId = await CreateAsync(client, csrf, sourceName);
+        var sourceId = await CreateAsync(client, csrf, sourceName);
         using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
         { ["_csrf"] = csrf, ["databaseId"] = sourceId, ["name"] = "users" }))
             await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -84,29 +85,25 @@ public sealed class DatabaseBranchJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(await ValueAsync(client, sourceId)).IsEqualTo("original");
         await DeleteAsync(client, csrf, firstId, firstName);
 
-        const string retryName = "snapshot-recovered";
         await ControlAsync(producer, new { command = "fail-database-metadata", organizationId, projectId, name = retryName });
         using (var interrupted = await BranchAsync(client, csrf, sourceId, retryName))
             await Assert.That(interrupted.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(await EvidenceAsync(interrupted, producer));
         var observations = await ReadAsync(producer, "/__test/observations");
         await Assert.That(observations.GetProperty("branchCreates").GetInt32()).IsEqualTo(2);
         await Assert.That(observations.GetProperty("failedDatabaseMetadataWrites").GetInt32()).IsEqualTo(1);
-        pendingBranch = observations.GetProperty("databases").EnumerateArray().Single(database => database.GetProperty("name").GetString() == retryName).Clone();
-        var recoveredId = pendingBranch.GetProperty("id").GetString()!;
+        var recoveredId = observations.GetProperty("databases").EnumerateArray().Single(database => database.GetProperty("name").GetString() == retryName)
+            .GetProperty("id").GetString()!;
         await Assert.That((await ReadAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(1);
 
-        // A real provider placement change between the interrupted201 and
-        // retry must survive recovery. The admitted SDK bearer stays in memory.
-        using (var request = new HttpRequestMessage(HttpMethod.Patch, "/v1/management/organizations/" + organizationId + "/projects/" + projectId + "/databases/" + recoveredId))
+        // A real provider placement change between the interrupted 201 and the retry must survive recovery. Another
+        // client places it with the same exchanged databases:write project bearer, at the canonical route by name.
+        using (var request = new HttpRequestMessage(HttpMethod.Patch, "/v1/projects/" + projectId + "/databases/" + retryName))
         {
             request.Headers.Host = "gru.api.terrascale.tech";
             request.Headers.Add("Authorization", bearer);
-            request.Headers.Add("X-TerraBase-User-Id", actingUser);
-            request.Headers.Add("X-TerraBase-Organization-Id", organizationId);
             request.Content = JsonContent.Create(new { replicaRegions = new[] { "sfo" } });
             using var placed = await producer.SendAsync(request);
             await Assert.That(placed.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await EvidenceAsync(placed, producer));
-            pendingBranch = await BodyAsync(placed);
         }
         var previousCalls = Volatile.Read(ref calls);
         await ControlAsync(producer, new { command = "role", organizationId, value = "member" });
@@ -129,7 +126,8 @@ public sealed class DatabaseBranchJourneyTests(DashboardE2EFixture fixture)
         var beforeUnsupported = Volatile.Read(ref lists);
         using (var unsupported = await BranchAsync(client, csrf, sourceId, retryName))
             await Assert.That(unsupported.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because(await EvidenceAsync(unsupported, producer));
-        await Assert.That(Volatile.Read(ref lists)).IsEqualTo(beforeUnsupported);
+        await Assert.That(Volatile.Read(ref lists)).IsEqualTo(beforeUnsupported + 1)
+            .Because("Only the source ID resolution lists; an unsupported conflict is never recovered by name.");
         Volatile.Write(ref mode, "");
         await WriteAsync(client, csrf, sourceId, "replace", "source-after-snapshot");
         using (var recovered = await BranchAsync(replica, replicaCsrf, sourceId, retryName))
@@ -164,27 +162,24 @@ public sealed class DatabaseBranchJourneyTests(DashboardE2EFixture fixture)
     {
         var organizationId = "";
         var projectId = "";
-        var sourceId = "";
         var paused = true;
         var entered = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         HttpClient? producer = null;
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
+        TestAuth auth = null!;
+        Uri origin = null!;
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), async http =>
         {
-            var prefix = "/v1/management/organizations/" + organizationId + "/projects/" + projectId + "/databases/";
-            var path = http.Request.Path.Value ?? "";
-            if (!Volatile.Read(ref paused) || http.Request.Method != "GET" || !path.StartsWith(prefix, StringComparison.Ordinal)) return null;
-            var requested = path[prefix.Length..];
-            if (requested.Length == 0 || requested == sourceId || requested.Contains('/')) return null;
-            DemandScope(http, organizationId);
-            using var response = await producer!.GetAsync("/__test/observations", http.RequestAborted);
-            response.EnsureSuccessStatusCode();
-            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(http.RequestAborted));
-            var actual = json.RootElement.GetProperty("databases").EnumerateArray().Single(row => row.GetProperty("id").GetString() == requested).Clone();
-            entered.TrySetResult(actual);
+            if (!Volatile.Read(ref paused) || http.Request.Headers.ContainsKey(DatabaseSdkJourneyTests.Forwarded) || http.Request.Method != "POST" ||
+                http.Request.Path != "/v1/projects/" + projectId + "/databases/commit-source/branches") return null;
+            DatabaseSdkJourneyTests.DemandProjectToken(auth, http, organizationId, projectId, "databases:write");
+            // The producer really snapshots; its 201 is held until the source status changes.
+            var (code, body) = await DatabaseSdkJourneyTests.ForwardAsync(http, origin);
+            entered.TrySetResult(JsonSerializer.SerializeToElement(body));
             await release.Task.WaitAsync(http.RequestAborted);
-            return null;
+            return Results.Json(body, statusCode: code);
         });
+        origin = scenario.ProviderOrigin;
         using var client = scenario.CreateClient();
         using var replica = scenario.CreateClient(replica: true);
         using (producer = scenario.CreateProviderClient())
@@ -198,7 +193,7 @@ public sealed class DatabaseBranchJourneyTests(DashboardE2EFixture fixture)
             await ControlAsync(producer, new { command = "plan", organizationId, value = OrganizationRecord.StarterPlanId });
             var csrf = await HttpJourney.CsrfAsync(client, "/databases");
             var replicaCsrf = await HttpJourney.CsrfAsync(replica, "/databases");
-            sourceId = await CreateAsync(client, csrf, "commit-source");
+            var sourceId = await CreateAsync(client, csrf, "commit-source");
             var pending = BranchAsync(client, csrf, sourceId, "commit-branch");
             JsonElement actual = default;
             try
@@ -247,30 +242,28 @@ public sealed class DatabaseBranchJourneyTests(DashboardE2EFixture fixture)
         var projectId = "";
         var sourceId = "";
         HttpClient? producer = null;
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
+        TestAuth auth = null!;
+        Uri origin = null!;
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), async http =>
         {
-            var prefix = "/v1/management/organizations/" + organizationId + "/projects/" + projectId + "/databases/";
-            var path = http.Request.Path.Value ?? "";
-            if (!Volatile.Read(ref corrupt) || http.Request.Method != "GET" || !path.StartsWith(prefix, StringComparison.Ordinal)) return null;
-            var requested = path[prefix.Length..];
-            if (requested == sourceId || requested.Contains('/')) return null;
-            DemandScope(http, organizationId);
-            using var observed = await producer!.GetAsync("/__test/observations");
-            observed.EnsureSuccessStatusCode();
-            using var json = JsonDocument.Parse(await observed.Content.ReadAsStringAsync());
-            var real = json.RootElement.GetProperty("databases").EnumerateArray().Single(database => database.GetProperty("id").GetString() == requested);
-            var row = JsonNode.Parse(real.GetRawText())!.AsObject();
+            if (!Volatile.Read(ref corrupt) || http.Request.Headers.ContainsKey(DatabaseSdkJourneyTests.Forwarded) || http.Request.Method != "POST" ||
+                http.Request.Path != "/v1/projects/" + projectId + "/databases/confirmation-source/branches") return null;
+            DatabaseSdkJourneyTests.DemandProjectToken(auth, http, organizationId, projectId, "databases:write");
+            // The producer really creates the branch; only its 201 answer is altered.
+            var (status, body) = await DatabaseSdkJourneyTests.ForwardAsync(http, origin);
+            var row = body!.AsObject();
             switch (mismatch)
             {
-                case "id": row["id"] = "01K78000000000000000000000"; break;
+                case "id": row["id"] = sourceId; break;
                 case "project": row["projectId"] = "01K78000000000000000000001"; break;
                 case "name": row["name"] = "another-branch"; break;
                 case "home": row["homeRegion"] = "sfo"; break;
                 case "source": row["branchedFrom"] = "01K78000000000000000000002"; break;
                 case "missing-source": row.Remove("branchedFrom"); break;
             }
-            return Results.Json(row);
+            return Results.Json(row, statusCode: status);
         });
+        origin = scenario.ProviderOrigin;
         using var client = scenario.CreateClient();
         using (producer = scenario.CreateProviderClient())
         {
@@ -306,13 +299,6 @@ public sealed class DatabaseBranchJourneyTests(DashboardE2EFixture fixture)
         }
     }
 
-    private static void DemandScope(HttpContext http, string organization)
-    {
-        if (http.Request.Host.Host != "gru.api.terrascale.tech" || http.Request.Headers["X-TerraBase-Organization-Id"] != organization ||
-            !http.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.Ordinal) ||
-            string.IsNullOrWhiteSpace(http.Request.Headers["X-TerraBase-User-Id"]))
-            throw new InvalidOperationException("Branch boundary evidence must use the genuine scoped home and official admitted SDK identity headers.");
-    }
     private static Task<HttpResponseMessage> BranchAsync(HttpClient client, string csrf, string source, string name) =>
         HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/branch", new() { ["_csrf"] = csrf, ["databaseId"] = source, ["name"] = name });
     private static async Task<string> CreateAsync(HttpClient client, string csrf, string name)

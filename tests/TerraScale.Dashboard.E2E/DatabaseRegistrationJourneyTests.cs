@@ -4,31 +4,31 @@ using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class DatabaseRegistrationJourneyTests(DashboardE2EFixture fixture)
 {
+    // Database creation reaches TerraBase only as the canonical project create, under a current-session token exchanged
+    // for exactly databases:write. Organization/project ownership lives at ts-auth (I3); no legacy catalog read or write.
     [Test]
-    [Arguments("organization-missing", 404)]
     [Arguments("project-missing", 404)]
     [Arguments("project-unauthenticated", 401)]
     [Arguments("project-forbidden", 403)]
     [Arguments("project-unavailable", 503)]
-    [Arguments("organization-identity", 503)]
     [Arguments("project-identity", 503)]
-    [Arguments("project-organization", 503)]
-    public async Task UnavailableRegionalScopeNeverUsesOperatorCommitsOrInventsResources(string fault, int status)
+    [Arguments("database-identity", 503)]
+    [Arguments("placement-identity", 503)]
+    public async Task UnavailableCanonicalScopeNeverUsesOperatorCommitsOrInventsResources(string fault, int status)
     {
         var armed = false;
         var organizationId = "";
         var projectId = "";
-        var userId = "";
-        var refusedReads = 0;
+        var refusedCreates = 0;
         var forbiddenCommits = 0;
         var unauthorizedCreates = 0;
-        const string targetHost = "gru.api.terrascale.tech";
         string[] regions = ["GRU"];
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
+        const string name = "catalog-recovery";
+        TestAuth auth = null!;
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, DatabaseSdkJourneyTests.CaptureAuth(value => auth = value), http =>
         {
             if (http.Request.Method == "POST" && http.Request.Path == "/v1/management/commits")
             {
@@ -38,34 +38,32 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardE2EFixture fixture
                 return Task.FromResult<IResult?>(Failure(403, "forbidden"));
             }
             if (!Volatile.Read(ref armed)) return Task.FromResult<IResult?>(null);
-            var organizationPath = "/v1/management/organizations/" + organizationId;
-            var projectPath = organizationPath + "/projects/" + projectId;
             if (http.Request.Method == "POST" && (http.Request.Path == "/v1/management/organizations" ||
-                http.Request.Path == organizationPath + "/projects"))
+                http.Request.Path == "/v1/management/organizations/" + organizationId + "/projects"))
             {
                 Interlocked.Increment(ref unauthorizedCreates);
                 return Task.FromResult<IResult?>(Failure(403, "forbidden"));
             }
-            var expectedPath = fault.StartsWith("organization-", StringComparison.Ordinal) ? organizationPath : projectPath;
-            if (http.Request.Method != "GET" || http.Request.Host.Host != targetHost || http.Request.Path != expectedPath)
+            if (http.Request.Method != "POST" || http.Request.Path != "/v1/projects/" + projectId + "/databases")
                 return Task.FromResult<IResult?>(null);
-            if (http.Request.Headers["X-TerraBase-Organization-Id"] != organizationId ||
-                http.Request.Headers["X-TerraBase-User-Id"] != userId ||
-                !http.Request.Headers.Authorization.ToString().StartsWith("Bearer test-access-", StringComparison.Ordinal))
-                throw new InvalidOperationException("Catalog faults must use the ordinary admitted user's exact canonical organization and acting subject.");
-            Interlocked.Increment(ref refusedReads);
-            if (fault == "organization-identity")
-                return Task.FromResult<IResult?>(Results.Json(new
-                { id = "01K78000000000000000000000", name = "Foreign organization", createdBy = userId, createdAt = DateTimeOffset.UtcNow, plan = "hobby" }));
-            if (fault is "project-identity" or "project-organization")
+            DatabaseSdkJourneyTests.DemandProjectToken(auth, http, organizationId, projectId, "databases:write");
+            Interlocked.Increment(ref refusedCreates);
+            if (fault.EndsWith("-identity", StringComparison.Ordinal))
+            {
+                http.Response.Headers["X-TerraBase-Region"] = "gru";
                 return Task.FromResult<IResult?>(Results.Json(new
                 {
-                    id = fault == "project-identity" ? "01K78000000000000000000001" : projectId,
-                    organizationId = fault == "project-organization" ? "01K78000000000000000000000" : organizationId,
-                    name = "Customer SDK project",
-                    createdAt = DateTimeOffset.UtcNow
-                }));
-            var code = status switch { 401 => "unauthorized", 403 => "forbidden", 503 => "unavailable", _ => "not_found" };
+                    id = new TerraScale.DotNet.TerraScaleIdGenerator().NewId(),
+                    projectId = fault == "project-identity" ? "01K78000000000000000000001" : projectId,
+                    name = fault == "database-identity" ? "another-database" : name,
+                    branchedFrom = (string?)null,
+                    createdAt = DateTimeOffset.UtcNow,
+                    region = "gru",
+                    homeRegion = fault == "placement-identity" ? "sfo" : "gru",
+                    replicaRegions = Array.Empty<string>()
+                }, statusCode: 201));
+            }
+            var code = status switch { 401 => "unauthorized", 403 => "forbidden_scope", 503 => "unavailable", _ => "not_found" };
             return Task.FromResult<IResult?>(Failure(status, code));
         });
         using var client = scenario.CreateClient();
@@ -77,12 +75,10 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardE2EFixture fixture
         var identity = await ReadAsync(client, "/api/v1/auth/me");
         organizationId = identity.GetProperty("organizationId").GetString()!;
         projectId = identity.GetProperty("projectId").GetString()!;
-        userId = identity.GetProperty("userId").GetString()!;
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         var secret = await HttpJourney.CreatePatAsync(client, "Unavailable regional catalog", account.Password);
         var baseline = await ReadAsync(producer, "/__test/observations");
         var baselineProjects = ProjectIdentities(baseline);
-        const string name = "catalog-recovery";
         Volatile.Write(ref armed, true);
         using (var refused = await CreateAsync(client, csrf, name, regions))
         {
@@ -93,7 +89,7 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardE2EFixture fixture
         { name = "create_database", arguments = new { organizationId, projectId, name, regions } });
         await Assert.That(rpc.TryGetProperty("error", out _) ||
             rpc.GetProperty("result").TryGetProperty("isError", out var error) && error.GetBoolean()).IsTrue().Because(rpc.GetRawText());
-        await Assert.That(refusedReads).IsEqualTo(2).Because("Both native and MCP creation reach the genuine scoped catalog boundary.");
+        await Assert.That(refusedCreates).IsEqualTo(2).Because("Native and MCP creation each send one canonical create; nothing retries it.");
         await Assert.That(forbiddenCommits).IsEqualTo(0);
         await Assert.That(unauthorizedCreates).IsEqualTo(0);
         var observed = await ReadAsync(producer, "/__test/observations");
@@ -104,7 +100,7 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardE2EFixture fixture
         await Assert.That((await ReadAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
         await Assert.That((await ReadAsync(replica, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(0);
 
-        // Once the catalog genuinely resolves the existing scope, the same
+        // Once the canonical producer accepts the existing scope, the same
         // ordinary account can proceed without creating another project.
         Volatile.Write(ref armed, false);
         string databaseId;
@@ -131,7 +127,7 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardE2EFixture fixture
                 keyId = issued.GetProperty("apiKey").GetProperty("keyId").GetString()!;
                 customerSecret = issued.GetProperty("secret").GetString()!;
             }
-            await DatabaseSdkJourneyTests.RunCustomerSdkAsync(fixture.Root, scenario, producer, projectId, name, customerSecret);
+            await DatabaseSdkJourneyTests.RunCustomerSdkAsync(fixture.Root, scenario, producer, auth, account, organizationId, projectId, name, customerSecret);
             using var revoked = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/" + keyId + "/revoke", new() { ["_csrf"] = csrf });
             await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent).Because(await EvidenceAsync(revoked, producer));
         }
@@ -146,7 +142,7 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardE2EFixture fixture
     }
 
     private static IResult Failure(int status, string code) => Results.Json(new
-    { error = new { code, message = "Scoped test-only catalog dependency failure", fix = "retry" } }, statusCode: status);
+    { error = new { code, message = "Scoped test-only producer failure", fix = "retry" } }, statusCode: status);
     private static string ProjectIdentities(JsonElement observations) => string.Join('|', observations.GetProperty("workspaceProjects").EnumerateArray()
         .Select(value => value.GetProperty("organizationId").GetString() + "/" + value.GetProperty("id").GetString() + "/" + value.GetProperty("name").GetString()).Order(StringComparer.Ordinal));
     private static async Task<HttpResponseMessage> CreateAsync(HttpClient client, string csrf, string name, string[] regions)
