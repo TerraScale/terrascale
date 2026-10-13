@@ -32,9 +32,9 @@ public sealed class CommitMarkerTests
         var (_, firstCommit) = await PutAsync(store, id, token);
         await Assert.That(firstCommit.Marker).IsNotNull();
         var marker = firstCommit.Marker!.Value;
-        await Assert.That(marker.Incarnation).IsEqualTo(store.Incarnation);
+        await Assert.That(marker.Incarnation).IsEqualTo(store.Incarnation).Because("the marker must name the writer's actual incarnation");
         await Assert.That(marker.ChangeId).IsEqualTo((await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token))
-            .Single(group => group.Deltas.Any(delta => delta.Id == id)).ChangeId);
+            .Single(group => group.Deltas.Any(delta => delta.Id == id)).ChangeId).Because("the marker must name this mutation's own committed CDC group");
         await Assert.That(firstCommit.Offset).IsGreaterThan(0);
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.OK);
         await AssertValueAsync(data, managed, id, 1, token);
