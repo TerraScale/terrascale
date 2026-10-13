@@ -187,6 +187,7 @@ jobs:
         run: |
           python3 terrascale/scripts/ci/slow-report-test.py
           bash terrascale/scripts/fly/deploy-test.sh
+          bash terrascale/scripts/fly/preview-test.sh
           bash terrascale/scripts/fly/volume-reset-test.sh
           bash terrascale/scripts/terrabase/storage-format-check-test.sh
           bash terrascale/scripts/terrabase/e2e-summary-test.sh
@@ -280,6 +281,7 @@ jobs:
           exit "$code"
 
   preview:
+    needs: test
     # OFF 2026-10-12 by the user's order: no PR preview environments until previews work again (Fly previews org
     # hit its 20-machine limit). Re-enable by deleting `false &&` in a reviewed PR.
     if: false && github.event_name == 'pull_request'

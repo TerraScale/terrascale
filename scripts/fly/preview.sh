@@ -31,10 +31,12 @@ case ${1:-} in
       flyctl volumes create data -a "$app" -r gru -s 1 --yes
     fi
     # Throwaway keys for this preview only, set once so updates keep reading what earlier pushes encrypted.
-    if ! flyctl secrets list -a "$app" --json | jq -e 'any(.[]; .name == "TS_AUTH_MASTER_KEY")' >/dev/null; then
-      flyctl secrets set -a "$app" --stage TS_AUTH_MASTER_KEY="$(openssl rand -base64 32)" \
-        TS_AUTH_AUDIT_SIGNING_KEY="$(openssl rand -base64 32)"
-    fi
+    secrets=$(flyctl secrets list -a "$app" --json | jq -r '.[].name')
+    for key in TS_AUTH_MASTER_KEY TS_AUTH_AUDIT_SIGNING_KEY; do
+      if ! grep -qx "$key" <<<"$secrets"; then
+        flyctl secrets set -a "$app" --stage "$key=$(openssl rand -base64 32)"
+      fi
+    done
     # TerraBase refuses to start without backup: each preview gets its own Tigris bucket and master key.
     secrets=$(flyctl secrets list -a "$app" --json | jq -r '.[].name')
     if ! grep -qx BUCKET_NAME <<<"$secrets"; then
@@ -56,6 +58,7 @@ case ${1:-} in
           "AWS_ENDPOINT_URL_S3", "AWS_REGION", "BUCKET_NAME", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "TERRABASE_MASTER_KEY"
         ] | map({env_var: ., name: .}))},
         {name: "ts-auth", image: $auth, env: {TS_AUTH_PUBLIC_ORIGIN: "https://\($app).fly.dev"},
+          secrets: (["TS_AUTH_MASTER_KEY", "TS_AUTH_AUDIT_SIGNING_KEY"] | map({env_var: ., name: .})),
           depends_on: [{name: "terrabase", condition: "started"}]}
       ],
       services: [
@@ -71,10 +74,19 @@ case ${1:-} in
     }')
     id=$(api "$machines/apps/$app/machines" | jq -r '.[0].id // empty')
     if [[ -z $id ]]; then
-      api -X POST "$machines/apps/$app/machines" -d "$(jq -n --argjson config "$config" '{region: "gru", config: $config}')" | jq '{id, state}'
+      created=$(api -X POST "$machines/apps/$app/machines" -d "$(jq -n --argjson config "$config" '{region: "gru", config: $config}')")
+      jq '{id, state}' <<<"$created"
+      id=$(jq -er .id <<<"$created")
+      curl -fsS --retry 20 --retry-delay 2 --retry-all-errors --max-time 5 \
+        -o /dev/null "https://$app.fly.dev:8443/healthz"
+      # A new disposable preview needs its first issuer key; updates preserve state and fail if keys were lost.
+      flyctl ssh console -a "$app" --machine "$id" --container ts-auth -C '/app/ts-auth provision-signing-key'
     else
       api -X POST "$machines/apps/$app/machines/$id" -d "$(jq -n --argjson config "$config" '{config: $config}')" | jq '{id, state}'
     fi
+    for origin in "https://$app.fly.dev:8443" "https://$app.fly.dev"; do
+      curl -fsS --retry 20 --retry-delay 2 --retry-all-errors --max-time 5 -o /dev/null "$origin/readyz"
+    done
     echo "https://$app.fly.dev"
     ;;
   destroy)
