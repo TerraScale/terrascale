@@ -1,0 +1,290 @@
+{
+  "audited_source_sha": "b719878083dffd9441e063bbfaccfa0dffa95abd",
+  "original_capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
+  "capture_status": "Actual local synthetic app captures from the recorded original head; not recaptured at the evidence-only commit.",
+  "processing": "Python standard-library PNG decoder/encoder. Retained pixel equality and encode/decode roundtrip asserted. No image generation. All ancillary PNG metadata removed.",
+  "privacy_review": "All captures inspected visually. No real user data or credentials. Synthetic sidebar scope/account and session ID areas masked; Viewer crops exclude account/member identities. Synthetic draft name, saved Audit Owner label and 65-digit phone retained solely to show the defect. Mobile profile frames contain no email or ID.",
+  "screenshots": [
+    {
+      "file": "screenshots/profile-draft-desktop.png",
+      "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
+      "source_file": "evidence/original-capture-7ab7352c/profile-draft-1366.png",
+      "source_sha256": "e4763a557f476442122b1c5ba12de168a85c103c03a721dcb537250a10ae869f",
+      "source_dimensions_px": [
+        1366,
+        900
+      ],
+      "sha256": "f0f8d303dd7e850c00e39b95337c72a60ebb6f730d2679ffbf55c85cfc863bcf",
+      "dimensions_px": [
+        1366,
+        900
+      ],
+      "bytes": 47879,
+      "crop_xywh_source_px": null,
+      "opaque_masks_xywh_source_px": [
+        [
+          60,
+          21,
+          185,
+          46
+        ],
+        [
+          16,
+          837,
+          232,
+          48
+        ],
+        [
+          305,
+          858,
+          500,
+          42
+        ]
+      ],
+      "mask_rgb": [
+        35,
+        42,
+        53
+      ],
+      "description": "Profile draft before native POST; 1366x900 CSS viewport."
+    },
+    {
+      "file": "screenshots/profile-error-desktop.png",
+      "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
+      "source_file": "evidence/original-capture-7ab7352c/profile-error-1366.png",
+      "source_sha256": "858420fce7eef54a0a3a425538586ed5d473925a368f4e76e5fecf38d0a86d8f",
+      "source_dimensions_px": [
+        1366,
+        900
+      ],
+      "sha256": "d63292646bbe9287eb46fff8e22aa1e18066c776bb2d1a8c00441b93bf1590b9",
+      "dimensions_px": [
+        1366,
+        900
+      ],
+      "bytes": 47050,
+      "crop_xywh_source_px": null,
+      "opaque_masks_xywh_source_px": [
+        [
+          60,
+          21,
+          185,
+          46
+        ],
+        [
+          16,
+          837,
+          232,
+          48
+        ]
+      ],
+      "mask_rgb": [
+        35,
+        42,
+        53
+      ],
+      "description": "Profile HTTP 422 resets the name to the saved synthetic Audit Owner and clears the phone; 1366x900 CSS viewport."
+    },
+    {
+      "file": "screenshots/profile-draft-mobile.png",
+      "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
+      "source_file": "evidence/original-capture-7ab7352c/profile-draft-320.png",
+      "source_sha256": "3c7b4b163ef643bbc0b744850986a8aa14047a974284c3194b2b0cb6fa6f1dd5",
+      "source_dimensions_px": [
+        320,
+        900
+      ],
+      "sha256": "09ec5790b9087782284418c7e4fa85da96fa8fa7c87f6d127e8a9186eba697c0",
+      "dimensions_px": [
+        320,
+        900
+      ],
+      "bytes": 21767,
+      "crop_xywh_source_px": null,
+      "opaque_masks_xywh_source_px": [],
+      "mask_rgb": null,
+      "description": "Profile draft before native POST; 320x900 CSS viewport."
+    },
+    {
+      "file": "screenshots/profile-error-mobile.png",
+      "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
+      "source_file": "evidence/original-capture-7ab7352c/profile-error-320.png",
+      "source_sha256": "077170c5130c095d7958073e5626e1c7916fb3158f44191312956ec62f3f3695",
+      "source_dimensions_px": [
+        320,
+        900
+      ],
+      "sha256": "4c73ea38262656abf26a730673d7b98f8e3d02468ac2081090e69d9ec1712e0d",
+      "dimensions_px": [
+        320,
+        900
+      ],
+      "bytes": 19643,
+      "crop_xywh_source_px": null,
+      "opaque_masks_xywh_source_px": [],
+      "mask_rgb": null,
+      "description": "Profile HTTP 422 resets both draft fields; 320x900 CSS viewport."
+    },
+    {
+      "file": "screenshots/viewer-rejection-desktop.png",
+      "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
+      "source_file": "evidence/original-capture-7ab7352c/native-viewer-rejection-1366-7ab7352c.png",
+      "source_sha256": "ef3619a79ad93a0ae468837799a4448329cf5bb1761cc49c5a4d225974f2359e",
+      "source_dimensions_px": [
+        1280,
+        843
+      ],
+      "sha256": "a776e22ddf4ef43d8eec0167734941d97ecfc6328fcf4d419cbc4090c481c743",
+      "dimensions_px": [
+        1000,
+        270
+      ],
+      "bytes": 13261,
+      "crop_xywh_source_px": [
+        280,
+        0,
+        1000,
+        270
+      ],
+      "opaque_masks_xywh_source_px": [],
+      "mask_rgb": null,
+      "description": "Collaborative browser native Viewer form submission returned HTTP 422; desktop export raster is 1280x843, and the original capture name labels 1366px browser width."
+    },
+    {
+      "file": "screenshots/viewer-rejection-mobile.png",
+      "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
+      "source_file": "evidence/original-capture-7ab7352c/native-viewer-rejection-320-7ab7352c.png",
+      "source_sha256": "c4cdd9e1c86617509e49b3233eef6cc4360e7f0b5d9dbdb30be972c8f1415860",
+      "source_dimensions_px": [
+        640,
+        1800
+      ],
+      "sha256": "fec8212455adbe6858ecf6d65d11612279f285bb59dc7f62fa9967a853ef83a4",
+      "dimensions_px": [
+        640,
+        875
+      ],
+      "bytes": 27514,
+      "crop_xywh_source_px": [
+        0,
+        0,
+        640,
+        875
+      ],
+      "opaque_masks_xywh_source_px": [],
+      "mask_rgb": null,
+      "description": "Collaborative browser native Viewer form submission returned HTTP 422; 320px CSS viewport, 640x1800 export raster (2x)."
+    }
+  ],
+  "committed_png_total_bytes": 177114,
+  "local_only_video": {
+    "file": "evidence/original-capture-7ab7352c/native-forms-desktop-mobile-7ab7352c.mp4",
+    "capture_head_sha": "7ab7352cc0d47374a2f7346d623552e7a069392a",
+    "sha256": "7bdb56baa3b4eec567205f89444f632b880e8af1087c3a9077874a2186b35c1c",
+    "bytes": 1371555,
+    "status": "Original local capture; not committed or published. Fixture identities are visible in the original video; it is not a sanitized publication attachment."
+  },
+  "original_test_results": {
+    "accounts-http-final.trx": {
+      "counts": {
+        "total": "8",
+        "executed": "8",
+        "passed": "4",
+        "failed": "4",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "cases": [
+        {
+          "name": "CandidatePolicyOrdinaryMembersCannotReadInvitationHistory(members)",
+          "outcome": "Failed"
+        },
+        {
+          "name": "CandidatePolicyOrdinaryMembersCannotReadInvitationHistory(invitations)",
+          "outcome": "Failed"
+        },
+        {
+          "name": "InviteAndMemberRoleChoicesMatchTheSupportedProviderRoles",
+          "outcome": "Failed"
+        },
+        {
+          "name": "InvalidProfilePreservesDraftFieldsWithoutWritingTheAccount",
+          "outcome": "Failed"
+        },
+        {
+          "name": "MemberAndInvitationPagesClampAndFiltersHaveUsefulEmptyStates",
+          "outcome": "Passed"
+        },
+        {
+          "name": "RepeatedUnsupportedRolesAndDeniedMemberActionsLeaveIdentityUnchanged",
+          "outcome": "Passed"
+        },
+        {
+          "name": "RetentionSettingsDenyMembersValidateOwnersAndHideProviderDetails",
+          "outcome": "Passed"
+        },
+        {
+          "name": "UnavailableOrganizationProviderReturnsSafe503AndRecovers",
+          "outcome": "Passed"
+        }
+      ]
+    },
+    "accounts-browser.trx": {
+      "counts": {
+        "total": "6",
+        "executed": "6",
+        "passed": "2",
+        "failed": "4",
+        "error": "0",
+        "timeout": "0",
+        "aborted": "0",
+        "inconclusive": "0",
+        "passedButRunAborted": "0",
+        "notRunnable": "0",
+        "notExecuted": "0",
+        "disconnected": "0",
+        "warning": "0",
+        "completed": "0",
+        "inProgress": "0",
+        "pending": "0"
+      },
+      "cases": [
+        {
+          "name": "ProfileValidationKeepsTheVisibleDraft(1366)",
+          "outcome": "Failed"
+        },
+        {
+          "name": "ProfileValidationKeepsTheVisibleDraft(320)",
+          "outcome": "Failed"
+        },
+        {
+          "name": "InvitationRoleOptionsExcludeTheAlwaysRejectedViewer(1366)",
+          "outcome": "Failed"
+        },
+        {
+          "name": "InvitationRoleOptionsExcludeTheAlwaysRejectedViewer(320)",
+          "outcome": "Failed"
+        },
+        {
+          "name": "CancellationKeyboardScrollingAndEmptyFiltersRemainAccessible(1366)",
+          "outcome": "Passed"
+        },
+        {
+          "name": "CancellationKeyboardScrollingAndEmptyFiltersRemainAccessible(320)",
+          "outcome": "Passed"
+        }
+      ]
+    }
+  },
+  "final_head_verification": "Existing synthetic local HTTP/browser cases rerun at the final report head; commands, outcomes and new raw capture hashes recorded separately in ignored evidence/current-head-checks.json. Committed PNGs still show original capture head 7ab7352c."
+}
