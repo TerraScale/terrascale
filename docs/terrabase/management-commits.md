@@ -179,7 +179,7 @@ under the same ids ([cross-region replication](cross-region.md#which-databases-r
 | `create_project` | `organization`, `name`, `id`? | member; internal listener's platform operator when `id` is supplied | project |
 | `rename_project` | `organization`, `project`, `name` | member | project |
 | `delete_project` | `organization`, `project` | member | none |
-| `create_database` | `organization`, `project`, `name`, `id`?, `home_region`?, `replica_regions`? | member | database (with `region` and its placement) |
+| `create_database` | `organization`, `project`, `name`, `id`?, `home_region`?, `replica_regions`? | member | database (with `region` and its placement). On a cell, without `replica_regions` it is placed in every other serving region (`503 remote_region_unavailable` with none), and an empty list is `400 placement_needs_two_regions` |
 | `set_database_regions` | `organization`, `project`, `database`, `replica_regions` | member | database with its new replica regions |
 | `branch_database` | `organization`, `project`, `database`, `name` | member | database (with `region`) |
 | `delete_database` | `organization`, `project`, `database` | member | none |

@@ -1396,6 +1396,55 @@ public sealed class PeerStreamTests
         }
     }
 
+    // Decision 0013a, placement: on a machine of a cell a new database is placed in at least two regions. Created without
+    // replica regions it is placed in every other serving region, and created in one region alone it is refused. An update
+    // may still remove every replica region (the database then takes no writes until one is added back, and can be deleted).
+    [Test]
+    public async Task In_a_cell_a_new_database_is_placed_in_every_other_serving_region_and_never_created_in_one_region_alone()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc", "fra");
+        var gru = cluster["gru"];
+        var database = cluster.Database;
+        await Assert.That(await gru.UntilStreamsAsync(["fra", "sjc"])).IsTrue();
+
+        var (status, body) = await gru.CommitAsync(new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "defaulted", id = EntityIds.New().ToString() });
+        await Assert.That(status).IsEqualTo(HttpStatusCode.OK).Because(body);
+        await Assert.That(ReplicaRegions(body)).IsEquivalentTo(["fra", "sjc"]);
+
+        (status, body) = await gru.CommitAsync(new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "alone", id = EntityIds.New().ToString(), replica_regions = Array.Empty<string>() });
+        await Assert.That(status).IsEqualTo(HttpStatusCode.BadRequest).Because(body);
+        await Assert.That(body).Contains("placement_needs_two_regions");
+
+        (status, body) = await gru.CommitAsync(new { op = "set_database_regions", organization = database.OrganizationId, project = database.ProjectId, database = database.DatabaseId, replica_regions = Array.Empty<string>() });
+        await Assert.That(status).IsEqualTo(HttpStatusCode.OK).Because(body);
+    }
+
+    // While no other region serves, a machine of a cell cannot place a new database in two regions by default: it fails
+    // clearly, and creates nothing, rather than placing it in its own region alone.
+    [Test]
+    public async Task A_new_database_without_replica_regions_fails_clearly_while_no_other_region_serves()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, database) = (cluster["gru"], cluster.Database);
+        await cluster["sjc"].StopAsync();
+        await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        var (status, body) = await gru.CommitAsync(new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "lonely", id = EntityIds.New().ToString() });
+        await Assert.That(status).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(body);
+        await Assert.That(body).Contains("remote_region_unavailable");
+    }
+
+    // The replicaRegions of the first database body in a commit's answer.
+    private static string[] ReplicaRegions(string body) =>
+        [.. (FindReplicaRegions(JsonElement.Parse(body)) ?? throw new InvalidOperationException($"no replicaRegions in {body}")).EnumerateArray().Select(region => region.GetString()!)];
+
+    private static JsonElement? FindReplicaRegions(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.Object => element.TryGetProperty("replicaRegions", out var regions) ? regions
+            : element.EnumerateObject().Select(property => FindReplicaRegions(property.Value)).FirstOrDefault(found => found is not null),
+        JsonValueKind.Array => element.EnumerateArray().Select(FindReplicaRegions).FirstOrDefault(found => found is not null),
+        _ => null,
+    };
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
@@ -1451,11 +1500,13 @@ public sealed class PeerStreamTests
         public static async Task<Cluster> StartAsync(bool cdc, ShiftedTime? clock, params string[] regions)
         {
             var cluster = new Cluster { Cdc = cdc, Clock = clock };
+            // A cell places every database in two regions or more (decision 0013): one region adds a region no machine serves.
+            string[] placement = regions.Length == 1 ? [.. regions, "unserved"] : regions;
             try
             {
                 foreach (var region in regions)
                 {
-                    var machine = new Machine(cluster, region, [.. regions.Where(other => other != region)]);
+                    var machine = new Machine(cluster, region, [.. placement.Where(other => other != region)]);
                     cluster._machines[region] = machine;
                     await machine.StartAsync();
                 }
@@ -1861,6 +1912,15 @@ public sealed class PeerStreamTests
             {
                 return null;
             }
+        }
+
+        // One management commit of `op` as the cluster's user: its status and body.
+        public async Task<(HttpStatusCode Status, string Body)> CommitAsync(object op)
+        {
+            var commit = JsonSerializer.Serialize(new { id = EntityIds.New().ToString(), ops = new[] { op } });
+            using var service = Api.Service(Api.User);
+            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
+            return (response.StatusCode, await response.Content.ReadAsStringAsync());
         }
 
         // The organization, project and database under the cluster's ids, placed in every region of the cluster.

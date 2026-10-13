@@ -543,7 +543,10 @@ public sealed class ExplainSqlBoundaryTests
             settings["node-name"] = "gru-member";
         }, services =>
         {
-            services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
+            // A cell places a new database in every other serving region (decision 0013): sfo-1 serves too.
+            var members = new FakeMemberStore();
+            members.Join(new ClusterMember("sfo-member", string.Empty, "sfo-1", string.Empty));
+            services.AddSingleton<IMemberDirectory>(members);
             hook?.Install(services);
         });
     }

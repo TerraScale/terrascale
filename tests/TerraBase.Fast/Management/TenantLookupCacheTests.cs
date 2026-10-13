@@ -38,7 +38,10 @@ public sealed class TenantLookupCacheTests
                 settings["data-directory"] = Directory.CreateDirectory(Path.Combine(directory, "gru")).FullName;
             }, services =>
             {
-                services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
+                // A cell places a new database in every other serving region (decision 0013): sfo-1 serves too.
+                var members = new FakeMemberStore();
+                members.Join(new ClusterMember("sfo-member", string.Empty, "sfo-1", string.Empty));
+                services.AddSingleton<IMemberDirectory>(members);
             });
             var tenants = gru.Server.Services.GetRequiredService<ITenantDirectory>();
             var organization = await gru.CreateOrganizationAsync(faker.Company.CompanyName());
