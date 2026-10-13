@@ -32,29 +32,41 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         while (true)
         {
             var document = await state.GetAsync(AccountsCollection, id, cancellationToken);
+            var now = time.GetUtcNow();
             if (document is null)
             {
-                // Reserve a single public identity before creating the account.
+                // Reserve a single public identity first. The replica that creates the
+                // account also holds the claim to create its Personal organization.
                 var identity = await ReserveIdentityAsync(session.UserId, null, cancellationToken);
-                var created = new AccountRecord { Id = identity.AccountId, UserId = session.UserId, Name = session.Name, Email = session.Email, CreatedAt = time.GetUtcNow() };
+                var created = new AccountRecord { Id = identity.AccountId, UserId = session.UserId, Name = session.Name, Email = session.Email, CreatedAt = now, PersonalClaimUntil = now.AddMinutes(1) };
                 try { await state.PutAsync(AccountsCollection, id, JsonSerializer.SerializeToElement(created), TerraBasePrecondition.Absent, cancellationToken); }
-                catch (TerraBasePreconditionFailedException) { }
-                continue;
+                catch (TerraBasePreconditionFailedException) { continue; }
             }
-            var account = await ReadAccountAsync(document, session.UserId, cancellationToken);
-            if (account.PersonalOrganizationId.Length != 0) return account;
-            var now = time.GetUtcNow();
-            if (account.PersonalClaimUntil > now)
+            else
             {
-                // Another replica is creating this account's Personal organization.
-                if (waited.Elapsed > TimeSpan.FromSeconds(20)) throw new TimeoutException("Workspace setup is still in progress.");
-                await Task.Delay(100, cancellationToken);
-                continue;
+                var account = await ReadAccountAsync(document, session.UserId, cancellationToken);
+                if (account.PersonalOrganizationId.Length != 0) return account;
+                if (account.PersonalClaimUntil > now)
+                {
+                    // Another replica is creating this account's Personal organization.
+                    if (waited.Elapsed > TimeSpan.FromSeconds(20)) throw new TimeoutException("Workspace setup is still in progress.");
+                    await Task.Delay(100, cancellationToken);
+                    continue;
+                }
+                account.PersonalClaimUntil = now.AddMinutes(1);
+                try { await state.PutAsync(AccountsCollection, id, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Matches(document.Version), cancellationToken); }
+                catch (TerraBasePreconditionFailedException) { continue; }
             }
-            account.PersonalClaimUntil = now.AddMinutes(1);
-            try { await state.PutAsync(AccountsCollection, id, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Matches(document.Version), cancellationToken); }
-            catch (TerraBasePreconditionFailedException) { continue; }
-            var personal = await CreatePersonalAsync(session, cancellationToken);
+            OrganizationRecord personal;
+            try { personal = await CreatePersonalAsync(session, cancellationToken); }
+            catch
+            {
+                // Release the claim so a retry resumes now; CreatePersonalAsync adopts whatever was created.
+                using var release = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try { await UpdateAccountAsync(session, current => { if (current.PersonalOrganizationId.Length == 0) current.PersonalClaimUntil = null; }, release.Token); }
+                catch (Exception error) when (error is HttpRequestException or IOException or TimeoutException or OperationCanceledException) { }
+                throw;
+            }
             await UpdateAccountAsync(session, current =>
             {
                 if (current.PersonalOrganizationId.Length != 0) return;
