@@ -247,6 +247,36 @@ public sealed class DatabaseChangesTests
     }
 
     [Test]
+    public async Task A_cursor_issued_in_the_future_counts_as_issued_now()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+        var future = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc>(), FeedCursor.At(DateTimeOffset.UtcNow + TimeSpan.FromDays(30))));
+        var joined = await JoinAsync(store, ReplicaId.Of(4518, 12, 1), DateTimeOffset.UtcNow);
+        await Assert.That(await TrimAsync(store, new Hlc(joined.Value + 1))).IsEqualTo(1);
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(future)}", UriKind.Relative)),
+            HttpStatusCode.Gone, "cursor_expired", "events after the cursor are no longer retained here; start again with cursor=now and re-read");
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task A_cursor_of_the_first_format_without_an_issue_instant_is_400(int origins)
+    {
+        await using var api = await DocumentApi.StartAsync();
+        // #118's layout: the format byte, then (origin, stamp) pairs, with no issue instant.
+        byte[] old = [1, .. Enumerable.Range(1, origins).SelectMany(origin => Origin((ulong)origin, (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16))];
+        var text = Convert.ToBase64String(old).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var changes = $"{api.DatabasePath()}/changes";
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?cursor={text}", UriKind.Relative)),
+            HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
+        using var resume = new HttpRequestMessage(HttpMethod.Get, new Uri(changes, UriKind.Relative));
+        resume.Headers.Add("Last-Event-ID", text);
+        await ErrorAssert.ErrorAsync(api.Client.SendAsync(resume), HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
+    }
+
+    [Test]
     public async Task Malformed_cursors_and_filters_are_400_a_missing_scope_403_and_an_unknown_database_404()
     {
         await using var api = await DocumentApi.StartAsync();

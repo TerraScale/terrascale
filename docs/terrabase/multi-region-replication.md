@@ -879,7 +879,7 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   origin's events within the retention (otherwise it refills, R6).
 - **Cursor.** base64url of a format byte (1), the issue instant as a stamp, then per origin in ascending order node and
   stamp, all 8-byte big-endian integers (16 bytes per origin, not LEB128: simpler, and a cursor of 5 origins is still
-  118 characters). Every event and heartbeat re-issues it at the instant the read behind it began. Decoding accepts
+  119 characters). Every event and heartbeat re-issues it at the instant the read behind it began. Decoding accepts
   canonical bytes only (400 `invalid_cursor`), at most 256 origins; encoding refuses more (it never issues a cursor the
   API would reject). An issued cursor with no origin is not "no cursor": it is expired by the rules above.
 - **Stream.** One page at a time, no queue per connection: after a page that left nothing waiting, the stream waits for
@@ -899,7 +899,9 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
 - **Repairs.** An anti-entropy repair joins with origin 0 (R6), which no cursor can name. Its feed row is filed as this
   machine's event at a fresh stamp from its clock, so this machine's events stay in commit order; repairs never ship,
   so every machine files its own. Section 14's "one row per original (node, stamp)" is not built: a reader sees the
-  repaired document (its current value) under the repairing machine.
+  repaired document (its current value) under the repairing machine. Known gap (tracked, must close before R8 deploys): repair rows
+  never ship, so a reader that leaves a machine after getting an origin's later events but before that machine's repair
+  rows (refill or anti-entropy), and resumes on another machine, gets 200 and never sees the repaired events.
 - **Known limit: stamps more than 1 s ahead.** A request mints `max(clock, document's stamp + 1)`, and the clock moves at
   most `MaxSkew` (1 s) ahead (section 3). A document carrying a stamp further ahead therefore gets a stamp larger than
   this origin's next writes to other documents, so one origin's stamps no longer follow its commit order, and a cursor

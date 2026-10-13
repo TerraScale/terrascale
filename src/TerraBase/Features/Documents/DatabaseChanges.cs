@@ -88,6 +88,12 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
                 return ErrorResponse.From(Expired);
             }
 
+            // An issue instant in the future would weaken the cursor's own promise about origins it lacks: it counts as now.
+            if (cursor is not null && cursor.Issued.Value > FeedCursor.At(time.GetUtcNow()).Value)
+            {
+                cursor = cursor with { Issued = FeedCursor.At(time.GetUtcNow()) };
+            }
+
             if (head)
             {
                 if (await HeadAsync(database, stop.Token).ConfigureAwait(false) is not { } stamps)
