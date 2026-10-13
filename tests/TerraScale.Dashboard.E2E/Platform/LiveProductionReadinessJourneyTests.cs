@@ -11,7 +11,6 @@ namespace TerraScale.Dashboard.E2E.Platform;
 // Missing automatic delivery or a serving producer fails this journey.
 [Explicit]
 [Category("LiveProduction")]
-[NotInParallel("dashboard-production")]
 public sealed class LiveProductionReadinessJourneyTests
 {
     [Test]
