@@ -91,7 +91,8 @@ public sealed class BackupEmptySegmentTests
 
         sealedEmpty[^1] ^= 0xff;
         using var rejected = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime = at, name = "bad-tag" }, cancellationToken);
-        await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+        await ErrorAssert.ErrorAsync(rejected, HttpStatusCode.Conflict, "backup_unreadable",
+            "continuous backup of this database cannot be read: an object fails authentication or its integrity check");
         using var absent = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/bad-tag/collections/items/documents/by-key?id={ManagementApi.DocumentId("before")}"), cancellationToken);
         await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(s3.BadSignatures).IsEqualTo(0);

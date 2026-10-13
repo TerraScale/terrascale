@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Text;
 using Turso;
 
@@ -14,9 +15,10 @@ namespace TerraBase.Engine.Sqlite;
 /// <remarks>
 /// <para>
 /// The tap reads rows after the last one it read (its anchor) on its own <see cref="TursoConnection"/>, up to the last
-/// commit row, and appends them as <see cref="ChangeLog"/> records. It then deletes the rows before its anchor on the writer,
-/// always keeping the newest: an empty <c>turso_cdc</c> restarts its ids at 1 after a reopen. An anchor that is gone means
-/// someone else deleted rows the tap never read: a hole, so the backup starts a new generation.
+/// commit row or the first commit past <see cref="ReadBudget"/>, and appends them as <see cref="ChangeLog"/> records. It
+/// then deletes the rows before its anchor on the writer, always keeping the newest: an empty <c>turso_cdc</c> restarts
+/// its ids at 1 after a reopen. An anchor that is gone means someone else deleted rows the tap never read: a hole, so the
+/// backup starts a new generation.
 /// </para>
 /// <para>
 /// A delete in mode <c>after</c> carries only the rowid. For <c>sqlite_schema</c> that is not enough, because Turso does
@@ -35,10 +37,15 @@ internal sealed class TursoChangeTap : IWalTap
     private const int PageRows = 1024;
     private const int PageBytes = 4 << 20;
 
+    // Log bytes one ReadAsync appends before it stops at the next commit and leaves the rest to the next call: a segment
+    // holds about this much, and a backlog (after a long snapshot upload) ships as several segments at upload speed.
+    private const long ReadBudget = 32L << 20;
+
     private readonly SqliteDatabaseStore _store;
     private readonly SqliteIoPool _io;
     private readonly TimeProvider _time;
-    private readonly TursoConnection _reader;
+    // Replaced when a snapshot's read transaction may be left open (ReplaceReaderAsync).
+    private TursoConnection _reader;
 
     // The change_id of the last row read, kept in turso_cdc; 0 before anything was captured.
     private long _anchor;
@@ -46,8 +53,21 @@ internal sealed class TursoChangeTap : IWalTap
     // The file's sqlite_schema as of _anchor: rowid -> (type, name).
     private Dictionary<long, (string Type, string Name)> _schema = [];
 
+    // The Turso times (change_time, Unix seconds) of the open transaction's first and latest rows, and whether every row
+    // had one no earlier than the row before; null between transactions.
+    private (long First, long Latest, bool Ordered)? _open;
+
     /// <summary>Runs after a snapshot is pinned and writers are released, before the file is copied; for integration tests.</summary>
     internal Func<CancellationToken, Task>? AfterSnapshotPinned { get; set; }
+
+    /// <summary>Runs after a read, before its change-log cleanup on the writer; for integration tests.</summary>
+    internal Func<CancellationToken, Task>? BeforeTrim { get; set; }
+
+    /// <summary>Runs as a snapshot's read transaction ends, before its rollback; for integration tests.</summary>
+    internal Func<CancellationToken, Task>? BeforeSnapshotEnd { get; set; }
+
+    /// <summary>Runs after a snapshot's read transaction begins, before the read that pins it; for integration tests.</summary>
+    internal Func<CancellationToken, Task>? AfterSnapshotBegin { get; set; }
 
     private TursoChangeTap(SqliteDatabaseStore store, SqliteIoPool io, TimeProvider time, TursoConnection reader)
     {
@@ -82,14 +102,33 @@ internal sealed class TursoChangeTap : IWalTap
         ArgumentNullException.ThrowIfNull(destination);
         return await AdmittedAsync(async () =>
         {
-            var read = await ReadCoreAsync(destination, cancellationToken).ConfigureAwait(false);
+            var (anchor, schema) = (_anchor, _schema);
+            var read = await ReadCoreAsync(destination, ReadBudget, cancellationToken).ConfigureAwait(false);
             if (!read.Continuous)
             {
                 await _store.WithWriterAsync(Reset, "the continuous backup's tap", cancellationToken).ConfigureAwait(false);
             }
             else if (read.Bytes > 0)
             {
-                await _store.WithWriterAsync(Truncate, "the continuous backup's cleanup", cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (BeforeTrim is { } trim)
+                    {
+                        await trim(cancellationToken).ConfigureAwait(false);
+                    }
+
+                    await _store.WithWriterAsync(Truncate, "the continuous backup's cleanup", cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // A call that throws has not moved the tap (IWalTap.ReadAsync): the next one reads the same changes
+                    // again, or finds a hole if the delete ran.
+                    (_anchor, _schema) = (anchor, schema);
+                    throw;
+                }
+
+                // Only now may CDC retention for peer streams move past the old anchor.
+                _store.BackupAnchor = _anchor;
             }
 
             return read;
@@ -104,7 +143,7 @@ internal sealed class TursoChangeTap : IWalTap
         {
             var snapshot = await _store.WithWritersHeldAsync(async () =>
             {
-                var read = await ReadCoreAsync(destination, cancellationToken).ConfigureAwait(false);
+                var read = await ReadCoreAsync(destination, long.MaxValue, cancellationToken).ConfigureAwait(false);
                 await _store.OnWriterAsync(writer =>
                 {
                     // Nothing commits meanwhile: the anchor is the newest row, and after a hole the next generation starts here.
@@ -112,7 +151,23 @@ internal sealed class TursoChangeTap : IWalTap
                     return Truncate(writer);
                 }, cancellationToken).ConfigureAwait(false);
                 // The read transaction the copy is made in, pinned at the anchor.
-                await _io.RunAsync(() => Execute("BEGIN;", "SELECT count(*) FROM sqlite_schema;"), cancellationToken).ConfigureAwait(false);
+                await _io.RunAsync(() => Execute("BEGIN;"), cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (AfterSnapshotBegin is { } begun)
+                    {
+                        await begun(cancellationToken).ConfigureAwait(false);
+                    }
+
+                    await _io.RunAsync(() => Execute("SELECT count(*) FROM sqlite_schema;"), cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // The transaction is open but not pinned: the next read would pin it, and every later read keep that state.
+                    await ReplaceReaderAsync().ConfigureAwait(false);
+                    throw;
+                }
+
                 return new WalSnapshot(read, _time.GetUtcNow());
             }, cancellationToken, "the continuous backup's snapshot").ConfigureAwait(false);
 
@@ -127,11 +182,44 @@ internal sealed class TursoChangeTap : IWalTap
             }
             finally
             {
-                await _io.RunAsync(() => Execute("ROLLBACK;"), CancellationToken.None).ConfigureAwait(false);
+                await EndSnapshotAsync().ConfigureAwait(false);
             }
 
             return snapshot;
         }).ConfigureAwait(false);
+    }
+
+    // Ends the snapshot's read transaction. Left open, it would serve every later read from the pinned state, and a read
+    // mark would claim commits that read cannot see: when the rollback fails, the reader is replaced by a new connection.
+    private async Task EndSnapshotAsync()
+    {
+        try
+        {
+            if (BeforeSnapshotEnd is { } ending)
+            {
+                await ending(CancellationToken.None).ConfigureAwait(false);
+            }
+
+            await _io.RunAsync(() => Execute("ROLLBACK;"), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            await ReplaceReaderAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    // A reader that may still be in a snapshot's read transaction is disposed and a new connection opened on the file; if
+    // that open fails, later reads fail instead of reading a pinned state.
+    private async Task ReplaceReaderAsync()
+    {
+        var stale = _reader;
+        _reader = new TursoConnection($"Data Source={_store.FilePath}");
+        await _io.RunAsync(() =>
+        {
+            stale.Dispose();
+            SqliteSession.OpenExisting(_reader, _store.FilePath);
+        }, CancellationToken.None).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -153,63 +241,105 @@ internal sealed class TursoChangeTap : IWalTap
         }
     }
 
-    // Appends the records committed after the anchor and moves the anchor to the last of them.
-    private async Task<WalRead> ReadCoreAsync(Stream destination, CancellationToken cancellationToken)
+    // Appends the records committed after the anchor, up to the first commit past `budget` bytes, and moves the anchor to
+    // the last of them.
+    private async Task<WalRead> ReadCoreAsync(Stream destination, long budget, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_store.Closed, _store);
-        var end = await _io.RunAsync(() =>
+        var (end, started) = await _io.RunAsync(() =>
         {
+            // Every commit that completed before this time is visible to the query below.
+            var now = _time.GetUtcNow();
             if (_anchor > 0 && Scalar("SELECT 1 FROM turso_cdc WHERE change_id = $anchor;", _anchor) is null)
             {
-                return -1;
+                return (-1L, now);
             }
 
-            return Scalar("SELECT max(change_id) FROM turso_cdc WHERE change_id > $anchor AND change_type = 2;", _anchor) as long? ?? _anchor;
+            return (Scalar("SELECT max(change_id) FROM turso_cdc WHERE change_id > $anchor AND change_type = 2;", _anchor) as long? ?? _anchor, now);
         }, cancellationToken).ConfigureAwait(false);
         if (end < 0)
         {
-            return new(0, false);
+            return new(0, false, false, null);
         }
 
         var buffer = new ArrayBufferWriter<byte>();
         var schema = new Dictionary<long, (string Type, string Name)>(_schema);
         long bytes = 0;
-        for (var after = _anchor; after < end;)
+        var after = _anchor;
+        var spent = false;
+        while (after < end && !spent)
         {
-            var (next, placed) = await _io.RunAsync(() => ReadPage(after, end, schema, buffer), cancellationToken).ConfigureAwait(false);
+            var (next, placed, stop) = await _io.RunAsync(() => ReadPage(after, end, budget - bytes, schema, buffer), cancellationToken).ConfigureAwait(false);
             if (!placed)
             {
-                return new(0, false);
+                return new(0, false, false, null);
             }
 
             await destination.WriteAsync(buffer.WrittenMemory, cancellationToken).ConfigureAwait(false);
             bytes += buffer.WrittenCount;
             buffer.ResetWrittenCount();
-            after = next;
+            (after, spent) = (next, stop);
         }
 
-        (_anchor, _schema) = (end, schema);
-        _store.BackupAnchor = end;
-        return new(bytes, true);
+        DateTimeOffset? mark = null;
+        if (after == end && bytes > 0)
+        {
+            // This read appended through the newest commit when it started: mark when that was.
+            ChangeLog.WriteReadMark(buffer, started);
+            await destination.WriteAsync(buffer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+            bytes += buffer.WrittenCount;
+            mark = started;
+        }
+
+        // The caller publishes the anchor to CDC retention (BackupAnchor) once its cleanup is done.
+        (_anchor, _schema) = (after, schema);
+        return new(bytes, true, after < end, mark);
     }
 
-    // Appends rows after `after`, up to `end`, and returns the last one read; false when a schema row cannot be placed.
-    private (long Next, bool Placed) ReadPage(long after, long end, Dictionary<long, (string Type, string Name)> schema, ArrayBufferWriter<byte> buffer)
+    // Appends rows after `after`, up to `end`, and returns the last one read; Placed is false when a schema row cannot be
+    // placed, and Spent true when the page stopped at the first commit that reached `allowance` bytes.
+    private (long Next, bool Placed, bool Spent) ReadPage(
+        long after, long end, long allowance, Dictionary<long, (string Type, string Name)> schema, ArrayBufferWriter<byte> buffer)
     {
         using var command = _reader.CreateCommand();
-        command.CommandText = "SELECT change_id, change_type, table_name, id, after FROM turso_cdc WHERE change_id > $after AND change_id <= $end ORDER BY change_id LIMIT $limit;";
+        command.CommandText = "SELECT change_id, change_type, table_name, id, after, change_time FROM turso_cdc WHERE change_id > $after AND change_id <= $end ORDER BY change_id LIMIT $limit;";
         command.Parameters.Add(new TursoParameter("$after", after));
         command.Parameters.Add(new TursoParameter("$end", end));
         command.Parameters.Add(new TursoParameter("$limit", (long)PageRows));
         using var rows = command.ExecuteReader();
         var last = after;
+        if (after == _anchor)
+        {
+            // A read starts between transactions.
+            _open = null;
+        }
+
         while (buffer.WrittenCount < PageBytes && rows.Read())
         {
             last = rows.GetInt64(0);
             var type = rows.GetInt64(1);
+            // Turso stamps every row, the commit row too, with the wall clock in whole seconds (unixepoch()).
+            long? time = rows.IsDBNull(5) ? null : rows.GetInt64(5);
+            _open = _open is not { } open ? (time ?? 0, time ?? 0, time is not null)
+                : (open.First, Math.Max(open.Latest, time ?? open.Latest), open.Ordered && time >= open.Latest);
             if (type == 2)
             {
-                ChangeLog.WriteCommit(buffer);
+                // A transaction whose times go back or are missing is logged without them: a restore cannot place a time in it.
+                if (_open is (var first, var latest, true))
+                {
+                    ChangeLog.WriteCommit(buffer, first, latest);
+                }
+                else
+                {
+                    ChangeLog.WriteCommit(buffer);
+                }
+
+                _open = null;
+                if (buffer.WrittenCount >= allowance)
+                {
+                    return (last, true, true);
+                }
+
                 continue;
             }
 
@@ -220,7 +350,7 @@ internal sealed class TursoChangeTap : IWalTap
             {
                 if (!Place(type, rowid, image, schema, buffer))
                 {
-                    return (last, false);
+                    return (last, false, false);
                 }
             }
             else if (!ChangeLog.EngineTable(table))
@@ -236,7 +366,7 @@ internal sealed class TursoChangeTap : IWalTap
             }
         }
 
-        return (last, true);
+        return (last, true, false);
     }
 
     // Logs a schema change by name: a created object with its SQL, a dropped one by type and name.
@@ -329,7 +459,10 @@ internal sealed class TursoChangeTap : IWalTap
 /// <summary>
 /// The records of a change log segment, format 1. Each starts with its kind: <c>1</c> upsert (table, rowid, the row's
 /// SQLite record), <c>2</c> delete (table, rowid), <c>3</c> commit, <c>4</c> create (the object's SQL), <c>5</c> drop (type,
-/// name). Strings and records are length-prefixed (unsigned LEB128); rowids are 8 bytes, big-endian.
+/// name), <c>6</c> timed commit (the Turso times of the transaction's first row and of its commit row, Unix seconds),
+/// <c>7</c> read mark (Unix milliseconds: every transaction committed before then comes before the mark). Strings and
+/// records are length-prefixed (unsigned LEB128); rowids and times are 8 bytes, big-endian. A log written before timed
+/// commits has only <c>3</c>: its transactions have no known time.
 /// </summary>
 internal static class ChangeLog
 {
@@ -338,6 +471,8 @@ internal static class ChangeLog
     private const byte Commit = 3;
     private const byte Create = 4;
     private const byte Drop = 5;
+    private const byte TimedCommit = 6;
+    private const byte ReadMark = 7;
 
     // Bounds a single length field: no record, name or statement of a valid log is near this.
     private const int MaxLength = 1 << 30;
@@ -353,7 +488,7 @@ internal static class ChangeLog
     {
         buffer.Write([Upsert]);
         WriteString(buffer, table);
-        WriteRowid(buffer, rowid);
+        WriteInt64(buffer, rowid);
         WriteLength(buffer, record.Length);
         buffer.Write(record);
     }
@@ -362,10 +497,25 @@ internal static class ChangeLog
     {
         buffer.Write([Delete]);
         WriteString(buffer, table);
-        WriteRowid(buffer, rowid);
+        WriteInt64(buffer, rowid);
     }
 
     public static void WriteCommit(IBufferWriter<byte> buffer) => buffer.Write([Commit]);
+
+    /// <summary>A commit whose rows Turso stamped from <paramref name="first"/> to <paramref name="last"/> (its commit row), never going back.</summary>
+    public static void WriteCommit(IBufferWriter<byte> buffer, long first, long last)
+    {
+        buffer.Write([TimedCommit]);
+        WriteInt64(buffer, first);
+        WriteInt64(buffer, last);
+    }
+
+    /// <summary>A mark after the last commit of a read that reached the newest commit when it started at <paramref name="started"/>.</summary>
+    public static void WriteReadMark(IBufferWriter<byte> buffer, DateTimeOffset started)
+    {
+        buffer.Write([ReadMark]);
+        WriteInt64(buffer, started.ToUnixTimeMilliseconds());
+    }
 
     public static void WriteCreate(IBufferWriter<byte> buffer, string sql)
     {
@@ -417,6 +567,140 @@ internal static class ChangeLog
         }
     }
 
+    /// <summary>
+    /// Places a restore at <paramref name="at"/> (to the millisecond) in <paramref name="segment"/>, whose transactions come
+    /// after ones that ran before it, the last committed in second <paramref name="previous"/> when known. A transaction is
+    /// before the time when its commit row's second ends by it, and after it when that second starts at or after it; a read
+    /// mark at or after the time also ends the history the restore needs.
+    /// </summary>
+    /// <exception cref="InvalidDataException">The log is malformed.</exception>
+    public static LogCut Cut(Stream segment, DateTimeOffset at, long? previous)
+    {
+        var time = at.ToUnixTimeMilliseconds();
+        long before = 0;
+        var reached = false;
+        var open = false;
+        try
+        {
+            int kind;
+            while ((kind = segment.ReadByte()) >= 0)
+            {
+                open = kind is Upsert or Delete or Create or Drop;
+                switch (kind)
+                {
+                    case Upsert:
+                        ReadString(segment);
+                        ReadInt64(segment);
+                        ReadBytes(segment);
+                        break;
+                    case Delete:
+                        ReadString(segment);
+                        ReadInt64(segment);
+                        break;
+                    case Create:
+                        ReadString(segment);
+                        break;
+                    case Drop:
+                        ReadString(segment);
+                        ReadString(segment);
+                        break;
+                    case Commit when !reached:
+                        return new(before, false, previous, "a transaction it needs has no recorded time (its log predates them, or the clock went back within it)");
+                    case Commit:
+                        break;
+                    case TimedCommit:
+                        var (first, last) = (ReadInt64(segment), ReadInt64(segment));
+                        if (first < previous)
+                        {
+                            return new(before, false, previous, "the database's clock went back between two of its transactions");
+                        }
+
+                        // Once reached, the rest of the segment is still read, so a later transaction stamped before it is caught.
+                        previous = last;
+                        if (reached || last * 1000 >= time)
+                        {
+                            reached = true;
+                        }
+                        else if ((last + 1) * 1000 <= time)
+                        {
+                            before = segment.Position;
+                        }
+                        else
+                        {
+                            var second = DateTimeOffset.FromUnixTimeSeconds(last);
+                            return new(before, false, previous, string.Create(CultureInfo.InvariantCulture,
+                                $"one committed in its second, {second:yyyy-MM-ddTHH:mm:ssZ} to {second.AddSeconds(1):yyyy-MM-ddTHH:mm:ssZ}, and transaction times are whole seconds; the nearest earlier time it can place is {second:yyyy-MM-ddTHH:mm:ssZ}"));
+                        }
+
+                        break;
+                    case ReadMark:
+                        reached |= ReadInt64(segment) >= time;
+                        before = reached ? before : segment.Position;
+                        break;
+                    default:
+                        throw new InvalidDataException("a change log record has an unknown kind");
+                }
+            }
+
+            return open ? throw new InvalidDataException("a change log ends inside a transaction") : new(before, reached, previous, null);
+        }
+        catch (Exception error) when (error is EndOfStreamException or DecoderFallbackException)
+        {
+            throw new InvalidDataException("a change log is malformed", error);
+        }
+    }
+
+    /// <summary>The read mark <paramref name="segment"/> ends with, or null when its last record is not one.</summary>
+    /// <exception cref="InvalidDataException">The log is malformed.</exception>
+    public static DateTimeOffset? EndMark(Stream segment)
+    {
+        DateTimeOffset? mark = null;
+        try
+        {
+            int kind;
+            while ((kind = segment.ReadByte()) >= 0)
+            {
+                mark = null;
+                switch (kind)
+                {
+                    case Upsert:
+                        ReadString(segment);
+                        ReadInt64(segment);
+                        ReadBytes(segment);
+                        break;
+                    case Delete:
+                        ReadString(segment);
+                        ReadInt64(segment);
+                        break;
+                    case Create:
+                        ReadString(segment);
+                        break;
+                    case Drop:
+                        ReadString(segment);
+                        ReadString(segment);
+                        break;
+                    case Commit:
+                        break;
+                    case TimedCommit:
+                        ReadInt64(segment);
+                        ReadInt64(segment);
+                        break;
+                    case ReadMark:
+                        mark = DateTimeOffset.FromUnixTimeMilliseconds(ReadInt64(segment));
+                        break;
+                    default:
+                        throw new InvalidDataException("a change log record has an unknown kind");
+                }
+            }
+
+            return mark;
+        }
+        catch (Exception error) when (error is EndOfStreamException or DecoderFallbackException)
+        {
+            throw new InvalidDataException("a change log is malformed", error);
+        }
+    }
+
     private sealed class Replay(TursoConnection connection)
     {
         // Per table: its columns in order and the ordinal of its rowid alias (INTEGER PRIMARY KEY), or -1.
@@ -432,14 +716,26 @@ internal static class ChangeLog
                 while ((kind = segment.ReadByte()) >= 0)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (kind == Commit)
+                    if (kind is Commit or TimedCommit)
                     {
+                        if (kind == TimedCommit)
+                        {
+                            ReadInt64(segment);
+                            ReadInt64(segment);
+                        }
+
                         if (Open)
                         {
                             Execute("COMMIT;");
                             Open = false;
                         }
 
+                        continue;
+                    }
+
+                    if (kind == ReadMark)
+                    {
+                        ReadInt64(segment);
                         continue;
                     }
 
@@ -452,10 +748,10 @@ internal static class ChangeLog
                     switch (kind)
                     {
                         case Upsert:
-                            ApplyUpsert(ReadString(segment), ReadRowid(segment), ReadBytes(segment));
+                            ApplyUpsert(ReadString(segment), ReadInt64(segment), ReadBytes(segment));
                             break;
                         case Delete:
-                            Execute($"DELETE FROM {TableShape.Quote(ReadString(segment))} WHERE rowid = $rowid;", ("$rowid", ReadRowid(segment)));
+                            Execute($"DELETE FROM {TableShape.Quote(ReadString(segment))} WHERE rowid = $rowid;", ("$rowid", ReadInt64(segment)));
                             break;
                         case Create:
                             Execute(ReadString(segment));
@@ -545,9 +841,9 @@ internal static class ChangeLog
         buffer.Write(bytes);
     }
 
-    private static void WriteRowid(IBufferWriter<byte> buffer, long rowid)
+    private static void WriteInt64(IBufferWriter<byte> buffer, long value)
     {
-        BinaryPrimitives.WriteInt64BigEndian(buffer.GetSpan(8), rowid);
+        BinaryPrimitives.WriteInt64BigEndian(buffer.GetSpan(8), value);
         buffer.Advance(8);
     }
 
@@ -565,7 +861,7 @@ internal static class ChangeLog
 
     private static string ReadString(Stream segment) => StrictUtf8.GetString(ReadBytes(segment));
 
-    private static long ReadRowid(Stream segment)
+    private static long ReadInt64(Stream segment)
     {
         Span<byte> bytes = stackalloc byte[8];
         segment.ReadExactly(bytes);

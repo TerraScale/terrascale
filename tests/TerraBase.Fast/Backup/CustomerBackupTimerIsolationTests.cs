@@ -35,7 +35,8 @@ public sealed class CustomerBackupTimerIsolationTests
         var backup = api.Server.Services.GetRequiredService<ContinuousBackup>();
         var customers = new List<ManagedDatabaseRef>();
         var clients = new List<HttpClient>();
-        var bodies = new Dictionary<string, StalledBody>(StringComparer.Ordinal);
+        // Each customer file's first snapshot PUT stalls inside its shipping job, holding that organization's customer slot.
+        var bodies = new Dictionary<string, StalledPut>(StringComparer.Ordinal);
         var snapshotEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseSnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var walEntered = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -65,21 +66,17 @@ public sealed class CustomerBackupTimerIsolationTests
                 destination.EnsureSuccessStatusCode();
                 await AssertPublicAsync(await destination.Content.ReadAsStringAsync(token));
                 await SeedAsync(data, database, before, token);
-                bodies.Add(File(database) + "/snapshots/", new StalledBody());
+                bodies.Add(File(database) + "/snapshots/", new StalledPut());
             }
 
             await Assert.That(customers[0].Organization).IsNotEqualTo(customers[1].Organization);
-            s3.CustomerContentOverride = key =>
+            s3.BeforeCustomerWrite = async (key, cancellationToken) =>
             {
                 var body = bodies.FirstOrDefault(pair => key.StartsWith(pair.Key, StringComparison.Ordinal)).Value;
-                if (body is null || body.Requested() != 1)
+                if (body is not null && body.Requested() == 1)
                 {
-                    return null;
+                    await body.WaitAsync(cancellationToken);
                 }
-
-                var content = new StreamContent(body);
-                content.Headers.ContentLength = s3.CustomerObjects[key].LongLength;
-                return content;
             };
             taps.ReleaseStartup.TrySetResult();
             await Task.WhenAll(bodies.Values.Select(body => body.Entered.Task)).WaitAsync(token);
@@ -113,7 +110,13 @@ public sealed class CustomerBackupTimerIsolationTests
             releaseSnapshot.TrySetResult();
             await snapshotJob.WaitAsync(token);
             await Assert.That(s3.Objects.Keys.Count(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsEqualTo(1);
-            var snapshot = await StatusAsync(api, healthy, token);
+            // The restore drill runs beside shipping; wait for its result.
+            BackupFileStatus snapshot;
+            while ((snapshot = await StatusAsync(api, healthy, token)).LastDrill is null)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(20), token);
+            }
+
             await Assert.That(snapshot.LastDrill!.Passed).IsTrue();
 
             await PutAsync(healthyData, healthy, "during", during, token);
@@ -140,21 +143,19 @@ public sealed class CustomerBackupTimerIsolationTests
             {
                 var tap = taps.Taps[File(customer)];
                 var body = bodies[File(customer) + "/snapshots/"];
-                // A second job on a busy file would touch its tap even if it never reaches another snapshot GET.
+                // The stalled job read its backlog once before its snapshot; a second job on the busy file would read again.
                 await Assert.That(tap.Snapshots).IsEqualTo(1);
-                await Assert.That(tap.Reads).IsEqualTo(0);
+                await Assert.That(tap.Reads).IsEqualTo(1);
                 await Assert.That(tap.Returned).IsFalse();
                 await Assert.That(body.Requests).IsEqualTo(1);
-                await Assert.That(body.Cancelled.Task.IsCompleted || body.Disposed.Task.IsCompleted).IsFalse();
+                await Assert.That(body.Cancelled.Task.IsCompleted).IsFalse();
                 await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
             }
 
-            // Leave the current bodies blocked; shutdown must cancel and join them before returning their taps.
-            s3.CustomerContentOverride = null;
+            // Leave the current uploads blocked; shutdown must cancel and join them before returning their taps.
             stopping = backup.StopAsync(token);
             await Task.WhenAll(bodies.Values.Select(body => body.Cancelled.Task)).WaitAsync(token);
             await stopping.WaitAsync(token);
-            await Task.WhenAll(bodies.Values.Select(body => body.Disposed.Task)).WaitAsync(token);
             await Assert.That(backup.ExecuteTask!.IsCompleted).IsTrue();
             await Assert.That(taps.Taps.Values.All(tap => tap.Returned)).IsTrue();
             var stopped = await api.Server.Client.GetFromJsonAsync(ManagementApi.Uri("/v1/backup"), TerraBaseJsonContext.Default.BackupStatus, token);
@@ -163,7 +164,7 @@ public sealed class CustomerBackupTimerIsolationTests
         }
         finally
         {
-            s3.CustomerContentOverride = null;
+            s3.BeforeCustomerWrite = null;
             s3.BeforeGet = null;
             s3.BeforePut = null;
             taps!.ReleaseStartup.TrySetResult();
@@ -180,11 +181,6 @@ public sealed class CustomerBackupTimerIsolationTests
             foreach (var client in clients)
             {
                 client.Dispose();
-            }
-
-            foreach (var body in bodies.Values)
-            {
-                body.Dispose();
             }
         }
     }
@@ -349,6 +345,10 @@ public sealed class CustomerBackupTimerIsolationTests
         public ValueTask<bool> RollForwardAsync(string file, IAsyncEnumerable<Stream> segments, CancellationToken cancellationToken) =>
             engine.RollForwardAsync(file, segments, cancellationToken);
 
+        public LogCut CutLog(Stream segment, DateTimeOffset at, long? previous) => engine.CutLog(segment, at, previous);
+
+        public DateTimeOffset? ReadMark(Stream segment) => engine.ReadMark(segment);
+
         public ValueTask ImportDatabaseAsync(TenantContext database, string file, CancellationToken cancellationToken) =>
             engine.ImportDatabaseAsync(database, file, cancellationToken);
 
@@ -384,31 +384,23 @@ public sealed class CustomerBackupTimerIsolationTests
         }
     }
 
-    private sealed class StalledBody : MemoryStream
+    private sealed class StalledPut
     {
-        private readonly TaskCompletionSource<int> _body = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _requests;
 
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int Requests => Volatile.Read(ref _requests);
-        public override bool CanSeek => false;
 
         public int Requested() => Interlocked.Increment(ref _requests);
 
-        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-        {
-            ArgumentNullException.ThrowIfNull(buffer);
-            return ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
-        }
-
-        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        public async Task WaitAsync(CancellationToken cancellationToken)
         {
             Entered.TrySetResult();
             try
             {
-                return await _body.Task.WaitAsync(cancellationToken);
+                await _release.Task.WaitAsync(cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -417,15 +409,6 @@ public sealed class CustomerBackupTimerIsolationTests
             }
         }
 
-        public void Release() => _body.TrySetResult(0);
-
-        protected override void Dispose(bool disposing)
-        {
-            base.Dispose(disposing);
-            if (disposing)
-            {
-                Disposed.TrySetResult();
-            }
-        }
+        public void Release() => _release.TrySetResult();
     }
 }

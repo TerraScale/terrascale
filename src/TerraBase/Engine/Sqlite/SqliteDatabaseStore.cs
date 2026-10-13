@@ -323,7 +323,23 @@ internal sealed partial class SqliteDatabaseStore(
 
     private void Committed()
     {
-        committed?.Invoke();
+        try
+        {
+            committed?.Invoke();
+        }
+        finally
+        {
+            // Even when the engine's notification failed.
+            MoveCommitCount();
+        }
+    }
+
+    /// <summary>
+    /// Moves the commit count, a cache key of StorageQuota, and wakes its waiters. Only invalidates, so it is also safe after
+    /// a commit that may not have landed.
+    /// </summary>
+    internal void MoveCommitCount()
+    {
         TaskCompletionSource signal;
         lock (_commits)
         {
@@ -333,6 +349,19 @@ internal sealed partial class SqliteDatabaseStore(
         }
 
         signal.SetResult();
+    }
+
+    /// <summary>Logs a step after a landed commit that failed; the commit's other steps still ran.</summary>
+    internal void LogAfterCommit(string step, Exception error)
+    {
+        try
+        {
+            logger?.ZLogError(error, $"Database {name:@Database} committed, but {step:@Step} after its commit failed");
+        }
+        catch (Exception)
+        {
+            // A failing logger must not skip the commit's remaining steps.
+        }
     }
 
     // Takes the writer, waiting at most 30 s as busy_timeout did before this wait replaced it in-process. A wait of
@@ -460,14 +489,20 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>Releases what <see cref="BeginTransactionAsync"/> took; called once per transaction.</summary>
     internal void End(bool write, bool ownsAdmission)
     {
-        if (write)
+        try
         {
-            ReleaseWriter();
+            if (write)
+            {
+                // Closing a stale writer connection can throw; the admission is released all the same.
+                ReleaseWriter();
+            }
         }
-
-        if (ownsAdmission)
+        finally
         {
-            io.Release();
+            if (ownsAdmission)
+            {
+                io.Release();
+            }
         }
     }
 
@@ -559,6 +594,15 @@ internal sealed partial class SqliteDatabaseStore(
 
     /// <summary>Writes of the batch that is running (waiting for the writer or committing), for tests.</summary>
     internal int BatchedWrites => Volatile.Read(ref _batched);
+
+    /// <summary>Runs once a group commit batch committed, before its transaction is disposed; integration tests fail it.</summary>
+    internal Action? AfterGroupCommit { get; set; }
+
+    /// <summary>Runs inside a transaction's CommitAsync right after its SQLite commit succeeded; integration tests fail it.</summary>
+    internal Action? AfterSqliteCommit { get; set; }
+
+    /// <summary>The generation <see cref="StatisticsChanged"/> moves, for tests.</summary>
+    internal int Statistics => Volatile.Read(ref _statistics);
 
     /// <summary>Writes waiting for the next batch, for tests.</summary>
     internal int QueuedWrites
@@ -655,9 +699,10 @@ internal sealed partial class SqliteDatabaseStore(
         List<IBatchedWrite> refused = [];
         List<IBatchedWrite> deferred = [];
         long offset = 0;
+        SqliteStorageTransaction? transaction = null;
         try
         {
-            var transaction = await BeginAsync(write: true, capture: true, durable: false, CancellationToken.None, "a group commit batch").ConfigureAwait(false);
+            transaction = await BeginAsync(write: true, capture: true, durable: false, CancellationToken.None, "a group commit batch").ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
                 for (var index = 0; index < batch.Count; index++)
@@ -735,12 +780,29 @@ internal sealed partial class SqliteDatabaseStore(
                 if (kept.Count > 0)
                 {
                     offset = await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+                    AfterGroupCommit?.Invoke();
                 }
+            }
+        }
+        catch (Exception error) when (!IsSystem && transaction?.Committed is { } committedAt && !transaction.ChangedReaderState)
+        {
+            // A client database's batch committed and changed no state readers see beside its documents: its writes are
+            // answered as committed, not as a failure a client would retry. What failed is a wake-up or the cleanup after
+            // the commit (disposing the transaction, releasing the writer).
+            offset = committedAt;
+            try
+            {
+                logger?.ZLogError(error, $"A group commit of database {name:@Database} committed, but the work after its commit failed; its writes are answered as committed");
+            }
+            catch (Exception)
+            {
+                // A failing logger must not fault the batch loop, which would leave this database's writes waiting forever.
             }
         }
         catch (Exception error)
         {
-            // Nothing of this batch committed: every write not answered yet fails with it.
+            // Nothing of this batch committed, or it is the catalog's, which fails closed: every write not answered yet
+            // fails with it.
             batch.ForEach(write => write.Fail(error));
             return [];
         }

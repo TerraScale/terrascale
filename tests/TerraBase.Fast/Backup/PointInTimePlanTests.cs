@@ -125,7 +125,8 @@ public sealed class PointInTimePlanTests
                 .IsEqualTo(segments.Count == 0 ? null : segments.Max());
             await Assert.That(plan.GetProperty("window").GetRawText()).IsEqualTo(window.RootElement.GetRawText());
             await Assert.That(plan.EnumerateObject().Select(property => property.Name))
-                .IsEquivalentTo(["window", "pointInTime", "snapshotAt", "latestSegmentAt", "segmentCount"]);
+                .IsEquivalentTo(["window", "pointInTime", "snapshotAt", "latestSegmentAt", "segmentCount", "historyCheck"]);
+            await Assert.That(plan.GetProperty("historyCheck").GetString()).IsEqualTo("metadata");
         }
 
         await Assert.That(probe.Writes).IsEqualTo(writes);
@@ -178,11 +179,15 @@ public sealed class PointInTimePlanTests
         await Assert.That(retained.Length).IsGreaterThan(0);
         var route = Uri(database.Path + "/point-in-time/plan");
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(route, new { }), HttpStatusCode.BadRequest, "invalid_request", "pointInTime is required");
-        foreach (var at in new[] { earliest.AddTicks(-1), latest.AddTicks(1), time.GetUtcNow(), time.GetUtcNow().AddTicks(1) })
+        // Outside the window but neither after now nor before the retention window, the backup does not hold the time: 409.
+        foreach (var at in new[] { earliest.AddTicks(-1), latest.AddTicks(1), time.GetUtcNow() })
         {
-            await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(route, new { pointInTime = at }), HttpStatusCode.BadRequest, "invalid_request",
-                "pointInTime must lie between the restore window's earliest and latest times");
+            await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(route, new { pointInTime = at }), HttpStatusCode.Conflict, "backup_history_incomplete",
+                "continuous backup cannot prove this database's history complete up to pointInTime");
         }
+
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(route, new { pointInTime = time.GetUtcNow().AddTicks(1) }), HttpStatusCode.BadRequest, "invalid_request",
+            "pointInTime must lie between the restore window's earliest and latest times");
 
         using var missing = await outsider.PostAsJsonAsync(route, new { });
         using var invalid = await outsider.PostAsJsonAsync(route, new { pointInTime = time.GetUtcNow().AddDays(1) });
@@ -263,7 +268,8 @@ public sealed class PointInTimePlanTests
                 await Assert.That(plan.GetProperty("latestSegmentAt").ValueKind == JsonValueKind.Null ? (DateTimeOffset?)null : plan.GetProperty("latestSegmentAt").GetDateTimeOffset())
                     .IsEqualTo(count == 0 ? null : at);
                 await Assert.That(plan.GetProperty("window").GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(snapshot);
-                await Assert.That(plan.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(time.GetUtcNow());
+                // No listed segment holds a read mark (none is even stored): only the snapshot's time is proven.
+                await Assert.That(plan.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(snapshot);
                 await Assert.That(probe.SegmentListings).IsEqualTo(listings + 1);
             }
 
@@ -274,7 +280,7 @@ public sealed class PointInTimePlanTests
             var regressedPlan = await regressed.Content.ReadFromJsonAsync<JsonElement>();
             await Assert.That(regressedPlan.GetProperty("segmentCount").GetInt32()).IsEqualTo(0);
             await Assert.That(regressedPlan.GetProperty("latestSegmentAt").ValueKind).IsEqualTo(JsonValueKind.Null);
-            await Assert.That(regressedPlan.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(time.GetUtcNow());
+            await Assert.That(regressedPlan.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(snapshot);
 
             if (segmentCount == 9999)
             {
@@ -326,7 +332,8 @@ public sealed class PointInTimePlanTests
             await Assert.That(plan.GetProperty("segmentCount").GetInt32()).IsEqualTo(1);
             await Assert.That(plan.GetProperty("latestSegmentAt").GetDateTimeOffset()).IsEqualTo(at);
             await Assert.That(plan.GetProperty("window").GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(first);
-            await Assert.That(plan.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(time.GetUtcNow());
+            // The newest generation's segment holds no read mark (none is stored): only its snapshot's time is proven.
+            await Assert.That(plan.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(last);
             await Assert.That(probe.SegmentListings).IsEqualTo(listings + 2);
         }
         finally

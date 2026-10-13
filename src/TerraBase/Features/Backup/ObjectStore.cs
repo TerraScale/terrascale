@@ -1,11 +1,18 @@
+using System.Buffers;
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Net;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
+using Amazon.Util;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Win32.SafeHandles;
 using TerraBase.Configuration;
+using TerraBase.Hosting;
+using ZLogger;
 
 namespace TerraBase.Features.Backup;
 
@@ -17,7 +24,10 @@ internal readonly record struct StoredObject(string Key, long Size);
 /// <summary>The backup bucket: whole objects addressed by key.</summary>
 internal interface IObjectStore
 {
-    /// <summary>Uploads <paramref name="content"/> (seekable, read from its position) as <paramref name="key"/>, replacing any object there.</summary>
+    /// <summary>
+    /// Uploads <paramref name="content"/> (seekable, read from its position) as <paramref name="key"/>, replacing any object there.
+    /// A file larger than one part uploads in parts and keeps its position.
+    /// </summary>
     Task PutAsync(string key, Stream content, CancellationToken cancellationToken);
 
     /// <summary>Streams <paramref name="key"/> to <paramref name="read"/>; <see langword="false"/> when it does not exist.</summary>
@@ -47,6 +57,21 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
 
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(15);
 
+    // Larger files upload in parts, so a failed or timed-out part restarts alone and no request nears S3's 5 GiB PUT cap.
+    // S3 allows 10,000 parts: 128 MiB parts cover objects up to 1.25 TiB.
+    private const long PartSize = 128L << 20;
+    private const int MaxParts = 10_000;
+    // Parts stream from the file at their own offsets: no part is held in memory.
+    private const int PartsInFlight = 4;
+    // Each attempt is one request under RequestTimeout, including the SDK's own retries of transient errors.
+    private const int PartAttempts = 3;
+    private static readonly TimeSpan AbortTimeout = TimeSpan.FromSeconds(5);
+    // No multipart upload outlives the deadline of the largest one (MaxParts parts, about seven days), so one initiated longer
+    // ago than that plus an hour (clock skew with the bucket, the owner's own abort) has no live owner on any node.
+    internal static readonly TimeSpan StaleUpload = UploadDeadline(MaxParts) + TimeSpan.FromHours(1);
+    // User metadata naming the upload that created an object (x-amz-meta-terrabase-upload).
+    private const string UploadMetadata = "terrabase-upload";
+
     private readonly AmazonS3Client _s3;
     // Requests that read their response headers, with the reader. The client reads its response event twice per response
     // (a null check, then the call), so a reader subscribed and removed per request broke a request completing at the same
@@ -55,15 +80,23 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
     private readonly string _bucket;
     private readonly bool _customer;
     private readonly TimeProvider _time;
+    private readonly ILogger _logger;
 
-    public S3ObjectStore(BackupSettings settings, IHttpClientFactory http, TimeProvider time)
-        : this(settings.Endpoint, settings.Region, settings.Bucket, settings.AccessKeyId, settings.SecretKey, http, HttpClientName, time) { }
+    public S3ObjectStore(BackupSettings settings, IHttpClientFactory http, TimeProvider time, ILogger<S3ObjectStore> logger, IMeterFactory meters)
+        : this(settings.Endpoint, settings.Region, settings.Bucket, settings.AccessKeyId, settings.SecretKey, http, HttpClientName, time, logger,
+            meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.backup.unproven_uploads_deleted",
+                description: "Snapshots whose multipart upload completed without proof, deleted from the bucket."))
+    {
+    }
 
-    public S3ObjectStore(Uri endpoint, string region, string bucket, string accessKeyId, string secretKey, IHttpClientFactory http, string clientName, TimeProvider time)
+    public S3ObjectStore(Uri endpoint, string region, string bucket, string accessKeyId, string secretKey, IHttpClientFactory http, string clientName, TimeProvider time,
+        ILogger? logger = null, Counter<long>? unprovenDeleted = null)
     {
         _bucket = bucket;
         _customer = clientName == CustomerHttpClientName;
         _time = time;
+        _logger = logger ?? NullLogger.Instance;
+        UnprovenDeleted = unprovenDeleted;
         _s3 = new(new BasicAWSCredentials(accessKeyId, secretKey), new AmazonS3Config
         {
             ServiceURL = endpoint.ToString(),
@@ -83,11 +116,30 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
         };
     }
 
+    /// <summary>The platform bucket's count of deleted unproven snapshots, shared with the customer buckets' stores.</summary>
+    internal Counter<long>? UnprovenDeleted { get; }
+
     public async Task PutAsync(string key, Stream content, CancellationToken cancellationToken)
     {
-        using var deadline = _customer ? new CancellationTokenSource(RequestTimeout, _time) : null;
+        var start = content.Position;
+        var length = content.Length - start;
+        var parts = Math.Max(1, (length + PartSize - 1) / PartSize);
+        if (parts > MaxParts)
+        {
+            throw new IOException("backup object exceeds the multipart upload limit");
+        }
+
+        // A customer upload and every multipart upload keep one deadline for the whole object.
+        var file = parts > 1 ? content as FileStream : null;
+        using var deadline = _customer || file is not null ? new CancellationTokenSource(UploadDeadline(parts), _time) : null;
         using var stop = deadline is null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         cancellationToken = stop?.Token ?? cancellationToken;
+        if (file is not null)
+        {
+            await PutPartsAsync(key, file.SafeFileHandle, start, length, (int)parts, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         await SafeAsync(_s3.PutObjectAsync(new PutObjectRequest
         {
             BucketName = _bucket,
@@ -97,6 +149,184 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
             // A signed payload hash rather than aws-chunked encoding, which S3-compatible services do not all accept.
             UseChunkEncoding = false,
         }, cancellationToken)).ConfigureAwait(false);
+    }
+
+    // Fifteen minutes, plus a minute for each further part (a sustained ~2 MiB/s).
+    private static TimeSpan UploadDeadline(long parts) => RequestTimeout + TimeSpan.FromMinutes(parts - 1);
+
+    private async Task PutPartsAsync(string key, SafeFileHandle file, long start, long length, int parts, CancellationToken cancellationToken)
+    {
+        // The completed object carries this upload's own id in its metadata, so it cannot be mistaken for an older object at the key.
+        var id = Ulid.NewUlid().ToString();
+        var initiate = new InitiateMultipartUploadRequest { BucketName = _bucket, Key = key };
+        initiate.Metadata.Add(UploadMetadata, id);
+        var upload = (await SafeAsync(_s3.InitiateMultipartUploadAsync(initiate, cancellationToken)).ConfigureAwait(false)).UploadId;
+        if (string.IsNullOrEmpty(upload))
+        {
+            throw new InvalidDataException("backup bucket returned no multipart upload id");
+        }
+
+        var completed = false;
+        try
+        {
+            var etags = new PartETag[parts];
+            await Parallel.ForEachAsync(Enumerable.Range(1, parts), new ParallelOptions { MaxDegreeOfParallelism = PartsInFlight, CancellationToken = cancellationToken },
+                async (part, token) =>
+                {
+                    var offset = (part - 1) * PartSize;
+                    var etag = await PutPartAsync(key, upload, part, file, start + offset, Math.Min(PartSize, length - offset), token).ConfigureAwait(false);
+                    etags[part - 1] = new(part, etag);
+                }).ConfigureAwait(false);
+            await SafeAsync(_s3.CompleteMultipartUploadAsync(new CompleteMultipartUploadRequest
+            {
+                BucketName = _bucket,
+                Key = key,
+                UploadId = upload,
+                PartETags = [.. etags],
+            }, cancellationToken)).ConfigureAwait(false);
+            completed = true;
+            // S3-compatible services may answer a failed completion with 200 and an error body, and an older object of the same
+            // length may sit at the key. The stored object proves this upload by its whole length and either this upload's id in
+            // its metadata or S3's multipart ETag of this upload's own parts (stores need not keep metadata). Missing or other
+            // evidence fails it (and aborts the upload if it still exists).
+            var stored = await SafeAsync(_s3.GetObjectMetadataAsync(_bucket, key, cancellationToken)).ConfigureAwait(false);
+            if (stored.ContentLength != length
+                || stored.Metadata[UploadMetadata] != id && !(MultipartETag(etags) is { } etag && string.Equals(stored.ETag?.Trim('"'), etag, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new IOException("backup object does not hold this multipart upload");
+            }
+        }
+        catch
+        {
+            if (completed)
+            {
+                await DeleteUnprovenAsync(key).ConfigureAwait(false);
+            }
+
+            await AbortAsync(key, upload).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    // S3's ETag of a multipart object: the MD5 of its parts' binary MD5s (their ETags), then "-" and the part count. Null when a
+    // part's ETag is not an MD5, as on stores with opaque ETags. MD5 is S3's protocol here, not a security check.
+    private static string? MultipartETag(PartETag[] parts)
+    {
+        var digests = new byte[parts.Length * 16];
+        for (var index = 0; index < parts.Length; index++)
+        {
+            if (parts[index].ETag?.Trim('"') is not { Length: 32 } hex
+                || Convert.FromHexString(hex, digests.AsSpan(index * 16, 16), out _, out _) != OperationStatus.Done)
+            {
+                return null;
+            }
+        }
+
+        return $"{Convert.ToHexStringLower(CryptoUtilFactory.CryptoInstance.ComputeMD5Hash(digests))}-{parts.Length}";
+    }
+
+    // An unproven completed object would stay as a whole, unrecorded copy. Only a snapshot key is this attempt's alone: it names
+    // the pin time, a generation and a position, ContinuousBackup stores each snapshot key once (a retry pins a new snapshot
+    // under a new key), and nothing else writes snapshot keys. So only there is the object deleted; another key, such as a log
+    // segment's that a retry rewrites, keeps its object.
+    private async Task DeleteUnprovenAsync(string key)
+    {
+        if (!key.AsSpan(0, key.LastIndexOf('/') + 1).EndsWith("/snapshots/", StringComparison.Ordinal) || BackupLayout.ParseSnapshot(key) is null)
+        {
+            _logger.ZLogWarning($"Backup object {key:@Key} completed but its upload was not proven; it is not a snapshot, so it stays");
+            return;
+        }
+
+        using var deadline = new CancellationTokenSource(AbortTimeout, _time);
+        try
+        {
+            await SafeAsync(_s3.DeleteObjectAsync(_bucket, key, deadline.Token)).ConfigureAwait(false);
+            UnprovenDeleted?.Add(1);
+            _logger.ZLogWarning($"Deleted snapshot {key:@Key}: its upload completed but the bucket did not prove it");
+        }
+        catch (Exception error)
+        {
+            _logger.ZLogWarning(error, $"Deleting the unproven snapshot {key:@Key} failed; it stays in the bucket");
+        }
+    }
+
+    private async Task<string> PutPartAsync(string key, string upload, int part, SafeFileHandle file, long offset, long length, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                using var content = new FilePart(file, offset, length);
+                var response = await SafeAsync(_s3.UploadPartAsync(new UploadPartRequest
+                {
+                    BucketName = _bucket,
+                    Key = key,
+                    UploadId = upload,
+                    PartNumber = part,
+                    InputStream = content,
+                    // A signed payload hash per part, as for single uploads.
+                    UseChunkEncoding = false,
+                }, cancellationToken)).ConfigureAwait(false);
+                return response.ETag;
+            }
+            catch (Exception error) when (attempt < PartAttempts && !cancellationToken.IsCancellationRequested)
+            {
+                _logger.ZLogWarning(error, $"Part {part} of backup object {key:@Key} failed; it is retried alone");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Aborts the multipart uploads under <paramref name="prefix"/> initiated more than <see cref="StaleUpload"/> ago: left
+    /// behind when their own abort failed or their node stopped. Best effort: a failure is logged and the next run retries.
+    /// </summary>
+    public async Task AbortStaleUploadsAsync(string prefix, CancellationToken cancellationToken)
+    {
+        var request = new ListMultipartUploadsRequest { BucketName = _bucket, Prefix = prefix };
+        try
+        {
+            while (true)
+            {
+                var page = await SafeAsync(_s3.ListMultipartUploadsAsync(request, cancellationToken)).ConfigureAwait(false);
+                foreach (var upload in page.MultipartUploads ?? [])
+                {
+                    if (upload.Key is { } key && key.StartsWith(prefix, StringComparison.Ordinal) && !string.IsNullOrEmpty(upload.UploadId)
+                        && upload.Initiated is { } initiated && _time.GetUtcNow() - new DateTimeOffset(DateTime.SpecifyKind(initiated, DateTimeKind.Utc)) > StaleUpload)
+                    {
+                        _logger.ZLogInformation($"Aborting the stale multipart upload of backup object {key:@Key} initiated {initiated:O}");
+                        await AbortAsync(key, upload.UploadId).ConfigureAwait(false);
+                    }
+                }
+
+                if (page.IsTruncated != true || page.NextKeyMarker is null
+                    || (page.NextKeyMarker, page.NextUploadIdMarker) == (request.KeyMarker, request.UploadIdMarker))
+                {
+                    return;
+                }
+
+                (request.KeyMarker, request.UploadIdMarker) = (page.NextKeyMarker, page.NextUploadIdMarker);
+            }
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.ZLogWarning(error, $"Listing the stale multipart uploads under {prefix:@Prefix} failed; the next run retries");
+        }
+    }
+
+    // Best effort under its own deadline, also after cancellation. An upload left behind is never visible as an object; its
+    // parts hold bucket storage until AbortStaleUploadsAsync finds it past StaleUpload.
+    private async Task AbortAsync(string key, string upload)
+    {
+        using var deadline = new CancellationTokenSource(AbortTimeout, _time);
+        try
+        {
+            await SafeAsync(_s3.AbortMultipartUploadAsync(new AbortMultipartUploadRequest { BucketName = _bucket, Key = key, UploadId = upload }, deadline.Token))
+                .ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            _logger.ZLogWarning(error, $"Aborting the multipart upload of backup object {key:@Key} failed; its parts stay in the bucket until it is stale");
+        }
     }
 
     public async Task<bool> ReadAsync(string key, Func<Stream, CancellationToken, Task> read, CancellationToken cancellationToken)
@@ -335,6 +565,59 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
 
         private static bool IsBodyTransportFailure(Exception error) => error is IOException or HttpRequestException or AmazonClientException
             or System.Net.Sockets.SocketException or System.Security.Authentication.AuthenticationException;
+    }
+
+    // One part of a file, read at its own offsets so parts upload concurrently without sharing the file's position.
+    private sealed class FilePart(SafeFileHandle file, long start, long length) : Stream
+    {
+        private long _position;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length => length;
+
+        public override long Position
+        {
+            get => _position;
+            set
+            {
+                ArgumentOutOfRangeException.ThrowIfNegative(value);
+                _position = value;
+            }
+        }
+
+        public override void Flush() { }
+
+        public override long Seek(long offset, SeekOrigin origin) => Position = origin switch
+        {
+            SeekOrigin.Begin => offset,
+            SeekOrigin.Current => _position + offset,
+            _ => length + offset,
+        };
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer)
+        {
+            var read = RandomAccess.Read(file, buffer[..Remaining(buffer.Length)], start + _position);
+            _position += read;
+            return read;
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var read = await RandomAccess.ReadAsync(file, buffer[..Remaining(buffer.Length)], start + _position, cancellationToken).ConfigureAwait(false);
+            _position += read;
+            return read;
+        }
+
+        private int Remaining(int count) => (int)Math.Clamp(length - _position, 0, count);
     }
 
     // Requests go through IHttpClientFactory, so tests replace the transport like every other outbound client.

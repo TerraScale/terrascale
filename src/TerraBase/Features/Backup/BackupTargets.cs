@@ -28,7 +28,8 @@ internal sealed class BackupTarget(string revision, IObjectStore store, DataKeys
 /// <summary>Creates a fixed generation destination from current project configuration, with no credential cache.</summary>
 internal sealed class BackupTargets(
     IObjectStore platform, DataKeys platformKeys, BackupReader platformReader, IProjectBackupDestinations destinations,
-    IMasterKey master, IWalBackup engine, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time) : IDisposable
+    IMasterKey master, IWalBackup engine, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, ILogger<S3ObjectStore> logger,
+    S3ObjectStore bucket) : IDisposable
 {
     private readonly SemaphoreSlim _customerKeyReads = new(DataKeys.MaxReads, DataKeys.MaxReads);
 
@@ -72,7 +73,8 @@ internal sealed class BackupTargets(
 
         var (accessKeyId, secretKey) = await CustomerCredentials.OpenAsync(master, record.Credentials, cancellationToken).ConfigureAwait(false);
         var destination = record.Destination;
-        var customer = new S3ObjectStore(destination.Endpoint, destination.Region, destination.Bucket, accessKeyId, secretKey, http, S3ObjectStore.CustomerHttpClientName, time);
+        var customer = new S3ObjectStore(destination.Endpoint, destination.Region, destination.Bucket, accessKeyId, secretKey, http, S3ObjectStore.CustomerHttpClientName, time, logger,
+            bucket.UnprovenDeleted);
         var scope = BackupLayout.KeyScope(database);
         var scopedCustomer = new ProjectStore(customer, scope);
         IObjectStore store = mirror ? new MirroredStore(new ProjectStore(platform, scope), scopedCustomer) : scopedCustomer;

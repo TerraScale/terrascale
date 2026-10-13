@@ -208,6 +208,34 @@ UTF-8 or percent escapes return `400 invalid_request`. See [the key contract](id
 | PATCH | `C/documents/by-key?id={id}` | `patchDocument` | `documents:write` |
 | DELETE | `C/documents/by-key?id={id}` | `deleteDocument` | `documents:write` |
 
+A successful write (`createDocument`, `putDocument`, `patchDocument`, `deleteDocument`, `runTransaction`) answers
+`"durability": "local_durable"`. The label means only that the write committed to the database file of the member that
+answered. It does not mean the write is synced to disk or backed up:
+
+- The commit uses `synchronous = NORMAL` ([0003](decisions/0003-sqlite-synchronous-normal.md)). A write survives a crash
+  of the TerraBase process, but an OS crash or power loss of that machine can lose the last acknowledged writes.
+- Continuous backup ships committed writes to the bucket asynchronously, about once per second, so the newest
+  acknowledged writes are in no backup yet. Some failures drop backup history; see [continuous backup](backup.md).
+
+A document write ends in one of three outcomes:
+
+1. **Committed:** a `2xx` answer with `local_durable`, as above. After the database's SQLite commit returned, the
+   storage engine still moves its commit count, wakes what waits for commits and releases the transaction. Each of
+   these runs even when work before it failed. A failure there is logged and the write is still answered this way,
+   except in two cases that answer outcome 3 instead: a group commit that also created or dropped a collection or
+   adopted an incarnation (no document write does today), and a change committed in its own transaction rather than
+   a group commit, such as creating or dropping a collection or changing a schema or an index. The quota and usage
+   accounting of a committed write is covered too: its failure is logged and the write is still answered this way.
+   Any other failure later in the request is not, and its `5xx` is outcome 3.
+2. **Not committed:** a `4xx` answer. The write was refused (validation, precondition, quota, uniqueness) and rolled
+   back.
+3. **Unknown:** a `5xx` answer, a lost connection or a proxy error. The write may or may not have committed. The
+   client either reads to verify, or retries the identical request only when that request is conditional: a create
+   with `If-None-Match: *` (`if_none_match: "*"` in a transaction), or a put or delete with `If-Match` on the exact
+   version it replaces. Nothing else is safe to retry: an unconditional put or delete, a patch (an increment or an
+   append applies twice), a sequence without version preconditions, or `createDocument`, which generates a new id on
+   every call.
+
 ### Queries
 
 | Method | Route | operationId | Scope | Old route |

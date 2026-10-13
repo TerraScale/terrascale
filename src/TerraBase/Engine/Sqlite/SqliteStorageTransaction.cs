@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using Turso.Data.Sqlite;
@@ -71,6 +72,12 @@ internal sealed partial class SqliteStorageTransaction(
 
     /// <summary>Whether a per-commit limit refused a write since the last savepoint: alone in a transaction, it could fit.</summary>
     internal bool LimitsReached { get; private set; }
+
+    /// <summary>The offset this transaction committed at, set as soon as its SQLite commit succeeded; null before.</summary>
+    internal long? Committed { get; private set; }
+
+    /// <summary>Whether this transaction changed state readers see beside its documents: collection names or the incarnation.</summary>
+    internal bool ChangedReaderState => _collectionsChanged || _adoptedIncarnation is not null;
 
     // Taken when the transaction begins: a catalog follower adopting its primary's incarnation never mixes it into a
     // snapshot read before.
@@ -986,54 +993,97 @@ internal sealed partial class SqliteStorageTransaction(
                 throw new InvalidOperationException("an operation of this transaction failed, so it can only be rolled back");
             }
 
+            long offset;
+            var committing = false;
             try
             {
                 FlushStates();
                 DropUniqueAffected();
-                var offset = _offset ?? GetOffset();
+                offset = _offset ?? GetOffset();
                 if (_changes is { Count: > 0 })
                 {
                     sequence = AppendChanges(_changes, cancellationToken);
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
+                committing = true;
                 transaction.Commit();
-                if (_collectionsChanged)
-                {
-                    store.ForgetCollections();
-                }
-
-                if (_statisticsChanged)
-                {
-                    store.StatisticsChanged();
-                }
-
-                if (_adoptedIncarnation is { } adopted)
-                {
-                    // Before the commit wakes waiters: readers see the adopted documents with their incarnation.
-                    store.AdoptIncarnation(adopted);
-                }
-
-                return offset;
             }
             catch
             {
                 _faulted = true;
+                // The driver can throw after the commit landed. Both only drop caches: safe whether or not it did.
+                if (committing && _collectionsChanged)
+                {
+                    store.ForgetCollections();
+                }
+
+                if (committing && (_offset is not null || _replicaChanged))
+                {
+                    store.MoveCommitCount();
+                }
+
                 throw;
             }
+
+            // On the write thread right after the commit, so readers see stale collection names or incarnation only
+            // briefly. Every step runs, each even when one before it failed.
+            Committed = offset;
+            Follow("the after-commit hook", store.AfterSqliteCommit);
+            if (_collectionsChanged)
+            {
+                Follow("forgetting the collection names", store.ForgetCollections);
+            }
+
+            if (_statisticsChanged)
+            {
+                // Only query plans depend on it: a session opened before the ANALYZE plans without the new statistics.
+                Follow("moving the statistics generation", store.StatisticsChanged);
+            }
+
+            if (_adoptedIncarnation is { } adopted)
+            {
+                // Before the commit wakes waiters: readers see the adopted documents with their incarnation.
+                Follow("adopting the incarnation", () => store.AdoptIncarnation(adopted));
+            }
+
+            return offset;
         }, cancellationToken).ConfigureAwait(false);
 
+        // A failed wake-up only delays its waiter, which also wakes on its own timeout.
         if (_offset is not null || _replicaChanged)
         {
-            committed?.Invoke();
+            Follow("the commit notification", committed);
         }
 
         if (sequence is { } appended)
         {
-            changesCommitted!(appended);
+            Follow("the change notification", () => changesCommitted!(appended));
+        }
+
+        if (_followFailure is { } failure)
+        {
+            ExceptionDispatchInfo.Throw(failure);
         }
 
         return offset;
+    }
+
+    // The first step after the commit that failed: CommitAsync throws it once every step ran.
+    private Exception? _followFailure;
+
+    // Runs one step after the commit landed; its failure is logged and kept instead of skipping the steps after it.
+    private void Follow(string step, Action? action)
+    {
+        try
+        {
+            action?.Invoke();
+        }
+        catch (Exception error)
+        {
+            _followFailure ??= error;
+            store.LogAfterCommit(step, error);
+        }
     }
 
     // Savepoints are lazy: SAVEPOINT runs with the write's first statement and RELEASE with the next write's, so a
@@ -1304,8 +1354,14 @@ internal sealed partial class SqliteStorageTransaction(
         }
         finally
         {
-            store.End(write, ownsAdmission);
-            _gate.Release();
+            try
+            {
+                store.End(write, ownsAdmission);
+            }
+            finally
+            {
+                _gate.Release();
+            }
         }
     }
 

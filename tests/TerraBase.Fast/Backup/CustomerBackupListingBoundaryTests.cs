@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
@@ -84,7 +85,8 @@ public sealed class CustomerBackupListingBoundaryTests
         await AssertDocumentAsync(data, restored, "kept", text, cancellationToken);
         await AssertDocumentAsync(data, restored, "after", text, cancellationToken);
         await Assert.That(snapshotReads).IsEqualTo(keyBytes == 1024 ? 1 : 0);
-        await Assert.That(segmentReads).IsEqualTo(keyBytes == 1024 ? 1 : 0);
+        // The window and the plan read the read mark at its end, the restore its log.
+        await Assert.That(segmentReads).IsEqualTo(keyBytes == 1024 ? 3 : 0);
         s3.CustomerListingOverride = null;
 
         // A valid predecessor protects the live generation while retention deletes the older test generation.
@@ -285,6 +287,80 @@ public sealed class CustomerBackupListingBoundaryTests
         await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
+    [Test]
+    public async Task A_window_read_from_the_bucket_ends_at_the_second_its_newest_read_mark_proves(CancellationToken cancellationToken)
+    {
+        var s3 = new FakeS3();
+        var time = Clock();
+        await using var api = await StartAsync(s3, time);
+        var (database, text) = await SeedAsync(api, cancellationToken);
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ShipAsync(api, time, cancellationToken);
+        var snapshotAt = time.GetUtcNow();
+        await PutAsync(data, database, "after", text, cancellationToken);
+        await ShipAsync(api, time, cancellationToken);
+        var read = time.GetUtcNow();
+        var segment = s3.CustomerObjects.Single(item => item.Key.Contains("/wal/", StringComparison.Ordinal));
+        // The test clock stands still during a read, so its mark is the read's end.
+        await Assert.That(await LatestAsync(api.Client, database.Path, cancellationToken)).IsEqualTo(read);
+
+        // A read that started 300 ms before it ended proves the whole second at or before its start.
+        await ResealAsync(s3, segment, segment.Key, log =>
+        {
+            BinaryPrimitives.WriteInt64BigEndian(log.AsSpan(^8), read.AddMilliseconds(-300).ToUnixTimeMilliseconds());
+            return log;
+        }, cancellationToken);
+        await Assert.That(await LatestAsync(api.Client, database.Path, cancellationToken)).IsEqualTo(read.AddSeconds(-1));
+        using (var plan = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/plan"),
+            new { pointInTime = snapshotAt, destination = "customer" }, cancellationToken))
+        {
+            plan.EnsureSuccessStatusCode();
+            await Assert.That((await plan.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken))
+                .GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(read.AddSeconds(-1));
+        }
+
+        // Without a mark (a read that stopped before the newest commit), only the snapshot's time is proven.
+        await ResealAsync(s3, segment, segment.Key, log => log[..^9], cancellationToken);
+        await Assert.That(await LatestAsync(api.Client, database.Path, cancellationToken)).IsEqualTo(snapshotAt);
+    }
+
+    [Test]
+    public async Task A_window_read_from_the_bucket_falls_back_past_an_unreadable_newest_segment(CancellationToken cancellationToken)
+    {
+        var s3 = new FakeS3();
+        var time = Clock();
+        await using var api = await StartAsync(s3, time);
+        var (database, text) = await SeedAsync(api, cancellationToken);
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ShipAsync(api, time, cancellationToken);
+        var snapshotAt = time.GetUtcNow();
+        await PutAsync(data, database, "first", text, cancellationToken);
+        await ShipAsync(api, time, cancellationToken);
+        var first = time.GetUtcNow();
+        await PutAsync(data, database, "second", text, cancellationToken);
+        await ShipAsync(api, time, cancellationToken);
+        // The newest segment, which holds second and the newest read mark, fails authentication.
+        var newest = s3.CustomerObjects.Keys.Where(key => key.Contains("/wal/", StringComparison.Ordinal)).Order(StringComparer.Ordinal).Last();
+        var corrupted = s3.CustomerObjects[newest].ToArray();
+        corrupted[^20] ^= 0xff;
+        s3.SeedObject(customer: true, newest, corrupted);
+
+        // Like a missing segment: the window ends at the previous segment's read mark.
+        await Assert.That(await LatestAsync(api.Client, database.Path, cancellationToken)).IsEqualTo(first);
+        using (var plan = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/plan"),
+            new { pointInTime = snapshotAt, destination = "customer" }, cancellationToken))
+        {
+            plan.EnsureSuccessStatusCode();
+            await Assert.That((await plan.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken))
+                .GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(first);
+        }
+
+        var restored = await RestoreAsync(api.Client, database, database.Path, first, "previous-latest", cancellationToken);
+        await AssertDocumentAsync(data, restored, "first", text, cancellationToken);
+        using var second = await data.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(restored, "people", "second")), cancellationToken);
+        await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
     private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time)
     {
         var api = await ManagementApi.StartAsync(s3.Configure, services =>
@@ -337,7 +413,10 @@ public sealed class CustomerBackupListingBoundaryTests
         return prefix + string.Concat(Enumerable.Repeat(scalar, remaining / scalarBytes)) + new string('x', remaining % scalarBytes) + "/" + filename;
     }
 
-    private static async Task ResealAsync(FakeS3 s3, KeyValuePair<string, byte[]> original, string renamed, CancellationToken cancellationToken)
+    private static Task ResealAsync(FakeS3 s3, KeyValuePair<string, byte[]> original, string renamed, CancellationToken cancellationToken) =>
+        ResealAsync(s3, original, renamed, log => log, cancellationToken);
+
+    private static async Task ResealAsync(FakeS3 s3, KeyValuePair<string, byte[]> original, string renamed, Func<byte[], byte[]> change, CancellationToken cancellationToken)
     {
         var keyId = Encoding.ASCII.GetString(original.Value, 4, 26);
         var parts = original.Key.Split('/');
@@ -348,9 +427,8 @@ public sealed class CustomerBackupListingBoundaryTests
             using var encrypted = new MemoryStream(original.Value);
             using var plain = new MemoryStream();
             await BackupObject.ReadAsync(encrypted, plain, original.Key, _ => Task.FromResult(key), cancellationToken);
-            plain.Position = 0;
             using var output = new MemoryStream();
-            await BackupObject.WriteAsync(plain, output, renamed, keyId, key, cancellationToken);
+            await BackupObject.WriteAsync(new MemoryStream(change(plain.ToArray())), output, renamed, keyId, key, cancellationToken);
             s3.SeedObject(customer: true, renamed, output.ToArray());
         }
         finally

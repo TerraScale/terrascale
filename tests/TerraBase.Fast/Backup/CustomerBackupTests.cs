@@ -123,10 +123,11 @@ public sealed class CustomerBackupTests
 
             foreach (var at in new[] { latest.AddTicks(1), time.GetUtcNow() })
             {
+                // Not in the future: the backup does not hold the time yet, for the plan as for the restore.
                 await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(planRoute, new { pointInTime = at, destination }, cancellationToken),
-                    HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times");
+                    HttpStatusCode.Conflict, "backup_history_incomplete", "continuous backup cannot prove this database's history complete up to pointInTime");
                 await ErrorAssert.ErrorAsync(writer.PostAsJsonAsync(restoreRoute, new { pointInTime = at, destination, name = "after-" + destination }, cancellationToken),
-                    HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times");
+                    HttpStatusCode.Conflict, "backup_history_incomplete", "continuous backup cannot prove this database's history complete up to pointInTime");
             }
 
             var name = "selected-" + destination;
@@ -156,8 +157,9 @@ public sealed class CustomerBackupTests
             await Assert.That(plan.GetProperty("segmentCount").GetInt32()).IsEqualTo(0);
         }
 
+        // Before the customer bucket's oldest snapshot, within the retention window: it does not hold the time.
         await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(planRoute, new { pointInTime = platformSnapshot, destination = "customer" }, cancellationToken),
-            HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times");
+            HttpStatusCode.Conflict, "backup_history_incomplete", "continuous backup cannot prove this database's history complete up to pointInTime");
         using var historical = await reader.PostAsJsonAsync(planRoute, new { pointInTime = customerSnapshot, destination = "customer" }, cancellationToken);
         historical.EnsureSuccessStatusCode();
         var earlier = await historical.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
@@ -1199,7 +1201,7 @@ public sealed class CustomerBackupTests
         await ShipAsync(api, time);
         var snapshot = s3.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
         var latest = await LatestAsync(api.Client, database, "customer");
-        foreach (var (code, status) in new[] { ("NoSuchBucket", HttpStatusCode.ServiceUnavailable), ("NoSuchKey", HttpStatusCode.InternalServerError) })
+        foreach (var (code, status) in new[] { ("NoSuchBucket", HttpStatusCode.ServiceUnavailable), ("NoSuchKey", HttpStatusCode.Conflict) })
         {
             s3.CustomerReadError = key => key == snapshot ? code : null;
             using var rejected = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
@@ -1208,6 +1210,11 @@ public sealed class CustomerBackupTests
             if (code == "NoSuchBucket")
             {
                 await AssertUnavailableAsync(rejected, "backup bucket could not be accessed");
+            }
+            else
+            {
+                await ErrorAssert.ErrorAsync(rejected, HttpStatusCode.Conflict, "backup_history_incomplete",
+                    "continuous backup cannot prove this database's history complete up to pointInTime");
             }
 
             await AssertPublicAsync(await rejected.Content.ReadAsStringAsync(cancellationToken));

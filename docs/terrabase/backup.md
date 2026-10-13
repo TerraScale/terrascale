@@ -92,7 +92,7 @@ supported.
 
 Customer listing pages request at most 250 objects and are bounded to 2 MiB before XML parsing. The smaller page leaves
 room for XML escaping of S3's 1,024-byte UTF-8 keys. Oversized keys are skipped; malformed entries still count toward
-metadata scan limits.
+metadata scan limits. Multipart start and completion responses, like error responses, are bounded to 64 KiB.
 
 Customer credentials are sealed in the catalog. Save probes the bucket, seals the key pair with AES-256-GCM under a
 per-record data key, and wraps that data key under the master key (`TERRABASE_MASTER_KEY`). The catalog record
@@ -116,7 +116,8 @@ the new database and `Location: /v1/projects/{project}/databases/{restored-name}
 organization route and restored database ID in `Location`.
 Encryption and `TBK1` objects are unchanged; restoring either source still requires the master key (`TERRABASE_MASTER_KEY`).
 In `both` mode, shipping succeeds only when both uploads succeed; a failed destination delays this project's progress
-and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload. Platform files
+and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload (a drop with
+reason `destination`, see [How shipping works](#how-shipping-works)). Platform files
 and eligible customer jobs in other organizations continue shipping. Retention scans both configured buckets
 independently, including earlier platform backups in customer-only mode; drills exercise the customer copy.
 Retention processes at most 10,000 expired snapshots per file
@@ -125,7 +126,8 @@ in batches of sixteen. Object locks may delay cleanup, and a bucket entirely out
 restore window. Customer-written junk keys inside the requested prefix are skipped; foreign or nonascending listing
 responses are rejected. Listing order follows S3's UTF-8 byte ordering, including unrelated Unicode objects.
 Customer object operations have a fifteen-minute deadline covering response headers, streamed body decoding and all
-pages of a listing.
+pages of a listing. A multipart upload (see [Uploads](#uploads)), platform or customer, keeps one deadline for the
+whole object: fifteen minutes plus one minute per part after the first, which a bucket meets at a sustained ~2 MiB/s.
 Shipping admits at most four file jobs, with at most two customer jobs and one customer job per organization;
 platform-only files, including `_system`, can use the remaining capacity. A stalled customer job holds its organization's
 customer slot until completion or cancellation. Background ticks skip busy files and admit
@@ -188,11 +190,21 @@ every change it commits in the table `turso_cdc`, mode `after`: one row per inse
 after-image (SQLite's record format), a row for each schema change (`sqlite_schema`), and a COMMIT row ending each
 transaction. The backup's tap (`Engine/Sqlite/TursoChangeTap.cs`) reads that table:
 
-1. Each second it reads, on a connection of its own, the rows after the last one it read (its anchor), up to the last
-   COMMIT row, in pages of at most 1024 rows or 4 MiB, and appends them to the log as records (`ChangeLog`, format 1):
-   upsert (table, rowid, record), delete (table, rowid), commit, create (the object's SQL), drop (type, name).
+1. Each second it reads, on a connection of its own, the rows after the last one it read (its anchor), in pages of at
+   most 1024 rows or 4 MiB, and appends them to the log as records (`ChangeLog`, format 1): upsert (table, rowid,
+   record), delete (table, rowid), commit, create (the object's SQL), drop (type, name), timed commit and read mark. A
+   read stops at the last COMMIT row, or at the first COMMIT row once it has appended 32 MiB, so it always ends between
+   transactions; the rest waits for the next read. One transaction is never split, so a read can exceed 32 MiB by one
+   transaction. A timed commit carries the `change_time` of the transaction's first row and of its COMMIT row; a
+   transaction whose times are missing or go back is logged with a plain commit. When a read appended changes up to the
+   newest COMMIT row that existed when it started (not a read stopped at 32 MiB), a read mark follows them with that
+   start time: every transaction committed before it is in the log before the mark. Both records are additive: the
+   object format, the bucket layout and older logs (plain commits only) stay readable.
 2. It then deletes, on the writer, the rows before its anchor, always keeping the newest: an empty `turso_cdc`
-   restarts its ids at 1 after a reopen. Turso does not capture changes to `turso_cdc` itself.
+   restarts its ids at 1 after a reopen. Turso does not capture changes to `turso_cdc` itself. A read that fails,
+   including this delete, puts its anchor back: the shipper drops what that read appended, and the next read appends
+   the same changes again (or finds a hole, if the delete ran). The change retention of peer streams follows the new
+   anchor only once the delete has succeeded.
 3. Anything that moves the log under the tap is a **hole**: the file starts a new generation, and
    `terrabase_backup_holes_total` counts it. Two cases:
    - the anchor row is gone: something else deleted changes the tap had not read;
@@ -209,18 +221,109 @@ A **generation** is one unbroken run of the log from one file on one member. It 
 the database's writer gate, so nothing commits, the tap reads what is left, moves its anchor to the newest change and
 opens a read transaction; then writers go on, and the database is copied row by row, every rowid kept, as of that
 transaction (`Engine/Sqlite/TursoCopy.cs`). The copy leaves out the engine's own tables (`turso_cdc`, `sqlite_stat1`).
-A generation starts when shipping starts (every process start), after a hole, or after 256 MiB of log could not be
-stored. Within a generation a snapshot is taken daily. The log read in one pass becomes one **segment**.
+A generation starts when shipping starts (every process start), when another member's lease or a new customer
+destination takes over, after a hole, or after unstored log was dropped (below). Before a generation's snapshot holds
+writers, the tap reads any backlog to discard it, so the gate covers only what commits meanwhile. Within a generation a
+snapshot is taken daily, but not while a backlog remains, because the snapshot reads what is left while it holds
+writers. The log read in one pass becomes one **segment**. A backlog, such as the writes committed during a long
+snapshot upload, ships as one segment per read budget, one per pass, so a pass that keeps up with the bucket drains it
+at up to 32 MiB a second.
 
-After a failed upload or snapshot, a file waits before the next attempt: 1 s, doubling to 5 minutes. Reads and
-trimming go on meanwhile, so `turso_cdc` stays small. Log that cannot be stored past 256 MiB is dropped, and the file
-starts a new generation once the bucket answers.
+Snapshots and segments are ordered so that every segment a generation stores has a base:
+
+- A generation's first snapshot is copied and uploaded in the file's shipping pass, because a segment is useless (and
+  in a customer bucket, WAL without a base) until the snapshot it starts from exists. The generation's segments ship
+  from the next pass on, right after that object is stored.
+- A daily snapshot is pinned and copied in the pass, and the log read up to its position is stored first, so the next
+  segment starts at that position. Its upload then runs beside shipping: segments after it keep shipping while it
+  uploads, and the snapshot becomes a new base once stored. At most four daily snapshot uploads run on a node at a
+  time, each holding its scratch copy until stored; a file whose turn has not come tries again next pass.
+- Restore drills run beside shipping too (see [Restore drills](#restore-drills)).
+
+A segment is sealed once. When its upload fails, even a PUT the bucket stored before the failure, the next attempt
+sends exactly those bytes under the same key before anything later is sealed, and the log read meanwhile becomes the
+next segment, starting where the failed one ends. So two segments never share a start, and an overwrite of a stored
+segment only repeats its own bytes.
+
+After a failed upload or snapshot, a file waits before the next attempt: 1 s, doubling to 5 minutes. When the attempt
+is due, the failed segment is sent again before anything more is read. Between attempts reads and trimming go on, so
+`turso_cdc` stays small, but only while no backlog remains and less than 256 MiB waits in scratch; otherwise the rest
+stays in `turso_cdc`, where the backup's anchor keeps it, and a short outage costs nothing. Once failures reach the
+longest backoff (about eight and a half minutes into an outage) while log still waits there, the outage counts as
+sustained: the log is **dropped**, the generation ends, reads trim `turso_cdc` again, and the file starts a new
+generation with a snapshot once the bucket answers. A log is dropped only then, after a failed snapshot read, or after
+any failure on a customer destination (below). Every drop logs a warning and counts in
+`terrabase_backup_abandoned_total{reason}` (`outage`, `read`, `destination`); a hole counts in
+`terrabase_backup_holes_total`. A new shipper lease, a destination change and shutdown also end a generation, on
+purpose, without counting a drop. At shutdown a file ships its whole backlog, read after read, while the shutdown
+budget lasts and its passes succeed; a daily snapshot upload that shutdown cancels does not stop that. Shutdown starts
+no generation, whose full snapshot would spend the budget other files need: a file without one waits for the next
+start. The exception is a file whose customer destination was just detached, which stores its final snapshot in the
+platform bucket. A daily snapshot due while a backlog remains, or
+while snapshot uploads are busy, waits for a later pass; `terrabase_backup_snapshots_deferred_total{reason}`
+(`backlog`, `busy`) counts each such pass. A daily snapshot upload that fails counts in
+`terrabase_backup_failures_total`, shows as `lastError` until a snapshot is stored, and puts off the next attempt by
+its own backoff (1 s, doubling to 5 minutes), while segments keep shipping.
+
+Lag (`terrabase_backup_lag_seconds`, `lagSeconds`) is how long the oldest committed data not yet in the bucket has
+waited, as far as the shipper can tell: it starts when a read first finds unstored changes (or a snapshot is pinned,
+or a read fails), stays above zero while a backlog remains, a failed upload is pending or the file has no generation
+after a drop or hole, and returns to 0 once a pass stores everything it read and nothing is left. It is not a bound on
+loss: data dropped or behind a hole is not in the bucket even after lag returns to 0. While a generation's first
+snapshot is copied and uploaded nothing of that file ships, so lag counts from before the copy until the pass after the
+snapshot is stored.
 
 Each object is sealed before upload (`Features/Backup/BackupObject.cs`, format 1): chunks of up to 1 MiB, LZ4-compressed
 when smaller, AES-256-GCM. Each object's AES key is HKDF-SHA256 of its project's data key, a random salt and the object's
 own key in the bucket, so an object moved elsewhere does not decrypt. Data keys are generated by TerraBase, wrapped with AES-256-GCM under the master key
 (`TERRABASE_MASTER_KEY`) and stored in the bucket. Only a node with the master key can unwrap them. Each project gets its own data
 key, and `_system.db` gets one too.
+
+### Uploads
+
+A sealed object of at most 128 MiB is one `PutObject`. A larger one, such as a whole-database snapshot, is an S3
+multipart upload (`Features/Backup/ObjectStore.cs`): 128 MiB parts (S3's 10,000-part limit then covers objects up to
+1.25 TiB; a larger object fails before it starts), at most four parts in flight, each streamed from the sealed scratch
+file at its own offset, so no part is held in memory. Every part uses the signing and checksum settings of a single
+upload: a signed SHA-256 payload hash without `aws-chunked` encoding, and checksums only where S3 requires them. The
+multipart path has not yet run against Tigris itself, only against the in-memory S3 fake. Each request has the
+fifteen-minute request timeout. A failed or timed-out part is retried alone, up to
+three attempts (each attempt includes the SDK's own retries of transient errors); the parts already stored stay.
+
+A completion answer alone does not count. Some S3-compatible services answer a failed completion with 200 and an error
+body (the AWS SDK in use turns that body into an error; a success answer that stored nothing would pass it), and an
+older object of the same length may already sit at the key. The upload counts only when a HEAD of the key then reports
+exactly the uploaded length and one of two proofs:
+
+- **Upload id.** Each upload starts with its own ULID as user metadata (`x-amz-meta-terrabase-upload`), which S3 copies
+  to the completed object.
+- **Multipart ETag.** S3's ETag of a multipart object: the MD5 of the binary MD5s its parts' uploads returned as ETags,
+  then `-` and the part count, computed from this upload's own part ETags. An older object of the same length but
+  another body has another ETag; one with the identical body (and part split) is the same data. Stores whose part
+  ETags are not MD5s give no such proof.
+
+Missing or other evidence fails the upload, so the shipper never records an object the bucket does not hold. The limit:
+a store that keeps no user metadata through a completion and has no S3-style ETags (the PitrLab emulator before it kept
+metadata was one) fails every multipart upload, so snapshots above 128 MiB never ship there. When a completion answered
+200 but its object is unproven, a snapshot key is this attempt's alone (it names the pin time, a generation and a
+position; the shipper stores each snapshot key once and pins a new snapshot under a new key to retry, and nothing else
+writes snapshot keys), so the object there is deleted (logged, `terrabase_backup_unproven_uploads_deleted_total`) rather
+than left as a whole unrecorded snapshot. Another key, such as a log segment's that a retry rewrites with the same bytes,
+keeps its object. Tigris support for either proof (user metadata kept through `CompleteMultipartUpload` and returned by
+HEAD; S3-style part and multipart ETags) is unverified until G1; if Tigris gave neither, large uploads would fail
+visibly, never succeed falsely.
+
+After a part's last attempt fails, a failed or unproven completion or a cancellation, TerraBase aborts the upload (best
+effort, with its own five-second deadline, logged when it fails) and the file's normal backoff applies. Every multipart
+upload keeps the whole-object deadline in [Customer buckets](#customer-buckets-ts-635), at most about seven days for
+10,000 parts. An upload whose abort fails, or whose node stops, is never visible as an object, but its parts hold bucket
+storage. No bucket lifecycle rule removes them. Instead, the member that ships a file lists the platform bucket's
+in-progress uploads under that file's directory (`ListMultipartUploads`, which
+[Tigris supports](https://www.tigrisdata.com/docs/objects/multipart-uploads/)) when it first retains the file after
+starting and then daily. It aborts those initiated more than the largest upload's deadline plus an hour ago, which no
+live upload on any member can still own. While its file is shipped and the bucket answers, an orphan therefore holds
+storage for about eight days at most. Uploads under directories that no member ships, such as a deleted database's, and
+orphans in customer buckets are not cleaned up.
 
 ### Data-key rotation
 
@@ -274,35 +377,130 @@ TS-647, through anti-entropy). Backups taken before the TS-602 wipe use the old 
 it (user decision, 2026-10-07). Production backup starts right after that cutover.
 
 `GET /v1/projects/{project}/databases/{database}/point-in-time` returns the restore window: from the oldest snapshot,
-but no earlier than the plan's retention window (a bucket rule may keep older objects), to the newest data in the
-bucket. It returns 404 when no stored data falls within the plan's window, including when retained objects have all
-expired under the plan.
+but no earlier than the plan's retention window (a bucket rule may keep older objects), to the newest time the backup
+proves (see [Proven history](#proven-history)): read from the bucket, the second at or before the newest read mark in
+the newest generation's last three segments (at most three object reads; a segment that is gone, fails authentication
+or is cut short counts as holding none), or its newest snapshot's time. While this node ships the database to the
+platform bucket, the shipper gives `latest` from what it has stored, without reading the bucket: the later of its
+generation's newest stored snapshot's time and, for the newest stored segment holding a read mark, the second at or
+before its newest mark, or that mark's own time, to the millisecond, when the mark ends a segment read in that
+millisecond. A daily snapshot moves it only once stored, and a
+read stopped by its budget, which writes no mark, does not move it. It returns 404
+when no stored data falls within the plan's window, including when retained objects have all expired under the plan.
 `POST /v1/projects/{project}/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}`
 restores into a new database of the same project (`branchedFrom` set, like a backup restore). The restore:
 
 1. takes the newest snapshot at or before `pointInTime`;
-2. replays its generation's segments up to `pointInTime` in order, checking they are contiguous: one transaction per
+2. checks from object names that the history up to `pointInTime` can be complete (see
+   [Proven history](#proven-history)), before downloading anything;
+3. replays its generation's segments read by `pointInTime` in order, checking they are contiguous: one transaction per
    commit record, rows by rowid (`INSERT OR REPLACE`, `DELETE`), schema objects created from their SQL and dropped by
    name. A log that ends inside a transaction, a malformed record or a change the file refuses fails the restore.
-   Eight segments download at once, each retried up to three times if the stream drops;
-3. runs `PRAGMA integrity_check`, then imports the file as a copy, so its replication starts over from a baseline.
+   Eight segments download at once, each retried up to three times if the stream drops. Then the history must be
+   proven to reach `pointInTime`, replaying the transactions of later segments that ran before it;
+4. runs `PRAGMA integrity_check`, then imports the file as a copy, so its replication starts over from a baseline.
 
-`pointInTime` must fall between `earliest` and `latest`, inclusive; requests outside those bounds return 400. A time after
-`latest` is refused even when it is before now, so a delayed shipper cannot silently restore older data for that time.
+A restore answers 400 only for a time no backup can ever hold: after now, or before the plan's retention window. A time
+in between that lies outside the restore window (before its oldest stored snapshot, or after the newest backed-up data:
+on the node that ships the database, the window's `latest`; otherwise the newest segment's time) answers `409`
+`backup_history_incomplete`, which a later retry can turn into a restore once the backup holds it: an unshipped final
+segment, or one or a snapshot lost from the bucket. So a delayed shipper cannot silently restore older data for a time it
+has not shipped. Off the shipping node, between the window's `latest` and the newest segment's time, a restore succeeds
+only when it proves the time.
 The shared restore service validates these bounds once before downloading or importing a database. It captures the
 retention reference time before reading metadata and uses one snapshot scan for both the window and snapshot selection,
 so metadata latency cannot move the retention floor during a restore. Window reads and previews also capture their
 reference time before reading metadata.
 
-The result holds every transaction the shipper read by `pointInTime`. The shipper reads every second, so a transaction
-committed in the second before `pointInTime` may be missing.
+The result holds every transaction committed before `pointInTime`, or the restore answers `409`.
+
+### Proven history
+
+A restore at `pointInTime` (T, taken to the millisecond) returns `201` only with whole transactions: every transaction
+committed before T, so every write acknowledged before T, and none whose COMMIT row was written at or after T.
+Otherwise it answers `409` and creates nothing. T, segment and snapshot times, read marks and Turso's `change_time` are
+all the node's wall clock, and "acknowledged before T" is measured on it.
+
+What Turso records (measured on the driver, `TursoChangeTimeTests`): every captured row, the COMMIT row included, holds
+`change_time`, the wall clock when Turso wrote that row, in whole Unix seconds rounded down; rows of one transaction
+differ when its statements run in different seconds. The COMMIT row is written inside the transaction, before it is
+durable, so a transaction commits, and is acknowledged, after its COMMIT row's time; a statement's time is never taken as
+a commit time. One transaction may hold many client writes (a group commit or a transaction request); a restore never
+splits it.
+
+The restore takes the newest snapshot at or before T and replays its generation's segments in log order:
+
+- segments read by T (their time at or before T, to the millisecond) are replayed whole: what they hold committed
+  before their read ended;
+- the history must then be proven complete up to T, by one of:
+  - the snapshot was taken in T's millisecond (it holds every writer while it reads);
+  - the last segment read by T was read in T's millisecond and ends with a read mark at or after T;
+  - the segments read after T, read on transaction by transaction: those whose COMMIT row's second ends by T (every
+    row ran before T) are replayed, up to the first whose COMMIT row's second starts at or after T (the witness: it and
+    every later transaction committed after T), or up to a read mark at or after T;
+  - the generation's next snapshot holds exactly the replayed log.
+
+A segment's own time is when its read finished: it shows nothing about commits made while the read ran, so it proves no
+time by itself.
+
+`409` `backup_history_incomplete`: the bucket cannot show the history complete up to T.
+
+- A missing or overlapping segment (a lost upload, a bucket-side deletion, two segments with the same start where the
+  first holds log; a segment holding no log ends where it starts, so the next may share its start). Times up to the
+  last segment before it can still restore.
+- Nothing after the replayed log proves T: an unshipped or missing final segment, a generation that ended (a hole, a
+  dropped backlog, a shipper move or restart; the next generation's snapshot time restores), or a quiet period not yet
+  closed by a later write or snapshot.
+- A snapshot or segment that disappears between listing and download (retention racing the restore).
+
+`409` `restore_point_unproven`: the history is there but T cannot be placed between two transactions, in a segment read
+after T: a transaction whose COMMIT row's second contains T (times are whole seconds), one without recorded times (a
+log written before they were recorded, or a clock that went back within it), or times that go back between two
+transactions. A whole second, or a time in a second in which no transaction committed, can be placed; the message of a
+time within a commit second names that second's start, the nearest earlier time it can place.
+
+`409` `backup_unreadable`: an object the restore needs fails authentication (a corrupted object, a data key the node's
+master key did not wrap) or is cut short, or the replayed file fails its integrity check. Each download is tried three
+times first. Like the other refusals, nothing is created.
+
+Guaranteed to restore exactly (`201`), given contiguous segments and timed transactions:
+
+- **Snapshot times**: T in a snapshot's millisecond.
+- **Witnessed times**: T at a whole second, or any time in a second in which no transaction read after T committed,
+  when a transaction committed at or after T (or a read mark at or after T) is shipped later in the same generation.
+  A quiesced cut is this case: writes stop, T is the next whole second, and a later write is the witness.
+- **The latest durable point**: the second at or before the newest read mark's time, with no later write needed.
+- **A quiet time closed by a snapshot**: a time up to the generation's next snapshot when no segment follows the
+  replayed log before it.
+
+Limits:
+
+- T is resolved to the millisecond: a transaction that committed within T's own millisecond, after T, can be included
+  through a segment or snapshot taken in that millisecond.
+- A backward wall-clock step between a commit and the backup read that picks it up, or between a COMMIT row and its
+  acknowledgement, cannot be detected. A step back between two transactions read after T is refused.
+- Only the transactions downloaded after T are checked for times going back; earlier segments are trusted by their read
+  times.
+- A read writes a mark only when it appended changes and reached the newest commit: a read that stops at its byte
+  budget, or an idle database, writes none (an idle database ships nothing). A commit made between a read's start
+  and its query is not covered by that mark; no T at or before the mark needs it.
+- A log written before timed commits and read marks restores only at snapshot times and at times its generation's next
+  snapshot closes.
+- A read mark rests on Turso showing a commit that returned on the writer's connection to the tap's next autocommit read
+  on its own connection (`TursoChangeTimeTests` checks it under concurrent commits); the tap's connection must not hold a
+  read transaction open across reads (only a snapshot opens one, and rolls it back).
+- `_system.db` restores only at its snapshot times. A catalog follower applies the leader's writes without capture, so
+  neither its log nor a later snapshot at the same position shows what was written after a snapshot. No point-in-time
+  restore of `_system` exists yet; the reader refuses any other time for it.
+- Integration tests run TerraBase on a test clock while Turso stamps rows with the machine's clock; tests that place T
+  between transactions set the recorded `change_time` themselves.
 
 ### Restore preview (TS-493)
 
 `POST /v1/projects/{project}/databases/{database}/point-in-time/plan` with
 `{"pointInTime":"…","destination":"customer"}` reads the selected source's
-backup metadata without downloading or decrypting backup contents, creating scratch files,
-or changing databases. It returns:
+backup metadata without changing databases. It downloads only what the window's `latest` needs when it comes from the
+bucket: at most three of the newest segments, for their read marks. It returns:
 
 ```json
 {
@@ -310,7 +508,8 @@ or changing databases. It returns:
   "pointInTime":"2026-10-07T12:00:13Z",
   "snapshotAt":"2026-10-07T12:00:10Z",
   "latestSegmentAt":null,
-  "segmentCount":0
+  "segmentCount":0,
+  "historyCheck":"metadata"
 }
 ```
 
@@ -320,18 +519,30 @@ restore. `segmentCount` and `latestSegmentAt` describe that snapshot generation'
 segments after its position and read by the requested time. The latter is null when
 none apply. No object keys or credentials are returned.
 
+The preview runs the restore's name-only check of [Proven history](#proven-history): the first segment starts at the
+snapshot's position, each later one starts at or after the previous one, and the history reaches `pointInTime`. When
+object names already show the history incomplete (a missing final segment, an ended generation, a later snapshot whose
+position no stored segment reaches), it answers `409` `backup_history_incomplete`, as the restore would. `historyCheck`
+is always `metadata`: segment names hold their start but not their length, so whether each segment begins exactly where
+the previous one ends (a missing middle segment, or two segments with the same start where the first holds log) is
+checked only by an actual restore, which can still answer `409`. The plan does not read transaction times either: a
+restore can answer `409` `restore_point_unproven` where the plan succeeds. `window.latest` is the window's, as
+`GET …/point-in-time` reports it; `pointInTime` may lie after it, up to the newest backed-up data.
+
 The request needs a ts-auth project token granting `databases:read`; `{database}` is its name.
 The hidden legacy management alias retains membership checks, including organization viewers. Access is checked
-before time validation: another tenant's database returns `404`. Missing time, a time
-outside the inclusive `window.earliest` and `window.latest` bounds returns `400`;
-disabled/empty backup, a wholly expired retention window or no applicable snapshot returns `404`.
+before time validation: another tenant's database returns `404`. A missing time, or a time after now or before the
+plan's retention window, returns `400`; any other time outside the restore window returns `409`
+`backup_history_incomplete`, exactly as the restore answers it;
+disabled/empty backup, a wholly expired retention window or no applicable snapshot returns `404`;
+a history the object names show incomplete returns `409` `backup_history_incomplete`.
 Preview uses the same restore-window bounds as restore. Metadata scanning is bounded to 10,000 items and 10 seconds;
 exhaustion returns `503` without a partial plan (`pitr_plan_limit` or
 `pitr_plan_timeout`). Object-store listing failures return `503`
 `pitr_plan_unavailable` without exposing provider details.
 
 This is an advisory preview. It does not reserve objects against retention, validate
-their encrypted contents, or prove WAL continuity. Restore still performs the download,
+their encrypted contents, or prove that segment lengths are contiguous. Restore still performs the download,
 authentication, continuity and integrity checks. The public project route and its hidden
 legacy alias follow [the HTTP API table](api.md).
 
@@ -380,7 +591,14 @@ At least once a day, when it stores a snapshot, the shipper checks it: it rebuil
 generation's previous snapshot, or the new one at generation start, rolled forward through the segments up to the new
 snapshot's exact log position), then compares a SHA-256 of the schema and every row of every table with the local copy
 the snapshot was made from, which is the live file at that position. A drill exercises download, decryption, contiguity,
-roll-forward and `integrity_check`.
+roll-forward and `integrity_check`. Every start snapshots every file, so every start also drills each file.
+
+The checksum of the local copy is taken before the snapshot is uploaded, so the copy is deleted with the pass and no
+copy waits for a drill. The drill itself then runs beside shipping: the file's segments keep shipping while it
+downloads and rebuilds. A node runs one platform drill and up to two customer drills at a time, each rebuilding one
+file in scratch, so a stalled customer bucket never holds a platform drill; the others wait their turn. Removal, a new
+destination and shutdown cancel a drill; a cancelled drill records no result. When a generation ends while its drill
+or snapshot upload runs (a hole, a drop, a new shipper), the next generation's snapshot is drilled.
 
 A failed drill is logged as an error and counted in `terrabase_backup_drills_total{result="failed"}`.
 
@@ -402,10 +620,11 @@ service, it only shows on `/backupz` and in the metrics.
 
 After a rollout, also check:
 
-1. Grafana (fly-metrics.net): `terrabase_backup_lag_seconds` (the RPO) stays under 2 s under writes,
-   `terrabase_backup_last_success_seconds` keeps moving, and `terrabase_backup_failures_total` and
-   `terrabase_backup_holes_total` do not rise. `/v1/backup` is on the loopback admin listener and the image has no
-   shell, so the metrics are the way in.
+1. Grafana (fly-metrics.net): `terrabase_backup_lag_seconds` stays under 2 s under writes,
+   `terrabase_backup_last_success_seconds` keeps moving, and `terrabase_backup_failures_total`,
+   `terrabase_backup_holes_total` and `terrabase_backup_abandoned_total` do not rise. Lag approximates the recovery
+   point only while holes and drops stay at zero (see [How shipping works](#how-shipping-works)). `/v1/backup` is on
+   the loopback admin listener and the image has no shell, so the metrics are the way in.
 2. Restore: `POST …/point-in-time/restore` of a scratch database to a second between two writes; check that the first
    write is in the new database and the second is not; delete the restored database.
 
@@ -457,12 +676,16 @@ its SQL), a segment is a change log, and replay applies rows instead of pages.
 ## Operations
 
 - `GET /v1/backup` on the loopback admin listener lists each shipped file: generation, log bytes read, last shipped time, lag,
-  pending bytes and the kind of the last error.
-- Metrics, over the files this member ships: `terrabase_backup_lag_seconds` (oldest data not yet in the bucket),
-  `terrabase_backup_last_success_seconds` (Unix time of the least recently shipped file) and `terrabase_backup_files`.
-  Also `terrabase_backup_uploaded_bytes_total{kind}`, `terrabase_backup_failures_total`, `terrabase_backup_holes_total`
-  and `terrabase_backup_generations_total` (a rising count means snapshots too often), `terrabase_backup_drills_total{result}`
+  pending bytes (read and not yet stored, sealed or not) and the kind of the last error.
+- Metrics, over the files this member ships: `terrabase_backup_lag_seconds` (oldest data not yet in the bucket, not a
+  loss bound), `terrabase_backup_last_success_seconds` (Unix time of the least recently shipped file) and
+  `terrabase_backup_files`. Also `terrabase_backup_uploaded_bytes_total{kind}`, `terrabase_backup_failures_total`,
+  `terrabase_backup_holes_total`, `terrabase_backup_abandoned_total{reason}` (unstored log dropped),
+  `terrabase_backup_snapshots_deferred_total{reason}` (passes that put off a due daily snapshot),
+  `terrabase_backup_generations_total` (a rising count means snapshots too often), `terrabase_backup_drills_total{result}`
   and `terrabase_backup_stored_bytes` (bucket bytes of the files this member ships).
+  `terrabase_backup_unproven_uploads_deleted_total` counts snapshots whose multipart upload completed without proof and
+  were deleted ([Uploads](#uploads)); a rising count means the bucket keeps neither proof.
   Bucket snapshots: `terrabase_backup_bucket_snapshots_total{result}` (taken, deleted, failed) and
   `terrabase_backup_bucket_snapshot_seconds` (Unix time of the newest snapshot, on the member that takes them; 0 elsewhere).
 - `GET /v1/backup` also shows, per file, whether this member ships it.

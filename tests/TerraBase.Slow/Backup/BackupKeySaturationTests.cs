@@ -95,7 +95,12 @@ public sealed class BackupKeySaturationTests
             }
 
             var primingAt = snapshotAt.AddMilliseconds(primingKeys);
-            var nextSnapshotAt = primingAt.AddMilliseconds(1);
+            // A segment's time is when its read ended, so it cannot show that nothing committed by then is missing: each
+            // restored generation's next snapshot, holding exactly the empty segments' log, closes its history.
+            var primingClosedAt = primingAt.AddMilliseconds(1);
+            var primingClosed = string.Create(CultureInfo.InvariantCulture, $"{filePrefix}/snapshots/{primingClosedAt.ToUnixTimeMilliseconds():D13}-{snapshotName[1]}-0000000000000000");
+            s3.StoreObject(primingClosed, SealFixture(primingClosed, originalId, originalDataKey, snapshotBytes));
+            var nextSnapshotAt = primingClosedAt.AddMilliseconds(1);
             var nextGeneration = Ulid.NewUlid(nextSnapshotAt).ToString();
             var nextSnapshot = string.Create(CultureInfo.InvariantCulture, $"{filePrefix}/snapshots/{nextSnapshotAt.ToUnixTimeMilliseconds():D13}-{nextGeneration}-0000000000000000");
             s3.StoreObject(nextSnapshot, SealFixture(nextSnapshot, originalId, originalDataKey, snapshotBytes));
@@ -112,6 +117,8 @@ public sealed class BackupKeySaturationTests
             }
 
             var targetAt = nextSnapshotAt.AddMilliseconds(concurrentSegments);
+            var targetClosed = string.Create(CultureInfo.InvariantCulture, $"{filePrefix}/snapshots/{targetAt.AddMilliseconds(1).ToUnixTimeMilliseconds():D13}-{nextGeneration}-0000000000000000");
+            s3.StoreObject(targetClosed, SealFixture(targetClosed, originalId, originalDataKey, snapshotBytes));
             // Seed everything and move time before cold startup. Frozen time prevents expiry, periodic discovery,
             // and shipping restored copies from selecting a current project key during the capacity regression.
             time.Advance(targetAt - time.GetUtcNow());

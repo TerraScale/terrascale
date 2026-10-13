@@ -101,6 +101,12 @@ internal sealed partial class ContinuousBackup
             (file.SizeBytes, file.SizedAt) = (size, now);
         }
 
+        if (measure)
+        {
+            // At start and daily, like the size: the platform bucket's multipart uploads under this file left by failed aborts.
+            await _bucket.AbortStaleUploadsAsync(file.Prefix + "/", cancellationToken).ConfigureAwait(false);
+        }
+
         if (file.Database is null)
         {
             await SnapshotBucketAsync(cancellationToken).ConfigureAwait(false);
@@ -263,10 +269,9 @@ internal sealed partial class ContinuousBackup
     }
 
     // Rebuilds the file from the bucket up to the snapshot just stored, from the generation's previous snapshot when it has
-    // one, and compares it with that snapshot's local copy: the live file at the same frame position.
-    // ponytail: runs in the file's shipping pass, so that file ships again only after the drill; move drills off the pass
-    // if large files make them delay shipping.
-    private async Task DrillAsync(ShippedFile file, SnapshotKey stored, string local, CancellationToken cancellationToken)
+    // one, and compares it with `live`, the checksum of that snapshot's local copy: the live file at the same log position.
+    // Runs beside the file's shipping, one drill at a time on a node (StartSide).
+    private async Task DrillAsync(ShippedFile file, SnapshotKey stored, byte[] live, CancellationToken cancellationToken)
     {
         var started = _time.GetTimestamp();
         string? error = null;
@@ -291,7 +296,6 @@ internal sealed partial class ContinuousBackup
                 }
                 else
                 {
-                    var live = await _engine.ChecksumAsync(local, cancellationToken).ConfigureAwait(false);
                     var rebuilt = await _engine.ChecksumAsync(restored, cancellationToken).ConfigureAwait(false);
                     if (!live.AsSpan().SequenceEqual(rebuilt))
                     {
@@ -310,7 +314,8 @@ internal sealed partial class ContinuousBackup
         }
 
         var drill = new BackupDrill(_time.GetUtcNow(), error is null, _time.GetElapsedTime(started).TotalSeconds, error);
-        (file.LastDrill, file.DrilledAt) = (drill, drill.At);
+        // DrilledAt belongs to the file's job, which set it when it asked for this drill.
+        file.LastDrill = drill;
         _drills.Add(1, new KeyValuePair<string, object?>("result", drill.Passed ? "passed" : "failed"));
         if (!drill.Passed)
         {
