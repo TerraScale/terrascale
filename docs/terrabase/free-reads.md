@@ -1,6 +1,6 @@
 # Free replication reads for TerraBase (the ElectricSQL trick)
 
-- **Status:** plan, checked against `main` at `2035b194` (2026-10-13). Shape reads remain proposed; merged prerequisites are listed in section 2.
+- **Status:** plan, checked against `main` at `a537727b` (2026-10-13). Shape reads remain proposed; merged prerequisites are listed in section 2.
   Decisions are in section 7. No CDN (T2) is selected.
 - **Protocol:** v1. Handle domain `TB-SHAPE-HANDLE-V1`, handle prefix `h1-`, shape id domain `TB-SHAPE-V1`.
 - **Normative contract:** [`shape-reads.md`](shape-reads.md) defines the wire protocol and exact byte layouts.
@@ -79,7 +79,7 @@ Electric references: <https://electric.ax/docs/api/http> and <https://electric.a
 | #211 `fix/feed-prefix-persisted` | open | Persisted prefix proofs across restarts, and replay to the issuing machine. Planned gate for resume (3.7) |
 | C1 peer RPCs unauthenticated | open | Blocks T1 headers and any shared caching (FR-05) |
 | C7 per-origin stamp order | open | Blocks vector resume (FR-01) |
-| Deploy job `if: false` ([ci.yml#L345](../../.github/workflows/ci.yml#L345)) | still paused on `main` | Nothing here reaches Fly until deploys resume |
+| #210 production deployment ([ci.yml](../../.github/workflows/ci.yml)) | merged: the deploy job is enabled again | Production deployment still requires the existing CI and live gates |
 
 ### 2.3 Read paths today
 
@@ -611,7 +611,7 @@ qualification of wave A). FR-40..42 and FR-44 = S1..S3 and S4; FR-43 (ts-cli) ha
 ## 10. References
 
 - Replication audit, 2026-10-12/13: findings C1–C10 and H1–H6, base `e30ffdc`, re-checked at `f7d5c3c`.
-- Changes merged since `f7d5c3c`, on `main` at `2035b194`: #165, #181, #184, #191, #207. #211 open.
+- Changes merged since `f7d5c3c`, on `main` at `a537727b`: #165, #181, #184, #191, #207. #211 open.
 - Opaque changes cursor: [`ChangeCursor.cs`](../../src/TerraBase/Features/Documents/ChangeCursor.cs) (#207).
 - Wire protocol: [`shape-reads.md`](shape-reads.md). Conformance vectors: [`shape-vectors.json`](shape-vectors.json).
 - TS-474 shape reads: `TS474/docs/terrabase/shape-reads.md` (permalink in 2.4).
