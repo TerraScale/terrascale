@@ -382,7 +382,7 @@ jobs:
     # PAUSED 2026-10-12 by the user's approval (containment 1C): merges to main must not deploy until the
     # three-region storage rebuild is done. Re-enable by deleting `false &&` in a reviewed PR.
     if: false && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 30
     concurrency:
       group: deploy
