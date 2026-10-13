@@ -10,7 +10,7 @@ namespace TerraScale.Dashboard.E2E;
 public static class OrganizationProviderScenario
 {
     public static void MapRoutes(WebApplication app) => app.MapPost("/__test/organization/members/role",
-        async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
+        async (HttpContext http, DashboardSessions sessions, AccountService accounts, TestWorkspace workspace) =>
         {
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
@@ -21,10 +21,10 @@ public static class OrganizationProviderScenario
             var userId = form["userId"].ToString();
             var role = form["role"].ToString();
             if (role is not ("member" or "admin")) return Results.BadRequest();
-            lock (TestWorkspace.Gate)
+            lock (workspace.Gate)
             {
-                var organization = TestWorkspace.Organizations.GetValueOrDefault(context.Organization.Id);
-                if (organization is null || organization.OwnerUserId != context.UserId || TestWorkspace.ScopedRole(context.UserId, organization.Id) != "owner")
+                var organization = workspace.Organizations.GetValueOrDefault(context.Organization.Id);
+                if (organization is null || organization.OwnerUserId != context.UserId || workspace.ScopedRole(context.UserId, organization.Id) != "owner")
                     return Results.StatusCode(403);
                 var member = organization.Members.GetValueOrDefault(userId);
                 if (member is null || member.Status != "active" || userId == context.UserId || member.Role == "owner") return Results.NotFound();

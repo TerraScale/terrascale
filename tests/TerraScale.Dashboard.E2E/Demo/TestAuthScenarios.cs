@@ -39,7 +39,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
     private readonly ConcurrentQueue<string> cliRequests = new();
     private string root = "";
 
-    private AuthProviderScenario() => provider = new(clock, state);
+    private AuthProviderScenario() => provider = new(clock, state, environment.Workspace);
 
     public Uri Origin { get; private set; } = null!;
     public Uri ReplicaOrigin { get; private set; } = null!;
@@ -161,8 +161,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
 
     private sealed class ScenarioIdentity : IDashboardIdentity
     {
-        private readonly DashboardCredentials identity = new("test-project", "test-api-key", "test-management", "terrascale", "01M4EQ2FRJ8S8B29E8TQVWNW4J", "secret",
-            Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new("sk_test_demo", "whsec_demo"), "sk_management-key");
+        private readonly DashboardCredentials identity = new("test-dashboard-client-secret-0123456789abcdef",
+            Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new("sk_test_demo", "whsec_demo"));
         public Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken) => Task.FromResult(identity);
     }
 
@@ -227,7 +227,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         }
     }
 
-    private sealed class ScenarioProvider(ScenarioClock clock, TestState state) : IDisposable
+    private sealed class ScenarioProvider(ScenarioClock clock, TestState state, TestWorkspace workspace) : IDisposable
     {
         // ts-auth 6bb896bb: one global issuer, {PublicOrigin}/{tenant}, served from every region.
         private const string Issuer = "https://auth.terrascale.tech/terrascale";
@@ -241,7 +241,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private readonly ConcurrentDictionary<string, PendingEnrollment> pendingEnrollments = new(StringComparer.Ordinal);
         private long authEpoch;
         private InternalBillingProducer? billing;
-        public InternalBillingProducer Billing => billing ??= new(state, clock.GetUtcNow, () => subject, organization => Ownership?.SeedOrganization(organization));
+        public InternalBillingProducer Billing => billing ??= new(state, workspace, clock.GetUtcNow, () => subject, organization => Ownership?.SeedOrganization(organization));
         public OwnershipSdkProtocol? Ownership { get; private set; }
         public Func<HttpContext, Task<IResult?>>? ReportingExtension { get; set; }
         public void ComposeOwnership() => Ownership = new(Billing, clock, ResolveActiveBearer);
@@ -741,8 +741,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 case "workspace-role":
                     var role = body.GetProperty("role").GetString()!;
                     if (role is not ("owner" or "admin" or "member" or "readonly" or "")) return Results.BadRequest();
-                    lock (TestWorkspace.Gate)
-                        foreach (var org in TestWorkspace.Organizations.Values.Where(org => org.Members.ContainsKey(subject)))
+                    lock (workspace.Gate)
+                        foreach (var org in workspace.Organizations.Values.Where(org => org.Members.ContainsKey(subject)))
                         {
                             org.Members[subject].Role = role;
                             org.Members[subject].Status = role.Length == 0 ? "inactive" : "active";
@@ -784,7 +784,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             if (publicId == "legacy") publicId = key;
             else TerraScaleIds.Validate(publicId);
             var session = new SessionRecord(subject, "Protocol User", "user@example.com", "", null, clock.GetUtcNow().AddHours(1));
-            var organization = await new TestWorkspace().EnsurePersonalAsync(session, default);
+            var organization = workspace.SeedPersonal(session);
             var account = new AccountRecord
             {
                 Id = publicId,
@@ -795,6 +795,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 OnboardingCompleted = true,
                 OnboardingStep = "complete",
                 OrganizationIds = [organization.Id],
+                PersonalOrganizationId = organization.Id,
                 ActiveOrganizationId = organization.Id,
                 ActiveProjectId = organization.Projects.Keys.Single()
             };
@@ -904,7 +905,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             { return false; }
         }
 
-        private static bool Basic(HttpContext http) => http.Request.Headers.Authorization == "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(ClientId + ":secret"));
+        private static bool Basic(HttpContext http) => http.Request.Headers.Authorization == "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(ClientId + ":test-dashboard-client-secret-0123456789abcdef"));
         private bool Audience(JsonElement claim) => claim.ValueKind switch
         {
             JsonValueKind.String => claim.GetString() == CurrentIssuer,
@@ -913,7 +914,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         };
         private static bool IsLoopback(string? value) => IPAddress.TryParse(value, out var address) &&
             IPAddress.IsLoopback(address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address);
-        private static bool Confidential(HttpContext http, IFormCollection form) => Basic(http) || form["client_id"] == ClientId && form["client_secret"] == "secret";
+        private static bool Confidential(HttpContext http, IFormCollection form) => Basic(http) || form["client_id"] == ClientId && form["client_secret"] == "test-dashboard-client-secret-0123456789abcdef";
         private IResult ContractFailure(string message) { Interlocked.Increment(ref contractFailures); return Results.Json(new { error = "contract_failure", message }, statusCode: 400); }
         private static IResult OAuthError(string code, int status) => Results.Json(new { error = code }, statusCode: status);
         private static string B64(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');

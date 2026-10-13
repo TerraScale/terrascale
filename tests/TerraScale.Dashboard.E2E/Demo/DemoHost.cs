@@ -37,23 +37,27 @@ public sealed class DemoEnvironment
     private readonly TestWorkspace workspace = new();
     private readonly TestDocuments documents = new();
     private readonly TestDatabases databases;
-    private readonly TestOrganizationAccess organizationAccess = new();
     private readonly TestStripeTransport stripe = new();
     private readonly TestBillingPlanTransport billingPlans;
     private readonly TestBillingCheckoutPersistence checkoutPersistence;
     private readonly TestReportingTransport reporting;
+    private readonly TestAuthApiKeys apiKeys;
 
     public DemoEnvironment()
     {
         databases = new TestDatabases(documents);
         billingPlans = new TestBillingPlanTransport(stripe);
         checkoutPersistence = new TestBillingCheckoutPersistence(state);
-        reporting = new TestReportingTransport(state, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken);
+        apiKeys = new TestAuthApiKeys(auth.ResolveAccessToken, workspace.ProjectRole);
+        reporting = new TestReportingTransport(state, workspace, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken, apiKeys);
     }
+
+    internal TestWorkspace Workspace => workspace;
+    internal TestAuthApiKeys ApiKeys => apiKeys;
 
     public async Task InitializeAsync()
     {
-        var personal = await workspace.EnsurePersonalAsync(new("test-user", "Test User", "user@example.com", "", null, clock.GetUtcNow().AddHours(1)), default);
+        var personal = workspace.SeedPersonal(new("test-user", "Test User", "user@example.com", "", null, clock.GetUtcNow().AddHours(1)));
         await state.PutAsync(AccountService.OrganizationsCollection, personal.Id, JsonSerializer.SerializeToElement(personal), TerraBasePrecondition.Absent, default);
         var account = new AccountRecord
         {
@@ -64,6 +68,7 @@ public sealed class DemoEnvironment
             OnboardingCompleted = true,
             OnboardingStep = "",
             OrganizationIds = [personal.Id],
+            PersonalOrganizationId = personal.Id,
             ActiveOrganizationId = personal.Id,
             ActiveProjectId = personal.Projects.Keys.First(),
             CreatedAt = clock.GetUtcNow()
@@ -74,7 +79,7 @@ public sealed class DemoEnvironment
     public async Task<ReferencePersonas> InitializeReferenceAsync(string root)
     {
         await InitializeAsync();
-        return await ReferenceFixtures.InitializeAsync(root, state, auth.RegisterFixturePrincipal, databases.SeedFixtureDatabase, documents);
+        return await ReferenceFixtures.InitializeAsync(root, state, workspace, auth.RegisterFixturePrincipal, databases.SeedFixtureDatabase, documents);
     }
 
     public WebApplication CreateHost(string root, int port, string origin, Action<WebApplicationBuilder>? configureScenario = null)
@@ -95,12 +100,10 @@ public sealed class DemoEnvironment
             builder.Services.Replace(ServiceDescriptor.Singleton<IProfileIdentityGateway>(auth));
             builder.Services.Replace(ServiceDescriptor.Singleton<IPlatformRoleGateway>(auth));
             builder.Services.Replace(ServiceDescriptor.Singleton<IProjectAccessTokens>(auth));
-            builder.Services.Replace(ServiceDescriptor.Singleton<IWorkspaceGateway>(workspace));
+            builder.Services.Replace(ServiceDescriptor.Singleton<ITsAuthPlatform>(workspace));
+            builder.Services.AddSingleton(workspace);
             builder.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend>(databases));
             builder.Services.Replace(ServiceDescriptor.Singleton<IDocumentBackend>(documents));
-            builder.Services.Replace(ServiceDescriptor.Singleton<IOrganizationAccess>(organizationAccess));
-            builder.Services.Replace(ServiceDescriptor.Singleton<IInvitationGateway>(new TestInvitationGateway()));
-            builder.Services.Replace(ServiceDescriptor.Singleton<IOrganizationLifecycle>(new TestOrganizationLifecycle()));
             builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new TestMeasurements()));
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(reporting)));
             builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
@@ -134,7 +137,7 @@ public sealed class DemoEnvironment
 
 sealed class TestIdentity : IDashboardIdentity
 {
-    private readonly DashboardCredentials credentials = new("test-project", "test-api-key", "test-management", "test-instance", "test-client", "test-client-secret", Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new("sk_test_demo", "whsec_demo"));
+    private readonly DashboardCredentials credentials = new("test-dashboard-client-secret-0123456789abcdef", Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new("sk_test_demo", "whsec_demo"));
     public Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken) => Task.FromResult(credentials);
 }
 sealed class TestClock : TimeProvider
@@ -154,9 +157,11 @@ sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, 
     private readonly ConcurrentDictionary<string, byte> consumedRefresh = new();
     private readonly ConcurrentDictionary<string, byte> revokedFamilies = new();
     private readonly ConcurrentDictionary<string, byte> revoked = new();
-    private readonly ConcurrentDictionary<string, (string SessionToken, string OrganizationId, string ProjectId)> projectTokens = new();
+    private readonly ConcurrentDictionary<string, (string SessionToken, string OrganizationId, string ProjectId, string[] Scopes)> projectTokens = new();
+    private static readonly string[] ProjectScopes = ["databases:read", "databases:write", "documents:read", "documents:write"];
     public bool Active { get; set; } = true;
     public Exception? RevokeError { get; set; }
+    public Exception? ExchangeError { get; set; }
     public int SignIns { get; private set; }
     public int Resets { get; private set; }
     public string LastPasswordIp { get; private set; } = "";
@@ -173,18 +178,22 @@ sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, 
         if (fixturePrincipals.TryGetValue(email, out var principal)) return (principal.Subject, principal.Email);
         return (email == "user@example.com" ? "test-user" : "test-signup-" + email, email);
     }
-    public Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken)
+    // The RFC 8693 exchange grants exactly the requested action scopes; a token outlives nothing its sign-in lost.
+    public Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, IReadOnlyList<string> scopes, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (ExchangeError is not null) return Task.FromException<string>(ExchangeError);
         if (ResolveAccessToken(session.AccessToken) is not { } actor || actor.UserId != session.UserId)
             throw new HttpRequestException("Test project authority requires a live sign-in.");
+        if (scopes.Count == 0 || scopes.Any(scope => !ProjectScopes.Contains(scope)) || scopes.Distinct(StringComparer.Ordinal).Count() != scopes.Count)
+            throw new HttpRequestException("Test project authority grants only distinct databases:* and documents:* scopes.");
         var token = "test-project-access-" + Guid.NewGuid().ToString("N");
-        projectTokens[token] = (session.AccessToken, organizationId, projectId);
+        projectTokens[token] = (session.AccessToken, organizationId, projectId, scopes.ToArray());
         return Task.FromResult(token);
     }
-    public (string UserId, string OrganizationId, string ProjectId)? ResolveProjectToken(string token) =>
+    public (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)? ResolveProjectToken(string token) =>
         projectTokens.TryGetValue(token, out var grant) && ResolveAccessToken(grant.SessionToken) is { } actor
-            ? (actor.UserId, grant.OrganizationId, grant.ProjectId) : null;
+            ? (actor.UserId, grant.OrganizationId, grant.ProjectId, grant.Scopes) : null;
     public Task<SessionRecord> PasswordAsync(string email, string password, string ip, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(ip)) throw new ArgumentException("Test password provider requires client address.");
@@ -249,12 +258,25 @@ sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, 
     }
     private sealed record TestRefresh(SessionRecord Session, string Family);
     public Task<string> EndSessionUrlAsync(string dashboardOrigin, CancellationToken cancellationToken) => Task.FromResult("/login");
-    public async Task ChangePasswordAsync(SessionRecord session, string currentPassword, string newPassword, string confirmPassword, string ip, CancellationToken cancellationToken)
+    public async Task StartPasswordChangeAsync(SessionRecord session, string currentPassword, string ip, CancellationToken cancellationToken)
     {
-        if (newPassword.EnumerateRunes().Count() < 12 || System.Text.Encoding.UTF8.GetByteCount(newPassword) > 1024 || newPassword != confirmPassword) throw new AuthRequestRejectedException("Enter matching passwords with at least 12 characters.", "password");
-        var grant = await PasswordAsync(session.Email, currentPassword, ip, cancellationToken);
-        if (grant.UserId != session.UserId) throw new SignInRejectedException();
-        await CompletePasswordResetAsync(session.Email, "123456", newPassword, ip, cancellationToken);
+        SessionRecord grant;
+        try { grant = await PasswordAsync(session.Email, currentPassword, ip, cancellationToken); }
+        catch (SignInRejectedException) { throw new AuthRequestRejectedException("Current password is incorrect.", "currentPassword"); }
+        try
+        {
+            if (grant.UserId != session.UserId) throw new AuthRequestRejectedException("Current password is incorrect.", "currentPassword");
+            await StartPasswordResetAsync(session.Email, ip, cancellationToken);
+        }
+        finally { await RevokeAsync(grant, cancellationToken); }
+    }
+    public async Task CompletePasswordChangeAsync(SessionRecord session, string code, string newPassword, string confirmPassword, string ip, CancellationToken cancellationToken)
+    {
+        if (newPassword.EnumerateRunes().Count() < 12) throw new AuthRequestRejectedException("Use at least 12 characters.", "newPassword");
+        if (System.Text.Encoding.UTF8.GetByteCount(newPassword) > 1024) throw new AuthRequestRejectedException("Use a password with 1024 bytes or fewer.", "newPassword");
+        if (newPassword != confirmPassword) throw new AuthRequestRejectedException("Passwords do not match.", "confirmPassword");
+        try { await CompletePasswordResetAsync(session.Email, code, newPassword, ip, cancellationToken); }
+        catch (SignInRejectedException) { throw new AuthRequestRejectedException("The code is incorrect or has expired.", "code"); }
     }
     public Task<string> SignUpAsync(string email, string password, string ip, CancellationToken cancellationToken)
     {
@@ -307,68 +329,254 @@ sealed class TestState : IDashboardState
         binder: null, args: [HttpStatusCode.PreconditionFailed, "Test version precondition failed", null, null], culture: null)!;
 }
 
-sealed class TestWorkspace : IWorkspaceGateway
+// One provider registry per DemoEnvironment: its host pair shares it, other scenarios never do.
+sealed class TestWorkspace : ITsAuthPlatform
 {
-    public static readonly object Gate = new();
-    public static readonly Dictionary<string, OrganizationRecord> Organizations = [];
-    private static string globalRole = "owner";
+    public readonly object Gate = new();
+    public readonly Dictionary<string, OrganizationRecord> Organizations = [];
+    private readonly Dictionary<string, (string OrganizationId, InvitationRecord Invitation)> invitations = [];
+    private readonly Dictionary<string, PlatformOwnershipTransfer> transfers = [];
+    private readonly Dictionary<string, string> projectCreators = [];
+    private readonly TerraScale.DotNet.TerraScaleIdGenerator ids = new();
+    private string globalRole = "owner";
     // Root authorization tests deliberately override every role. Default owner
     // means use the scoped provider registry, never grant an arbitrary caller.
     public string Role { get => globalRole; set => globalRole = value; }
     public string GlobalRole { get => Role; set => Role = value; }
-    public static string ScopedRole(string userId, string organizationId)
+    public string ScopedRole(string userId, string organizationId)
     {
-        lock (Gate) return globalRole != "owner" ? globalRole : Organizations.GetValueOrDefault(organizationId)?.Members.GetValueOrDefault(userId)?.Role ?? "";
+        lock (Gate)
+        {
+            var member = Organizations.GetValueOrDefault(organizationId)?.Members.GetValueOrDefault(userId);
+            if (member is null || member.Status != "active") return "";
+            return globalRole != "owner" ? globalRole : member.Role;
+        }
+    }
+    public string ProjectRole(string userId, string organizationId, string projectId)
+    {
+        lock (Gate)
+        {
+            var role = ScopedRole(userId, organizationId);
+            if (role.Length == 0 || Organizations.GetValueOrDefault(organizationId)?.Projects.ContainsKey(projectId) != true) return "";
+            return projectCreators.GetValueOrDefault(projectId) == userId || role is "owner" or "admin" ? "admin" : role;
+        }
     }
     public static OrganizationRecord Clone(OrganizationRecord value) => JsonSerializer.Deserialize<OrganizationRecord>(JsonSerializer.Serialize(value))!;
-    public Task<OrganizationRecord> EnsurePersonalAsync(SessionRecord session, CancellationToken cancellationToken)
+    // The dashboard creates the Personal organization through ts-auth on first sign-in;
+    // fixtures that start signed in seed the same shape directly.
+    public OrganizationRecord SeedPersonal(SessionRecord session)
     {
         lock (Gate)
         {
-            var id = "test-org-" + AccountService.AccountId(session.UserId)[..16];
-            if (Organizations.TryGetValue(id, out var existing)) return Task.FromResult(Clone(existing));
-            var projectId = "test-project-" + AccountService.AccountId(session.UserId)[..16];
-            var org = new OrganizationRecord { Id = id, Name = "Personal", Slug = "personal", OwnerUserId = session.UserId, CreatedAt = DateTimeOffset.UtcNow };
-            org.Members[session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = org.CreatedAt };
-            org.Projects[projectId] = new() { Id = projectId, OrganizationId = id, Name = "Personal", Slug = "personal", Region = "GRU", Regions = ["GRU"], IsDefault = true, CreatedAt = DateTimeOffset.UtcNow };
-            Organizations[id] = org;
-            return Task.FromResult(Clone(org));
-        }
-    }
-    public Task<OrganizationRecord> CreateOrganizationAsync(SessionRecord session, string name, CancellationToken cancellationToken)
-    {
-        lock (Gate)
-        {
-            var org = new OrganizationRecord { Id = Guid.CreateVersion7().ToString(), Name = name, Slug = AccountService.Slug(name), OwnerUserId = session.UserId, CreatedAt = DateTimeOffset.UtcNow };
-            org.Members[session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = org.CreatedAt };
-            Organizations[org.Id] = org;
-            return Task.FromResult(Clone(org));
-        }
-    }
-    public Task<ProjectRecord> CreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken)
-    {
-        lock (Gate)
-        {
-            var org = Get(organizationId);
-            if (ScopedRole(session.UserId, organizationId) is not ("owner" or "admin" or "member")) throw new AccountAccessException("Project provisioning is forbidden.");
-            if (org.Projects.Values.Any(project => project.Name == name)) throw new AccountAccessException("A project with that name already exists.", 409);
-            var project = new ProjectRecord { Id = Guid.CreateVersion7().ToString(), OrganizationId = organizationId, Name = name, Slug = AccountService.Slug(name), CreatedAt = DateTimeOffset.UtcNow };
+            var org = Create(session, "Personal");
+            var project = new ProjectRecord { Id = ids.NewId(), OrganizationId = org.Id, Name = "Personal", Slug = "personal", Region = "GRU", Regions = ["GRU"], IsDefault = true, CreatedAt = DateTimeOffset.UtcNow };
             org.Projects[project.Id] = project;
-            return Task.FromResult(Clone(new() { Projects = new() { [project.Id] = project } }).Projects[project.Id]);
+            projectCreators[project.Id] = session.UserId;
+            var result = Clone(org);
+            result.Kind = "personal";
+            return result;
         }
     }
-    public Task<string> RoleAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => Task.FromResult(ScopedRole(session.UserId, organizationId));
-    public Task RenameOrganizationAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken)
-    { lock (Gate) { Manage(session.UserId, organizationId).Name = name; return Task.CompletedTask; } }
-    public Task RenameProjectAsync(SessionRecord session, string organizationId, string projectId, string name, CancellationToken cancellationToken)
-    { lock (Gate) { var org = Manage(session.UserId, organizationId); var project = org.Projects.GetValueOrDefault(projectId) ?? throw new AccountAccessException("Project is unavailable.", 404); project.Name = name; project.Slug = AccountService.Slug(name); return Task.CompletedTask; } }
-    public static OrganizationRecord Get(string id) => Organizations.GetValueOrDefault(id) ?? throw new AccountAccessException("Organization is unavailable.", 404);
-    public static OrganizationRecord Manage(string userId, string id)
+    public void ExpireInvitation(AccountContext context, string id, DateTimeOffset expiresAt)
+    {
+        lock (Gate)
+        {
+            if (ScopedRole(context.UserId, context.Organization!.Id) != "owner") throw new AccountAccessException("Organization ownership is required.");
+            if (!invitations.TryGetValue(id, out var value) || value.OrganizationId != context.Organization.Id) throw new AccountAccessException("Invitation is unavailable.", 404);
+            value.Invitation.ExpiresAt = expiresAt;
+        }
+    }
+    public OrganizationRecord Get(string id) => Organizations.GetValueOrDefault(id) ?? throw new AccountAccessException("Organization is unavailable.", 404);
+    public OrganizationRecord Manage(string userId, string id)
     {
         var org = Get(id);
-        if (ScopedRole(userId, id) is not ("owner" or "admin")) throw new AccountAccessException("Organization management is required.");
+        if (ScopedRole(userId, id) is not ("owner" or "admin")) throw new AccountAccessException("Organization management is required.", 403, "forbidden_role");
         return org;
     }
+    private OrganizationRecord Member(string userId, string id)
+    {
+        var org = Get(id);
+        if (ScopedRole(userId, id).Length == 0) throw new AccountAccessException("Organization is unavailable.", 404, "not_found");
+        return org;
+    }
+    private OrganizationRecord Create(SessionRecord session, string name)
+    {
+        var org = new OrganizationRecord { Id = ids.NewId(), Name = name, Slug = AccountService.Slug(name), OwnerUserId = session.UserId, CreatedAt = DateTimeOffset.UtcNow };
+        org.Members[session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = org.CreatedAt };
+        Organizations[org.Id] = org;
+        return org;
+    }
+    private PlatformOrganization Wire(OrganizationRecord org, string userId) => new(org.Id, org.Name, org.OwnerUserId, org.CreatedAt, ScopedRole(userId, org.Id));
+    private PlatformProject Wire(ProjectRecord project, OrganizationRecord org, string userId) =>
+        new(project.Id, org.Id, project.Name, projectCreators.GetValueOrDefault(project.Id, org.OwnerUserId), project.CreatedAt, ProjectRole(userId, org.Id, project.Id));
+    private PlatformInvitation Wire(InvitationRecord invitation, string invitedBy) =>
+        new(invitation.Id, invitation.Email, invitation.Role, null, invitedBy, invitation.CreatedAt, invitation.ExpiresAt, invitation.ExpiresAt <= DateTimeOffset.UtcNow && invitation.Status == "pending" ? "expired" : invitation.Status);
+    private void LastOwner(OrganizationRecord org, string userId)
+    {
+        if (org.Members.Values.Count(member => member.Role == "owner" && member.Status == "active") == 1 && org.Members.GetValueOrDefault(userId)?.Role == "owner")
+            throw new AccountAccessException("The organization needs another owner first.", 409, "last_owner");
+    }
+
+    public Task<IReadOnlyList<PlatformOrganization>> ListOrganizationsAsync(SessionRecord session, CancellationToken cancellationToken)
+    { lock (Gate) return Task.FromResult<IReadOnlyList<PlatformOrganization>>(Organizations.Values.Where(org => ScopedRole(session.UserId, org.Id).Length > 0).Select(org => Wire(org, session.UserId)).ToArray()); }
+    public Task<PlatformOrganization> CreateOrganizationAsync(SessionRecord session, string name, CancellationToken cancellationToken)
+    { lock (Gate) return Task.FromResult(Wire(Create(session, name), session.UserId)); }
+    public Task RenameOrganizationAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken)
+    { lock (Gate) { var org = Manage(session.UserId, organizationId); org.Name = name; org.Slug = AccountService.Slug(name); return Task.CompletedTask; } }
+    public Task LeaveOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    { lock (Gate) { var org = Member(session.UserId, organizationId); LastOwner(org, session.UserId); org.Members.Remove(session.UserId); return Task.CompletedTask; } }
+    public Task<IReadOnlyList<PlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    { lock (Gate) return Task.FromResult<IReadOnlyList<PlatformMember>>(Member(session.UserId, organizationId).Members.Values.Where(member => member.Status == "active").Select(member => new PlatformMember(member.UserId, member.Email, member.Role, member.CreatedAt)).ToArray()); }
+    public Task ChangeMemberRoleAsync(SessionRecord session, string organizationId, string userId, string role, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            var org = Manage(session.UserId, organizationId);
+            if (role is not ("viewer" or "member" or "admin" or "owner")) throw new AccountAccessException("role is invalid.", 422, "invalid_request");
+            var member = org.Members.GetValueOrDefault(userId) ?? throw new AccountAccessException("Member is unavailable.", 404, "not_found");
+            if (role != "owner") LastOwner(org, userId);
+            member.Role = role;
+            return Task.CompletedTask;
+        }
+    }
+    public Task RemoveMemberAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken)
+    { lock (Gate) { var org = Manage(session.UserId, organizationId); if (!org.Members.ContainsKey(userId)) throw new AccountAccessException("Member is unavailable.", 404, "not_found"); LastOwner(org, userId); org.Members.Remove(userId); return Task.CompletedTask; } }
+    public Task<IReadOnlyList<PlatformProject>> ListProjectsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    { lock (Gate) { var org = Member(session.UserId, organizationId); return Task.FromResult<IReadOnlyList<PlatformProject>>(org.Projects.Values.Select(project => Wire(project, org, session.UserId)).ToArray()); } }
+    public Task<PlatformProject> CreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            var org = Member(session.UserId, organizationId);
+            if (ScopedRole(session.UserId, organizationId) is not ("owner" or "admin" or "member")) throw new AccountAccessException("Project provisioning is forbidden.", 403, "forbidden_role");
+            if (org.Projects.Values.Any(project => project.Name == name)) throw new AccountAccessException("A project with that name already exists.", 409, "name_taken");
+            var project = new ProjectRecord { Id = ids.NewId(), OrganizationId = organizationId, Name = name, Slug = AccountService.Slug(name), CreatedAt = DateTimeOffset.UtcNow };
+            org.Projects[project.Id] = project;
+            projectCreators[project.Id] = session.UserId;
+            return Task.FromResult(Wire(project, org, session.UserId));
+        }
+    }
+    public Task RenameProjectAsync(SessionRecord session, string organizationId, string projectId, string name, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            var org = Manage(session.UserId, organizationId);
+            var project = org.Projects.GetValueOrDefault(projectId) ?? throw new AccountAccessException("Project is unavailable.", 404, "not_found");
+            if (org.Projects.Values.Any(other => other.Id != projectId && other.Name == name)) throw new AccountAccessException("A project with that name already exists.", 409, "name_taken");
+            project.Name = name; project.Slug = AccountService.Slug(name);
+            return Task.CompletedTask;
+        }
+    }
+    public Task DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken)
+    { lock (Gate) { var org = Manage(session.UserId, organizationId); if (!org.Projects.Remove(projectId)) throw new AccountAccessException("Project is unavailable.", 404, "not_found"); return Task.CompletedTask; } }
+    public Task<IReadOnlyList<PlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    { lock (Gate) { var org = Manage(session.UserId, organizationId); return Task.FromResult<IReadOnlyList<PlatformInvitation>>(invitations.Values.Where(value => value.OrganizationId == org.Id).Select(value => Wire(value.Invitation, org.OwnerUserId)).ToArray()); } }
+    public Task<PlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            var org = Manage(session.UserId, organizationId);
+            if (org.Members.Values.Any(member => member.Email.Equals(email, StringComparison.OrdinalIgnoreCase))) throw new AccountAccessException("Already a member.", 409, "already_member");
+            if (invitations.Values.Any(value => value.OrganizationId == org.Id && value.Invitation.Status == "pending" && value.Invitation.ExpiresAt > DateTimeOffset.UtcNow &&
+                value.Invitation.Email.Equals(email, StringComparison.OrdinalIgnoreCase)))
+                throw new AccountAccessException("An invitation is pending.", 409, "invitation_pending");
+            var invitation = new InvitationRecord { Id = ids.NewId(), OrganizationId = org.Id, Email = email, Role = role, Status = "pending", CreatedAt = DateTimeOffset.UtcNow, ExpiresAt = DateTimeOffset.UtcNow.AddDays(7) };
+            invitations[invitation.Id] = (org.Id, invitation);
+            return Task.FromResult(new PlatformCreatedInvitation(Wire(invitation, session.UserId), "test-invitation-" + invitation.Id));
+        }
+    }
+    public Task RevokeInvitationAsync(SessionRecord session, string organizationId, string invitationId, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            Manage(session.UserId, organizationId);
+            if (!invitations.TryGetValue(invitationId, out var value) || value.OrganizationId != organizationId || value.Invitation.Status != "pending") throw new AccountAccessException("Invitation is unavailable.", 404, "not_found");
+            value.Invitation.Status = "revoked";
+            return Task.CompletedTask;
+        }
+    }
+    private (string OrganizationId, InvitationRecord Invitation) Pending(string token)
+    {
+        const string prefix = "test-invitation-";
+        if (!token.StartsWith(prefix, StringComparison.Ordinal) || !invitations.TryGetValue(token[prefix.Length..], out var found) ||
+            found.Invitation.Status != "pending" || found.Invitation.ExpiresAt <= DateTimeOffset.UtcNow) throw new AccountAccessException("Invitation is unavailable.", 404, "not_found");
+        return found;
+    }
+    public Task<PlatformInvitationLookup?> LookupInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            try
+            {
+                var found = Pending(token);
+                return Task.FromResult<PlatformInvitationLookup?>(new(new(found.OrganizationId, Get(found.OrganizationId).Name), null, found.Invitation.Email, found.Invitation.Role, found.Invitation.ExpiresAt));
+            }
+            catch (AccountAccessException) { return Task.FromResult<PlatformInvitationLookup?>(null); }
+        }
+    }
+    public Task<PlatformAcceptedInvitation> AcceptInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            var found = Pending(token);
+            if (!found.Invitation.Email.Equals(session.Email, StringComparison.OrdinalIgnoreCase)) throw new AccountAccessException("Sign in with the invited email.", 403, "email_mismatch");
+            var org = Get(found.OrganizationId);
+            if (org.Members.ContainsKey(session.UserId)) throw new AccountAccessException("Already a member.", 409, "already_member");
+            org.Members[session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = found.Invitation.Role, CreatedAt = DateTimeOffset.UtcNow };
+            found.Invitation.Status = "accepted";
+            return Task.FromResult(new PlatformAcceptedInvitation(org.Id, null, found.Invitation.Role));
+        }
+    }
+    public Task DeclineInvitationAsync(SessionRecord session, string token, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            var found = Pending(token);
+            if (!found.Invitation.Email.Equals(session.Email, StringComparison.OrdinalIgnoreCase)) throw new AccountAccessException("Sign in with the invited email.", 403, "email_mismatch");
+            found.Invitation.Status = "declined";
+            return Task.CompletedTask;
+        }
+    }
+    public Task<PlatformOwnershipTransfer?> GetOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    { lock (Gate) { Member(session.UserId, organizationId); return Task.FromResult(transfers.GetValueOrDefault(organizationId)); } }
+    public Task StartOwnershipTransferAsync(SessionRecord session, string organizationId, string userId, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            var org = Member(session.UserId, organizationId);
+            if (ScopedRole(session.UserId, organizationId) != "owner") throw new AccountAccessException("Organization ownership is required.", 403, "forbidden_role");
+            if (!org.Members.TryGetValue(userId, out var nominee) || nominee.Role == "owner") throw new AccountAccessException("Choose a member who is not an owner.", 422, "invalid_request");
+            transfers[org.Id] = new(session.UserId, userId, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddDays(7));
+            return Task.CompletedTask;
+        }
+    }
+    public Task ConfirmOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            var org = Member(session.UserId, organizationId);
+            var transfer = transfers.GetValueOrDefault(org.Id) ?? throw new AccountAccessException("Ownership transfer is unavailable.", 404, "not_found");
+            if (transfer.ToUserId != session.UserId || transfer.ExpiresAt <= DateTimeOffset.UtcNow) throw new AccountAccessException("Only the nominee can confirm.", 403, "forbidden_role");
+            org.Members[transfer.ToUserId].Role = "owner";
+            if (org.Members.TryGetValue(transfer.FromUserId, out var previous)) previous.Role = "admin";
+            org.OwnerUserId = transfer.ToUserId;
+            transfers.Remove(org.Id);
+            return Task.CompletedTask;
+        }
+    }
+    public Task CancelOwnershipTransferAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            Member(session.UserId, organizationId);
+            var transfer = transfers.GetValueOrDefault(organizationId) ?? throw new AccountAccessException("Ownership transfer is unavailable.", 404, "not_found");
+            if (ScopedRole(session.UserId, organizationId) != "owner" && transfer.ToUserId != session.UserId) throw new AccountAccessException("Ownership transfer cancellation is forbidden.", 403, "forbidden_role");
+            transfers.Remove(organizationId);
+            return Task.CompletedTask;
+        }
+    }
+    public Task<IReadOnlyList<PlatformAuditEvent>> ListAuditEventsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
+    { lock (Gate) { Manage(session.UserId, organizationId); return Task.FromResult<IReadOnlyList<PlatformAuditEvent>>([]); } }
 }
 sealed class TestMeasurements : IHomeMeasurements
 {
@@ -377,8 +585,7 @@ sealed class TestMeasurements : IHomeMeasurements
 sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
 {
     private readonly ConcurrentDictionary<string, ManagedDatabase> databases = new();
-    private readonly ConcurrentDictionary<string, ProjectCredential> credentials = new();
-    private readonly ConcurrentDictionary<string, string> credentialRegions = new();
+    private readonly TerraScale.DotNet.TerraScaleIdGenerator ids = new();
     private readonly ConcurrentDictionary<string, DatabaseIndex> indexes = new();
     private static readonly IReadOnlyList<DatabaseRegion> regions = [new("GRU", "gru", "São Paulo", "br", new("https://gru.api.terrascale.tech"), true), new("SFO", "sfo", "San Francisco", "us", new("https://sfo.api.terrascale.tech"), true)];
     public void SeedFixtureDatabase(ManagedDatabase database)
@@ -388,14 +595,13 @@ sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
             !databases.TryAdd(database.Id, database)) throw new InvalidDataException("Invalid or duplicate fixture database.");
     }
     public Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken) => Task.FromResult(regions);
-    public Task RegisterAsync(DatabaseScope scope, DatabaseRegion region, CancellationToken cancellationToken) => Task.CompletedTask;
     public Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ManagedDatabase>>(databases.Values.Where(item => item.ProjectId == scope.ProjectId).ToArray());
     public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, CancellationToken cancellationToken)
-    { var value = new ManagedDatabase(Guid.CreateVersion7().ToString(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: placement[0].Id, ReplicaRegions: placement.Skip(1).Select(item => item.Id).ToArray()); databases[value.Id] = value; return Task.FromResult(value); }
+    { var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: placement[0].Id, ReplicaRegions: placement.Skip(1).Select(item => item.Id).ToArray()); databases[value.Id] = value; return Task.FromResult(value); }
     public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
     {
         var source = Database(scope, databaseId);
-        var value = new ManagedDatabase(Guid.CreateVersion7().ToString(), scope.ProjectId, name, DateTimeOffset.UtcNow, databaseId, home.Id, []);
+        var value = new ManagedDatabase(ids.NewId(), scope.ProjectId, name, DateTimeOffset.UtcNow, databaseId, home.Id, []);
         documents.CopyDatabase(scope, source.Name, value.Name);
         foreach (var index in indexes.Where(item => item.Key.StartsWith(databaseId + "/", StringComparison.Ordinal)).Select(item => item.Value).ToArray()) indexes[value.Id + "/" + index.Name] = index;
         databases[value.Id] = value;
@@ -422,126 +628,9 @@ sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
     }
     public Task DropIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
     { Database(scope, databaseId); indexes.TryRemove(databaseId + "/" + name, out _); return Task.CompletedTask; }
-    public Task<IReadOnlyList<ProjectCredential>> CredentialsAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ProjectCredential>>(credentials.Values.Where(item => item.ProjectId == scope.ProjectId && credentialRegions.GetValueOrDefault(item.Id) == home.Id).ToArray());
-    public Task<CreatedProjectCredential> CreateCredentialAsync(DatabaseScope scope, DatabaseRegion home, string name, IReadOnlyList<string> scopes, string? databaseId, CancellationToken cancellationToken)
-    { var secret = "tb_" + Guid.NewGuid().ToString("N"); var key = new ProjectCredential(Guid.CreateVersion7().ToString(), scope.ProjectId, name, scopes, databaseId, secret[^4..], DateTimeOffset.UtcNow); credentialRegions[key.Id] = home.Id; credentials[key.Id] = key; return Task.FromResult(new CreatedProjectCredential(key, secret)); }
-    public Task RevokeCredentialAsync(DatabaseScope scope, DatabaseRegion home, string keyId, CancellationToken cancellationToken)
-    {
-        if (!credentials.TryGetValue(keyId, out var key) || key.ProjectId != scope.ProjectId || credentialRegions.GetValueOrDefault(keyId) != home.Id) throw new HttpRequestException("Test credential missing.", null, HttpStatusCode.NotFound);
-        credentials.TryRemove(keyId, out _); credentialRegions.TryRemove(keyId, out _); return Task.CompletedTask;
-    }
     private ManagedDatabase Database(DatabaseScope scope, string id) => databases.TryGetValue(id, out var database) && database.ProjectId == scope.ProjectId ? database : throw new HttpRequestException("Test database missing.", null, HttpStatusCode.NotFound);
 }
 
-sealed class TestOrganizationAccess : IOrganizationAccess
-{
-    private static readonly Dictionary<string, (string OrganizationId, TerraBaseInvitation Invitation)> invitations = [];
-    private static readonly Dictionary<string, TerraBaseOwnershipTransfer> transfers = [];
-    public static void ExpireInvitation(AccountContext context, string id, DateTimeOffset expiresAt)
-    {
-        lock (TestWorkspace.Gate)
-        {
-            var org = TestWorkspace.Get(context.Organization!.Id);
-            if (TestWorkspace.ScopedRole(context.UserId, org.Id) != "owner") throw new AccountAccessException("Organization ownership is required.");
-            if (!invitations.TryGetValue(id, out var value) || value.OrganizationId != org.Id) throw new AccountAccessException("Invitation is unavailable.", 404);
-            invitations[id] = (org.Id, value.Invitation with { ExpiresAt = expiresAt });
-        }
-    }
-    public Task<OrganizationAccessView> ReadAsync(AccountContext context, CancellationToken cancellationToken)
-    {
-        lock (TestWorkspace.Gate)
-        {
-            var org = TestWorkspace.Get(context.Organization!.Id);
-            if (TestWorkspace.ScopedRole(context.UserId, org.Id).Length == 0) throw new AccountAccessException("Organization membership is required.");
-            var members = org.Members.Values.Select(member => new MemberRecord { UserId = member.UserId, Role = member.Role, Name = context.Organization.Members.GetValueOrDefault(member.UserId)?.Name ?? member.Name, Email = member.Email, CreatedAt = member.CreatedAt, JoinedOn = context.Organization.Members.GetValueOrDefault(member.UserId)?.JoinedOn ?? member.JoinedOn }).ToArray();
-            return Task.FromResult(new OrganizationAccessView(members, context.CanManage ? invitations.Values.Where(value => value.OrganizationId == org.Id).Select(value => value.Invitation).ToArray() : [], context.CanManage ? context.Organization.AuditEvents : [], transfers.GetValueOrDefault(org.Id), context.CanManage ? 90 : null));
-        }
-    }
-    public Task<TerraBaseCreatedInvitation> InviteAsync(AccountContext context, string email, string role, CancellationToken cancellationToken)
-    {
-        lock (TestWorkspace.Gate)
-        {
-            var org = TestWorkspace.Manage(context.UserId, context.Organization!.Id);
-            if (role is not ("member" or "admin")) throw new AccountAccessException("Choose an available role.", 422);
-            var value = new TerraBaseInvitation(Guid.CreateVersion7().ToString(), email, role == "admin" ? TerraBaseRole.Admin : TerraBaseRole.Member, context.UserId, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddDays(7));
-            invitations[value.Id] = (org.Id, value);
-            return Task.FromResult(new TerraBaseCreatedInvitation(value, "test-invitation-" + value.Id));
-        }
-    }
-    public Task RevokeInvitationAsync(AccountContext context, string id, CancellationToken cancellationToken)
-    {
-        lock (TestWorkspace.Gate)
-        {
-            _ = TestWorkspace.Manage(context.UserId, context.Organization!.Id);
-            if (!invitations.TryGetValue(id, out var value) || value.OrganizationId != context.Organization.Id) throw new AccountAccessException("Invitation is unavailable.", 404);
-            invitations.Remove(id);
-            return Task.CompletedTask;
-        }
-    }
-    public Task ChangeRoleAsync(AccountContext context, string userId, string role, CancellationToken cancellationToken)
-    {
-        lock (TestWorkspace.Gate)
-        {
-            var org = TestWorkspace.Manage(context.UserId, context.Organization!.Id);
-            if (role is not ("member" or "admin")) throw new AccountAccessException("Choose an available role.", 422);
-            var member = org.Members.GetValueOrDefault(userId) ?? throw new AccountAccessException("Member is unavailable.", 404);
-            if (userId == context.UserId || member.Role == "owner") throw new AccountAccessException("Choose another member than yourself or the owner.", 422);
-            member.Role = role;
-            return Task.CompletedTask;
-        }
-    }
-    public Task RemoveMemberAsync(AccountContext context, string userId, CancellationToken cancellationToken)
-    {
-        lock (TestWorkspace.Gate)
-        {
-            var org = TestWorkspace.Manage(context.UserId, context.Organization!.Id);
-            var member = org.Members.GetValueOrDefault(userId) ?? throw new AccountAccessException("Member is unavailable.", 404);
-            if (userId == context.UserId || member.Role == "owner") throw new AccountAccessException("Choose another member than yourself or the owner.", 422);
-            org.Members.Remove(userId);
-            return Task.CompletedTask;
-        }
-    }
-    public Task TransferAsync(AccountContext context, string operation, string? userId, CancellationToken cancellationToken)
-    {
-        lock (TestWorkspace.Gate)
-        {
-            var org = TestWorkspace.Get(context.Organization!.Id);
-            var role = TestWorkspace.ScopedRole(context.UserId, org.Id);
-            if (operation == "start")
-            {
-                if (role != "owner") throw new AccountAccessException("Organization ownership is required.");
-                if (string.IsNullOrEmpty(userId) || userId == context.UserId || !org.Members.ContainsKey(userId)) throw new AccountAccessException("Choose another active member as the new owner.", 422);
-                transfers[org.Id] = new(context.UserId, userId, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(24));
-            }
-            else
-            {
-                var transfer = transfers.GetValueOrDefault(org.Id) ?? throw new AccountAccessException("Ownership transfer is unavailable.", 404);
-                if (operation == "confirm")
-                {
-                    if (transfer.ToUserId != context.UserId || transfer.ExpiresAt <= DateTimeOffset.UtcNow || !org.Members.ContainsKey(context.UserId)) throw new AccountAccessException("This ownership transfer belongs to another member.");
-                    org.Members[transfer.FromUserId].Role = "member"; org.Members[transfer.ToUserId].Role = "owner"; org.OwnerUserId = transfer.ToUserId;
-                }
-                else if (operation != "cancel" || role != "owner" && transfer.ToUserId != context.UserId) throw new AccountAccessException("Ownership transfer cancellation is forbidden.");
-                transfers.Remove(org.Id);
-            }
-            return Task.CompletedTask;
-        }
-    }
-    public static TerraBaseMember Accept(SessionRecord session, string token)
-    {
-        lock (TestWorkspace.Gate)
-        {
-            const string prefix = "test-invitation-";
-            if (!token.StartsWith(prefix, StringComparison.Ordinal) || !invitations.TryGetValue(token[prefix.Length..], out var found) || found.Invitation.ExpiresAt <= DateTimeOffset.UtcNow || !found.Invitation.Email.Equals(session.Email, StringComparison.OrdinalIgnoreCase)) throw new AccountAccessException("Invitation is unavailable.", 404);
-            var org = TestWorkspace.Get(found.OrganizationId);
-            var role = found.Invitation.Role.ToString().ToLowerInvariant();
-            if (org.Members.TryGetValue(session.UserId, out var existing)) role = existing.Role;
-            else org.Members[session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = role, CreatedAt = DateTimeOffset.UtcNow };
-            invitations.Remove(found.Invitation.Id);
-            return new(session.UserId, role switch { "owner" => TerraBaseRole.Owner, "admin" => TerraBaseRole.Admin, "member" => TerraBaseRole.Member, _ => throw new AccountAccessException("Membership role is unavailable.") }, org.Members[session.UserId].CreatedAt);
-        }
-    }
-}
 sealed class TestDocuments : IDocumentBackend
 {
     private readonly Dictionary<string, Dictionary<string, TerraBaseDocument>> collections = [];
@@ -721,6 +810,7 @@ sealed class TestStripeTransport : HttpMessageHandler
                     number = row.Number,
                     status = row.Status,
                     amount_due = row.Amount,
+                    amount_remaining = row.Status == "open" ? row.Amount : 0,
                     currency = row.Currency,
                     created = row.Created.ToUnixTimeSeconds(),
                     period_start = row.Created.AddDays(-10).ToUnixTimeSeconds(),
@@ -809,20 +899,6 @@ sealed class TestStripeTransport : HttpMessageHandler
         public string SubscriptionId { get; set; } = "";
     }
     private sealed record Invoice(string Id, string Number, string Status, long Amount, string Currency, DateTimeOffset Created, string HostedUrl, string PdfUrl);
-}
-
-sealed class TestInvitationGateway : IInvitationGateway
-{
-    public Task<TerraBaseMember> AcceptAsync(SessionRecord session, string token, CancellationToken cancellationToken) => Task.FromResult(TestOrganizationAccess.Accept(session, token));
-}
-sealed class TestOrganizationLifecycle : IOrganizationLifecycle
-{
-    public Task LeaveAsync(AccountContext context, CancellationToken cancellationToken)
-    { lock (TestWorkspace.Gate) { var org = TestWorkspace.Get(context.Organization!.Id); if (TestWorkspace.ScopedRole(context.UserId, org.Id) == "owner") throw new AccountAccessException("Transfer ownership before leaving.", 409); if (!org.Members.Remove(context.UserId)) throw new AccountAccessException("Organization membership is required."); return Task.CompletedTask; } }
-    public Task DeleteAsync(AccountContext context, CancellationToken cancellationToken)
-    { lock (TestWorkspace.Gate) { var org = TestWorkspace.Get(context.Organization!.Id); if (TestWorkspace.ScopedRole(context.UserId, org.Id) != "owner") throw new AccountAccessException("Organization ownership is required."); if (org.Projects.Count > 0) throw new AccountAccessException("Organization is not empty.", 409); TestWorkspace.Organizations.Remove(org.Id); return Task.CompletedTask; } }
-    public Task DeleteProjectAsync(AccountContext context, string projectId, CancellationToken cancellationToken)
-    { lock (TestWorkspace.Gate) { var org = TestWorkspace.Manage(context.UserId, context.Organization!.Id); if (!org.Projects.TryGetValue(projectId, out var project)) throw new AccountAccessException("Project is unavailable.", 404); if (project.Databases.Count > 0) throw new AccountAccessException("Project is not empty.", 409); org.Projects.Remove(projectId); return Task.CompletedTask; } }
 }
 
 sealed class TestClientAddress(TestStripeTransport stripe) : IStartupFilter

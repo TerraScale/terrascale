@@ -73,6 +73,5 @@ public sealed class ReferenceScenario : IAsyncDisposable
         if (first is not null) { await first.StopAsync(); await first.DisposeAsync(); first = null; }
         transport?.Dispose();
         transport = null;
-        if (Personas is not null) ReferenceFixtures.Release(Personas);
     }
 }

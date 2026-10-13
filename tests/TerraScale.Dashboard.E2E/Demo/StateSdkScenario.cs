@@ -20,8 +20,8 @@ using TerraScale.DotNet;
 namespace TerraScale.Dashboard.E2E;
 
 // An external, test-only HTTP producer for the production state adapter and
-// unmodified official Documents SDK. The prerequisite service project/key is
-// fixture-owned; this does not qualify Vault delivery or a live deployment.
+// unmodified official Documents SDK. The producer-seeded platform database is
+// fixture-owned; this does not qualify Fly secret delivery or a live deployment.
 public sealed class StateSdkScenario : IAsyncDisposable
 {
     private readonly string root;
@@ -134,11 +134,13 @@ public sealed class StateSdkScenario : IAsyncDisposable
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri!;
-            var stateRequest = uri.Host == "api.terrascale.tech";
-            if (stateRequest && (uri.Scheme != "https" || !uri.IsDefaultPort || uri.UserInfo.Length != 0))
-                throw new HttpRequestException("Invalid origin in the state SDK protocol fixture.");
+            // Off Fly, Development reaches TerraBase's private listener on loopback port 8081: cleartext HTTP/2, no credential.
+            var stateRequest = uri.Host == "127.0.0.1" && uri.Port == 8081;
+            if (stateRequest && (uri.Scheme != "http" || uri.UserInfo.Length != 0 || request.Version != HttpVersion.Version20 ||
+                request.VersionPolicy != HttpVersionPolicy.RequestVersionExact || request.Headers.Authorization is not null))
+                throw new HttpRequestException("Invalid private-listener request in the state SDK protocol fixture.");
             using var forwarded = new HttpRequestMessage(request.Method, stateRequest ? new Uri(origin, uri.PathAndQuery) : uri)
-            { Version = request.Version, VersionPolicy = request.VersionPolicy };
+            { Version = stateRequest ? HttpVersion.Version11 : request.Version, VersionPolicy = stateRequest ? HttpVersionPolicy.RequestVersionOrLower : request.VersionPolicy };
             foreach (var header in request.Headers) forwarded.Headers.TryAddWithoutValidation(header.Key, header.Value);
             foreach (var option in request.Options) forwarded.Options.Set(new HttpRequestOptionsKey<object?>(option.Key), option.Value);
             if (stateRequest) forwarded.Headers.Host = uri.Authority;
@@ -160,19 +162,17 @@ public sealed class StateSdkScenario : IAsyncDisposable
         public async Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken)
         {
             var value = await underlying.ReadAsync(cancellationToken);
-            if (protocol.Mode == "vault-down") throw new IOException("The test-only Vault descriptor is unavailable.");
-            return value with
-            {
-                StateProjectId = protocol.Mode == "invalid-project" ? "invalid-project" : StateProducer.Project,
-                StateApiKey = protocol.Secret,
-                AuthManagementKey = "sk_test_state_auth"
-            };
+            if (protocol.Mode == "fly-secrets-unavailable") throw new IOException("The test-only secret delivery is unavailable.");
+            if (protocol.Mode == "invalid-auth-client-secret") value = value with { AuthClientSecret = "" };
+            if (protocol.Mode == "invalid-session-key") value = value with { SessionEncryptionKey = "invalid" };
+            value.Validate();
+            return value;
         }
     }
 
     private sealed class StateProducer
     {
-        public const string Project = "01M4EQ2FRJ8S8B29E8TQVWNW41";
+        public const string Project = "00000000000000000000000002";
         private readonly object gate = new();
         private readonly TerraScaleIdGenerator ids = new();
         private readonly Dictionary<string, Collection> collections = new(StringComparer.Ordinal);
@@ -187,14 +187,11 @@ public sealed class StateSdkScenario : IAsyncDisposable
         private int collectionConflicts;
         private int documentWrites;
         private int preconditionFailures;
-        private int rotatedRequests;
+        private int privateRequests;
         private long offset;
-        private string? databaseId;
+        private readonly string? databaseId = "00000000000000000000000004";
         private string mode = "";
-        private string secret = NewSecret();
-        private bool rotated;
         public string Mode { get { lock (gate) return mode; } }
-        public string Secret { get { lock (gate) return secret; } }
         public void Release() { collectionGate?.TrySetResult(); documentGate?.TrySetResult(); }
 
         public async Task<IResult> DispatchAsync(HttpContext http)
@@ -204,29 +201,19 @@ public sealed class StateSdkScenario : IAsyncDisposable
                 var path = http.Request.Path.Value!;
                 if (path == "/__test/observations") return Observe();
                 if (path == "/__test/control") return await ControlAsync(http);
-                // TerraBase's global origin; there is no Atlas discovery (terrascale e30ffdc2, region-identity.md).
-                Require(http.Request.Host.Host == "api.terrascale.tech", "The SDK must preserve TerraBase's global origin.");
+                Require(http.Request.Host.Host == "127.0.0.1" && http.Request.Host.Port == 8081, "The state SDK must use the private listener origin.");
                 http.Response.Headers["X-TerraBase-Region"] = "gru";
                 if (Mode == "region-unavailable") return Error(503, "region_unavailable");
                 if (Mode == "authorization") return Error(401, "unauthorized");
-                if (http.Request.Headers.Authorization != "Bearer " + Secret) return Error(401, "unauthorized");
-                if (rotated) Interlocked.Increment(ref rotatedRequests);
+                Require(!http.Request.Headers.ContainsKey("Authorization"), "The private listener takes no credential.");
+                Interlocked.Increment(ref privateRequests);
                 if (Mode == "forbidden" && http.Request.Method != "GET") return Error(403, "forbidden");
                 var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
                 Require(parts.Length >= 5 && parts[0] == "v1" && parts[1] == "projects" && parts[2] == Project &&
-                    parts[3] == "databases" && parts[4] == "dashboard", "State namespace must use only its delivered canonical project and fixed database.");
-                if (parts.Length == 5 && http.Request.Method == "PUT")
-                {
-                    Interlocked.Increment(ref databasePuts);
-                    if (Mode == "project-missing") return Error(404, "unknown_database");
-                    lock (gate)
-                    {
-                        var created = databaseId is null;
-                        if (created) { databaseId = ids.NewId(); databaseCreates++; }
-                        return Results.Json(new { id = databaseId, projectId = Mode == "wrong-database" ? ids.NewId() : Project, name = "dashboard" }, statusCode: created ? 201 : 200);
-                    }
-                }
-                lock (gate) if (databaseId is null) return Error(404, "unknown_database");
+                    parts[3] == "databases" && parts[4] == "platform-dashboard", "State namespace must use only its delivered canonical project and fixed database.");
+                // TerraBase seeds platform-dashboard itself; the dashboard never creates it.
+                if (parts.Length == 5) { Interlocked.Increment(ref databasePuts); Interlocked.Increment(ref databaseCreates); Require(false, "The dashboard must not create or replace its seeded database."); }
+                if (Mode == "project-missing") return Error(404, "unknown_database");
                 Require(parts.Length >= 6 && parts[5] == "collections", "Only genuine collection and by-key document routes are admitted.");
                 if (parts.Length == 6 && http.Request.Method == "POST") return await CreateCollectionAsync(http);
                 Require(parts.Length >= 7, "A collection name is required.");
@@ -317,7 +304,6 @@ public sealed class StateSdkScenario : IAsyncDisposable
                     case "pause-account-writes": pausedWrites = 0; documentGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
                     case "release-account-writes": documentGate?.TrySetResult(); documentGate = null; break;
                     case "drop-collection": collections.Remove(body.GetProperty("name").GetString()!); break;
-                    case "rotate-key": secret = NewSecret(); rotated = true; break;
                     default: return Results.BadRequest();
                 }
             }
@@ -337,7 +323,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
                 preconditionFailures,
                 pausedCreates,
                 pausedWrites,
-                rotatedRequests,
+                privateRequests,
                 failures = failures.ToArray(),
                 collections = collections.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => new
                 { name = item.Key, id = item.Value.Id, createdAt = item.Value.CreatedAt, documents = item.Value.Documents.Count(entry => !entry.Value.Deleted) }).ToArray(),
@@ -347,7 +333,6 @@ public sealed class StateSdkScenario : IAsyncDisposable
             });
         }
 
-        private static string NewSecret() => "tb_" + WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
         private static IResult Error(int status, string code) => Results.Json(new { error = new { code, message = "Test-only state producer refusal.", op = (int?)null } }, statusCode: status);
         private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
         private sealed record Document(string Version, JsonElement Value, bool Deleted);
