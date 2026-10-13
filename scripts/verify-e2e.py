@@ -37,6 +37,10 @@ for source in root.rglob("*.cs"):
         continue
     text = source.read_text()
     attributes = "\n".join(re.findall(r"\[([^\]]+)\]", text))
+    assert not re.search(r"\b(?:NotInParallel|ParallelLimiter)(?:Attribute)?\b", attributes), \
+        f"Fix per-test isolation instead of limiting parallel execution: {source}"
+    assert not re.search(r"\bSharedType\s*\.\s*PerTestSession\b", attributes), \
+        f"Give each test its own fixture instead of sharing session state: {source}"
     assert not re.search(r"\b(?:Fact|Theory|TestMethod|DataTestMethod|TestCase|TestCaseSource)(?:Attribute)?\b", attributes), \
         f"Use TUnit application journeys, not another test framework: {source}"
     if not re.search(r"(?:^|[,\s:.])Test(?:Attribute)?\s*(?:\(|,|$)", attributes, re.MULTILINE):
