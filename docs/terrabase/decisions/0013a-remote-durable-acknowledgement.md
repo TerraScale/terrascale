@@ -150,3 +150,17 @@
 - **Bounds:** waiter bounds refuse before execution.
 - **The SDK contract:** the error codes and headers, and `Idempotency-Key` still refused.
 - **Placement:** delivery 4 (#pending), with fail-first and mutants.
+
+## 9. Code boundary (delivery 5)
+
+| Area | Change | Owner |
+| --- | --- | --- |
+| `Engine` (`IDatabaseStore.WriteAsync` result, `SqliteStorageTransaction.CommitAsync`) | The commit returns its marker: the store incarnation, and `max(change_id)` of `turso_cdc` read on the writer right after a successful `COMMIT`. The writer is exclusive, so that id is this transaction's own last row. An error at or after `COMMIT` returns no marker, and the request answers outcome unknown. | R6-FIX (sync settings and commit, as assigned) |
+| `Features/Replication/RemoteDurability.cs` | `IRemoteDurability` gains `CanConfirm(database, placement)` (the precheck) and `WaitAsync(database, marker, cancellationToken)`, which answers confirmed or not within the 10 s bound. | R6-FIX |
+| `Features/Replication/PeerStreams.cs` | It keeps, per link and database, the highest eligible ack with the incarnation of the batch it covers. A waiter registry is signalled on every eligible ack and on link loss. `LocalDurability` (a cell of one) confirms at once. | R6-FIX |
+| `Features/Replication/ChangeGroups.cs` / `TursoChangeGroupSource` | **Dependency:** a read of change groups must report the store incarnation it read from, so a batch's ack can be scoped to it. That is one field on the read result. | **R3** (CDC source). To be agreed before coding |
+| `Features/Documents` (`DocumentService`, `DocumentRoute`, `TransactionEndpoint`) | Precheck before the write; await the wait after the commit; answer `remote_durable` or `503 write_outcome_unknown`; precheck refusals. | R6-FIX (client write path, as assigned) |
+| `Errors`, OpenAPI | `write_outcome_unknown`, `remote_region_unavailable`, `confirmation_busy` typed in the source-generated schemas. | R6-FIX |
+| Tests | Fast cluster tests (`PeerStreamTests`), the E2E three-region topology (`RegionProcesses`, R3's harness: test registrations only, agreed with R3), and the mutants of section 8. | R6-FIX |
+
+Nothing here changes `_operations`, keys or lookups (0013b).
