@@ -182,6 +182,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
             ConfigurationManager = gitHubActions.Configuration,
             ValidIssuer = GitHubActionsGrant.Issuer,
             ValidAudience = OidcIssuer.Issuer(options).AbsoluteUri,
+            // Exact audience, as every token ts-auth validates: no trailing-slash folding.
+            IgnoreTrailingSlashWhenValidatingAudience = false,
             ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
             RequireSignedTokens = true,
             RequireExpirationTime = true,

@@ -29,11 +29,20 @@ public sealed class FakeGitHubActions : IDisposable
     public void Route(IServiceCollection services) =>
         services.AddHttpClient(GitHubActionsGrant.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
 
+    /// <summary>The <c>kid</c> of the published key.</summary>
+    public string KeyId => this.key.KeyId;
+
+    /// <summary>Credentials that sign with the published key under <paramref name="algorithm"/> (RS256 is what GitHub uses).</summary>
+    public SigningCredentials Signing(string algorithm) => new(this.key, algorithm);
+
     /// <summary>
-    /// A GitHub OIDC token for the e2e job on a push to main, for <paramref name="audience"/>. <paramref name="claims"/>
-    /// replaces or (with a null value) removes claims; <paramref name="signing"/> signs instead of the published key.
+    /// A GitHub OIDC token for the e2e job on a push to main, for <paramref name="audience"/> (none when null).
+    /// <paramref name="claims"/> replaces or (with a null value) removes claims; <paramref name="signing"/> signs instead
+    /// of the published key; <paramref name="issuer"/> replaces GitHub's issuer; <paramref name="notBeforeIn"/> moves
+    /// <c>nbf</c>; without <paramref name="expires"/> the token has no <c>exp</c>.
     /// </summary>
-    public string Mint(string audience, IReadOnlyDictionary<string, string?>? claims = null, TimeSpan? expiresIn = null, SigningCredentials? signing = null)
+    public string Mint(string? audience, IReadOnlyDictionary<string, string?>? claims = null, TimeSpan? expiresIn = null, SigningCredentials? signing = null,
+        string issuer = GitHubActionsGrant.Issuer, TimeSpan? notBeforeIn = null, bool expires = true)
     {
         var now = DateTimeOffset.UtcNow;
         var payload = new Dictionary<string, object>(StringComparer.Ordinal)
@@ -65,11 +74,11 @@ public sealed class FakeGitHubActions : IDisposable
 
         return Tokens.CreateToken(new SecurityTokenDescriptor
         {
-            Issuer = GitHubActionsGrant.Issuer,
+            Issuer = issuer,
             Audience = audience,
             IssuedAt = now.UtcDateTime,
-            NotBefore = now.UtcDateTime,
-            Expires = (now + (expiresIn ?? TimeSpan.FromMinutes(5))).UtcDateTime,
+            NotBefore = (now + (notBeforeIn ?? TimeSpan.Zero)).UtcDateTime,
+            Expires = expires ? (now + (expiresIn ?? TimeSpan.FromMinutes(5))).UtcDateTime : null,
             Claims = payload,
             SigningCredentials = signing ?? new SigningCredentials(this.key, SecurityAlgorithms.RsaSha256),
         });
