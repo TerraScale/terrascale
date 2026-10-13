@@ -62,6 +62,7 @@ public sealed class FlyRolloutJourneyTests(DashboardRootFixture fixture)
                 fi
                 """);
             await ToolAsync("curl", """
+                [[ "$*" == *'https://dash.terrascale.tech/health/ready'* ]] || exit 98
                 [[ "$FLY_CASE" != http-error ]] || exit 22
                 case "$*" in
                   *'fly-prefer-region: gru'*) region=gru;;

@@ -8,6 +8,7 @@ than polling or sleeping. A newer main commit supersedes an older candidate.
 `scripts/fly-rollout.sh` reuses that image in gru, sjc and fra, in that order.
 It creates missing regional capacity from the app config and retains exactly
 one always-running shared-cpu-2x machine with 512 MB RAM and 4 GB swap per region.
+The live checks use the app’s certified host, `https://dash.terrascale.tech`.
 Each region must report readiness, the exact tested commit, and its Fly region
 before the next region is provisioned. No dashboard volumes or local data stores
 exist.
