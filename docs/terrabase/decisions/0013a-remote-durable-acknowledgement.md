@@ -27,13 +27,16 @@
   - If reading the marker then fails, the attempt's barrier cannot be checked, so the answer is outcome unknown, even if
     an ack later arrives.
   - If resetting the writer session fails after the marker was read, that is not a barrier. The session is discarded
-    and never reused, and the attempt is decided by the wait like any other. **Pending:** this needs #181's
-    unpublished revision. At its published head `83291845`, a failed reset still rethrows after a commit.
+    and never reused, and the attempt is decided by the wait like any other. #181 publishes the reset fix at
+    `e54808bf`, whose tree matches the author-validated `21f7ad69`. Revised-head review and required CI remain
+    pending; B4 has no implemented marker or wait yet.
 - **A transaction that writes nothing** (only `assert` / `assert_count` operations) has no own change to ship and no
   marker. It is answered without a wait, with `durability: "unchanged"`. No mutation is added to it, and it does not
   wait for some unrelated head.
 - **Its local durable commit (B1).** Its transaction committed with `synchronous = FULL`, and `CommitAsync` returned
-  without error. Implementation: #181 (published `83291845`). Its validation is pending, so it is not evidence yet.
+  without error. Implementation: #181 (published `e54808bf`, tree identical to author-validated `21f7ad69`).
+  The author's reset test, four E2E tests and `make check` passed at `21f7ad69`; tests did not run at `e54808bf`.
+  Independent revised-head review and green required CI remain acceptance gates.
 - **An eligible acknowledgement (B2).** An ack confirms the marker only when it is:
   - received on a live push link of this process;
   - for the same database;
@@ -279,7 +282,7 @@
 
 | Area | Change | Owner |
 | --- | --- | --- |
-| `Engine` (`IDatabaseStore.WriteAsync` result, `SqliteStorageTransaction.CommitAsync`) | The commit returns its marker: the store incarnation, and `max(change_id)` of `turso_cdc` read on the writer right after a successful `COMMIT`. The writer is exclusive, so that id is this transaction's own last row. A `COMMIT` error, or a failure to read the marker, returns no marker, and the request answers outcome unknown. A marker already read survives a later session-reset failure: the session is discarded and the wait decides (**pending**: #181's unpublished revision keeps that failure out of `DisposeAsync` once committed. At the published `83291845`, `DisposeCoreAsync` still rethrows it and `CommitBatchAsync` treats it as a commit error: a conservative failure, never a false success). | R6-FIX (sync settings and commit, as assigned) |
+| `Engine` (`IDatabaseStore.WriteAsync` result, `SqliteStorageTransaction.CommitAsync`) | The commit returns its marker: the store incarnation, and `max(change_id)` of `turso_cdc` read on the writer right after a successful `COMMIT`. The writer is exclusive, so that id is this transaction's own last row. A `COMMIT` error, or a failure to read the marker, returns no marker, and the request answers outcome unknown. A marker already read survives a later session-reset failure: the session is discarded and the wait decides (#181 publishes this reset behavior at `e54808bf`, tree identical to author-validated `21f7ad69`; revised-head review and green required CI remain required). | R6-FIX (sync settings and commit, as assigned) |
 | `Features/Replication/RemoteDurability.cs` | `IRemoteDurability` gains `CanConfirm(database, placement)` (the precheck) and `WaitAsync(database, marker, cancellationToken)`, which answers confirmed or not within the 10 s bound. | R6-FIX |
 | `Features/Replication/PeerStreams.cs` | It keeps, per link and database, the highest eligible ack with the incarnation of the batch it covers. Its cursors reset when the source incarnation changes. A waiter registry is signalled on every eligible ack and on link loss, and a waiter checks the current position when it registers. `LocalDurability` (a cell of one) confirms at once. | R6-FIX |
 | `Features/Replication/ChangeGroups.cs` / `TursoChangeGroupSource` | **Dependency:** every source read used for a prefix must report the store incarnation it read: `ReadAsync`, `HeadAsync`, `AckedAsync`, `RetainsAsync`, `DigestAsync` and `ReadBucketsAsync`. The digest and bucket reads must also refuse an expected incarnation that no longer matches. `AckAsync` takes the acked incarnation and writes only when it matches the file's own, checked in the same writer transaction; `_tb_peers` stores the incarnation with `acked`, and a stored ack of another incarnation reads as 0. | **R3** (CDC source). To be agreed before coding |
