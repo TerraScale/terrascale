@@ -1,19 +1,24 @@
 using System.Text.Json;
-using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Platform.Persistence;
 
-public sealed class TerraBaseDashboardState(IDashboardIdentity identity, IHttpClientFactory http) : IDashboardState
+// The dashboard's own dogfood database, reached through TerraBase's private
+// listener without a credential. No customer key or token ever reaches it.
+public sealed class TerraBaseDashboardState(IHttpClientFactory http, IHostEnvironment environment) : IDashboardState
 {
+    private readonly Uri origin = Origin(environment, Environment.GetEnvironmentVariable("FLY_APP_NAME"));
+
+    // gru stays the single home until cross-region conditional writes are proven (integration plan G15).
+    public static Uri Origin(IHostEnvironment environment, string? flyApp) =>
+        flyApp is not null ? new("http://gru.ts-terrabase.internal:8081/")
+        : environment.IsDevelopment() ? new("http://127.0.0.1:8081/")
+        : throw new InvalidOperationException("Off Fly only Development may use the loopback TerraBase.");
+
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
-        var credentials = await identity.ReadAsync(cancellationToken);
-        var database = Database(credentials);
-        var created = await database.CreateAsync(cancellationToken);
-        if (created.ProjectId != credentials.StateProjectId || created.Name != DashboardStateSchema.Database || !TerraScaleIds.IsValid(created.Id))
-            throw new IOException("Dashboard state database identity is invalid.");
-
+        // The database is seeded by TerraBase; a missing one fails here instead of being created.
+        var database = Database();
         foreach (var name in DashboardStateSchema.Collections)
         {
             TerraBaseCollection collection;
@@ -32,36 +37,23 @@ public sealed class TerraBaseDashboardState(IDashboardIdentity identity, IHttpCl
 
     public async Task CheckReadyAsync(CancellationToken cancellationToken)
     {
-        var database = await DatabaseAsync(cancellationToken);
+        var database = Database();
         await Task.WhenAll(DashboardStateSchema.Collections.Select(async name =>
             ValidateCollection(await database.GetCollectionAsync(name, cancellationToken), name)));
     }
 
-    public async Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
-        await (await DatabaseAsync(cancellationToken)).GetDocumentAsync(collection, id, cancellationToken);
+    public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
+        Database().GetDocumentAsync(collection, id, cancellationToken);
 
     public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken) =>
-        await (await DatabaseAsync(cancellationToken)).PutDocumentAsync(collection, id, document, precondition, cancellationToken);
+        await Database().PutDocumentAsync(collection, id, document, precondition, cancellationToken);
 
     public async Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken) =>
-        await (await DatabaseAsync(cancellationToken)).DeleteDocumentAsync(collection, id, TerraBasePrecondition.Matches(version), cancellationToken);
+        await Database().DeleteDocumentAsync(collection, id, TerraBasePrecondition.Matches(version), cancellationToken);
 
-    private async Task<TerraBaseDatabase> DatabaseAsync(CancellationToken cancellationToken)
-    {
-        var credentials = await identity.ReadAsync(cancellationToken);
-        return Database(credentials);
-    }
-
-    private TerraBaseDatabase Database(DashboardCredentials credentials)
-    {
-        if (!TerraScaleIds.IsValid(credentials.StateProjectId)) throw new IOException("Dashboard state project identity is invalid.");
-        var client = new TerraBaseDocumentsClient(http.CreateClient("platform"), new TerraBaseDocumentsClientOptions
-        {
-            EndpointResolver = new TerraBaseDiscovery(),
-            ApiKey = credentials.StateApiKey
-        });
-        return client.Database(credentials.StateProjectId, DashboardStateSchema.Database);
-    }
+    private TerraBaseDatabase Database() =>
+        new TerraBaseDocumentsClient(http.CreateClient("platform"), new TerraBaseDocumentsClientOptions { BaseAddress = origin })
+            .Database(DashboardStateSchema.ProjectId, DashboardStateSchema.Database);
 
     private static void ValidateCollection(TerraBaseCollection collection, string name)
     {

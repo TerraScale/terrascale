@@ -77,10 +77,9 @@ public sealed partial record OrganizationPage
         get
         {
             var now = Filter.Now ?? DateTimeOffset.UtcNow;
-            var canonical = Shell.Context.Organization?.Invitations.Values.AsEnumerable() ?? Enumerable.Empty<InvitationRecord>();
-            var rows = canonical.Select(invite => new InvitationRow(invite.Id, invite.Email, invite.Role,
-                invite.Status == "pending" && invite.ExpiresAt != DateTimeOffset.MinValue && invite.ExpiresAt <= now ? "expired" : invite.Status, invite.CreatedAt, invite.ExpiresAt, invite.Status == "pending")).ToDictionary(invite => invite.Id);
-            foreach (var invite in Access?.Invitations ?? []) rows.TryAdd(invite.Id, new(invite.Id, invite.Email, invite.Role.ToString().ToLowerInvariant(), invite.ExpiresAt != DateTimeOffset.MinValue && invite.ExpiresAt <= now ? "expired" : "pending", invite.CreatedAt, invite.ExpiresAt, true));
+            var rows = (Access?.Invitations ?? []).Select(invite => new InvitationRow(invite.Id, invite.Email, invite.Role,
+                invite.Status == "pending" && invite.ExpiresAt != DateTimeOffset.MinValue && invite.ExpiresAt <= now ? "expired" : invite.Status,
+                invite.CreatedAt, invite.ExpiresAt, invite.Status == "pending")).ToDictionary(invite => invite.Id);
             return rows.Values.OrderBy(invite => !invite.Open).ThenBy(invite => invite.Email, StringComparer.Ordinal).ToArray();
         }
     }

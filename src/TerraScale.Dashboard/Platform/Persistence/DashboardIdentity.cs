@@ -1,45 +1,46 @@
-using System.Text.Json;
-
 namespace TerraScale.Dashboard.Platform.Persistence;
 
-// This file is the consumer boundary for the Vault-delivered machine identity.
-// Provisioning/delivery is an external cutover gate, never a manual setup fallback.
+// Fly secrets are the only secret store: `fly secrets set` delivers them as
+// environment variables. No file, default or fallback exists, and the values
+// are never logged or echoed.
 public interface IDashboardIdentity
 {
     Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken);
 }
 
-public sealed class DashboardIdentity : IDashboardIdentity
+public sealed class DashboardIdentity(Func<string, string?> environment) : IDashboardIdentity
 {
-    private const string Path = "/run/secrets/terrascale/dashboard.json";
+    // ts-auth seeds its dashboard client from the same-named secret on its own app.
+    public const string AuthClientSecretName = "TS_AUTH_DASHBOARD_CLIENT_SECRET";
+    public const string SessionEncryptionKeyName = "TS_DASHBOARD_SESSION_ENCRYPTION_KEY";
+    public const string StripeSecretKeyName = "STRIPE_SECRET_KEY";
+    public const string StripeWebhookSecretName = "STRIPE_WEBHOOK_SECRET";
 
-    public async Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken)
+    public DashboardIdentity() : this(Environment.GetEnvironmentVariable) { }
+
+    public Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken)
     {
-        await using var stream = File.OpenRead(Path);
-        if (stream.Length > 65536) throw new IOException("Dashboard machine identity is invalid.");
-        var credentials = await JsonSerializer.DeserializeAsync<DashboardCredentials>(stream, cancellationToken: cancellationToken)
-            ?? throw new IOException("Dashboard machine identity is unavailable.");
+        var credentials = new DashboardCredentials(Read(AuthClientSecretName), Read(SessionEncryptionKeyName),
+            new(Read(StripeSecretKeyName), Read(StripeWebhookSecretName)));
         credentials.Validate();
-        return credentials;
+        return Task.FromResult(credentials);
     }
+
+    private string Read(string name) => environment(name) is { Length: > 0 } value
+        ? value
+        : throw new IOException($"Dashboard secret {name} is not set.");
 }
 
-public sealed record DashboardCredentials(
-    string StateProjectId,
-    string StateApiKey,
-    string ManagementCredential,
-    string AuthInstanceSlug,
-    string AuthClientId,
-    string AuthClientSecret,
-    string SessionEncryptionKey,
-    StripeCredentials? Stripe = null,
-    string AuthManagementKey = "")
+public sealed record DashboardCredentials(string AuthClientSecret, string SessionEncryptionKey, StripeCredentials Stripe)
 {
+    // ts-auth fixes the dashboard client's ID in its code; only the secret is delivered.
+    public string AuthClientId => "01M4EQ2FRJ8S8B29E8TQVWNW4J";
+
     public void Validate()
     {
-        foreach (var value in new[] { StateProjectId, StateApiKey, ManagementCredential, AuthInstanceSlug, AuthClientId, AuthClientSecret })
-            if (string.IsNullOrWhiteSpace(value) || value.Any(char.IsControl))
-                throw new IOException("Dashboard machine identity is invalid.");
+        // ts-auth accepts 32-512 characters without whitespace or ';' for this secret.
+        if (AuthClientSecret is not { Length: >= 32 and <= 512 } || AuthClientSecret.Any(character => char.IsWhiteSpace(character) || char.IsControl(character) || character == ';'))
+            throw new IOException("Dashboard authentication client secret is invalid.");
         try
         {
             if (string.IsNullOrWhiteSpace(SessionEncryptionKey) || Convert.FromBase64String(SessionEncryptionKey).Length != 32)
@@ -53,15 +54,13 @@ public sealed record DashboardCredentials(
             !Stripe.SecretKey.StartsWith("sk_", StringComparison.Ordinal) || !Stripe.WebhookSecret.StartsWith("whsec_", StringComparison.Ordinal) ||
             Stripe.SecretKey.Any(char.IsControl) || Stripe.WebhookSecret.Any(char.IsControl))
             throw new IOException("Dashboard Stripe identity is invalid.");
-        if (string.IsNullOrWhiteSpace(AuthManagementKey) || !AuthManagementKey.StartsWith("sk_", StringComparison.Ordinal) || AuthManagementKey.Any(char.IsControl))
-            throw new IOException("Dashboard authentication management identity is invalid.");
     }
 
     public override string ToString() => "Dashboard credentials [REDACTED]";
 }
 
-// Vendor-issued credentials are delivered by OCI Vault in the same machine
-// identity as service credentials. There are no payment feature toggles.
+// Vendor-issued Stripe keys are set once as Fly secrets on the dashboard app.
+// There are no payment feature toggles.
 public sealed record StripeCredentials(string SecretKey, string WebhookSecret)
 {
     public override string ToString() => "Stripe credentials [REDACTED]";
