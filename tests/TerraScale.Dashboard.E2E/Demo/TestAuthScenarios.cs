@@ -248,6 +248,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private readonly ConcurrentDictionary<string, Grant> access = new();
         private readonly ConcurrentDictionary<string, Grant> refresh = new();
         private readonly ConcurrentDictionary<string, ProjectGrant> projectGrants = new();
+        private readonly ConcurrentQueue<object> projectScopeExchanges = new();
         private readonly ConcurrentQueue<object> projectRequests = new();
         private int projectExchanges;
         private int projectReportReads;
@@ -456,14 +457,20 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private IResult ProjectExchange(IFormCollection form)
         {
             Interlocked.Increment(ref projectExchanges);
-            if (form["subject_token_type"] != "urn:ietf:params:oauth:token-type:access_token" || form["scope"] != "databases:read")
-                return ContractFailure("Project exchange did not request its exact subject type and read scope.");
+            var requested = form["scope"].ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (form["subject_token_type"] != "urn:ietf:params:oauth:token-type:access_token" || requested.Length == 0 ||
+                requested.Distinct(StringComparer.Ordinal).Count() != requested.Length)
+                return ContractFailure("Project exchange did not request its exact subject type and distinct action scopes.");
             if (!ActiveBearer(form["subject_token"].ToString(), out var session)) return OAuthError("invalid_grant", 400);
             var organizationId = form["organization"].ToString();
             var projectId = form["project"].ToString();
-            var organization = state.Items.GetValueOrDefault(AccountService.OrganizationsCollection + "/" + organizationId)?.Document.Deserialize<OrganizationRecord>();
-            if (!TerraScaleIds.IsValid(organizationId) || !TerraScaleIds.IsValid(projectId) || organization?.ContainsMember(session.Subject) != true ||
-                !organization.Projects.ContainsKey(projectId) || fault == "project-refused") return OAuthError("invalid_target", 400);
+            var role = workspace.ProjectRole(session.Subject, organizationId, projectId);
+            var allowed = role == "viewer" ? new[] { "databases:read", "documents:read" }
+                : role is "member" or "admin" ? new[] { "databases:read", "databases:write", "documents:read", "documents:write" } : [];
+            var error = !TerraScaleIds.IsValid(organizationId) || !TerraScaleIds.IsValid(projectId) || allowed.Length == 0 || fault == "project-refused"
+                ? "invalid_target" : requested.Except(allowed, StringComparer.Ordinal).Any() ? "invalid_scope" : "";
+            projectScopeExchanges.Enqueue(new { organizationId, projectId, requested, granted = error.Length == 0 ? requested : [], error });
+            if (error.Length > 0) return OAuthError(error, 400);
             var expires = clock.GetUtcNow().AddMinutes(15);
             if (expires > session.ExpiresAt) expires = session.ExpiresAt;
             var claims = new Dictionary<string, object>
@@ -475,7 +482,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 ["client_id"] = fault == "project-wrong-client" ? "foreign-client" : ClientId,
                 ["org_id"] = fault == "project-foreign-organization" ? new TerraScaleIdGenerator().NewId() : organizationId,
                 ["project_id"] = fault == "project-foreign-project" ? new TerraScaleIdGenerator().NewId() : projectId,
-                ["scope"] = fault == "project-missing-scope" ? "documents:read" : "databases:read",
+                ["scope"] = fault == "project-missing-scope" ? "" : string.Join(' ', requested),
                 ["auth_time"] = session.AuthenticatedAt,
                 ["iat"] = clock.GetUtcNow().ToUnixTimeSeconds(),
                 ["exp"] = (fault == "project-expired" ? clock.GetUtcNow().AddMinutes(-1) : fault == "project-too-long" ? clock.GetUtcNow().AddHours(1) : expires).ToUnixTimeSeconds(),
@@ -486,7 +493,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             byte[] signature;
             lock (keyGate) signature = (fault == "project-bad-signature" ? wrongKey : signingKey).SignData(Encoding.ASCII.GetBytes(unsigned), HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
             var token = unsigned + "." + B64(signature);
-            projectGrants[token] = new(session, organizationId, projectId, expires);
+            projectGrants[token] = new(session, organizationId, projectId, expires, requested);
             var response = new Dictionary<string, object>
             {
                 ["access_token"] = token,
@@ -515,7 +522,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 using var payload = JsonDocument.Parse(UnB64(parts[1]));
                 var claims = payload.RootElement;
                 if (jwtHeader.RootElement.GetProperty("typ").GetString() != "at+jwt" || claims.GetProperty("iss").GetString() != CurrentIssuer ||
-                    claims.GetProperty("aud").GetString() != "https://api.terrascale.tech" || claims.GetProperty("scope").GetString() != "databases:read" ||
+                    claims.GetProperty("aud").GetString() != "https://api.terrascale.tech" || !grant.Scopes.Contains("databases:read") ||
+                    claims.GetProperty("scope").GetString() != string.Join(' ', grant.Scopes) ||
                     claims.GetProperty("sub").GetString() != grant.Session.Subject || claims.GetProperty("client_id").GetString() != ClientId ||
                     claims.GetProperty("org_id").GetString() != grant.OrganizationId || claims.GetProperty("project_id").GetString() != grant.ProjectId ||
                     claims.GetProperty("exp").GetInt64() <= clock.GetUtcNow().ToUnixTimeSeconds()) return false;
@@ -740,7 +748,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 case "seed-account": return await SeedAccountAsync(body.GetProperty("accountId").GetString()!);
                 case "workspace-role":
                     var role = body.GetProperty("role").GetString()!;
-                    if (role is not ("owner" or "admin" or "member" or "readonly" or "")) return Results.BadRequest();
+                    if (role is not ("owner" or "admin" or "member" or "viewer" or "readonly" or "")) return Results.BadRequest();
+                    workspace.Role = role;
                     lock (workspace.Gate)
                         foreach (var org in workspace.Organizations.Values.Where(org => org.Members.ContainsKey(subject)))
                         {
@@ -837,6 +846,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 passwordGrants,
                 codeExchanges,
                 projectExchanges,
+                projectScopeExchanges = projectScopeExchanges.ToArray(),
                 projectReportReads,
                 projectRequests = projectRequests.ToArray(),
                 signupGrantBindings,
@@ -933,6 +943,6 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             public DateTimeOffset ActivityExpiresAt { get; set; } = ExpiresAt;
             public string AccessToken { get; set; } = "";
         }
-        private sealed record ProjectGrant(Grant Session, string OrganizationId, string ProjectId, DateTimeOffset ExpiresAt);
+        private sealed record ProjectGrant(Grant Session, string OrganizationId, string ProjectId, DateTimeOffset ExpiresAt, IReadOnlyList<string> Scopes);
     }
 }
