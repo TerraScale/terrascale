@@ -39,6 +39,10 @@ internal sealed partial class SqliteStorageEngine
         }
     }
 
+    public LogCut CutLog(Stream segment, DateTimeOffset at, long? previous) => ChangeLog.Cut(segment, at, previous);
+
+    public DateTimeOffset? ReadMark(Stream segment) => ChangeLog.EndMark(segment);
+
     public async ValueTask<bool> RollForwardAsync(string file, IAsyncEnumerable<Stream> segments, CancellationToken cancellationToken)
     {
         Io.Admit();

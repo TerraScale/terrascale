@@ -264,7 +264,8 @@ public sealed class PointInTimePlanTests
                 await Assert.That(plan.GetProperty("latestSegmentAt").ValueKind == JsonValueKind.Null ? (DateTimeOffset?)null : plan.GetProperty("latestSegmentAt").GetDateTimeOffset())
                     .IsEqualTo(count == 0 ? null : at);
                 await Assert.That(plan.GetProperty("window").GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(snapshot);
-                await Assert.That(plan.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(time.GetUtcNow());
+                // No listed segment holds a read mark (none is even stored): only the snapshot's time is proven.
+                await Assert.That(plan.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(snapshot);
                 await Assert.That(probe.SegmentListings).IsEqualTo(listings + 1);
             }
 
@@ -275,7 +276,7 @@ public sealed class PointInTimePlanTests
             var regressedPlan = await regressed.Content.ReadFromJsonAsync<JsonElement>();
             await Assert.That(regressedPlan.GetProperty("segmentCount").GetInt32()).IsEqualTo(0);
             await Assert.That(regressedPlan.GetProperty("latestSegmentAt").ValueKind).IsEqualTo(JsonValueKind.Null);
-            await Assert.That(regressedPlan.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(time.GetUtcNow());
+            await Assert.That(regressedPlan.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(snapshot);
 
             if (segmentCount == 9999)
             {
@@ -327,7 +328,8 @@ public sealed class PointInTimePlanTests
             await Assert.That(plan.GetProperty("segmentCount").GetInt32()).IsEqualTo(1);
             await Assert.That(plan.GetProperty("latestSegmentAt").GetDateTimeOffset()).IsEqualTo(at);
             await Assert.That(plan.GetProperty("window").GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(first);
-            await Assert.That(plan.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(time.GetUtcNow());
+            // The newest generation's segment holds no read mark (none is stored): only its snapshot's time is proven.
+            await Assert.That(plan.GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(last);
             await Assert.That(probe.SegmentListings).IsEqualTo(listings + 2);
         }
         finally
