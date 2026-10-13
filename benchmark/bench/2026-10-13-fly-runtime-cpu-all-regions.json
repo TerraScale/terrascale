@@ -1,0 +1,77 @@
+{
+  "status": "success",
+  "observations": [
+    {
+      "labels": {
+        "app": "ts-terrabase",
+        "host": "cfce",
+        "instance": "1857503f017528",
+        "region": "gru"
+      },
+      "value": [
+        1791929061,
+        "2"
+      ]
+    },
+    {
+      "labels": {
+        "app": "ts-terrabase",
+        "host": "5bd1",
+        "instance": "286557e5b45498",
+        "region": "fra"
+      },
+      "value": [
+        1791929061,
+        "2"
+      ]
+    },
+    {
+      "labels": {
+        "app": "ts-terrabase",
+        "host": "2618",
+        "instance": "847310c2ee95d8",
+        "region": "sjc"
+      },
+      "value": [
+        1791929061,
+        "2"
+      ]
+    },
+    {
+      "labels": {
+        "app": "ts-auth",
+        "host": "2620",
+        "instance": "850e45b4142318",
+        "region": "sjc"
+      },
+      "value": [
+        1791929061,
+        "2"
+      ]
+    },
+    {
+      "labels": {
+        "app": "ts-auth",
+        "host": "cdc4",
+        "instance": "8747930a042038",
+        "region": "gru"
+      },
+      "value": [
+        1791929061,
+        "2"
+      ]
+    },
+    {
+      "labels": {
+        "app": "ts-auth",
+        "host": "710a",
+        "instance": "d8921e1b3e5758",
+        "region": "fra"
+      },
+      "value": [
+        1791929061,
+        "2"
+      ]
+    }
+  ]
+}
