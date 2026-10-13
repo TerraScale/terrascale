@@ -15,8 +15,9 @@ These are reproducible behavior defects, independent of any role-policy question
 - Audited source SHA, checkout base, and source-only HEAD: `b719878083dffd9441e063bbfaccfa0dffa95abd`.
 - Local delivery branch: `audit/database-data-access-20261013`, bound to `/home/mariogk/.t3/worktrees/ts-dashboard/audit-database-data-access-20261013`.
 - `origin/main` resolved to the audited SHA during verification. No rebase or source changes were performed.
-- The delivery commit SHA is reported in the handoff. Post-commit captures and their exact HEAD/checksums are recorded in ignored `obj/evidence/manifest.json`, avoiding a self-referential SHA inside this commit.
-- No push or PR publication: the coordinator must grant the serial publication slot. Alpha CI is permitted once that slot is granted. Any eventual PR must remain draft while defect regressions fail; do not merge or enable auto-merge.
+- Actual browser capture/test SHA: `6d05a7ee374547ee8ceab938ee14eabc86d9a22f`. [Committed evidence provenance](evidence/manifest.json) preserves that SHA, original capture times, raw SHA-256 hashes, mask rectangles and sanitized hashes. These images were not recaptured at the later evidence-delivery head.
+- The final evidence-delivery SHA is reported in the handoff and ignored `obj/evidence-followup-verification.json`; it cannot be embedded in its own commit. Source and test files remain identical to the capture SHA.
+- No push or PR publication: Mongo holds the active serialized slot, and the coordinator must grant this audit's explicit slot later. Alpha CI is permitted once that slot is granted. Any eventual PR must remain draft while defect regressions fail; do not merge or enable auto-merge.
 
 The actual checkout uses .NET 10, C#, RazorSlices and Datastar, with TUnit journeys in `tests/TerraScale.Dashboard.E2E`; it is not the old Go layout. Verification follows [development instructions](../../../development.md) and uses SDK `10.0.401` plus the existing pinned Playwright/Chromium workflow.
 
@@ -116,13 +117,27 @@ nice -n 19 dotnet run --configuration Release \
 
 | Check | Result | Evidence / limits |
 | --- | --- | --- |
-| Focused new journeys | **FAIL as expected: 10 total, 6 failed, 4 passed, 0 skipped** | `$1` HTTP, list outage and four desktop/mobile defect cases fail; `?`, cancellation/retry and two management cases pass. Assertions are neither disabled nor marked expected-failure in the runner |
+| Focused new journeys at capture SHA `6d05a7ee` | **FAIL as expected: 10 total, 6 failed, 4 passed, 0 skipped** | `$1` HTTP, list outage and four desktop/mobile defect cases fail; `?`, cancellation/retry and two management cases pass. Assertions are neither disabled nor marked expected-failure in the runner |
 | `nice -n 19 make build` | **PASS**, zero warnings/errors | Locked Release solution build; focused run also compiles the final test changes |
 | `nice -n 19 make lint` | **PASS** | CSS consistency, SDK provenance, E2E boundary guard and `dotnet format --verify-no-changes --no-restore` |
 | Existing backup/subscription journeys | **PASS**, 8 + 1 cases | Filters `/*/*/BackupPolicyJourneyTests/*` and `/*/*/QuerySubscriptionJourneyTests/*`; logs in ignored `obj/backup-tests.log` and `obj/subscription-tests.log` |
 | Proposed patches / source integrity | **PASS** for applicability and read-only checks | `git apply --check` for all three proposals together; existing tracked files unchanged. This is not runtime validation of the proposed fixes |
 
-The last pre-commit keyboard-input run completed in 47.723 seconds. Raw failure logs/TRX are under ignored `obj/keyboard-tests.log` and `obj/keyboard-results/`. The committed-head rerun is recorded separately in `obj/head-tests.log` and `obj/head-results/`; its identity and outcome are captured by the post-commit manifest and handoff.
+The last pre-commit keyboard-input run completed in 47.723 seconds. Raw failure logs/TRX are under ignored `obj/keyboard-tests.log` and `obj/keyboard-results/`. The run at capture SHA `6d05a7ee374547ee8ceab938ee14eabc86d9a22f` completed in 26.950 seconds; its logs/TRX remain in `obj/head-tests.log` and `obj/head-results/`.
+
+The evidence-only follow-up runs the four HTTP cases: **2 passed, 2 expected defect failures, 0 skipped**, with every assertion intact. The `$1` HTML-success and outage-total regressions remain red; the `?` and cancellation/retry controls pass. Browser journeys perform sign-in and are **not rerun** under the latest no-browser-sign-in instruction. Their two passes and four expected failures remain pinned to the actual capture SHA. They are not counted as current-head results.
+
+Run the allowed focused follow-up from the checkout root:
+
+```sh
+nice -n 19 dotnet run --configuration Release \
+  --project tests/TerraScale.Dashboard.E2E -- \
+  --treenode-filter '/*/TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.DatabaseDataAccess/DatabaseDataAccessJourneyTests/*' \
+  --report-trx \
+  --results-directory "$PWD/docs/reviews/2026-10-13/database-data-access/obj/evidence-head-http-results"
+```
+
+Final-head logs/TRX are local-only in `obj/evidence-head-http-tests.log` and `obj/evidence-head-http-results/`; exact HEAD, counts, lint outcome and source-integrity checks are recorded after commit in `obj/evidence-followup-verification.json`. No assertion or test file was modified to obtain this result.
 
 **Not run:** full `test-fast`/`test-slow` aggregate suites, Alpha CI, live-production readiness, live ts-typescript account flow, production authentication/provider delivery, real database mutations and real payments. No new spend was authorized or incurred for services. These results qualify local test-host behavior only.
 
@@ -130,22 +145,30 @@ The journeys run actual application routes/assets against disposable local Kestr
 
 ## Desktop/mobile evidence
 
-Captures come from actual Chromium rendering of this bound worktree's application with bundled Monaco. Files live under ignored `docs/reviews/2026-10-13/database-data-access/obj/evidence/`; do not commit screenshots, logs or TRX. The captures show synthetic fixture data and no API-key/token/payment values. No patch was applied for these captures.
+Captures come from actual Chromium rendering of this bound worktree's application with bundled Monaco at SHA **`6d05a7ee374547ee8ceab938ee14eabc86d9a22f`**, captured on 2026-10-13 between 02:28:52 and 02:29:12 UTC. No patch was applied. The later delivery commit adds documentation/evidence only; it is not the capture SHA.
 
-| Flow / description | Desktop (1440×900) | Mobile (390×844) |
+Eight small sanitized PNGs are committed under `docs/reviews/2026-10-13/database-data-access/evidence/`, totaling **556,805 bytes (0.53 MiB)**. This is the explicit user-authorized exception to the checkout's usual no-screenshots-in-Git rule, within the same repository and unique report directory. No new host, permission change or browser sign-in was used for this follow-up.
+
+All eight images were inspected for personal data and secrets. Desktop workspace/account labels, fixture names/emails and avatars are replaced by opaque rectangles, including areas already blurred by the dialog. Every decoded pixel outside those rectangles is preserved; mobile images contain no identity areas and are exact original copies. The remaining database names and `audit-local` SQL value are synthetic repro labels. No API key, token, password or payment value appears. The [manifest](evidence/manifest.json) records original and sanitized hashes, original capture SHA/times, exact mask rectangles and pixel-preservation checks. Raw originals, logs and TRX remain ignored and local-only.
+
+| Flow / description, all captured at `6d05a7ee` | Desktop viewport (1440×900) | Mobile viewport (390×844) |
 | --- | --- | --- |
-| Console contains the new query draft | [query-draft-1440.png](obj/evidence/query-draft-1440.png) | [query-draft-390.png](obj/evidence/query-draft-390.png) |
-| Save dialog displays old SQL | [save-query-1440.png](obj/evidence/save-query-1440.png) | [save-query-390.png](obj/evidence/save-query-390.png) |
-| SQL check shows success for `$1` | [sql-check-1440.png](obj/evidence/sql-check-1440.png) | [sql-check-390.png](obj/evidence/sql-check-390.png) |
-| Credential dialog inspected without issuing a key | [api-key-dialog-1440.png](obj/evidence/api-key-dialog-1440.png) | [api-key-dialog-390.png](obj/evidence/api-key-dialog-390.png) |
-| Independent saved-query API observation | [saved-query-values-1440.json](obj/evidence/saved-query-values-1440.json) | [saved-query-values-390.json](obj/evidence/saved-query-values-390.json) |
+| Console contains the new query draft | [query-draft-1440.png](evidence/query-draft-1440.png) | [query-draft-390.png](evidence/query-draft-390.png) |
+| Save dialog displays old SQL | [save-query-1440.png](evidence/save-query-1440.png) | [save-query-390.png](evidence/save-query-390.png) |
+| SQL check shows success for `$1` | [sql-check-1440.png](evidence/sql-check-1440.png) | [sql-check-390.png](evidence/sql-check-390.png) |
+| Credential dialog inspected without issuing a key | [api-key-dialog-1440.png](evidence/api-key-dialog-1440.png) | [api-key-dialog-390.png](evidence/api-key-dialog-390.png) |
+| Independent saved-query API observation | [saved-query-values-1440.json](evidence/saved-query-values-1440.json) | [saved-query-values-390.json](evidence/saved-query-values-390.json) |
 
-These relative evidence links are local-only until attachment upload. The committed report remains useful without the images because it includes exact repros and observed values. After the publication slot is granted, attach the committed-head images with flow descriptions and the manifest SHA to the draft PR; do not label this failing regression run as a green release candidate. No video was captured.
+These are full-page captures, so image heights can exceed their viewport heights. The relative links resolve in this committed report and will use the same repository when publication is authorized. No upload or publication has occurred. No video was captured or committed. These screenshots document verified defects on the original capture SHA, not green release qualification at a later head.
+
+![DDA-01: unbound $1 SQL and the false Server check passed message; captured at 6d05a7ee374547ee8ceab938ee14eabc86d9a22f, fixture identity masked](evidence/sql-check-1440.png)
+
+![DDA-02: Save query contains SELECT * FROM users LIMIT 20 instead of the edited draft; captured at 6d05a7ee374547ee8ceab938ee14eabc86d9a22f, fixture identity masked](evidence/save-query-1440.png)
 
 ## Source-owner dependencies and delivery boundary
 
 The three proposals overlap the active shared R3–R6 refactoring in the Data/Databases source areas. The source owner must adapt/apply them against its current head and rerun these regressions; applicability is pinned to the audited SHA. No source-owner thread or cancelled history was read or contacted. The banner work needs no change here. Guided imports and import-owned files are excluded entirely.
 
-The committed deliverable consists of this report, the three linked `.patch` proposals, and the two linked test files. Existing source, shared/refactor code, fixtures, projects, settings, CI, locks, vendor files, AGENTS and tracked generated assets remain unchanged. Ignored build/dependency/evidence outputs are permitted local verification artifacts only.
+The committed deliverable consists of this report, three linked `.patch` proposals, two linked test files and eleven evidence files (eight PNGs, two small saved-query observation JSON files and one provenance manifest): **17 new files in total relative to the audited base**. This follow-up adds eleven files and updates only this workstream's report. Existing source, shared/refactor code, fixtures, projects, settings, CI, locks, vendor files, AGENTS and tracked generated assets remain unchanged. Ignored build/dependency/raw-evidence outputs are local verification artifacts only.
 
-Next publication action: grant the serialized draft-PR slot after release-critical jobs permit it. Before publication, fetch and assess the latest `origin/main`, revalidate changed source assumptions, rerun the focused checks if the head changes, and recapture evidence. Keep the draft unmerged while the product regressions remain red.
+Next publication action: wait for the coordinator's explicit serialized slot after Mongo and release-critical jobs permit it. Before publication, fetch and assess the latest `origin/main`, revalidate changed source assumptions, rerun permitted focused checks if the head changes, and preserve the original capture SHA. Recapture changed product behavior only within the authorization then in effect. Keep the draft unmerged while the product regressions remain red.
