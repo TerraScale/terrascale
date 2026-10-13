@@ -243,6 +243,14 @@ The integration owner merges every PR in the f354ed91 order **without asking COS
 because of the SQL/usage HTTP 400 (cause 2 below). `train-watch.sh` wakes the owner on any change to the next PR or
 to main.
 
+**New PRs (02:40Z):**
+- **#169:** the #106 fix-forward, "acks rise over joined rows; copies and restores reset peer acks". Item 12 in the order.
+- **#170:** ts-auth stores in its own region's TerraBase, falling back to another region's. This is the AUTH-REGIONAL
+  PR, item 14.
+  - Its body says it **needs a security decision before merge**: single-use and uniqueness checks (passcodes,
+    authorization codes, refresh tokens) become per-region until R12.
+  - That makes it a **user/COS decision gate**, on top of review and checks.
+
 ## MAIN RED HAS TWO CAUSES (02:00Z)
 
 1. **#149** (Healthz/Readyz, revision missing in the Docker test stage). Fixed by **#166**, which an independent review
