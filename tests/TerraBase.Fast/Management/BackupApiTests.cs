@@ -713,7 +713,9 @@ public sealed class BackupApiTests
     {
         var output = TUnit.Core.TestContext.Current!.OutputWriter;
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 4, 10, 30, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(time: time);
+        // Drive complete passes so polling never advances cron time during a snapshot copy.
+        await using var api = await ManagementApi.StartAsync(time: time, services: services =>
+            services.Remove(services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(BackupScheduler))));
         var organization = await api.CreateOrganizationAsync(Faker.Company.CompanyName());
         var project = await api.CreateProjectAsync(organization, Faker.Commerce.ProductName());
         var databases = new List<ManagedDatabaseRef>();
@@ -725,11 +727,13 @@ public sealed class BackupApiTests
             output.WriteLine($"backup schedule: {databases.Count}/17 databases and policies configured");
         }
 
+        var scheduler = api.Server.Services.GetRequiredService<IManagedBackupService>();
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var backedUp = new HashSet<string>();
-        output.WriteLine("backup schedule: waiting for all scheduled backups");
-        await WaitAsync(time, async () =>
+        for (var pass = 0; pass < 2; pass++)
         {
-            var before = backedUp.Count;
+            time.AdjustTime(time.GetUtcNow() + TimeSpan.FromMinutes(1));
+            await scheduler.RunScheduleAsync(token);
             foreach (var database in databases.Where(database => !backedUp.Contains(database.Id)))
             {
                 if ((await ListBackupsAsync(api, $"{database.Path}/backups")).Any(item => item.GetProperty("trigger").GetString() == "scheduled"))
@@ -738,13 +742,9 @@ public sealed class BackupApiTests
                 }
             }
 
-            if (backedUp.Count != before)
-            {
-                output.WriteLine($"backup schedule: {backedUp.Count}/17 scheduled backups observed");
-            }
-
-            return backedUp.Count == databases.Count;
-        });
+            await Assert.That(backedUp.Count).IsEqualTo(pass == 0 ? 16 : 17);
+            output.WriteLine($"backup schedule: {backedUp.Count}/17 scheduled backups observed after pass {pass + 1}");
+        }
 
         await Assert.That(backedUp.Count).IsEqualTo(17);
         output.WriteLine("backup schedule: all 17 backups verified before cleanup");
@@ -888,14 +888,14 @@ public sealed class BackupApiTests
         }
 
         // Database ids use the application clock: a later millisecond sorts the healthy one after every failing one.
-        time.Advance(TimeSpan.FromMilliseconds(1));
+        time.AdjustTime(time.GetUtcNow() + TimeSpan.FromMilliseconds(1));
         var healthy = await api.CreateManagedDatabaseAsync(organization, project, "healthy");
         (await api.Client.PutAsJsonAsync(Uri($"{healthy.Path}/backup-policy"), new { fullBackupCron = "* * * * *", retentionDays = 35 })).EnsureSuccessStatusCode();
         await Assert.That(failed.All(database => string.CompareOrdinal(database.Id, healthy.Id) < 0)).IsTrue();
 
         var scheduler = api.Server.Services.GetRequiredService<IManagedBackupService>();
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        time.Advance(TimeSpan.FromMinutes(1));
+        time.AdjustTime(time.GetUtcNow() + TimeSpan.FromMinutes(1));
         await scheduler.RunScheduleAsync(cancellationToken);
         foreach (var database in failed.Take(16))
         {
@@ -907,7 +907,7 @@ public sealed class BackupApiTests
         await Assert.That((await ListBackupsAsync(api, $"{healthy.Path}/backups")).Length).IsEqualTo(0);
 
         // The unattempted failing database and the healthy one precede retries on the second pass.
-        time.Advance(TimeSpan.FromMinutes(1));
+        time.AdjustTime(time.GetUtcNow() + TimeSpan.FromMinutes(1));
         await scheduler.RunScheduleAsync(cancellationToken);
         var backups = await ListBackupsAsync(api, $"{healthy.Path}/backups");
 

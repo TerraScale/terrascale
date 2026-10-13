@@ -14,6 +14,7 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -539,18 +540,38 @@ public sealed class UsageAnalyticsTests
         // Hobby admission would throttle creating the databases below; the plan does not change sampling.
         await api.SetPlanAsync(api.User, first.Organization, "enterprise");
         var databases = new List<TenantContext> { new(first.Organization, PlanTier.Hobby, first.Project, first.Id) };
-        for (var i = 1; i < 140; i++)
+        // Create the real catalog in lifecycle commits, without 139 separate admission/publication cycles.
+        foreach (var batch in Enumerable.Range(1, 139).Chunk(16))
         {
-            var created = await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "db" + i.ToString(CultureInfo.InvariantCulture));
-            databases.Add(new(created.Organization, PlanTier.Hobby, created.Project, created.Id));
+            using var response = await api.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
+            {
+                id = EntityIds.New().ToString(),
+                ops = batch.Select(i => new
+                {
+                    op = "create_database",
+                    organization = first.Organization,
+                    project = first.Project,
+                    name = "db" + i.ToString(CultureInfo.InvariantCulture),
+                }).ToArray(),
+            });
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            var committed = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync());
+            foreach (var result in committed.GetProperty("results").EnumerateArray())
+            {
+                var database = result.GetProperty("value");
+                databases.Add(new TenantContext(first.Organization, PlanTier.Hobby, first.Project, database.GetProperty("id").GetString()!));
+            }
         }
+
+        await Assert.That(databases.Count).IsEqualTo(140);
 
         // Two minutes sample 2 × 128 databases; the second pass lists them in reverse.
         var flush = api.Server.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single();
         foreach (var reverse in new[] { false, true })
         {
             hook.ReverseDatabases = reverse;
-            clock.Advance(TimeSpan.FromMinutes(1));
+            // These explicit passes own sampling; a wall-clock correction does not also launch hosted passes.
+            clock.AdjustTime(clock.GetUtcNow() + TimeSpan.FromMinutes(1));
             await flush.SampleStorageAsync(CancellationToken.None);
             await flush.FlushAsync(CancellationToken.None);
         }
@@ -564,6 +585,7 @@ public sealed class UsageAnalyticsTests
             {
                 UsageCounts counts => counts,
                 Unavailable error => throw new InvalidOperationException(error.Message),
+                null => throw new InvalidOperationException("usage observations unavailable"),
             };
             unsampled += lifetime.Meters?.ContainsKey("storage_bytes|gru-1||sample") == true ? 0 : 1;
         }
