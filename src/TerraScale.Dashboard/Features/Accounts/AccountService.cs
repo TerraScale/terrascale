@@ -105,8 +105,12 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         {
             var stored = await state.GetAsync(OrganizationsCollection, org.Id, cancellationToken) ?? throw new IOException("Personal organization state did not persist.");
             org = Read<OrganizationRecord>(stored);
-            if (stored.Id != live.Id || org.Id != live.Id || org.Kind != "personal" || org.OwnerUserId != session.UserId)
+            // ts-auth's live list proved the caller owns it; the stored settings only confirm the Personal kind.
+            if (stored.Id != live.Id || org.Id != live.Id || org.Kind != "personal")
                 throw new AccountAccessException("Personal organization identity does not match.");
+            org.Name = live.Name;
+            org.OwnerUserId = session.UserId;
+            org.Projects.TryAdd(project.Id, new() { Id = project.Id, OrganizationId = live.Id, Name = project.Name, IsDefault = true, CreatedAt = project.CreatedAt });
         }
         return org;
     }
@@ -184,6 +188,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
     {
         org.Name = live.Name;
         org.Slug = Slug(live.Name);
+        org.CreatedAt = live.CreatedAt;
         Member(org, session, live.Role!);
         var saved = org.Projects;
         org.Projects = new();
@@ -193,6 +198,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             project.OrganizationId = live.Id;
             project.Name = remote.Name;
             project.Slug = Slug(remote.Name);
+            project.CreatedAt = remote.CreatedAt;
             org.Projects[remote.Id] = project;
         }
     }

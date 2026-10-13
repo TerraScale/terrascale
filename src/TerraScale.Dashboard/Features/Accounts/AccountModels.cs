@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.Features.Accounts;
@@ -28,19 +29,19 @@ public sealed class AccountRecord
 // subject digest; this public identity survives source-state migration.
 public sealed record AccountIdentityBinding(string UserId, string AccountId);
 
-// Dashboard-owned state of a ts-auth organization, keyed by its ts-auth ID. Name,
-// owner, members and project names are refreshed from ts-auth on every context
-// read; the stored copies are a projection that never authorizes anything.
+// Dashboard-owned state of a ts-auth organization, keyed by its ts-auth ID. The
+// [JsonIgnore] members are ts-auth's: AccountService fills them from ts-auth on
+// every read and before every write, and they are never stored.
 public sealed class OrganizationRecord
 {
     public const string FreePlanId = "3BN8V1JQWTB3R3NSZ26SERTHWT";
     public const string StarterPlanId = "443RCMMF70MNP6S1QMT230NF99";
     public string Id { get; set; } = "";
-    public string Name { get; set; } = "";
+    [JsonIgnore] public string Name { get; set; } = "";
     public string Kind { get; set; } = "personal";
-    public string Slug { get; set; } = "";
+    [JsonIgnore] public string Slug { get; set; } = "";
     public string Status { get; set; } = "active";
-    public string OwnerUserId { get; set; } = "";
+    [JsonIgnore] public string OwnerUserId { get; set; } = "";
     public string PlanId { get; set; } = FreePlanId;
     public string BillingStatus { get; set; } = "active";
     public bool PaymentMethodValidated { get; set; }
@@ -50,13 +51,14 @@ public sealed class OrganizationRecord
     public bool DeletionRequested { get; set; }
     public TerraScale.Dashboard.Features.Billing.InternalBillingPolicy? InternalBilling { get; set; }
     public Dictionary<string, TerraScale.Dashboard.Features.Billing.InternalBillingAlert> InternalBillingAlerts { get; set; } = [];
-    public string PendingOwnerUserId { get; set; } = "";
-    public DateTimeOffset? PendingOwnerExpiresAt { get; set; }
-    public Dictionary<string, MemberRecord> Members { get; set; } = [];
+    [JsonIgnore] public string PendingOwnerUserId { get; set; } = "";
+    [JsonIgnore] public DateTimeOffset? PendingOwnerExpiresAt { get; set; }
+    [JsonIgnore] public Dictionary<string, MemberRecord> Members { get; set; } = [];
+    // Dashboard settings per ts-auth project id; only ts-auth's current projects are kept.
     public Dictionary<string, ProjectRecord> Projects { get; set; } = [];
     public List<AuditRecord> AuditEvents { get; set; } = [];
-    public Dictionary<string, InvitationRecord> Invitations { get; set; } = [];
-    public DateTimeOffset CreatedAt { get; set; }
+    [JsonIgnore] public Dictionary<string, InvitationRecord> Invitations { get; set; } = [];
+    [JsonIgnore] public DateTimeOffset CreatedAt { get; set; }
     public bool ContainsMember(string userId) => Status == "active" && !Archived &&
         Members.TryGetValue(userId, out var member) && member.Status == "active";
     public string RoleFor(string userId) => ContainsMember(userId) ? Members[userId].Role : "";
@@ -77,12 +79,13 @@ public sealed class MemberRecord
     public DateOnly? JoinedOn { get; set; }
 }
 
+// Dashboard settings of a ts-auth project; the [JsonIgnore] members come from ts-auth.
 public sealed class ProjectRecord
 {
     public string Id { get; set; } = "";
-    public string OrganizationId { get; set; } = "";
-    public string Name { get; set; } = "";
-    public string Slug { get; set; } = "";
+    [JsonIgnore] public string OrganizationId { get; set; } = "";
+    [JsonIgnore] public string Name { get; set; } = "";
+    [JsonIgnore] public string Slug { get; set; } = "";
     public string Region { get; set; } = "";
     public string BackupRegion { get; set; } = "";
     public List<string> Regions { get; set; } = [];
@@ -92,7 +95,7 @@ public sealed class ProjectRecord
     public OperationLimits OperationLimits { get; set; } = new();
     public Dictionary<string, DatabaseRecord> Databases { get; set; } = [];
     public Dictionary<string, TerraScale.Dashboard.Features.QuerySubscriptions.SharedResultConfiguration> SharedResultConfigs { get; set; } = [];
-    public DateTimeOffset CreatedAt { get; set; }
+    [JsonIgnore] public DateTimeOffset CreatedAt { get; set; }
 }
 
 public sealed class DatabaseRecord
