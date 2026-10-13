@@ -278,7 +278,10 @@ commit keeps the guarantees of the database lifecycle recovery in [management-ap
   A branch copies its source then; inside the transaction its source must still exist where the operation runs
   (`404` otherwise, for example after an earlier `delete_database` of it), and an organization or project created
   in the same commit has no database to branch. The commit registers the database and clears
-  the intent in its transaction. A failed commit removes the files and the intent. A crash before the commit
+  the intent in its transaction. A failed commit removes unregistered files and the intent. If catalog
+  replication registered the prepared copy meanwhile, abandonment preserves its files and clears the local
+  preparation intent instead. Startup still refuses an intent conflicting with a registered database.
+  A crash before the commit
   leaves the intent, which the next start replays, removing the files. The database is visible (listed,
   reachable through the data API) only once the commit is visible.
 - **Delete:** the commit removes the registration and records the cleanup intent in its transaction; the
