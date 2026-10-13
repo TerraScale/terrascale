@@ -43,18 +43,24 @@ public sealed class ShapeLiveTests
 
         var written = await api.PutAsync(DocumentApi.NewId(), new { text = new Faker().Lorem.Sentence() });
         await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
-        var answers = (await Task.WhenAll(waiters)).Select(Flight).ToArray();
+        var answers = (await Task.WhenAll(waiters).WaitAsync(Deadline)).Select(Flight).ToArray();
 
-        await Assert.That(sealer.Calls).IsEqualTo(1).Because("the commit wake takes one shared seal");
-        await Assert.That(shape.Reads).IsEqualTo(1).Because("exactly one read per flight");
-        await Assert.That(answers.All(answer => ReferenceEquals(answer.Value, answers[0].Value))).IsTrue()
-            .Because("every requester gets the same answer instance");
-        await Assert.That(answers[0].Value.Head).IsEqualTo(await HeadAsync(api, database));
-        await Assert.That(answers[0].Value.Head).IsGreaterThan(head);
-        await Assert.That(answers[0].Value.UpToDate).IsTrue().Because("the fresh page delivers through the sealed head");
-        foreach (var answer in answers)
+        try
         {
-            answer.Dispose();
+            await Assert.That(sealer.Calls).IsEqualTo(1).Because("the commit wake takes one shared seal");
+            await Assert.That(shape.Reads).IsEqualTo(1).Because("exactly one read per flight");
+            await Assert.That(answers.All(answer => ReferenceEquals(answer.Value, answers[0].Value))).IsTrue()
+                .Because("every requester gets the same answer instance");
+            await Assert.That(answers[0].Value.Head).IsEqualTo(await HeadAsync(api, database));
+            await Assert.That(answers[0].Value.Head).IsGreaterThan(head);
+            await Assert.That(answers[0].Value.UpToDate).IsTrue().Because("the fresh page delivers through the sealed head");
+        }
+        finally
+        {
+            foreach (var answer in answers)
+            {
+                answer.Dispose();
+            }
         }
     }
 
@@ -66,7 +72,7 @@ public sealed class ShapeLiveTests
         var flights = Flights(api);
         var database = await api.TenantOfAsync();
         var head = await HeadAsync(api, database);
-        var hold = new Latch();
+        using var hold = new Latch();
         var first = new FakeShape(Sealer(api), head, hold);
         var second = new FakeShape(Sealer(api), head);
 
@@ -81,14 +87,20 @@ public sealed class ShapeLiveTests
         // The first shape holds its read until the second has read too, so the seal's watermark still covers the head.
         await second.ReadEntered.WaitAsync(Deadline);
         hold.Open();
-        var answers = (await Task.WhenAll(waitingFirst, waitingSecond)).Select(Flight).ToArray();
+        var answers = (await Task.WhenAll(waitingFirst, waitingSecond).WaitAsync(Deadline)).Select(Flight).ToArray();
 
-        await Assert.That(sealer.Calls).IsEqualTo(1).Because("one seal covers every shape of the database at the commit");
-        await Assert.That(first.Reads).IsEqualTo(1);
-        await Assert.That(second.Reads).IsEqualTo(1);
-        foreach (var answer in answers)
+        try
         {
-            answer.Dispose();
+            await Assert.That(sealer.Calls).IsEqualTo(1).Because("one seal covers every shape of the database at the commit");
+            await Assert.That(first.Reads).IsEqualTo(1);
+            await Assert.That(second.Reads).IsEqualTo(1);
+        }
+        finally
+        {
+            foreach (var answer in answers)
+            {
+                answer.Dispose();
+            }
         }
     }
 
@@ -100,8 +112,8 @@ public sealed class ShapeLiveTests
         var flights = Flights(api);
         var database = await api.TenantOfAsync();
         var head = await HeadAsync(api, database);
-        var holdRead = new Latch();
-        var holdProbe = new Latch();
+        using var holdRead = new Latch();
+        using var holdProbe = new Latch();
         var first = new FakeShape(sealer, head, holdRead);
         var late = new FakeShape(sealer, head);
         var firstWaiting = ReadFlightAsync(flights, LiveRequest(database, "h-first"), first);
@@ -114,19 +126,41 @@ public sealed class ShapeLiveTests
         }, late.Read, CancellationToken.None).AsTask();
         await late.ProbeEntered.WaitAsync(Deadline);
 
-        _ = await api.PutAsync(DocumentApi.NewId(), new { text = new Faker().Lorem.Sentence() });
-        await first.ReadEntered.WaitAsync(Deadline);
-        await Assert.That(sealer.Calls).IsEqualTo(1);
-        _ = await api.PutAsync(DocumentApi.NewId(), new { text = new Faker().Lorem.Sentence() });
+        try
+        {
+            var written = await api.PutAsync(DocumentApi.NewId(), new { text = new Faker().Lorem.Sentence() });
+            await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
+            await first.ReadEntered.WaitAsync(Deadline);
+            await Assert.That(sealer.Calls).IsEqualTo(1);
+            written = await api.PutAsync(DocumentApi.NewId(), new { text = new Faker().Lorem.Sentence() });
+            await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
 
-        // The late flight captured the same old sequence, but its wake must seal the head that exists now.
-        holdProbe.Open();
-        using var lateAnswer = Flight(await lateWaiting.WaitAsync(Deadline));
-        await Assert.That(sealer.Calls).IsEqualTo(2);
-        await Assert.That(lateAnswer.Value.Head).IsEqualTo(await HeadAsync(api, database));
-        await Assert.That(lateAnswer.Value.UpToDate).IsTrue();
-        holdRead.Open();
-        using var firstAnswer = Flight(await firstWaiting.WaitAsync(Deadline));
+            // The late flight captured the same old sequence, but its wake must seal the head that exists now.
+            holdProbe.Open();
+            var lateAnswer = Flight(await lateWaiting.WaitAsync(Deadline));
+            await Assert.That(sealer.Calls).IsEqualTo(2);
+            await Assert.That(lateAnswer.Value.Head).IsEqualTo(await HeadAsync(api, database));
+            await Assert.That(lateAnswer.Value.UpToDate).IsTrue();
+        }
+        finally
+        {
+            holdProbe.Open();
+            holdRead.Open();
+            try
+            {
+                _ = await Task.WhenAll(firstWaiting, lateWaiting).WaitAsync(Deadline);
+            }
+            finally
+            {
+                foreach (var waiting in new[] { firstWaiting, lateWaiting })
+                {
+                    if (waiting.IsCompletedSuccessfully && await waiting is ShapeFlight<ShapePage> answer)
+                    {
+                        answer.Dispose();
+                    }
+                }
+            }
+        }
     }
 
     [Test]
@@ -136,21 +170,27 @@ public sealed class ShapeLiveTests
         await using var api = await StartAsync(new FakeTimeProvider(Start), sealer);
         var flights = Flights(api);
         var database = await api.TenantOfAsync();
-        var hold = new Latch();
+        using var hold = new Latch();
         var shape = new FakeShape(Sealer(api), StaleHead, hold);
 
         var first = ReadFlightAsync(flights, new ShapeFlightRequest(database, "h-plain", "0", false, 1), shape);
         await shape.ReadEntered.WaitAsync(Deadline);
         var second = ReadFlightAsync(flights, new ShapeFlightRequest(database, "h-plain", "0", false, 2), shape);
         hold.Open();
-        var answers = (await Task.WhenAll(first, second)).Select(Flight).ToArray();
+        var answers = (await Task.WhenAll(first, second).WaitAsync(Deadline)).Select(Flight).ToArray();
 
-        await Assert.That(sealer.Calls).IsEqualTo(0);
-        await Assert.That(shape.Probes).IsEqualTo(0);
-        await Assert.That(shape.Reads).IsEqualTo(1).Because("a cursor is part of the key only for live requests");
-        foreach (var answer in answers)
+        try
         {
-            answer.Dispose();
+            await Assert.That(sealer.Calls).IsEqualTo(0);
+            await Assert.That(shape.Probes).IsEqualTo(0);
+            await Assert.That(shape.Reads).IsEqualTo(1).Because("a cursor is part of the key only for live requests");
+        }
+        finally
+        {
+            foreach (var answer in answers)
+            {
+                answer.Dispose();
+            }
         }
     }
 
@@ -161,7 +201,7 @@ public sealed class ShapeLiveTests
         await using var api = await StartAsync(new FakeTimeProvider(Start), sealer);
         var flights = Flights(api);
         var database = await api.TenantOfAsync();
-        var hold = new Latch();
+        using var hold = new Latch();
         var moved = new FakeShape(Sealer(api), StaleHead, hold);
         var same = new FakeShape(Sealer(api), StaleHead, hold);
 
@@ -171,13 +211,19 @@ public sealed class ShapeLiveTests
         var sameFirst = ReadFlightAsync(flights, LiveRequest(database, "h-same", 3), same);
         var sameSecond = ReadFlightAsync(flights, LiveRequest(database, "h-same", 3), same);
         hold.Open();
-        var answers = (await Task.WhenAll(movedFirst, movedSecond, sameFirst, sameSecond)).Select(Flight).ToArray();
+        var answers = (await Task.WhenAll(movedFirst, movedSecond, sameFirst, sameSecond).WaitAsync(Deadline)).Select(Flight).ToArray();
 
-        await Assert.That(moved.Reads).IsEqualTo(2).Because("different cursors never share a flight");
-        await Assert.That(same.Reads).IsEqualTo(1).Because("the same cursor shares one flight");
-        foreach (var answer in answers)
+        try
         {
-            answer.Dispose();
+            await Assert.That(moved.Reads).IsEqualTo(2).Because("different cursors never share a flight");
+            await Assert.That(same.Reads).IsEqualTo(1).Because("the same cursor shares one flight");
+        }
+        finally
+        {
+            foreach (var answer in answers)
+            {
+                answer.Dispose();
+            }
         }
     }
 
@@ -235,15 +281,15 @@ public sealed class ShapeLiveTests
         await using var api = await StartAsync(new FakeTimeProvider(Start), new FakeSealer());
         var flights = Flights(api);
         var database = await api.TenantOfAsync();
-        var hold = new Latch();
+        using var hold = new Latch();
         var shape = new FakeShape(Sealer(api), StaleHead, hold);
 
         var running = Enumerable.Range(0, ShapeFlights<ShapePage>.MaxFlights)
             .Select(n => ReadFlightAsync(flights, LiveRequest(database, $"h-{n}"), shape))
             .ToArray();
-        var refused = await ReadFlightAsync(flights, LiveRequest(database, "h-overflow"), shape);
+        var refused = await ReadFlightAsync(flights, LiveRequest(database, "h-overflow"), shape).WaitAsync(Deadline);
         hold.Open();
-        foreach (var answer in await Task.WhenAll(running))
+        foreach (var answer in await Task.WhenAll(running).WaitAsync(Deadline))
         {
             Flight(answer).Dispose();
         }
@@ -257,15 +303,15 @@ public sealed class ShapeLiveTests
         await using var api = await StartAsync(new FakeTimeProvider(Start), new FakeSealer());
         var flights = Flights(api);
         var database = await api.TenantOfAsync();
-        var hold = new Latch();
+        using var hold = new Latch();
         var shape = new FakeShape(Sealer(api), StaleHead, hold);
 
         var joined = Enumerable.Range(0, ShapeFlights<ShapePage>.MaxRequesters)
             .Select(_ => ReadFlightAsync(flights, LiveRequest(database), shape))
             .ToArray();
-        var refused = await ReadFlightAsync(flights, LiveRequest(database), shape);
+        var refused = await ReadFlightAsync(flights, LiveRequest(database), shape).WaitAsync(Deadline);
         hold.Open();
-        foreach (var answer in await Task.WhenAll(joined))
+        foreach (var answer in await Task.WhenAll(joined).WaitAsync(Deadline))
         {
             Flight(answer).Dispose();
         }
@@ -281,7 +327,7 @@ public sealed class ShapeLiveTests
         var flights = Flights(api);
         var database = await api.TenantOfAsync();
         var before = await api.ReservedBytesAsync();
-        var hold = new Latch();
+        using var hold = new Latch();
         const long resultBytes = 1 << 20;
         var shape = new FakeShape(Sealer(api), StaleHead, hold) { ResultBytes = resultBytes };
 
@@ -317,7 +363,7 @@ public sealed class ShapeLiveTests
                 }
             }
 
-            var refused = await ReadFlightAsync(Flights(api), LiveRequest(database), shape);
+            var refused = await ReadFlightAsync(Flights(api), LiveRequest(database), shape).WaitAsync(Deadline);
             await Assert.That(refused is QuotaExceeded { Code: "shape_busy" }).IsTrue();
             await Assert.That(shape.Reads).IsEqualTo(0);
         }
@@ -339,7 +385,7 @@ public sealed class ShapeLiveTests
         await using var api = await StartAsync(new FakeTimeProvider(Start), new FakeSealer());
         var flights = Flights(api);
         var database = await api.TenantOfAsync();
-        var hold = new Latch();
+        using var hold = new Latch();
         var shape = new FakeShape(Sealer(api), StaleHead, hold);
         using var leaving = new CancellationTokenSource();
 
@@ -348,7 +394,7 @@ public sealed class ShapeLiveTests
         await shape.ReadEntered.WaitAsync(Deadline);
         leaving.Cancel();
 
-        await Assert.That(async () => await leaves).Throws<OperationCanceledException>();
+        await Assert.That(async () => await leaves.WaitAsync(Deadline)).Throws<OperationCanceledException>();
         await Assert.That(shape.Canceled.IsCompleted).IsFalse().Because("the flight runs on while another requester waits");
         hold.Open();
         var answer = Flight(await stays.WaitAsync(Deadline));
@@ -368,7 +414,7 @@ public sealed class ShapeLiveTests
         await shape.ReadEntered.WaitAsync(Deadline);
         leaving.Cancel();
 
-        await Assert.That(async () => await only).Throws<OperationCanceledException>();
+        await Assert.That(async () => await only.WaitAsync(Deadline)).Throws<OperationCanceledException>();
         await shape.Canceled.WaitAsync(Deadline);
     }
 
@@ -378,7 +424,7 @@ public sealed class ShapeLiveTests
         await using var api = await StartAsync(new FakeTimeProvider(Start), new FakeSealer());
         var flights = Flights(api);
         var database = await api.TenantOfAsync();
-        var hold = new Latch();
+        using var hold = new Latch();
         // Reads that ignore cancellation keep their flights running after every requester has left.
         var abandonedShape = new FakeShape(Sealer(api), StaleHead, hold, ignoreCancel: true);
         var others = new FakeShape(Sealer(api), StaleHead, hold, ignoreCancel: true);
@@ -387,17 +433,17 @@ public sealed class ShapeLiveTests
         var abandoned = ReadFlightAsync(flights, LiveRequest(database, "h-abandoned"), abandonedShape, leaving.Token);
         await abandonedShape.ReadEntered.WaitAsync(Deadline);
         leaving.Cancel();
-        await Assert.That(async () => await abandoned).Throws<OperationCanceledException>();
+        await Assert.That(async () => await abandoned.WaitAsync(Deadline)).Throws<OperationCanceledException>();
 
         var running = Enumerable.Range(1, ShapeFlights<ShapePage>.MaxFlights - 1)
             .Select(n => ReadFlightAsync(flights, LiveRequest(database, $"h-{n}"), others))
             .ToArray();
-        var refused = await ReadFlightAsync(flights, LiveRequest(database, "h-after"), others);
+        var refused = await ReadFlightAsync(flights, LiveRequest(database, "h-after"), others).WaitAsync(Deadline);
         await Assert.That(refused is QuotaExceeded { Code: "shape_busy" }).IsTrue()
             .Because("the abandoned flight still occupies one of the 32 running slots");
 
         hold.Open();
-        foreach (var answer in await Task.WhenAll(running))
+        foreach (var answer in await Task.WhenAll(running).WaitAsync(Deadline))
         {
             Flight(answer).Dispose();
         }
@@ -406,7 +452,7 @@ public sealed class ShapeLiveTests
     [Test]
     public async Task Application_stop_cancels_every_parked_flight()
     {
-        var api = await StartAsync(new FakeTimeProvider(Start), new FakeSealer());
+        await using var api = await StartAsync(new FakeTimeProvider(Start), new FakeSealer());
         var flights = Flights(api);
         var database = await api.TenantOfAsync();
         var head = await HeadAsync(api, database);
@@ -414,9 +460,9 @@ public sealed class ShapeLiveTests
 
         var parked = ReadFlightAsync(flights, LiveRequest(database), shape);
         await shape.ProbeEntered.WaitAsync(Deadline);
-        await api.DisposeAsync();
+        api.Server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
 
-        await Assert.That(async () => await parked).Throws<OperationCanceledException>();
+        await Assert.That(async () => await parked.WaitAsync(Deadline)).Throws<OperationCanceledException>();
         await Assert.That(shape.Reads).IsEqualTo(0);
     }
 
@@ -424,7 +470,7 @@ public sealed class ShapeLiveTests
     public async Task Application_stop_cancels_a_seal_that_is_still_running()
     {
         var sealer = new FakeSealer { Hold = new Latch() };
-        var api = await StartAsync(new FakeTimeProvider(Start), sealer);
+        await using var api = await StartAsync(new FakeTimeProvider(Start), sealer);
         var flights = Flights(api);
         var database = await api.TenantOfAsync();
         var head = await HeadAsync(api, database);
@@ -435,9 +481,9 @@ public sealed class ShapeLiveTests
         var written = await api.PutAsync(DocumentApi.NewId(), new { text = new Faker().Lorem.Sentence() });
         await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
         await sealer.Entered.WaitAsync(Deadline);
-        await api.DisposeAsync();
+        api.Server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
 
-        await Assert.That(async () => await parked).Throws<OperationCanceledException>();
+        await Assert.That(async () => await parked.WaitAsync(Deadline)).Throws<OperationCanceledException>();
         await sealer.Canceled.WaitAsync(Deadline);
         await Assert.That(shape.Reads).IsEqualTo(0).Because("the read never started once its seal was cancelled");
     }
@@ -451,7 +497,7 @@ public sealed class ShapeLiveTests
         var missing = database with { DatabaseId = DocumentApi.NewId() };
         var shape = new FakeShape(Sealer(api), StaleHead);
 
-        var refused = await ReadFlightAsync(flights, LiveRequest(missing), shape);
+        var refused = await ReadFlightAsync(flights, LiveRequest(missing), shape).WaitAsync(Deadline);
 
         await Assert.That(refused is NotFound { Code: "unknown_database" }).IsTrue();
         await Assert.That(shape.Reads).IsEqualTo(0);
@@ -518,13 +564,15 @@ public sealed class ShapeLiveTests
     }, "a live-tail test reading the persisted feed frontier", cancellationToken);
 
     /// <summary>A gate the test opens. Work waiting on it is released by the test, never by time.</summary>
-    private sealed class Latch
+    private sealed class Latch : IDisposable
     {
         private readonly TaskCompletionSource _opened = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task Opened => _opened.Task;
 
         public void Open() => _opened.TrySetResult();
+
+        public void Dispose() => Open();
     }
 
     /// <summary>The fake seal: counts calls, optionally holds, and returns a scripted refusal.</summary>
