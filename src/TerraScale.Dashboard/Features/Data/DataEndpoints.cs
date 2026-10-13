@@ -96,7 +96,9 @@ public static class DataEndpoints
                     if (action == "sql/check")
                     {
                         var diagnostics = SqlValidation.Diagnostics(form["sql"].ToString());
-                        return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, id, "sql", data, saved, collection, sql: form["sql"].ToString(), sqlChecked: true) : Results.Json(diagnostics);
+                        var invalid = diagnostics.Any(item => item.Severity == "error");
+                        return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, id, "sql", data, saved, collection,
+                            sql: form["sql"].ToString(), sqlChecked: !invalid, status: invalid ? 422 : 200) : Results.Json(diagnostics);
                     }
                     if (action is "sql" or "saved-queries")
                     {
@@ -182,7 +184,7 @@ public static class DataEndpoints
             else if (section == "sql")
             {
                 queries = await saved.ListAsync(context, id, http.RequestAborted);
-                if (sql.Length == 0) sql = queries.FirstOrDefault(query => query.Id == http.Request.Query["savedQueryId"])?.Sql ?? "SELECT * FROM " + collection + " LIMIT 20";
+                if (sql.Length == 0 && submittedForm is null) sql = queries.FirstOrDefault(query => query.Id == http.Request.Query["savedQueryId"])?.Sql ?? "SELECT * FROM " + collection + " LIMIT 20";
                 catalog = await data.CatalogAsync(context, id, collections, http.RequestAborted);
             }
             else if (section == "schema") schema = JsonSerializer.Serialize(await data.SchemaAsync(context, id, collection, http.RequestAborted), new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
