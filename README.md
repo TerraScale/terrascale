@@ -104,6 +104,41 @@ TerraBaseDocument? current = await database.GetDocumentAsync("users", userId, ca
 
 `DeleteAsync` deletes the database and its data; it throws `TerraBaseConflictException` (`database_replicated`) while replica regions exist.
 
+One-time imports follow TerraBase's import contract v1 revision 3 (monorepo `docs/terrabase/import.md` on
+`feat/postgres-turso-import-engine` at `567bfd33`; the engine is not merged or deployed, and nothing here is
+live-qualified). The user exports with their own tools
+(`pg_dump --format=plain`, or a rollback-journal SQLite/Turso file from `VACUUM INTO`) and uploads it: TerraBase never
+connects to the source or receives its credentials. Create a new, empty destination database for each import with
+`Project(projectId).CreateDatabaseAsync`, a fresh `import-<lowercase ULID>` name, no replicas and the same ts-auth
+project access token (a database created through `TerraBaseManagementClient` is reachable by a project token only once
+TerraBase has verified its project binding). Then drive the import through it, on a client pinned to the database's
+home region:
+
+```csharp
+TerraBaseManagedDatabase destination = await documents.Project(projectId).CreateDatabaseAsync(destinationName, cancellationToken: cancellationToken);
+TerraBaseDatabase import = regional.Database(projectId, destinationName); // a client with Region = destination.HomeRegion
+TerraBaseImportJob job = await import.CreateImportAsync(TerraBaseImportFormat.PostgresPlain, fileBytes, fileSha256Hex, cancellationToken: cancellationToken);
+var part = new byte[TerraBaseDatabase.MaxImportSourcePartBytes];
+while (job.Source.ReceivedBytes < job.Source.Bytes)
+{
+    var size = (int)Math.Min(part.Length, job.Source.Bytes - job.Source.ReceivedBytes);
+    file.Position = job.Source.ReceivedBytes;
+    await file.ReadExactlyAsync(part.AsMemory(0, size), cancellationToken);
+    job = await import.UploadImportSourceAsync(job.Source.ReceivedBytes, part.AsMemory(0, size), cancellationToken);
+}
+
+// Poll GetImportAsync until Ready (show job.Preview) or Rejected; start only the preview the user confirmed.
+job = await import.StartImportAsync(confirmedPreviewId, cancellationToken);
+```
+
+Poll `GetImportAsync` for progress, validation and errors; `UpdateImportAsync`, `CancelImportAsync` and
+`ResumeImportAsync` follow the contract's state machine. Every request is sent once and TerraBase takes no
+`Idempotency-Key`: replaying an identical create or an already received part returns the job unchanged, and
+`offset_mismatch` means "read the job and continue from `Source.ReceivedBytes`" (an upload idle for a day restarts at
+0). TerraBase keeps a staged source at most 7 days after the job failed, was cancelled or its preview was left alone,
+and meters upload bytes and imported documents; tell users before a real upload. Deleting the destination database
+discards the import and its staged source.
+
 `GetDocumentAsync` returns `null` for an absent document. `CreateDocumentAsync`
 posts a document and TerraBase generates a ULID. Lists and queries return
 pages with `NextCursor`. Patches take an RFC 7396 merge patch `JsonElement` or a

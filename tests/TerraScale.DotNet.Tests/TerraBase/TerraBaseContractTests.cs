@@ -75,6 +75,13 @@ public sealed class TerraBaseContractTests
         yield return ("documents", "deleteDocument", client => Db(client).DeleteDocumentAsync("users", "id"));
         yield return ("documents", "queryDocuments", client => Db(client).QueryAsync("users", new TerraBaseQuery()));
         yield return ("documents", "runTransaction", client => Db(client).TransactAsync([TerraBaseTransactionOperation.Delete("users", "id")]));
+        yield return ("documents", "createImport", client => Db(client).CreateImportAsync(TerraBaseImportFormat.Sqlite, 1, new string('0', 64)));
+        yield return ("documents", "getImport", client => Db(client).GetImportAsync());
+        yield return ("documents", "uploadImportSource", client => Db(client).UploadImportSourceAsync(0, new byte[] { 1 }));
+        yield return ("documents", "updateImport", client => Db(client).UpdateImportAsync(new TerraBaseImportOptions()));
+        yield return ("documents", "startImport", client => Db(client).StartImportAsync("preview"));
+        yield return ("documents", "cancelImport", client => Db(client).CancelImportAsync());
+        yield return ("documents", "resumeImport", client => Db(client).ResumeImportAsync());
 
         yield return ("project", "createDatabase", client => ProjectClient(client).CreateDatabaseAsync("app"));
         yield return ("project", "listDatabases", client => ProjectClient(client).ListDatabasesAsync());

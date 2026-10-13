@@ -53,6 +53,7 @@ namespace TerraScale.DotNet.TerraBase;
 [JsonSerializable(typeof(TerraBaseChange))]
 [JsonSerializable(typeof(TerraBaseChangeCursor))]
 [JsonSerializable(typeof(TerraBaseStreamError))]
+[JsonSerializable(typeof(TerraBaseImportJob))]
 [JsonSerializable(typeof(RequestBody))]
 internal sealed partial class TerraBaseJsonContext : JsonSerializerContext
 {
@@ -109,4 +110,14 @@ internal sealed record RequestBody
     public string? OrganizationId { get; init; }
 
     public int? Days { get; init; }
+
+    public TerraBaseImportFormat? Format { get; init; }
+
+    public long? SourceBytes { get; init; }
+
+    public string? SourceSha256 { get; init; }
+
+    public TerraBaseImportOptions? Options { get; init; }
+
+    public string? PreviewId { get; init; }
 }
