@@ -730,21 +730,21 @@ public sealed class PeerStreamTests
         var exit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         sjc.HeldRepairExit = exit;
         using var older = await RawPush.StartAsync(sjc, peer);
-        await older.RefillAsync(cluster.Database, 1);
-        await sjc.RepairWaits.Task.WaitAsync(Deadline);
-
-        var replacing = 0;
-        var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var both = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        sjc.Api.Server.Services.GetRequiredService<PeerStreamReceiver>().Replacing = origin =>
-        {
-            if (origin == ReplicaId.Of(1, 7, 0))
-            {
-                _ = Interlocked.Increment(ref replacing) == 1 ? first.TrySetResult() : both.TrySetResult();
-            }
-        };
         try
         {
+            await older.RefillAsync(cluster.Database, 1);
+            await sjc.RepairWaits.Task.WaitAsync(Deadline);
+            var replacing = 0;
+            var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var both = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            sjc.Api.Server.Services.GetRequiredService<PeerStreamReceiver>().Replacing = origin =>
+            {
+                if (origin == ReplicaId.Of(1, 7, 0))
+                {
+                    _ = Interlocked.Increment(ref replacing) == 1 ? first.TrySetResult() : both.TrySetResult();
+                }
+            };
+
             using var middle = await RawPush.OpenAsync(sjc, peer);
             await first.Task.WaitAsync(Deadline);
             using var latest = await RawPush.OpenAsync(sjc, peer);
