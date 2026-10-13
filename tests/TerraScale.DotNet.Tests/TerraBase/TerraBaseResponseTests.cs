@@ -317,6 +317,7 @@ public sealed class TerraBaseResponseIntegrationTests
         });
         using var http = new HttpClient(handler);
         using var canceled = new CancellationTokenSource();
+        var clock = new ResponseDeadlineClock();
         var parsed = false;
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         options.Converters.Add(new ProcessingConverter(() =>
@@ -324,8 +325,8 @@ public sealed class TerraBaseResponseIntegrationTests
             parsed = true;
             if (deadlineExpires)
             {
-                // Let the one-second request deadline elapse inside synchronous JSON processing.
-                Thread.Sleep(TimeSpan.FromSeconds(1.1));
+                // Fire the deadline inside parsing without relying on ThreadPool timer scheduling.
+                clock.Expire();
             }
             else
             {
@@ -338,7 +339,7 @@ public sealed class TerraBaseResponseIntegrationTests
             }
         }));
         var typeInfo = new TerraBaseJsonContext(options).TerraBaseCollection;
-        var connection = new TerraBaseConnection(http, Origin, null, "tb_test_key", "ApiKey", TimeSpan.FromSeconds(1), TerraBaseConnection.DefaultMaxResponseBytes);
+        var connection = new TerraBaseConnection(http, Origin, null, "tb_test_key", "ApiKey", TimeSpan.FromSeconds(1), TerraBaseConnection.DefaultMaxResponseBytes, timeProvider: clock);
         var call = () => connection.SendAsync(HttpMethod.Get, "/v1/projects/01JA0000000000000000000001/databases/cancellation/collections/items", null, typeInfo, null, canceled.Token);
         if (deadlineExpires)
         {
@@ -350,6 +351,30 @@ public sealed class TerraBaseResponseIntegrationTests
         }
 
         await Assert.That(parsed).IsTrue();
+        await Assert.That(clock.DueTime).IsEqualTo(TimeSpan.FromSeconds(1));
+    }
+
+    private sealed class ResponseDeadlineClock : TimeProvider
+    {
+        private ResponseDeadlineTimer? timer;
+        public TimeSpan DueTime { get; private set; }
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            DueTime = dueTime;
+            return timer = new ResponseDeadlineTimer(callback, state);
+        }
+
+        public void Expire() => (timer ?? throw new InvalidOperationException("The request deadline has not been created.")).Fire();
+
+        private sealed class ResponseDeadlineTimer(TimerCallback callback, object? state) : ITimer
+        {
+            private TimerCallback? pending = callback;
+            public void Fire() => Interlocked.Exchange(ref pending, null)?.Invoke(state);
+            public bool Change(TimeSpan dueTime, TimeSpan period) => false;
+            public void Dispose() => Interlocked.Exchange(ref pending, null);
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
     }
 
     private static TerraBaseTestHandler Answer(Func<HttpResponseMessage> response) => new((_, _) => Task.FromResult(response()));
