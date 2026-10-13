@@ -2,6 +2,9 @@
 # (`--target terrabase`), gru, then sjc, then fra: .github/workflows/ci.yml.
 app = "ts-terrabase"
 primary_region = "gru"
+# SIGTERM starts the 20-second application budget; retain ten seconds of margin before Fly's hard kill.
+kill_signal = "SIGTERM"
+kill_timeout = 30
 # 512 MB RAM; the 4 GB swap only absorbs spikes (it pages at a few MB/s).
 swap_size_mb = 4096
 
