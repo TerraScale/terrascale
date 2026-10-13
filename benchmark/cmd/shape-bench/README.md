@@ -41,7 +41,8 @@ the targets file at the end stops the host.
 ## Limits
 
 - Physical storage reads of the feed are not instrumented: the report says N/A. `inferred_min_doc_selects` is inferred
-  from `SqliteStorageTransaction.Feed.cs` (one document SELECT per received upsert per stream), not measured.
+  from `SqliteStorageTransaction.Feed.cs` (one document SELECT per received upsert of an in-window write per stream,
+  including redeliveries through grace), not measured. It excludes warmup writes and other storage work.
 - Two regions are required for database placement. All client traffic targets gru; sjc replicates in the same process.
   Both nodes use loopback: no WAN, Fly Proxy or TLS.
 - A step stops the run with an error when a measurement is invalid: a follower refused other than by `changes_busy`

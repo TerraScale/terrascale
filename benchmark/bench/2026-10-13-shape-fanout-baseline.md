@@ -38,7 +38,10 @@ writer, measurement and reporting path, without flags.
 
 Two local `BenchmarkClusterHost` regions (`gru,sjc`) share one process because database placement requires two
 serving regions. All client traffic targets gru, over HTTP/1.1 on loopback, with the existing test-only ts-auth stand-in
-and temporary storage. No Fly run, WAN, proxy or TLS is included. sjc replication remains active.
+and temporary storage. No Fly run, WAN, proxy or TLS is included; sjc is the local replica.
+This local test-binary baseline follows the B2 request to run locally with no Fly runs; serving-region `.internal` DNS
+discovery and Fly-secret credentials are outside this run. The explicit task scope overrides the repository's general
+Fly benchmark requirements.
 
 For each requested N = 1, 10, 100, 1000, the harness opens followers at 20/s, one at a time, to avoid the fixture's
 independent Hobby QoS admission limit. Only `changes_busy` counts as an expected rejection. After admission, a writer
@@ -50,7 +53,8 @@ Followers use `GET /v1/projects/{p}/databases/{d}/changes?cursor=now&collections
 write's send timestamp to receipt of its event, including the write request and storage path; it is not measured
 from commit acknowledgement. Deduplicated deliveries of in-window writes count through the 5 s grace. SSE body bytes
 count only bytes received during the 30 s window, excluding HTTP headers, admission/rejection traffic and grace bytes.
-Thus the final row has fewer in-window bytes even though all its deliveries arrived within grace.
+The final row has fewer in-window bytes despite full grace-inclusive delivery. Window cutoffs can explain this,
+but per-event byte arrival times were not recorded.
 
 CPU and RSS are sampled once per second from `/proc/1118268`, the combined host process: **both nodes**, replication,
 ts-auth stand-in and test runner. CPU % is mean cores busy × 100 (100% = one core); CPU seconds below are that sampled
@@ -77,7 +81,7 @@ is published per closed 5 s accounting window; the harness waits 6 s after each 
 | 100 | 18.991 | 1751.039 | 27.309085 | 91.030283 | 286.578125 |
 | 1000 | 55.167 | 2228.223 | 30.267173 | 100.890577 | 281.515625 |
 
-| requested N | physical feed storage reads | accounting reads delta (measured) | minimum document SELECTs (inferred) |
+| requested N | physical feed storage reads | accounting reads delta (measured) | minimum document SELECTs for in-window writes (inferred) |
 | --- | --- | --- | --- |
 | 1 | N/A — uninstrumented | 0 | 600 |
 | 10 | N/A — uninstrumented | 0 | 6000 |
@@ -89,8 +93,9 @@ machine and 1024 per machine. This single-database experiment hits the first lim
 machine limit**. N=1000 is a request count, not 1000 active readers. No scaling gain beyond 32 admitted readers is claimed.
 
 [SqliteStorageTransaction.Feed.cs](../../src/TerraBase/Engine/Sqlite/SqliteStorageTransaction.Feed.cs) executes a document
-SELECT for each returned upsert per stream. The inference counts received upsert events (including redeliveries,
-if any); it excludes feed-table pages, cursor/head/floor reads, other server work and actual disk I/O/cache behavior.
+SELECT for each returned upsert per stream. The inference counts received upsert events **of in-window writes** through delivery grace (including redeliveries,
+if any); it excludes the 100 warmup writes per follower, feed-table pages, cursor/head/floor reads, other server work
+and actual disk I/O/cache behavior. It is a lower bound for this write cohort, not a total for the entire step.
 It therefore cannot substitute for physical-read metrics. Byte fan-out is directly measured; linear document SELECT
 fan-out is source-derived.
 
