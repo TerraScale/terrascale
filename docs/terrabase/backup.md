@@ -236,12 +236,26 @@ three attempts (each attempt includes the SDK's own retries of transient errors)
 
 A completion answer alone does not count. Some S3-compatible services answer a failed completion with 200 and an error
 body (the AWS SDK in use turns that body into an error; a success answer that stored nothing would pass it), and an
-older object of the same length may already sit at the key. Each upload therefore starts with its own ULID as user
-metadata (`x-amz-meta-terrabase-upload`), which S3 copies to the completed object, and the upload counts only when a
-HEAD of the key then reports both that ULID and exactly the uploaded length. Missing or other evidence fails the upload,
-so the shipper never records an object the bucket does not hold. Tigris support for this evidence (user metadata kept
-through a multipart completion and returned by HEAD) is unverified until G1; if Tigris lacked it, large uploads would
-fail visibly, never succeed falsely.
+older object of the same length may already sit at the key. The upload counts only when a HEAD of the key then reports
+exactly the uploaded length and one of two proofs:
+
+- **Upload id.** Each upload starts with its own ULID as user metadata (`x-amz-meta-terrabase-upload`), which S3 copies
+  to the completed object.
+- **Multipart ETag.** S3's ETag of a multipart object: the MD5 of the binary MD5s its parts' uploads returned as ETags,
+  then `-` and the part count, computed from this upload's own part ETags. An older object of the same length but
+  another body has another ETag; one with the identical body (and part split) is the same data. Stores whose part
+  ETags are not MD5s give no such proof.
+
+Missing or other evidence fails the upload, so the shipper never records an object the bucket does not hold. The limit:
+a store that keeps no user metadata through a completion and has no S3-style ETags (the PitrLab emulator before it kept
+metadata was one) fails every multipart upload, so snapshots above 128 MiB never ship there. When a completion answered
+200 but its object is unproven, a snapshot key is this attempt's alone (it names the pin time, a generation and a
+position; the shipper stores each snapshot key once and pins a new snapshot under a new key to retry, and nothing else
+writes snapshot keys), so the object there is deleted (logged, `terrabase_backup_unproven_uploads_deleted_total`) rather
+than left as a whole unrecorded snapshot. Another key, such as a log segment's that a retry rewrites with the same bytes,
+keeps its object. Tigris support for either proof (user metadata kept through `CompleteMultipartUpload` and returned by
+HEAD; S3-style part and multipart ETags) is unverified until G1; if Tigris gave neither, large uploads would fail
+visibly, never succeed falsely.
 
 After a part's last attempt fails, a failed or unproven completion or a cancellation, TerraBase aborts the upload (best
 effort, with its own five-second deadline, logged when it fails) and the file's normal backoff applies. Every multipart
@@ -496,6 +510,8 @@ its SQL), a segment is a change log, and replay applies rows instead of pages.
   Also `terrabase_backup_uploaded_bytes_total{kind}`, `terrabase_backup_failures_total`, `terrabase_backup_holes_total`
   and `terrabase_backup_generations_total` (a rising count means snapshots too often), `terrabase_backup_drills_total{result}`
   and `terrabase_backup_stored_bytes` (bucket bytes of the files this member ships).
+  `terrabase_backup_unproven_uploads_deleted_total` counts snapshots whose multipart upload completed without proof and
+  were deleted ([Uploads](#uploads)); a rising count means the bucket keeps neither proof.
   Bucket snapshots: `terrabase_backup_bucket_snapshots_total{result}` (taken, deleted, failed) and
   `terrabase_backup_bucket_snapshot_seconds` (Unix time of the newest snapshot, on the member that takes them; 0 elsewhere).
 - `GET /v1/backup` also shows, per file, whether this member ships it.

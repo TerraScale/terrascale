@@ -3,9 +3,11 @@ using System.Collections.Concurrent;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
+using Amazon.Util;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
@@ -36,8 +38,9 @@ public sealed class FakeS3
     private readonly List<(string Version, DateTimeOffset At)> _snapshots = [];
     private readonly ConcurrentDictionary<string, Upload> _uploads = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<int, int> _partRequests = new();
-    // User metadata of completed multipart objects, valid only while the key still holds that exact content.
-    private readonly ConcurrentDictionary<(bool Customer, string Key), (byte[] Content, KeyValuePair<string, string>[] Metadata)> _uploadedMetadata = new();
+    // User metadata and ETag of completed multipart objects, attached to their exact content: replacing or deleting the object
+    // drops them with it, and they never keep a deleted body alive.
+    private readonly ConditionalWeakTable<byte[], UploadedObject> _uploadedMetadata = [];
     private int _startedUploads;
     private int _completedUploads;
     private int _abortedUploads;
@@ -129,6 +132,15 @@ public sealed class FakeS3
 
     /// <summary>Replaces the <c>Content-Length</c> an object HEAD reports for an existing key; null reports its stored length.</summary>
     public Func<string, long?>? HeadLengthOverride { get; set; }
+
+    /// <summary>Completed multipart objects keep no user metadata, like S3-compatible stores that drop it.</summary>
+    public bool DropUploadMetadata { get; set; }
+
+    /// <summary>
+    /// S3-style ETags: a part's is its MD5, and a completed multipart object's is the MD5 of its parts' binary MD5s, then
+    /// <c>-</c> and the part count. Otherwise every ETag is an opaque UUID, like stores whose ETags are not MD5s.
+    /// </summary>
+    public bool Md5ETags { get; set; }
 
     /// <summary>Part upload requests by part number, failed ones included.</summary>
     public IReadOnlyDictionary<int, int> PartRequests => _partRequests;
@@ -273,9 +285,24 @@ public sealed class FakeS3
         services.Replace(ServiceDescriptor.Singleton<IMasterKey>(provider => new CountingMasterKey(new MasterKey(provider.GetRequiredService<BackupSettings>().MasterKey), this)));
     }
 
+    // One exact allocation for a body of known length (ReadAsByteArrayAsync buffers it, then copies): parts are 128 MiB, and
+    // the suite's parallel tests share one process.
+    private static async Task<byte[]> ReadBodyAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength is not { } length)
+        {
+            return await content.ReadAsByteArrayAsync(cancellationToken);
+        }
+
+        var body = new byte[length];
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+        await stream.ReadExactlyAsync(body, cancellationToken);
+        return body;
+    }
+
     private async Task<HttpResponseMessage> RespondAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        var body = request.Content is null ? [] : await request.Content.ReadAsByteArrayAsync(cancellationToken);
+        var body = request.Content is null ? [] : await ReadBodyAsync(request.Content, cancellationToken);
         var uri = request.RequestUri!;
         if (uri.GetLeftPart(UriPartial.Authority) == CustomerEndpoint && request.Method == HttpMethod.Put
             && BeforeCustomerWrite is { } beforeWrite)
@@ -457,15 +484,14 @@ public sealed class FakeS3
             var head = new HttpResponseMessage(key.Length == 0 || objects.ContainsKey(key) ? HttpStatusCode.OK : HttpStatusCode.NotFound);
             if (objects.TryGetValue(key, out var headed))
             {
-                // Like S3, a HEAD of an object reports its length, and the user metadata it was uploaded with.
+                // Like S3, a HEAD of an object reports its length, its ETag, and the user metadata it was uploaded with.
                 head.Content = new ByteArrayContent([]);
                 head.Content.Headers.ContentLength = HeadLengthOverride?.Invoke(key) ?? headed.Length;
-                if (_uploadedMetadata.TryGetValue((customer, key), out var uploaded) && ReferenceEquals(uploaded.Content, headed))
+                var uploaded = _uploadedMetadata.TryGetValue(headed, out var entry);
+                head.Headers.ETag = new(uploaded ? entry!.ETag : ETag(headed));
+                foreach (var (name, value) in uploaded ? entry!.Metadata : [])
                 {
-                    foreach (var (name, value) in uploaded.Metadata)
-                    {
-                        head.Headers.Add(name, value);
-                    }
+                    head.Headers.Add(name, value);
                 }
             }
 
@@ -531,7 +557,7 @@ public sealed class FakeS3
             upload.Parts[number] = body;
             PartStored?.Invoke(key, number);
             var stored = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([]) };
-            stored.Headers.ETag = new(ETag(body));
+            stored.Headers.ETag = new(PartETag(body));
             return stored;
         }
 
@@ -558,7 +584,7 @@ public sealed class FakeS3
         var listed = XElement.Parse(Encoding.UTF8.GetString(body)).Elements().Where(item => item.Name.LocalName == "Part")
             .Select(item => (Number: int.Parse(Child(item, "PartNumber"), CultureInfo.InvariantCulture), ETag: Child(item, "ETag"))).ToList();
         if (listed.Count == 0 || listed.Where((item, index) => item.Number != index + 1
-            || !upload.Parts.TryGetValue(item.Number, out var part) || ETag(part) != item.ETag).Any())
+            || !upload.Parts.TryGetValue(item.Number, out var part) || PartETag(part) != item.ETag).Any())
         {
             return S3Error(HttpStatusCode.BadRequest, "InvalidPart");
         }
@@ -582,12 +608,17 @@ public sealed class FakeS3
             offset += part.Length;
         }
 
-        _uploadedMetadata[(customer, key)] = (content, upload.Metadata);
+        var etag = Md5ETags
+            ? $"\"{Convert.ToHexStringLower(CryptoUtilFactory.CryptoInstance.ComputeMD5Hash([.. parts.SelectMany(CryptoUtilFactory.CryptoInstance.ComputeMD5Hash)]))}-{parts.Count}\""
+            : ETag(content);
+        _uploadedMetadata.AddOrUpdate(content, new(DropUploadMetadata ? [] : upload.Metadata, etag));
         (customer ? _customerObjects : _objects)[key] = content;
         Interlocked.Increment(ref _completedUploads);
         return Xml(HttpStatusCode.OK, new XElement(S3 + "CompleteMultipartUploadResult",
-            new XElement(S3 + "Bucket", bucket), new XElement(S3 + "Key", key), new XElement(S3 + "ETag", ETag(content))));
+            new XElement(S3 + "Bucket", bucket), new XElement(S3 + "Key", key), new XElement(S3 + "ETag", etag)));
     }
+
+    private string PartETag(byte[] part) => Md5ETags ? $"\"{Convert.ToHexStringLower(CryptoUtilFactory.CryptoInstance.ComputeMD5Hash(part))}\"" : ETag(part);
 
     // ListMultipartUploads in S3's order (key, then upload id), resuming after key-marker and upload-id-marker. Like a store
     // that pages early, one upload per page, so a caller must follow the markers.
@@ -782,6 +813,8 @@ public sealed class FakeS3
             return inner.UnwrapAsync(wrapped, cancellationToken);
         }
     }
+
+    private sealed record UploadedObject(KeyValuePair<string, string>[] Metadata, string ETag);
 
     private sealed record Upload(bool Customer, string Key, DateTimeOffset Initiated, KeyValuePair<string, string>[] Metadata)
     {

@@ -1,13 +1,17 @@
+using System.Buffers;
 using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Net;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
+using Amazon.Util;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Win32.SafeHandles;
 using TerraBase.Configuration;
+using TerraBase.Hosting;
 using ZLogger;
 
 namespace TerraBase.Features.Backup;
@@ -78,16 +82,21 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
     private readonly TimeProvider _time;
     private readonly ILogger _logger;
 
-    public S3ObjectStore(BackupSettings settings, IHttpClientFactory http, TimeProvider time, ILogger<S3ObjectStore> logger)
-        : this(settings.Endpoint, settings.Region, settings.Bucket, settings.AccessKeyId, settings.SecretKey, http, HttpClientName, time, logger) { }
+    public S3ObjectStore(BackupSettings settings, IHttpClientFactory http, TimeProvider time, ILogger<S3ObjectStore> logger, IMeterFactory meters)
+        : this(settings.Endpoint, settings.Region, settings.Bucket, settings.AccessKeyId, settings.SecretKey, http, HttpClientName, time, logger,
+            meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.backup.unproven_uploads_deleted",
+                description: "Snapshots whose multipart upload completed without proof, deleted from the bucket."))
+    {
+    }
 
     public S3ObjectStore(Uri endpoint, string region, string bucket, string accessKeyId, string secretKey, IHttpClientFactory http, string clientName, TimeProvider time,
-        ILogger? logger = null)
+        ILogger? logger = null, Counter<long>? unprovenDeleted = null)
     {
         _bucket = bucket;
         _customer = clientName == CustomerHttpClientName;
         _time = time;
         _logger = logger ?? NullLogger.Instance;
+        UnprovenDeleted = unprovenDeleted;
         _s3 = new(new BasicAWSCredentials(accessKeyId, secretKey), new AmazonS3Config
         {
             ServiceURL = endpoint.ToString(),
@@ -106,6 +115,9 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
             }
         };
     }
+
+    /// <summary>The platform bucket's count of deleted unproven snapshots, shared with the customer buckets' stores.</summary>
+    internal Counter<long>? UnprovenDeleted { get; }
 
     public async Task PutAsync(string key, Stream content, CancellationToken cancellationToken)
     {
@@ -154,6 +166,7 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
             throw new InvalidDataException("backup bucket returned no multipart upload id");
         }
 
+        var completed = false;
         try
         {
             var etags = new PartETag[parts];
@@ -171,19 +184,69 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
                 UploadId = upload,
                 PartETags = [.. etags],
             }, cancellationToken)).ConfigureAwait(false);
+            completed = true;
             // S3-compatible services may answer a failed completion with 200 and an error body, and an older object of the same
-            // length may sit at the key: only this upload's id and whole length on the stored object prove the upload. Missing or
-            // other evidence fails it (and aborts the upload if it still exists).
+            // length may sit at the key. The stored object proves this upload by its whole length and either this upload's id in
+            // its metadata or S3's multipart ETag of this upload's own parts (stores need not keep metadata). Missing or other
+            // evidence fails it (and aborts the upload if it still exists).
             var stored = await SafeAsync(_s3.GetObjectMetadataAsync(_bucket, key, cancellationToken)).ConfigureAwait(false);
-            if (stored.ContentLength != length || stored.Metadata[UploadMetadata] != id)
+            if (stored.ContentLength != length
+                || stored.Metadata[UploadMetadata] != id && !(MultipartETag(etags) is { } etag && string.Equals(stored.ETag?.Trim('"'), etag, StringComparison.OrdinalIgnoreCase)))
             {
                 throw new IOException("backup object does not hold this multipart upload");
             }
         }
         catch
         {
+            if (completed)
+            {
+                await DeleteUnprovenAsync(key).ConfigureAwait(false);
+            }
+
             await AbortAsync(key, upload).ConfigureAwait(false);
             throw;
+        }
+    }
+
+    // S3's ETag of a multipart object: the MD5 of its parts' binary MD5s (their ETags), then "-" and the part count. Null when a
+    // part's ETag is not an MD5, as on stores with opaque ETags. MD5 is S3's protocol here, not a security check.
+    private static string? MultipartETag(PartETag[] parts)
+    {
+        var digests = new byte[parts.Length * 16];
+        for (var index = 0; index < parts.Length; index++)
+        {
+            if (parts[index].ETag?.Trim('"') is not { Length: 32 } hex
+                || Convert.FromHexString(hex, digests.AsSpan(index * 16, 16), out _, out _) != OperationStatus.Done)
+            {
+                return null;
+            }
+        }
+
+        return $"{Convert.ToHexStringLower(CryptoUtilFactory.CryptoInstance.ComputeMD5Hash(digests))}-{parts.Length}";
+    }
+
+    // An unproven completed object would stay as a whole, unrecorded copy. Only a snapshot key is this attempt's alone: it names
+    // the pin time, a generation and a position, ContinuousBackup stores each snapshot key once (a retry pins a new snapshot
+    // under a new key), and nothing else writes snapshot keys. So only there is the object deleted; another key, such as a log
+    // segment's that a retry rewrites, keeps its object.
+    private async Task DeleteUnprovenAsync(string key)
+    {
+        if (!key.AsSpan(0, key.LastIndexOf('/') + 1).EndsWith("/snapshots/", StringComparison.Ordinal) || BackupLayout.ParseSnapshot(key) is null)
+        {
+            _logger.ZLogWarning($"Backup object {key:@Key} completed but its upload was not proven; it is not a snapshot, so it stays");
+            return;
+        }
+
+        using var deadline = new CancellationTokenSource(AbortTimeout, _time);
+        try
+        {
+            await SafeAsync(_s3.DeleteObjectAsync(_bucket, key, deadline.Token)).ConfigureAwait(false);
+            UnprovenDeleted?.Add(1);
+            _logger.ZLogWarning($"Deleted snapshot {key:@Key}: its upload completed but the bucket did not prove it");
+        }
+        catch (Exception error)
+        {
+            _logger.ZLogWarning(error, $"Deleting the unproven snapshot {key:@Key} failed; it stays in the bucket");
         }
     }
 

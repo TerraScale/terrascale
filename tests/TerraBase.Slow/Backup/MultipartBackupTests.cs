@@ -193,11 +193,11 @@ public sealed class MultipartBackupTests
         await Assert.That(s3.PendingUploads).IsEqualTo(0);
     }
 
-    // A completion counts only when the key holds this upload's object, whole. An older object of exactly the same length at
-    // the key passes a length-only check (the control) yet fails the upload, whether the completion was answered with 200
-    // and an error body or with a success that stored nothing; so does this upload's own object reported at another length.
+    // A completion counts only when a HEAD of the key reports the whole length and proves this upload: by its id in the object's
+    // metadata, or by S3's multipart ETag of its own parts. One store, phase by phase, so the suite's parallel tests hold few
+    // 128 MiB bodies at once.
     [Test]
-    public async Task A_multipart_upload_counts_only_when_the_key_holds_this_upload_whole()
+    public async Task A_multipart_upload_counts_only_with_proof_that_the_key_holds_it_whole()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var faker = new Faker();
@@ -206,20 +206,18 @@ public sealed class MultipartBackupTests
         await using var provider = Routed(s3);
         using var store = PlatformStore(s3, provider);
         var key = $"v1/{Ulid.NewUlid()}/snapshots/object";
-        var old = new byte[PartSize + (1 << 20)];
-        Array.Fill(old, older);
-        s3.StoreObject(key, old);
-        string[] answers =
-        [
-            "<Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again.</Message></Error>",
-            $"<CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>{FakeS3.Bucket}</Bucket><Key>{key}</Key>"
-                + "<ETag>\"3858f62230ac3c915f300c664312c11f-2\"</ETag></CompleteMultipartUploadResult>",
-        ];
+        const long length = PartSize + (1 << 20);
+        s3.StoreObject(key, Filled(length, older));
+        var stored = $"<CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>{FakeS3.Bucket}</Bucket><Key>{key}</Key>"
+            + "</CompleteMultipartUploadResult>";
+
+        // 1. The control: an older object of exactly the same length sits at the key, so a length-only check accepts both a 200
+        // answer with an error body and a success answer that stored nothing. Neither proves this upload.
         var failures = new List<Exception>();
         var controlLengths = new List<long?>();
-        foreach (var answer in answers)
+        foreach (var answer in new[] { "<Error><Code>InternalError</Code><Message>We encountered an internal error.</Message></Error>", stored })
         {
-            s3.CompleteAnswer = _ => answer;
+            s3.CompleteAnswer = item => item == key ? answer : null;
             await using (var content = await FileAsync(newer, cancellationToken))
             {
                 failures.Add((await Assert.ThrowsAsync<Exception>(() => store.PutAsync(key, content, cancellationToken)))!);
@@ -228,7 +226,9 @@ public sealed class MultipartBackupTests
             controlLengths.Add(await HeadLengthAsync(s3, provider, key, cancellationToken));
         }
 
-        s3.CompleteAnswer = null;
+        var oldKept = s3.Objects[key].AsSpan().IndexOfAnyExcept(older) == -1;
+
+        // 2. This upload's own object, reported at another length.
         var truncated = $"v1/{Ulid.NewUlid()}/snapshots/truncated";
         s3.HeadLengthOverride = item => item == truncated ? PartSize : null;
         await using (var content = await FileAsync(newer, cancellationToken))
@@ -236,19 +236,77 @@ public sealed class MultipartBackupTests
             failures.Add((await Assert.ThrowsAsync<Exception>(() => store.PutAsync(truncated, content, cancellationToken)))!);
         }
 
-        // A length-only check would have accepted both answers: the key holds the old object at exactly the uploaded length.
-        await Assert.That(controlLengths).IsEquivalentTo(new long?[] { old.LongLength, old.LongLength });
-        // An error body may already fail in the SDK; a success answer passes the SDK and fails only on this upload's evidence.
+        await store.DeleteAsync(truncated, cancellationToken);
+
+        // 3. A store that keeps no metadata (like the PitrLab emulator) but S3's ETags: the multipart ETag proves an upload. An
+        // older object of the same length and another body has another ETag; one with the identical body is the same data.
+        (s3.DropUploadMetadata, s3.Md5ETags, s3.CompleteAnswer) = (true, true, null);
+        var proven = SnapshotKey();
+        await using (var content = await FileAsync(newer, cancellationToken))
+        {
+            await store.PutAsync(proven, content, cancellationToken);
+        }
+
+        var (provenLength, provenForeign) = (s3.Objects[proven].LongLength, s3.Objects[proven].AsSpan().IndexOfAnyExcept(newer));
+        await store.DeleteAsync(proven, cancellationToken);
+        await using (var content = await FileAsync(older, cancellationToken))
+        {
+            await store.PutAsync(key, content, cancellationToken);
+        }
+
+        s3.CompleteAnswer = item => item == key ? stored : null;
+        await using (var content = await FileAsync(newer, cancellationToken))
+        {
+            failures.Add((await Assert.ThrowsAsync<Exception>(() => store.PutAsync(key, content, cancellationToken)))!);
+        }
+
+        controlLengths.Add(await HeadLengthAsync(s3, provider, key, cancellationToken));
+        await using (var content = await FileAsync(older, cancellationToken))
+        {
+            await store.PutAsync(key, content, cancellationToken);
+        }
+
+        // 4. Neither proof (no metadata, opaque ETags): the upload fails closed. A snapshot key names this attempt alone, so its
+        // unproven object is deleted; another key (a log segment's, which a retry rewrites) keeps its object.
+        (s3.Md5ETags, s3.CompleteAnswer) = (false, null);
+        var snapshot = SnapshotKey();
+        var segment = BackupLayout.Segment($"v1/{Ulid.NewUlid()}/{Ulid.NewUlid()}/{Ulid.NewUlid()}", Ulid.NewUlid(), 0, DateTimeOffset.UnixEpoch);
+        foreach (var unproven in new[] { snapshot, segment })
+        {
+            await using var content = await FileAsync(newer, cancellationToken);
+            failures.Add((await Assert.ThrowsAsync<Exception>(() => store.PutAsync(unproven, content, cancellationToken)))!);
+        }
+
+        // A length-only check would have accepted every unproven answer: the key held an older object of the uploaded length.
+        await Assert.That(controlLengths).IsEquivalentTo(new long?[] { length, length, length });
+        // An error body already fails in the SDK; every other failure is this store's missing or other evidence.
         await Assert.That(failures[0] is Amazon.S3.AmazonS3Exception or IOException).IsTrue();
-        await Assert.That(failures[1]).IsTypeOf<IOException>();
-        await Assert.That(failures[2]).IsTypeOf<IOException>();
-        await Assert.That(ReferenceEquals(s3.Objects[key], old)).IsTrue();
-        // Both unanswered uploads were aborted; the truncated one completed before its HEAD, so its abort found nothing.
-        await Assert.That(s3.StartedUploads).IsEqualTo(3);
-        await Assert.That(s3.AbortedUploads).IsEqualTo(2);
-        await Assert.That(s3.CompletedUploads).IsEqualTo(1);
-        await Assert.That(s3.PendingUploads).IsEqualTo(0);
+        await Assert.That(failures.Skip(1).All(error => error is IOException)).IsTrue();
+        await Assert.That(failures).Count().IsEqualTo(6);
+        await Assert.That(oldKept).IsTrue();
+        await Assert.That(provenLength).IsEqualTo(length);
+        await Assert.That(provenForeign).IsEqualTo(-1);
+        await Assert.That(s3.Objects[key].AsSpan().IndexOfAnyExcept(older)).IsEqualTo(-1);
+        await Assert.That(s3.Objects.ContainsKey(snapshot)).IsFalse();
+        await Assert.That(s3.Objects.ContainsKey(segment)).IsTrue();
+        // Completed: the truncated object, the proven one, the older one at the key, and both unproven ones. Aborted: the three
+        // that never completed but the identical body's, which the store answered and left pending.
+        await Assert.That(s3.StartedUploads).IsEqualTo(9);
+        await Assert.That(s3.CompletedUploads).IsEqualTo(5);
+        await Assert.That(s3.AbortedUploads).IsEqualTo(3);
+        await Assert.That(s3.PendingUploads).IsEqualTo(1);
     }
+
+    // A body the caller does not keep: only the fake holds it, so it is freed when the key is replaced.
+    private static byte[] Filled(long length, byte fill)
+    {
+        var body = new byte[length];
+        Array.Fill(body, fill);
+        return body;
+    }
+
+    private static string SnapshotKey() =>
+        BackupLayout.Snapshot($"v1/{Ulid.NewUlid()}/{Ulid.NewUlid()}/{Ulid.NewUlid()}", DateTimeOffset.UnixEpoch.AddDays(20_000), Ulid.NewUlid(), 0);
 
     // The Content-Length a plain HEAD of the key reports, as a length-only completion check would read it.
     private static async Task<long?> HeadLengthAsync(FakeS3 s3, ServiceProvider provider, string key, CancellationToken cancellationToken)
