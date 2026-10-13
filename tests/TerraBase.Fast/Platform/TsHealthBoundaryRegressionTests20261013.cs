@@ -125,12 +125,10 @@ public sealed class TsHealthBoundaryRegressionTests20261013
 
     private sealed class ToggledCatalog : ICatalogReadiness
     {
-        private bool _ready;
-
         public bool Ready
         {
-            get => Volatile.Read(ref _ready);
-            set => Volatile.Write(ref _ready, value);
+            get => Volatile.Read(ref field);
+            set => Volatile.Write(ref field, value);
         }
 
         public bool IsReady => Ready;

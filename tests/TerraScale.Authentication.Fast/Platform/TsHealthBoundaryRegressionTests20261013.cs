@@ -133,8 +133,9 @@ public sealed class TsHealthBoundaryRegressionTests20261013
 
         await Assert.That(response.StatusCode).IsEqualTo(expected);
         await Assert.That(body.RootElement.GetProperty("status").GetString()).IsEqualTo(status);
+        string[] expectedKeys = region is null ? ["status", "version"] : ["status", "version", "region"];
         await Assert.That(body.RootElement.EnumerateObject().Select(property => property.Name).ToList())
-            .IsEquivalentTo(region is null ? ["status", "version"] : ["status", "version", "region"]);
+            .IsEquivalentTo(expectedKeys);
         if (region is not null)
         {
             await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo(region);
