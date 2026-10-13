@@ -1,0 +1,27 @@
+{
+  "pull_request": 212,
+  "head": "488549283af00c0b5d9268612e99397a746a00d3",
+  "merge": "745ea0d586782c33d1b6e2a21d8efc20b83f6d5c",
+  "run_id": 38458866836,
+  "job_id": 115509097792,
+  "runtime_configuration": "pid=304 cpus=8 server_gc=True latency_mode=Interactive total_available_memory_bytes=130456088576 tiered_pgo=configured:False ServerGC=True ConcurrentGC=True HeapCount=8 MaxHeapCount=0 GCDynamicAdaptationMode=0 GCHeapHardLimit=0 GCHeapHardLimitPercent=0 GCHeapHardLimitSOH=0 GCHeapHardLimitLOH=0 GCHeapHardLimitPOH=0 GCHeapHardLimitSOHPercent=0 GCHeapHardLimitLOHPercent=0 GCHeapHardLimitPOHPercent=0 GCConserveMem=0 NoAffinitize=False GCHeapAffinitizeMask=0 GCCpuGroup=False RetainVM=False",
+  "near_119_seconds": {
+    "elapsed_seconds": 119.015,
+    "gc_pause_seconds": 7.677,
+    "load1": 19.85
+  },
+  "final_sample": {
+    "elapsed_seconds": 156.446,
+    "gc_pause_seconds": 8.19,
+    "load1": 15.09
+  },
+  "counts": {
+    "terrabase_fast": 1567,
+    "native": 6,
+    "auth_fast": 664,
+    "endpoints": 88,
+    "logging": 46,
+    "failed": 0,
+    "skipped": 0
+  }
+}
