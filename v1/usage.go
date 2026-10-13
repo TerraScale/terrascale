@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/url"
 	"time"
 )
@@ -51,6 +52,18 @@ func (u *ManagementUser) Usage(ctx context.Context, org, project, database strin
 	if project == "" {
 		return nil, errors.New("terrabase: usage requires a project")
 	}
+	query, err := opts.query()
+	if err != nil {
+		return nil, err
+	}
+	path := projectPath(org, project, "usage")
+	if database != "" {
+		path = databasePath(org, project, database, "usage")
+	}
+	return get[Usage](ctx, u, path, query)
+}
+
+func (opts UsageOptions) query() (url.Values, error) {
 	if opts.Granularity != "" && opts.Granularity != "hour" && opts.Granularity != "day" {
 		return nil, errors.New("terrabase: usage granularity must be hour or day")
 	}
@@ -67,9 +80,47 @@ func (u *ManagementUser) Usage(ctx context.Context, org, project, database strin
 	if !opts.To.IsZero() {
 		query.Set("to", opts.To.UTC().Format(time.RFC3339Nano))
 	}
-	path := projectPath(org, project, "usage")
-	if database != "" {
-		path = databasePath(org, project, database, "usage")
+	return query, nil
+}
+
+// ProjectUsage reads project usage and its database items using a project access
+// token with databases:read. Counters and window aggregation come from the server.
+func (c *Client) ProjectUsage(ctx context.Context, project string, opts UsageOptions) (*Usage, error) {
+	if err := checkID(project); err != nil {
+		return nil, err
 	}
-	return get[Usage](ctx, u, path, query)
+	return c.usage(ctx, []string{"v1", "projects", project, "usage"}, opts)
+}
+
+// Usage reads this database's metered usage by name using databases:read.
+func (d *Database) Usage(ctx context.Context, opts UsageOptions) (*Usage, error) {
+	path, err := d.path("usage")
+	if err != nil {
+		return nil, err
+	}
+	return d.c.usage(ctx, path, opts)
+}
+
+func (c *Client) usage(ctx context.Context, path []string, opts UsageOptions) (*Usage, error) {
+	query, err := opts.query()
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Usage
+		StorageBytes *int64 `json:"storageBytes"`
+		Documents    *int64 `json:"documents"`
+		Reads        *int64 `json:"reads"`
+		Writes       *int64 `json:"writes"`
+	}
+	_, err = c.call(ctx, request{method: http.MethodGet, path: path, query: query, replaySafe: true}, nil, &out)
+	if err != nil {
+		return nil, err
+	}
+	if out.StorageBytes == nil || out.Documents == nil || out.Reads == nil || out.Writes == nil {
+		return nil, errors.New("terrabase: usage response requires storageBytes, documents, reads and writes counters")
+	}
+	out.Usage.StorageBytes, out.Usage.Documents = *out.StorageBytes, *out.Documents
+	out.Usage.Reads, out.Usage.Writes = *out.Reads, *out.Writes
+	return &out.Usage, nil
 }

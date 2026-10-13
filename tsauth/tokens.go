@@ -36,7 +36,6 @@ const (
 	ScopeDatabasesWrite = "databases:write"
 	ScopeDocumentsRead  = "documents:read"
 	ScopeDocumentsWrite = "documents:write"
-	ScopeShapesRead     = "shapes:read"
 )
 
 // APIKeyConfig configures an API key token source (contract section 6.1).

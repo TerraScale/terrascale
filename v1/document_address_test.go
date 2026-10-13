@@ -24,7 +24,7 @@ func TestDocumentIDsAtHTTPBoundary(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Error(err)
 			}
-			fmt.Fprintf(w, `{"offset":"1","results":[{"id":%q,"version":"opaque"}]}`, body.Ops[0].ID)
+			fmt.Fprintf(w, `{"offset":"1","durability":"local_durable","results":[{"id":%q,"version":"opaque"}]}`, body.Ops[0].ID)
 			return
 		}
 		query := r.URL.Query()
@@ -47,7 +47,7 @@ func TestDocumentIDsAtHTTPBoundary(t *testing.T) {
 			}
 		}
 		w.Header().Set("Location", r.URL.RequestURI())
-		fmt.Fprintf(w, `{"id":%q,"version":"opaque","offset":"1","state":"value","document":{"name":"Ana"}}`, id)
+		fmt.Fprintf(w, `{"id":%q,"version":"opaque","offset":"1","durability":"local_durable","state":"value","document":{"name":"Ana"}}`, id)
 	}))
 	t.Cleanup(peer.Close)
 	c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken, MaxRetries: -1, HTTPClient: peer.Client()})
@@ -55,7 +55,7 @@ func TestDocumentIDsAtHTTPBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	db := c.Database(testProject, "main")
-	for _, key := range []string{v1.NewID(), testProject} {
+	for _, key := range []string{v1.NewID(), testProject, " /a%2Fb?#+ ", "e\u0301", strings.Repeat("😀", 128)} {
 		doc, err := db.Collection("users").Get(t.Context(), key, v1.IfNoneMatch("previous"))
 		if err != nil || doc.ID != key {
 			t.Fatalf("get caller key %q: %v", key, err)
@@ -87,7 +87,7 @@ func TestTransactionGeneratedKeysAreULIDs(t *testing.T) {
 		t.Run(key, func(t *testing.T) {
 			peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				fmt.Fprintf(w, `{"offset":"1","results":[{"id":%q,"version":"opaque"}]}`, key)
+				fmt.Fprintf(w, `{"offset":"1","durability":"local_durable","results":[{"id":%q,"version":"opaque"}]}`, key)
 			}))
 			t.Cleanup(peer.Close)
 			c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken, MaxRetries: -1})

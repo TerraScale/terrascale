@@ -56,7 +56,7 @@ func TestOpaqueVersions(t *testing.T) {
 	for _, version := range []string{"tbv1-0123456789abcdef0123456789abcdef", "tbv2-AQID.Bf_x-9~"} {
 		t.Run(version[:4], func(t *testing.T) {
 			busy := scripted{status: http.StatusTooManyRequests, header: http.Header{"Retry-After": {"0"}}, body: `{"error":{"code":"rate_limited","message":"slow down"}}`}
-			written := `{"id":"` + id + `","version":"` + version + `","offset":"7","durability":"region_durable"}`
+			written := `{"id":"` + id + `","version":"` + version + `","offset":"7","durability":"region_durable","document":{"a":1}}`
 			users, db, tr := scriptedUsers(t,
 				// If-Match writes stay retryable.
 				busy, scripted{status: http.StatusOK, header: http.Header{"Etag": {`"` + version + `"`}}, body: written},

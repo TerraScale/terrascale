@@ -21,6 +21,8 @@ const (
 	ErrInvalidRequest       ErrorCode = "invalid_request"
 	ErrInvalidQuery         ErrorCode = "invalid_query"
 	ErrInvalidCursor        ErrorCode = "invalid_cursor"
+	ErrCursorExpired        ErrorCode = "cursor_expired" // 410: stream cursor is outside retention
+	ErrChangesBusy          ErrorCode = "changes_busy"   // 429: database stream capacity is exhausted
 	ErrInvalidPatch         ErrorCode = "invalid_patch"
 	ErrSortRequiresIndex    ErrorCode = "sort_requires_index"
 	ErrAssertRequiresIndex  ErrorCode = "assert_requires_index"
@@ -80,8 +82,10 @@ type APIError struct {
 	// ETag is the unquoted ETag of the response; a 404 for a deleted document
 	// carries the tombstone's version so it can be recreated with IfMatch.
 	ETag string
-	// Body is the raw error object or message.
+	// Body preserves the complete response body, including malformed errors.
 	Body json.RawMessage
+	// RequestID is the response's X-Request-ID, when supplied by the service.
+	RequestID string
 	// HomeRegion and Regions are the database's home and every region that
 	// holds it, as region ids (X-TerraBase-Database-Home and
 	// X-TerraBase-Database-Regions), on a 421 ErrWrongRegion.
@@ -89,7 +93,11 @@ type APIError struct {
 	Regions    []string
 
 	retryAfterSet bool
+	cause         error
 }
+
+// Unwrap preserves a failure encountered while reading the error response.
+func (e *APIError) Unwrap() error { return e.cause }
 
 func (e *APIError) Error() string {
 	var b strings.Builder
@@ -120,6 +128,8 @@ func (e *APIError) OpIndex() (int, bool) {
 func parseAPIError(status int, h http.Header, body []byte) *APIError {
 	e := &APIError{
 		Status:     status,
+		Body:       append(json.RawMessage(nil), body...),
+		RequestID:  h.Get("X-Request-ID"),
 		ETag:       unquoteETag(h.Get("ETag")),
 		HomeRegion: h.Get("X-TerraBase-Database-Home"),
 		Regions:    strings.FieldsFunc(h.Get("X-TerraBase-Database-Regions"), func(r rune) bool { return r == ',' || r == ' ' }),
@@ -136,11 +146,9 @@ func parseAPIError(status int, h http.Header, body []byte) *APIError {
 		}
 		if decodeExact(env.Error, &d) == nil {
 			e.Code, e.Message, e.Op = ErrorCode(d.Code), d.Message, d.Op
-			e.Body = env.Error
 		}
 	} else if decodeExact(body, &e.Message) == nil {
 		// Management answers some errors with a bare JSON string.
-		e.Body = body
 		switch status {
 		case http.StatusBadRequest:
 			e.Code = ErrInvalidRequest

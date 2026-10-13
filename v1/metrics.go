@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 )
 
@@ -22,13 +21,10 @@ const (
 
 // MetricsOptions filters a project's analytics or replication measurements.
 // Empty Range uses the server default; empty DatabaseID or Region selects all.
-// After is the previous response's Next. Limit is 1-100, or zero for the default.
 type MetricsOptions struct {
 	Range      MetricsRange
 	DatabaseID string
 	Region     string
-	After      string
-	Limit      int
 }
 
 // ReplicationStatus is TerraBase's assessment of one database replica.
@@ -41,89 +37,137 @@ const (
 	ReplicationStopped  ReplicationStatus = "stopped"
 )
 
-// ReplicationBytesMeter identifies usage metered separately from client traffic.
-const ReplicationBytesMeter = "replication_bytes"
+// BandwidthUsage separates sent and received observations.
+type BandwidthUsage struct {
+	BytesSent     int64 `json:"bytesSent"`
+	BytesReceived int64 `json:"bytesReceived"`
+}
 
-// ReplicationBandwidth measures a directed region pair within the response
-// period. Sent and received bytes are separate observations, not additive usage.
+// ReplicationBandwidth measures traffic by directed region pair and kind
+// (delta, anti_entropy or handoff).
 type ReplicationBandwidth struct {
 	SourceRegion      string `json:"sourceRegion"`
 	DestinationRegion string `json:"destinationRegion"`
+	Kind              string `json:"kind"`
 	BytesSent         int64  `json:"bytesSent"`
 	BytesReceived     int64  `json:"bytesReceived"`
-	Meter             string `json:"meter"`
 }
 
-// ReplicationResponse is a page of database x region measurements for [From, To).
+// ReplicationResponse contains observations in automatically bucketed UTC time.
 type ReplicationResponse struct {
 	ProjectID     string               `json:"projectId" ulid:"required"`
+	Range         MetricsRange         `json:"range"`
 	From          time.Time            `json:"from"`
 	To            time.Time            `json:"to"`
 	BucketSeconds int64                `json:"bucketSeconds"`
 	Items         []ReplicationMetrics `json:"items"`
-	Next          string               `json:"next"`
 }
 
-// ReplicationMetrics includes period counters and the latest replica state.
-// Nil observations mean unavailable; measured zero remains distinct.
+// ReplicationMetrics includes period counters and latest replica state.
+// Nil observations mean unavailable; measured false and zero remain distinct.
 type ReplicationMetrics struct {
-	DatabaseID        string                 `json:"databaseId" ulid:"required"`
-	Region            string                 `json:"region"`
-	ReplicatedOps     int64                  `json:"replicatedOps"`
-	Bandwidth         []ReplicationBandwidth `json:"bandwidth"`
-	LagMS             *float64               `json:"lagMs"`
-	Divergence        *int64                 `json:"divergence"`
-	ConvergenceTimeMS *float64               `json:"convergenceTimeMs"`
-	LastApplied       *time.Time             `json:"lastApplied"`
-	Status            ReplicationStatus      `json:"status"`
+	DatabaseID    string                 `json:"databaseId" ulid:"required"`
+	DatabaseName  string                 `json:"databaseName"`
+	Region        string                 `json:"region"`
+	Status        ReplicationStatus      `json:"status"`
+	ReplicatedOps int64                  `json:"replicatedOps"`
+	LagMS         *float64               `json:"lagMs"`
+	Divergence    *bool                  `json:"divergence"`
+	ConvergenceMS *float64               `json:"convergenceMs"`
+	LastApplied   *time.Time             `json:"lastApplied"`
+	Bandwidth     []ReplicationBandwidth `json:"bandwidth"`
+	Series        []ReplicationPoint     `json:"series"`
 }
 
-// AnalyticsResponse is a page of server-bucketed project measurements.
+// ReplicationPoint is a replication period bucket.
+type ReplicationPoint struct {
+	Start         time.Time              `json:"start"`
+	ReplicatedOps int64                  `json:"replicatedOps"`
+	Bandwidth     []ReplicationBandwidth `json:"bandwidth"`
+}
+
+// AnalyticsResponse groups series by database and observing region.
 type AnalyticsResponse struct {
-	ProjectID     string           `json:"projectId" ulid:"required"`
-	From          time.Time        `json:"from"`
-	To            time.Time        `json:"to"`
-	BucketSeconds int64            `json:"bucketSeconds"`
-	Series        []AnalyticsPoint `json:"series"`
-	Next          string           `json:"next"`
+	ProjectID     string              `json:"projectId" ulid:"required"`
+	Range         MetricsRange        `json:"range"`
+	From          time.Time           `json:"from"`
+	To            time.Time           `json:"to"`
+	BucketSeconds int64               `json:"bucketSeconds"`
+	Items         []DatabaseAnalytics `json:"items"`
 }
 
-// AnalyticsPoint is one bucket per database and region. Counters are int64 to
-// preserve exact byte and operation counts. Latencies are milliseconds; nil
-// means no samples. TerraBase owns the counters, percentiles and bucketing.
+// DatabaseAnalytics contains one database and region's oldest-first buckets.
+type DatabaseAnalytics struct {
+	DatabaseID   string           `json:"databaseId" ulid:"required"`
+	DatabaseName string           `json:"databaseName"`
+	Region       string           `json:"region"`
+	Series       []AnalyticsPoint `json:"series"`
+}
+
+// LatencyPercentiles contains approximate histogram percentiles in milliseconds.
+// Nil means there were no request samples.
+type LatencyPercentiles struct {
+	P50MS *float64 `json:"p50Ms"`
+	P95MS *float64 `json:"p95Ms"`
+	P99MS *float64 `json:"p99Ms"`
+}
+
+// AnalyticsPoint is one UTC bucket. StorageBytes is the sampled average, or
+// nil before sampling. Counters are best-effort observations, not billing.
 type AnalyticsPoint struct {
-	Start                time.Time              `json:"start"`
-	DatabaseID           string                 `json:"databaseId" ulid:"required"`
-	Region               string                 `json:"region"`
-	Requests             map[string]int64       `json:"requests"`
-	Ops                  map[string]int64       `json:"ops"`
-	Errors               int64                  `json:"errors"`
-	P50LatencyMS         *float64               `json:"p50LatencyMs"`
-	P95LatencyMS         *float64               `json:"p95LatencyMs"`
-	P99LatencyMS         *float64               `json:"p99LatencyMs"`
-	StorageBytes         int64                  `json:"storageBytes"`
-	ClientBytesSent      int64                  `json:"clientBytesSent"`
-	ClientBytesReceived  int64                  `json:"clientBytesReceived"`
-	ReplicationBandwidth []ReplicationBandwidth `json:"replicationBandwidth"`
+	Start                time.Time           `json:"start"`
+	Requests             map[string]int64    `json:"requests"`
+	Operations           map[string]int64    `json:"operations"`
+	Errors               int64               `json:"errors"`
+	Latency              *LatencyPercentiles `json:"latency"`
+	StorageBytes         *int64              `json:"storageBytes"`
+	ClientBandwidth      *BandwidthUsage     `json:"clientBandwidth"`
+	ReplicationBandwidth *BandwidthUsage     `json:"replicationBandwidth"`
 }
 
-// Analytics reads GET /projects/{project}/analytics with a ts-auth project
-// access token supplied to Management.WithToken. Next pages retain the filters.
+// Analytics reads GET /v1/projects/{project}/analytics with a ts-auth project
+// access token supplied to Management.WithToken.
 func (u *ManagementUser) Analytics(ctx context.Context, project string, opts MetricsOptions) (*AnalyticsResponse, error) {
 	var out AnalyticsResponse
 	if err := u.metrics(ctx, project, "analytics", opts, &out); err != nil {
 		return nil, err
 	}
+	if out.Items == nil || out.Range == "" || out.From.IsZero() || out.To.IsZero() || out.BucketSeconds <= 0 {
+		return nil, errors.New("terrabase: metrics response is missing its window or items")
+	}
+	for _, item := range out.Items {
+		if item.DatabaseName == "" || item.Region == "" || item.Series == nil {
+			return nil, errors.New("terrabase: analytics response requires database name, region and series")
+		}
+		for _, point := range item.Series {
+			if point.Start.IsZero() || point.Requests == nil || point.Operations == nil || point.Latency == nil || point.ClientBandwidth == nil || point.ReplicationBandwidth == nil {
+				return nil, errors.New("terrabase: analytics bucket is missing required observations")
+			}
+		}
+	}
 	return &out, nil
 }
 
-// Replication reads GET /projects/{project}/replication. Database IDs are plain
+// Replication reads GET /v1/projects/{project}/replication. Database IDs are plain
 // ULIDs; an empty filter selects all databases. Use Management.WithToken with
 // a ts-auth project access token. No usage is computed by the client.
 func (u *ManagementUser) Replication(ctx context.Context, project string, opts MetricsOptions) (*ReplicationResponse, error) {
 	var out ReplicationResponse
 	if err := u.metrics(ctx, project, "replication", opts, &out); err != nil {
 		return nil, err
+	}
+	if out.Items == nil || out.Range == "" || out.From.IsZero() || out.To.IsZero() || out.BucketSeconds <= 0 {
+		return nil, errors.New("terrabase: metrics response is missing its window or items")
+	}
+	for _, item := range out.Items {
+		if item.DatabaseName == "" || item.Region == "" || item.Status == "" || item.Bandwidth == nil || item.Series == nil {
+			return nil, errors.New("terrabase: replication response is missing replica observations")
+		}
+		for _, point := range item.Series {
+			if point.Start.IsZero() || point.Bandwidth == nil {
+				return nil, errors.New("terrabase: replication bucket requires start and bandwidth")
+			}
+		}
 	}
 	return &out, nil
 }
@@ -148,18 +192,12 @@ func (u *ManagementUser) metrics(ctx context.Context, project, endpoint string, 
 	default:
 		return errors.New("terrabase: metrics range must be 1h, 24h, 7d or 30d")
 	}
-	if opts.Limit < 0 || opts.Limit > 100 {
-		return errors.New("terrabase: metrics limit must be 1-100 or zero")
-	}
 	q := url.Values{}
-	for key, value := range map[string]string{"range": string(opts.Range), "database": opts.DatabaseID, "region": opts.Region, "after": opts.After} {
+	for key, value := range map[string]string{"range": string(opts.Range), "database": opts.DatabaseID, "region": opts.Region} {
 		if value != "" {
 			q.Set(key, value)
 		}
 	}
-	if opts.Limit != 0 {
-		q.Set("limit", strconv.Itoa(opts.Limit))
-	}
-	_, err := u.c.call(ctx, request{method: http.MethodGet, path: []string{"projects", project, endpoint}, query: q, header: u.header, token: u.token, replaySafe: true}, nil, out)
+	_, err := u.c.call(ctx, request{method: http.MethodGet, path: []string{"v1", "projects", project, endpoint}, query: q, header: u.header, token: u.token, replaySafe: true}, nil, out)
 	return err
 }

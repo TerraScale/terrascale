@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -57,7 +58,7 @@ func TestULIDHTTPBoundary(t *testing.T) {
 		}
 	}
 	before := calls.Load()
-	for _, id := range []string{"", "doc_01ARZ3NDEKTSV4RRFFQ69G5FAV", "01arz3ndektsv4rrffq69g5fav", "0190a6e4-7c3b-7d2e-8f00-0123456789ab", "81ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAI", "01ARZ3NDEKTSV4RRFFQ69G5FA", "legacy id"} {
+	for _, id := range []string{"", "a\nb", "a\u0085b", strings.Repeat("😀", 129), "\xff"} {
 		if _, err := users.Get(t.Context(), id); err == nil {
 			t.Fatal("accepted an invalid document ID")
 		}
@@ -99,8 +100,8 @@ func TestULIDMalformedHTTPResponses(t *testing.T) {
 	}
 	users := c.Database(testProject, "main").Collection("users")
 	body.Store(`{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","version":"opaque","state":"value","document":{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}}`)
-	if _, err := users.Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FAV"); err == nil {
-		t.Fatal("accepted a repeated payload ID")
+	if _, err := users.Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FAV"); err != nil {
+		t.Fatal("rejected application payload ID")
 	}
 	body.Store(`{"id":"01arz3ndektsv4rrffq69g5fav","version":"opaque","offset":"1","durability":"local_durable"}`)
 	if _, err := users.Create(t.Context(), map[string]any{"name": "Ana"}); err == nil {
@@ -108,51 +109,28 @@ func TestULIDMalformedHTTPResponses(t *testing.T) {
 	}
 }
 
-func TestULIDWritesRejectPayloadIDsBeforeHTTP(t *testing.T) {
-	var calls atomic.Int64
-	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	t.Cleanup(peer.Close)
-	c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken, MaxRetries: -1})
-	if err != nil {
+func TestPayloadIDsReachHTTP(t *testing.T) {
+	users, db, transport := scriptedUsers(t,
+		scripted{status: http.StatusOK, body: `{"id":"caller-key","version":"opaque","offset":"1","durability":"local_durable"}`},
+		scripted{status: http.StatusOK, body: `{"id":"caller-key","version":"opaque","offset":"1","durability":"local_durable","document":{"id":null}}`},
+		scripted{status: http.StatusOK, body: `{"offset":"1","durability":"local_durable","results":[{"id":"caller-key","version":"opaque","document":{"id":null}}]}`})
+	payload := json.RawMessage(`{"i\u0064":null}`)
+	if _, err := users.Put(t.Context(), "caller-key", payload); err != nil {
 		t.Fatal(err)
 	}
-	db := c.Database(testProject, "main")
-	users := db.Collection("users")
-	id := v1.NewID()
-	for _, payload := range []any{map[string]any{"id": id}, json.RawMessage(`{"id":null}`), json.RawMessage(`{"i\u0064":null}`)} {
-		if _, err := users.Create(t.Context(), payload); err == nil {
-			t.Fatal("accepted a repeated create ID")
-		}
-		if _, err := users.Put(t.Context(), id, payload); err == nil {
-			t.Fatal("accepted a repeated put ID")
-		}
-		if _, err := db.Tx().Put("users", id, payload).Commit(t.Context()); err == nil {
-			t.Fatal("accepted a repeated transaction ID")
-		}
-		if _, err := users.Patch(t.Context(), id, v1.MergePatch(payload)); err == nil {
-			t.Fatal("accepted a repeated merge-patch ID")
-		}
-		root := v1.Ops(v1.Set("", payload))
-		if _, err := users.Patch(t.Context(), id, root); err == nil {
-			t.Fatal("accepted a repeated root-set ID")
-		}
-		if _, err := db.Tx().Patch("users", id, root).Commit(t.Context()); err == nil {
-			t.Fatal("accepted a repeated transaction root-set ID")
-		}
+	if _, err := users.Patch(t.Context(), "caller-key", v1.Ops(v1.Set("/id", nil))); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := users.Patch(t.Context(), id, v1.Ops(v1.Set("/id", id))); err == nil {
-		t.Fatal("accepted an id patch")
+	if _, err := db.Tx().Patch("users", "caller-key", v1.MergePatch(payload)).Commit(t.Context()); err != nil {
+		t.Fatal(err)
 	}
-	if calls.Load() != 0 {
-		t.Fatal("invalid payloads reached HTTP")
+	if len(transport.requests) != 3 {
+		t.Fatal("application payload id did not reach HTTP")
 	}
 }
 
 func TestULIDRootSetAcceptsPayloadWithoutDuplicateID(t *testing.T) {
-	users, _, transport := scriptedUsers(t, scripted{status: http.StatusOK, body: `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","version":"opaque"}`})
+	users, _, transport := scriptedUsers(t, scripted{status: http.StatusOK, body: `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","version":"opaque","offset":"1","durability":"local_durable","document":{"profile":{"id":"application data"}}}`})
 	patch := v1.Ops(v1.Set("", map[string]any{"profile": map[string]any{"id": "application data"}}))
 	if _, err := users.Patch(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", patch); err != nil {
 		t.Fatal(err)

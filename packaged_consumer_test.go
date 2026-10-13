@@ -257,12 +257,20 @@ import (
 	"testing"
 
 	sdk "terrascale.tech/sdk"
+	"terrascale.tech/sdk/tsauth"
+	v1 "terrascale.tech/sdk/v1"
 )
+
+var _ v1.TokenSource = (*tsauth.TokenSource)(nil)
 
 func TestInteger(t *testing.T) {
 	const integer = int64(9007199254740993)
 	if err := sdk.ValidateSQL("SELECT value FROM orders WHERE value = :value", sdk.SQLParameters{"value": integer}); err != nil {
 		t.Fatal(err)
+	}
+	c, err := v1.New(v1.Config{Token: "fixture.jwt.signature"})
+	if err != nil || c.Database("01ARZ3NDEKTSV4RRFFQ69G5FA8", "main").Name() != "main" {
+		t.Fatalf("packaged v1 client: %v", err)
 	}
 }
 `
