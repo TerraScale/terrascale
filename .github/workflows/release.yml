@@ -67,6 +67,8 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - run: dotnet build TerraScale.DotNet.slnx --configuration Release -p:ContinuousIntegrationBuild=true -p:RestoreLockedMode=true
+      - run: dotnet format TerraScale.DotNet.slnx --verify-no-changes --no-restore
+      - run: dotnet run scripts/check-nuget-vulnerabilities.cs -- src/TerraScale.DotNet/TerraScale.DotNet.csproj tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj
       - run: dotnet run --project tests/TerraScale.DotNet.Tests --configuration Release --no-build --framework net10.0
       - run: dotnet run --project tests/TerraScale.DotNet.Tests --configuration Release --no-build --framework net11.0
       - id: pack
