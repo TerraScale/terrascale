@@ -253,5 +253,6 @@
   ],
   "rawLocalManifestSha256": "289d03abaebdb4ffe6721712cda650460c6b22489cd1ddeabaa62fa1e9ad48f4",
   "captureSourceTreeSha": "a0891b885f7cc8a0ab3d429f163d95dade6f603c",
-  "sanitizedPixelsInspectedUtc": "2026-10-13T03:14:57.600290+00:00"
+  "sanitizedPixelsInspectedUtc": "2026-10-13T03:14:57.600290+00:00",
+  "manifestScope": "Sanitization and publication preparation of the original 6d05a7ee captures only. The false follow-up sign-in/new-capture fields describe that completed sanitization phase. Later authorized synthetic local sign-in and final-head verification are recorded separately; they do not change the original image capture SHA or hashes."
 }

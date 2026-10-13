@@ -125,7 +125,11 @@ nice -n 19 dotnet run --configuration Release \
 
 The last pre-commit keyboard-input run completed in 47.723 seconds. Raw failure logs/TRX are under ignored `obj/keyboard-tests.log` and `obj/keyboard-results/`. The run at capture SHA `6d05a7ee374547ee8ceab938ee14eabc86d9a22f` completed in 26.950 seconds; its logs/TRX remain in `obj/head-tests.log` and `obj/head-results/`.
 
-The evidence-only follow-up runs the four HTTP cases: **2 passed, 2 expected defect failures, 0 skipped**, with every assertion intact. The `$1` HTML-success and outage-total regressions remain red; the `?` and cancellation/retry controls pass. Browser journeys perform sign-in and are **not rerun** under the latest no-browser-sign-in instruction. Their two passes and four expected failures remain pinned to the actual capture SHA. They are not counted as current-head results.
+The initial evidence-only follow-up at `00cf8dce8a1e20fe664235e18a345a98119fe844` ran four HTTP cases: **2 passed, 2 expected defect failures, 0 skipped**, with every assertion intact. The `$1` HTML-success and outage-total regressions remained red; the `?` and cancellation/retry controls passed.
+
+The coordinator subsequently clarified that the sign-in restriction applies to real/external accounts and permits the already-authorized synthetic local browser login. Final verification therefore runs **all ten focused HTTP/browser cases after the final documentation commit**, with results, exact tested HEAD and local capture hashes recorded separately in ignored `obj/evidence-followup-verification.json`. The older committed PNGs retain capture SHA `6d05a7ee374547ee8ceab938ee14eabc86d9a22f`; they are not relabeled as final-head captures.
+
+The local-only boundary was rechecked before this run: `NativeWorkspaceAsync` in `DatabaseSdkJourneyTests.cs:222` generates synthetic `@example.test` accounts; `Demo/DemoHost.cs:31` owns a test-only `TestAuth` and replaces authentication gateways; `Demo/DatabaseSdkScenario.cs:56` creates the local producer/application hosts and redirects database SDK requests to the local producer, rejecting unknown outbound origins. Every browser navigation uses `scenario.Origin`, a loopback URL. `web/assets/js/code-editor/monaco.js` bundles Monaco without runtime CDN fetches; application CSP restricts scripts, fonts and connection requests to self. No real/external account login, credential retrieval, permission change or denied browser action is required.
 
 Run the allowed focused follow-up from the checkout root:
 
@@ -137,7 +141,17 @@ nice -n 19 dotnet run --configuration Release \
   --results-directory "$PWD/docs/reviews/2026-10-13/database-data-access/obj/evidence-head-http-results"
 ```
 
-Final-head logs/TRX are local-only in `obj/evidence-head-http-tests.log` and `obj/evidence-head-http-results/`; exact HEAD, counts, lint outcome and source-integrity checks are recorded after commit in `obj/evidence-followup-verification.json`. No assertion or test file was modified to obtain this result.
+The initial HTTP-only follow-up logs/TRX remain local-only in `obj/evidence-head-http-tests.log` and `obj/evidence-head-http-results/`. Final full verification uses:
+
+```sh
+nice -n 19 dotnet run --configuration Release \
+  --project tests/TerraScale.Dashboard.E2E -- \
+  --treenode-filter '/*/TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.DatabaseDataAccess/*/*' \
+  --report-trx \
+  --results-directory "$PWD/docs/reviews/2026-10-13/database-data-access/obj/evidence-final-full-results"
+```
+
+Final full-run logs/TRX are local-only in `obj/evidence-final-full-tests.log` and `obj/evidence-final-full-results/`. Fresh final-head raw captures and their own manifest are kept separately in `obj/capture-final-head/evidence/`. Original raw images are preserved in `obj/capture-6d05a7ee/evidence/` and restored to their original local paths after the run, so the committed provenance hashes continue to resolve. Exact final HEAD, full counts, lint outcome and source-integrity checks are recorded after commit in `obj/evidence-followup-verification.json`. No assertion or test file is modified for this verification.
 
 **Not run:** full `test-fast`/`test-slow` aggregate suites, Alpha CI, live-production readiness, live ts-typescript account flow, production authentication/provider delivery, real database mutations and real payments. No new spend was authorized or incurred for services. These results qualify local test-host behavior only.
 
