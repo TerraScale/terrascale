@@ -7,7 +7,7 @@ use serde_json::value::RawValue;
 
 use super::client::{Client, Req, Resp};
 use super::errors::{Error, Result};
-use super::ids::{check_name, DocumentId, IdempotencyKey, Version};
+use super::ids::{check_document_id, check_name, DocumentId, IdempotencyKey, Version};
 use super::tx::{Tx, TxResult};
 use super::types::{u64_string, Durability, Number};
 
@@ -35,14 +35,17 @@ impl Database {
         &self.client
     }
 
-    /// Creates this database using the pinned C# producer's idempotent PUT.
-    /// This is the pre-TS-589 route, not the successor management POST.
+    /// Creates this database through the project management API.
+    /// Requires `databases:write`; a conflict is returned for an existing name.
     pub async fn create(&self) -> Result<ProjectDatabaseInfo> {
         check_name("database", &self.name)?;
         self.client
-            .send_project(Req::new(Method::PUT, vec!["v1", "databases", &self.name]))
+            .send_project(
+                Req::new(Method::POST, vec!["v1", "databases"])
+                    .json(&serde_json::json!({"name": self.name}))?,
+            )
             .await?
-            .decode()
+            .decode_status(&[StatusCode::CREATED])
     }
 
     /// A handle to the named collection. Performs no I/O.
@@ -63,7 +66,10 @@ impl Database {
             vec!["v1", "databases", &self.name, "collections"],
         )
         .json(&serde_json::json!({"name": name}))?;
-        self.client.send_project(req).await?.decode()
+        self.client
+            .send_project(req)
+            .await?
+            .decode_status(&[StatusCode::CREATED])
     }
 
     /// Lists C# TerraBase collections with the producer's opaque cursor.
@@ -88,7 +94,10 @@ impl Database {
         if let Some(cursor) = cursor {
             req.query.push(("cursor", cursor.to_owned()));
         }
-        self.client.send_project(req).await?.decode()
+        self.client
+            .send_project(req)
+            .await?
+            .decode_status(&[StatusCode::OK])
     }
 
     /// Atomically commits `tx` (`POST /v1/databases/{db}/transactions`).
@@ -106,36 +115,43 @@ impl Database {
         req.body = Some(body);
         req.idempotency_key = tx.key();
         let resp = self.client.send(req).await?;
-        let out: TxResult = resp.decode()?;
-        tx.check_results(&out.results)
-            .map_err(|message| Error::UndecodableAck {
-                status: resp.status.as_u16(),
-                message,
-            })?;
+        let out: TxResult = resp.decode_status(&[StatusCode::OK])?;
+        tx.check_results(&out.results, self.client.is_project())
+            .map_err(|message| resp.invalid(message))?;
         Ok(out)
     }
 }
 
-/// Database metadata from the pinned C# producer.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// Database metadata from the project management API.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectDatabaseInfo {
-    pub id: uuid::Uuid,
-    pub project_id: uuid::Uuid,
+    #[serde(deserialize_with = "super::ids::entity_id")]
+    pub id: String,
+    #[serde(deserialize_with = "super::ids::entity_id")]
+    pub project_id: String,
     pub name: String,
+    pub branched_from: Option<String>,
+    pub created_at: String,
+    pub region: String,
+    pub home_region: String,
+    pub replica_regions: Vec<String>,
 }
 
 /// A C# TerraBase collection; timestamps are exact decimal milliseconds.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectCollectionInfo {
+    #[serde(deserialize_with = "super::ids::entity_id")]
+    pub id: String,
     pub name: String,
     #[serde(with = "u64_string")]
     pub created_at: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectCollectionPage {
     pub items: Vec<ProjectCollectionInfo>,
+    #[serde(deserialize_with = "super::ids::cursor")]
     pub next_cursor: Option<String>,
 }
 
@@ -207,6 +223,7 @@ impl From<Precondition> for WriteOptions {
 /// The response to a document write.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct WriteResult {
+    #[serde(deserialize_with = "super::ids::document_id")]
     pub id: DocumentId,
     /// The new version; for a delete, the tombstone's version.
     pub version: Version,
@@ -304,6 +321,7 @@ fn none<T>() -> Option<T> {
 
 #[derive(Deserialize)]
 struct WireDocument<T> {
+    #[serde(deserialize_with = "super::ids::document_id")]
     id: DocumentId,
     version: Version,
     state: String,
@@ -486,7 +504,7 @@ impl Collection {
         self.client()
             .send_project(Req::new(Method::GET, self.segments(&[])))
             .await?
-            .decode()
+            .decode_status(&[StatusCode::OK])
     }
 
     /// Synchronously drops a C# TerraBase collection and its documents.
@@ -495,7 +513,7 @@ impl Collection {
         self.client()
             .send_project(Req::new(Method::DELETE, self.segments(&[])))
             .await?
-            .decode()
+            .decode_status(&[StatusCode::OK])
     }
 
     /// Lists C# TerraBase documents in id order using its opaque cursor.
@@ -517,7 +535,10 @@ impl Collection {
         if let Some(cursor) = cursor {
             req.query.push(("cursor", cursor.to_owned()));
         }
-        self.client().send_project(req).await?.decode()
+        self.client()
+            .send_project(req)
+            .await?
+            .decode_status(&[StatusCode::OK])
     }
 
     /// The collection name.
@@ -549,8 +570,8 @@ impl Collection {
 
     /// Reads a document. Absent, deleted and expired documents fail with
     /// [`Error::NotFound`] (with the tombstone version for deleted ones).
-    pub async fn get<T: DeserializeOwned>(&self, id: DocumentId) -> Result<Document<T>> {
-        self.get_inner(id, None)
+    pub async fn get<T: DeserializeOwned>(&self, id: impl ToString) -> Result<Document<T>> {
+        self.get_inner(id.to_string(), None)
             .await?
             .ok_or_else(|| Error::Decode("unexpected 304".into()))
     }
@@ -559,10 +580,10 @@ impl Collection {
     /// means `304 Not Modified`.
     pub async fn get_if_changed<T: DeserializeOwned>(
         &self,
-        id: DocumentId,
+        id: impl ToString,
         version: &Version,
     ) -> Result<Option<Document<T>>> {
-        self.get_inner(id, Some(version)).await
+        self.get_inner(id.to_string(), Some(version)).await
     }
 
     async fn get_inner<T: DeserializeOwned>(
@@ -571,21 +592,23 @@ impl Collection {
         if_none_match: Option<&Version>,
     ) -> Result<Option<Document<T>>> {
         self.check()?;
-        let id = id.to_string();
-        let mut req = Req::new(Method::GET, self.segments(&["documents", &id]));
+        check_document_id(&id)?;
+        let mut req = self.point_request(Method::GET, &id);
         if let Some(v) = if_none_match {
             req.headers.push(("If-None-Match", v.quoted()));
         }
         let resp = self.client().send(req).await?;
+        resp.check_status(if if_none_match.is_some() {
+            &[StatusCode::OK, StatusCode::NOT_MODIFIED]
+        } else {
+            &[StatusCode::OK]
+        })?;
         if resp.status == StatusCode::NOT_MODIFIED {
             return Ok(None);
         }
         let doc: Document<T> = resp.decode()?;
-        if doc.id.to_string() != id {
-            return Err(Error::Decode(format!(
-                "response is for document {}, not {id}",
-                doc.id
-            )));
+        if doc.id != id {
+            return Err(resp.invalid(format!("response is for document {}, not {id}", doc.id)));
         }
         Ok(Some(doc))
     }
@@ -593,21 +616,26 @@ impl Collection {
     /// Writes the complete document (`PUT`). `created` reports a `201`.
     pub async fn put<T: Serialize + ?Sized>(
         &self,
-        id: DocumentId,
+        id: impl ToString,
         doc: &T,
         opts: WriteOptions,
     ) -> Result<WriteResult> {
         self.check()?;
         let body = encode_object(doc)?;
         let id = id.to_string();
-        let mut req = Req::new(Method::PUT, self.segments(&["documents", &id]));
+        check_document_id(&id)?;
+        let mut req = self.point_request(Method::PUT, &id);
         req.body = Some(body.get().as_bytes().to_vec());
         req.headers = precondition_headers(opts.precondition.as_ref());
         req.idempotency_key = opts.idempotency_key.as_ref();
-        write_result(self.client().send(req).await?, Some(&id))
+        write_result(
+            self.client().send(req).await?,
+            Some(&id),
+            &[StatusCode::OK, StatusCode::CREATED],
+        )
     }
 
-    /// Creates a document under a server-generated UUIDv7 (`POST`).
+    /// Creates a document under a server-generated ID (`POST`, ULID on project clients).
     /// Preconditions are rejected.
     pub async fn create<T: Serialize + ?Sized>(
         &self,
@@ -622,13 +650,13 @@ impl Collection {
         let mut req = Req::new(Method::POST, self.segments(&["documents"]));
         req.body = Some(body.get().as_bytes().to_vec());
         req.idempotency_key = opts.idempotency_key.as_ref();
-        write_result(self.client().send(req).await?, None)
+        write_result(self.client().send(req).await?, None, &[StatusCode::CREATED])
     }
 
     /// Patches an existing document (`PATCH`). Only `IfMatch` is accepted.
     pub async fn patch(
         &self,
-        id: DocumentId,
+        id: impl ToString,
         patch: &Patch,
         opts: WriteOptions,
     ) -> Result<WriteResult> {
@@ -640,16 +668,17 @@ impl Collection {
             ));
         }
         let id = id.to_string();
-        let mut req = Req::new(Method::PATCH, self.segments(&["documents", &id]));
+        check_document_id(&id)?;
+        let mut req = self.point_request(Method::PATCH, &id);
         req.body = Some(patch.body()?);
         req.content_type = Some(patch.content_type());
         req.headers = precondition_headers(opts.precondition.as_ref());
         req.idempotency_key = opts.idempotency_key.as_ref();
-        write_result(self.client().send(req).await?, Some(&id))
+        write_result(self.client().send(req).await?, Some(&id), &[StatusCode::OK])
     }
 
     /// Deletes (tombstones) a document. Only `IfMatch` is accepted.
-    pub async fn delete(&self, id: DocumentId, opts: WriteOptions) -> Result<WriteResult> {
+    pub async fn delete(&self, id: impl ToString, opts: WriteOptions) -> Result<WriteResult> {
         self.check()?;
         if opts.precondition == Some(Precondition::IfNoneMatchAny) {
             return Err(Error::InvalidInput(
@@ -657,27 +686,47 @@ impl Collection {
             ));
         }
         let id = id.to_string();
-        let mut req = Req::new(Method::DELETE, self.segments(&["documents", &id]));
+        check_document_id(&id)?;
+        let mut req = self.point_request(Method::DELETE, &id);
         req.headers = precondition_headers(opts.precondition.as_ref());
         req.idempotency_key = opts.idempotency_key.as_ref();
-        write_result(self.client().send(req).await?, Some(&id))
+        write_result(self.client().send(req).await?, Some(&id), &[StatusCode::OK])
     }
 
     pub(crate) fn query_segments(&self) -> Vec<&str> {
         self.segments(&["query"])
     }
+
+    fn point_request<'a>(&'a self, method: Method, id: &'a str) -> Req<'a> {
+        if self.client().is_project() {
+            let mut req = Req::new(method, self.segments(&["documents", "by-key"]));
+            req.query.push(("id", id.to_owned()));
+            req
+        } else {
+            Req::new(method, self.segments(&["documents", id]))
+        }
+    }
 }
 
-fn write_result(resp: Resp, expected_id: Option<&str>) -> Result<WriteResult> {
-    let mut out: WriteResult = resp.decode()?;
-    if expected_id.is_some_and(|id| out.id.to_string() != id) {
-        return Err(Error::UndecodableAck {
-            status: resp.status.as_u16(),
-            message: format!(
-                "acknowledgement is for document {}, not the one written",
-                out.id
-            ),
-        });
+fn write_result(
+    resp: Resp,
+    expected_id: Option<&str>,
+    allowed: &[StatusCode],
+) -> Result<WriteResult> {
+    let mut out: WriteResult = resp.decode_status(allowed)?;
+    if resp.project
+        && expected_id.is_none()
+        && (resp.status != StatusCode::CREATED || !super::ids::valid_entity_id(&out.id))
+    {
+        return Err(resp.invalid(
+            "generated creation requires HTTP 201 and a canonical uppercase ULID".into(),
+        ));
+    }
+    if expected_id.is_some_and(|id| out.id != id) {
+        return Err(resp.invalid(format!(
+            "acknowledgement is for document {}, not the one written",
+            out.id
+        )));
     }
     out.created = resp.status == StatusCode::CREATED;
     out.location = resp.header("Location").map(str::to_owned);

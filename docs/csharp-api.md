@@ -1,71 +1,73 @@
 # C# TerraBase client
 
-The C# document contract is qualified against TerraBase commit
-`263598b47ffc79398db394550e3c074acf4fc57d`. Its Documents API v1 uses
-`/v1/projects/{project}/databases/{database}` with the existing Rust document,
-patch, query, transaction, version and exact-number codecs.
+The source compatibility target is TerraScale/terrascale
+`e30ffdc287530551b161b0130220be53d3c0475e`. See the
+[compatibility matrix and evidence](compatibility-20261013.md) for qualification limits.
 
 ```rust,no_run
 use terrascale::v1::{Client, WriteOptions};
-# async fn example(project: uuid::Uuid, access_token: &str) -> terrascale::v1::Result<()> {
+# async fn example(project: &str, access_token: &str) -> terrascale::v1::Result<()> {
+// project is a canonical uppercase ULID from ts-auth.
 let client = Client::for_project(project, access_token).build()?;
 let database = client.database("orders");
+database.create().await?; // POST, requires databases:write
 database.create_collection("items").await?;
 let items = database.collection("items");
-let id = uuid::Uuid::new_v4();
-let written = items.put(id, &serde_json::json!({"quantity": 1}),
+let key = "customer/a+b";
+let written = items.put(key, &serde_json::json!({"quantity": 1}),
     WriteOptions::new().if_none_match_any()).await?;
-let unchanged = items.get_if_changed::<serde_json::Value>(id, &written.version).await?;
-assert!(unchanged.is_none());
+assert!(items.get_if_changed::<serde_json::Value>(key, &written.version).await?.is_none());
+let result = database.run_sql::<serde_json::Value>("SELECT * FROM items LIMIT 10").await?;
+# let _ = result;
 # Ok(())
 # }
 ```
 
-Pass a project UUID and an already exchanged ts-auth access token. Obtain
-identity and credentials from the authentication SDK: TerraBase does not own
-users, organizations, projects, billing or dashboard sign-in. The pinned
-producer still authenticates data requests with legacy `tb_` keys. The real
-binary test uses that revision's loopback bootstrap API and legacy data
-credential; this is not evidence that its successor JWT-only API has shipped.
+Project IDs must be canonical 26-character uppercase ULIDs. Point document operations use
+`GET/PUT/PATCH/DELETE /v1/projects/{project}/databases/{name}/collections/{name}/documents/by-key?id=…`.
+Keys are raw strings of 1–256 UTF-16 code units without control characters. The SDK query-encodes
+them once, preserving slashes, percent signs, plus signs and distinct Unicode sequences.
+`DocumentId` and response IDs are strings. Caller UUIDs remain valid raw document keys;
+`uuidv5_for` can generate a stable key before the first request. Generated creates return ULIDs.
+`Tx::create` accepts `Option<String>` and `OpResult::id()` borrows `Option<&str>`.
 
-Normal first-party routing automatically discovers a verified eligible region;
-no serving-region activation or manual region pin is a setup step. Existing
-static endpoint/region-pin paths are confined to reviewed isolated tests and
-producer qualification and remain inventoried for implementation removal.
-Customer project scope and bearer authorization remain mandatory. HTTPS is
-required; any loopback HTTP exception belongs only to isolated tests.
-Redirects are never followed and project traffic bypasses environment proxies.
+The bearer credential is an already exchanged ts-auth project access token. The SDK does not
+mint credentials or grant scopes. The server validates issuer, exact audience, signed token
+type, lifetime, canonical subject, project and database restrictions, and exact operation scopes.
+Wrong project/database is 404; invalid credentials are 401; missing scope is 403.
+Database creation uses `POST /v1/projects/{project}/databases` with `{"name":…}` and
+`databases:write`. Collection/document reads need `documents:read`; their writes and
+transactions need `documents:write`; SQL needs `databases:read`.
 
-Default routing consumes Atlas's merged discovery v1 contract, introduced in
-`ts-atlas` commit `59ee7cc`: anonymous `/v1/resolve?project=…&database=…` and
-`/v1/keys`. ES256 verification binds issuer, project, database, region, API
-origin and expiry. A session lasts at most 600 seconds; caching checks wall
-and monotonic time. Expiry, `421` and redirects trigger `fresh=1`. A routing
-correction permits one immediate retry of a read or read-only query, even
-with general retries disabled. Writes return their original failure without
-replay. Successful pinned responses must report the expected
-`X-TerraBase-Region`; a mismatched mutation acknowledgement is uncertain.
-Discovery never receives the TerraBase bearer token. For local resolver
-tests, `.atlas_base_url(loopback_origin)` overrides Atlas.
+The audited implementation still supports `If-Match`, `If-None-Match` and transaction
+preconditions. These are retained because the current server implements them. It rejects
+`Idempotency-Key`; the SDK rejects keyed project mutations before dispatch. A caller may
+explicitly repeat a PUT with the same key and bytes, but it is a new commit, not a deduplicated
+receipt; concurrent intervening changes can be overwritten. Mutations do not automatically
+replay after transport or 503 failures. The existing `429 rate_limited` retry requires that
+exact code; no permission is inferred from status alone.
 
-Collection operations are `Database::create_collection`, `list_collections`,
-`Collection::get_collection`, and synchronous `drop_collection`. Document
-`list` takes a limit and opaque cursor. `Database::create` uses the pinned
-producer's idempotent `PUT`; the future TS-589 management `POST` is not
-qualified here. Database provisioning belongs to TerraBase; project creation
-belongs to ts-auth. The legacy `/v1/dashboard` control client is unavailable
-on project clients.
+Project errors preserve actual HTTP status, exact response bytes and any `X-Request-ID` in
+`Error::Response`. Use `status()`, `code()`, `op()`, `is_not_found()`, `is_uncertain()`,
+`raw_body()` and `request_id()`, or inspect the boxed typed `error`/standard error source.
+Malformed successes and mismatched acknowledgements retain diagnostics; failed mutation
+acknowledgements are uncertain. Oversized bodies retain only the bounded prefix.
+The server currently emits `{"error":{…}}`. RFC 9457 decoding is defensive test coverage;
+server problem responses and request-ID generation remain unqualified dependencies.
 
-C# TerraBase rejects `Idempotency-Key`; project clients reject keyed writes
-and transactions before dispatch. Transport/server failures and malformed
-successful write acknowledgements retain `Error::is_uncertain()`. Reconcile
-an uncertain mutation through reads and preconditions. Unsupported server
-features (unique constraints, TTL, query `lower`/`explain`) remain server
-errors; the SDK does not emulate them or widen their guarantees.
+Lists and queries preserve opaque cursors; empty intermediate pages do not mean completion.
+The page iterator stops at a null cursor and rejects repeated or missing/empty cursors.
+HTTP SQL returns bounded rows and a truncation flag; it has no parameters or cursors.
+Use `Box<RawValue>` to preserve exact document numbers, including SQL values.
 
-Run `nice -n 19 python3 scripts/terrabase/run.py` for the real C# binary suite.
-The runner checks the pinned release hash, creates temporary TLS and storage,
-provisions only through HTTP, requires the integration test to execute, and
-cleans up its process and storage. Ordinary `cargo test` marks this test
-ignored; CI explicitly runs the runner as a required step. Fast codec and
-Atlas signature tests also run under `cargo test --locked --all-features`.
+Atlas discovery is anonymous; TerraBase bearer credentials never reach it. ES256 verification
+still binds issuer, exact project string, database, region, API origin and expiry. Sessions last
+at most 600 seconds and use wall and monotonic clocks. Expiry, 421 and redirects trigger refresh;
+reads may retry once, while writes retain their original failure. Static endpoint/region overrides
+are limited to isolated tests and producer qualification. Live ULID Atlas discovery has not been qualified.
+
+The implemented `/changes` SSE route has no Rust SDK consumer. Native subscriptions and the
+optional PostgreSQL consumer target older protocols. The existing real-binary runner remains
+pinned to `263598b47ffc79398db394550e3c074acf4fc57d` and cannot qualify this current contract;
+it needs a current release artifact and an authorized JWT fixture. No test is skipped or weakened
+to conceal that gap.

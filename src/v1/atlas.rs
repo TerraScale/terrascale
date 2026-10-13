@@ -9,7 +9,6 @@ use reqwest::Url;
 use ring::signature::{UnparsedPublicKey, ECDSA_P256_SHA256_FIXED};
 use serde::{de::DeserializeOwned, Deserialize};
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use super::{is_valid_name, Error, Result};
 
@@ -18,7 +17,7 @@ const MAX_SCOPES: usize = 128;
 const TIMEOUT: Duration = Duration::from_secs(3);
 const KEY_TTL: Duration = Duration::from_secs(300);
 
-type Scope = (Uuid, Option<String>);
+type Scope = (String, Option<String>);
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedEndpoint {
@@ -75,7 +74,7 @@ impl AtlasResolver {
 
     pub(crate) async fn resolve(
         &self,
-        project: Uuid,
+        project: &str,
         database: Option<&str>,
         fresh: bool,
     ) -> Result<ResolvedEndpoint> {
@@ -90,7 +89,7 @@ impl AtlasResolver {
                 "Atlas must be an HTTPS or explicit loopback origin".into(),
             ));
         }
-        let scope = (project, database.map(str::to_owned));
+        let scope = (project.to_owned(), database.map(str::to_owned));
         // ponytail: serialize discovery per client; use per-scope locks if contention matters.
         let mut state = self.state.lock().await;
         if !fresh {
@@ -145,15 +144,14 @@ impl AtlasResolver {
     async fn fetch(
         &self,
         state: &mut State,
-        project: Uuid,
+        project: &str,
         database: Option<&str>,
         fresh: bool,
     ) -> Result<Session> {
         let wall = SystemTime::now();
         let monotonic = Instant::now();
         let mut url = self.atlas.join("/v1/resolve").map_err(decode)?;
-        url.query_pairs_mut()
-            .append_pair("project", &project.to_string());
+        url.query_pairs_mut().append_pair("project", project);
         if let Some(database) = database {
             url.query_pairs_mut().append_pair("database", database);
         }
@@ -162,7 +160,7 @@ impl AtlasResolver {
         }
         let response: ResolveResponse = self.get(url).await?;
         if response.v != 1
-            || response.project != project.to_string()
+            || response.project != project
             || response.database.as_deref() != database
             || !valid_region(&response.region)
             || !matches!(response.health.as_str(), "ok" | "down" | "unknown")

@@ -19,6 +19,7 @@ use uuid::Uuid;
 // Exercise the private resolver directly as well as the parent's public client wiring.
 #[path = "../src/v1/atlas.rs"]
 mod atlas;
+const PROJECT: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 use atlas::AtlasResolver;
 
 struct Fixture {
@@ -154,7 +155,7 @@ impl Fixture {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let mut response = json!({"v":1,"project":Uuid::nil().to_string(),"database":"orders", "region":"new-region-9", "api":self.url, "auth":self.url, "health":"down", "placement":"known", "stale":false, "expires":now+600});
+        let mut response = json!({"v":1,"project":PROJECT,"database":"orders", "region":"new-region-9", "api":self.url, "auth":self.url, "health":"down", "placement":"known", "stale":false, "expires":now+600});
         for (k, v) in response_changes.as_object().unwrap() {
             response[k] = v.clone();
         }
@@ -197,18 +198,18 @@ async fn verifies_real_es256_pin_reuses_session_and_refreshes_explicitly() {
     let fixture = Fixture::new().await;
     let resolver = fixture.resolver();
     let endpoint = resolver
-        .resolve(Uuid::nil(), Some("orders"), false)
+        .resolve(PROJECT, Some("orders"), false)
         .await
         .unwrap();
     assert_eq!(endpoint.api.as_str().trim_end_matches('/'), fixture.url);
     assert_eq!(endpoint.region, "new-region-9"); // No region allowlist; placed/down is valid.
     resolver
-        .resolve(Uuid::nil(), Some("orders"), false)
+        .resolve(PROJECT, Some("orders"), false)
         .await
         .unwrap();
     assert_eq!(fixture.requests.lock().unwrap().len(), 2);
     resolver
-        .resolve(Uuid::nil(), Some("orders"), true)
+        .resolve(PROJECT, Some("orders"), true)
         .await
         .unwrap();
     let requests = fixture.requests.lock().unwrap();
@@ -239,7 +240,7 @@ async fn rejects_expired_future_overlong_and_mismatched_signed_claims() {
         assert!(matches!(
             fixture
                 .resolver()
-                .resolve(Uuid::nil(), Some("orders"), false)
+                .resolve(PROJECT, Some("orders"), false)
                 .await,
             Err(Error::Decode(_))
         ));
@@ -248,7 +249,7 @@ async fn rejects_expired_future_overlong_and_mismatched_signed_claims() {
     assert!(matches!(
         fixture
             .resolver()
-            .resolve(Uuid::nil(), Some("orders"), false)
+            .resolve(PROJECT, Some("orders"), false)
             .await,
         Err(Error::Decode(_))
     ));
@@ -262,7 +263,7 @@ async fn rejects_expired_future_overlong_and_mismatched_signed_claims() {
     assert!(matches!(
         fixture
             .resolver()
-            .resolve(Uuid::nil(), Some("orders"), false)
+            .resolve(PROJECT, Some("orders"), false)
             .await,
         Err(Error::Decode(_))
     ));
@@ -288,7 +289,7 @@ async fn rejects_malicious_origins_and_invalid_scopes() {
             matches!(
                 fixture
                     .resolver()
-                    .resolve(Uuid::nil(), Some("orders"), false)
+                    .resolve(PROJECT, Some("orders"), false)
                     .await,
                 Err(Error::Decode(_))
             ),
@@ -299,7 +300,7 @@ async fn rejects_malicious_origins_and_invalid_scopes() {
     assert!(matches!(
         fixture
             .resolver()
-            .resolve(Uuid::nil(), Some("orders"), false)
+            .resolve(PROJECT, Some("orders"), false)
             .await,
         Err(Error::Decode(_))
     ));
@@ -307,7 +308,7 @@ async fn rejects_malicious_origins_and_invalid_scopes() {
     assert!(matches!(
         fixture
             .resolver()
-            .resolve(Uuid::nil(), Some("../secret"), false)
+            .resolve(PROJECT, Some("../secret"), false)
             .await,
         Err(Error::InvalidInput(_))
     ));
@@ -319,7 +320,7 @@ async fn nullable_database_scope_is_bound_and_key_rotation_refetches() {
     let fixture = Fixture::new().await;
     let resolver = fixture.resolver();
     resolver
-        .resolve(Uuid::nil(), Some("orders"), false)
+        .resolve(PROJECT, Some("orders"), false)
         .await
         .unwrap();
     fixture.keys.lock().unwrap()["keys"][0]["kid"] = "rotated".into();
@@ -338,7 +339,7 @@ async fn nullable_database_scope_is_bound_and_key_rotation_refetches() {
         response["pin"] =
             format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature.as_ref())).into();
     }
-    resolver.resolve(Uuid::nil(), None, false).await.unwrap();
+    resolver.resolve(PROJECT, None, false).await.unwrap();
     let requests = fixture.requests.lock().unwrap();
     assert_eq!(
         requests
@@ -353,7 +354,7 @@ async fn nullable_database_scope_is_bound_and_key_rotation_refetches() {
 #[tokio::test]
 async fn public_project_client_routes_to_verified_endpoint_with_only_region_pin() {
     let fixture = Fixture::new().await;
-    let client = terrascale::v1::Client::for_project(Uuid::nil(), "fixture-access-token")
+    let client = terrascale::v1::Client::for_project(PROJECT, "fixture-access-token")
         .atlas_base_url(&fixture.url)
         .retry_policy(terrascale::v1::RetryPolicy::none())
         .build()
@@ -364,7 +365,7 @@ async fn public_project_client_routes_to_verified_endpoint_with_only_region_pin(
         .get::<Value>(Uuid::nil())
         .await
         .unwrap_err();
-    assert!(matches!(error, Error::NotFound { .. }), "{error:?}");
+    assert!(error.is_not_found(), "{error:?}");
     let requests = fixture.requests.lock().unwrap();
     assert!(requests
         .iter()
@@ -385,13 +386,13 @@ async fn expires_session_refreshes_atlas_and_bounds_cached_scopes() {
         .as_secs();
     fixture.publish(json!({"expires":now+2}), json!({}));
     resolver
-        .resolve(Uuid::nil(), Some("orders"), false)
+        .resolve(PROJECT, Some("orders"), false)
         .await
         .unwrap();
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     fixture.publish(json!({}), json!({}));
     resolver
-        .resolve(Uuid::nil(), Some("orders"), false)
+        .resolve(PROJECT, Some("orders"), false)
         .await
         .unwrap();
     assert!(fixture
@@ -403,22 +404,22 @@ async fn expires_session_refreshes_atlas_and_bounds_cached_scopes() {
         .0
         .contains("fresh=1"));
     for id in 1..=128 {
-        let project = Uuid::from_u128(id);
+        let project = format!("{id:026}");
         fixture.publish(json!({"project":project.to_string()}), json!({}));
         resolver
-            .resolve(project, Some("orders"), false)
+            .resolve(&project, Some("orders"), false)
             .await
             .unwrap();
     }
     let before = fixture.requests.lock().unwrap().len();
     resolver
-        .resolve(Uuid::from_u128(128), Some("orders"), false)
+        .resolve(&format!("{:026}", 128), Some("orders"), false)
         .await
         .unwrap();
     assert_eq!(fixture.requests.lock().unwrap().len(), before);
     fixture.publish(json!({}), json!({}));
     resolver
-        .resolve(Uuid::nil(), Some("orders"), false)
+        .resolve(PROJECT, Some("orders"), false)
         .await
         .unwrap();
     assert_eq!(fixture.requests.lock().unwrap().len(), before + 1); // Oldest scope was evicted.
@@ -431,7 +432,7 @@ async fn rejects_oversized_and_incomplete_responses_before_using_an_endpoint() {
     assert!(matches!(
         fixture
             .resolver()
-            .resolve(Uuid::nil(), Some("orders"), false)
+            .resolve(PROJECT, Some("orders"), false)
             .await,
         Err(Error::Decode(_))
     ));
@@ -444,14 +445,14 @@ async fn rejects_oversized_and_incomplete_responses_before_using_an_endpoint() {
         .unwrap()
         .remove("database");
     assert!(matches!(
-        fixture.resolver().resolve(Uuid::nil(), None, false).await,
+        fixture.resolver().resolve(PROJECT, None, false).await,
         Err(Error::Decode(_))
     ));
     fixture.publish(json!({"project":Uuid::new_v4().to_string()}), json!({}));
     assert!(matches!(
         fixture
             .resolver()
-            .resolve(Uuid::nil(), Some("orders"), false)
+            .resolve(PROJECT, Some("orders"), false)
             .await,
         Err(Error::Decode(_))
     ));
@@ -462,18 +463,20 @@ async fn keeps_still_valid_session_when_fresh_atlas_request_cannot_connect() {
     let fixture = Fixture::new().await;
     let resolver = fixture.resolver();
     let first = resolver
-        .resolve(Uuid::nil(), Some("orders"), false)
+        .resolve(PROJECT, Some("orders"), false)
         .await
         .unwrap();
     fixture.disconnected.store(true, Ordering::Relaxed);
     let fallback = resolver
-        .resolve(Uuid::nil(), Some("orders"), true)
+        .resolve(PROJECT, Some("orders"), true)
         .await
         .unwrap();
     assert_eq!(first.api, fallback.api);
     assert_eq!(first.region, fallback.region);
     assert!(matches!(
-        resolver.resolve(Uuid::new_v4(), Some("orders"), true).await,
+        resolver
+            .resolve("01ARZ3NDEKTSV4RRFFQ69G5FAW", Some("orders"), true)
+            .await,
         Err(Error::Transport(_))
     ));
 }
@@ -486,7 +489,7 @@ async fn public_reads_refresh_on_421_and_redirect_but_retry_only_once() {
         fixture.move_after_wrong_route(&target);
         *fixture.fault.lock().unwrap() = Some((status, 1));
         *target.fault.lock().unwrap() = Some((status, failures - 1));
-        let client = terrascale::v1::Client::for_project(Uuid::nil(), "fixture-access-token")
+        let client = terrascale::v1::Client::for_project(PROJECT, "fixture-access-token")
             .atlas_base_url(&fixture.url)
             .retry_policy(terrascale::v1::RetryPolicy::none())
             .build()
@@ -541,7 +544,7 @@ async fn public_mutations_refresh_on_421_and_redirect_without_replay() {
         let target = Fixture::new().await;
         fixture.move_after_wrong_route(&target);
         *fixture.fault.lock().unwrap() = Some((status, 1));
-        let client = terrascale::v1::Client::for_project(Uuid::nil(), "fixture-access-token")
+        let client = terrascale::v1::Client::for_project(PROJECT, "fixture-access-token")
             .atlas_base_url(&fixture.url)
             .retry_policy(terrascale::v1::RetryPolicy::none())
             .build()
@@ -599,13 +602,13 @@ async fn public_mutations_refresh_on_421_and_redirect_without_replay() {
 async fn public_static_endpoint_bypasses_atlas_entirely() {
     let fixture = Fixture::new().await;
     let clients = [
-        terrascale::v1::Client::for_project(Uuid::nil(), "fixture-access-token")
+        terrascale::v1::Client::for_project(PROJECT, "fixture-access-token")
             .endpoint(&fixture.url)
             .region_pin("new-region-9")
             .build()
             .unwrap(),
         terrascale::v1::Client::builder(&fixture.url, "fixture-access-token")
-            .project(Uuid::nil())
+            .project(PROJECT)
             .region_pin("new-region-9")
             .build()
             .unwrap(),

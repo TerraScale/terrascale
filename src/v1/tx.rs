@@ -6,7 +6,7 @@ use serde_json::value::RawValue;
 
 use super::documents::{encode_object, Patch, PatchOp, Precondition};
 use super::errors::{Error, Result};
-use super::ids::{check_name, DocumentId, IdempotencyKey, Version};
+use super::ids::{check_document_id, check_name, DocumentId, IdempotencyKey, Version};
 use super::query::Filter;
 use super::types::{opt_u64_string, u64_string, Durability};
 
@@ -147,6 +147,11 @@ impl Tx {
         if let Err(e) = check_name("collection", &op.collection) {
             self.fail(e.to_string());
         }
+        if let Some(id) = &op.id {
+            if let Err(e) = check_document_id(id) {
+                self.fail(e.to_string());
+            }
+        }
         self.ops.push(op);
         self
     }
@@ -162,7 +167,7 @@ impl Tx {
     }
 
     /// `create`: a put that requires absence. `None` lets the server generate
-    /// a UUIDv7, returned in the op's result.
+    /// an ID (ULID on project clients), returned in the op's result.
     pub fn create<T: Serialize + ?Sized>(
         &mut self,
         collection: &str,
@@ -178,11 +183,11 @@ impl Tx {
     pub fn put<T: Serialize + ?Sized>(
         &mut self,
         collection: &str,
-        id: DocumentId,
+        id: impl ToString,
         doc: &T,
         precondition: Option<Precondition>,
     ) -> &mut Self {
-        let mut op = TxOp::new("put", collection, Some(id));
+        let mut op = TxOp::new("put", collection, Some(id.to_string()));
         op.document = self.document(doc);
         match precondition {
             Some(Precondition::IfMatch(v)) => op.if_match = Some(v),
@@ -196,14 +201,14 @@ impl Tx {
     pub fn patch(
         &mut self,
         collection: &str,
-        id: DocumentId,
+        id: impl ToString,
         patch: Patch,
         if_match: Option<Version>,
     ) -> &mut Self {
         if let Err(e) = patch.validate() {
             self.fail(e.to_string());
         }
-        let mut op = TxOp::new("patch", collection, Some(id));
+        let mut op = TxOp::new("patch", collection, Some(id.to_string()));
         match patch {
             Patch::Merge(raw) => op.merge = Some(raw),
             Patch::Ops(ops) => op.ops = Some(ops),
@@ -216,29 +221,29 @@ impl Tx {
     pub fn delete(
         &mut self,
         collection: &str,
-        id: DocumentId,
+        id: impl ToString,
         if_match: Option<Version>,
     ) -> &mut Self {
-        let mut op = TxOp::new("delete", collection, Some(id));
+        let mut op = TxOp::new("delete", collection, Some(id.to_string()));
         op.if_match = if_match;
         self.push(op)
     }
 
     /// `assert` with a filter: the document must exist, be unconflicted and
     /// match, without being written.
-    pub fn assert(&mut self, collection: &str, id: DocumentId, filter: Filter) -> &mut Self {
+    pub fn assert(&mut self, collection: &str, id: impl ToString, filter: Filter) -> &mut Self {
         if let Err(e) = filter.validate() {
             self.fail(e.to_string());
         }
-        let mut op = TxOp::new("assert", collection, Some(id));
+        let mut op = TxOp::new("assert", collection, Some(id.to_string()));
         op.filter = Some(filter);
         self.push(op)
     }
 
     /// `assert` with `absent:true`: the document must be absent, deleted or
     /// expired.
-    pub fn assert_absent(&mut self, collection: &str, id: DocumentId) -> &mut Self {
-        let mut op = TxOp::new("assert", collection, Some(id));
+    pub fn assert_absent(&mut self, collection: &str, id: impl ToString) -> &mut Self {
+        let mut op = TxOp::new("assert", collection, Some(id.to_string()));
         op.absent = true;
         self.push(op)
     }
@@ -272,7 +277,11 @@ impl Tx {
 
     /// Checks that an acknowledgement has one compatible result per op, in
     /// order, naming the submitted document IDs.
-    pub(crate) fn check_results(&self, results: &[OpResult]) -> std::result::Result<(), String> {
+    pub(crate) fn check_results(
+        &self,
+        results: &[OpResult],
+        project: bool,
+    ) -> std::result::Result<(), String> {
         if results.len() != self.ops.len() {
             return Err(format!(
                 "{} results for {} ops",
@@ -283,7 +292,11 @@ impl Tx {
         for (i, (op, res)) in self.ops.iter().zip(results).enumerate() {
             let ok = match (op.op, res) {
                 ("create" | "put" | "patch" | "delete", OpResult::Write { id, .. }) => {
-                    op.id.is_none_or(|want| want == *id)
+                    op.id.as_ref().is_none_or(|want| want == id)
+                        && (!project
+                            || op.op != "create"
+                            || op.id.is_some()
+                            || super::ids::valid_entity_id(id))
                 }
                 ("assert", OpResult::Asserted { count: None }) => true,
                 ("assert_count", OpResult::Asserted { count: Some(_) }) => true,
@@ -347,9 +360,9 @@ impl OpResult {
 
     /// The written document's ID, for write ops.
     #[must_use]
-    pub fn id(&self) -> Option<DocumentId> {
+    pub fn id(&self) -> Option<&str> {
         match self {
-            Self::Write { id, .. } => Some(*id),
+            Self::Write { id, .. } => Some(id),
             Self::Asserted { .. } => None,
         }
     }
@@ -368,7 +381,10 @@ impl<'de> Deserialize<'de> for OpResult {
         }
         let w = Wire::deserialize(d)?;
         match (w.id, w.version, w.asserted) {
-            (Some(id), Some(version), false) => Ok(Self::Write { id, version }),
+            (Some(id), Some(version), false) => {
+                check_document_id(&id).map_err(D::Error::custom)?;
+                Ok(Self::Write { id, version })
+            }
             (None, None, true) => Ok(Self::Asserted { count: w.count }),
             _ => Err(D::Error::custom(
                 "transaction result is neither a write nor an assert",

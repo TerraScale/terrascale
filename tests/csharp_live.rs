@@ -80,7 +80,10 @@ async fn csharp_live_contract() {
 async fn exercise() {
     let live = Live::new();
     let db = live.client.database("app");
-    assert_eq!(db.create().await.unwrap().project_id, live.project);
+    assert_eq!(
+        db.create().await.unwrap().project_id,
+        live.project.to_string()
+    );
     let collection = db.create_collection("items").await.unwrap();
     assert_eq!(collection.name, "items");
     let items = db.collection("items");
@@ -169,7 +172,7 @@ async fn exercise() {
         .await
         .unwrap();
     assert!(generated.created);
-    assert_eq!(generated.id.get_version_num(), 7);
+    assert_eq!(Uuid::parse_str(&generated.id).unwrap().get_version_num(), 7);
     assert!(generated
         .location
         .unwrap()
@@ -192,7 +195,7 @@ async fn exercise() {
         .is_not_found());
     let mut keyed_tx = Tx::new();
     keyed_tx
-        .create("items", Some(id("key-rejected")), &json!({}))
+        .create("items", Some(id("key-rejected").to_string()), &json!({}))
         .idempotency_key(IdempotencyKey::random());
     assert!(matches!(
         db.commit(&keyed_tx).await,
@@ -202,8 +205,16 @@ async fn exercise() {
     // A failure at op 2 must roll back writes in both collections.
     let mut failed = Tx::new();
     failed
-        .create("items", Some(id("rollback")), &json!({"batch":true}))
-        .create("other", Some(id("rollback")), &json!({"batch":true}))
+        .create(
+            "items",
+            Some(id("rollback").to_string()),
+            &json!({"batch":true}),
+        )
+        .create(
+            "other",
+            Some(id("rollback").to_string()),
+            &json!({"batch":true}),
+        )
         .put(
             "items",
             id("point"),
@@ -239,11 +250,23 @@ async fn exercise() {
         "failed transaction consumed no offset"
     );
     let mut tx = Tx::new();
-    tx.create("items", Some(id("batch-a")), &json!({"batch":true,"n":1}))
-        .create("items", Some(id("batch-b")), &json!({"batch":true,"n":2}))
-        .create("other", Some(id("batch-c")), &json!({"batch":true}))
-        .assert("items", id("point"), Filter::eq("/n", 42))
-        .assert_count("items", Filter::exists("/batch"), CountBounds::at_most(0));
+    tx.create(
+        "items",
+        Some(id("batch-a").to_string()),
+        &json!({"batch":true,"n":1}),
+    )
+    .create(
+        "items",
+        Some(id("batch-b").to_string()),
+        &json!({"batch":true,"n":2}),
+    )
+    .create(
+        "other",
+        Some(id("batch-c").to_string()),
+        &json!({"batch":true}),
+    )
+    .assert("items", id("point"), Filter::eq("/n", 42))
+    .assert_count("items", Filter::exists("/batch"), CountBounds::at_most(0));
     let committed = db.commit(&tx).await.unwrap();
     assert_eq!(committed.durability, Durability::LocalDurable);
     assert_eq!(committed.offset, before.offset + 1);
@@ -254,7 +277,7 @@ async fn exercise() {
         (2, "other", "batch-c"),
     ] {
         let document = db.collection(name).get::<Value>(id(point)).await.unwrap();
-        assert_eq!(committed.results[index].id(), Some(document.id));
+        assert_eq!(committed.results[index].id(), Some(document.id.as_str()));
         assert_eq!(committed.results[index].version(), Some(&document.version));
     }
     assert_eq!(committed.results[4], OpResult::Asserted { count: Some(0) });
@@ -271,13 +294,13 @@ async fn exercise() {
         .count(true);
     let page = items.query::<Value>(&query).await.unwrap();
     assert_eq!(page.items.len(), 1);
-    assert_eq!(page.items[0].id, id("batch-a"));
+    assert_eq!(page.items[0].id, id("batch-a").to_string());
     assert_eq!(page.count.unwrap().value, 2);
     let second = items
         .query::<Value>(&query.clone().count(false).cursor(page.next_cursor.unwrap()))
         .await
         .unwrap();
-    assert_eq!(second.items[0].id, id("batch-b"));
+    assert_eq!(second.items[0].id, id("batch-b").to_string());
     assert!(second.next_cursor.is_none());
     assert_eq!(items.query_all::<Value>(query, 2).await.unwrap().len(), 2);
     let listed = items.list::<Box<RawValue>>(Some(1), None).await.unwrap();

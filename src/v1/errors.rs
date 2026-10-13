@@ -14,11 +14,25 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// A v1 client error.
 ///
 /// Well-known server codes map to dedicated variants; every other non-2xx
-/// response is [`Error::Api`]. `op` is the failing transaction op index when
-/// the server names one.
+/// response is [`Error::Api`]. Project failures wrap the decoded error in
+/// [`Error::Response`] to retain the HTTP diagnostics. `op` is the failing
+/// transaction op index when the server names one.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
+    /// A project API failure with its complete HTTP diagnostics. The inner
+    /// error retains the decoded code and typed legacy error, when present.
+    #[error("{error}")]
+    Response {
+        /// Actual HTTP status, independent of the response body.
+        status: u16,
+        #[source]
+        error: Box<Error>,
+        /// Exact response bytes, including malformed or empty bodies.
+        body: Vec<u8>,
+        /// Server correlation id, preferring the HTTP header over the body.
+        request_id: Option<String>,
+    },
     /// `412 precondition_failed`: a failed `If-Match`, `If-None-Match: *`,
     /// `assert` or `assert_count`.
     #[error("terrabase: 412 precondition_failed{}", fmt_op(*op))]
@@ -135,6 +149,9 @@ impl Error {
     #[must_use]
     pub fn status(&self) -> Option<u16> {
         Some(match self {
+            Self::Response { status, .. }
+            | Self::ResponseTooLarge { status, .. }
+            | Self::UndecodableAck { status, .. } => *status,
             Self::PreconditionFailed { .. } => 412,
             Self::UniqueViolation { .. } | Self::ConflictUnresolved { .. } => 409,
             Self::IdempotencyConflict | Self::IdempotencyExpired => 409,
@@ -147,12 +164,10 @@ impl Error {
             Self::InternalError => 500,
             Self::Api { status, .. } => *status,
             Self::OperationFailed { .. }
-            | Self::ResponseTooLarge { .. }
             | Self::InvalidTxOp { .. }
             | Self::Transport(_)
             | Self::InvalidInput(_)
-            | Self::Decode(_)
-            | Self::UndecodableAck { .. } => return None,
+            | Self::Decode(_) => return None,
         })
     }
 
@@ -160,6 +175,7 @@ impl Error {
     #[must_use]
     pub fn code(&self) -> Option<&str> {
         Some(match self {
+            Self::Response { error, .. } => return error.code(),
             Self::PreconditionFailed { .. } => "precondition_failed",
             Self::UniqueViolation { .. } => "unique_violation",
             Self::NotFound { .. } => "not_found",
@@ -186,6 +202,7 @@ impl Error {
     #[must_use]
     pub fn op(&self) -> Option<usize> {
         match self {
+            Self::Response { error, .. } => error.op(),
             Self::PreconditionFailed { op }
             | Self::UniqueViolation { op, .. }
             | Self::NotFound { op, .. }
@@ -200,7 +217,31 @@ impl Error {
     /// True for `404 not_found`.
     #[must_use]
     pub fn is_not_found(&self) -> bool {
-        matches!(self, Self::NotFound { .. })
+        match self {
+            Self::Response { status, error, .. } => *status == 404 && error.is_not_found(),
+            Self::NotFound { .. } => true,
+            Self::Api { status, code, .. } => *status == 404 && code == "not_found",
+            _ => false,
+        }
+    }
+
+    /// Exact bytes of a project API error response, including unknown problem
+    /// extensions and invalid JSON. Local and legacy client errors have none.
+    #[must_use]
+    pub fn raw_body(&self) -> Option<&[u8]> {
+        match self {
+            Self::Response { body, .. } => Some(body),
+            _ => None,
+        }
+    }
+
+    /// Server correlation id from a project API error response.
+    #[must_use]
+    pub fn request_id(&self) -> Option<&str> {
+        match self {
+            Self::Response { request_id, .. } => request_id.as_deref(),
+            _ => None,
+        }
     }
 
     /// True when a mutation may have been applied although an error was
@@ -215,6 +256,9 @@ impl Error {
     #[must_use]
     pub fn is_uncertain(&self) -> bool {
         match self {
+            Self::Response { status, error, .. } => {
+                !(400..500).contains(status) && error.is_uncertain()
+            }
             Self::CommitUncertain
             | Self::InternalError
             | Self::Transport(_)
@@ -225,6 +269,54 @@ impl Error {
             Self::Api { status, .. } => !(400..500).contains(status),
             _ => false,
         }
+    }
+}
+
+/// Maps a project API failure without discarding its HTTP diagnostics.
+pub(crate) fn from_project_response(
+    status: u16,
+    etag: Option<&str>,
+    retry_after: Option<Duration>,
+    request_id: Option<&str>,
+    body: &[u8],
+) -> Error {
+    let value = serde_json::from_slice::<std::collections::HashMap<String, &RawValue>>(body).ok();
+    let problem = value.as_ref().filter(|value| {
+        ["type", "title", "status", "detail", "instance"]
+            .iter()
+            .any(|key| value.contains_key(*key))
+            && !value.contains_key("error")
+    });
+    let error = if let Some(problem) = problem {
+        let text = |name: &str| {
+            problem
+                .get(name)
+                .and_then(|raw| serde_json::from_str::<String>(raw.get()).ok())
+        };
+        // The HTTP status is authoritative; a problem's status cannot change
+        // retry decisions or turn a denied request into another error kind.
+        Error::Api {
+            status,
+            code: text("code").unwrap_or_else(|| format!("http_{status}")),
+            message: text("detail").or_else(|| text("title")),
+            op: problem
+                .get("op")
+                .and_then(|raw| serde_json::from_str::<usize>(raw.get()).ok()),
+            // The wrapper retains every member and the exact number text.
+            details: None,
+        }
+    } else {
+        from_response(status, etag, retry_after, body)
+    };
+    Error::Response {
+        status,
+        error: Box::new(error),
+        body: body.to_vec(),
+        request_id: request_id.map(str::to_owned).or_else(|| {
+            problem
+                .and_then(|problem| problem.get("requestId"))
+                .and_then(|raw| serde_json::from_str::<String>(raw.get()).ok())
+        }),
     }
 }
 

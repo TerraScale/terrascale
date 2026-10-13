@@ -10,9 +10,57 @@ use uuid::Uuid;
 
 use super::errors::{Error, Result};
 
-/// Document IDs are lowercase hyphenated UUIDs; [`Uuid`]'s `Display` is that
-/// canonical form.
-pub type DocumentId = Uuid;
+/// A raw UTF-8 document key. Generated project document IDs are uppercase ULIDs.
+pub type DocumentId = String;
+
+pub(crate) fn check_document_id(id: &str) -> Result<()> {
+    if !id.is_empty() && id.encode_utf16().count() <= 256 && !id.chars().any(char::is_control) {
+        Ok(())
+    } else {
+        Err(Error::InvalidInput(
+            "id must be 1 to 256 characters without control characters".into(),
+        ))
+    }
+}
+
+pub(crate) fn valid_entity_id(id: &str) -> bool {
+    id.len() == 26
+        && id.as_bytes()[0] <= b'7'
+        && id
+            .bytes()
+            .all(|b| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(&b))
+}
+
+pub(crate) fn document_id<'de, D: Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<String, D::Error> {
+    let id = String::deserialize(d)?;
+    check_document_id(&id).map_err(serde::de::Error::custom)?;
+    Ok(id)
+}
+
+pub(crate) fn entity_id<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    let id = String::deserialize(d)?;
+    if valid_entity_id(&id) {
+        Ok(id)
+    } else {
+        Err(serde::de::Error::custom(
+            "entity ID must be a canonical uppercase ULID",
+        ))
+    }
+}
+
+pub(crate) fn cursor<'de, D: Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<String>, D::Error> {
+    let cursor = Option::<String>::deserialize(d)?;
+    if cursor.as_deref() == Some("") {
+        return Err(serde::de::Error::custom(
+            "pagination cursor must be nonempty or null",
+        ));
+    }
+    Ok(cursor)
+}
 
 /// The deterministic document ID for a natural `key` in `collection`:
 /// `uuidv5(uuidv5(NAMESPACE_URL, "terrabase:collection:" + collection), key)`.
