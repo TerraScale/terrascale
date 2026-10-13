@@ -7,13 +7,15 @@ using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// The receiving side of <c>Replication.Push</c>: joins each batch through the <see cref="IChangeGroupSink"/>, in stream
 /// order, and acks it after its durable commit. A newer stream from the same origin ends the older one, so one origin's
-/// groups apply in order. A malformed batch ends the stream; the sender reconnects and resumes from its last ack.
+/// groups apply in order. A batch this machine cannot decode is refused for its database only (the sender holds that
+/// database and sends it again later); any other malformed frame ends the stream, and the sender resumes from its last ack.
 /// </summary>
 internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 {
@@ -25,15 +27,19 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private readonly ConcurrentDictionary<ReplicaId, CancellationTokenSource> _streams = new();
     private readonly Counter<long> _merged;
     private readonly Histogram<double> _delay;
+    private readonly Counter<long> _undecodable;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly ILogger<PeerStreamReceiver> _logger;
 
     public PeerStreamReceiver(
-        IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime)
+        IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime,
+        ILogger<PeerStreamReceiver> logger)
     {
         _sink = sink;
         _states = states;
         _antiEntropy = antiEntropy;
         _lifetime = lifetime;
+        _logger = logger;
         _self = self;
         _time = time;
         var meter = meters.Create(Telemetry.MeterName);
@@ -41,6 +47,8 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         _delay = meter.CreateHistogram<double>("terrabase.replication.apply_delay", "s",
             "Apply time minus the origin stamp's physical time: convergence lag, by the origin's region.",
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300] });
+        _undecodable = meter.CreateCounter<long>("terrabase.replication.undecodable_batches", "{batch}",
+            "Peer batches refused because they could not be decoded, by the origin's region.");
     }
 
     public override async Task Push(IAsyncStreamReader<PushFrame> requestStream, IServerStreamWriter<AckFrame> responseStream, ServerCallContext context)
@@ -112,11 +120,11 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     throw new RpcException(new Status(StatusCode.InvalidArgument, "a push stream carries batches and heartbeats after its hello"));
                 }
 
-                TenantContext database;
+                // A batch that names no database cannot be refused for one: it ends the stream.
+                var database = Tenant(batch.Database);
                 List<OriginGroup> groups;
                 try
                 {
-                    database = ChangeGroups.Tenant(batch.Database);
                     if (last.TryGetValue(database, out var previous) && batch.LastChangeId <= previous)
                     {
                         throw new InvalidDataException("a stream's batches of one database have growing change ids");
@@ -130,7 +138,12 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 }
                 catch (InvalidDataException error)
                 {
-                    throw new RpcException(new Status(StatusCode.InvalidArgument, error.Message));
+                    // Nothing of the batch applies and its database is refused: the sender holds that database, and the stream
+                    // goes on with the others.
+                    _logger.ZLogError(error, $"A batch of database {database.DatabaseId:@Database} from machine {origin.Value:@Origin} in {region:@Region} could not be decoded; it is refused");
+                    _undecodable.Add(1, new KeyValuePair<string, object?>("peer_region", region));
+                    await responseStream.WriteAsync(new AckFrame { Ack = new Ack { Database = batch.Database, Refused = true } }, stream.Token).ConfigureAwait(false);
+                    continue;
                 }
 
                 var applied = await _sink.ApplyAsync(database, origin, groups, stream.Token).ConfigureAwait(false);

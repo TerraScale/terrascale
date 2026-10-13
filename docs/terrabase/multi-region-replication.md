@@ -732,8 +732,10 @@ ts-dotnet until R12 makes ts-auth lattice-native.
   It heartbeats every second when idle. A batch not acked within 15 s ends the stream, and the sender reconnects with a
   backoff of 1 s, doubling to 30 s.
 - `PeerStreamReceiver` checks every batch (canonical ULIDs, growing change ids per database, at most 1024 groups and
-  1024 deltas per group, valid collections and ids, canonical states). A bad batch ends the stream with
-  `INVALID_ARGUMENT`. A newer stream from the same origin ends the older one, so one origin's groups apply in order.
+  1024 deltas per group, valid collections and ids, canonical states). A bad batch applies nothing and is refused for
+  its database alone (an error log and `terrabase.replication.undecodable_batches`): the sender holds that database and
+  sends it again 5 s later, and the stream goes on with the others. A frame that names no valid database ends the stream
+  with `INVALID_ARGUMENT`. A newer stream from the same origin ends the older one, so one origin's groups apply in order.
 - `StorageChangeGroupSink` joins whole groups, at most 1024 documents per durable transaction (`synchronous = FULL`),
   through `IStorageTransaction.JoinAsync`, and records `_tb_peers.applied`. An ack follows the last commit.
 - `JoinAsync` writes the document only when the join changed it, with `stamp = S` and `origin` = the delta's node,
