@@ -72,13 +72,27 @@ COPY --from=test-libs /passed /libs
 COPY --from=test-auth /passed /auth
 COPY --from=test-terrabase /passed /terrabase
 
-# The Slow suites never fail the build: their log and exit code are the `test-slow` output, which CI reports from.
+# Slow exports each suite's log and exit code for CI to report; `test-slow` exports both area directories.
 # Plain text: TUnit colours its output here, and the report parses lines like "failed <test> (<duration>)".
-FROM restored AS slow-run
-RUN mkdir /slow && { make -o restore test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi; echo $? > /slow/exit; } 2>&1 | tee /slow/log
+# Each area runs independently so an auth failure cannot prevent TerraBase Slow from executing.
+FROM restored AS slow-auth-run
+RUN mkdir /slow && { make -o restore auth-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi; echo $? > /slow/exit; } 2>&1 | tee /slow/log
+
+FROM scratch AS test-slow-auth
+COPY --from=slow-auth-run /slow /
+
+FROM restored AS slow-terrabase-run
+# BuildKit secret mounts never enter a layer or build arg. No org-level provisioning credential reaches CI.
+RUN --mount=type=secret,id=tigris-ci,required=true \
+    mkdir /slow && { set -a; . /run/secrets/tigris-ci; set +a; \
+    make -o restore terrabase-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi; echo $? > /slow/exit; } 2>&1 | tee /slow/log
+
+FROM scratch AS test-slow-terrabase
+COPY --from=slow-terrabase-run /slow /
 
 FROM scratch AS test-slow
-COPY --from=slow-run /slow /
+COPY --from=slow-auth-run /slow /auth/
+COPY --from=slow-terrabase-run /slow /terrabase/
 
 # Fly images: the self-contained release executables (`make terrabase-publish` / `auth-publish` flags) on the chiseled
 # runtime-deps base (6 MB: no shell, no package manager). These stages skip the test stages: CI deploys only a tree whose

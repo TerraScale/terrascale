@@ -1,4 +1,5 @@
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -7,31 +8,35 @@ using Amazon.S3.Model;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Backup;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Backup;
 
 /// <summary>
-/// Continuous backup and point-in-time restore against the real Tigris dev bucket (<c>make terrabase-tigris-e2e</c>).
-/// Runs only when the bucket variables are set: <c>set -a; . ~/.config/terrascale/tigris-dev.env; set +a</c>.
+/// Continuous backup and point-in-time restore against the private Tigris CI bucket (<c>make terrabase-test-slow</c>).
+/// Requires its bucket-scoped credentials; every invocation owns and deletes a unique object prefix.
 /// </summary>
 public sealed class TigrisBackupTests
 {
     private static readonly TimeSpan ShippingDeadline = TimeSpan.FromMinutes(2);
 
     [Test]
-    [TigrisDevBucket]
     public async Task A_database_shipped_to_Tigris_restores_identically_after_its_documents_are_wiped(CancellationToken cancellationToken)
     {
         var faker = new Faker();
-        var started = DateTimeOffset.UtcNow;
-        var api = await ManagementApi.StartAsync(TigrisDevBucketAttribute.Configure, cancellationToken: cancellationToken);
-        var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
-        using var s3 = TigrisDevBucketAttribute.Client();
-        ManagedDatabaseRef? database = null;
+        var prefix = $"ci/{EntityIds.New()}/";
+        using var s3 = TigrisCiBucket.Client();
+        ManagementApi? api = null;
+        var failedStartCleanup = Task.CompletedTask;
         try
         {
-            database = await api.CreateManagedDatabaseAsync("main");
+            api = await ManagementApi.StartAsync(TigrisCiBucket.Configure,
+                services: services => services.AddSingleton<IObjectStore>(provider =>
+                    new PrefixedStore(provider.GetRequiredService<S3ObjectStore>(), prefix)),
+                cancellationToken: cancellationToken, failedStartCleanup: cleanup => failedStartCleanup = cleanup);
+            var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
+            var database = await api.CreateManagedDatabaseAsync("main");
             using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
             await ManagementApi.CreateCollectionAsync(data, database, "people", cancellationToken);
             var written = Enumerable.Range(0, 50).ToDictionary(i => $"p{i:D3}", _ => faker.Lorem.Paragraph(4));
@@ -58,12 +63,12 @@ public sealed class TigrisBackupTests
                     : response.StatusCode.ToString();
             }
 
-            var objects = await ListAsync(s3, $"v1/{database.Organization}/{database.Project}/{database.Id}/", cancellationToken);
+            var objects = await ListAsync(s3, $"{prefix}v1/{database.Organization}/{database.Project}/{database.Id}/", cancellationToken);
             var plain = Encoding.UTF8.GetBytes(written.Values.First());
             var sealedOnly = true;
             foreach (var key in objects)
             {
-                using var obj = await s3.GetObjectAsync(TigrisDevBucketAttribute.Bucket, key, cancellationToken);
+                using var obj = await s3.GetObjectAsync(TigrisCiBucket.Bucket, key, cancellationToken);
                 using var buffer = new MemoryStream();
                 await obj.ResponseStream.CopyToAsync(buffer, cancellationToken);
                 sealedOnly &= buffer.GetBuffer().AsSpan(0, (int)buffer.Length).StartsWith("TBK1"u8) && buffer.ToArray().AsSpan().IndexOf(plain) < 0;
@@ -77,12 +82,31 @@ public sealed class TigrisBackupTests
         }
         finally
         {
-            // Stop the node first: its shipper keeps uploading until shutdown.
-            var generation = backup.Status.Files.SingleOrDefault(status => status.File == "v1/_system")?.Generation;
-            await api.DisposeAsync();
-            if (database is not null)
+            // Join startup/shutdown first: its shipper must stop before deleting this invocation's objects.
+            try
             {
-                await CleanUpAsync(s3, database, generation, started);
+                if (api is not null)
+                {
+                    try
+                    {
+                        await api.DisposeAsync();
+                    }
+                    finally
+                    {
+                        await api.CleanupCompletion;
+                    }
+                }
+                else
+                {
+                    await failedStartCleanup;
+                }
+            }
+            finally
+            {
+                foreach (var key in await ListAsync(s3, prefix, CancellationToken.None))
+                {
+                    await s3.DeleteObjectAsync(TigrisCiBucket.Bucket, key, CancellationToken.None);
+                }
             }
         }
     }
@@ -107,48 +131,54 @@ public sealed class TigrisBackupTests
     private static async Task<List<string>> ListAsync(AmazonS3Client s3, string prefix, CancellationToken cancellationToken)
     {
         var keys = new List<string>();
-        var request = new ListObjectsV2Request { BucketName = TigrisDevBucketAttribute.Bucket, Prefix = prefix };
+        var request = new ListObjectsV2Request { BucketName = TigrisCiBucket.Bucket, Prefix = prefix };
         ListObjectsV2Response page;
         do
         {
             page = await s3.ListObjectsV2Async(request, cancellationToken);
-            keys.AddRange((page.S3Objects ?? []).Select(item => item.Key));
+            foreach (var item in page.S3Objects ?? [])
+            {
+                if (!item.Key.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException("Tigris listing returned an object outside this test's prefix");
+                }
+
+                keys.Add(item.Key);
+            }
             request.ContinuationToken = page.NextContinuationToken;
         }
         while (page.IsTruncated == true);
         return keys;
     }
 
-    // The run's own objects only: its organization, its node's system generation, and system keys written during it.
-    private static async Task CleanUpAsync(AmazonS3Client s3, ManagedDatabaseRef database, string? generation, DateTimeOffset started)
+    // Test-only namespace adapter: the real S3 store still performs signing, uploads, reads and deletes.
+    private sealed class PrefixedStore(IObjectStore inner, string prefix) : IObjectStore
     {
-        var keys = await ListAsync(s3, $"v1/{database.Organization}/", CancellationToken.None);
-        keys.AddRange(await ListAsync(s3, $"v1/keys/{database.Organization}/", CancellationToken.None));
-        if (generation is not null)
+        public Task PutAsync(string key, Stream content, CancellationToken cancellationToken) =>
+            inner.PutAsync(prefix + key, content, cancellationToken);
+
+        public Task<bool> ReadAsync(string key, Func<Stream, CancellationToken, Task> read, CancellationToken cancellationToken) =>
+            inner.ReadAsync(prefix + key, read, cancellationToken);
+
+        public async IAsyncEnumerable<StoredObject> ListAsync(string keyPrefix, string? startAfter,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
         {
-            keys.AddRange((await ListAsync(s3, "v1/_system/snapshots/", CancellationToken.None)).Where(key => key.Contains($"-{generation}-", StringComparison.Ordinal)));
-            keys.AddRange(await ListAsync(s3, $"v1/_system/wal/{generation}/", CancellationToken.None));
+            await foreach (var item in inner.ListAsync(prefix + keyPrefix, startAfter is null ? null : prefix + startAfter, cancellationToken))
+            {
+                yield return item with { Key = item.Key.StartsWith(prefix, StringComparison.Ordinal) ? item.Key[prefix.Length..] : string.Empty };
+            }
         }
 
-        var request = new ListObjectsV2Request { BucketName = TigrisDevBucketAttribute.Bucket, Prefix = "v1/keys/_system/" };
-        var systemKeys = await s3.ListObjectsV2Async(request);
-        keys.AddRange((systemKeys.S3Objects ?? []).Where(item => item.LastModified >= started.UtcDateTime.AddMinutes(-1)).Select(item => item.Key));
-        foreach (var key in keys)
-        {
-            await s3.DeleteObjectAsync(TigrisDevBucketAttribute.Bucket, key);
-        }
+        public Task<bool> DeleteAsync(string key, CancellationToken cancellationToken) =>
+            inner.DeleteAsync(prefix + key, cancellationToken);
     }
 }
 
-/// <summary>Skips the test unless the Tigris dev bucket variables are set.</summary>
-internal sealed class TigrisDevBucketAttribute() : SkipAttribute("set the Tigris dev bucket variables (~/.config/terrascale/tigris-dev.env)")
+/// <summary>Bucket-scoped credentials for the durable private CI bucket; missing credentials fail the test.</summary>
+internal static class TigrisCiBucket
 {
-    private static readonly string[] Variables = ["AWS_ENDPOINT_URL_S3", "AWS_REGION", "BUCKET_NAME", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"];
-
-    public static string Bucket => Variable("BUCKET_NAME");
-
-    public override Task<bool> ShouldSkip(TestRegisteredContext context) =>
-        Task.FromResult(Variables.Any(name => string.IsNullOrEmpty(Environment.GetEnvironmentVariable(name))));
+    public static string Bucket => Variable("BUCKET_NAME") == "ts-terrabase-ci" ? "ts-terrabase-ci"
+        : throw new InvalidOperationException("BUCKET_NAME must name the private ts-terrabase-ci test bucket");
 
     public static void Configure(Dictionary<string, string> settings)
     {
@@ -167,5 +197,6 @@ internal sealed class TigrisDevBucketAttribute() : SkipAttribute("set the Tigris
         ForcePathStyle = true,
     });
 
-    private static string Variable(string name) => Environment.GetEnvironmentVariable(name) ?? string.Empty;
+    private static string Variable(string name) => Environment.GetEnvironmentVariable(name) is { } value && !string.IsNullOrWhiteSpace(value)
+        ? value : throw new InvalidOperationException($"required Tigris CI credential {name} is missing");
 }

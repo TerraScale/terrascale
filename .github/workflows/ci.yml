@@ -190,7 +190,9 @@ jobs:
       - *checkout
       - name: Fly deploy, volume reset, storage train and e2e summary self-checks
         run: |
+          python3 terrascale/scripts/ci/slow-report-test.py
           bash terrascale/scripts/fly/deploy-test.sh
+          bash terrascale/scripts/fly/preview-test.sh
           bash terrascale/scripts/fly/volume-reset-test.sh
           bash terrascale/scripts/terrabase/storage-format-check-test.sh
           bash terrascale/scripts/terrabase/e2e-summary-test.sh
@@ -202,11 +204,17 @@ jobs:
         run: terrascale/scripts/terrabase/storage-format-check.sh "$GITHUB_REPOSITORY" "${{ github.event.pull_request.number }}"
 
   slow:
-    needs: test
+    needs: changes
     if: >-
       github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
       || contains(github.event.pull_request.labels.*.name, 'full-ci')
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - area: auth
+          - area: terrabase
     runs-on: alpha
     timeout-minutes: 60
     permissions:
@@ -216,29 +224,42 @@ jobs:
       - *checkout
       - *checkout-ts-dotnet
       - *setup-builder
+      - name: Supply bucket-scoped CI storage credentials
+        if: matrix.area == 'terrabase'
+        env:
+          TIGRIS_CI_CREDENTIALS: ${{ secrets.TIGRIS_CI_CREDENTIALS }}
+        run: |
+          [[ -n $TIGRIS_CI_CREDENTIALS ]] || { echo 'TIGRIS_CI_CREDENTIALS is required' >&2; exit 1; }
+          umask 077
+          printf '%s\n' "$TIGRIS_CI_CREDENTIALS" > "$RUNNER_TEMP/tigris-ci.env"
       - uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
-          target: test-slow
+          target: test-slow-${{ matrix.area }}
+          secret-files: ${{ matrix.area == 'terrabase' && format('tigris-ci={0}/tigris-ci.env', runner.temp) || '' }}
           build-args: |
             DOTNET_PROCESSOR_COUNT=8
             DOTNET_GCHeapCount=8
           # A rerun of the same commit runs the suites again instead of reusing the stored result.
-          no-cache-filters: slow-run
+          no-cache-filters: slow-${{ matrix.area }}-run
           outputs: type=local,dest=slow
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=slow' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=slow' || '' }}
+          cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope=slow-{0}', matrix.area) || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && format('type=gha,mode=max,scope=slow-{0}', matrix.area) || '' }}
+      - name: Remove the CI credential file
+        if: ${{ always() && matrix.area == 'terrabase' }}
+        run: rm -f "$RUNNER_TEMP/tigris-ci.env"
       - name: Report the Slow result
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          if [[ ! -f slow/exit ]]; then
-            echo "Slow suites did not run: $RUN_URL" | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 1
+          if [[ ! -f slow/exit || ! -f slow/log ]]; then
+            mkdir -p slow
+            echo "Slow ${{ matrix.area }} suites did not finish building: $RUN_URL" | tee -a "$GITHUB_STEP_SUMMARY" > slow/log
+            echo 1 > slow/exit
           fi
           code=$(<slow/exit)
           mapfile -t failed < <(sed -nE 's/^failed (.+) \([^)]*\)$/\1/p' slow/log | sort -u)
@@ -255,8 +276,7 @@ jobs:
           [[ ${#failed[@]} -gt 0 ]] || failed=("Slow suites failed without a failed test (build or runner error)")
           gh label create slow-failure -R "$GITHUB_REPOSITORY" --color B60205 --description "A Slow test failed on main" --force
           open=$(gh issue list -R "$GITHUB_REPOSITORY" --label slow-failure --state open --limit 500 --json number,title)
-          # shortcut: at most 10 issues per run so a mass failure stays readable; the summary lists every test.
-          for test in "${failed[@]:0:10}"; do
+          for test in "${failed[@]}"; do
             title="Slow: $test"
             # The exception and stack, without the captured server output; credentials redacted.
             excerpt=$(awk -v t="failed $test " 'index($0, t) == 1 { on = 1; next } on && (/^[^ ]/ || /^  Standard output/ || ++n > 80) { exit } on' slow/log \
@@ -266,10 +286,10 @@ jobs:
             case $target in *TerraBase.Slow*) target="terrabase-test-slow" ;; *Authentication.Slow*) target="auth-test-slow" ;; *) target="test-slow" ;; esac
             body=$(printf '%s\n' \
               "Failed on \`$GITHUB_SHA\` in the Slow job: $RUN_URL" "" \
-              "Environment: \`slow\` job on alpha, Dockerfile stage \`test-slow\`, Release build." \
+              "Environment: \`slow (${{ matrix.area }})\` job on alpha, Dockerfile stage \`test-slow-${{ matrix.area }}\`, Release build." \
               "Reproduce: \`nice -n 19 make $target TEST_ARGS=\"--treenode-filter '/*/*/*/${test%%(*}'\"\`" \
               "Expected: the test passes. Actual:" "" '```' "${excerpt:-see the run log}" '```')
-            number=$(jq -r --arg t "$title" 'first(.[] | select(.title == $t) | .number) // empty' <<< "$open")
+            number=$(jq -r --arg t "$title" "first(.[] | select(.title == \$t) | .number) // empty" <<< "$open")
             if [[ -n $number ]]; then
               gh issue comment "$number" -R "$GITHUB_REPOSITORY" --body "$body"
             else
@@ -279,9 +299,8 @@ jobs:
           exit "$code"
 
   preview:
-    # OFF 2026-10-12 by the user's order: no PR preview environments until previews work again (Fly previews org
-    # hit its 20-machine limit). Re-enable by deleting `false &&` in a reviewed PR.
-    if: false && github.event_name == 'pull_request'
+    needs: test
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: alpha
     timeout-minutes: 20
     concurrency:
