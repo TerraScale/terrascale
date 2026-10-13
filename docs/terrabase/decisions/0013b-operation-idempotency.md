@@ -1,4 +1,20 @@
-# 0013: A production write answers success only after two independently durable regional copies exist
+# 0013b: Operation ids and cross-region idempotency (revision 3 pending)
+
+> **Split, 2026-10-13.**
+> - The success barrier for one write attempt (B4) is now [0013a](0013a-remote-durable-acknowledgement.md). That
+>   covers the commit marker, eligible acks, outcomes, placement, routes and bounds.
+> - This record keeps the operation-id protocol: sections 4 (idempotency states), 6, 7 and 12 (keys and lookups).
+> - It is **proposed, revision 3 pending**. Round 2's review (#171, 6138821716) found the majority reservation of
+>   revision 2 unsafe across acceptor changes, without termination for split votes, and too loose in certifying records
+>   and fences.
+> - Nothing below is claimed or implemented until revision 3 passes independent review. Until then:
+>   - `Idempotency-Key` stays refused;
+>   - no cross-region exactly-once is promised;
+>   - where the sections below overlap 0013a, 0013a governs.
+>
+> Revision 2 follows unchanged, for its context.
+
+## Revision 2 text
 
 - **Status:** proposed, revision 2 (2026-10-13).
   - The contract was approved by the user through COS. This record defines it before step 2 is coded.
