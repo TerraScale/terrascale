@@ -85,7 +85,7 @@ public sealed class BackupQualificationTests
     {
         var failures = BackupQualification.Failures(
             [.. Plan, new("after-commit", true, Committed)],
-            [new("after-commit", Committed, null), new("after-commit", Committed, null), new("during-stall", null, ""), new("added-later", Committed, null)]);
+            [new("after-commit", Committed, null), new("after-commit", Committed, null), new("during-stall", null, " "), new("added-later", Committed, null)]);
         await Assert.That(failures).Contains("cut after-commit is planned twice");
         await Assert.That(failures).Contains("cut added-later was not in the frozen plan");
         await Assert.That(failures).Contains("cut after-commit has 2 outcomes, not one");

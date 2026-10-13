@@ -140,10 +140,12 @@ Qualification needs both, reported separately:
    injected backup stall). Each either restores exactly the writes acknowledged before it or answers a typed refusal
    naming why. Any partial result fails.
 
-A run in which every cut is refused is **not** green. `BackupQualification.Failures` enforces these rules on the run's
-frozen plan and outcomes: no supported cut in the plan, a supported cut that refuses, any restore that differs from the
-acknowledged writes (count, digest, a version, source database or regions), an untyped answer, and a missing, repeated or
-unplanned cut each fail the run (`BackupQualificationTests`). Test bucket only.
+A run in which every cut is refused is **not** green. The judge of these rules exists and is tested
+(`BackupQualification.Failures`, `BackupQualificationTests`): no supported cut in the plan, a supported cut that refuses,
+any restore that differs from the acknowledged writes (count, digest, a version, source database or regions), an answer
+without an error code, and a missing, repeated or unplanned cut each fail it. **Not wired yet:** no scenario takes
+backups, restores the cuts and feeds the outcomes to it. That scenario (pinned mode, the disposable app's own test bucket)
+is a gate before the backup row can be run; until it lands, no backup qualification result exists. Test bucket only.
 
 ## Teardown (scoped, confirmed per step)
 

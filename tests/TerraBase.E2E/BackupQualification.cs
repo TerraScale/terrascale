@@ -4,7 +4,8 @@ namespace TerraBase.E2E;
 /// The A7YES backup qualification (docs/terrabase/e2e-disposable-app.md, "Backup"): a backup at T holds every write
 /// acknowledged before T, or the restore answers a typed refusal. Supported cuts are the functional proof and must
 /// restore and match; a refusal passes only the safety assertion of a fault cut. A plan with no supported cut, or a run
-/// in which every cut refused, is never green.
+/// in which every cut refused, is never green. This is the judge only: the pinned scenario that takes backups, restores
+/// the cuts and feeds it is not wired yet, so no backup qualification result exists until it lands (runbook, "Backup").
 /// </summary>
 internal static class BackupQualification
 {
@@ -46,7 +47,8 @@ internal static class BackupQualification
             {
                 failures.Add($"supported cut {cut.Name} refused ({outcome.Refusal ?? "no code"}): a supported cut must restore");
             }
-            else if (string.IsNullOrEmpty(outcome.Refusal))
+            // shortcut: any snake_case error code counts as typed; the backup scenario pins the exact refusal codes it expects.
+            else if (outcome.Refusal is not [>= 'a' and <= 'z', ..] code || !code.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_'))
             {
                 failures.Add($"cut {cut.Name} neither restored nor answered a typed refusal");
             }

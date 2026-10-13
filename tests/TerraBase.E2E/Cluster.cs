@@ -189,8 +189,8 @@ public sealed class Cluster : IAsyncDisposable
 
     private Local RequireLocal() => _local ?? throw new NotSupportedException("this fault needs local nodes");
 
-    // Unpinned Fly runs (production's read-only suite and its outage test) keep their default app; a machine-pinned run
-    // names its disposable app explicitly (DisposableTarget).
+    // An unpinned Fly run (the production e2e project's suite: its own collection, no machine faults) needs no app; a
+    // machine-pinned run names its whole disposable target explicitly (DisposableTarget).
 
     private static async Task<Cluster> StartLocalAsync(string[] regions, IReadOnlyDictionary<string, TimeSpan> skews)
     {
