@@ -3,6 +3,7 @@ using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Usage;
@@ -60,8 +61,17 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
                     return new(UsageSourceState.Measured, DatabaseReading(row, project, first, now, bucket));
                 }
                 var totals = await sdk.Project(project.Id).GetUsageAsync(bucket, first, now, deadline.Token);
-                if (totals.ProjectId != project.Id || totals.Items.Select(item => item.DatabaseId).Distinct(StringComparer.Ordinal).Count() != totals.Items.Count)
+                if (totals.ProjectId != project.Id || Count(totals.Databases) != totals.Items.Count ||
+                    totals.Items.Select(item => item.DatabaseId).Distinct(StringComparer.Ordinal).Count() != totals.Items.Count)
                     throw new JsonException("Usage returned a different project or repeated database.");
+                if (Count(totals.StorageBytes) != totals.Items.Sum(item => Count(item.StorageBytes)) ||
+                    Count(totals.LogicalBytes) != totals.Items.Sum(item => Count(item.LogicalBytes)) ||
+                    Count(totals.Documents) != totals.Items.Sum(item => Count(item.Documents)) ||
+                    Count(totals.Reads) != totals.Items.Sum(item => Count(item.Reads)) ||
+                    Count(totals.Writes) != totals.Items.Sum(item => Count(item.Writes)) ||
+                    totals.Period.Reads != totals.Items.Sum(item => Count(item.Period.Reads)) ||
+                    totals.Period.Writes != totals.Items.Sum(item => Count(item.Period.Writes)))
+                    throw new JsonException("Project usage totals disagree with database usage.");
                 return new(UsageSourceState.Measured, new(project.Id, "", Count(totals.LogicalBytes), Count(totals.Documents),
                     Period(totals.Period, first, now, bucket), Points(totals.Series, totals.Period, bucket),
                     totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket)).ToArray()));
@@ -77,6 +87,7 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
     }
     private static UsageReading DatabaseReading(TerraBaseDatabaseUsage row, ProjectRecord project, DateTimeOffset from, DateTimeOffset now, string bucket)
     {
+        _ = Count(row.StorageBytes); _ = Count(row.Collections); _ = Count(row.Reads); _ = Count(row.Writes);
         if (!project.Databases.TryGetValue(row.DatabaseId, out var database) || database.ProjectId != project.Id)
             throw new JsonException("Usage returned a foreign database.");
         return new(project.Id, row.DatabaseId, Count(row.LogicalBytes), Count(row.Documents), Period(row.Period, from, now, bucket),

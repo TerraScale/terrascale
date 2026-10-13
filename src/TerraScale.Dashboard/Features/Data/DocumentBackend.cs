@@ -77,7 +77,7 @@ public sealed class DocumentBackend(IHttpClientFactory http, IProjectAccessToken
     }
 
     public async Task<TerraBaseCollectionSchema> SchemaAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken) =>
-        await (await DatabaseAsync(scope, home, databaseName, "databases:read", cancellationToken)).GetSchemaAsync(collection, cancellationToken);
+        await (await DatabaseAsync(scope, home, databaseName, "databases:read", cancellationToken)).GetInferredSchemaAsync(collection, cancellationToken);
 
     private async Task<TerraBaseDatabase> DatabaseAsync(DatabaseScope scope, DatabaseRegion home, string name, string permission, CancellationToken cancellationToken)
     {

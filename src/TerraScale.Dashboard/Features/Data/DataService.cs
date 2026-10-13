@@ -185,7 +185,7 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         var scope = DatabaseService.Scope(context);
         var home = await databases.HomeAsync(context, database, cancellationToken);
         try { await backend.CreateIndexAsync(scope, home, database.Id, collection, paths, cancellationToken); }
-        catch (DatabaseProviderException error) when (error.StatusCode == System.Net.HttpStatusCode.Conflict)
+        catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.Conflict)
         {
             // Treat only the actual matching provider index as an idempotent
             // replay; other conflicts must still reach the caller.
