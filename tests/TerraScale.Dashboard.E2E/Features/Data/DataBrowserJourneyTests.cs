@@ -108,7 +108,21 @@ public sealed class DataBrowserJourneyTests(DashboardE2EFixture fixture)
         await EditorAsync("DELETE FROM orders");
         await CheckAsync(422);
         await Assert.That(await page.Locator("#sql-analysis").CountAsync()).IsEqualTo(0);
-        await Assert.That(await page.GetByRole(AriaRole.Alert).InnerTextAsync()).Contains("Only SELECT, WITH, and EXPLAIN statements are allowed.");
+        // Editor live regions may boot after navigation; keep their alert collision deterministic.
+        await page.Locator("#sql-editor").EvaluateAsync("""
+            element => {
+                for (let index = 0; index < 2; index++) {
+                    const alert = document.createElement('div');
+                    alert.className = 'monaco-alert';
+                    alert.setAttribute('role', 'alert');
+                    alert.setAttribute('aria-atomic', 'true');
+                    element.append(alert);
+                }
+            }
+            """);
+        var sqlAlert = page.Locator(".ts-data-sql .ts-alert-danger[role='alert']");
+        await Assert.That(await sqlAlert.CountAsync()).IsEqualTo(1);
+        await Assert.That(await sqlAlert.InnerTextAsync()).IsEqualTo("Only SELECT, WITH, and EXPLAIN statements are allowed.");
         await Assert.That(errors.ToArray()).IsEmpty();
         await Assert.That(bootFailures.ToArray()).IsEmpty();
 
