@@ -441,8 +441,8 @@ internal sealed class PointInTimeRestore(
     }
 
     // The newest time the backup proves restorable from last, the newest snapshot, and newest, its generation's newest
-    // segment keys (oldest first): the second at or before the start of the newest read marked at the end of one of them,
-    // where every transaction is placed either side of a whole second, or last's own time.
+    // segment keys (oldest first): the second at or before the start of the newest read marked at the end of a readable
+    // one of them, where every transaction is placed either side of a whole second, or last's own time.
     private static async Task<DateTimeOffset> ProvenLatestAsync(
         BackupTarget backup, string scope, SnapshotKey last, IReadOnlyList<string> newest, CancellationToken cancellationToken)
     {
@@ -453,9 +453,9 @@ internal sealed class PointInTimeRestore(
             {
                 mark = await backup.Reader.ReadMarkAsync(newest[index], scope, cancellationToken).ConfigureAwait(false);
             }
-            catch (BackupHistoryIncompleteException)
+            catch (Exception error) when (error is BackupHistoryIncompleteException or InvalidDataException)
             {
-                // Retention removed it since the listing.
+                // Gone since the listing (retention), or unreadable (corrupted, cut short): it proves nothing, as if missing.
                 continue;
             }
 

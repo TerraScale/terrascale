@@ -281,7 +281,8 @@ it (user decision, 2026-10-07). Production backup starts right after that cutove
 `GET /v1/projects/{project}/databases/{database}/point-in-time` returns the restore window: from the oldest snapshot,
 but no earlier than the plan's retention window (a bucket rule may keep older objects), to the newest time the backup
 proves (see [Proven history](#proven-history)): read from the bucket, the second at or before the newest read mark in
-the newest generation's last three segments (at most three object reads), or its newest snapshot's time. While this
+the newest generation's last three segments (at most three object reads; a segment that is gone, fails authentication
+or is cut short counts as holding none), or its newest snapshot's time. While this
 node ships the database to the platform bucket, `latest` is instead the shipper's acknowledged progress, the end of its
 newest stored read, which a restore can refuse with `409` until a later write or read mark proves it. It returns 404
 when no stored data falls within the plan's window, including when retained objects have all expired under the plan.
