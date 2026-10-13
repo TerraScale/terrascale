@@ -25,7 +25,7 @@ public static class TerraScaleAuthServiceCollectionExtensions
         services.AddHttpClient<TerraScaleAuthClient>(httpClient =>
         {
             httpClient.BaseAddress = optionSnapshot.BaseAddress;
-        }).ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler { AllowAutoRedirect = false });
+        }).ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
 
         return services;
     }

@@ -658,9 +658,8 @@ public sealed class TerraScaleAuthClientEdgeCaseTests
         cancelled.Cancel();
 
         await Assert.ThrowsAsync<OperationCanceledException>(() => client.Users.ListAsync(cancellationToken: cancelled.Token));
-        // The HttpClient layer still dispatches the request once; cancellation
-        // surfaces before the body is consumed. pins current behavior.
-        await Assert.That(handler.Attempts).IsEqualTo(1);
+        // Cancellation is checked before credentials or the request reach the handler.
+        await Assert.That(handler.Attempts).IsEqualTo(0);
     }
 
     [Test]

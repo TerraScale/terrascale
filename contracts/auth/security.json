@@ -1,0 +1,128 @@
+{
+  "producer_revision": "e30ffdc287530551b161b0130220be53d3c0475e",
+  "schemes": {
+    "platformUser": {
+      "type": "http",
+      "scheme": "bearer",
+      "bearerFormat": "JWT",
+      "requires": "Live terrascale user sign-in token; ES256 at+jwt; audience includes issuer; current auth epoch and live token/sign-in entries. Active MFA primary-only users refused. Organization, project, service and API-key tokens refused."
+    },
+    "clientBasic": {
+      "type": "http",
+      "scheme": "basic",
+      "encoding": "base64(ASCII(form_encode(client_id) + ':' + form_encode(client_secret)))",
+      "requires": "Confidential client; headless JSON additionally requires email-code grant permission."
+    },
+    "oauth_userinfo": {
+      "type": "http",
+      "scheme": "bearer",
+      "requires": "Issuer's valid access token; live user/current authentication epoch; active MFA primary-only users refused."
+    }
+  },
+  "token_audiences": {
+    "platform_issuer": "https://auth.terrascale.tech/terrascale",
+    "resource": "https://api.terrascale.tech",
+    "regional_host_changes_audience": false,
+    "sign_in": "Includes issuer and configured resource audiences; ID tokens are client-bound.",
+    "project_key_or_exchange": "Resource audience; org_id/project_id/scope, optional database only for narrowed API keys. Lifetime at most 15 minutes; exchange no longer than remaining subject lifetime."
+  },
+  "sign_in_scopes": [
+    "openid",
+    "email",
+    "profile",
+    "offline_access"
+  ],
+  "action_scopes": [
+    "databases:read",
+    "databases:write",
+    "documents:read",
+    "documents:write"
+  ],
+  "authorization": "Producer rechecks ownership/membership/role; SDK never treats UI roles or local IDs as authority.",
+  "pagination": "limit 1..100 (default 20), opaque after bound to same list; items/next; next null ends. IDs unchanged; key lists creation order, org/project/member lists id order.",
+  "errors": {
+    "nested": "{error:{code,message}}",
+    "oauth": "{error,error_description?}",
+    "safe_metadata": "StatusCode, admitted ErrorCode, RetryAfter only; unknown code, server descriptions and bodies omitted.",
+    "platform_codes": [
+      "invalid_request",
+      "unauthorized",
+      "forbidden_role",
+      "not_found",
+      "not_empty",
+      "last_owner",
+      "name_taken",
+      "rotation_pending",
+      "temporarily_unavailable"
+    ],
+    "headless_codes": [
+      "invalid_request",
+      "invalid_client",
+      "invalid_password",
+      "invalid_code",
+      "rate_limited",
+      "temporarily_unavailable"
+    ],
+    "token_codes": [
+      "invalid_request",
+      "invalid_client",
+      "invalid_grant",
+      "invalid_scope",
+      "invalid_target",
+      "unauthorized_client",
+      "unsupported_grant_type",
+      "rate_limited",
+      "temporarily_unavailable"
+    ]
+  },
+  "required_request_values": {
+    "NameRequest": [
+      "name"
+    ],
+    "RoleRequest": [
+      "role"
+    ],
+    "CreateApiKeyRequest": [
+      "name",
+      "scopes"
+    ],
+    "HeadlessSignUpRequest": [
+      "email",
+      "password",
+      "ip_address"
+    ],
+    "HeadlessEmailCodeRequest": [
+      "email",
+      "ip_address"
+    ],
+    "HeadlessEmailRequest": [
+      "email",
+      "ip_address"
+    ],
+    "HeadlessPasswordResetRequest": [
+      "email",
+      "code",
+      "new_password",
+      "ip_address"
+    ]
+  },
+  "limits": {
+    "headless_json_bytes": 8192,
+    "platform_json_bytes": 16384,
+    "sdk_token_form_and_success_bytes": 1048576,
+    "sdk_error_bytes": 65536,
+    "sdk_deadline_seconds": 30
+  },
+  "retry": "No automatic retries for this integration surface; no stable mutation idempotency contract.",
+  "revocation": "Revoking user access/refresh token ends sign-in in ts-auth. Key/role revocation prevents fresh scope issuance. Offline tokens persist until expiry; no immediate offline revocation claim.",
+  "handler_prerequisite": "Caller-owned HttpClient must disable redirects and cookies. SDK DI does so; arbitrary handlers cannot be inspected. SDK never owns caller HttpClient disposal.",
+  "qualification": "Source-derived contract and synthetic HTTP fakes only. Producer parity, exact package compatibility and live integration remain unproven. Token database narrowing via exchange is absent. Introspection endpoint is absent.",
+  "api_key_secret_format": {
+    "id": "canonical 26-character ULID",
+    "separator": "_",
+    "secret_length": 52,
+    "secret_alphabet": "0123456789abcdefghjkmnpqrstvwxyz",
+    "prefix_or_last4_metadata": "absent",
+    "one_time_display": "Only creation/rotation returns key; listings/get return metadata."
+  }
+}

@@ -1,0 +1,780 @@
+{
+  "producer_revision": "e30ffdc287530551b161b0130220be53d3c0475e",
+  "operations": [
+    {
+      "operation_id": "create_organization",
+      "method": "POST",
+      "path": "/v1/terrascale/organizations",
+      "request_dto": "NameRequest",
+      "response_dto": "OrganizationBody",
+      "success_status": 201,
+      "errors": [
+        400,
+        401,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.CreateOrganizationAsync"
+    },
+    {
+      "operation_id": "list_organizations",
+      "method": "GET",
+      "path": "/v1/terrascale/organizations",
+      "request_dto": null,
+      "response_dto": "OrganizationPageBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": {
+        "limit": "integer 1..100, default 20",
+        "after": "opaque same-list cursor; response next or null"
+      },
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.ListOrganizationsAsync"
+    },
+    {
+      "operation_id": "get_organization",
+      "method": "GET",
+      "path": "/v1/terrascale/organizations/{organization}",
+      "request_dto": null,
+      "response_dto": "OrganizationBody",
+      "success_status": 200,
+      "errors": [
+        401,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.GetOrganizationAsync"
+    },
+    {
+      "operation_id": "rename_organization",
+      "method": "PATCH",
+      "path": "/v1/terrascale/organizations/{organization}",
+      "request_dto": "NameRequest",
+      "response_dto": "OrganizationBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.RenameOrganizationAsync"
+    },
+    {
+      "operation_id": "delete_organization",
+      "method": "DELETE",
+      "path": "/v1/terrascale/organizations/{organization}",
+      "request_dto": null,
+      "response_dto": null,
+      "success_status": 204,
+      "errors": [
+        401,
+        403,
+        404,
+        409,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.DeleteOrganizationAsync"
+    },
+    {
+      "operation_id": "list_members",
+      "method": "GET",
+      "path": "/v1/terrascale/organizations/{organization}/members",
+      "request_dto": null,
+      "response_dto": "MemberPageBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": {
+        "limit": "integer 1..100, default 20",
+        "after": "opaque same-list cursor; response next or null"
+      },
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.ListMembersAsync"
+    },
+    {
+      "operation_id": "change_member_role",
+      "method": "PUT",
+      "path": "/v1/terrascale/organizations/{organization}/members/{user}/role",
+      "request_dto": "RoleRequest",
+      "response_dto": "MemberBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.ChangeMemberRoleAsync"
+    },
+    {
+      "operation_id": "remove_member",
+      "method": "DELETE",
+      "path": "/v1/terrascale/organizations/{organization}/members/{user}",
+      "request_dto": null,
+      "response_dto": null,
+      "success_status": 204,
+      "errors": [
+        401,
+        403,
+        404,
+        409,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.RemoveMemberAsync"
+    },
+    {
+      "operation_id": "leave_organization",
+      "method": "POST",
+      "path": "/v1/terrascale/organizations/{organization}/leave",
+      "request_dto": null,
+      "response_dto": null,
+      "success_status": 204,
+      "errors": [
+        401,
+        404,
+        409,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.LeaveOrganizationAsync"
+    },
+    {
+      "operation_id": "create_project",
+      "method": "POST",
+      "path": "/v1/terrascale/organizations/{organization}/projects",
+      "request_dto": "NameRequest",
+      "response_dto": "ProjectBody",
+      "success_status": 201,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.CreateProjectAsync"
+    },
+    {
+      "operation_id": "list_projects",
+      "method": "GET",
+      "path": "/v1/terrascale/organizations/{organization}/projects",
+      "request_dto": null,
+      "response_dto": "ProjectPageBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": {
+        "limit": "integer 1..100, default 20",
+        "after": "opaque same-list cursor; response next or null"
+      },
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.ListProjectsAsync"
+    },
+    {
+      "operation_id": "get_project",
+      "method": "GET",
+      "path": "/v1/terrascale/organizations/{organization}/projects/{project}",
+      "request_dto": null,
+      "response_dto": "ProjectBody",
+      "success_status": 200,
+      "errors": [
+        401,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.GetProjectAsync"
+    },
+    {
+      "operation_id": "rename_project",
+      "method": "PATCH",
+      "path": "/v1/terrascale/organizations/{organization}/projects/{project}",
+      "request_dto": "NameRequest",
+      "response_dto": "ProjectBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.RenameProjectAsync"
+    },
+    {
+      "operation_id": "delete_project",
+      "method": "DELETE",
+      "path": "/v1/terrascale/organizations/{organization}/projects/{project}",
+      "request_dto": null,
+      "response_dto": null,
+      "success_status": 204,
+      "errors": [
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.DeleteProjectAsync"
+    },
+    {
+      "operation_id": "list_project_members",
+      "method": "GET",
+      "path": "/v1/terrascale/organizations/{organization}/projects/{project}/members",
+      "request_dto": null,
+      "response_dto": "ProjectMemberPageBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": {
+        "limit": "integer 1..100, default 20",
+        "after": "opaque same-list cursor; response next or null"
+      },
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.ListProjectMembersAsync"
+    },
+    {
+      "operation_id": "set_project_member_role",
+      "method": "PUT",
+      "path": "/v1/terrascale/organizations/{organization}/projects/{project}/members/{user}",
+      "request_dto": "RoleRequest",
+      "response_dto": "ProjectMemberBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.SetProjectMemberRoleAsync"
+    },
+    {
+      "operation_id": "remove_project_member",
+      "method": "DELETE",
+      "path": "/v1/terrascale/organizations/{organization}/projects/{project}/members/{user}",
+      "request_dto": null,
+      "response_dto": null,
+      "success_status": 204,
+      "errors": [
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.RemoveProjectMemberAsync"
+    },
+    {
+      "operation_id": "create_organization_api_key",
+      "method": "POST",
+      "path": "/v1/terrascale/organizations/{organization}/api-keys",
+      "request_dto": "CreateApiKeyRequest",
+      "response_dto": "ApiKeySecretBody",
+      "success_status": 201,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.CreateOrganizationApiKeyAsync"
+    },
+    {
+      "operation_id": "list_organization_api_keys",
+      "method": "GET",
+      "path": "/v1/terrascale/organizations/{organization}/api-keys",
+      "request_dto": null,
+      "response_dto": "ApiKeyPageBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": {
+        "limit": "integer 1..100, default 20",
+        "after": "opaque same-list cursor; response next or null"
+      },
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.ListOrganizationApiKeysAsync"
+    },
+    {
+      "operation_id": "get_organization_api_key",
+      "method": "GET",
+      "path": "/v1/terrascale/organizations/{organization}/api-keys/{key}",
+      "request_dto": null,
+      "response_dto": "ApiKeyBody",
+      "success_status": 200,
+      "errors": [
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.GetOrganizationApiKeyAsync"
+    },
+    {
+      "operation_id": "revoke_organization_api_key",
+      "method": "DELETE",
+      "path": "/v1/terrascale/organizations/{organization}/api-keys/{key}",
+      "request_dto": null,
+      "response_dto": null,
+      "success_status": 204,
+      "errors": [
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.RevokeOrganizationApiKeyAsync"
+    },
+    {
+      "operation_id": "rotate_organization_api_key",
+      "method": "POST",
+      "path": "/v1/terrascale/organizations/{organization}/api-keys/{key}/rotate",
+      "request_dto": "RotateApiKeyRequest",
+      "response_dto": "ApiKeySecretBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.RotateOrganizationApiKeyAsync"
+    },
+    {
+      "operation_id": "create_project_api_key",
+      "method": "POST",
+      "path": "/v1/terrascale/organizations/{organization}/projects/{project}/api-keys",
+      "request_dto": "CreateApiKeyRequest",
+      "response_dto": "ApiKeySecretBody",
+      "success_status": 201,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.CreateProjectApiKeyAsync"
+    },
+    {
+      "operation_id": "list_project_api_keys",
+      "method": "GET",
+      "path": "/v1/terrascale/organizations/{organization}/projects/{project}/api-keys",
+      "request_dto": null,
+      "response_dto": "ApiKeyPageBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": {
+        "limit": "integer 1..100, default 20",
+        "after": "opaque same-list cursor; response next or null"
+      },
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.ListProjectApiKeysAsync"
+    },
+    {
+      "operation_id": "get_project_api_key",
+      "method": "GET",
+      "path": "/v1/terrascale/organizations/{organization}/projects/{project}/api-keys/{key}",
+      "request_dto": null,
+      "response_dto": "ApiKeyBody",
+      "success_status": 200,
+      "errors": [
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.GetProjectApiKeyAsync"
+    },
+    {
+      "operation_id": "revoke_project_api_key",
+      "method": "DELETE",
+      "path": "/v1/terrascale/organizations/{organization}/projects/{project}/api-keys/{key}",
+      "request_dto": null,
+      "response_dto": null,
+      "success_status": 204,
+      "errors": [
+        401,
+        403,
+        404,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": null,
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.RevokeProjectApiKeyAsync"
+    },
+    {
+      "operation_id": "rotate_project_api_key",
+      "method": "POST",
+      "path": "/v1/terrascale/organizations/{organization}/projects/{project}/api-keys/{key}/rotate",
+      "request_dto": "RotateApiKeyRequest",
+      "response_dto": "ApiKeySecretBody",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        403,
+        404,
+        409,
+        503
+      ],
+      "security": "platform_user_sign_in_bearer",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Platform.RotateProjectApiKeyAsync"
+    },
+    {
+      "operation_id": "headless_email_code_start",
+      "method": "POST",
+      "path": "/{slug}/headless/v1/email-code/start",
+      "request_dto": "HeadlessEmailCodeRequest",
+      "response_dto": null,
+      "success_status": 202,
+      "errors": [
+        400,
+        401,
+        404,
+        429,
+        503
+      ],
+      "security": "client_secret_basic",
+      "request_media_type": "application/json",
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Headless.StartEmailCodeAsync"
+    },
+    {
+      "operation_id": "headless_sign_up",
+      "method": "POST",
+      "path": "/{slug}/headless/v1/sign-up",
+      "request_dto": "HeadlessSignUpRequest",
+      "response_dto": "HeadlessSignUpResponse",
+      "success_status": 202,
+      "errors": [
+        400,
+        401,
+        404,
+        429,
+        503
+      ],
+      "security": "client_secret_basic",
+      "request_media_type": "application/json",
+      "response_media_type": "application/json",
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Headless.SignUpAsync"
+    },
+    {
+      "operation_id": "headless_password_reset_start",
+      "method": "POST",
+      "path": "/{slug}/headless/v1/password-reset/start",
+      "request_dto": "HeadlessEmailRequest",
+      "response_dto": null,
+      "success_status": 202,
+      "errors": [
+        400,
+        401,
+        404,
+        429,
+        503
+      ],
+      "security": "client_secret_basic",
+      "request_media_type": "application/json",
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Headless.StartPasswordResetAsync"
+    },
+    {
+      "operation_id": "headless_password_reset_complete",
+      "method": "POST",
+      "path": "/{slug}/headless/v1/password-reset/complete",
+      "request_dto": "HeadlessPasswordResetRequest",
+      "response_dto": null,
+      "success_status": 204,
+      "errors": [
+        400,
+        401,
+        404,
+        429,
+        503
+      ],
+      "security": "client_secret_basic",
+      "request_media_type": "application/json",
+      "response_media_type": null,
+      "pagination": null,
+      "retry": "none; no idempotency contract",
+      "sdk_method": "Headless.CompletePasswordResetAsync"
+    }
+  ],
+  "oauth_operations": [
+    {
+      "operation_id": "oauth_token",
+      "method": "POST",
+      "path": "/{slug}/oauth/token",
+      "request_media_type": "application/x-www-form-urlencoded",
+      "response_media_type": "application/json",
+      "response_dto": "TokenBody",
+      "security": "client_secret_basic or client_secret_post",
+      "success_status": 200,
+      "errors": [
+        400,
+        401,
+        429,
+        503
+      ],
+      "retry": "none",
+      "grants": {
+        "password": {
+          "grant_type": "urn:terrascale:params:oauth:grant-type:password",
+          "required": [
+            "email",
+            "password",
+            "ip_address"
+          ],
+          "optional": [
+            "scope"
+          ],
+          "sdk_method": "Headless.SignInWithPasswordAsync"
+        },
+        "email_code": {
+          "grant_type": "urn:terrascale:params:oauth:grant-type:email-code",
+          "required": [
+            "email",
+            "code",
+            "ip_address"
+          ],
+          "optional": [
+            "pending_token",
+            "scope"
+          ],
+          "sdk_method": "Headless.SignInWithEmailCodeAsync"
+        },
+        "token_exchange": {
+          "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+          "required": [
+            "subject_token",
+            "subject_token_type",
+            "organization"
+          ],
+          "optional": [
+            "project",
+            "scope"
+          ],
+          "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+          "unsupported": [
+            "database"
+          ],
+          "sdk_method": "Oidc.ExchangeTokenAsync"
+        },
+        "client_credentials": {
+          "grant_type": "client_credentials",
+          "required": [
+            "client_id",
+            "client_secret"
+          ],
+          "optional": [
+            "project",
+            "scope"
+          ],
+          "sdk_method": "Oidc.RequestClientCredentialsTokenAsync"
+        },
+        "refresh_token": {
+          "grant_type": "refresh_token",
+          "required": [
+            "refresh_token",
+            "client_id",
+            "client_secret"
+          ],
+          "sdk_method": "Oidc.RefreshTokenAsync"
+        }
+      }
+    },
+    {
+      "operation_id": "oauth_revoke",
+      "method": "POST",
+      "path": "/{slug}/oauth/revoke",
+      "request_media_type": "application/x-www-form-urlencoded",
+      "security": "client_secret_basic or client_secret_post",
+      "required": [
+        "token"
+      ],
+      "optional": [
+        "token_type_hint"
+      ],
+      "success_status": 200,
+      "errors": [
+        400,
+        401
+      ],
+      "retry": "none",
+      "sdk_method": "Oidc.RevokeTokenAsync"
+    },
+    {
+      "operation_id": "oauth_userinfo",
+      "method": "GET",
+      "path": "/{slug}/oauth/userinfo",
+      "security": "user_access_token_bearer",
+      "success_status": 200,
+      "response_dto": "UserInfoBody",
+      "response_media_type": "application/json",
+      "errors": [
+        401,
+        503
+      ],
+      "sdk_method": "Oidc.GetUserInfoAsync"
+    }
+  ]
+}

@@ -82,10 +82,17 @@ internal static class TerraScaleAuthErrors
 
     private sealed class ErrorBodyLimitException : Exception;
 
-    // Fixed error identities from ts-auth management/feature contracts and
+    // Fixed error identities from the source-pinned C# platform/headless and legacy contracts and
     // the OAuth error vocabulary. No producer-supplied free text is retained.
     private static readonly HashSet<string> KnownErrorCodes = new(StringComparer.Ordinal)
     {
+        "already_member",
+        "forbidden_role",
+        "invalid_target",
+        "last_owner",
+        "name_taken",
+        "not_empty",
+        "rotation_pending",
         "access_denied",
         "account_unavailable",
         "already_a_member",
