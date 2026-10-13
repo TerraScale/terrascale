@@ -248,7 +248,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         public InternalBillingProducer Billing => billing ??= new(state, workspace, clock.GetUtcNow, () => subject, organization => Ownership?.SeedOrganization(organization));
         public OwnershipSdkProtocol? Ownership { get; private set; }
         public Func<HttpContext, Task<IResult?>>? ReportingExtension { get; set; }
-        public void ComposeOwnership() => Ownership = new(Billing, clock, ResolveActiveBearer);
+        public void ComposeOwnership() => Ownership = new(workspace, ResolveActiveBearer);
         private readonly ConcurrentDictionary<string, Grant> access = new();
         private readonly ConcurrentDictionary<string, Grant> refresh = new();
         private readonly ConcurrentDictionary<string, ProjectGrant> projectGrants = new();
@@ -338,6 +338,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 // physical URL and still supplies its public trusted Host.
                 return ContractFailure("The physical transport did not preserve the trusted auth origin.");
             }
+            if (Ownership is not null && path.StartsWith("/v1/terrascale/", StringComparison.Ordinal))
+                return await Ownership.DispatchAsync(http) ?? Results.NotFound();
             if (path == "/terrascale/.well-known/openid-configuration") return Discovery();
             if (path == "/terrascale/.well-known/jwks.json")
             {
