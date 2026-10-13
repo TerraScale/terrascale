@@ -524,6 +524,175 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.UntilIndexAsync("by_key", "others", ["n"])).IsTrue();
     }
 
+    [Test]
+    public async Task Review176_equal_stamp_node_tie_converges_in_opposite_arrival_orders()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var stamp = Stamp();
+        var low = ReplicaId.Of(1, 7, 0);
+        var high = ReplicaId.Of(2, 7, 0);
+        var older = Review176Metadata(low, stamp, DocumentDelta.Indexes, "by_key", """{"collection":"items","fields":["n"]}""");
+        var winner = Review176Metadata(high, stamp, DocumentDelta.Indexes, "by_key", """{"collection":"others","fields":["m","n"]}""");
+        await Review176PushAsync(cluster, cluster["gru"], low, older);
+        await Review176PushAsync(cluster, cluster["gru"], high, winner);
+        await Review176PushAsync(cluster, cluster["sjc"], high, winner);
+        await Review176PushAsync(cluster, cluster["sjc"], low, older);
+        foreach (var machine in cluster.Machines)
+        {
+            var store = await machine.StoreAsync();
+            await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+            var index = (await read.ListIndexesAsync(CancellationToken.None)).Single();
+            await Assert.That(index.Collection).IsEqualTo("others");
+            await Assert.That(index.Fields.Select(field => field.Path).ToArray()).IsEquivalentTo(["m", "n"]);
+        }
+    }
+
+    [Test]
+    public async Task Review176_definition_changes_the_digest_and_repairs_the_physical_index()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var origin = ReplicaId.Of(1, 7, 0);
+        var stamp = Stamp();
+        var before = Review176Metadata(origin, stamp, DocumentDelta.Indexes, "by_key", """{"collection":"items","fields":["n"]}""");
+        var after = Review176Metadata(origin, stamp + 1, DocumentDelta.Indexes, "by_key", """{"collection":"items","fields":["m"]}""");
+        foreach (var machine in cluster.Machines)
+        {
+            await Review176PushAsync(cluster, machine, origin, before);
+        }
+
+        // Same version with different payloads isolates whether the digest actually hashes the definition bytes.
+        await Review176PushAsync(cluster, cluster["gru"], origin,
+            Review176Metadata(origin, stamp, DocumentDelta.Indexes, "payload_key", """{"collection":"items","fields":["n"]}"""));
+        await Review176PushAsync(cluster, cluster["sjc"], origin,
+            Review176Metadata(origin, stamp, DocumentDelta.Indexes, "payload_key", """{"collection":"items","fields":["m"]}"""));
+        var payloadGru = await Review176DigestAsync(cluster, cluster["gru"]);
+        var payloadSjc = await Review176DigestAsync(cluster, cluster["sjc"]);
+        await Assert.That(payloadGru.SequenceEqual(payloadSjc)).IsFalse();
+
+        var oldDigest = await Review176DigestAsync(cluster, cluster["gru"]);
+        await Review176PushAsync(cluster, cluster["gru"], origin, after);
+        var newDigest = await Review176DigestAsync(cluster, cluster["gru"]);
+        await Assert.That(oldDigest.SequenceEqual(newDigest)).IsFalse();
+        await cluster["sjc"].AntiEntropy.RunRoundAsync(CancellationToken.None);
+        await cluster["sjc"].AntiEntropy.RunRoundAsync(CancellationToken.None);
+        var store = await cluster["sjc"].StoreAsync();
+        await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        var index = (await read.ListIndexesAsync(CancellationToken.None)).Single(index => index.Name == "by_key");
+        await Assert.That(index.Fields.Single().Path).IsEqualTo("m");
+        await Assert.That((await Review176DigestAsync(cluster, cluster["sjc"])).SequenceEqual(newDigest)).IsTrue();
+    }
+
+    [Test]
+    public async Task Review176_rebuild_and_unique_reprojection_preserve_documents_and_reader_snapshots()
+    {
+        await using var cluster = await Cluster.StartAsync("gru");
+        var machine = cluster["gru"];
+        var origin = ReplicaId.Of(1, 7, 0);
+        var stamp = Stamp();
+        var ids = Enumerable.Range(0, 3).Select(_ => EntityIds.New().ToString()).Order(StringComparer.Ordinal).ToArray();
+        string[] bodies = ["""{"m":10,"n":1}""", """{"m":20,"n":1}""", """{"m":20,"n":2}"""];
+        await Review176PushAsync(cluster, machine, origin,
+            Review176Metadata(origin, stamp, DocumentDelta.Indexes, "by_key", """{"collection":"items","fields":["n"]}"""),
+            Put(origin, stamp, ids[0], bodies[0]), Put(origin, stamp, ids[1], bodies[1]), Put(origin, stamp, ids[2], bodies[2]),
+            Review176Metadata(origin, stamp, DocumentDelta.Unique, "items", """{"constraints":[{"name":"key","fields":["n"],"normalization":"none"}]}"""));
+        var store = await machine.StoreAsync();
+        await using (var initial = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            await Assert.That((await initial.GetAsync("items", ids[1], CancellationToken.None))!.UniqueConflict).IsTrue();
+        }
+
+        _ = DocumentField.TryParse("n", out var n);
+        var readers = Enumerable.Range(0, 8).Select(async _ =>
+        {
+            for (var attempt = 0; attempt < 12; attempt++)
+            {
+                await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+                var index = (await read.ListIndexesAsync(CancellationToken.None)).Single();
+                var rows = new List<string>();
+                await foreach (var document in read.QuerySqlAsync(new SqlQuery("items", null, [new SqlOrder(n, false)], 10), CancellationToken.None))
+                {
+                    rows.Add(document.Id);
+                }
+
+                string[] expected = index.Fields.Single().Path == "n" ? [ids[0], ids[2]] : [ids[0], ids[1]];
+                await Assert.That(rows).IsEquivalentTo(expected);
+            }
+        }).ToArray();
+        await Review176PushAsync(cluster, machine, origin,
+            Review176Metadata(origin, stamp + 1, DocumentDelta.Indexes, "by_key", """{"collection":"items","fields":["m"]}"""),
+            Review176Metadata(origin, stamp + 1, DocumentDelta.Unique, "items", """{"constraints":[{"name":"key","fields":["m"],"normalization":"none"}]}"""));
+        await Task.WhenAll(readers);
+        await using (var read = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            var index = (await read.ListIndexesAsync(CancellationToken.None)).Single();
+            await Assert.That(index.Fields.Single().Path).IsEqualTo("m");
+            for (var i = 0; i < ids.Length; i++)
+            {
+                var document = await read.GetAsync("items", ids[i], CancellationToken.None);
+                await Assert.That(Encoding.UTF8.GetString(document!.Json.Span)).IsEqualTo(bodies[i]);
+                await Assert.That(document.UniqueConflict).IsEqualTo(i == 2);
+            }
+        }
+
+        await using (var write = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            _ = await Assert.ThrowsAsync<UniqueConstraintException>(async () =>
+                _ = await write.PutAsync("items", EntityIds.New().ToString(), Json("""{"m":20,"n":9}"""), CancellationToken.None));
+        }
+
+        await Review176PushAsync(cluster, machine, origin,
+            Review176Metadata(origin, stamp + 2, DocumentDelta.Unique, "items", """{"constraints":[]}"""));
+        await using (var restored = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            foreach (var id in ids)
+            {
+                await Assert.That((await restored.GetAsync("items", id, CancellationToken.None))!.UniqueConflict).IsFalse();
+            }
+        }
+
+        await machine.StopAsync();
+        await machine.StartAsync();
+        var reopened = await machine.StoreAsync();
+        await using var persisted = await reopened.BeginTransactionAsync(write: false, CancellationToken.None);
+        await Assert.That((await persisted.ListIndexesAsync(CancellationToken.None)).Single().Fields.Single().Path).IsEqualTo("m");
+        for (var i = 0; i < ids.Length; i++)
+        {
+            await Assert.That(Encoding.UTF8.GetString((await persisted.GetAsync("items", ids[i], CancellationToken.None))!.Json.Span)).IsEqualTo(bodies[i]);
+        }
+    }
+
+    private static ChangeDelta Review176Metadata(ReplicaId node, ulong stamp, string collection, string id, string json)
+    {
+        var at = new EntryVersion(new Hlc(stamp), node);
+        using var body = JsonDocument.Parse(json);
+        return new ChangeDelta(collection, id, at.Stamp, DocumentState.Bottom.Put(at, body.RootElement).DeltaAt(at.Stamp));
+    }
+
+    private static async Task Review176PushAsync(Cluster cluster, Machine machine, ReplicaId origin, params ChangeDelta[] deltas)
+    {
+        using var channel = PeerChannel.Create(machine.Api.Server.BaseAddress);
+        var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
+        using var timeout = new CancellationTokenSource(Deadline);
+        using var call = client.Push(cancellationToken: timeout.Token);
+        await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = origin.Value, Region = "fra" } });
+        _ = await call.ResponseStream.MoveNext(timeout.Token);
+        await call.RequestStream.WriteAsync(new PushFrame
+        {
+            Batch = new Batch { Database = ChangeGroups.Wire(cluster.Database), LastChangeId = 1, Groups = ChangeGroups.Encode([new OriginGroup(1, deltas)]) },
+        });
+        await Assert.That(await call.ResponseStream.MoveNext(timeout.Token)).IsTrue();
+        await Assert.That(call.ResponseStream.Current.Ack.Refused).IsFalse();
+        await call.RequestStream.CompleteAsync();
+    }
+
+    private static async Task<byte[]> Review176DigestAsync(Cluster cluster, Machine machine)
+    {
+        using var channel = PeerChannel.Create(machine.Api.Server.BaseAddress);
+        var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
+        var digest = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(cluster.Database) });
+        return digest.Buckets.ToByteArray();
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
