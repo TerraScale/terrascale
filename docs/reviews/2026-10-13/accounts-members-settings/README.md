@@ -2,7 +2,7 @@
 
 Two verified P2 defects: organization forms offer a Viewer role that the service always rejects, and profile validation errors discard unsaved form values. Existing application, shared fixtures, configuration, locks and generated tracked files are unchanged. The source patches below are proposals only.
 
-Audited source/base: `b719878083dffd9441e063bbfaccfa0dffa95abd`. Branch: `audit/accounts-members-settings-20261013`. The committed deliverable head and capture hashes are recorded in ignored `evidence/manifest.json` and the final handoff. Publication is withheld until the coordinator grants the serialized CI slot; no PR, push, merge or CI change has been performed.
+Audited source/base: `b719878083dffd9441e063bbfaccfa0dffa95abd`. Branch: `audit/accounts-members-settings-20261013`. Original tested/capture head: `7ab7352cc0d47374a2f7346d623552e7a069392a`. Sanitized screenshot provenance is committed in [screenshot-provenance.json](screenshot-provenance.json); the final local head and subsequent focused checks are recorded in ignored `evidence/current-head-checks.json` and the final handoff. The later evidence-only commit is not claimed as the original capture head. Publication is withheld until the coordinator grants the serialized CI slot; no PR, push, merge or CI change has been performed.
 
 ## 1. P2 — Offered organization roles disagree with the service
 
@@ -54,11 +54,13 @@ The current contracts point in different directions: `TsOrganizationAccess.ReadA
 | --- | --- |
 | Locked Release build of application + existing E2E project | PASS, 0 warnings / 0 errors |
 | HTTP audit: 8 cases | 4 PASS; 2 confirmed-defect FAIL; 2 candidate-policy FAIL |
-| Browser audit: 6 cases, 1366×900 / 320×900 | 2 PASS; 4 confirmed-defect FAIL |
+| Browser audit: 6 cases, 1366×900 / 320×900, original tested head `7ab7352c` | 2 PASS; 4 confirmed-defect FAIL |
 | New C# whitespace verification | PASS |
 | `scripts/verify-e2e.py`, `scripts/verify-sdk.py`, `make check-css` | PASS |
 | Both proposed patches, `git apply --check` | PASS; proposals not applied |
 | Full `make lint`, aggregate `test-fast` / `test-slow`, production/live qualification | NOT RUN |
+
+The evidence-only head is checked again with the locked build, all eight HTTP cases and the focused lint/patch checks. Browser rerun at that head is **NOT RUN**: these tests require a browser sign-in, which the latest user direction prohibits. The six browser outcomes above and all committed PNGs remain pinned to the original tested/capture head. Test sources and all failing assertions are unchanged. Detailed current-head results and exact commands live in ignored `evidence/current-head-checks.json` after verification.
 
 Passing journeys cover 10-row member/invitation pagination with page clamping and useful empty filters; owner/member role-aware controls and denied mutation; repeated rejected Viewer invites without state change; invalid/denied retention settings without provider writes; safe 503 settings responses; unavailable organization provider and recovery. Browser journeys verify keyboard activation and focus restoration for Escape/Cancel/Close, no member removal on cancellation, keyboard horizontal table scrolling, no page overflow at 320 px, accessible dialog/empty/profile-error states, Clear filters, and Back/Forward between cleared members and profile. Existing `BrowserAudit` runs WCAG 2.2 A/AA tags. The inherited Playwright environment skips host prerequisite validation; Chromium launched and every case reached its application assertions.
 
@@ -99,7 +101,27 @@ New test directory: `tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/accou
 3. `AccountsMembersSettingsBrowserAuditJourneyTests.cs` — six desktop/narrow browser cases and captures.
 4. `AccountsAuditPreviewJourneyTests.cs` — explicit 15-minute synthetic host for the collaborative browser; finish via local `/__audit/finish`.
 
-Report files: this `README.md`, `IsolatedAuditBuild.targets`, `.gitignore`, and the two patch files under `proposals/`. Ignored `evidence/` contains TRX, current-head screenshots, a collaborative-browser recording when supported, and the SHA/hash manifest. Never commit screenshots/videos; attach them to the eventual draft PR when publication is authorized. All visible names/emails in these captures are invented synthetic fixtures; no personal data or credentials are shown.
+Report files: this `README.md`, `IsolatedAuditBuild.targets`, `.gitignore`, the two patch files under `proposals/`, [screenshot-provenance.json](screenshot-provenance.json), and six sanitized PNGs under `screenshots/`. The user explicitly authorized these small synthetic PNGs to be committed in this unique report directory. Ignored `evidence/` retains original captures, TRX, current-head validation and the original SHA/hash manifest. No video is committed.
+
+### Reviewable desktop and mobile captures
+
+All six images were captured from the actual local synthetic app at `7ab7352cc0d47374a2f7346d623552e7a069392a`, then sanitized locally. These show the existing defects; no proposed patch was applied. Desktop profile captures mask synthetic sidebar identity/scope and any visible session ID. Viewer captures crop out identity rows and the desktop account sidebar. Mobile profile captures have no visible email or ID. The invented saved name `Audit Owner`, draft name and invalid 65-digit phone remain visible because their disappearance is the profile defect evidence. Retained pixels were verified against the originals; no rescaling or image generation occurred. The provenance JSON records original/output SHA-256 hashes, original/output dimensions, masks/crops and byte sizes.
+
+| Flow and actual capture head | Desktop | Mobile |
+| --- | --- | --- |
+| `/profile` draft before POST — `7ab7352c` | [Draft, 1366×900](screenshots/profile-draft-desktop.png) | [Draft, 320×900](screenshots/profile-draft-mobile.png) |
+| `/api/v1/dashboard/profile` HTTP 422 loses draft — `7ab7352c` | [Name reset and phone cleared, 1366×900](screenshots/profile-error-desktop.png) | [Name reset and phone cleared, 320×900](screenshots/profile-error-mobile.png) |
+| Native Viewer invitation POST rejected — `7ab7352c` | [Provider rejection, desktop crop](screenshots/viewer-rejection-desktop.png) | [Provider rejection, 320px CSS viewport crop](screenshots/viewer-rejection-mobile.png) |
+
+![Desktop profile after HTTP 422: saved synthetic name replaces the draft and the phone is empty. Actual capture head 7ab7352c.](screenshots/profile-error-desktop.png)
+
+![Mobile profile after HTTP 422: draft values are lost at 320px. Actual capture head 7ab7352c.](screenshots/profile-error-mobile.png)
+
+![Desktop native Viewer form rejection: the identity provider does not offer a viewer role and no membership changed. Actual capture head 7ab7352c.](screenshots/viewer-rejection-desktop.png)
+
+![Mobile native Viewer form rejection at 320px CSS width. Actual capture head 7ab7352c.](screenshots/viewer-rejection-mobile.png)
+
+The original collaborative-browser recording, `evidence/native-forms-desktop-mobile-7ab7352c.mp4`, is **local-only** (1,371,555 bytes). Its original hash and capture SHA are preserved in the committed provenance JSON. It contains invented fixture identities and has not been sanitized for publication; it is neither a Git deliverable nor a published attachment.
 
 ## Overlap and release limits
 
