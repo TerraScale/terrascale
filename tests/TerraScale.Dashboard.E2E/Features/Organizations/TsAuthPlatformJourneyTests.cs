@@ -385,14 +385,21 @@ public sealed class TsAuthPlatformJourneyTests
 
         private static object Wire(Organization org, string userId) => new
         {
-            id = org.Id, name = org.Name, created_by = org.CreatedBy, created_at = org.CreatedAt,
+            id = org.Id,
+            name = org.Name,
+            created_by = org.CreatedBy,
+            created_at = org.CreatedAt,
             role = org.Members.GetValueOrDefault(userId)?.Role
         };
         // The creator holds project admin; otherwise the organization role implies the project role (owner → admin).
         private static object Wire(Organization org, Project project, string userId) => new
         {
-            id = project.Id, organization_id = org.Id, name = project.Name, issuer = "https://auth.terrascale.tech/" + project.Id,
-            created_by = project.CreatedBy, created_at = project.CreatedAt,
+            id = project.Id,
+            organization_id = org.Id,
+            name = project.Name,
+            issuer = "https://auth.terrascale.tech/" + project.Id,
+            created_by = project.CreatedBy,
+            created_at = project.CreatedAt,
             role = project.CreatedBy == userId || org.Members.GetValueOrDefault(userId)?.Role is "owner" or "admin" ? "admin" : org.Members.GetValueOrDefault(userId)?.Role
         };
         private Organization? Find(string id) => organizations.FirstOrDefault(org => org.Id == id);
