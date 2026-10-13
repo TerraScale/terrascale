@@ -1,262 +1,422 @@
-# 0013: A client write answers success only after a durable copy exists in another region
+# 0013: A production write answers success only after two independently durable regional copies exist
 
-- Status: **proposed** (2026-10-13). The contract was approved by the user through COS; this record defines it for
-  review before step 2 is coded. Placement option A was decided by the user through COS on 2026-10-13. Owner: R6-FIX.
-- Scope:
-  - `Features/Replication`: the receiver's ack (`PeerStreamReceiver`, `StorageChangeGroupSink`) and the sender's acks
-    (`PeerStreams`).
-  - `Engine/Sqlite`: the sync settings of client databases (`SqliteDatabaseStore`).
-  - `Features/Documents`: the client write path.
-- Amends:
-  - [0003](0003-sqlite-synchronous-normal.md): client database commits sync.
+- **Status:** proposed, revision 2 (2026-10-13).
+  - The contract was approved by the user through COS. This record defines it before step 2 is coded.
+  - Placement option A was decided by the user through COS (2026-10-13).
+  - Revision 2 answers the design review of revision 1 (#171, at `4d360ece`).
+  - Owner: R6-FIX.
+- **Scope:**
+  - `Features/Replication`: the receiver's ack, the sender's acks, operation reservations.
+  - `Engine/Sqlite`: client-database sync, the commit marker.
+  - `Features/Documents`: the client write path, the operations route.
+  - `Features/Management`: placement.
+  - Catalog writes need R10a's lattice catalog (section 15 of the design).
+- **Amends:**
+  - [0003](0003-sqlite-synchronous-normal.md): every write transaction syncs.
   - Design C ([multi-region-replication.md](../multi-region-replication.md) section 6, "ack after one node").
-- Reuses from [0010](0010-write-wait-and-synced-durable-ack.md), which is superseded: the synced replica apply.
-  Unlike 0010, a timeout is reported, never answered as success.
+- **Replaces** [0010](0010-write-wait-and-synced-durable-ack.md), which is already superseded.
 
-## Context
+## 1. Contract and definitions
 
-Under design C a write answers after one local commit, with `synchronous = NORMAL`. That causes two problems:
+- **Contract.** A production mutating request answers success only after its effect is committed and durable on its
+  accepting machine *and* on a machine of a second placed region. A request carrying an operation id executes at most
+  once, whichever machines its retries reach.
+- **Durable.** Recoverable after a process crash, an OS crash or a power loss of the machine, with its persistent volume
+  intact and its sync acknowledgements honoured. A write's frames are durable once a sync of the write-ahead log that
+  contains them has returned success. A checkpoint moves them into the database file. It may reset the log only after the
+  database file is synced, so durability transfers and the log need not keep them. Whether the shipped Turso binary does
+  this is tested (section 9), not assumed.
+- **Local durable commit (B1).** The write's transaction committed with `synchronous = FULL` on the accepting machine,
+  and `CommitAsync` returned without error.
+- **Remote durable commit (B2).** The receiver's transactions that joined the change group committed with
+  `synchronous = FULL`. That holds for every transaction when a batch splits into several, and for every repair
+  transaction of a refill. Only after that does the receiver send a non-refused ack. Receipt, queueing, a refused ack, an
+  unsynced log or a failed sync never count.
+- **Two regional copies.** B1 on the accepting machine, plus B2 on a machine of another region that the database's
+  placement includes. The guarantee survives the loss of either region while the other's volume survives. It does not
+  cover both copies being destroyed.
+- **Last writer wins stays.** A durable write can still be superseded by a later concurrent write under the lattice's
+  rules (design sections 3 and 4). Durable means not lost; it does not mean final.
 
-- A power loss of the accepting machine can lose writes it answered but had not yet shipped (barrier B1 below; design
-  section 18).
-- The user's contract is: production writes succeed only after a durable copy exists in at least one other region.
+## 2. Four barriers, audited separately
 
-## Definitions
+Main at `e30ffdc2`, with the evidence on the step branches.
 
-- **Local durable commit.** The write's transaction committed on the accepting machine with `synchronous = FULL`: the
-  commit returned after the write-ahead log was synced.
-- **Remote durable commit of a change group on machine M.** The transaction that joined the group committed on M with
-  `synchronous = FULL` (`BeginDurableTransactionAsync`), so its WAL is synced. Only after that does M ack. Receipt does
-  not count, a queued group does not count, and WAL frames that are not synced do not count.
-  - An ack of change id N on a stream means every group of the sender up to N is remotely durable on M.
-  - A refill's ack likewise comes after its repairs committed durably.
-- **Remote durable copy of a write.** A machine whose region differs from the accepting machine's, and whose region the
-  database's placement includes, acknowledged a change id at or above the write's.
+| # | Barrier | Code | Evidence |
+| --- | --- | --- | --- |
+| B1 | Origin commit and fsync | At `e30ffdc2` client stores run `synchronous = NORMAL`: `SyncsEveryCommit` is set only for `_system` (`Engine/Sqlite/SqliteStorageEngine.cs:776` against `:1416`, `SqliteSession.cs:96`). `83291845` makes every write transaction FULL (`SqliteDatabaseStore.BeginAsync`). | `ClientWritePowerLossTests` (H4 shim: SIGKILL, then every log cut back to its last sync). It **fails at NORMAL** ("write 1 was answered before the power loss") and **passes at `83291845`**. Not yet covered: checkpoint/reset, sync errors, connection reuse (section 9). |
+| B2 | Remote apply commit and fsync | `StorageChangeGroupSink.cs:36`/`:66` → `BeginDurableTransactionAsync` (FULL). Ack after `ApplyAsync` (`PeerStreamReceiver`). | `ReplicatedApplyPowerLossTests` at `4adf8424`: a node acks three groups and loses power; all three survive the restart. The **ack-before-fsync mutant fails it** ("group 1 was acknowledged before the power loss"). Not yet covered: the same gaps as B1. |
+| B3 | Backup shipping | `Features/Backup/ContinuousBackup.cs:57`/`:317`: 1 s after the commit, off the request path. | Gates no answer and is never counted as a regional copy. Acceptance includes a successful restore of a non-empty database carrying valid operation records (section 9). |
+| B4 | Client-success release | `DocumentService.cs:363` → `DocumentRoute.cs:277` answers `local_durable` right after the local commit. | Step 2 moves the release after B1 and B2 of the request's own commit marker (section 5). The success-before-remote-ack mutant must fail. |
 
-## Four barriers, audited separately (main at `e30ffdc2`)
+Configuration alone (a PRAGMA) is never cited as proof. Each claim cites its fault test at the SHA of the code it covers.
 
-The contract needs **two independently durable regional copies** before a success answer. Four barriers stand between a
-write and that answer. They are distinct code paths, and each one needs its own proof. A setting proven on one path says
-nothing about another.
+## 3. Scope: every production mutating route, no switches
 
-| # | Barrier | Code at `e30ffdc2` | State | Fault-test evidence |
-| --- | --- | --- | --- | --- |
-| B1 | **Origin commit and fsync**: the accepting machine's client-database write transaction | Client stores are built without `SyncsEveryCommit` (`Engine/Sqlite/SqliteStorageEngine.cs:1416`; only `_system` sets it, `:776`). So `durable \|= write && SyncsEveryCommit` stays false (`Engine/Sqlite/SqliteDatabaseStore.cs:250`), and the session runs `PRAGMA synchronous = NORMAL` (`Engine/Sqlite/SqliteSession.cs:96`). | **Not synced at commit (audit finding).** A power loss of the origin can lose a write it answered. | None yet. A planned origin power-loss test (a write answered `2xx` must be present after the power loss) is expected to **fail** on `e30ffdc2`. Delivery 2 fixes it, with that test and a mutation back to `NORMAL`. |
-| B2 | **Remote apply commit and fsync**: the receiver's join of a change group | `Features/Replication/StorageChangeGroupSink.cs:36` (apply) and `:66` (repair) use `BeginDurableTransactionAsync` (`Engine/Sqlite/SqliteDatabaseStore.cs:237`). That sets `synchronous = FULL` before `BEGIN` (`:286`). The ack follows `ApplyAsync` (`Features/Replication/PeerStreamReceiver.cs:125-141`). | Configured to sync before the ack. **Configuration is not proof.** | Pending: `ReplicatedApplyPowerLossTests` (H4 shim, power loss after the ack) and the ack-before-fsync mutant, branch `fix/r6-remote-ack-after-fsync` `5711210c`. |
-| B3 | **Backup shipping**: continuous backup to the bucket | `Features/Backup/ContinuousBackup.cs:57` and `:317`: a 1 s timer ships each file's new frames after the commit, off the request path. | Gates no answer, and is **not counted** as one of the two regional copies. It ships what the origin's file holds, so it cannot be more durable than B1 for frames it has not shipped yet. | Covered by the backup suite, outside this contract. A successful point-in-time restore of a non-empty database is an acceptance item (below). |
-| B4 | **Client-success release**: the HTTP answer | `Features/Documents/DocumentService.cs:363` commits through `store.WriteAsync` and returns at `:412`. `Features/Documents/DocumentRoute.cs:277` then answers with `durability = "local_durable"` (`:58`). | The answer is released right after the local commit (B1, under `NORMAL`), and **nothing waits for B2**. | Step 2 moves the release after B1 (synced) **and** B2 (an ack from another placed region). The success-before-remote-ack mutant must fail its tests. |
+- **Where the contract holds.** On every machine that belongs to a cell: one with a member directory. On Fly that is
+  the app's internal DNS, and it covers the production app, the acceptance app `ts-terrabase-e2e` and PR previews. In
+  tests it is the multi-machine suites' directory.
+  - The seam `IRemoteDurability` is registered by the same rule as the membership (`AddTerraBaseCluster`).
+  - A DNS failure or a partition does not remove the directory, so the machine fails closed. It never falls back.
+  - No app name, setting, flag or per-database durability level selects behaviour.
+- **The one documented limitation: a cell of one.** A machine without a directory (off Fly: development, and the
+  single-machine Fast servers) has no second region. It answers after B1 with `durability: "local_durable"`. It never
+  runs on Fly and never in acceptance.
+- **Every production mutating route is in scope.** That covers:
+  - documents (`PUT`, `PATCH` including `inc`/`append`/`add`/`remove`, `DELETE`, `POST`);
+  - transactions;
+  - collections and collection schemas;
+  - indexes and unique schemas;
+  - database create, update and delete, and placement;
+  - backups and restore;
+  - management commits;
+  - API keys.
+- **Catalog writes.** Catalog and management writes live in `_system`. Section 15 of the design makes `_system` a
+  lattice database placed in every region and replicated by the same streams (R10a; it supersedes the catalog primary
+  of 0009). Its writes then take the same reservation, commit marker and wait. FULL on `_system` alone (0012) proves
+  only one copy.
+- **No announcement before coverage.**
+  - Until every route above waits, no answer says `remote_durable` for an uncovered route, and the contract is not
+    announced.
+  - Each delivery PR lists the routes still uncovered.
+  - Covered routes answer `remote_durable`. Uncovered ones keep answering `local_durable`, which is true, and the
+    release notes name them.
+- **Single-machine Fly apps fail clearly.** A PR preview runs one machine in gru, so its writes answer
+  `503 remote_region_unavailable` (section 4). That includes the platform databases placed in gru, sjc and fra. A
+  second preview region is a tooling change outside this record.
 
-A success answer is allowed only once B1 and B2 both hold for the write's change group, each proven by its own fault
-test at the same SHA as the code it covers. B3 is never a prerequisite, and never a substitute.
+## 4. Outcome state machine
 
-## Decision
+An operation id is checked **before** any precheck that could claim "not applied".
 
-### Step 1: the receiver acks only a remote durable commit
+| State | When | Answer | Applied? |
+| --- | --- | --- | --- |
+| `rejected_invalid` | Validation fails before reservation (malformed, unauthorized, too large) | `4xx` as today; nothing is recorded | No. The same key may be retried |
+| `remote_region_unavailable` | Reservation lookup found no record, and no placed machine of another region is reachable: the reservation round could not start | `503 remote_region_unavailable`, `Retry-After: 1` | **No** (proven: nothing reserved, nothing executed) |
+| `reservation_unavailable` | The reservation reached no majority within the bound (section 6) | `503 operation_quorum_unavailable` with `operation_id` | Not executed by this attempt. The key may hold a minority reservation, so a later retry decides |
+| `in_progress` | Another attempt holds the reservation and has not finished | Waits, within the bound, for its outcome; then the outcome, or `503 write_outcome_unknown` | Unknown until it finishes |
+| `rejected_recorded` | Executed and deterministically refused, for example a local unique violation (`409`) | Recorded, and replayed on every retry | No |
+| `committed_unconfirmed` | B1 holds; no eligible remote ack within the bound, a sync error after `COMMIT` was issued, or a cancellation after commit | `503 write_outcome_unknown` with `operation_id`, `region`, `machine`, `expires_at` | **Unknown to the client.** It is applied locally and keeps replicating |
+| `confirmed` | B1 and B2 of the request's commit marker | `2xx` with `durability: "remote_durable"` | Yes |
+| `absent_here` | A lookup on a machine without the record, and no majority answer | `404 operation_unknown`, `authoritative: false` | Unknown |
+| `not_executed` | A lookup whose majority round found no reservation; it then fences the key | `404 operation_not_executed`, `authoritative: true` | **No, and never will be under this key** |
+| `expired` | The key's ULID time is outside the admission window, or its record expired | `410 operation_expired` | Unknown: use a new key only after reconciling by other means |
 
-The configuration on main points this way, but configuration is not proof:
-- `StorageChangeGroupSink.ApplyAsync` and `RepairAsync` join in `BeginDurableTransactionAsync` transactions, which set
-  `synchronous = FULL`.
-- The receiver acks after `CommitAsync` returns.
+- **Cancellation.** A client that disconnects after the commit cancels only its wait. The write, its record and its
+  replication go on.
+- **Sync errors.** If an error happens at or after `COMMIT`, the outcome is `committed_unconfirmed`. The store's
+  writer is faulted (`_faulted`) and reopened before the next write. That error is never reported as "not applied".
 
-No ack is claimed durable until an end-to-end power-loss test (`tests/TerraBase.E2E/WalFaults/ReplicatedApplyPowerLossTests`) passes:
-1. A real node runs under the write-ahead log fault shim and acknowledges pushed groups.
-2. Its power is cut: every unsynced byte of every log is dropped.
-3. After the restart, every acknowledged group must be present.
+## 5. Commit marker and the ack rule
 
-A mutation that applies in a plain transaction (ack before the sync) must fail that test. If the test fails on main, step 1
-becomes a code fix.
+- **The marker.**
+  - The local commit returns its marker: `(store incarnation, change id of the transaction's own last CDC row)`, read
+    on the writer right after `COMMIT` and before the writer is released.
+  - Every request committed in that group-commit batch shares it.
+  - A newly read CDC head is never used. Bookkeeping and received applies move the head without shipping anything.
+- **What confirms.** The marker is confirmed by an ack that is:
+  - received on a live push link of this process;
+  - for this database (tenant ids);
+  - from a peer node whose region differs from this machine's and which the database's placement includes;
+  - for a batch or refill sent from the same store incarnation as the marker;
+  - not refused;
+  - with `change_id ≥ marker`.
 
-### Step 2: the commit wait
+  Welcomes, applied HLCs, refused acks, other databases' acks, same-region acks and stored `_tb_peers.acked` values never
+  confirm: retention raises the stored value over joined rows (#169). Acks from before a restore, a copy or a volume
+  replacement never confirm, because the incarnation differs.
+- **Any eligible remote.** The write waits on every link at once. The first eligible ack confirms it, and a link that
+  drops does not end the wait while another can still confirm. The bound is **10 s**, set in code.
+- **Refill.**
+  - A refill's ack certifies every own group up to its `head`. `head` is read before the receiver's digest and bucket
+    reads, joins are monotone, and the receiver acks only after every repair transaction committed with FULL.
+  - #168's per-database order holds: no later batch of that database joins before the refill commits.
+  - A failed, carried or reconnected refill confirms nothing.
+  - Other databases keep flowing meanwhile.
+- **Replay on another machine.** The operation record carries the executor's `region` and its marker. When the
+  executor sees the confirming ack, it writes `confirmed_by: <region>` into the record, and that update replicates. A
+  machine that holds the record answers a retry or lookup as follows:
+  - `confirmed` if the record says so, or if this machine is itself in a placed region other than the executor's: its
+    own FULL apply plus the executor's B1 make the second copy;
+  - otherwise `committed_unconfirmed`.
 
-1. **Which writes.** Every client write to a client database:
-   - document `PUT`, `PATCH`, `DELETE` and `POST`;
-   - `POST /transactions`;
-   - collection create and drop, and collection schema set and delete;
-   - index create and drop, and unique schema.
+  It never compares its own CDC ids with the executor's.
 
-   These do not wait:
-   - catalog and management writes (the system database, under the catalog primary, [0009](0009-catalog-replication.md));
-   - database create and delete, backups and restore;
-   - reads.
+## 6. Operation identity and at-most-once execution
 
-   Step 2 starts with documents and transactions. The DDL routes follow in their own PR.
-2. **Precheck: unavailable before writing.** When no machine of another placed region has a connected peer stream for
-   the database, the write is refused before it touches storage: `503` with code `remote_region_unavailable` and
-   `Retry-After: 1`. It is definitely not applied, so retrying is safe.
-3. **Local durable commit.** Client database write transactions commit with `synchronous = FULL`, as the system
-   database's do ([0012](0012-system-database-synchronous-full.md)). The group commit lane shares one sync among the
-   writes it batches. The operation's record (see 5) is written in the same transaction.
-4. **Wait.** After the commit, the target is the database's CDC head read right after the commit. That is at or above
-   the write's own change id, so the wait is conservative. The write waits until a machine of another placed region has
-   acknowledged at least the target.
-   - The bound is **10 s**, a value in code: many cross-region round trips, since the sender is woken by the commit.
-   - The wait holds no lock and no storage session.
-5. **Operation ids.**
-   - A write may carry `Idempotency-Key: <ULID>`. This replaces today's 400 "not supported yet". Without one, the
-     machine mints a ULID.
-   - Every write answer carries `TerraBase-Operation-Id: <ULID>`, the success and the ambiguous one alike.
-   - The operation's record is a replicated document in the reserved collection `_operations`, written in the write's
-     own transaction, so it travels in the same change group. It holds:
-     - `request`: SHA-256 of the method, route and body;
-     - `committed_at`;
-     - `response`: status, plus a body without `document`.
-6. **Success.** `2xx` as today, with `durability: "remote_durable"` instead of `local_durable`.
-7. **Ambiguous outcome.** When the bound expires, or a link drops after the precheck, the answer is `503`:
+**Keys.**
+- `Idempotency-Key: <ULID>`, which replaces today's 400 "not supported yet".
+- SDKs mint the key before the first transmission and reuse it on every retry.
+- A request without a key gets a server id `m-<ULID>`, returned in `TerraBase-Operation-Id`. It can be looked up, but
+  a request may never present an `m-` id as its key. Only client keys can be retried.
+- Keys are scoped to the database's immutable organization, project and database ids.
+- A key must be a canonical ULID.
+- **Admission window.** A key whose ULID time lies outside `[now − 24 h + 1 h, now + 5 min]` (server time) answers
+  `410 operation_expired` before anything else. The ULID time is used only for this admission. Expiry itself uses the
+  executor's commit time (section 7).
 
-   ```json
-   {"error":{"code":"write_outcome_unknown","operation_id":"<ULID>","region":"gru","message":"..."}}
-   ```
+**Reservation before execution.** One write's key reservation goes through these steps:
+1. **Local check, atomic.** In the database's write lane, a per-database key latch admits one attempt per key. A
+   second attempt with the same key, in the same group-commit batch or not, waits for the first one's outcome.
+2. **Majority round.** The machine asks the acceptor of every placed region for `Reserve(database, key, fingerprint,
+   attempt)`. The acceptor of a region is the first machine of that region by name, the same rule the catalog used for
+   its primary.
+   - An acceptor durably records the first reservation of a key (FULL, first wins) and answers `granted`, or answers
+     the existing reservation with its fingerprint and outcome.
+   - Execution needs grants from a majority of the placed regions, this machine's region included.
+   - Two attempts with the same key can never both reach a majority. That is the cross-region guarantee, with no
+     availability promise beyond what is stated below.
+3. **Atomic execution.** In one local transaction:
+   - re-check the local reservation;
+   - apply the write;
+   - write the immutable operation record (section 7).
 
-   With `Retry-After: 1`. The write is committed locally and keeps replicating, so it may become durable later. It never
-   answers success.
-8. **Idempotent retry.** A write whose `Idempotency-Key` names an existing record:
-   - **Same request hash:** nothing is applied again. The machine waits as in 4, with the current head as target. It
-     then answers the recorded response with `TerraBase-Replayed: true`, or the ambiguous `503` again.
-   - **Different request hash:** `409 idempotency_key_reused`.
-9. **Reconciliation.** `GET /v1/projects/{project}/databases/{database}/operations/{operation}` answers on the machine
-   asked:
-   - `200 {"operation_id","status":"applied","durability":"remote_durable"|"local_durable","response":{...}}` when the
-     record is there. `remote_durable` runs the same bounded wait first.
-   - `404 operation_unknown` when it is not.
-     - Asked of the accepting region (named in the ambiguous answer; reach it with a region pin), a `404` means the
-       write was never applied, or its record expired.
-     - Asked elsewhere, a `404` only means "not here yet".
-10. **Retention.** A record lives **24 h** after `committed_at`, the same horizon as CDC retention and refill. Then the
-    accepting machine deletes it, and the delete replicates. A retry after 24 h is a new operation.
+   A savepoint or batch rollback removes all three together.
+4. **Wait** for B2 of the marker (section 5), then answer.
 
-### Placement: at least two distinct regions (option A, decided)
+**If a reservation exists:**
+- same fingerprint: replay the recorded outcome, or wait for it (`in_progress`);
+- different fingerprint: `409 idempotency_key_reused`.
 
-Today a database created without `replica_regions` is placed in its home region only, so no other region can hold a
-durable copy. Decision (option A): every database this contract covers is placed in **at least two distinct regions**.
+A retry never executes a key that any acceptor has reserved.
 
-- **New databases.**
-  - A create may name its replica regions among the configured, supported serving regions.
-  - A create without `replica_regions` places replicas in every other serving region the membership lists.
-  - A placement with fewer than two distinct regions is rejected with `400 placement_needs_two_regions`, on create and
-    on update. Validation is explicit and covered by tests.
-- **Existing databases placed in one region.**
-  - They are never relocated, and their data is never dropped.
-  - Their writes fail clearly: `503 remote_region_unavailable`, with a message naming the single-region placement.
-  - Their reads keep working.
-  - An explicit, controlled backfill adds a region through the placement update. The new region refills from the
-    home region. Writes succeed again once a machine of the added region acknowledges them, which comes after its
-    refill, as for any write.
-- **Disposable test datasets.** The approved pre-production reset and reseed rebuilds them with a correct placement.
-- The options not taken were:
-  - (B) exempting single-region databases with `local_durable`;
-  - (C) failing them forever.
+**Availability, stated plainly:**
+- Writes need a majority of their placed regions reachable.
+  - With three placed regions, one region can be lost and writes go on.
+  - With exactly two, both are needed: losing one stops writes, with a clear 503 and no false success.
+- This is the cost of at-most-once execution in a leaderless system.
+- Placement option A keeps two regions as the minimum. Three is the recommended default wherever three regions serve
+  (gru, sjc, fra).
 
-## API contract for the SDKs (ts-dotnet first, separate repository)
+**Acceptor changes and recovery.**
+- **A new acceptor** (machine replaced, new volume) grants nothing until it has pulled the reservations and records of
+  every reachable placed region, through a refill of `_operations`.
+- **Losing reservations.** A reservation is lost for good only if every machine holding it loses its volume: two
+  regions at once, outside the contract.
+- **An owner that restarts** with a reservation but no record knows it never executed: execution and record commit
+  together. It writes the outcome `not_executed` for that key, and it replicates.
+- **Lookups.** `GET …/operations/{op}` runs the same majority round, read-only.
+  - It answers `confirmed`, `committed_unconfirmed` or `rejected_recorded` from a record.
+  - It answers `in_progress` from a reservation.
+  - With no reservation at a majority, it records a fence (`not_executed`) at that majority. It then answers
+    `404 operation_not_executed`, `authoritative: true`. A late attempt with that key can no longer reach a majority.
+- **A missing record proves nothing.** A missing record on one machine, on a same-region machine, on a new volume or on
+  a restored node never authorizes execution and never proves "not applied". Only a majority answer does.
 
-- **Request:** an optional `Idempotency-Key: <ULID>` on every client write. The SDK sets one per logical operation and
-  reuses it on retries.
-- **Response:** `TerraBase-Operation-Id` on every write answer. `TerraBase-Replayed: true` marks an answer that replays
-  a recorded one.
-- **`durability`:** `remote_durable` on every success.
+## 7. The operation record
+
+- **Storage.** A reserved, replicated collection, `_operations`, with one document per key.
+  - Client reads, writes, DDL and queries cannot reach it (`CollectionName.IsReserved`).
+  - The public changes feed excludes it: `AppendFeed` gets `_operations` next to `_collections`, `_indexes` and
+    `_unique`, a change to R8's file that R8 makes.
+  - Replication, refill, anti-entropy, backup and restore include it.
+  - Reservations live in a local table, `_tb_operation_reservations`, which is not a lattice.
+- **Immutable envelope.**
+  - The record is written once, as one whole-document put by its executor. The only later changes are `confirmed_by`
+    (set once) and expiry.
+  - At most one executor exists per key (section 6), so no field-wise merge of competing envelopes can happen.
+  - If two envelopes ever meet, the join is detected: a different fingerprint or executor. That is logged, counted
+    (`terrabase.operations.conflicts`), and the lookup answers `409 operation_conflict`.
+- **Fields:**
+  - `v` (1);
+  - `fingerprint`;
+  - `executor` (machine, region, incarnation, marker);
+  - `committed_at` (the executor's HLC physical time);
+  - `status`;
+  - `response`;
+  - `confirmed_by`.
+- **Fingerprint v1.** SHA-256 over a canonical, length-prefixed encoding of the following:
+  - version 1;
+  - the operation name (the OpenAPI operation id);
+  - organization, project and database ids;
+  - collection;
+  - document id (`?id=`);
+  - the normalized `Content-Type` media type, which tells merge PATCH from operation PATCH;
+  - `If-Match` and `If-None-Match` if present, even though design C answers them `400 unsupported_precondition`;
+  - every other query parameter the route reads;
+  - the raw body.
+
+  A key reused with any of these changed answers `409 idempotency_key_reused`.
+- **Replay.**
+  - The recorded response is replayed with `TerraBase-Replayed: true`: status, `Location`, `ETag`, generated ids,
+    versions, `offset` and `durability`.
+  - The materialized `document` is not stored. A replayed PATCH body has every other field and `"document": null`,
+    and the SDK reads the document again if it needs it.
+  - A committed conditional or constrained request replays its original outcome. It is never evaluated again against
+    today's state.
+  - Terminal `409`/`412` results after reservation are recorded and replayed.
+- **Permissions.**
+  - A retry is a full request: authenticated and authorized again, for the same scope as the original route.
+  - A lookup needs the write scope of the database the record belongs to.
+  - Records never cross databases.
+- **Retention.** A record is kept at least **24 h + 1 h** after `committed_at`. The extra hour covers clock skew, since
+  `committed_at` is HLC time.
+  - Any machine of a placed region may expire a record once it is old enough. The expiry is a lattice delete, and its
+    tombstone dominates the older put, so a stale replica's record cannot come back.
+  - Tombstones stay until garbage collection (R7), whose horizon is at least the retention.
+  - Cleanup runs in the background, at most 1,024 records and 2 MiB per transaction.
+  - Records count toward the database's storage quota.
+- **Limits.**
+  - The record rides in the request's own transaction and change group. Group bounds become 1,024 documents plus one
+    operation record, and the receiver's decode bound follows (versioned).
+  - A 1,024-document transaction that is valid today stays valid.
+  - The record's bytes count toward the 2 MiB group bound. A request that is already at the bound is refused before
+    reservation, as today.
+
+## 8. Placement (option A) and availability
+
+- **Every database of a cell is placed in at least two distinct regions.**
+  - A create without `replica_regions` places replicas in every other serving region from the membership.
+  - With none listed, it answers `503 remote_region_unavailable`.
+  - A placement with fewer than two regions answers `400 placement_needs_two_regions`, on create and on update.
+- **Existing single-region databases** are never relocated, and their data is never dropped. Their writes fail clearly
+  (`503 remote_region_unavailable`, naming the single-region placement) until an explicit placement update adds a
+  region. Their writes then succeed once the added region has refilled and acknowledges them.
+- **Placement changes keep surviving copies.**
+  - Recovery, refill and placement changes never erase the only surviving acknowledged copy before a replacement is
+    durable. R7's copy-refill must compare before wiping.
+  - Streams do not forward remote-origin groups. After the loss of an origin, its writes that one other region holds
+    reach the remaining regions through anti-entropy rounds (two differing rounds, 60 s apart).
+- **Availability after a region loss:**
+  - writes need a majority of placed regions (section 6) and at least two reachable placed regions;
+  - a placement of exactly two cannot keep writing when one is lost;
+  - three regions can.
+
+## 9. Evidence required before the contract is claimed
+
+**Fault model.**
+- The H4 shim models only unsynced log bytes (`DropUnsynced`). It does not model unsynced writes to the database file,
+  or log generations after a checkpoint reset.
+- It is extended, still test-only: a snapshot of each database file and log at its last successful sync, restored on a
+  simulated power loss.
+
+**Durability barriers.** For both B1 and B2, on the shipped Turso binary:
+- a remote sync held or failed (`EIO`, `ENOSPC`), then a crash before the ack: no success is answered;
+- after an ack or a success: power loss, then restart. The data **and the operation record** survive;
+- the same across a checkpoint and log reset, and across reuse of a pooled connection;
+- mutants that must fail: receiver at NORMAL, ack before the sync, origin at NORMAL.
+
+**Acks and ordering.**
+- All six directions among gru, sjc and fra.
+- Acks that must never confirm: same-region, unplaced, refused, wrong-database, stale-incarnation.
+- One remote held while another confirms.
+- Either remote of a three-region placement killed, with writes going on through the survivor.
+- Full and asymmetric partitions: never a false success.
+- Grouped writes, receiver batch splitting, bookkeeping-only CDC heads, and replay on a receiving machine.
+- Held, failed and reconnected refills, with another database flowing.
+- Mutants: success before the ack, missing refill order.
+
+**Idempotency.**
+- Lose the ack and the whole response, separately.
+- Retry the same key concurrently: on the same machine, on another machine of the region, and in a different region
+  before the record arrives.
+- POST-generated ids, `inc`, `append` and multi-document transactions execute once.
+- A changed body, `?id=`, `Content-Type` or conditional header answers `409`.
+- A committed conditional request replays after state changes.
+- First-attempt `409`/`412`, generated ids, `Location` and `ETag`.
+- Savepoint and whole-batch rollback.
+- Mutant: deduplication removed.
+
+**Reconciliation and retention.**
+- Restart either side in the middle of an ack.
+- Lose the accepting region, rejoin, reconcile.
+- Lookup and retry on a surviving replica, with no reliance on new writes.
+- A missing record elsewhere is never authoritative.
+- Expiry just before, at and after its time, with clock jumps and skew.
+- The origin unavailable during cleanup; a stale replica refill; tombstone garbage collection.
+- A non-empty restore that carries valid records.
+- No operation metadata in the changes feed or through an unauthorized lookup, and no duplicate user event on a retry.
+
+**Scope and resources.**
+- Every in-scope route.
+- Placement create, update and move.
+- Existing single-region databases failing clearly.
+- Default region discovery, and a Fly directory failure with no local fallback.
+- Maximum-size transactions with the record.
+- Waiter and byte bounds; cleanup under a stalled remote; storage and memory pressure.
+- Cancellation after commit, while unrelated databases progress.
+
+**Where the tests run.**
+- Fast: the critical request, retry and failure paths.
+- Slow and E2E: power loss, the six-direction matrix and load.
+- All integration tests, run in parallel.
+
+## 10. Resources and admission
+
+- Waiting requests hold no storage session or lock.
+- They are bounded per machine and per database, with the numbers in code. The starting numbers are 4,096 and 256,
+  measured and adjusted with evidence.
+- A response body held for a replay is bounded by the response size limit and counted in the memory budget.
+- Over a bound, a write is refused **before** reservation with `503 confirmation_busy`. It is not applied.
+- A cancelled request frees its waiter, and replication and reconciliation go on.
+- At 100 writes/s, 24 h of records is 8.64 million rows plus tombstones. Their bytes, disk and quota cost are measured
+  before the contract is announced.
+
+## 11. Latency: measured, not promised
+
+The 10 s bound is a ceiling for one write's wait, not a latency promise. Before any latency is stated, the following
+are measured and recorded in `benchmark/bench/`, before and after:
+- p50, p95, p99 and p99.9 latency;
+- throughput;
+- the local and remote sync time;
+- the reservation round and the wait;
+- memory;
+- WAL and checkpoint stalls;
+- disk growth.
+
+They are measured for realistic document and transaction sizes, with both remotes healthy, and with one slow or
+unavailable. The first eligible ack sets the latency: there is no fixed-peer or all-peer wait.
+
+## 12. API contract for the SDKs (ts-dotnet first, separate repository)
+
+- **Request:** an optional `Idempotency-Key: <ULID>` on every mutating request. SDKs always send one, minted before the
+  first transmission and reused on retries.
+- **Response headers:**
+  - `TerraBase-Operation-Id` on every mutating answer;
+  - `TerraBase-Replayed: true` on a replay.
+- **Body:** `durability: "remote_durable"` on success. A cell of one, which is development only, answers `local_durable`.
 - **Errors**, all with the standard error body:
-  - `503 remote_region_unavailable`: not applied. Retry after `Retry-After`.
-  - `503 write_outcome_unknown` with `operation_id` and `region`: applied locally, not confirmed. Retry with
-    `Idempotency-Key: <operation_id>` and the same request, or reconcile.
-  - `409 idempotency_key_reused`: the key names another request.
-  - `400 placement_needs_two_regions`, on database create and placement update: fewer than two distinct regions.
-- **Reconciliation:** `GET .../operations/{operation}`, as in step 2.9.
-- **SDK rule:**
-  - Never surface `write_outcome_unknown` as failure or success. It is a distinct outcome, with the operation id.
-  - Retry with the same key, at most until 24 h after the first attempt.
+  - `503 remote_region_unavailable`: not applied.
+  - `503 operation_quorum_unavailable`: not executed by this attempt. Retry with the same key.
+  - `503 confirmation_busy`: not applied.
+  - `503 write_outcome_unknown` with `operation_id`, `region`, `machine`, `expires_at`: applied locally, not confirmed.
+    Retry with the same key and request, or look it up.
+  - `409 idempotency_key_reused`.
+  - `409 operation_conflict`.
+  - `410 operation_expired`.
+  - `400 placement_needs_two_regions`.
+- **Lookup:** `GET /v1/projects/{project}/databases/{database}/operations/{operation}`.
+  - It waits within the bound, then answers `200` with `{operation_id, status, durability, response, executed_by
+    {machine, region}, committed_at, expires_at}`.
+  - Or `404` with `{code, authoritative}`, or `410`.
+  - It is built with TerraScale.Endpoints, with source-generated OpenAPI and Scalar schemas.
+- **SDK rules:**
+  - `write_outcome_unknown`, `operation_quorum_unavailable` and `404 authoritative: false` are distinct typed outcomes.
+    They are never success and never failure.
+  - Only `operation_not_executed` and `remote_region_unavailable` mean "not applied".
 
-## Guarantees
+## 13. Not guaranteed
 
-For a write answered `2xx`:
+- **Consistency models.** Neither global serializability nor cross-region linearizability is promised. Neither is
+  read-your-writes on a machine other than the two that hold the copies.
+- **Superseding.** A durable write can still be superseded by a concurrent one (last writer wins).
+- **Two regions lost at once.** The loss of both durable copies: two regions' volumes at the same time.
+- **Requests without a key.** Execution at most once for a request sent without `Idempotency-Key`. Its `m-` id serves
+  lookups only.
+- **Latency.** Any latency figure until section 11's measurements exist.
 
-- It committed with a synced log on the accepting machine.
-- It committed with a synced log on at least one machine of another region holding the database. So it survives a
-  power loss of the accepting machine, or the loss of its whole region.
-- Its operation record travelled in the same change group, so a retry with its key, on either of those machines, does
-  not apply it again.
+## 14. Delivery (separate PRs against main)
 
-## Not guaranteed
+| # | PR | Status |
+| --- | --- | --- |
+| 1 | B2 proof: `ReplicatedApplyPowerLossTests` with its mutant | Evidence exists (`4adf8424`) |
+| 2 | B1: every write transaction FULL, with its power-loss test (fails at NORMAL) | Evidence exists (`83291845`) |
+| 3 | The H4 extension (database file, checkpoint/reset, `EIO`/`ENOSPC`); B1 and B2 re-proven under it | |
+| 4 | Placement option A | |
+| 5 | Commit marker, ack rule and wait: documents and transactions first, with `local_durable` kept on uncovered routes | |
+| 6 | Reservations, records, replay, lookup and fences | |
+| 7 | The remaining routes | Catalog routes after R10a's section 15 |
+| 8 | Measurements (section 11), then the announcement | |
 
-- **Serializability and linearizability.** Neither global serializability nor cross-region linearizability is promised.
-  Concurrent writes still merge per field, last writer wins (sections 3 and 4).
-- **Read-your-writes in other regions.** A read on a third region, or on another machine of the confirming region, can
-  still miss the write until replication delivers it.
-- **Ambiguous writes.** That a write answered `write_outcome_unknown` did not apply.
-- **Idempotency.** It is not guaranteed for:
-  - a retry with another key or with no key;
-  - a retry routed to a region the operation's record has not reached. For example, the accepting region is cut off
-    and the write never left it: a retry elsewhere applies again, and when the region returns both copies merge.
-    `PUT`, `DELETE` and `PATCH` are idempotent by value, so this matters only for `POST` without a client id and for
-    transactions;
-  - a retry more than 24 h after the original.
-- **Re-evaluation.** A replay answers the original outcome. It does not evaluate the request again against today's state.
-
-## Consequences
-
-- **Latency.** Every write adds one cross-region round trip, plus the remote fsync, plus the local fsync, which the group
-  commit shares. The added time per write is measured and recorded in `benchmark/bench/`, before and after.
-- **Storage.** Each write adds one `_operations` state row for 24 h, then a tombstone until garbage collection (R7).
-- **Availability.**
-  - A database's writes need its region and one other placed region to be reachable.
-  - In a full partition, writes fail: `remote_region_unavailable` before the write, or `write_outcome_unknown` after
-    it. None answers success.
-
-### Scope: every machine of a cell, and one seam
-
-- **Where the contract holds.** On every machine that belongs to a cell of machines, which means a machine with a
-  member directory:
-  - on Fly, the internal DNS of its app. That covers the production app, the three-region acceptance app
-    `ts-terrabase-e2e` and PR previews;
-  - in tests, the directory the multi-machine suites register: the `PeerStreamTests` cluster and the E2E
-    three-region topology.
-
-  Acceptance therefore runs the same write path as the release. The rule depends on no app name and no setting.
-- **The one documented limitation: a cell of one.** A machine without a member directory (off Fly, identity `local`):
-  development, and the single-machine Fast test servers.
-  - It has no second region by construction, so its writes answer after the local durable commit (B1) with
-    `durability: "local_durable"`, never `remote_durable`.
-  - A database there may be placed in one region.
-  - This never happens on Fly. A partition does not make a Fly machine a cell of one: its directory stays, so it fails
-    closed.
-- **Single-machine Fly apps fail clearly.** A PR preview runs one machine in gru, so no other region can confirm.
-  - A database create without a replica region answers `503 remote_region_unavailable`.
-  - A write to a database placed in regions that do not serve answers `503 remote_region_unavailable` or
-    `write_outcome_unknown`.
-  - The platform databases are placed in gru, sjc and fra, so a preview's ts-auth writes fail the same way.
-  - A preview that needs writes runs a machine in a second region. That is a change to the preview tooling, outside
-    this record.
-- **The seam.** One interface in `Features/Replication`, `IRemoteDurability`, holds the following:
-  - whether this machine confirms writes remotely (it has a member directory);
-  - `OtherRegionsAsync`: the serving regions other than this machine's, from the membership, for a new database's
-    default placement. With none listed, such a create answers `503 remote_region_unavailable`;
-  - `CanConfirm` and `WaitAsync` (step 2).
-
-  With a member directory it is backed by the peer streams (`PeerStreams`, which holds every link's acks). Without
-  one it confirms locally. The registration uses the same test as the membership's (`AddTerraBaseCluster`).
-
-## Acceptance
-
-- **Fast integration tests**, per behavior, parallel-safe, each with its fail-first and its mutation.
-- **End to end:** the existing three-region test topology (gru, sjc, fra), with no new services and no new regions.
-  - A write accepted in each region is confirmed by each other region: all six directed edges.
-  - A write that fails is never confirmed by a region.
-- **Restore:** a point-in-time restore of a non-empty database succeeds, and the restored database is placed in two
-  regions or more.
-
-## Delivery (separate PRs against main)
-
-1. Step 1: the power-loss test and the ack definition in section 9 of the design.
-2. Client database commits sync, with a before/after write benchmark.
-3. Placement of two regions or more: validation on create and update, the default, and the clear failure of
-   single-region databases.
-4. Commit wait and precheck, the ambiguous answer, operation ids minted and returned, idempotent retry and
-   reconciliation, for documents and transactions. Tests:
-   - a remote crash before and after the durable ack;
-   - a lost ack response;
-   - the loss of one region (writes still succeed through the other);
-   - a full partition (no false success);
-   - rejoin and reconciliation;
-   - a restart.
-
-   Mutations: ack before the sync, success before the remote ack, a non-idempotent retry.
-5. The DDL routes on the same wait.
-6. The `api.md` and design-section updates land with the PR that changes the behavior.
+Each PR lists the routes still uncovered, its fail-first tests and its mutants. The `api.md` and design-section
+updates land with the PR that changes behaviour.
