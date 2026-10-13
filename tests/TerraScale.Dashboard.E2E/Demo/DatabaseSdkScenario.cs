@@ -818,12 +818,17 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                         var sampled = inferredRows.Values.OrderBy(row => row.Id, StringComparer.Ordinal).Take(1000).ToArray();
                         var inferredFields = sampled.SelectMany(row => row.Document.EnumerateObject()).GroupBy(field => field.Name)
                             .OrderBy(field => field.Key, StringComparer.Ordinal)
-                            .Select(field => new { path = field.Key, present = field.Count(), types = field.GroupBy(value => value.Value.ValueKind switch
+                            .Select(field => new
+                            {
+                                path = field.Key,
+                                present = field.Count(),
+                                types = field.GroupBy(value => value.Value.ValueKind switch
                                 {
                                     JsonValueKind.Number => value.Value.TryGetInt64(out _) ? "integer" : "number",
                                     JsonValueKind.True or JsonValueKind.False => "boolean",
                                     _ => value.Value.ValueKind.ToString().ToLowerInvariant()
-                                }).ToDictionary(kind => kind.Key, kind => kind.Count()) }).ToArray();
+                                }).ToDictionary(kind => kind.Key, kind => kind.Count())
+                            }).ToArray();
                         return Results.Json(new { collection = parts[6], documents = inferredRows.Count, sampledDocuments = sampled.Length, fields = inferredFields, uniqueConstraints = Array.Empty<object>() });
                     }
                 case (6, "POST", "sql"):
@@ -840,8 +845,11 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     }
                 case (6, "GET", "indexes"):
                     var only = http.Request.Query["collection"].ToString();
-                    lock (gate) return Results.Json(new { items = indexes.GetValueOrDefault(current.Id)?.Values.Where(index => only.Length == 0 || index.Collection == only)
-                        .Select(index => new { name = index.Name, collection = index.Collection, fields = index.Fields, state = "active" }).ToArray() ?? [] });
+                    lock (gate) return Results.Json(new
+                    {
+                        items = indexes.GetValueOrDefault(current.Id)?.Values.Where(index => only.Length == 0 || index.Collection == only)
+                        .Select(index => new { name = index.Name, collection = index.Collection, fields = index.Fields, state = "active" }).ToArray() ?? []
+                    });
                 case (6, "POST", "indexes"):
                     var create = await JsonAsync(http);
                     Require(create.EnumerateObject().All(field => field.Name is "collection" or "fields" or "name"), "Index create sends collection, fields and optional name");
@@ -918,8 +926,12 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                         if (index == delivered.Length - 1) events.Append("id: ").Append(EncodeCursor(database.Id, group.Max(item => item.Sequence))).Append('\n');
                         events.Append("data: ").Append(JsonSerializer.Serialize(new
                         {
-                            collection = change.Collection, id = change.Id, op = change.Op,
-                            version = change.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture), origin = "00000000000000a1", document = value?.Document
+                            collection = change.Collection,
+                            id = change.Id,
+                            op = change.Op,
+                            version = change.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            origin = "00000000000000a1",
+                            document = value?.Document
                         })).Append("\n\n");
                     }
                 }
@@ -975,8 +987,14 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         // I2 ManagedDatabaseBody: camelCase, answering region and complete placement.
         private static object Wire(ManagedDatabase database, string region) => new
         {
-            id = database.Id, projectId = database.ProjectId, name = database.Name, branchedFrom = database.BranchedFrom, createdAt = database.CreatedAt,
-            region, homeRegion = database.HomeRegion, replicaRegions = database.ReplicaRegions ?? Array.Empty<string>()
+            id = database.Id,
+            projectId = database.ProjectId,
+            name = database.Name,
+            branchedFrom = database.BranchedFrom,
+            createdAt = database.CreatedAt,
+            region,
+            homeRegion = database.HomeRegion,
+            replicaRegions = database.ReplicaRegions ?? Array.Empty<string>()
         };
 
         private async Task<IResult> DocumentsAsync(HttpContext http)

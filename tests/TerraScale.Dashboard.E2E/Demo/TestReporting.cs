@@ -224,17 +224,31 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
         object[] Series(long r, long w) => Enumerable.Range(0, buckets).Select(index => (object)new { start = from.AddTicks(step * index), reads = index == 0 ? r : 0, writes = index == 0 ? w : 0 }).ToArray();
         object Database(string id, bool child) => new
         {
-            databaseId = scenario == "foreign-database" ? "foreign" : id, storageBytes = 8192L, logicalBytes = 4096L, collections = 1L, documents = 2L,
-            reads, writes, period = Period(reads, writes), series = child ? Array.Empty<object>() : Series(reads, writes)
+            databaseId = scenario == "foreign-database" ? "foreign" : id,
+            storageBytes = 8192L,
+            logicalBytes = 4096L,
+            collections = 1L,
+            documents = 2L,
+            reads,
+            writes,
+            period = Period(reads, writes),
+            series = child ? Array.Empty<object>() : Series(reads, writes)
         };
         if (databaseName.Length > 0) return Json(Database(selected[0], false));
         var count = selected.Length;
         var total = unchecked(reads * count);
         return Json(new
         {
-            projectId = scenario == "foreign-project" ? "foreign-project" : project.Id, databases = count, storageBytes = 8192L * count,
-            logicalBytes = 4096L * count, documents = 2L * count, reads = total, writes = writes * count, period = Period(total, writes * count),
-            series = Series(total, writes * count), items = selected.Select(id => Database(id, true)).ToArray()
+            projectId = scenario == "foreign-project" ? "foreign-project" : project.Id,
+            databases = count,
+            storageBytes = 8192L * count,
+            logicalBytes = 4096L * count,
+            documents = 2L * count,
+            reads = total,
+            writes = writes * count,
+            period = Period(total, writes * count),
+            series = Series(total, writes * count),
+            items = selected.Select(id => Database(id, true)).ToArray()
         });
     }
     private static HttpResponseMessage Json(object value, HttpStatusCode status = HttpStatusCode.OK) => new(status) { Content = new StringContent(JsonSerializer.Serialize(value), new MediaTypeHeaderValue("application/json")) };

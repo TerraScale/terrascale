@@ -91,7 +91,7 @@ public sealed class ProjectAuthorityJourneyTests
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
             using var body = JsonDocument.Parse(await read.Content.ReadAsStringAsync());
             await Assert.That(body.RootElement.GetProperty("scopes").EnumerateArray().Select(item => item.GetString()).ToArray())
-                .IsEquivalentTo(new[] { "documents:read" });
+                .IsEquivalentTo(new string?[] { "documents:read" });
             using var write = await browser.GetAsync(target + "databases%3Awrite%20documents%3Awrite");
             await Assert.That(write.StatusCode).IsEqualTo(role == "viewer" ? HttpStatusCode.Forbidden : HttpStatusCode.OK);
             var observed = auth.ProjectExchanges.Last();
