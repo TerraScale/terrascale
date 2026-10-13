@@ -57,3 +57,19 @@ Each of the three outage cases stops its own node cleanly, retains its data, acc
 The initial analyzer build failure and both pre-fix 16/16 failing runs are uncredited. The passing run still logged unobserved socket-copy cancellation exceptions from the existing TCP proxy; no pass is inferred from those logs. This run proves graceful local stop/rejoin, not abrupt power-loss durability, permanent origin loss, rebuild certification or incarnation fencing.
 
 Raw local log: `/tmp/cos-replication-matrix-proof/local-matrix-4.log`; SHA-256 `d52f1e93bf5c47af4674f858c2e978926713e30d86a4e6de8800b6fe65f919b8`. Per-test outcomes: `/tmp/cos-replication-matrix-proof/local-outcomes-4.jsonl`. Both are preserved on delta until the COS resumes live qualification.
+
+## Required-check gate
+
+`TsDotnetRoot=/home/mariogk/.t3/worktrees/terrascale/cos-replication-matrix-sdk ~/.local/bin/ts-heavy make check TS_DOTNET_DIR=/home/mariogk/.t3/worktrees/terrascale/cos-replication-matrix-sdk` exited 2. Formatting, the solution build, library checks, auth security/OpenAPI checks, TerraBase analyzer checks and Go race checks passed. Endpoints tests passed 88/88; logging tests passed 46/46. Authentication Fast passed 667/670 and failed these three existing tests:
+
+| Test | Failure |
+| --- | --- |
+| `A_new_project_jwks_must_not_create_unbounded_keys_while_its_local_copy_lags` | `RegionalReviewTests.cs:136`: expected one key, found zero |
+| `Only_exact_discovery_paths_can_select_local_storage` | `RegionalReviewTests.cs:44`: expected the original signing key ID, received another |
+| `Dump_served_client_routes` | `ScratchPr5RegionalE2ETests.cs:60`: null output-file path |
+
+Those auth files are unchanged by this branch. `make check` stopped before running TerraBase Fast and the Turso driver tests. Slow was not run. Log: `/tmp/cos-replication-matrix-proof/make-check.log`.
+
+Workflow structure passed `actionlint -shellcheck='' .github/workflows/ci.yml`; the shellcheck shim has no selected version, so its integration was not run. No Docker execution or live Fly execution was performed locally.
+
+The branch is committed locally and unpushed. No PR exists yet: repository rules require `make check` to pass before pushing. Publication and merge wait on **COS: terrascale main green (T0)**; live six-direction and disposable-app outage qualification wait on **COS: terrascale Fly greenfield (T2)**. The CI wiring above is implemented but has not run in GitHub yet.
