@@ -1,0 +1,193 @@
+{
+  "route": "/analytics?range=1h",
+  "Mode": "explicit-gap",
+  "DatabaseId": "01a13320-57f4-7f73-8c7e-67c0c2029653",
+  "placement": [
+    "GRU"
+  ],
+  "Reads": 1,
+  "producerPayload": {
+    "projectId": "01M4SJ0NYBFR8G5TH5FXZRJPJ9",
+    "range": "1h",
+    "from": "2026-10-12T22:39:00-03:00",
+    "to": "2026-10-12T23:39:00-03:00",
+    "bucketSeconds": 60,
+    "items": [
+      {
+        "databaseId": "01a13320-57f4-7f73-8c7e-67c0c2029653",
+        "region": "gru",
+        "series": [
+          {
+            "start": "2026-10-12T22:39:00-03:00",
+            "requests": {
+              "GET": 10
+            },
+            "operations": {
+              "document_read": 4
+            },
+            "errors": 1,
+            "latency": {
+              "p50Ms": 0.5,
+              "p95Ms": 1.75,
+              "p99Ms": 9
+            },
+            "storageBytes": 4096,
+            "clientBandwidth": {
+              "bytesSent": 6,
+              "bytesReceived": 7
+            },
+            "replicationBandwidth": {
+              "bytesSent": 8,
+              "bytesReceived": 9
+            }
+          },
+          {
+            "start": "2026-10-12T22:40:00-03:00",
+            "requests": {
+              "GET": 10
+            },
+            "operations": {
+              "document_read": 4
+            },
+            "errors": 1,
+            "latency": {
+              "p50Ms": null,
+              "p95Ms": null,
+              "p99Ms": null
+            },
+            "storageBytes": 4096,
+            "clientBandwidth": {
+              "bytesSent": 6,
+              "bytesReceived": 7
+            },
+            "replicationBandwidth": {
+              "bytesSent": 8,
+              "bytesReceived": 9
+            }
+          },
+          {
+            "start": "2026-10-12T22:41:00-03:00",
+            "requests": {
+              "GET": 10
+            },
+            "operations": {
+              "document_read": 4
+            },
+            "errors": 1,
+            "latency": {
+              "p50Ms": 0.5,
+              "p95Ms": 1.75,
+              "p99Ms": 9
+            },
+            "storageBytes": 4096,
+            "clientBandwidth": {
+              "bytesSent": 6,
+              "bytesReceived": 7
+            },
+            "replicationBandwidth": {
+              "bytesSent": 8,
+              "bytesReceived": 9
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "stats": [
+    {
+      "label": "Requests",
+      "value": "30"
+    },
+    {
+      "label": "Errors",
+      "value": "3"
+    },
+    {
+      "label": "Worst p95 latency",
+      "value": "1.750 ms"
+    },
+    {
+      "label": "Storage",
+      "value": "4.0 KiB"
+    },
+    {
+      "label": "Operations",
+      "value": "12"
+    },
+    {
+      "label": "Client bandwidth",
+      "value": "39 B"
+    },
+    {
+      "label": "Replication sent",
+      "value": "24 B"
+    },
+    {
+      "label": "Replication received",
+      "value": "27 B"
+    }
+  ],
+  "charts": [
+    {
+      "label": "Requests by type, 1h",
+      "columns": 3,
+      "paths": [
+        "M 48.0,14.0 C 158.0,14.0 268.0,14.0 378.0,14.0 C 488.0,14.0 598.0,14.0 708.0,14.0"
+      ],
+      "missingLabels": 0
+    },
+    {
+      "label": "Operations by type, 1h",
+      "columns": 3,
+      "paths": [
+        "M 48.0,44.8 C 158.0,44.8 268.0,44.8 378.0,44.8 C 488.0,44.8 598.0,44.8 708.0,44.8"
+      ],
+      "missingLabels": 0
+    },
+    {
+      "label": "Errors, 1h",
+      "columns": 3,
+      "paths": [
+        "M 48.0,14.0 C 158.0,14.0 268.0,14.0 378.0,14.0 C 488.0,14.0 598.0,14.0 708.0,14.0"
+      ],
+      "missingLabels": 0
+    },
+    {
+      "label": "Approximate request latency percentiles (\u00B5s), 1h",
+      "columns": 3,
+      "paths": [
+        "M 48.0,160.3 M 708.0,160.3",
+        "M 48.0,141.1 M 708.0,141.1",
+        "M 48.0,29.4 M 708.0,29.4"
+      ],
+      "missingLabels": 6
+    },
+    {
+      "label": "Storage (bytes), 1h",
+      "columns": 3,
+      "paths": [
+        "M 48.0,41.8 C 158.0,41.8 268.0,41.8 378.0,41.8 C 488.0,41.8 598.0,41.8 708.0,41.8"
+      ],
+      "missingLabels": 0
+    },
+    {
+      "label": "Client bandwidth (bytes), 1h",
+      "columns": 3,
+      "paths": [
+        "M 48.0,75.6 C 158.0,75.6 268.0,75.6 378.0,75.6 C 488.0,75.6 598.0,75.6 708.0,75.6",
+        "M 48.0,60.2 C 158.0,60.2 268.0,60.2 378.0,60.2 C 488.0,60.2 598.0,60.2 708.0,60.2"
+      ],
+      "missingLabels": 0
+    },
+    {
+      "label": "Replication bandwidth (bytes), 1h",
+      "columns": 3,
+      "paths": [
+        "M 48.0,44.8 C 158.0,44.8 268.0,44.8 378.0,44.8 C 488.0,44.8 598.0,44.8 708.0,44.8",
+        "M 48.0,29.4 C 158.0,29.4 268.0,29.4 378.0,29.4 C 488.0,29.4 598.0,29.4 708.0,29.4"
+      ],
+      "missingLabels": 0
+    }
+  ],
+  "error": false
+}

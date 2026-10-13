@@ -1,0 +1,11 @@
+--- a/src/TerraScale.Dashboard/Features/Analytics/AnalyticsBackend.cs
++++ b/src/TerraScale.Dashboard/Features/Analytics/AnalyticsBackend.cs
+@@ -59,6 +59,8 @@
+                     requestedRegion.Length > 0 && region != requestedRegion)
+                     throw new JsonException("Analytics returned measurements outside the selected scope.");
+                 var displayRegion = regionCodes.GetValueOrDefault(region) ?? DatabaseRegion.FromId(region)?.Code ?? region;
++                if (!record.Regions.Prepend(record.Region).Contains(displayRegion, StringComparer.Ordinal))
++                    throw new JsonException("Analytics returned a region outside the current database placement.");
+                 DateTimeOffset? previousStart = null;
+                 foreach (var series in database.GetProperty("series").EnumerateArray())
+                 {
