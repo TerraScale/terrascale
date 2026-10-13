@@ -1,6 +1,6 @@
 # One-time import from PostgreSQL and Turso (contract v1)
 
-Status, 2026-10-12: **contract v1, revision 3, implementation in progress** (branch `feat/postgres-turso-import-core`,
+Status, 2026-10-12: **contract v1, revision 3 (clarified), implementation in progress** (branch `feat/postgres-turso-import-core`,
 draft PR #167). This file is the single contract for import jobs. Downstream owners (ts-dashboard, ts-dotnet,
 ts-docs) build against it; changes are made here first. Revision 2 replaced revision 1 (destination from
 `createDatabase`, uploads in parts, no `listImports`). Revision 3 (source integrity): SQLite files must be in rollback
@@ -27,9 +27,17 @@ into a database that holds data, schema/constraint enforcement in TerraBase.
 3. **Dry run first.** Uploading produces a preview. No document is written until the caller confirms that exact
    preview (`startImport` with `previewId`). Every path back into copying (resume included) requires a confirmed
    preview that is still current.
-4. **Isolated destination.** The destination is a database the caller creates with the existing `createDatabase`
-   (`POST P/databases`) and that has **no collections** when the import is attached. Imported documents are written
-   create-only: an import never overwrites a document it did not write. TerraBase never deletes a destination.
+4. **Isolated destination.** The destination is a **new** database the caller provisions for this import with the
+   existing `createDatabase` (`POST P/databases`); `createImport` refuses a database that has any collection
+   (`409 destination_not_empty`), so a populated database is never adopted. Imported documents are written create-only:
+   an import never overwrites a document it did not write; a concurrent ordinary write that collides fails the job
+   explicitly (`destination_modified`), and validation fails on any other change to imported collections.
+   TerraBase never deletes a destination.
+5. **The confirmation binds the artifact and the mapping.** `preview.id` (a ULID) names one analysis of the staged
+   bytes with SHA-256 `source.sha256` under the job's `options`; the preview holds the complete plan (tables,
+   collections, ids, column mappings). `startImport` must name the current `preview.id`; the copy then applies exactly
+   that stored plan and re-checks the SHA-256 before reading. New options or a new analysis mint a new id, and
+   `confirmedPreviewId` records what the user confirmed.
 
 ## 2. Ownership and routing
 
@@ -208,14 +216,19 @@ resume from failed/cancelled:
 | `format` | Accepted input | How to produce it |
 | --- | --- | --- |
 | `postgres_plain` | `pg_dump` plain-text SQL in UTF-8 with `COPY … FROM stdin` data (pg_dump's default) | `pg_dump --format=plain --no-owner --no-privileges --encoding=UTF8 -f dump.sql <db>`; convert a custom-format archive offline with `pg_restore -f dump.sql archive.dump` |
-| `sqlite` | One consolidated SQLite 3 database file in **rollback journal mode** (header bytes 18–19 = 1), Turso/libSQL databases included | Turso: `turso db export DB --output-file turso-export.db`, then `sqlite3 turso-export.db "VACUUM INTO 'export.db'"` (with `turso-export.db-wal` beside it, if one was written); local SQLite: `sqlite3 local.db "VACUUM INTO 'export.db'"`. Upload `export.db` |
+| `sqlite` | One consolidated SQLite 3 database file in **rollback journal mode** (header bytes 18–19 = 1), Turso/libSQL databases included | Turso: `turso db export DB --output-file turso-export.db`, then `sqlite3 turso-export.db "VACUUM INTO 'export.db'"` with `turso-export.db-wal` (if written) still beside it. Local SQLite: `sqlite3 local.db "VACUUM INTO 'export.db'"`. Upload `export.db`. Alternative on a **copy** (never the live file): keep `copy.db` and `copy.db-wal` together and run `sqlite3 copy.db "PRAGMA journal_mode=DELETE"`, which folds the WAL in and rewrites the header |
 
 Rejected (`rejected`, `error.code` `unsupported_source_format`): pg_dump custom/directory/tar archives (`PGDMP`),
 compressed files, non-UTF-8 dumps, `pg_dumpall` output (`\connect`), files that are not SQLite 3, encrypted SQLite,
 and SQLite files in WAL mode (`error.code` `wal_mode_source`). A WAL-mode file may lack rows that are still in its
 `-wal`, and no check of the file alone (`quick_check` included) can tell: `turso db export` can write a `.db` and a
 `.db-wal`, and the `.db` alone silently misses the newest rows. `sqlite3 … ".backup …"` keeps the WAL flag, so its output
-is refused too; `VACUUM INTO` reads the WAL and writes a rollback-mode file.
+is refused too; `VACUUM INTO` reads the WAL and writes a rollback-mode file. Tested with sqlite3 3.51.2: a WAL-mode
+copy whose `-wal` held 4 rows lost all of them without its `-wal`, while `VACUUM INTO` and `journal_mode=DELETE` on the
+`.db` + `.db-wal` pair both gave 4 rows and header bytes 1. The rule is conservative: it also refuses a WAL-mode file
+that was fully checkpointed (persistent WAL); converting it as above costs one command. It is not a completeness
+proof: a rollback-mode file copied while another process wrote to it can still be torn or stale, and TerraBase cannot
+detect every such copy; take the snapshot with `VACUUM INTO` (or pg_dump) as documented.
 Blocking issues: `INSERT` statements (`--inserts`), large objects, `COPY` in CSV/binary form, unknown statements.
 pg_dump's `\restrict`/`\unrestrict` lines (PostgreSQL 17.6+) are recognized and ignored.
 
