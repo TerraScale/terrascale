@@ -231,6 +231,52 @@ public sealed class TransactionApiTests
     }
 
     [Test]
+    public async Task Transaction_count_deadlines_follow_the_authenticated_plan()
+    {
+        using var clock = new TransactionQueryClock();
+        await using var api = await DocumentApi.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock));
+        var tenants = api.Server.Services.GetRequiredService<ITenantDirectory>();
+        await Assert.That(await tenants.PlanAsync(api.Tenant.OrganizationId, CancellationToken.None)).IsEqualTo(PlanTier.Hobby);
+        var before = await api.PutAsync(DocumentApi.NewId(), new { n = 1 });
+        var fresh = DocumentApi.NewId();
+        object[] operations =
+        [
+            new { op = "create", collection = "items", id = fresh, document = new { n = 2 } },
+            new { op = "assert_count", collection = "items", gte = 1, lte = 1 },
+        ];
+
+        clock.Enabled = true;
+        var hobby = await api.TransactAsync(operations);
+        clock.Enabled = false;
+        await Assert.That((hobby.Status, hobby.Code, hobby.Message, hobby.Op))
+            .IsEqualTo((HttpStatusCode.BadRequest, "invalid_query", "query too expensive", 1));
+        await Assert.That((await api.GetAsync(fresh)).Status).IsEqualTo(HttpStatusCode.NotFound);
+
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "pro");
+        await Assert.That(await tenants.PlanAsync(api.Tenant.OrganizationId, CancellationToken.None)).IsEqualTo(PlanTier.Pro);
+        clock.Enabled = true;
+        var pro = await api.TransactAsync(operations);
+        clock.Enabled = false;
+        await Assert.That(pro.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(pro.Json.GetProperty("results")[1].GetProperty("count").GetString()).IsEqualTo("1");
+        await Assert.That(Offset(pro)).IsEqualTo(Offset(before) + 1);
+        await Assert.That((await api.GetAsync(fresh)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(2);
+    }
+
+    // Advance only native writer execution: 1.5 seconds exceeds Hobby's one-second deadline but fits Pro's five.
+    private sealed class TransactionQueryClock : TimeProvider, IDisposable
+    {
+        private readonly ThreadLocal<long> _timestamps = new();
+        private bool _enabled;
+        public bool Enabled { set => Volatile.Write(ref _enabled, value); }
+        public override long TimestampFrequency => 1000;
+        public override long GetTimestamp() => Volatile.Read(ref _enabled) && Thread.CurrentThread.Name == "terrabase-sqlite-writer"
+            ? _timestamps.Value += 1500 : _timestamps.Value;
+        public void Dispose() => _timestamps.Dispose();
+    }
+
+    [Test]
     public async Task Assertions_need_the_read_scope()
     {
         await using var api = await DocumentApi.StartAsync();
