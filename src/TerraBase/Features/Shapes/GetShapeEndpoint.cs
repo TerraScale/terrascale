@@ -4,7 +4,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Net.Http.Headers;
 using Microsoft.OpenApi;
 using TerraBase.Engine;
@@ -216,7 +215,7 @@ internal sealed class GetShapeEndpoint(
         return tags.Any(candidate => candidate.Equals(EntityTagHeaderValue.Any) || candidate.Tag.Value![1..^1] == tag);
     }
 
-    private RedirectHttpResult Redirect(ShapeRequest request, ShapeLineage lineage, string offset, string cacheControl)
+    private Microsoft.AspNetCore.Http.HttpResults.RedirectHttpResult Redirect(ShapeRequest request, ShapeLineage lineage, string offset, string cacheControl)
     {
         var headers = HttpContext.Response.Headers;
         headers.CacheControl = cacheControl;
@@ -226,7 +225,7 @@ internal sealed class GetShapeEndpoint(
         return TypedResults.Redirect(Location(request, lineage.Handle.Length, offset, lineage.Handle), permanent: false, preserveMethod: true);
     }
 
-    private JsonHttpResult<ShapeErrorBody> Refetch(ShapeLineage lineage, string message)
+    private Microsoft.AspNetCore.Http.HttpResults.JsonHttpResult<ShapeErrorBody> Refetch(ShapeLineage lineage, string message)
     {
         HttpContext.Response.Headers.CacheControl = "no-store";
         HttpContext.Response.Headers["TB-Shape-Handle"] = lineage.Handle;
@@ -403,7 +402,7 @@ internal sealed class GetShapeEndpoint(
                 DocumentFilter filter => new Where(Canonical(json.RootElement), filter),
             };
         }
-        catch (JsonException)
+        catch (Exception error) when (error is JsonException or InvalidOperationException)
         {
             return new Validation("where must be a JSON filter", Code);
         }
