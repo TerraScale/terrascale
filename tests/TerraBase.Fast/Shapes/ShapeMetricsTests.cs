@@ -294,6 +294,28 @@ public sealed class ShapeMetricsTests
         await Assert.That(PointReads(await ScrapeAsync(api.Server))).IsEqualTo(beforeHit);
     }
 
+    [Test]
+    public async Task Repeated_writes_in_one_transaction_count_the_stored_body_read_only_once()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+        await Assert.That((await api.PutAsync(id, new { a = 1 })).Status).IsEqualTo(HttpStatusCode.Created);
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var tenant = await api.TenantOfAsync();
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, token))!;
+        await using var transaction = await store.BeginTransactionAsync(write: true, token);
+
+        var before = PointReads(await ScrapeAsync(api.Server));
+        await transaction.PutAsync(DocumentApi.Collection, id, "{\"a\":2}"u8.ToArray(), token);
+        var afterFirst = PointReads(await ScrapeAsync(api.Server));
+        // With no uniqueness constraints, the first mutation reads only stored state plus its JSON.
+        await Assert.That(afterFirst - before).IsEqualTo(1d);
+
+        await transaction.PutAsync(DocumentApi.Collection, id, "{\"a\":3}"u8.ToArray(), token);
+        // The next mutation uses the pending state, so no document SELECT runs.
+        await Assert.That(PointReads(await ScrapeAsync(api.Server))).IsEqualTo(afterFirst);
+    }
+
     // The sum of terrabase_storage_reads point samples, which every document, version, size and system lookup feeds.
     private static double PointReads(string scrape) => scrape.Split('\n')
         .Where(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith('#') && MetricName(line) == "terrabase_storage_reads_total"
