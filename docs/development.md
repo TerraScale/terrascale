@@ -60,7 +60,7 @@ nice -n 19 make perf
 
 `test-fast` runs the HTTP, MCP, CLI and customer-SDK journeys; `test-slow` runs the
 browser journeys and the internal-billing policy suites (`[Category("Slow")]`);
-`test-e2e` runs both and is the merge gate.
+`test-e2e` runs both for local investigation. `make check` (formatting, build, security and Fast) is required before advancing an artifact. Slow runs independently in GitHub Actions; failures remain red and create or update a GitHub issue.
 CI does not run the explicit hot-reload journey. Run `nice -n 19 make test-hot-reload`
 on a tailnet machine before pushing changes to `scripts/demo.sh`, `scripts/dev.sh`,
 the asset scripts or the demo host.

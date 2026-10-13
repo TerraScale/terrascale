@@ -1,0 +1,284 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "TerraScale Dashboard integration API",
+    "description": "Same-origin dashboard APIs. Existing /api/v1 browser paths are preserved. New public APIs use /v1. Mutations require the current session and the _csrf form token bound to the same origin; authentication and membership checks run before actions. This document covers explicitly annotated integration routes, not every UI page.",
+    "version": "v1"
+  },
+  "paths": {
+    "/api/v1/auth/me": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Read the current dashboard session and workspace",
+        "operationId": "getDashboardIdentity",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountIdentityResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "dashboardSession": []
+          }
+        ]
+      }
+    },
+    "/api/v1/dashboard/switch-organization": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Select an organization the current user can access",
+        "operationId": "switchDashboardOrganization",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SwitchOrganizationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "303": {
+            "description": "See Other"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "dashboardSession": []
+          }
+        ]
+      }
+    },
+    "/api/v1/dashboard/switch-project": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Select a project the current user can access",
+        "operationId": "switchDashboardProject",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/SwitchProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "303": {
+            "description": "See Other"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "dashboardSession": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AccountIdentityResponse": {
+        "required": [
+          "userId",
+          "accountId",
+          "name",
+          "email",
+          "phoneNumber",
+          "locale",
+          "onboardingCompleted",
+          "organizationId",
+          "projectId",
+          "role"
+        ],
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string"
+          },
+          "accountId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "phoneNumber": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "onboardingCompleted": {
+            "type": "boolean"
+          },
+          "organizationId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "projectId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "detail": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "instance": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "SwitchOrganizationRequest": {
+        "required": [
+          "_csrf",
+          "organizationId",
+          "returnUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "_csrf": {
+            "type": "string"
+          },
+          "organizationId": {
+            "type": "string"
+          },
+          "returnUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "SwitchProjectRequest": {
+        "required": [
+          "_csrf",
+          "projectId",
+          "returnUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "_csrf": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "returnUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "dashboardSession": {
+        "type": "apiKey",
+        "description": "Server-managed HttpOnly session cookie. Obtain through the native login flow.",
+        "name": "ts-dashboard-session",
+        "in": "cookie"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Session"
+    },
+    {
+      "name": "Workspace"
+    }
+  ]
+}

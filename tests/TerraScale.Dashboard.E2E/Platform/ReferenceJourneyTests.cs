@@ -4,8 +4,7 @@ using System.Text.RegularExpressions;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class ReferenceJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
