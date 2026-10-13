@@ -1171,7 +1171,7 @@ public sealed class PeerStreamTests
         });
         await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
         await sjc.LoseAsync("items", lost);
-        gru.LoseOnBucketRead = true;
+        gru.LoseOnBucketRead = cluster.Database;
 
         using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
         await push.RefillAsync(cluster.Database, 1);
@@ -2112,7 +2112,7 @@ public sealed class PeerStreamTests
         public bool RefusesRepairs { get; set; }
 
         // The source becomes unavailable between a successful digest and its first bucket page.
-        public bool LoseOnBucketRead { get; set; }
+        public TenantContext? LoseOnBucketRead { get; set; }
 
         public Func<TenantContext, CancellationToken, Task>? BeforeDigest { get; set; }
 
@@ -2619,7 +2619,7 @@ public sealed class PeerStreamTests
             TenantContext database, Ulid incarnation, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
             states.ForgetAsync(database, incarnation, keys, horizon, cancellationToken);
 
-        private bool _lost;
+        private readonly ConcurrentDictionary<TenantContext, byte> _lost = new();
 
         public async ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken)
         {
@@ -2628,7 +2628,7 @@ public sealed class PeerStreamTests
                 await before(database, cancellationToken);
             }
 
-            return Volatile.Read(ref _lost) ? null : await states.DigestAsync(database, expected, cancellationToken);
+            return _lost.ContainsKey(database) ? null : await states.DigestAsync(database, expected, cancellationToken);
         }
 
         // An empty page, then refused reads: the closing pin check detects that the source lost the database.
@@ -2636,14 +2636,14 @@ public sealed class PeerStreamTests
             TenantContext database, Ulid incarnation, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken)
         {
             // A lost copy refuses every later read pinned to it, as storage does: the closing check of a refill among them.
-            if (Volatile.Read(ref _lost))
+            if (_lost.ContainsKey(database))
             {
                 return ValueTask.FromResult<(IReadOnlyList<RepairState>, BucketCursor?)?>(null);
             }
 
-            if (machine.LoseOnBucketRead)
+            if (machine.LoseOnBucketRead == database && buckets.Count > 0)
             {
-                Volatile.Write(ref _lost, true);
+                _ = _lost.TryAdd(database, 0);
                 return ValueTask.FromResult<(IReadOnlyList<RepairState>, BucketCursor?)?>(([], null));
             }
 
