@@ -207,7 +207,7 @@ CREATE INDEX _tb_state_dead ON _tb_state (stamp) WHERE live = 0;
 CREATE TABLE _tb_peers (node INTEGER PRIMARY KEY,     -- every origin and every peer of this database
   applied INTEGER NOT NULL,   -- highest stamp applied from this origin, in stream order (or heartbeat)
   acked   INTEGER NOT NULL,   -- sender side: highest local change_id this peer acknowledged
-  incarnation TEXT NOT NULL, -- the local file incarnation whose change_id the ACK names; empty before ACK contact
+  incarnation TEXT NOT NULL DEFAULT '', -- the local file incarnation whose change_id the ACK names; empty before ACK contact
   stable  INTEGER NOT NULL,   -- the peer's last reported stable stamp (section 11)
   seen    INTEGER NOT NULL);  -- Unix ms last heard from
 CREATE TABLE _tb_feed (seq INTEGER NOT NULL UNIQUE, commit_offset INTEGER NOT NULL,
