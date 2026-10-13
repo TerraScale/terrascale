@@ -15,6 +15,10 @@ public static class ReplicationExtensions
         ArgumentNullException.ThrowIfNull(builder);
         builder.Services.AddSingleton<IChangeGroupSink, StorageChangeGroupSink>();
         builder.Services.AddSingleton<PeerStreamReceiver>();
+        builder.Services.AddSingleton<CatalogGate>();
+        builder.Services.AddSingleton<ICatalogGate>(provider => provider.GetRequiredService<CatalogGate>());
+        // Verify before catalog recovery, platform seeding and any background catalog work.
+        builder.Services.Insert(0, ServiceDescriptor.Singleton<IHostedService>(provider => provider.GetRequiredService<CatalogGate>()));
         builder.Services.AddSingleton<AntiEntropy>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<AntiEntropy>());
         builder.Services.AddSingleton<PeerStreams>();

@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -12,6 +13,7 @@ public sealed class DeleteOrganizationEndpoint(IManagementService management) : 
     public override void Configure()
     {
         Delete(ManagementRoute.Organization);
+        Metadata(AnchoredRevocation.Instance);
         Name("deleteOrganization");
         Summary("Deletes an organization");
         Description("Needs owner (403 otherwise). Fails with 409 while the organization still has projects. Also deletes its members, invitations, ownership transfer and audit log." + " " + ManagementRoute.IdentityDescription);

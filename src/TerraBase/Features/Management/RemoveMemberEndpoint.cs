@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -12,6 +13,7 @@ public sealed class RemoveMemberEndpoint(IAccessService access) : EndpointWithou
     public override void Configure()
     {
         Delete(ManagementRoute.Member);
+        Metadata(AnchoredRevocation.Instance);
         Name("removeMember");
         Summary("Removes a member from an organization");
         Description($"Needs admin, and owner to remove an owner. 409 for the last owner. {ManagementRoute.IdentityDescription}");

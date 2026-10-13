@@ -1,4 +1,3 @@
-using TerraBase.Features.Replication;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management.Indexes;
@@ -6,6 +5,7 @@ using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
@@ -21,6 +21,7 @@ public static class ManagementExtensions
     {
         // One catalog instance behind every interface: it remembers that the catalog version is current.
         services.AddSingleton<EngineManagementService>();
+        services.AddSingleton(provider => new Lazy<ICatalogGate>(provider.GetRequiredService<ICatalogGate>));
         // Commits apply document operations; the document service reaches the catalog back through usage metering.
         services.AddSingleton(provider => new Lazy<IDocumentService>(provider.GetRequiredService<IDocumentService>));
         services.AddSingleton(provider => new Lazy<IQueryShapeTracker>(provider.GetRequiredService<IQueryShapeTracker>));

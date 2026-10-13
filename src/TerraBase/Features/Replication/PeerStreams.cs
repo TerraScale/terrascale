@@ -38,11 +38,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Link> _links = [with(StringComparer.Ordinal)];
 
+    private readonly Lazy<ICatalogGate> _catalogGate;
+
     public PeerStreams(
         IMembership membership, IChangeGroupSource source, IReplicaStates states, ITenantDirectory tenants, LocalReplica self, TerraBaseOptions options,
-        TimeProvider time, IMeterFactory meters, ILogger<PeerStreams> logger)
+        TimeProvider time, IMeterFactory meters, ILogger<PeerStreams> logger, Lazy<ICatalogGate> catalogGate)
     {
         (_membership, _source, _states, _tenants, _self, _options, _time, _logger) = (membership, source, states, tenants, self, options, time, logger);
+        _catalogGate = catalogGate;
         var meter = meters.Create(Telemetry.MeterName);
         meter.CreateObservableGauge("terrabase.replication.send_lag", () => Lags(cursor => cursor.BehindSince), "s",
             "Age of the oldest change group not yet acknowledged by the peer region's machines.");
@@ -258,7 +261,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         var sent = false;
         await foreach (var database in _source.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (!await PlacedAsync(link, database, cancellationToken).ConfigureAwait(false))
+            if (database == ChangeGroups.System && !_catalogGate.Value.Trusted
+                || !await PlacedAsync(link, database, cancellationToken).ConfigureAwait(false))
             {
                 continue;
             }

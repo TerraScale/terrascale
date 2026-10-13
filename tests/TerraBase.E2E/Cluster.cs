@@ -432,6 +432,7 @@ public sealed class Cluster : IAsyncDisposable
         private readonly FakeMemberStore _machines = new();
         private readonly Dictionary<string, Node> _nodes = [with(StringComparer.Ordinal)];
         public string OrganizationId { get; } = EntityIds.New().ToString();
+        private readonly string _user = EntityIds.New().ToString();
         private readonly string _project = EntityIds.New().ToString();
         private readonly string _database = EntityIds.New().ToString();
 
@@ -665,7 +666,7 @@ public sealed class Cluster : IAsyncDisposable
                     backups.Route(services);
                     ManualBackupHosting.Configure(services);
                 }
-            }, time: node.Skew == TimeSpan.Zero ? null : new SkewedTime(node.Skew));
+            }, time: node.Skew == TimeSpan.Zero ? null : new SkewedTime(node.Skew), userId: _user);
         }
 
         // Each start is a new ts-auth stand-in, so the project binding and the project token are set again, for the

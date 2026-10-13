@@ -1893,6 +1893,8 @@ public sealed class PeerStreamTests
 
         public FakeMemberStore Members { get; } = new();
 
+        public string User { get; } = EntityIds.New().ToString();
+
         public TenantContext Database { get; } = new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
 
         // Whether the machines keep their CDC tailer as the change group source, instead of a fake.
@@ -2003,7 +2005,7 @@ public sealed class PeerStreamTests
                 {
                     services.AddSingleton<IChangeGroupSource>(Source);
                 }
-            }, time: cluster.Clock);
+            }, time: cluster.Clock, userId: cluster.User);
             if (first)
             {
                 await RegisterAsync();
