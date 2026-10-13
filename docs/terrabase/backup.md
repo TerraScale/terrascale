@@ -256,8 +256,14 @@ any failure on a customer destination (below). Every drop logs a warning and cou
 `terrabase_backup_abandoned_total{reason}` (`outage`, `read`, `destination`); a hole counts in
 `terrabase_backup_holes_total`. A new shipper lease, a destination change and shutdown also end a generation, on
 purpose, without counting a drop. At shutdown a file ships its whole backlog, read after read, while the shutdown
-budget lasts. A daily snapshot due while a backlog remains, or while snapshot uploads are busy, waits for a later pass;
-`terrabase_backup_snapshots_deferred_total{reason}` (`backlog`, `busy`) counts each such pass.
+budget lasts and its passes succeed; a daily snapshot upload that shutdown cancels does not stop that. Shutdown starts
+no generation, whose full snapshot would spend the budget other files need: a file without one waits for the next
+start. The exception is a file whose customer destination was just detached, which stores its final snapshot in the
+platform bucket. A daily snapshot due while a backlog remains, or
+while snapshot uploads are busy, waits for a later pass; `terrabase_backup_snapshots_deferred_total{reason}`
+(`backlog`, `busy`) counts each such pass. A daily snapshot upload that fails counts in
+`terrabase_backup_failures_total`, shows as `lastError` until a snapshot is stored, and puts off the next attempt by
+its own backoff (1 s, doubling to 5 minutes), while segments keep shipping.
 
 Lag (`terrabase_backup_lag_seconds`, `lagSeconds`) is how long the oldest committed data not yet in the bucket has
 waited, as far as the shipper can tell: it starts when a read first finds unstored changes (or a snapshot is pinned,
@@ -375,9 +381,10 @@ but no earlier than the plan's retention window (a bucket rule may keep older ob
 proves (see [Proven history](#proven-history)): read from the bucket, the second at or before the newest read mark in
 the newest generation's last three segments (at most three object reads; a segment that is gone, fails authentication
 or is cut short counts as holding none), or its newest snapshot's time. While this node ships the database to the
-platform bucket, the shipper gives `latest` by the same rule without reading the bucket: the later of its generation's
-newest stored snapshot's time and, for the newest stored segment ending in a read mark, the second at or before the mark
-(the mark's own time when that read ended in the mark's millisecond). A daily snapshot moves it only once stored, and a
+platform bucket, the shipper gives `latest` from what it has stored, without reading the bucket: the later of its
+generation's newest stored snapshot's time and, for the newest stored segment holding a read mark, the second at or
+before its newest mark, or that mark's own time, to the millisecond, when the mark ends a segment read in that
+millisecond. A daily snapshot moves it only once stored, and a
 read stopped by its budget, which writes no mark, does not move it. It returns 404
 when no stored data falls within the plan's window, including when retained objects have all expired under the plan.
 `POST /v1/projects/{project}/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}`
@@ -590,7 +597,8 @@ The checksum of the local copy is taken before the snapshot is uploaded, so the 
 copy waits for a drill. The drill itself then runs beside shipping: the file's segments keep shipping while it
 downloads and rebuilds. A node runs one platform drill and up to two customer drills at a time, each rebuilding one
 file in scratch, so a stalled customer bucket never holds a platform drill; the others wait their turn. Removal, a new
-destination and shutdown cancel a drill; a cancelled drill records no result.
+destination and shutdown cancel a drill; a cancelled drill records no result. When a generation ends while its drill
+or snapshot upload runs (a hole, a drop, a new shipper), the next generation's snapshot is drilled.
 
 A failed drill is logged as an error and counted in `terrabase_backup_drills_total{result="failed"}`.
 
