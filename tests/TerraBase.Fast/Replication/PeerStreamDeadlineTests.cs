@@ -103,6 +103,40 @@ public sealed class PeerStreamDeadlineTests
     }
 
     [Test]
+    public async Task The_sender_ends_an_idle_stream_whose_peer_reads_heartbeats_but_never_answers_and_reconnects()
+    {
+        var time = new ObservedTime();
+        await using var peer = await FakePeer.StartAsync(silentStreams: 0, unansweredStreams: 1);
+        var source = new FakeChangeGroupSource();
+        await using var api = await StartSenderAsync(peer, source, time);
+
+        await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
+        await time.UntilTimerAsync(Idle, after: 0, period: Idle);
+        var started = time.GetUtcNow();
+        // No databases or batches: reads keep the request window open, but only replies can reset sender silence.
+        time.Advance(Idle);
+        await Assert.That((await peer.NextAsync()).KindCase).IsEqualTo(PushFrame.KindOneofCase.Heartbeat);
+        await Assert.That(peer.FirstEnded.Task.IsCompleted).IsFalse();
+        await Assert.That(peer.Streams).IsEqualTo(1);
+        var timers = time.Timers;
+        time.Advance(ReplicationProtocol.ProgressTimeout - Idle);
+        await peer.FirstEnded.Task.WaitAsync(Deadline);
+        await Assert.That(time.GetUtcNow() - started).IsEqualTo(ReplicationProtocol.ProgressTimeout);
+        // Earlier idle passes also create one-shot timers; only the timer created at the deadline is reconnect backoff.
+        await time.UntilTimerAsync(Idle, timers, period: Timeout.InfiniteTimeSpan, createdAt: started + ReplicationProtocol.ProgressTimeout);
+        time.Advance(Idle);
+        // Heartbeats read during the clock advance can precede the replacement, but no database frame may do so.
+        var replacement = await peer.NextAsync();
+        while (replacement.Heartbeat is not null)
+        {
+            replacement = await peer.NextAsync();
+        }
+
+        await Assert.That(replacement.Hello).IsNotNull();
+        await Assert.That(peer.Streams).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task The_sender_ends_a_stream_whose_batch_write_is_blocked_by_flow_control_and_reconnects()
     {
         var time = new ObservedTime();
@@ -267,6 +301,7 @@ public sealed class PeerStreamDeadlineTests
     public async Task An_unacknowledged_batch_expires_while_another_database_read_is_held_despite_live_heartbeats()
     {
         var time = new ObservedTime();
+        var warnings = new PeerWarnings();
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var peer = await FakePeer.StartAsync(silentStreams: 0, batchRelease: release);
         var source = new FakeChangeGroupSource();
@@ -281,7 +316,7 @@ public sealed class PeerStreamDeadlineTests
             {
                 _ = source.Add(database, Incompressible(node, 32));
             }
-        });
+        }, warnings);
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
         await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[0]));
         await held.Entered.Task.WaitAsync(Deadline);
@@ -298,12 +333,22 @@ public sealed class PeerStreamDeadlineTests
         time.Advance(Idle);
         await held.Cancelled.Task.WaitAsync(Deadline);
         await peer.FirstEnded.Task.WaitAsync(Deadline);
+        var failure = await warnings.Failure.Task.WaitAsync(Deadline);
+        await Assert.That(failure).IsTypeOf<TimeoutException>();
+        await Assert.That(failure!.Message).IsEqualTo("the peer did not acknowledge a batch in time");
         await Assert.That(release.Task.IsCompleted).IsFalse();
         await Assert.That(source.AckedBy(databases[0], ReplicaId.Of(1, 9, 0))).IsEqualTo(0);
         await Assert.That(source.AckedBy(databases[1], ReplicaId.Of(1, 9, 0))).IsEqualTo(0);
         await time.UntilTimerAsync(Idle, timers);
         time.Advance(Idle);
-        await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
+        // The heartbeat and independent deadline timers can run in either order at 15s; one last heartbeat may precede cancellation.
+        var replacement = await peer.NextAsync();
+        if (replacement.Heartbeat is not null)
+        {
+            replacement = await peer.NextAsync();
+        }
+
+        await Assert.That(replacement.Hello).IsNotNull();
         await Assert.That(peer.Streams).IsEqualTo(2);
     }
 
@@ -460,7 +505,7 @@ public sealed class PeerStreamDeadlineTests
     }
 
     private static async Task<ManagementApi> StartSenderAsync(
-        FakePeer peer, IChangeGroupSource source, ObservedTime time, Func<ManagementApi, Task>? beforeJoin = null)
+        FakePeer peer, IChangeGroupSource source, ObservedTime time, Func<ManagementApi, Task>? beforeJoin = null, PeerWarnings? warnings = null)
     {
         var members = new FakeMemberStore();
         var api = await ManagementApi.StartAsync(settings =>
@@ -473,6 +518,10 @@ public sealed class PeerStreamDeadlineTests
             services.AddSingleton<IMembership>(provider => ActivatorUtilities.CreateInstance<DirectoryMembership>(provider, time));
             services.AddSingleton<IChangeGroupSource>(source);
             services.AddSingleton(provider => ActivatorUtilities.CreateInstance<PeerStreams>(provider, time));
+            if (warnings is not null)
+            {
+                services.AddSingleton<ILogger<PeerStreams>>(warnings);
+            }
         });
         if (beforeJoin is not null)
         {
@@ -557,6 +606,24 @@ public sealed class PeerStreamDeadlineTests
         catch (TimeoutException)
         {
             return false;
+        }
+    }
+
+    private sealed class PeerWarnings : ILogger<PeerStreams>
+    {
+        public TaskCompletionSource<Exception?> Failure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => logLevel == LogLevel.Warning;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Warning)
+            {
+                _ = Failure.TrySetResult(exception);
+            }
         }
     }
 
@@ -707,7 +774,7 @@ public sealed class PeerStreamDeadlineTests
     {
         private readonly FakeTimeProvider _time = new();
         private readonly Lock _gate = new();
-        private readonly List<(TimeSpan Due, TimeSpan Period)> _timers = [];
+        private readonly List<(TimeSpan Due, TimeSpan Period, DateTimeOffset Created)> _timers = [];
         private readonly List<TimeSpan> _changes = [];
         private TaskCompletionSource _created = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -743,11 +810,12 @@ public sealed class PeerStreamDeadlineTests
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
+            var at = _time.GetUtcNow();
             var timer = _time.CreateTimer(callback, state, dueTime, period);
             TaskCompletionSource created;
             lock (_gate)
             {
-                _timers.Add((dueTime, period));
+                _timers.Add((dueTime, period, at));
                 (created, _created) = (_created, new(TaskCreationOptions.RunContinuationsAsynchronously));
             }
 
@@ -756,7 +824,7 @@ public sealed class PeerStreamDeadlineTests
         }
 
         // Waits for a timer due in `due` among those created after the first `after`.
-        public async Task UntilTimerAsync(TimeSpan due, int after, TimeSpan? period = null)
+        public async Task UntilTimerAsync(TimeSpan due, int after, TimeSpan? period = null, DateTimeOffset? createdAt = null)
         {
             using var deadline = new CancellationTokenSource(Deadline);
             while (true)
@@ -764,7 +832,8 @@ public sealed class PeerStreamDeadlineTests
                 Task next;
                 lock (_gate)
                 {
-                    if (_timers.Skip(after).Any(timer => timer.Due == due && (period is null || timer.Period == period)))
+                    if (_timers.Skip(after).Any(timer => timer.Due == due && (period is null || timer.Period == period)
+                        && (createdAt is null || timer.Created == createdAt)))
                     {
                         return;
                     }
@@ -824,13 +893,15 @@ public sealed class PeerStreamDeadlineTests
     /// <summary>
     /// A peer listener with the smallest HTTP/2 stream window that welcomes every push stream, answers its heartbeats and
     /// refuses its batches. Its first <c>silentStreams</c> streams go silent once welcomed: they read nothing more and
-    /// answer nothing, as a half-open connection, and report when the sender has filled their window.
+    /// answer nothing, as a half-open connection, and report when the sender has filled their window. Its first
+    /// <c>unansweredStreams</c> streams keep reading after welcoming but never answer another frame.
     /// </summary>
     private sealed class FakePeer : Features.Replication.V1.Replication.ReplicationBase, IAsyncDisposable
     {
         private const int Window = 65_535;
         private readonly Channel<PushFrame> _frames = Channel.CreateBounded<PushFrame>(64);
         private readonly int _silentStreams;
+        private readonly int _unansweredStreams;
         private readonly RepairState? _repair;
         private readonly TaskCompletionSource? _refillRelease;
         private readonly TaskCompletionSource? _batchRelease;
@@ -840,9 +911,11 @@ public sealed class PeerStreamDeadlineTests
         private int _batchesBeforeRelease;
 
         private FakePeer(
-            int silentStreams, RepairState? repair, TaskCompletionSource? refillRelease, TaskCompletionSource? batchRelease, TaskCompletionSource? frontierRelease)
+            int silentStreams, RepairState? repair, TaskCompletionSource? refillRelease, TaskCompletionSource? batchRelease,
+            TaskCompletionSource? frontierRelease, int unansweredStreams)
         {
             _silentStreams = silentStreams;
+            _unansweredStreams = unansweredStreams;
             _repair = repair;
             _refillRelease = refillRelease;
             _batchRelease = batchRelease;
@@ -861,9 +934,9 @@ public sealed class PeerStreamDeadlineTests
 
         public static async Task<FakePeer> StartAsync(
             int silentStreams, RepairState? repair = null, TaskCompletionSource? refillRelease = null, TaskCompletionSource? batchRelease = null,
-            TaskCompletionSource? frontierRelease = null)
+            TaskCompletionSource? frontierRelease = null, int unansweredStreams = 0)
         {
-            var peer = new FakePeer(silentStreams, repair, refillRelease, batchRelease, frontierRelease);
+            var peer = new FakePeer(silentStreams, repair, refillRelease, batchRelease, frontierRelease, unansweredStreams);
             var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
             builder.Configuration.Sources.Clear();
             builder.Logging.ClearProviders();
@@ -926,7 +999,7 @@ public sealed class PeerStreamDeadlineTests
                         PushFrame.KindOneofCase.Refill => new AckFrame { Ack = new Ack { Database = frame.Refill.Database, Refused = true } },
                         _ => null,
                     };
-                    if (answer is not null)
+                    if (answer is not null && (ordinal > _unansweredStreams || frame.Hello is not null))
                     {
                         await responseStream.WriteAsync(answer, context.CancellationToken);
                     }

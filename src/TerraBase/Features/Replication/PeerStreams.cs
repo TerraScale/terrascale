@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using Grpc.Core;
 using TerraBase.Configuration;
@@ -225,6 +226,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         var responses = Channel.CreateBounded<AckFrame>(2 * MaxPendingResponses);
         var reading = responses.Reader.ReadAsync(activity.Token).AsTask();
         var pending = 0;
+        ExceptionDispatchInfo? failure = null;
         using var writer = new LinkWriter(call.RequestStream, _time, ReserveAsync);
         var receiving = ReceiveAsync();
         var heartbeats = HeartbeatAsync();
@@ -248,6 +250,11 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
                 CheckProgress();
             }
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested && Volatile.Read(ref failure) is not null)
+        {
+            Volatile.Read(ref failure)!.Throw();
+            throw;
         }
         finally
         {
@@ -338,12 +345,11 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     }
                 }
 
-                responses.Writer.TryComplete(new IOException("the peer ended the stream"));
+                await FailAsync(new IOException("the peer ended the stream")).ConfigureAwait(false);
             }
             catch (Exception error)
             {
-                responses.Writer.TryComplete(error);
-                await activity.CancelAsync().ConfigureAwait(false);
+                await FailAsync(error).ConfigureAwait(false);
             }
         }
 
@@ -362,8 +368,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
             catch (Exception error)
             {
-                responses.Writer.TryComplete(error);
-                await activity.CancelAsync().ConfigureAwait(false);
+                await FailAsync(error).ConfigureAwait(false);
             }
         }
 
@@ -380,9 +385,20 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
             catch (Exception error)
             {
-                responses.Writer.TryComplete(error);
-                await activity.CancelAsync().ConfigureAwait(false);
+                await FailAsync(error).ConfigureAwait(false);
             }
+        }
+
+        // Preserve the first background failure before cancellation unblocks storage or transport with a different error.
+        async Task FailAsync(Exception error)
+        {
+            if (!activity.IsCancellationRequested)
+            {
+                _ = Interlocked.CompareExchange(ref failure, ExceptionDispatchInfo.Capture(error), null);
+            }
+
+            responses.Writer.TryComplete(error);
+            await activity.CancelAsync().ConfigureAwait(false);
         }
     }
 

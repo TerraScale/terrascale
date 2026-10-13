@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
@@ -54,7 +55,7 @@ public sealed class ChangeLogAgeTests
 
         foreach (var at in new[] { TimeSpan.FromMinutes(2), TimeSpan.FromHours(12), TimeSpan.FromHours(23) })
         {
-            peer.Clock.Offset = at;
+            await AgePrefixAsync(store, c2, at);
             await peer.ReportFrontierAsync();
             await gru.TrimAsync();
             await Assert.That(await gru.FloorAsync(peer.Clock.GetUtcNow())).IsEqualTo(c0).Because($"heard from at +{at}");
@@ -62,7 +63,7 @@ public sealed class ChangeLogAgeTests
         }
 
         store.BackupAnchor = c1;
-        peer.Clock.Offset = TimeSpan.FromHours(25);
+        await AgePrefixAsync(store, c2, TimeSpan.FromHours(25));
         await peer.ReportFrontierAsync();
         await gru.TrimAsync();
         await Assert.That(await gru.FloorAsync(peer.Clock.GetUtcNow())).IsEqualTo(c0).Because("the peer still counts as live");
@@ -73,7 +74,8 @@ public sealed class ChangeLogAgeTests
         await Assert.That(await gru.UntilAckedAsync(peer.Replica, c1)).IsTrue();
         await Assert.That(await gru.FloorAsync(peer.Clock.GetUtcNow())).IsEqualTo(c1).Because("slow progress does not renew the hold");
         await Assert.That(await OldestAsync(store)).IsEqualTo(c2).Because("past 24 h the ack holds nothing; the newest commit stays");
-        await Assert.That((await peer.NextAsync()).Refill?.ChangeId).IsEqualTo((ulong)c2).Because("the live sender refills after its late ack");
+        var head = await gru.HeadAsync();
+        await Assert.That((await peer.NextAsync()).Refill?.ChangeId).IsEqualTo((ulong)head).Because("the live sender refills after its late ack");
     }
 
     [Test]
@@ -120,24 +122,26 @@ public sealed class ChangeLogAgeTests
         var rows = await RowsAsync(store);
         await Assert.That(rows).IsGreaterThan(70_002L);
 
-        peer.Clock.Offset = TimeSpan.FromMinutes(2);
+        await AgePrefixAsync(store, newest, TimeSpan.FromMinutes(2));
         await peer.ReportFrontierAsync();
         await gru.TrimAsync();
         await Assert.That(await gru.FloorAsync(peer.Clock.GetUtcNow())).IsEqualTo(0L);
-        await Assert.That(await RowsAsync(store)).IsEqualTo(rows).Because("inside 24 h the ack at 0 holds every row");
-        peer.Clock.Offset = TimeSpan.FromHours(25);
+        await Assert.That(await ScalarAsync(store, $"SELECT count(*) FROM turso_cdc WHERE change_id <= {newest};")).IsEqualTo(rows)
+            .Because("inside 24 h the ack at 0 holds every fixture row; inbound frontier bookkeeping appends newer rows");
+        await AgePrefixAsync(store, newest, TimeSpan.FromHours(25));
         await peer.ReportFrontierAsync();
         await peer.AckAsync(pending);
         await Assert.That(await gru.UntilAckedAsync(peer.Replica, ScriptedPeer.ChangeId(pending))).IsTrue();
         await Assert.That(await OldestAsync(store)).IsEqualTo(newest);
-        await Assert.That(await RowsAsync(store)).IsEqualTo(1L).Because("the entire oversized transaction went");
+        await Assert.That(await ScalarAsync(store, $"SELECT count(*) FROM turso_cdc WHERE change_id <= {newest};")).IsEqualTo(1L)
+            .Because("the entire oversized transaction went; only its final commit anchor stays below newer frontier bookkeeping");
     }
 
     // A machine absent for longer than the retention bound gets its missing write by a real refill on return.
     [Test]
     public async Task A_peer_gone_past_24_hours_rejoins_by_a_refill()
     {
-        var clock = new ShiftedTime();
+        var clock = new ShiftedTime(TimeProvider.System);
         await using var pair = await Pair.StartAsync(clock);
         var (gru, sjc) = (pair.Gru, pair.Sjc);
         await gru.WriteAsync(async transaction =>
@@ -167,6 +171,10 @@ public sealed class ChangeLogAgeTests
         await Assert.That(await gru.UntilAckedAsync(sjcNode, await gru.HeadAsync())).IsTrue();
     }
 
+    // Age the persisted CDC fixture, keeping the live listener and its bookkeeping on the real host clock.
+    private static Task<int> AgePrefixAsync(SqliteDatabaseStore store, long through, TimeSpan age) =>
+        Run(store, $"UPDATE turso_cdc SET change_time = unixepoch() - {(long)age.TotalSeconds} WHERE change_id <= {through};");
+
     private static Task<long> OldestAsync(SqliteDatabaseStore store) => ScalarAsync(store, "SELECT min(change_id) FROM turso_cdc;");
 
     private static Task<long> RowsAsync(SqliteDatabaseStore store) => ScalarAsync(store, "SELECT count(*) FROM turso_cdc;");
@@ -190,7 +198,7 @@ public sealed class ChangeLogAgeTests
     private static ReadOnlyMemory<byte> Json(string json) => Encoding.UTF8.GetBytes(json);
 
     /// <summary>A real sender with a real gRPC listener that holds its batches until the test acknowledges them.</summary>
-    private sealed class ScriptedPeer : Features.Replication.V1.Replication.ReplicationBase, IAsyncDisposable
+    private sealed class ScriptedPeer(FakeTimeProvider timers) : Features.Replication.V1.Replication.ReplicationBase, IAsyncDisposable
     {
         private readonly Channel<PushFrame> _pending = Channel.CreateBounded<PushFrame>(16);
         private readonly Channel<AckFrame> _answers = Channel.CreateBounded<AckFrame>(16);
@@ -200,13 +208,14 @@ public sealed class ChangeLogAgeTests
 
         public ReplicaId Replica { get; } = ReplicaId.Of(1, 9, 0);
 
-        public ShiftedTime Clock { get; } = new();
+        public ShiftedTime Clock { get; } = new(timers);
 
         public Node Sender { get; private set; } = null!;
 
         public static async Task<ScriptedPeer> StartAsync()
         {
-            var peer = new ScriptedPeer();
+            var timers = new FakeTimeProvider();
+            var peer = new ScriptedPeer(timers);
             try
             {
                 var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
@@ -230,6 +239,8 @@ public sealed class ChangeLogAgeTests
                     _ = await transaction.PutAsync(Items, "warm", Json("""{"n":0}"""), CancellationToken.None);
                 });
                 members.Join(new ClusterMember("zzzz-peer", address, "sjc", ""));
+                // Discover the peer, then freeze deadlines while the test holds its original batch across retention work.
+                timers.Advance(DirectoryMembership.Heartbeat);
                 return peer;
             }
             catch
@@ -544,7 +555,7 @@ public sealed class ChangeLogAgeTests
         }
     }
 
-    private sealed class ShiftedTime : TimeProvider
+    private sealed class ShiftedTime(TimeProvider timers) : TimeProvider
     {
         private long _offset;
 
@@ -554,6 +565,13 @@ public sealed class ChangeLogAgeTests
             set => Interlocked.Exchange(ref _offset, value.Ticks);
         }
 
+        public override long TimestampFrequency => timers.TimestampFrequency;
+
         public override DateTimeOffset GetUtcNow() => System.GetUtcNow() + Offset;
+
+        public override long GetTimestamp() => timers.GetTimestamp();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            timers.CreateTimer(callback, state, dueTime, period);
     }
 }
