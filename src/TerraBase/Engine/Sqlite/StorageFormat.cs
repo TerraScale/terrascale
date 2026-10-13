@@ -12,9 +12,9 @@ public static class StorageFormat
     /// every schema change by itself. CI requires a bump when a storage file changes (docs/terrabase/ci.md, storage train).
     /// 3: the Turso engine (one writer connection with change capture, rowid tables only). 4: no change_log, shape_history
     /// or collections.generation (R2c-2). 5: the system database is a lattice database (R10a): document states, HLC
-    /// versions and tombstones, no catalog journal.
+    /// versions and tombstones, no catalog journal. 6: persisted feed sequence and derived shape storage.
     /// </summary>
-    public const int Version = 5;
+    public const int Version = 6;
 
     /// <summary>The format this build writes, for example <c>2-3f1a09c4e7b2</c>.</summary>
     public static string Id { get; } = $"{Version}-{Convert.ToHexStringLower(SqliteDatabaseStore.FormatDigest)[..12]}";
