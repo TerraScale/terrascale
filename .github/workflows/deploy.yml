@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   tested-head:
-    runs-on: ubuntu-24.04
+    runs-on: alpha
     outputs:
       sha: ${{ steps.head.outputs.sha }}
     steps:
@@ -43,7 +43,7 @@ jobs:
   rollout:
     needs: tested-head
     if: needs.tested-head.outputs.sha != ''
-    runs-on: ubuntu-24.04
+    runs-on: alpha
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
