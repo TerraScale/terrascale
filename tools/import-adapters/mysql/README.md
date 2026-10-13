@@ -22,7 +22,9 @@ nice -n 19 python3 -I -B tools/import-adapters/mysql/tests.py
 ```
 
 `output/import.sql` is UTF-8 PostgreSQL plain SQL with `CREATE TABLE`, text
-`COPY ... FROM stdin`, and `ALTER TABLE ... ADD` primary/unique/foreign-key metadata.
+`COPY ... FROM stdin`, inline unnamed primary/unique/foreign-key constraints, and
+named `ALTER TABLE ... ADD CONSTRAINT` metadata. The pinned core reads unnamed
+constraints inside `CREATE TABLE`; its ALTER reader requires `ADD CONSTRAINT`.
 This is the existing core's `postgres_plain` artifact, **not a new server format**.
 `output/report.json` records original source types, sizes, unsignedness, ENUM/SET
 members, column attributes, constraints, table options, source/output byte counts and
@@ -97,7 +99,7 @@ The supported rows/types are:
 | DATE | `date` → `YYYY-MM-DD` | Valid Gregorian date, year 1000…9999. All zero/partial-zero/invalid dates reject. |
 | DATETIME(fsp) | `timestamp` → `YYYY-MM-DDThh:mm:ss[.ffffff]` | Calendar validation, fsp 0…6, no timezone added or inferred. |
 | TIMESTAMP(fsp) | `timestamptz` → RFC 3339 UTC string | UTC declaration mandatory. Conservative common range 1970-01-01 00:00:01…2038-01-19 03:14:07.999999; other values reject even on MariaDB versions supporting a wider range. |
-| TIME(fsp) | `text` → exact string | Signed duration through ±838:59:59.999999, minute/second/fraction validation; not a time of day or instant. |
+| TIME(fsp) | `text` → exact string | ASCII digits only; signed duration through ±838:59:59.999999, minute/second/fraction validation; not a time of day or instant. |
 
 FLOAT/DOUBLE/REAL, JSON, BIT, YEAR, geometry/spatial and every unlisted type reject.
 Numeric primary keys must be integer types; string/ENUM/SET keys are also supported.
@@ -185,7 +187,7 @@ attributes appear only in the report. Collation, type-specific comparison behavi
 CHAR padding removed by the exporter, and original MySQL database namespace are lost.
 Foreign keys may share names with their supporting indexes. If a UNIQUE/PRIMARY
 constraint and foreign key reuse a name across MySQL namespaces, both constraints
-are emitted without names to avoid invalid PostgreSQL constraint-name collisions;
+are emitted inline without names to avoid invalid PostgreSQL constraint-name collisions;
 original names stay in the report, alongside each constraint's `outputName` (null
 for omitted names/indexes).
 The operator must review those warnings and the future core preview separately.
@@ -215,7 +217,10 @@ dashboard, jobs, CI or deployment.
 DECIMAL(65,30), NULL versus empty/literal `\N`, Unicode, escaped strings, binary NUL,
 empty versus missing binary, enums/sets, durations, microseconds, original identifiers,
 reordered columns, multi-row inserts, and primary/unique/foreign-key metadata.
-[fixtures/expected.sql](fixtures/expected.sql) is the resulting 2-table/3-row artifact.
+[fixtures/expected-core.sql](fixtures/expected-core.sql) is the current 2-table/3-row
+artifact with primary keys inline. [fixtures/expected.sql](fixtures/expected.sql)
+preserves the original `41a15eb3` golden/evidence unchanged; its unnamed ALTER
+primary keys were found incompatible with the pinned core during publication review.
 The parallel subprocess suite uses isolated temporary resources and independently
 decodes COPY values. It also checks determinism, dry-run equivalence, read-only input,
 no overwrite/partial publication, integer/decimal boundaries, encoding, SQL modes,
@@ -223,6 +228,10 @@ zero dates/timezone/precision, malformed input, rejected routines/expressions, d
 IDs, a Unicode record crossing many chunks, and a multi-row INSERT over 1 MiB.
 Regressions also reject inactive/ambiguous conditional statements, bound aggregate
 metadata, and verify that multi-megabyte default payloads become small fingerprints.
+Publication-review regressions verify unnamed primary/unique/foreign constraints
+inside CREATE TABLE and reject Unicode TIME digits/fractions. These grammar checks
+use synthetic files and accessible core source; real exporter/core acceptance stays
+unrun.
 
 Required repository-wide .NET checks and external/service integration are not part
 of this local adapter suite. Publishing a PR must first prove its workflows will not

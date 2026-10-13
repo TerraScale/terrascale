@@ -38,3 +38,25 @@ Only authored synthetic files and accessible repository source were used.
 All commands for unmet phases are explicitly **UNRUN** in [README.md](README.md).
 The existing [PR body](../PR.md) is preserved; this acceptance recipe does not
 remove its CI/publication blocker or claim universal MySQL/MariaDB support.
+
+## Publication-review follow-up — 2026-10-13
+
+The user admitted one noncritical serial publication slot, after Mongo draft #188
+completed normal CI. Other imports/payment/docs holds remain untouched.
+Fresh checks at exact `1d5f746d` passed 127/127 synthetic tests, oracle, syntax and
+scope checks; no open PR overlapped this adapter directory. Independent review
+then found two blockers before any push: the pinned core ignores unnamed ALTER
+constraints, and TIME accepted non-ASCII digits.
+
+The adapter-only correction emits unnamed constraints inline in CREATE TABLE,
+keeps named ADD CONSTRAINT clauses, and requires ASCII TIME digits. It adds a
+separate `fixtures/expected-core.sql` golden, leaving both original fixtures and
+the original PR body byte-identical to `41a15eb3`. The native acceptance oracle now
+checks primary-key/ALTER shapes the pinned reader recognizes. Core files, APIs,
+workflows and all unrun native/core acceptance phases stay unchanged.
+
+Corrected-source verification: **131/131** low-priority parallel synthetic CLI
+checks passed, plus the acceptance oracle, seven Bash/embedded Python syntax
+checks and scoped whitespace checks. Historical COPY rows are unchanged between
+the preserved and current goldens. A second independent review and fresh release
+queue preflight are still required before publication; no push or PR yet.

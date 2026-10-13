@@ -100,7 +100,15 @@ def bundle(directory, source, preview_report):
     plans = {p["sourceTable"]: p for p in report["tables"]}
     tables = expected()
     assert set(rows) == set(plans) == {t["name"] for t in tables}
+    text = artifact.decode("utf-8")
+    assert all(' ADD CONSTRAINT "' in line for line in text.splitlines() if line.startswith("ALTER TABLE "))
     for table in tables:
+        quote = lambda name: '"' + name.replace('"', '""') + '"'
+        header = "CREATE TABLE public." + quote(table["name"]) + " (\n"
+        assert text.count(header) == 1, "missing or repeated fixture schema"
+        schema = text.split(header, 1)[1].split("\n);", 1)[0]
+        key = ", ".join(quote(name) for name in table["primaryKey"])
+        assert "    PRIMARY KEY (" + key + ")" in schema, "core cannot read unnamed ALTER primary keys"
         plan = plans[table["name"]]
         assert plan["primaryKey"] == table["primaryKey"]
         assert plan["collection"] == table["collection"]

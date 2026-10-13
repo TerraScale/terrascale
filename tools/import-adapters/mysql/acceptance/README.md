@@ -5,8 +5,11 @@ are UNRUN.** Missing installed exporters, cached source images and an owned read
 core prevent this acceptance run. Active local builds also prevent admission.
 Do not pull, install, restore, build, start CI, push or open a PR to satisfy it.
 
-The existing `41a15eb3` adapter, 127-check evidence, synthetic input/output fixtures
-and `../PR.md` remain unchanged. This separate recipe checks the adapter against
+The historical `41a15eb3` commit, 127-check evidence, synthetic input/output fixtures
+and `../PR.md` are preserved. The adapter's publication follow-up emits unnamed
+constraints inline for the pinned core and rejects Unicode TIME digits. The current
+golden is `../fixtures/expected-core.sql`; the original `expected.sql` remains a
+historical artifact. This separate recipe checks the adapter against
 real exporter bytes and core source at
 `567bfd33fe1257a922c4f8df4e8217517fc06268`; it does not claim those checks passed.
 
@@ -187,6 +190,9 @@ not the server's stricter insert-validation mode. Accepted exporter SET wrappers
 may explicitly set `NO_AUTO_VALUE_ON_ZERO` again. No mode/charset is inferred from
 values. MariaDB's exact sandbox safety marker is recognized only for MariaDB.
 Any unknown gate/SET, schema syntax or expression fails the whole conversion.
+Unnamed constraints stay inside CREATE TABLE; named constraints use ADD CONSTRAINT,
+the two constraint forms the pinned core recognizes. Foreign targets are checked
+against all tables in the artifact, including later declarations.
 Retain the original raw export; never delete statements, rewrite escaped values or
 drop rejected rows to get a pass. Retry requires another complete export/new run.
 
@@ -473,7 +479,8 @@ nice -n 19 python3 -I -B tools/import-adapters/mysql/acceptance/verify.py self-c
 ```
 
 It substitutes a known literal into the trusted seed to make **synthetic** export
-text, checks dry-run/COPY values/counts/checksums, and exercises constructed API
+text, checks inline-primary-key/core ALTER grammar, dry-run/COPY values/counts/checksums,
+and exercises constructed API
 responses plus malformed typed/missing values and a checksum mismatch. It starts
 no server and proves no real-export or TerraBase acceptance. Publication remains
 queued behind separate serial admission; no push or PR is authorized here.

@@ -560,6 +560,19 @@ def parse_table(tokens):
     return table
 
 
+def constraint_sql(constraint):
+    columns = ", ".join(quoted(n) for n in constraint["columns"])
+    name = "CONSTRAINT " + quoted(constraint["outputName"]) + " " if constraint["outputName"] else ""
+    if constraint["kind"] == "primary":
+        clause = f"PRIMARY KEY ({columns})"
+    elif constraint["kind"] == "unique":
+        clause = f"UNIQUE ({columns})"
+    else:
+        references = ", ".join(quoted(n) for n in constraint["references_columns"])
+        clause = f"FOREIGN KEY ({columns}) REFERENCES public.{quoted(constraint['references_table'])} ({references})"
+    return name + clause
+
+
 def convert_value(column, token):
     if token.is_word("NULL"):
         require(column.nullable, "null_not_allowed")
@@ -594,7 +607,7 @@ def convert_value(column, token):
             require(selected == [m for m in column.members if m in selected], "invalid_set")
         return value, value
     if column.source_type == "TIME":
-        match = re.fullmatch(r"(-?)(\d{2,3}):([0-5]\d):([0-5]\d)(?:\.(\d{1,6}))?", value)
+        match = re.fullmatch(r"(-?)([0-9]{2,3}):([0-5][0-9]):([0-5][0-9])(?:\.([0-9]{1,6}))?", value)
         require(match is not None, "invalid_time")
         require(int(match[2]) <= 838 and len(match[5] or "") <= column.scale, "invalid_time")
         return value, value
@@ -804,8 +817,10 @@ class Adapter:
         with path.open("w", encoding="utf-8", newline="\n") as output:
             output.write("SET client_encoding = 'UTF8';\n")
             for table in sorted(self.tables.values(), key=lambda t: t.name):
-                columns = ",\n".join("    " + quoted(c.name) + " " + c.pg_type + ("" if c.nullable else " NOT NULL") for c in table.columns)
-                schema = f"CREATE TABLE public.{quoted(table.name)} (\n{columns}\n);\n"
+                entries = ["    " + quoted(c.name) + " " + c.pg_type + ("" if c.nullable else " NOT NULL") for c in table.columns]
+                # The core reads unnamed constraints inline; ALTER supports ADD CONSTRAINT only.
+                entries.extend("    " + constraint_sql(c) for c in table.constraints if c["kind"] != "index" and c["outputName"] is None)
+                schema = f"CREATE TABLE public.{quoted(table.name)} (\n" + ",\n".join(entries) + "\n);\n"
                 require(len(schema.encode("utf-8")) <= MAX_DOCUMENT, "statement_too_large")
                 output.write(schema)
                 output.write(f"COPY public.{quoted(table.name)} ({', '.join(quoted(c.name) for c in table.columns)}) FROM stdin;\n")
@@ -834,16 +849,8 @@ class Adapter:
                     if kind == "index":
                         self.skipped_indexes += 1
                         continue
-                    columns = ", ".join(quoted(n) for n in constraint["columns"])
-                    name = "CONSTRAINT " + quoted(constraint["outputName"]) + " " if constraint["outputName"] else ""
-                    if kind == "primary":
-                        clause = f"PRIMARY KEY ({columns})"
-                    elif kind == "unique":
-                        clause = f"UNIQUE ({columns})"
-                    else:
-                        references = ", ".join(quoted(n) for n in constraint["references_columns"])
-                        clause = f"FOREIGN KEY ({columns}) REFERENCES public.{quoted(constraint['references_table'])} ({references})"
-                    output.write(f"ALTER TABLE ONLY public.{quoted(table.name)} ADD {name}{clause};\n")
+                    if constraint["outputName"] is not None:
+                        output.write(f"ALTER TABLE ONLY public.{quoted(table.name)} ADD {constraint_sql(constraint)};\n")
         require(path.stat().st_size <= MAX_SOURCE, "output_too_large")
         return {
             "adapterProfile": PROFILE, "sourceDeclaration": self.flavor,

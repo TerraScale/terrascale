@@ -108,7 +108,7 @@ def copy_tables(artifact):
 
 
 def check_fixture(root, source, destination, artifact, report):
-    assert artifact == (HERE / "fixtures/expected.sql").read_bytes()
+    assert artifact == (HERE / "fixtures/expected-core.sql").read_bytes()
     assert report["tableCount"] == 2 and report["rowCount"] == 3
     assert report["skippedIndexes"] == 1
     tables = copy_tables(artifact)
@@ -212,10 +212,24 @@ def foreign_unique_name():
     def check(root, source, destination, artifact, report):
         constraints = report["tables"][0]["constraints"][1:]
         assert all(c["name"] == "same_name" and c["outputName"] is None for c in constraints)
-        assert 'ADD UNIQUE ("parent_id");' in artifact.decode()
-        assert 'ADD FOREIGN KEY ("parent_id")' in artifact.decode()
+        assert '    UNIQUE ("parent_id"),' in artifact.decode()
+        assert '    FOREIGN KEY ("parent_id")' in artifact.decode()
         assert "same_name" not in artifact.decode()
     exercise(text, check=check)
+
+
+def unnamed_constraints(flavor):
+    text = PREFIX + "CREATE TABLE t (id bigint NOT NULL, parent_id bigint, PRIMARY KEY (id), UNIQUE (parent_id), FOREIGN KEY (parent_id) REFERENCES t (id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4; INSERT INTO t (id,parent_id) VALUES (1,NULL),(2,1);"
+    def check(root, source, destination, artifact, report):
+        schema, _, _ = artifact.decode().partition("COPY ")
+        assert '    PRIMARY KEY ("id"),' in schema
+        assert '    UNIQUE ("parent_id"),' in schema
+        assert '    FOREIGN KEY ("parent_id") REFERENCES public."t" ("id")' in schema
+        assert "ALTER TABLE" not in artifact.decode()
+        assert report["tables"][0]["primaryKey"] == ["id"]
+        assert len(report["tables"][0]["constraints"]) == 3
+        assert report["rowCount"] == 2
+    exercise(text, check=check, flavor=flavor)
 
 
 def cases():
@@ -283,6 +297,8 @@ def cases():
         ("timestamp-precision", dump("(1,'2024-01-01 00:00:00.123456')", "timestamp(3)"), "invalid_timestamp_precision"),
         ("timestamp-range", dump("(1,'2040-01-01 00:00:00')", "timestamp"), "timestamp_out_of_range"),
         ("time-range", dump("(1,'839:00:00')", "time"), "invalid_time"),
+        ("time-unicode-digits", dump("(1,'٠١:0٠:0٠')", "time(6)"), "invalid_time"),
+        ("time-unicode-fraction", dump("(1,'01:00:00.１２３４５６')", "time(6)"), "invalid_time"),
         ("float-unsupported", dump("(1,1.25)", "double"), "unsupported_type"),
         ("json-unsupported", dump("(1,'{}')", "json"), "unsupported_type"),
         ("generated-column", dump("(1,'x')", "text GENERATED ALWAYS AS (uuid()) STORED"), "unsupported_column_attribute"),
@@ -343,6 +359,8 @@ def cases():
         ("foreign-index-name-mysql", lambda: foreign_index_name("mysql-8.4")),
         ("foreign-index-name-maria", lambda: foreign_index_name("mariadb-11.4")),
         ("foreign-unique-output-names", foreign_unique_name),
+        ("inline-unnamed-constraints-mysql", lambda: unnamed_constraints("mysql-8.4")),
+        ("inline-unnamed-constraints-maria", lambda: unnamed_constraints("mariadb-11.4")),
     ])
     return result
 
