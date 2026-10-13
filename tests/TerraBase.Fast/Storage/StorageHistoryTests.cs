@@ -64,6 +64,8 @@ public sealed class StorageHistoryTests
     [Arguments(true, "break")]
     [Arguments(false, "cancel")]
     [Arguments(true, "cancel")]
+    [Arguments(false, "cancel-boundary")]
+    [Arguments(true, "cancel-boundary")]
     public async Task An_active_query_stream_refuses_overlap_and_releases_its_transaction(bool native, string ending)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
@@ -73,8 +75,9 @@ public sealed class StorageHistoryTests
         (await api.PutAsync(DocumentApi.NewId(), new { n = 2 }, cancellationToken: token)).Status.ShouldBe(HttpStatusCode.Created);
         var engine = native ? api.Server.Services.GetRequiredService<SqliteStorageEngine>()
             : api.Server.Services.GetRequiredService<IStorageEngine>();
-        var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(cancellationToken: token), token))!;
-        await using var transaction = await store.BeginTransactionAsync(write: false, token);
+        var tenant = await api.TenantOfAsync(cancellationToken: token);
+        var store = (await engine.OpenDatabaseAsync(tenant, token))!;
+        await using var transaction = await store.BeginTransactionAsync(write: ending == "cancel", token);
         var offset = await transaction.GetOffsetAsync(token);
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
         await using (var changes = transaction.QuerySqlAsync(new SqlQuery(DocumentApi.Collection, null, [], 100), cancellation.Token).GetAsyncEnumerator())
@@ -94,6 +97,19 @@ public sealed class StorageHistoryTests
                 await Assert.That(await transaction.GetOffsetAsync(token)).IsEqualTo(offset);
             }
             else if (ending == "cancel")
+            {
+                // Cancel inside native execution: a failed scan must still end Turso's transaction.
+                var nativeStore = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>()
+                    .OpenDatabaseAsync(tenant, token))!;
+                await nativeStore.WriteLane.RunAsync(() => nativeStore.CurrentWriter()!.StopWhen(() =>
+                {
+                    cancellation.Cancel();
+                    return true;
+                }), token);
+                await Assert.ThrowsAsync<OperationCanceledException>(() => changes.MoveNextAsync().AsTask().WaitAsync(token));
+                await Assert.That(cancellation.IsCancellationRequested).IsTrue();
+            }
+            else if (ending == "cancel-boundary")
             {
                 cancellation.Cancel();
                 await Assert.ThrowsAsync<OperationCanceledException>(() => changes.MoveNextAsync().AsTask().WaitAsync(token));
