@@ -447,6 +447,36 @@ public sealed class PointInTimeHistoryTests
     }
 
     [Test]
+    public async Task A_snapshot_that_fails_before_pinning_its_read_transaction_leaves_the_tap_reading_new_commits(CancellationToken cancellationToken)
+    {
+        await using var host = await Host.StartAsync(cancellationToken);
+        var directory = Directory.CreateTempSubdirectory("terrabase-tap-snapshot-");
+        try
+        {
+            var engine = host.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            await using var tap = (TursoChangeTap)(await engine.OpenTapAsync(host.Tenant, cancellationToken))!;
+            // The read that would pin the snapshot's transaction fails after BEGIN, leaving the transaction open.
+            tap.AfterSnapshotBegin = _ => throw new IOException("the snapshot's pinning read failed");
+            await Assert.That(async () => await tap.SnapshotAsync(Stream.Null, Path.Combine(directory.FullName, "snapshot.db"), cancellationToken))
+                .Throws<IOException>();
+
+            // An open transaction pins at its first read: each commit must still be in the read after it.
+            foreach (var name in new[] { "a", "b" })
+            {
+                await host.PutAsync(name, cancellationToken);
+                using var log = new MemoryStream();
+                var read = await tap.ReadAsync(log, cancellationToken);
+                await Assert.That(read.Bytes).IsGreaterThan(9);
+                await Assert.That(log.ToArray()[^9]).IsEqualTo((byte)7);
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Test]
     public async Task The_system_database_restores_only_at_its_snapshot_times(CancellationToken cancellationToken)
     {
         await using var host = await Host.StartAsync(cancellationToken);
