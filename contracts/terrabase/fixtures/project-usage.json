@@ -1,0 +1,42 @@
+{
+  "projectId": "01JA0000000000000000000001",
+  "databases": 1,
+  "storageBytes": 9007199254740993,
+  "logicalBytes": 1024,
+  "documents": 2,
+  "reads": 22,
+  "writes": 5,
+  "period": {
+    "from": "2026-10-12T00:00:00+00:00",
+    "to": "2026-10-12T01:00:00+00:00",
+    "granularity": "hour",
+    "reads": 12,
+    "writes": 3
+  },
+  "series": [
+    {
+      "start": "2026-10-12T00:00:00+00:00",
+      "reads": 12,
+      "writes": 3
+    }
+  ],
+  "items": [
+    {
+      "databaseId": "01JA0000000000000000000004",
+      "storageBytes": 9007199254740993,
+      "logicalBytes": 1024,
+      "collections": 1,
+      "documents": 2,
+      "reads": 22,
+      "writes": 5,
+      "period": {
+        "from": "2026-10-12T00:00:00+00:00",
+        "to": "2026-10-12T01:00:00+00:00",
+        "granularity": "hour",
+        "reads": 12,
+        "writes": 3
+      },
+      "series": []
+    }
+  ]
+}
