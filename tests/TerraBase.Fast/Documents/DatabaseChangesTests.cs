@@ -265,35 +265,36 @@ public sealed class DatabaseChangesTests
     [Arguments(0)]
     [Arguments(1)]
     [Arguments(2)]
-    public async Task A_cursor_of_the_first_format_without_an_issue_instant_is_400(int origins)
+    public async Task A_cursor_that_does_not_decode_is_410(int origins)
     {
         await using var api = await DocumentApi.StartAsync();
-        // #118's layout: the format byte, then (origin, stamp) pairs, with no issue instant.
-        byte[] old = [1, .. Enumerable.Range(1, origins).SelectMany(origin => Origin((ulong)origin, (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16))];
+        // Bytes missing the issue instant, issuer and prefix proof cannot be resumed.
+        byte[] old = [0, .. Enumerable.Range(1, origins).SelectMany(origin => Origin((ulong)origin, (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16))];
         var text = Convert.ToBase64String(old).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var changes = $"{api.DatabasePath()}/changes";
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?cursor={text}", UriKind.Relative)),
-            HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
+            HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
         using var resume = new HttpRequestMessage(HttpMethod.Get, new Uri(changes, UriKind.Relative));
         resume.Headers.Add("Last-Event-ID", text);
-        await ErrorAssert.ErrorAsync(api.Client.SendAsync(resume), HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
+        await ErrorAssert.ErrorAsync(api.Client.SendAsync(resume), HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
     }
 
     [Test]
-    public async Task Malformed_cursors_and_filters_are_400_a_missing_scope_403_and_an_unknown_database_404()
+    public async Task Undecodable_cursors_are_410_invalid_filters_400_a_missing_scope_403_and_an_unknown_database_404()
     {
         await using var api = await DocumentApi.StartAsync();
         var changes = $"{api.DatabasePath()}/changes";
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?cursor=AQ-not-a-cursor", UriKind.Relative)),
-            HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
+            HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
         // A canonical cursor names each origin once, in ascending order.
-        var unordered = Convert.ToBase64String([1, .. Origin(0, (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16)[8..], .. Origin(2, 5), .. Origin(1, 5)])
-            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var canonical = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc> { [new ReplicaId(1)] = new Hlc(5), [new ReplicaId(2)] = new Hlc(5) }, FeedCursor.At(DateTimeOffset.UtcNow)));
+        var bytes = System.Buffers.Text.Base64Url.DecodeFromChars(canonical);
+        var unordered = System.Buffers.Text.Base64Url.EncodeToString([.. bytes[..17], .. bytes[73..], .. bytes[17..73]]);
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?cursor={unordered}", UriKind.Relative)),
-            HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
+            HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
         using var lastEventId = new HttpRequestMessage(HttpMethod.Get, new Uri(changes, UriKind.Relative));
         lastEventId.Headers.Add("Last-Event-ID", "garbage");
-        await ErrorAssert.ErrorAsync(api.Client.SendAsync(lastEventId), HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
+        await ErrorAssert.ErrorAsync(api.Client.SendAsync(lastEventId), HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?collections=Bad", UriKind.Relative)),
             HttpStatusCode.BadRequest, "invalid_request", "collection must be a lowercase name of at most 63 characters");
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?since=1", UriKind.Relative)),
@@ -381,12 +382,20 @@ public sealed class DatabaseChangesTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task A_portable_cursor_requires_the_same_origin_prefix_not_just_the_same_event_count(bool differentPrefix)
+    [Arguments("gru", "sjc", false)]
+    [Arguments("gru", "fra", false)]
+    [Arguments("sjc", "gru", false)]
+    [Arguments("sjc", "fra", false)]
+    [Arguments("fra", "gru", false)]
+    [Arguments("fra", "sjc", false)]
+    [Arguments("fra", "gru", true)]
+    public async Task A_portable_cursor_requires_the_same_origin_prefix_not_just_the_same_event_count(string from, string to, bool differentPrefix)
     {
-        await using var fra = await DocumentApi.StartAsync(values => values["region"] = "fra");
-        await using var gru = await DocumentApi.StartAsync(values => values["region"] = "gru");
+        await using var source = await DocumentApi.StartAsync(values => values["region"] = from);
+        await using var destination = await DocumentApi.StartAsync(values => values["region"] = to);
+        var (sourceRegion, _) = await IdentityAsync(source);
+        var (destinationRegion, _) = await IdentityAsync(destination);
+        await Assert.That((sourceRegion, destinationRegion)).IsEqualTo((from, to));
         var origin = ReplicaId.Of(4518, 21, 1);
         var now = DateTimeOffset.UtcNow;
         var first = DocumentApi.NewId();
@@ -394,28 +403,28 @@ public sealed class DatabaseChangesTests
         var firstStamp = Stamp(now - TimeSpan.FromMinutes(2));
         var excluded = DocumentApi.NewId();
         var secondStamp = Stamp(now - TimeSpan.FromMinutes(1));
-        foreach (var api in new[] { fra, gru })
+        foreach (var api in new[] { source, destination })
         {
             (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "other" })).Status.ShouldBe(HttpStatusCode.Created);
-            var id = differentPrefix && api == gru ? DocumentApi.NewId() : first;
+            var id = differentPrefix && api == destination ? DocumentApi.NewId() : first;
             var delta = Group(1, id, firstStamp, origin).Deltas[0];
             _ = await api.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await api.TenantOfAsync(), origin,
                 [new OriginGroup(1, [delta, delta with { Collection = "other", Id = excluded }]), Group(2, second, secondStamp, origin)], CancellationToken.None);
         }
 
         string cursor;
-        using (var stream = await Sse.OpenAsync(fra.Client, $"{fra.DatabasePath()}/changes?collections={DocumentApi.Collection}"))
+        using (var stream = await Sse.OpenAsync(source.Client, $"{source.DatabasePath()}/changes?collections={DocumentApi.Collection}"))
         {
             _ = await stream.NextAsync();
             cursor = (await stream.ChangesAsync(1))[0].Id;
         }
 
-        var uri = $"{gru.DatabasePath()}/changes?collections={DocumentApi.Collection}&cursor={Uri.EscapeDataString(cursor)}";
-        using var response = await gru.Client.GetAsync(new Uri(uri, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead);
+        var uri = $"{destination.DatabasePath()}/changes?collections={DocumentApi.Collection}&cursor={Uri.EscapeDataString(cursor)}";
+        using var response = await destination.Client.GetAsync(new Uri(uri, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead);
         await Assert.That(response.StatusCode).IsEqualTo(differentPrefix ? HttpStatusCode.Gone : HttpStatusCode.OK);
         if (!differentPrefix)
         {
-            using var resumed = await Sse.OpenAsync(gru.Client, uri);
+            using var resumed = await Sse.OpenAsync(destination.Client, uri);
             _ = await resumed.NextAsync();
             await Assert.That((await resumed.ChangesAsync(1))[0].Data.GetProperty("id").GetString()).IsEqualTo(second);
         }
