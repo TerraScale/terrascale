@@ -7,6 +7,13 @@ The JavaScript/JSDoc SDK for the project-scoped C#/.NET TerraBase server
 The package targets Node.js 22 and 24 and current Chrome, Firefox, Safari, and Edge.
 Plain ES modules ship as written; `nice -n 19 npm run build` generates the
 TypeScript declarations in `types/`.
+The latest published standard is [ECMAScript 2026](https://ecma-international.org/publications-and-standards/standards/ecma-262/).
+The compiler uses [`ESNext`](https://www.typescriptlang.org/tsconfig/target.html),
+its latest supported ECMAScript target. Source stays
+in `.js` files; JSDoc supplies types through `allowJs` and `checkJs`. JSDoc typing
+is a [tooling feature](https://www.typescriptlang.org/docs/handbook/jsdoc-supported-types.html),
+independent of the ECMAScript edition. Published runtime
+support remains Node.js 22/24 and the browser targets listed above.
 
 ```sh
 npm install @terrascale/sdk

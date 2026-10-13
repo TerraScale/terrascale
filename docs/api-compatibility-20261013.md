@@ -1,6 +1,6 @@
 # TerraBase API audit — JavaScript/TypeScript SDK
 
-**Owner:** `TerraScale/ts-js`, branch `sdk/js-api-contracts-20261013` only. Imports, other SDKs, dashboard, server implementation, deployment, instructions and publishing configuration are excluded. No existing open SDK PR covered this work when checked initially or again before admission. Draft creation is awaiting the coordinating thread's explicit admission slot.
+**Owner:** `TerraScale/ts-js`, branch `sdk/js-api-contracts-20261013` only. Imports, other SDKs, dashboard, server implementation, deployment, instructions and publishing configuration are excluded. No existing open SDK PR covered this work when checked initially or again before admission. PR creation was admitted by the user's explicit 2026-10-13 request; the preceding hold was respected.
 
 ## Exact inputs and qualification boundary
 
@@ -10,7 +10,7 @@
 | Current actual server, `TerraScale/terrascale/main` | `e30ffdc287530551b161b0130220be53d3c0475e` (rechecked unchanged) |
 | Current source evidence | [pin.json](../contracts/terrabase-current-source/pin.json): exact selected handler, DTO, validation and authorization bytes, each SHA-256 bound; no import files |
 | Existing immutable qualification producer | `6cb97456b9b52a92a61856601cc025c4f2833518`, existing [release pin](../scripts/ci/terrabase-release.json) and generated historical OpenAPI |
-| Draft SDK revision | The eventual PR head records the exact committed SDK revision. Tests below exercised this isolated worktree; the audited baseline is the exact SDK commit above. |
+| Draft SDK revision | API implementation commit: `2028c61d23b1746600ad42de7b9fe1f575cdc4cd`. The PR records the exact head including the ESNext/JSDoc configuration follow-up. |
 
 Local HTTP fixtures are deterministic SDK wire/decoder tests. They do **not** qualify a producer. No current server build, live allocation, credentials, generated current OpenAPI, or immutable current producer runtime was used. The historical qualification pin was preserved. Historical OpenAPI drift checks remain intact; 25 current routes additionally verify registration, named/in-handler scope, media and success statuses against current source. The retained shape route is explicitly historical-only. All source hashes are checked, and negative parity tests cover each current route.
 
@@ -78,7 +78,7 @@ Current server documentation describes service subjects such as `tsk_…`, but `
 | better-auth | Named server-only entry; browser condition rejects it. Current named-operation producer qualification remains separate. |
 | local, postgres | Deprecated Node-only legacy support; browser condition rejects them. Inventoried without new activation guidance or extensions. |
 
-Browser-condition resolution loaded the nine allowed entries and rejected better-auth/local/postgres. This checks export resolution, not a bundled browser test of every framework peer. Root packed native-browser fetch is actually exercised. Publishing configuration, package version and dependencies are unchanged.
+Browser-condition resolution loaded the nine allowed entries and rejected better-auth/local/postgres. This checks export resolution, not a bundled browser test of every framework peer. Root packed native-browser fetch is actually exercised. Compiler target/library are now ESNext with checked JSDoc in JavaScript; this follows the compiler’s newest language support without claiming every new built-in is available in Node22/24. Publishing configuration, package version and dependencies are unchanged.
 
 ## Browser 421 and ambiguous effects
 
@@ -105,4 +105,4 @@ The bounded integration dependency is producer/edge enforcement of **421 only be
 | Firefox155 / WebKit26.6 attempt | 20 launch failures from missing host libraries; no SDK/browser compatibility result, no skips added |
 | Current immutable C# producer / generated OpenAPI / live identity verification | Not run; no current runtime qualification claimed |
 
-Automatic eligible-region discovery, current authorized bounded-query snapshots/WebSocket reactive delivery, retained historical shape parity, and separately owned adapter capability gaps remain documented dependencies. Local fixtures do not resolve those gates. The full heavy release/security suite was not run while release CI was contended. No new CI-producing PR or push is admitted until the coordinating thread supplies its slot.
+Automatic eligible-region discovery, current authorized bounded-query snapshots/WebSocket reactive delivery, retained historical shape parity, and separately owned adapter capability gaps remain documented dependencies. Local fixtures do not resolve those gates. The full heavy release/security suite was not run while release CI was contended. The user's subsequent 2026-10-13 instruction admitted PR creation. GitHub reports repository auto-merge disabled; known red checks and missing producer qualification remain visible.
