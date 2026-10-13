@@ -241,6 +241,11 @@ after each.
 9. **R6-FIX's #114 fix** (fix-forward).
 10. **R6-FIX's synchronous second-region durable-commit contract** (new; user-approved). A write succeeds only after a
     durable copy exists in at least one other region; ambiguous outcomes carry operation IDs.
+    - **#171** is its design: decision 0013 (proposed), docs only, with no code before review.
+    - It needs a **COS decision on placing single-region databases**:
+      - A (recommended by R6-FIX): every database is placed in at least two regions;
+      - B: single-region databases are exempt and stay `local_durable`;
+      - C: their writes always fail.
 11. R8's repair-feed PR.
 12. #164 (owner: GPT-6.1-Sol).
 13. **#170** (auth regional), **reworked** so security-critical conditional writes (passcodes, authorization codes,
