@@ -773,6 +773,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 try
                 {
                     await system.BootstrapAsync(openingToken).ConfigureAwait(false);
+                    await system.SeedClockAsync(openingToken).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -1425,6 +1426,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
             RejectDatabaseLinks(path);
             await store.BootstrapAsync(lifetime.Token).ConfigureAwait(false);
+            await store.SeedClockAsync(lifetime.Token).ConfigureAwait(false);
             _afterBootstrap?.Invoke(store);
             await _creation.WaitAsync(lifetime.Token).ConfigureAwait(false);
             try

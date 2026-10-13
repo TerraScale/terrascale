@@ -5,9 +5,8 @@ namespace TerraBase.Engine;
 
 /// <summary>
 /// The member's hybrid logical clock (docs/design/anna-core.md, Identities and dots): it stamps every local write, after
-/// every stamp it saw. A replicated stamp ahead of the physical clock by more than <see cref="MaxSkew"/> is accepted, but
-/// moves the clock at most that far ahead and is counted: a fast peer clock never stalls a stream, and only wins the
-/// last-writer-wins choice between concurrent writes.
+/// every local mint and the stored state it writes. Receiving a replicated stamp ahead of the physical clock by more
+/// than <see cref="MaxSkew"/> advances the clock only that far and is counted. Local mints and durable seeds are uncapped.
 /// </summary>
 internal sealed class MemberClock
 {
@@ -28,17 +27,26 @@ internal sealed class MemberClock
             "terrabase.clock.skew_capped", "{stamp}", "Replicated stamps further ahead of this member's physical clock than the 1 s skew bound.");
     }
 
-    /// <summary>The stamp of a local write, after every stamp issued or observed.</summary>
-    public Hlc Tick()
+    /// <summary>A local stamp after every previous mint and the state this write replaces, without a skew cap.</summary>
+    public Hlc Tick(Hlc floor = default)
     {
         var now = _time.GetUtcNow().ToUnixTimeMilliseconds();
         lock (_lock)
         {
-            return _last = _last.Tick(now);
+            return _last = new Hlc(Math.Max(_last.Value, floor.Value)).Tick(now);
         }
     }
 
-    /// <summary>Moves the clock past <paramref name="stamp"/>, a stamp this member read or received.</summary>
+    /// <summary>Restores the uncapped floor from durable stamps before a store is published.</summary>
+    public void Seed(Hlc stamp)
+    {
+        lock (_lock)
+        {
+            _last = new Hlc(Math.Max(_last.Value, stamp.Value));
+        }
+    }
+
+    /// <summary>Observes a received stamp with the skew cap, without lowering the local mint floor.</summary>
     public void Observe(Hlc stamp)
     {
         var now = _time.GetUtcNow().ToUnixTimeMilliseconds();

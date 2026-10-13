@@ -75,12 +75,16 @@ The spike's "CDC costs about 2 %" figure is invalid: those runs never enabled CD
   is a new node, so stamps lost in a crash are never reused.
 - **One operation = one stamp.** A document write, a whole `POST /transactions` request, a SQL statement chunk
   (section 12) or a management commit gets one stamp `S`. Every entry it writes carries `(S, self)`.
-- **Minting.** The write lane mints `S = max(clock.Tick(), maxStamp(doc) + 1)` for each touched document. Stamps are
+- **Minting.** The write lane mints `S = clock.Tick(maxStamp(doc))` for each touched document. The clock atomically
+  retains the uncapped maximum of its last mint and the document's stamp, then advances past it. Stamps are
   minted inside the single writer, so an origin's commit order equals its stamp order. The changes feed and GC rely on
   this (sections 11 and 14).
 - **Observing.** Every applied stamp goes through `MemberClock.Observe`, which caps it at now + 1 s (`MaxSkew`, a code
-  constant) and counts `terrabase.clock.skew_capped`. The stored stamp is never changed. The per-document `+1` keeps
+  constant) and counts `terrabase.clock.skew_capped`. The stored stamp is never changed. `Tick(maxStamp(doc))` keeps
   read-your-writes even after a remote stamp from the future.
+- **Opening.** Before publishing a system or tenant store, restore the clock's uncapped floor from its largest stored
+  state stamp; tenant stores also include retained feed stamps and retention floors. Opening another store can only
+  raise the shared member clock. This preserves durable local stamps across a clean restart with the same origin.
 - **Skew bound.** Fly hosts run NTP. We expect skew of a few ms, though nobody has measured it on Fly yet. Within the
   skew, last-writer-wins between concurrent writes may pick the writer that is slightly earlier in real time. That is
   the documented behaviour. Past 1 s the metric alerts. Nothing rejects the stamp, because rejecting at one replica
@@ -1022,11 +1026,9 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   if a reader gets an origin's later event before a repaired earlier event, another machine holding the original
   earlier event rejects that cursor with 410 rather than silently skipping it. This also covers cursors issued before
   the repair happens; invalidating only completed repairs would not suffice.
-- **Known limit: stamps more than 1 s ahead.** A request mints `max(clock, document's stamp + 1)`, and the clock moves at
-  most `MaxSkew` (1 s) ahead (section 3). A document carrying a stamp further ahead therefore gets a stamp larger than
-  this origin's next writes to other documents, so one origin's stamps no longer follow its commit order, and a cursor
-  past the large stamp skips the later, smaller ones. `terrabase.clock.skew_capped` counts the stamps that cause it.
-  Making the feed exact here needs the origin's stamps to stay monotonic (a design decision on the clock, not R8's).
+- **Future stamps.** Receiving a stamp remains capped at `MaxSkew` (1 s), counted by `terrabase.clock.skew_capped`.
+  A local write that must exceed a future document stamp retains that mint without a cap, so later local writes to
+  other documents advance past it and a feed cursor cannot skip them because their stamps went backwards.
 - Metrics: `terrabase.changes.streams` (open streams).
 - Tests: Fast `DatabaseChangesTests` (events, `cursor=now`, `Last-Event-ID`, filter, joined remote writes under their
   origin, 410 at retention, limits, heartbeat, errors); e2e `ChangesFeedE2ETests` (gru and sjc write, a cursor from
