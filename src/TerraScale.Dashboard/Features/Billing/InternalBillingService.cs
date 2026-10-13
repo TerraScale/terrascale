@@ -30,7 +30,7 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
         var basePlan = PlanCatalog.For(config.BasePlanKey);
         if (basePlan.PriceCents <= 0) throw new AccountAccessException("Select an existing paid base plan key.", 422);
         var target = await AuthorizedOrganizationAsync(principal, config.OrganizationId, cancellationToken);
-        Target(target.Organization);
+        Target(target.Organization, target.Authority);
         var reservation = await ReserveAsync(target.Organization, config, cancellationToken);
         try { await ClaimSingletonAsync(reservation, cancellationToken); }
         catch (AccountAccessException)
@@ -48,7 +48,7 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             await ClaimSingletonAsync(reservation, cancellationToken);
             principal = await RefreshAdministratorAsync(principal, refreshAuthority, cancellationToken);
             target = await AuthorizedOrganizationAsync(principal, config.OrganizationId, cancellationToken);
-            Target(target.Organization);
+            Target(target.Organization, target.Authority);
             var proposal = reservation.InternalReservation!;
             if (target.Organization.InternalBilling?.ConfigurationId == proposal.Policy.ConfigurationId)
             {
@@ -95,11 +95,22 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
     private async Task<(OrganizationRecord Organization, InternalBill Bill)> ReadDetailsAsync(AccountContext context, CancellationToken cancellationToken)
     {
         context = await AccountScope.RefreshAsync(accounts, context, cancellationToken);
-        var organization = (await AuthorizedOrganizationAsync(context, context.Organization!.Id, cancellationToken)).Organization;
+        var target = await AuthorizedOrganizationAsync(context, context.Organization!.Id, cancellationToken);
+        var organization = target.Organization;
         if (organization.InternalBilling is null) throw new AccountAccessException("Organization has no internal billing policy.", 422);
         await ValidateClaimsAsync(state, organization, cancellationToken);
-        var selection = new UsageSelection(context with { Organization = organization }, "7d", "", false);
-        return (organization, Estimate(organization, await measurements.ReadAsync(selection, cancellationToken), time.GetUtcNow()));
+        // This metering projection is transient. Its project list comes from ts-auth,
+        // while only the separate dashboard billing record can be persisted.
+        var metering = new OrganizationRecord
+        {
+            Id = organization.Id,
+            PlanId = organization.PlanId,
+            SpendCapCents = organization.SpendCapCents,
+            InternalBilling = organization.InternalBilling,
+            Projects = target.Authority.Projects
+        };
+        var selection = new UsageSelection(context with { Organization = metering }, "7d", "", false);
+        return (organization, Estimate(metering, await measurements.ReadAsync(selection, cancellationToken), time.GetUtcNow()));
     }
 
     public static InternalBill Estimate(OrganizationRecord organization, UsageMeasurements measurements, DateTimeOffset now)
@@ -124,6 +135,10 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             from = capturedMonth;
             if (from.Offset != TimeSpan.Zero || from.Day != 1 || from.TimeOfDay != TimeSpan.Zero || from > now)
                 return initial with { Error = MissingUsage };
+            // TerraBase includes the current UTC day bucket; its upper boundary
+            // is the next midnight unless the request was made exactly at midnight.
+            var ticks = TimeSpan.TicksPerDay;
+            var roundedEnd = new DateTimeOffset(checked((now.UtcTicks + ticks - 1) / ticks * ticks), TimeSpan.Zero);
             to = from;
             long reads = 0, writes = 0, bytes = 0;
             foreach (var project in projects)
@@ -132,7 +147,8 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
                 var period = reading.Period;
                 if (organization.Projects.GetValueOrDefault(project.Id) != project || project.OrganizationId != organization.Id ||
                     reading.ProjectId != project.Id || reading.DatabaseId.Length != 0 || period.From != from || period.Granularity != "day" ||
-                    period.To <= from || period.To > from.AddMonths(1) || period.To > now ||
+                    period.To.Offset != TimeSpan.Zero || period.To.TimeOfDay != TimeSpan.Zero ||
+                    period.To <= from || period.To > from.AddMonths(1) || period.To > roundedEnd ||
                     period.Reads < 0 || period.Writes < 0 || reading.LogicalBytes < 0)
                     return initial with { Error = MissingUsage };
                 reads = checked(reads + period.Reads); writes = checked(writes + period.Writes); bytes = checked(bytes + reading.LogicalBytes);
@@ -354,7 +370,7 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
         return (document, organization);
     }
 
-    private async Task<(TerraBaseDocument Document, OrganizationRecord Organization)> AuthorizedOrganizationAsync(AccountContext principal, string id, CancellationToken cancellationToken)
+    private async Task<(TerraBaseDocument Document, OrganizationRecord Organization, OrganizationRecord Authority)> AuthorizedOrganizationAsync(AccountContext principal, string id, CancellationToken cancellationToken)
     {
         // Capture the CAS version before awaited canonical reads so a newer dashboard projection cannot be overwritten.
         var target = await OrganizationAsync(id, cancellationToken);
@@ -364,19 +380,9 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
         if (members.Any(member => string.IsNullOrEmpty(member.UserId)) || members.Select(member => member.UserId).Distinct(StringComparer.Ordinal).Count() != members.Count ||
             !members.Any(member => member.UserId == current.UserId) || owners.Length != 1)
             throw new IOException("Internal organization owner identity is invalid.");
-        target.Organization.Name = current.Organization!.Name;
-        target.Organization.Projects = current.Organization.Projects;
+        // I3 keeps OwnerUserId transient; each persisted billing alert owns its owner reference.
         target.Organization.OwnerUserId = owners[0].UserId;
-        target.Organization.Members = members.ToDictionary(member => member.UserId, member => new MemberRecord
-        {
-            UserId = member.UserId,
-            Email = member.Email,
-            Role = member.Role,
-            Status = "active",
-            CreatedAt = member.JoinedAt,
-            Name = target.Organization.Members.GetValueOrDefault(member.UserId)?.Name ?? ""
-        }, StringComparer.Ordinal);
-        return target;
+        return (target.Document, target.Organization, current.Organization!);
     }
 
     private async Task<BillingBinding> FenceAsync(string id, CancellationToken cancellationToken) => StripeBilling.ReadBinding(
@@ -398,15 +404,13 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             throw new IOException("Internal billing fence does not match its policy.");
     }
 
-    private static void Target(OrganizationRecord organization)
+    private static void Target(OrganizationRecord organization, OrganizationRecord authority)
     {
-        if (organization.Name != "terrascale") throw new AccountAccessException("Internal billing requires the organization named exactly terrascale.");
-        if (organization.Status != "active" || organization.Archived || organization.DeletionRequested) throw new AccountAccessException("The internal organization must be active.", 409);
-        if (organization.OwnerUserId.Length == 0 || !organization.Members.TryGetValue(organization.OwnerUserId, out var owner) ||
-            owner.UserId != organization.OwnerUserId || owner.Status != "active" || owner.Role != "owner")
-            throw new IOException("Internal organization owner identity is invalid.");
+        if (authority.Id != organization.Id) throw new IOException("Internal organization identity is invalid.");
+        if (authority.Name != "terrascale") throw new AccountAccessException("Internal billing requires the organization named exactly terrascale.");
+        if (authority.Status != "active" || organization.Archived || organization.DeletionRequested) throw new AccountAccessException("The internal organization must be active.", 409);
         foreach (var name in new[] { "ts-dashboard", "ts-auth", "ts-router", "ts-status", "ts-orchestrator", "ku", "ts-reviewer" })
-            if (!organization.Projects.Any(pair => pair.Key == pair.Value.Id && pair.Value.OrganizationId == organization.Id && pair.Value.Status == "active" && pair.Value.Name == name))
+            if (!authority.Projects.Any(pair => pair.Key == pair.Value.Id && pair.Value.OrganizationId == organization.Id && pair.Value.Status == "active" && pair.Value.Name == name))
                 throw new AccountAccessException("Internal service project " + name + " is missing or inactive.", 409);
         organization.InternalBilling?.Validate(organization);
     }

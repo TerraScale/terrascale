@@ -22,7 +22,8 @@ public sealed class DocumentBackendContractTests
         await Assert.That(tokens.Scopes).IsEquivalentTo(new[] { "documents:read", "documents:read" });
         await Assert.That(wire.Requests).IsEqualTo(2);
         await Assert.That(wire.Bearers).IsEquivalentTo(new[] { "project-1", "project-2" });
-        await Assert.That(wire.Path).IsEqualTo("/v1/projects/01JA0000000000000000000001/databases/app/collections/items/documents/a");
+        await Assert.That(wire.Path).IsEqualTo("/v1/projects/01JA0000000000000000000001/databases/app/collections/items/documents/by-key");
+        await Assert.That(wire.Query).IsEqualTo("?id=a");
         await Assert.That(wire.Pin).IsEqualTo("gru");
     }
 
@@ -41,7 +42,8 @@ public sealed class DocumentBackendContractTests
         await Assert.That(unknown).IsNotNull();
         await Assert.That(TerraScaleIds.IsValid(unknown!.OperationId)).IsTrue();
         await Assert.That(TerraScaleIds.IsValid(unknown.DocumentId)).IsTrue();
-        await Assert.That(wire.Path).EndsWith("/documents/" + unknown.DocumentId);
+        await Assert.That(wire.Path).EndsWith("/documents/by-key");
+        await Assert.That(wire.Query).IsEqualTo("?id=" + unknown.DocumentId);
         await Assert.That(wire.Method).IsEqualTo(HttpMethod.Put);
         await Assert.That(wire.IfNoneMatch).IsEqualTo("*");
         await Assert.That(wire.IdempotencyKey).IsNull();
@@ -51,14 +53,32 @@ public sealed class DocumentBackendContractTests
     }
 
     [Test]
-    public async Task DeniedExchangeSendsNoDataRequest()
+    [Arguments(401)]
+    [Arguments(403)]
+    [Arguments(404)]
+    [Arguments(429)]
+    [Arguments(503)]
+    [Arguments(0)]
+    public async Task RefusedReadAndWriteExchangesPreserveStatusWithoutSendingOrClaimingUnknownWrites(int status)
     {
         using var wire = new Wire();
-        var backend = new DocumentBackend(wire, new Tokens { Denied = true });
-        HttpRequestException? denied = null;
-        try { await backend.GetAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "a", CancellationToken.None); }
-        catch (HttpRequestException error) { denied = error; }
-        await Assert.That(denied?.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        var tokens = new Tokens { Refusal = status };
+        var backend = new DocumentBackend(wire, tokens);
+        using var body = JsonDocument.Parse("{\"title\":\"kept\"}");
+        foreach (var write in new[] { false, true })
+        {
+            HttpRequestException? denied = null;
+            try
+            {
+                if (write) await backend.WriteAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "create", "", body.RootElement, "", CancellationToken.None);
+                else await backend.GetAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "a", CancellationToken.None);
+            }
+            catch (HttpRequestException error) { denied = error; }
+            await Assert.That(denied).IsNotNull();
+            await Assert.That(denied is DocumentWriteOutcomeUnknownException).IsFalse();
+            await Assert.That(denied!.StatusCode).IsEqualTo(status == 0 ? (HttpStatusCode?)null : (HttpStatusCode)status);
+        }
+        await Assert.That(tokens.Scopes).IsEquivalentTo(new[] { "documents:read", "documents:write" });
         await Assert.That(wire.Requests).IsEqualTo(0);
     }
 
@@ -110,14 +130,14 @@ public sealed class DocumentBackendContractTests
 
     private sealed class Tokens : IProjectAccessTokens
     {
-        public bool Denied { get; init; }
+        public int? Refusal { get; init; }
         public List<string> Scopes { get; } = [];
         public Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, IReadOnlyList<string> scopes, CancellationToken cancellationToken)
         {
-            if (Denied) throw new HttpRequestException("Denied", null, HttpStatusCode.Forbidden);
             if (session.AccessToken != "original-user-token" || organizationId != "01JA0000000000000000000002" || projectId != "01JA0000000000000000000001")
                 throw new InvalidOperationException("Authority changed.");
             Scopes.Add(scopes.Single());
+            if (Refusal is { } status) throw new HttpRequestException("Exchange refused", null, status == 0 ? null : (HttpStatusCode)status);
             return Task.FromResult("project-" + Scopes.Count);
         }
     }
@@ -129,6 +149,7 @@ public sealed class DocumentBackendContractTests
         public int Requests { get; private set; }
         public List<string> Bearers { get; } = [];
         public string Path { get; private set; } = "";
+        public string Query { get; private set; } = "";
         public string? Pin { get; private set; }
         public string? IfNoneMatch { get; private set; }
         public string? IdempotencyKey { get; private set; }
@@ -139,6 +160,7 @@ public sealed class DocumentBackendContractTests
         {
             Requests++;
             Path = request.RequestUri!.AbsolutePath;
+            Query = request.RequestUri.Query;
             Method = request.Method;
             Pin = request.Headers.GetValues("X-TerraScale-Region-Pin").Single();
             Bearers.Add(request.Headers.Authorization!.Parameter!);

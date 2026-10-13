@@ -42,7 +42,7 @@ public sealed class UsageReplicationBackend(IHttpClientFactory factory, IProject
         {
             var client = factory.CreateClient("platform");
             var origin = await new TerraBaseDiscovery().ResolveAsync(deadline.Token);
-            var token = await projectTokens.GetAsync(context.Session, organization.Id, project.Id, deadline.Token);
+            var token = await projectTokens.GetAsync(context.Session, organization.Id, project.Id, ["databases:read"], deadline.Token);
             var path = $"/v1/projects/{Uri.EscapeDataString(project.Id)}/replication?range={Uri.EscapeDataString(selection.Range)}";
             if (selection.DatabaseId.Length > 0)
                 path += "&database=" + Uri.EscapeDataString(selection.DatabaseId);

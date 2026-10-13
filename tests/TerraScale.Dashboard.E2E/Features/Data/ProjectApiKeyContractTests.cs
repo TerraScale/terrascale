@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using TUnit.Assertions.Enums;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.ApiKeys;
 
@@ -23,7 +24,7 @@ public sealed class ProjectApiKeyContractTests
             ["database:read", "database:write"], CancellationToken.None);
         using var request = JsonDocument.Parse(wire.Body!);
         await Assert.That(request.RootElement.GetProperty("database").GetString()).IsEqualTo("app");
-        await Assert.That(request.RootElement.GetProperty("scopes").EnumerateArray().Select(item => item.GetString()))
+        await Assert.That(request.RootElement.GetProperty("scopes").EnumerateArray().Select(item => item.GetString()!))
             .IsEquivalentTo(new[] { "documents:read", "documents:write" });
         await Assert.That(created.Secret).IsEqualTo(KeyId + "_synthetic-secret");
         await Assert.That(created.Key.LastFour).IsEqualTo("");

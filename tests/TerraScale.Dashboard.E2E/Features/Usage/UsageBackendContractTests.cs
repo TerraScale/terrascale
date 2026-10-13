@@ -39,6 +39,21 @@ public sealed class UsageBackendContractTests
         await Assert.That(bill.TotalCents).IsEqualTo(9900);
         await Assert.That(bill.CapReached).IsTrue();
         await Assert.That(bill.Alert).IsNotNull();
+
+        // A producer bucket may include today, but cannot cover tomorrow's activity.
+        var reading = monthly.Reading!;
+        var future = measured with
+        {
+            Monthly = new Dictionary<string, UsageObservation>
+            {
+                [reading.ProjectId] = new(UsageSourceState.Measured,
+                    reading with { Period = reading.Period with { To = bill.PeriodEnd.AddDays(1) } })
+            }
+        };
+        var refused = InternalBillingService.Estimate(organization, future, Clock.Now);
+        await Assert.That(refused.Available).IsFalse();
+        await Assert.That(refused.CapReached).IsFalse();
+        await Assert.That(refused.Alert).IsNull();
     }
 
     [Test]

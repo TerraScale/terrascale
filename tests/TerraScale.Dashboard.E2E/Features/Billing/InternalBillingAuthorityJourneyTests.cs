@@ -32,9 +32,8 @@ public sealed class InternalBillingAuthorityJourneyTests(DashboardE2EFixture fix
         await Assert.That(result.Observed.GetProperty("issuedAdminRoleGrants").GetInt32()).IsEqualTo(3);
         var billing = result.Observed.GetProperty("billing");
         var stored = billing.GetProperty("organizations").EnumerateArray().Single(row => row.GetProperty("id").GetString() == organization).GetProperty("document");
-        var owner = stored.GetProperty("OwnerUserId").GetString()!;
-        await Assert.That(stored.GetProperty("Members").GetProperty(owner).GetProperty("Role").GetString()).IsEqualTo("owner");
-        await Assert.That(stored.GetProperty("Members").GetProperty(owner).GetProperty("Status").GetString()).IsEqualTo("active");
+        await Assert.That(stored.TryGetProperty("Members", out var members) &&
+            (members.ValueKind != JsonValueKind.Object || members.EnumerateObject().Any())).IsFalse();
         await Assert.That(stored.GetProperty("InternalBilling").ValueKind).IsEqualTo(JsonValueKind.Null);
         await Assert.That(billing.GetProperty("bindings").GetArrayLength()).IsEqualTo(0);
         await Assert.That(billing.GetProperty("singleton").ValueKind).IsEqualTo(JsonValueKind.Null);
