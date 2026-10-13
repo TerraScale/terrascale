@@ -25,6 +25,17 @@ with zipfile.ZipFile(package) as archive:
     assert f'lib/{metadata["targetFramework"]}/TerraScale.DotNet.dll' in archive.namelist()
     if "assemblySha256" in metadata:
         assert hashlib.sha256(archive.read(f'lib/{metadata["targetFramework"]}/TerraScale.DotNet.dll')).hexdigest() == metadata["assemblySha256"], "SDK assembly digest mismatch"
+    if "assemblySha256ByFramework" in metadata:
+        assemblies = metadata["assemblySha256ByFramework"]
+        assert set(assemblies) == {"net10.0", "net11.0"}, "SDK must qualify both supported frameworks"
+        for framework, digest in assemblies.items():
+            assert hashlib.sha256(archive.read(f"lib/{framework}/TerraScale.DotNet.dll")).hexdigest() == digest, "SDK assembly digest mismatch"
+    if "contractSha256ByPath" in metadata:
+        contracts = metadata["contractSha256ByPath"]
+        packed = {name for name in archive.namelist() if name.startswith(("contracts/auth/", "contracts/terrabase/")) and not name.endswith("/")}
+        assert packed and set(contracts) == packed, "SDK contract provenance must cover every packed contract"
+        for path, digest in contracts.items():
+            assert hashlib.sha256(archive.read(path)).hexdigest() == digest, "SDK contract bytes mismatch"
 versions = ET.parse(root / "Directory.Packages.props")
 pins = versions.findall('.//PackageVersion[@Include="TerraScale.DotNet"]')
 assert len(pins) == 1 and pins[0].get("Version") == metadata["version"]

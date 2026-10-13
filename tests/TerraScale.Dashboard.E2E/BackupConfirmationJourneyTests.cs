@@ -4,11 +4,11 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class BackupConfirmationJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
@@ -20,8 +20,10 @@ public sealed class BackupConfirmationJourneyTests(DashboardE2EFixture fixture)
         var placeOnConfirmation = false;
         var rawNullObserved = false;
         var confirmedRequests = 0;
+        TestAuth auth = null!;
         HttpClient? producer = null;
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root,
+            builder => auth = (TestAuth)builder.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!, producerExtension: async http =>
         {
             var id = ConfirmationId(http, organizationId, projectId, sourceId);
             if (id is null) return null;
@@ -32,7 +34,8 @@ public sealed class BackupConfirmationJourneyTests(DashboardE2EFixture fixture)
                 Volatile.Write(ref placeOnConfirmation, false);
                 var stored = await StoredAsync(producer!, id);
                 rawNullObserved = stored.GetProperty("replicaRegions").ValueKind == JsonValueKind.Null;
-                using var request = ScopedRequest(http, HttpMethod.Patch, http.Request.Path.Value!);
+                using var request = ScopedRequest(http, HttpMethod.Patch, CanonicalDatabasePath(projectId, stored.GetProperty("name").GetString()!));
+                request.Headers.Authorization = new("Bearer", await WriteTokenAsync(auth, http.Request.Headers.Authorization.ToString(), organizationId, projectId));
                 request.Content = JsonContent.Create(new { replicaRegions = new[] { "sfo" } });
                 using var changed = await producer!.SendAsync(request, http.RequestAborted);
                 changed.EnsureSuccessStatusCode();
@@ -120,8 +123,10 @@ public sealed class BackupConfirmationJourneyTests(DashboardE2EFixture fixture)
         var corrupt = false;
         var admittedBearer = "";
         var actingUser = "";
+        TestAuth auth = null!;
         HttpClient? producer = null;
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: async http =>
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root,
+            builder => auth = (TestAuth)builder.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!, producerExtension: async http =>
         {
             var id = ConfirmationId(http, organizationId, projectId, sourceId);
             if (id is null) return null;
@@ -184,10 +189,10 @@ public sealed class BackupConfirmationJourneyTests(DashboardE2EFixture fixture)
             await Assert.That((await ReadAsync(client, "/api/v1/dashboard/databases")).GetArrayLength()).IsEqualTo(1);
             // Cleanup is an explicit authorized HTTP request to the exact
             // unprojected producer target, never an invented successful repair.
-            using (var request = new HttpRequestMessage(HttpMethod.Delete, DatabasePath(organizationId, projectId, orphanId)))
+            using (var request = new HttpRequestMessage(HttpMethod.Delete, CanonicalDatabasePath(projectId, restoredName)))
             {
                 request.Headers.Host = "gru.api.terrascale.tech";
-                request.Headers.Add("Authorization", admittedBearer);
+                request.Headers.Authorization = new("Bearer", await WriteTokenAsync(auth, admittedBearer, organizationId, projectId));
                 request.Headers.Add("X-TerraBase-Organization-Id", organizationId);
                 request.Headers.Add("X-TerraBase-User-Id", actingUser);
                 using var removed = await producer.SendAsync(request);
@@ -293,6 +298,15 @@ public sealed class BackupConfirmationJourneyTests(DashboardE2EFixture fixture)
     }
     private static string DatabasePath(string organizationId, string projectId, string id) =>
         "/v1/management/organizations/" + organizationId + "/projects/" + projectId + "/databases/" + id;
+    private static string CanonicalDatabasePath(string projectId, string name) =>
+        "/v1/projects/" + projectId + "/databases/" + Uri.EscapeDataString(name);
+    private static Task<string> WriteTokenAsync(TestAuth auth, string bearer, string organizationId, string projectId)
+    {
+        var token = bearer["Bearer ".Length..];
+        var actor = auth.ResolveAccessToken(token) ?? throw new InvalidOperationException("Cleanup requires a live signed-in actor.");
+        return auth.GetAsync(new SessionRecord(actor.UserId, "", actor.Email, token, null, DateTimeOffset.UtcNow.AddHours(1)),
+            organizationId, projectId, ["databases:write"], default);
+    }
     private static Task<HttpResponseMessage> RestoreAsync(HttpClient client, string csrf, string id, string backupId, string name) =>
         HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups/restore", new()
         { ["_csrf"] = csrf, ["databaseId"] = id, ["backupId"] = backupId, ["name"] = name });

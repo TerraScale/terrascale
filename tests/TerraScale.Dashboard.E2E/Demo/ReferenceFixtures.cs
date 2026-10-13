@@ -27,7 +27,7 @@ internal static class ReferenceFixtures
     internal const string SandboxId = "06RCAG0WTSX0132AWJ5NEK4KR8";
     internal const string PrimaryId = "0Z793APJ2ECFW2F7P6J9F2RKVY";
 
-    public static async Task<ReferencePersonas> InitializeAsync(string root, TestState state,
+    public static async Task<ReferencePersonas> InitializeAsync(string root, TestState state, TestWorkspace workspace,
         Action<ReferencePrincipal> registerPrincipal, Action<ManagedDatabase> registerDatabase, TestDocuments documents)
     {
         using var manifest = await ReadManifestAsync(root);
@@ -44,18 +44,18 @@ internal static class ReferenceFixtures
         var personal = routes.Personal;
         ApplyCapturedMembers(personal, routes.Members[personal.Id]);
         ApplyCapturedInvitations(personal, routes.Invitations[personal.Id]);
-        await PersistOrganizationAsync(state, personal);
+        await PersistOrganizationAsync(state, workspace, personal);
         await PersistAccountAsync(state, personas.Routes, routes.OrganizationIds, routes.ActiveOrganizationId, routes.ActiveProjectId);
 
         var marioPersonal = seeded.Personal;
         ApplyCapturedMembers(marioPersonal, seeded.Members[marioPersonal.Id]);
         ApplyCapturedInvitations(marioPersonal, seeded.Invitations[marioPersonal.Id]);
-        await PersistOrganizationAsync(state, marioPersonal);
+        await PersistOrganizationAsync(state, workspace, marioPersonal);
         var labs = Labs();
         ApplyOrganizationMetadata(labs, seeded.Organizations.Single(item => item.GetProperty("id").GetString() == LabsId));
         ApplyCapturedMembers(labs, seeded.Members[labs.Id]);
         ApplyCapturedInvitations(labs, seeded.Invitations[labs.Id]);
-        await PersistOrganizationAsync(state, labs);
+        await PersistOrganizationAsync(state, workspace, labs);
         await PersistAccountAsync(state, personas.Seeded, seeded.OrganizationIds, seeded.ActiveOrganizationId, seeded.ActiveProjectId, Notifications());
         await state.PutAsync(StripeBilling.Collection, LabsId, JsonSerializer.SerializeToElement(new BillingBinding
         {
@@ -296,13 +296,6 @@ internal static class ReferenceFixtures
         organization.Members = members;
     }
 
-    public static void Release(ReferencePersonas personas)
-    {
-        lock (TestWorkspace.Gate)
-            foreach (var id in TestWorkspace.Organizations.Where(item => item.Value.OwnerUserId == personas.Routes.Subject ||
-                item.Value.OwnerUserId == personas.Seeded.Subject).Select(item => item.Key).ToArray()) TestWorkspace.Organizations.Remove(id);
-    }
-
     private static async Task PersistAccountAsync(TestState state, ReferencePrincipal principal, List<string> organizations,
         string activeOrganization, string activeProject, List<NotificationRecord>? notifications = null)
     {
@@ -328,12 +321,13 @@ internal static class ReferenceFixtures
         await state.PutAsync(AccountService.AccountsCollection, storageKey, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Absent, default);
     }
 
-    private static async Task PersistOrganizationAsync(TestState state, OrganizationRecord organization)
+    private static async Task PersistOrganizationAsync(TestState state, TestWorkspace workspace, OrganizationRecord organization)
     {
-        lock (TestWorkspace.Gate)
+        lock (workspace.Gate)
         {
-            if (TestWorkspace.Organizations.ContainsKey(organization.Id)) throw new InvalidDataException("A Go reference organization is already registered.");
-            TestWorkspace.Organizations[organization.Id] = TestWorkspace.Clone(organization);
+            if (workspace.Organizations.ContainsKey(organization.Id)) throw new InvalidDataException("A Go reference organization is already registered.");
+            workspace.Organizations[organization.Id] = TestWorkspace.Clone(organization);
+            workspace.SeedInvitationMetadata(organization);
         }
         await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), TerraBasePrecondition.Absent, default);
     }

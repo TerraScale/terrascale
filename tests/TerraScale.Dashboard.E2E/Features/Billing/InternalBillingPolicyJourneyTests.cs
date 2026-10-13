@@ -6,14 +6,51 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 [Category("Slow")]
 public sealed class InternalBillingPolicyJourneyTests(DashboardE2EFixture fixture)
 {
     private const string CapAlert = "Internal spending cap reached: estimated bill US$ 124.40, cap US$ 120.00. Report only; services remain active.";
     private const string MissingUsage = "Every project's monthly usage is required to compute the internal bill and evaluate its cap.";
     private const string InvalidAmount = "The internal bill exceeds the supported amount or has invalid reporting rates.";
+
+    [Test]
+    public async Task ConfigurationAndCapAlertPersistBillingWithoutCanonicalMemberIdentities()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var producer = scenario.CreateProviderClient();
+        using var browser = scenario.CreateClient();
+        var setup = await PrepareAsync(browser, producer);
+        var reservations = Organization(await ObserveAsync(producer), setup.Organization).GetProperty("InvitationReservations").Clone();
+
+        await SuccessAsync(await RunAsync(scenario, browser, producer, Configure(setup.Organization)), setup.Organization);
+        await BillingStateOnlyAsync(await ObserveAsync(producer), setup.Organization, setup.Projects, reservations);
+        await BillAsync(await RunAsync(scenario, browser, producer, Report(setup.Organization)), setup.Month);
+        var observed = await ObserveAsync(producer);
+        await BillingStateOnlyAsync(observed, setup.Organization, setup.Projects, reservations);
+        await CheckAsync(Alerts(observed, setup.Organization).Length == 1,
+            "The live owner receives the cap alert without persisting the canonical member roster");
+    }
+
+    private static async Task BillingStateOnlyAsync(JsonElement observed, string organization, string[] projects, JsonElement reservations)
+    {
+        var stored = Organization(observed, organization);
+        await CheckAsync(new[] { "Name", "Slug", "OwnerUserId", "Members", "PendingOwnerUserId", "PendingOwnerExpiresAt", "Invitations", "CreatedAt" }
+            .All(field => !stored.TryGetProperty(field, out _)),
+            "Configuration and alert writes retain no ts-auth organization or member identities");
+        await CheckAsync(JsonElement.DeepEquals(stored.GetProperty("InvitationReservations"), reservations),
+            "Configuration and alert writes preserve existing invitation-capacity reservations");
+        var settings = stored.GetProperty("Projects").EnumerateObject().ToArray();
+        await CheckAsync(settings.Select(project => project.Name).Order(StringComparer.Ordinal)
+            .SequenceEqual(projects.Order(StringComparer.Ordinal)),
+            "Billing retains dashboard settings keyed by the current canonical project IDs");
+        await CheckAsync(settings.All(project => project.Value.GetProperty("Region").GetString() == "GRU" &&
+            !project.Value.TryGetProperty("Name", out _) && !project.Value.TryGetProperty("OrganizationId", out _) &&
+            !project.Value.TryGetProperty("Slug", out _) && !project.Value.TryGetProperty("CreatedAt", out _)),
+            "Billing preserves project placement settings without storing ts-auth project identities");
+        await PolicyAsync(stored);
+        await NoStripeAsync(observed);
+    }
 
     [Test]
     public async Task NativeCommandsPersistCopiedPlanReportExactUtcMonthAndDeduplicateOwnerAlertAcrossRestart()
@@ -717,9 +754,9 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardE2EFixture fixtur
             "An old owner snapshot cannot project an inbox alert after a native provider ownership change at the actual pending-write or refresh boundary");
         var oldIdentity = await IdentityAsync(owner);
         var newIdentity = await IdentityAsync(nominee);
-        await CheckAsync(oldIdentity.GetProperty("role").GetString() == "member" && newIdentity.GetProperty("role").GetString() == "owner" &&
+        await CheckAsync(oldIdentity.GetProperty("role").GetString() == "admin" && newIdentity.GetProperty("role").GetString() == "owner" &&
             newIdentity.GetProperty("organizationId").GetString() == setup.Organization && newIdentity.GetProperty("userId").GetString() == enrolled.Subject,
-            "Fresh native contexts match the real Management contract: nominee becomes owner and starter becomes member");
+            "Fresh native contexts match the ts-auth contract: nominee becomes owner and starter becomes admin");
         using var operatorDenied = await nominee.GetAsync("/admin/users");
         await CheckAsync(operatorDenied.StatusCode == HttpStatusCode.Forbidden &&
             (await ObserveAsync(producer)).GetProperty("issuedAdminRoleGrantsByUser").GetProperty(enrolled.Subject).GetInt32() == 0,
@@ -731,8 +768,8 @@ public sealed class InternalBillingPolicyJourneyTests(DashboardE2EFixture fixtur
             probe.GetProperty("failures").GetArrayLength() == 0 && probe.GetProperty("acceptances").EnumerateArray().Single().GetProperty("email").GetString() == enrolled.Email &&
             transferred.GetProperty("pendingTransfer").ValueKind == JsonValueKind.Null &&
             transferred.GetProperty("members").EnumerateArray().Single(row => row.GetProperty("userId").GetString() == enrolled.Subject).GetProperty("role").GetString() == "owner" &&
-            transferred.GetProperty("members").EnumerateArray().Single(row => row.GetProperty("userId").GetString() == oldIdentity.GetProperty("userId").GetString()).GetProperty("role").GetString() == "member" &&
-            probe.GetProperty("requests").EnumerateArray().Any(row => row.GetProperty("path").GetString() == "/v1/management/organizations/" + setup.Organization + "/ownership-transfer/confirm" &&
+            transferred.GetProperty("members").EnumerateArray().Single(row => row.GetProperty("userId").GetString() == oldIdentity.GetProperty("userId").GetString()).GetProperty("role").GetString() == "admin" &&
+            probe.GetProperty("requests").EnumerateArray().Any(row => row.GetProperty("path").GetString() == "/v1/terrascale/organizations/" + setup.Organization + "/ownership-transfer/confirm" &&
                 row.GetProperty("userId").GetString() == enrolled.Subject),
             "External producer evidence proves the verified email acceptance and nominee-authorized SDK confirm without any dashboard projection shortcut");
         await BillAsync(await RunAsync(scenario, owner, producer, Report(setup.Organization)), setup.Month);

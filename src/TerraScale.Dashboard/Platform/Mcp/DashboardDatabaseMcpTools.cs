@@ -23,7 +23,14 @@ public sealed record McpDeleted(bool Deleted);
 public sealed record McpCollectionList(IReadOnlyList<string> Collections);
 public sealed record McpDocument(string Id, JsonElement Value, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Version = null);
 public sealed record McpDocumentList(IReadOnlyList<McpDocument> Documents);
-public sealed record McpDocumentWrite(string Id, string Operation);
+public sealed record McpDocumentWrite(string Id, string Operation)
+{
+    public string Outcome { get; init; } = "acknowledged";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? OperationId { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Message { get; init; }
+}
 public sealed record McpHistoryVersion(string Revision, bool Deleted, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Value);
 public sealed record McpDocumentHistory(IReadOnlyList<McpHistoryVersion> Versions);
 public sealed record McpCollectionSchema(string Collection, TerraBaseCollectionSchema Schema);
@@ -272,8 +279,8 @@ public sealed partial class DashboardMcpTools
         if (databaseId.Length > 0) DatabaseService.Database(context, databaseId);
         search = search.Trim();
         var list = await keys.ListAsync(context, Cancellation);
-        return new(list.Where(key => kind != "m2m" && status != "inactive" && (databaseId.Length == 0 || databaseId == key.DatabaseId)
-            && (search.Length == 0 || (key.Name + " tb_").Contains(search, StringComparison.OrdinalIgnoreCase))).Select(ApiKeyService.CredentialMetadata).ToArray());
+        return new(list.Where(key => kind != "m2m" && (status.Length == 0 || (status == "active") == key.IsActive) && (databaseId.Length == 0 || databaseId == key.DatabaseId)
+            && (search.Length == 0 || (key.Name + " " + key.Id + "_").Contains(search, StringComparison.OrdinalIgnoreCase))).Select(ApiKeyService.CredentialMetadata).ToArray());
     }
 
     [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Issue a project API key for the TerraScale SDKs. Returns the secret once; store it securely. Requires an owner or admin role.")]
@@ -290,10 +297,10 @@ public sealed partial class DashboardMcpTools
         var context = Scope(organizationId, projectId);
         DemandManagement(context);
         if (!(await keys.ListAsync(context, Cancellation)).Any(key => key.Id == keyId)) throw new AccountAccessException("Credential is unavailable.", 404);
-        throw new AccountAccessException("The data plane does not expose credential rotation.", 503);
+        throw new AccountAccessException("Credential rotation is unavailable in this dashboard view. Create a replacement key.", 503);
     }
 
-    [McpServerTool(Name = "revoke_api_key", Title = "Revoke API key", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Permanently revoke an API key or M2M client so its secret no longer authenticates.")]
+    [McpServerTool(Name = "revoke_api_key", Title = "Revoke API key", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Revoke a project API key to prevent new token issuance. Previously issued short-lived tokens remain valid until expiry.")]
     public async Task<McpCredentialRevoked> RevokeApiKey(string keyId, string? organizationId = null, string? projectId = null)
     {
         await keys.RevokeAsync(Scope(organizationId, projectId), keyId, Cancellation);
@@ -317,8 +324,15 @@ public sealed partial class DashboardMcpTools
             version = current.Version;
         }
         if (operation != "create" && string.IsNullOrWhiteSpace(version)) throw new AccountAccessException("A document version is required.", 422);
-        var result = await data.WriteAsync(context, databaseId, collection, operation, id, operation == "delete" ? "" : body.GetRawText(), version ?? "", Cancellation);
-        return new(result.Id, operation);
+        try
+        {
+            var result = await data.WriteAsync(context, databaseId, collection, operation, id, operation == "delete" ? "" : body.GetRawText(), version ?? "", Cancellation);
+            return new(result.Id, operation);
+        }
+        catch (DocumentWriteOutcomeUnknownException error)
+        {
+            return new(error.DocumentId, operation) { Outcome = "unknown", OperationId = error.OperationId, Message = error.Message };
+        }
     }
     private static JsonElement Body(Dictionary<string, JsonElement>? document, JsonElement? value)
     {

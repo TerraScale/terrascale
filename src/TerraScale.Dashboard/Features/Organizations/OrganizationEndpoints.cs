@@ -16,8 +16,8 @@ public static class OrganizationEndpoints
 {
     public static IServiceCollection AddOrganizationFeatures(this IServiceCollection services) => services
         .AddSingleton<IOrganizationAccess, TsOrganizationAccess>()
-        .AddSingleton<IInvitationGateway, TsInvitationGateway>().AddSingleton<InvitationService>()
-        .AddSingleton<IOrganizationLifecycle, TsOrganizationLifecycle>().AddSingleton<OrganizationLifecycleService>()
+        .AddSingleton<InvitationService>()
+        .AddSingleton<OrganizationLifecycleService>()
         .AddSingleton<OrganizationOperations>();
     public static IEndpointRouteBuilder MapOrganizations(this IEndpointRouteBuilder endpoints)
     {
@@ -57,12 +57,12 @@ public static class OrganizationEndpoints
         {
             var operation = route;
             endpoints.MapPost("/api/v1/dashboard/organization/" + route,
-                async (HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspaceGateway gateway, IWorkspacePlacement placement) =>
-                    await MutateAsync(http, sessions, accounts, gateway, placement, operation));
+                async (HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement) =>
+                    await MutateAsync(http, sessions, accounts, placement, operation));
         }
         endpoints.MapPost("/api/v1/dashboard/organization/projects/{projectId}/rename",
-            async (HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspaceGateway gateway, IWorkspacePlacement placement, string projectId) =>
-                await MutateAsync(http, sessions, accounts, gateway, placement, "rename-project", projectId));
+            async (HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement, string projectId) =>
+                await MutateAsync(http, sessions, accounts, placement, "rename-project", projectId));
         foreach (var action in new[] { "invite", "role", "remove", "ownership", "ownership/confirm", "ownership/cancel" })
         {
             var operation = action;
@@ -184,7 +184,7 @@ public static class OrganizationEndpoints
         catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode); }
     }
 
-    internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspaceGateway gateway, IWorkspacePlacement placement, string operation, string? projectId = null)
+    internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement, string operation, string? projectId = null)
     {
         var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
         if (context is null) return Results.Unauthorized();

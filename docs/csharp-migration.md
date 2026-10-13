@@ -25,8 +25,8 @@ Production is not deployed. Read-only checks at 18:09 UTC found: the Fly app
 `ts-dashboard` has no machines and no releases; ts-auth `/readyz` returned
 503; `atlas.terrascale.tech` and `auth.terrascale.tech` are NXDOMAIN; and
 ts-terrabase was started only in `sjc`. The C# image exits at startup because
-the identity descriptor `/run/secrets/terrascale/dashboard.json` is not
-delivered. Persistence migration and live producer qualification remain open.
+its Fly secrets ([identity-descriptor.md](identity-descriptor.md)) are not
+set. Persistence migration and live producer qualification remain open.
 
 On 2026-10-12 the user accepted merging the implementation into GitHub
 `main` without perfect parity. That acceptance does not qualify a production
@@ -396,17 +396,11 @@ journeys passed again in the focused follow-up.
   The dashboard calls ts-auth only at its global issuer
   `https://auth.terrascale.tech/terrascale`, as ts-auth serves it from every
   region; it no longer uses Atlas auth discovery or regional auth hosts.
-- **Identity delivery.** The Fly app `ts-dashboard` has no secrets and no
-  machines. ts-auth already receives its production secrets as Fly secrets
-  (its zero-configuration contract). The smallest compatible delivery is one
-  Fly secret holding the base64 descriptor, materialized by a `fly.toml`
-  `[[files]]` entry at `/run/secrets/terrascale/dashboard.json`, readable by
-  the image's uid 1654. Its values need a ready ts-auth: a dashboard OIDC
-  client and instance, a TerraBase state project and API key, a generated
-  session key and the vendor Stripe keys. No `[[files]]` entry is committed
-  until the secret exists, because Fly would refuse to start a machine
-  without it.
-  The field list, client registration and proposed delivery are in
+- **Identity delivery.** The Fly app `ts-dashboard` has no secrets. The app
+  reads four Fly secrets from its environment (ts-auth client secret, session
+  encryption key, Stripe secret and webhook keys) and keeps its state in the
+  seeded `platform-dashboard` database through TerraBase's private listener,
+  with no state key. Names, formats and owners are in
   [identity-descriptor.md](identity-descriptor.md).
 
 `c379cc3b2cf724d2c10c753397479b5cf2b4f44d` and SDK main

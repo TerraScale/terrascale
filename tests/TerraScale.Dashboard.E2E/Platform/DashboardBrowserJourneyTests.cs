@@ -5,8 +5,7 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 [Category("Slow")]
 public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
 {
@@ -105,7 +104,7 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
                 var keySecret = page.Locator(".ts-apikeys-secret-value");
                 await keySecret.WaitForAsync();
                 var issuedKey = await keySecret.InnerTextAsync();
-                await Assert.That(issuedKey).Matches("^tb_[A-Za-z0-9_-]+$").Because("The producer issues a usable native key");
+                await Assert.That(issuedKey).Matches("^[0-9A-HJKMNP-TV-Z]{26}_[0-9a-hjkmnp-tv-z]{52}$").Because("ts-auth reveals its canonical project key once");
                 await ShotAsync("key-created");
                 await GotoAsync("/api-keys?kind=key");
                 await Assert.That(await page.Locator("main").InnerTextAsync()).DoesNotContain(issuedKey).Because("API-key plaintext disappears on refresh");

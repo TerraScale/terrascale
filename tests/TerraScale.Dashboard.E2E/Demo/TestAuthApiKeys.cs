@@ -1,0 +1,116 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
+using TerraScale.DotNet;
+
+// Test-only ts-auth project API keys, wire per I1 contracts/auth list/create/get/revoke_project_api_key. Only the global
+// https://auth.terrascale.tech origin with the caller's original admitted sign-in bearer reaches it: exchanged project
+// tokens, other hosts and regional fanout are refused. One instance per environment; nothing is static.
+sealed partial class TestAuthApiKeys(Func<string, (string UserId, string Email)?> resolveSession, Func<string, string, string, string> role)
+{
+    private const string Alphabet = "0123456789abcdefghjkmnpqrstvwxyz";
+    private static readonly string[] Allowed = ["databases:read", "databases:write", "documents:read", "documents:write"];
+    private readonly TerraScaleIdGenerator ids = new();
+    private readonly object gate = new();
+    private readonly SortedDictionary<string, (Key Key, string Secret)> keys = new(StringComparer.Ordinal);
+    private readonly List<(string Method, string Path, string UserId, string Token)> requests = [];
+    private TaskCompletionSource? listGate;
+    private int pausedLists;
+    public int PausedLists => Volatile.Read(ref pausedLists);
+    public void PauseLists() { Interlocked.Exchange(ref pausedLists, 0); listGate = new(TaskCreationOptions.RunContinuationsAsynchronously); }
+    public void ReleaseLists() { listGate?.TrySetResult(); listGate = null; }
+    public (Key Key, string Secret)[] Issued() { lock (gate) return keys.Values.ToArray(); }
+
+    public sealed record Key([property: JsonPropertyName("id")] string Id, [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("organization_id")] string OrganizationId, [property: JsonPropertyName("project_id")] string ProjectId,
+        [property: JsonPropertyName("database")] string? Database, [property: JsonPropertyName("scopes")] IReadOnlyList<string> Scopes,
+        [property: JsonPropertyName("created_by")] string CreatedBy, [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
+        [property: JsonPropertyName("expires_at")] DateTimeOffset? ExpiresAt,
+        [property: JsonPropertyName("previous_secret_expires_at")] DateTimeOffset? PreviousSecretExpiresAt);
+
+    public object Observations()
+    {
+        lock (gate) return new
+        {
+            keys = keys.Values.Select(value => new { value.Key.Id, value.Key.Name, value.Key.ProjectId, value.Key.Database, value.Key.Scopes, secret = value.Secret }).ToArray(),
+            requests = requests.Select(value => new
+            {
+                method = value.Method,
+                path = value.Path,
+                userId = value.UserId,
+                bearerKind = "original-session",
+                authorization = "Bearer " + value.Token
+            }).ToArray()
+        };
+    }
+
+    public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var uri = request.RequestUri!;
+        if (uri.Scheme != "https" || uri.Host != "auth.terrascale.tech" || !uri.IsDefaultPort || uri.UserInfo.Length != 0)
+            throw new HttpRequestException("Project API keys are issued only by the global ts-auth origin.");
+        if (request.Headers.Authorization is not { Scheme: "Bearer", Parameter: { } token } || resolveSession(token) is not { } actor)
+            return Error(HttpStatusCode.Unauthorized, "invalid_token");
+        var match = Route().Match(uri.AbsolutePath);
+        if (!match.Success) return Error(HttpStatusCode.NotFound, "not_found");
+        string organization = match.Groups["organization"].Value, project = match.Groups["project"].Value, keyId = match.Groups["key"].Value;
+        lock (gate) requests.Add((request.Method.Method, uri.AbsolutePath, actor.UserId, token));
+        var current = role(actor.UserId, organization, project);
+        if (current.Length == 0) return Error(HttpStatusCode.NotFound, "not_found");
+        var manage = current is "owner" or "admin";
+        if (keyId.Length == 0 && request.Method == HttpMethod.Get)
+        {
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+            if (query.Keys.Except(["limit", "after"]).Any()) return Error(HttpStatusCode.BadRequest, "invalid_request");
+            var limit = 20;
+            if (query.TryGetValue("limit", out var text) && (!int.TryParse(text, out limit) || limit is < 1 or > 100)) return Error(HttpStatusCode.BadRequest, "invalid_request");
+            var after = query.GetValueOrDefault("after").ToString();
+            if (listGate is { } paused) { Interlocked.Increment(ref pausedLists); await paused.Task.WaitAsync(cancellationToken); }
+            lock (gate)
+            {
+                var scoped = keys.Values.Where(value => value.Key.OrganizationId == organization && value.Key.ProjectId == project).Select(value => value.Key).ToArray();
+                if (after.Length > 0 && !scoped.Any(key => key.Id == after)) return Error(HttpStatusCode.BadRequest, "invalid_cursor");
+                var page = scoped.Where(key => string.CompareOrdinal(key.Id, after) > 0).Take(limit + 1).ToArray();
+                return Json(new { items = page.Take(limit), next = page.Length > limit ? page[limit - 1].Id : null });
+            }
+        }
+        if (keyId.Length == 0 && request.Method == HttpMethod.Post)
+        {
+            if (!manage) return Error(HttpStatusCode.Forbidden, "access_denied");
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+            var root = body.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Any(field => field.Name is not ("name" or "scopes" or "database" or "expires_at")) ||
+                !root.TryGetProperty("name", out var name) || name.GetString() is not { Length: > 0 and <= 128 } keyName ||
+                !root.TryGetProperty("scopes", out var scopes) || scopes.ValueKind != JsonValueKind.Array || scopes.GetArrayLength() == 0)
+                return Error(HttpStatusCode.BadRequest, "invalid_request");
+            var granted = scopes.EnumerateArray().Select(value => value.GetString() ?? "").ToArray();
+            if (granted.Any(scope => !Allowed.Contains(scope)) || granted.Distinct(StringComparer.Ordinal).Count() != granted.Length) return Error(HttpStatusCode.BadRequest, "invalid_scope");
+            var database = root.TryGetProperty("database", out var named) && named.ValueKind == JsonValueKind.String ? named.GetString() : null;
+            DateTimeOffset? expires = root.TryGetProperty("expires_at", out var expiry) && expiry.ValueKind == JsonValueKind.String ? expiry.GetDateTimeOffset() : null;
+            var key = new Key(ids.NewId(), keyName, organization, project, database, granted, actor.UserId, DateTimeOffset.UtcNow, expires, null);
+            var secret = key.Id + "_" + string.Concat(Enumerable.Range(0, 52).Select(_ => Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)]));
+            lock (gate) keys[key.Id] = (key, secret);
+            return Json(new { api_key = key, key = secret }, HttpStatusCode.Created);
+        }
+        lock (gate)
+        {
+            if (!keys.TryGetValue(keyId, out var stored) || stored.Key.OrganizationId != organization || stored.Key.ProjectId != project)
+                return Error(HttpStatusCode.NotFound, "api_key_not_found");
+            if (request.Method == HttpMethod.Get) return Json(stored.Key);
+            if (request.Method != HttpMethod.Delete) return Error(HttpStatusCode.MethodNotAllowed, "invalid_request");
+            if (!manage) return Error(HttpStatusCode.Forbidden, "access_denied");
+            keys.Remove(keyId);
+            return new(HttpStatusCode.NoContent);
+        }
+    }
+
+    [GeneratedRegex("^/v1/terrascale/organizations/(?<organization>[0-9A-HJKMNP-TV-Z]{26})/projects/(?<project>[0-9A-HJKMNP-TV-Z]{26})/api-keys(?:/(?<key>[0-9A-HJKMNP-TV-Z]{26}))?$")]
+    private static partial Regex Route();
+    private static HttpResponseMessage Json(object value, HttpStatusCode status = HttpStatusCode.OK) =>
+        new(status) { Content = new StringContent(JsonSerializer.Serialize(value), new MediaTypeHeaderValue("application/json")) };
+    // ts-auth management errors use the nested envelope (TerraScaleAuthErrors).
+    private static HttpResponseMessage Error(HttpStatusCode status, string code) => Json(new { error = new { code, message = "Test ts-auth rejected the request" } }, status);
+}

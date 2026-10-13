@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1
-# Fly builds the final stage (fly.toml). CI builds `test-slow` on the alpha runners' BuildKit, because the
-# browser journeys need Chromium's system libraries; `make test-fast` runs on the runner itself.
+# The final stage is the actual application. Test providers never enter its publish output.
 
 FROM node:24-bookworm-slim AS node-modules
 # The asset build's npm project.
@@ -23,23 +22,6 @@ RUN test -n "$SOURCE_REVISION" || { echo 'Pass --build-arg SOURCE_REVISION=$(git
 RUN --mount=type=cache,target=/root/.nuget/packages \
     dotnet publish src/TerraScale.Dashboard --configuration Release --output /app \
       -p:RestoreLockedMode=true -p:ContinuousIntegrationBuild=true -p:SourceRevisionId=$SOURCE_REVISION
-
-# The browser journeys (`make test-slow`) with Chromium and its system libraries. Never deployed.
-FROM mcr.microsoft.com/dotnet/sdk:10.0.401-noble AS test-browsers
-ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
-COPY --from=node-modules /usr/local/bin/node /usr/local/bin/node
-WORKDIR /src
-COPY --from=node-modules /src/src/TerraScale.Dashboard/web/node_modules ./src/TerraScale.Dashboard/web/node_modules
-RUN apt-get update && apt-get install -y --no-install-recommends make && rm -rf /var/lib/apt/lists/*
-
-FROM test-browsers AS test-slow
-COPY . .
-# Microsoft.Playwright's bundled driver installs the Chromium revision it pins.
-ARG PLAYWRIGHT=tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/.playwright
-RUN dotnet build tests/TerraScale.Dashboard.E2E --configuration Release -p:RestoreLockedMode=true \
-    && $PLAYWRIGHT/node/linux-x64/node $PLAYWRIGHT/package/cli.js install --with-deps chromium \
-    && rm -rf /var/lib/apt/lists/* \
-    && make test-slow
 
 # No shell or package manager; runs as the non-root app user and listens on 8080.
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled

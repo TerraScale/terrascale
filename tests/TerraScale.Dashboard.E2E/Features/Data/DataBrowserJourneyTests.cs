@@ -4,8 +4,7 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.Features.Data;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 [Category("Slow")]
 public sealed class DataBrowserJourneyTests(DashboardE2EFixture fixture)
 {
@@ -107,9 +106,23 @@ public sealed class DataBrowserJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(await page.Locator("#sql-result").CountAsync()).IsEqualTo(0)
             .Because("The native check validates and advises without executing the query.");
         await EditorAsync("DELETE FROM orders");
-        await CheckAsync();
+        await CheckAsync(422);
         await Assert.That(await page.Locator("#sql-analysis").CountAsync()).IsEqualTo(0);
-        await Assert.That(await page.GetByRole(AriaRole.Alert).InnerTextAsync()).Contains("Only SELECT, WITH, and EXPLAIN statements are allowed.");
+        // Editor live regions may boot after navigation; keep their alert collision deterministic.
+        await page.Locator("#sql-editor").EvaluateAsync("""
+            element => {
+                for (let index = 0; index < 2; index++) {
+                    const alert = document.createElement('div');
+                    alert.className = 'monaco-alert';
+                    alert.setAttribute('role', 'alert');
+                    alert.setAttribute('aria-atomic', 'true');
+                    element.append(alert);
+                }
+            }
+            """);
+        var sqlAlert = page.Locator(".ts-data-sql .ts-alert-danger[role='alert']");
+        await Assert.That(await sqlAlert.CountAsync()).IsEqualTo(1);
+        await Assert.That(await sqlAlert.InnerTextAsync()).IsEqualTo("Only SELECT, WITH, and EXPLAIN statements are allowed.");
         await Assert.That(errors.ToArray()).IsEmpty();
         await Assert.That(bootFailures.ToArray()).IsEmpty();
 
@@ -123,11 +136,11 @@ public sealed class DataBrowserJourneyTests(DashboardE2EFixture fixture)
             await page.Locator("#sql").EvaluateAsync("(el, text) => { el.value = text; el.dispatchEvent(new Event('input', {bubbles:true})); }", statement);
             await Assert.That(await page.Locator("#sql").InputValueAsync()).IsEqualTo(statement);
         }
-        async Task CheckAsync()
+        async Task CheckAsync(int expectedStatus = 200)
         {
             var response = await page.RunAndWaitForResponseAsync(() => page.GetByRole(AriaRole.Button, new() { Name = "Check SQL", Exact = true }).ClickAsync(),
                 value => value.Request.IsNavigationRequest && value.Request.Method == "POST" && new Uri(value.Url).AbsolutePath == "/api/v1/dashboard/data/sql/check");
-            await Assert.That(response.Status).IsEqualTo(200);
+            await Assert.That(response.Status).IsEqualTo(expectedStatus);
             await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
         }
     }

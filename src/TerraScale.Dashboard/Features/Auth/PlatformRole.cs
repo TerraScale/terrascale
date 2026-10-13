@@ -11,14 +11,11 @@ public sealed partial class TsAuthGateway : IPlatformRoleGateway
 {
     public async Task<string?> PlatformRoleAsync(SessionRecord freshlyRotatedSession, CancellationToken cancellationToken)
     {
-        var credentials = await identity.ReadAsync(cancellationToken);
-        if (credentials.AuthInstanceSlug != "terrascale") return null;
-        var origin = AuthOrigin;
-        var client = Client(credentials, origin);
+        var client = Client();
         var discovery = await client.Oidc.GetDiscoveryDocumentAsync(cancellationToken);
         try
         {
-            var issuer = TrustedIssuer(discovery.Issuer, origin, credentials.AuthInstanceSlug);
+            var issuer = TrustedIssuer(discovery.Issuer);
             var claims = AuthJwtClaims.Read(freshlyRotatedSession.AccessToken, issuer, issuer,
                 await client.Oidc.GetJwksAsync(cancellationToken), time.GetUtcNow(), "at+jwt", 8192);
             if (claims.GetProperty("sub").GetString() != freshlyRotatedSession.UserId ||

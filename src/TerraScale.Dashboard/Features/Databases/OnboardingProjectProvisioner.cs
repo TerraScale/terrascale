@@ -1,9 +1,13 @@
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Onboarding;
 
 namespace TerraScale.Dashboard.Features.Databases;
 
-public sealed class OnboardingProjectProvisioner(IWorkspaceGateway workspace, IDatabaseBackend backend) : IOnboardingProjectProvisioner
+// The Personal project is ts-auth's; onboarding renames it there and records the
+// chosen serving region as the dashboard's placement preference. TerraBase needs
+// no project registration before the project's first database.
+public sealed class OnboardingProjectProvisioner(ITsAuthPlatform platform, IDatabaseBackend backend) : IOnboardingProjectProvisioner
 {
     public async Task<ProjectRecord> CompleteProjectAsync(AccountContext context, string name, string region, CancellationToken cancellationToken)
     {
@@ -11,11 +15,10 @@ public sealed class OnboardingProjectProvisioner(IWorkspaceGateway workspace, ID
         if (context.Organization is null || !context.CanManage || context.Organization.Kind != "personal")
             throw new AccountAccessException("Select your personal organization to complete onboarding.");
         var placement = (await backend.RegionsAsync(cancellationToken)).FirstOrDefault(item => item.Code == region && item.Healthy)
-            ?? throw new OnboardingValidationException("Choose a serving project region.");
+            ?? throw new OnboardingValidationException("Choose a supported project region.");
         var project = context.Organization.Projects.Values.FirstOrDefault(item => item.IsDefault)
             ?? throw new AccountAccessException("The personal project is unavailable.", 404);
-        if (project.Name != name) await workspace.RenameProjectAsync(context.Session, context.Organization.Id, project.Id, name, cancellationToken);
-        await backend.RegisterAsync(new(context.UserId, context.Session.AccessToken, context.Organization.Id, context.Organization.Name, project.Id, name), placement, cancellationToken);
+        if (project.Name != name) await platform.RenameProjectAsync(context.Session, context.Organization.Id, project.Id, name, cancellationToken);
         return new ProjectRecord
         {
             Id = project.Id,

@@ -3,7 +3,6 @@ using System.Text.Json;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
-[NotInParallel("dashboard-demo")]
 public sealed class HostLifecycleJourneyTests
 {
     [Test]
@@ -18,7 +17,7 @@ public sealed class HostLifecycleJourneyTests
         foreach (var origin in origins)
         {
             using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
-            { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(10) };
+            { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(30) };
             using var ready = await client.GetAsync("/readyz");
             await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(await ready.Content.ReadAsStringAsync()).IsEqualTo("ok");

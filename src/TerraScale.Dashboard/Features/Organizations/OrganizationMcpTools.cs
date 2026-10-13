@@ -2,7 +2,6 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Platform.Mcp;
-using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Organizations;
 
@@ -46,12 +45,12 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
     public Task<OrganizationDone> LeaveOrganization([Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
     { await lifecycle.LeaveAsync(Scope(organizationId, projectId), Cancellation); return new OrganizationDone(true); });
 
-    [McpServerTool(Name = "update_member_role", Title = "Update member role", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Change a member's role to member or viewer. Requires the owner role.")]
+    [McpServerTool(Name = "update_member_role", Title = "Update member role", Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Change a member's role to viewer, member or admin. Requires the owner role.")]
     public Task<OrganizationDone> UpdateMemberRole([Description("Member user ID from list_members.")] string userId,
-        [Description("member (read and write data) or viewer (read only).")] string role,
+        [Description("viewer (read only), member (read and write data) or admin (manages members, projects and keys).")] string role,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
     {
-        if (role is not ("member" or "viewer")) throw new AccountAccessException("Role must be member or viewer.", 400);
+        if (role is not ("viewer" or "member" or "admin")) throw new AccountAccessException("Role must be viewer, member or admin.", 400);
         await operations.MutateMemberAsync(Scope(organizationId, projectId), "role", userId, role, Cancellation);
         return new OrganizationDone(true);
     });
@@ -64,15 +63,15 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
     public Task<OrganizationDone> RequestOwnershipTransfer([Description("Member user ID from list_members.")] string userId,
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Member("start", userId, organizationId, projectId);
 
-    [McpServerTool(Name = "confirm_ownership_transfer", Title = "Confirm ownership transfer", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Accept a pending ownership transfer nominated to the caller. The previous owner becomes a member.")]
+    [McpServerTool(Name = "confirm_ownership_transfer", Title = "Confirm ownership transfer", Destructive = true, OpenWorld = true, UseStructuredContent = true), Description("Accept a pending ownership transfer nominated to the caller. The previous owner becomes an admin.")]
     public Task<OrganizationDone> ConfirmOwnershipTransfer([Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Member("confirm", "", organizationId, projectId);
 
     [McpServerTool(Name = "list_members", Title = "List members", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("List an organization's active members with their roles, optionally filtered by name, email, or role.")]
     public Task<OrganizationMemberList> ListMembers([Description("Case-insensitive filter on member name or email.")] string search = "",
-        [Description("Only members with this role: owner, member, or viewer.")] string role = "",
+        [Description("Only members with this role: owner, admin, member, or viewer.")] string role = "",
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
     {
-        if (role is not ("" or "all" or "owner" or "member" or "viewer")) throw new AccountAccessException("Role must be owner, member, or viewer.", 400);
+        if (role is not ("" or "all" or "owner" or "admin" or "member" or "viewer")) throw new AccountAccessException("Role must be owner, admin, member, or viewer.", 400);
         var context = await FreshAsync(organizationId, projectId);
         var members = (await access.ReadAsync(context, Cancellation)).Members.Where(member => member.Status == "active").ToArray();
         var matching = members.Where(member => (role is "" or "all" || member.Role == role) &&
@@ -82,7 +81,8 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
                 member.UserId == context.Organization!.OwnerUserId || member.Role == "owner", member.UserId == context.UserId,
                 context.Role == "owner" && member.UserId != context.UserId && member.Role != "owner",
                 member.CreatedAt != DateTimeOffset.MinValue ? member.CreatedAt.UtcDateTime.ToString("yyyy-MM-dd") : member.JoinedOn?.ToString("yyyy-MM-dd") ?? "")).ToArray();
-        return new OrganizationMemberList(matching, new(members.Count(member => member.Role == "owner"), members.Count(member => member.Role == "member"), members.Count(member => member.Role == "viewer")));
+        return new OrganizationMemberList(matching, new(members.Count(member => member.Role == "owner"), members.Count(member => member.Role == "member"),
+            members.Count(member => member.Role == "viewer"), members.Count(member => member.Role == "admin")));
     });
 
     [McpServerTool(Name = "list_invitations", Title = "List invitations", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("List an organization's invitations with their status and expiry, pending first.")]
@@ -90,18 +90,16 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
     {
         var context = await FreshAsync(organizationId, projectId);
         var snapshot = await access.ReadAsync(context, Cancellation);
-        var rows = context.Organization!.Invitations.Values.Select(invite => View(invite.Id, invite.Email, invite.Role, invite.Status, invite.ExpiresAt)).ToDictionary(invite => invite.Id);
-        foreach (var invite in snapshot.Invitations)
-            rows.TryAdd(invite.Id, View(invite.Id, invite.Email, invite.Role.ToString().ToLowerInvariant(), "pending", invite.ExpiresAt));
-        return new OrganizationInvitationList(rows.Values.OrderBy(invite => invite.Status != "Pending").ThenBy(invite => invite.Email).ToArray());
+        var rows = snapshot.Invitations.Select(invite => View(invite.Id, invite.Email, invite.Role, invite.Status, invite.ExpiresAt));
+        return new OrganizationInvitationList(rows.OrderBy(invite => invite.Status != "Pending").ThenBy(invite => invite.Email).ToArray());
     });
 
     [McpServerTool(Name = "invite_member", Title = "Invite member", Destructive = false, OpenWorld = true, UseStructuredContent = true), Description("Invite an email address to an organization and return a one-time invitation link. Requires the owner role and plan member capacity.")]
     public Task<OrganizationIssuedInvitation> InviteMember([Description("Email address to invite.")] string email,
-        [Description("member (read and write data) or viewer (read only). Defaults to member.")] string role = "member",
+        [Description("viewer (read only), member (read and write data) or admin (manages members, projects and keys). Defaults to member.")] string role = "member",
         [Description(OrganizationDescription)] string? organizationId = null, [Description(ProjectDescription)] string? projectId = null) => Invoke(async () =>
     {
-        if (role is not ("" or "member" or "viewer")) throw new AccountAccessException("Role must be member or viewer.", 400);
+        if (role is not ("" or "viewer" or "member" or "admin")) throw new AccountAccessException("Role must be viewer, member or admin.", 400);
         var created = await invitations.CreateAsync(Scope(organizationId, projectId), email, role, Cancellation);
         return Issued(created);
     });
@@ -120,7 +118,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
     public Task<OrganizationInvitationPreview> GetInvitation([Description("Invitation token or the full invitation link.")] string token) => Invoke(async () =>
     {
         var context = await PrincipalAsync();
-        var pending = await invitations.FindAsync(Token(token), Cancellation) ?? throw new AccountAccessException("No pending invitation matches that token.", 404);
+        var pending = await invitations.FindAsync(context.Session, Token(token), Cancellation) ?? throw new AccountAccessException("No pending invitation matches that token.", 404);
         return new OrganizationInvitationPreview(pending.Organization.Id, pending.Organization.Name, pending.Invitation.Email, pending.Invitation.Role,
             pending.Invitation.ExpiresAt, pending.Invitation.Email.Equals(context.Account.Email, StringComparison.OrdinalIgnoreCase));
     });
@@ -138,7 +136,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
     public Task<OrganizationAuditEvents> ListAuditEvents(
         [Description("Case-insensitive text matched against actor, action, target, source, and severity.")] string search = "",
         [Description("Only events with this raw action code. Omit or use all for every action.")] string action = "",
-        [Description("info, warn, critical, or all (default).")] string severity = "",
+        [Description("info, warn, critical, unknown (not reported by the provider), or all (default).")] string severity = "",
         [Description("Time window: 24h, 7d (default), 30d, or 90d, capped by the organization's retention.")] string range = "",
         [Description("1-based page number. Defaults to 1.")] int page = 1,
         [Description("Events per page, 1-100. Defaults to 10.")] int pageSize = 10,
@@ -152,7 +150,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         var retention = snapshot.AuditRetentionDays is >= 1 and <= 90 ? snapshot.AuditRetentionDays.Value
             : throw new IOException("Audit retention policy is unavailable.");
         range = range is "24h" or "30d" or "90d" ? range : "7d";
-        severity = severity is "info" or "warn" or "critical" ? severity : "all";
+        severity = severity is "info" or "warn" or "critical" or "unknown" ? severity : "all";
         var filter = new OrganizationFilters(Search: search.Trim(), Action: action.Length == 0 ? "all" : action, Severity: severity, Range: range, Now: time.GetUtcNow());
         var matches = filter.ApplyAudit(snapshot.AuditEvents, retention);
         var pages = Math.Max(1, (matches.Count + pageSize - 1) / pageSize);
@@ -163,6 +161,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
             item.TargetType, item.Source, OrganizationFilters.AuditSeverity(item), OrganizationFilters.AuditOutcome(item))).ToArray();
         return new OrganizationAuditEvents(rows, matches.Count, matches.Count(item => OrganizationFilters.AuditSeverity(item) == "critical"),
             matches.Count(item => OrganizationFilters.AuditSeverity(item) == "warn"), matches.Count(item => OrganizationFilters.AuditSeverity(item) == "info"),
+            matches.Count(item => OrganizationFilters.AuditSeverity(item) == "unknown"),
             page, pages, range, severity, retained.Select(item => item.Action).Distinct().Order().ToArray(), retention);
     });
 
@@ -179,8 +178,8 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         var marker = raw.IndexOf("/invitations/", StringComparison.Ordinal);
         return marker < 0 ? raw : Uri.UnescapeDataString(raw[(marker + 13)..].Split('/', '?', '#')[0]);
     }
-    private OrganizationIssuedInvitation Issued(TerraBaseCreatedInvitation created) => new(
-        View(created.Invitation.Id, created.Invitation.Email, created.Invitation.Role.ToString().ToLowerInvariant(), "pending", created.Invitation.ExpiresAt),
+    private OrganizationIssuedInvitation Issued(CreatedInvitation created) => new(
+        View(created.Invitation.Id, created.Invitation.Email, created.Invitation.Role, "pending", created.Invitation.ExpiresAt),
         "/invitations/" + Uri.EscapeDataString(created.Token));
     private OrganizationInvitationView View(string id, string email, string role, string status, DateTimeOffset expires) => new(id, email, role,
         status == "pending" && expires != DateTimeOffset.MinValue && expires <= time.GetUtcNow() ? "Expired" : status switch
@@ -188,11 +187,8 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         expires == DateTimeOffset.MinValue ? "" : expires.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ"), status == "pending");
     private async Task<T> Invoke<T>(Func<Task<T>> action)
     {
+        // ts-auth refusals arrive as AccountAccessException with its status and message.
         try { return await action(); }
-        catch (TerraBaseForbiddenException) { throw new AccountAccessException("Organization access is forbidden."); }
-        catch (TerraBaseNotFoundException) { throw new AccountAccessException("Organization resource is unavailable.", 404); }
-        catch (TerraBaseValidationException) { throw new AccountAccessException("The organization request is invalid.", 400); }
-        catch (TerraBaseConflictException) { throw new AccountAccessException("The organization changed. Reload it and try again.", 409); }
         catch (Exception error) when (error is IOException or HttpRequestException || error is OperationCanceledException && !Cancellation.IsCancellationRequested)
         { throw new AccountAccessException("The organization provider could not complete this request. Reload it and try again.", 502); }
     }

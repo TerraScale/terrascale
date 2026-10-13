@@ -9,15 +9,15 @@ using TerraScale.Dashboard.Features.Usage;
 
 namespace TerraScale.Dashboard.E2E.Features.Usage;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class UsageStorageJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
     public async Task AbsentOperationMetersKeepReadsUnknownWhileNativeSdkStorageRemainsIndependentlyKnown()
     {
-        Func<string, (string UserId, string Email)?> resolveToken = null!;
+        Func<string, (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)?> resolveToken = null!;
         var organizationId = "";
+        var projectId = "";
         var userId = "";
         var storagePath = "";
         var storageFault = 0;
@@ -25,7 +25,7 @@ public sealed class UsageStorageJourneyTests(DashboardE2EFixture fixture)
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root,
             builder =>
             {
-                resolveToken = ((TestAuth)builder.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!).ResolveAccessToken;
+                resolveToken = ((TestAuth)builder.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!).ResolveProjectToken;
                 builder.Services.Replace(ServiceDescriptor.Singleton<IUsageMeasurements>(new ReferenceUsageMeasurements()));
                 builder.Services.Replace(ServiceDescriptor.Singleton<IUsageReplication>(new ReferenceUsageReplication()));
             },
@@ -35,8 +35,9 @@ public sealed class UsageStorageJourneyTests(DashboardE2EFixture fixture)
                     return Task.FromResult<IResult?>(null);
                 var bearer = http.Request.Headers.Authorization.ToString();
                 var actor = bearer.StartsWith("Bearer ", StringComparison.Ordinal) ? resolveToken(bearer[7..]) : null;
-                if (http.Request.Host.Host is not ("gru.api.terrascale.tech" or "sfo.api.terrascale.tech") || actor?.UserId != userId ||
-                    http.Request.Headers["X-TerraBase-Organization-Id"] != organizationId)
+                if (http.Request.Host.Host is not ("gru.api.terrascale.tech" or "sfo.api.terrascale.tech") || actor is not { } grant || grant.UserId != userId ||
+                    grant.OrganizationId != organizationId || grant.ProjectId != projectId || !grant.Scopes.Contains("databases:read") ||
+                    http.Request.Headers.ContainsKey("X-TerraBase-Organization-Id"))
                     throw new InvalidOperationException("The independent storage fault must target the exact admitted SDK scope.");
                 Interlocked.Increment(ref observedStorageFaults);
                 IResult result = Volatile.Read(ref storageFault) switch
@@ -60,7 +61,7 @@ public sealed class UsageStorageJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         using var identity = JsonDocument.Parse(await first.GetStringAsync("/api/v1/auth/me"));
         organizationId = identity.RootElement.GetProperty("organizationId").GetString()!;
-        var projectId = identity.RootElement.GetProperty("projectId").GetString()!;
+        projectId = identity.RootElement.GetProperty("projectId").GetString()!;
         userId = identity.RootElement.GetProperty("userId").GetString()!;
         var secret = await HttpJourney.CreatePatAsync(first, "Independent storage E2E", account.Password);
         var empty = await UsageAsync(first);
@@ -102,7 +103,7 @@ public sealed class UsageStorageJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(knownBody).Contains("1 documents");
         await Assert.That(knownBody.Contains("Storage isn't measured here.", StringComparison.Ordinal)).IsFalse();
 
-        storagePath = "/v1/management/organizations/" + organizationId + "/projects/" + projectId + "/databases/" + databaseId + "/collections";
+        storagePath = "/v1/projects/" + projectId + "/databases/independent-storage/schema";
         foreach (var fault in Enumerable.Range(1, 8))
         {
             Volatile.Write(ref storageFault, fault);

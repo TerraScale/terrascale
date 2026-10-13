@@ -1,11 +1,11 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using TerraScale.Dashboard.Features.Accounts;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class ReferenceJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
@@ -113,12 +113,15 @@ public sealed class ReferenceJourneyTests(DashboardE2EFixture fixture)
         var voidInvoices = filtered.GetProperty("result").GetProperty("structuredContent").GetProperty("invoices");
         await Assert.That(voidInvoices.GetArrayLength()).IsEqualTo(1);
         await Assert.That(voidInvoices[0].GetProperty("id").GetString()).IsEqualTo("in_01JC202601HIST07Q7T9V2X5");
-        var currentPlanForm = System.Text.RegularExpressions.Regex.Match(body,
-            "<form[^>]*action=\"/billing/checkout\"[^>]*>(?:(?!</form>).)*name=\"plan\" value=\"pro\"(?:(?!</form>).)*<button(?<attributes>[^>]*)>Current plan</button>",
+        var choosePlanButton = System.Text.RegularExpressions.Regex.Match(body,
+            "<button(?<attributes>[^>]*commandfor=\"change-billing-plan\"[^>]*)>Choose plan</button>",
             System.Text.RegularExpressions.RegexOptions.Singleline);
-        await Assert.That(currentPlanForm.Success).IsTrue();
-        await Assert.That(currentPlanForm.Groups["attributes"].Value).Contains("ts-btn-primary");
-        await Assert.That(currentPlanForm.Groups["attributes"].Value.Contains("disabled", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(choosePlanButton.Success).IsTrue();
+        await Assert.That(body.Contains(">Current plan</button>", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(choosePlanButton.Groups["attributes"].Value).Contains("ts-btn-primary");
+        await Assert.That(choosePlanButton.Groups["attributes"].Value.Contains("disabled", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(body).Contains("name=\"plan\" value=\"pro\"");
+        await Assert.That(body).Contains(">Review change</button>");
         var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
         using var checkout = await HttpJourney.PostFormAsync(client, "/billing/checkout", new()
         { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly", ["return"] = "/organization?tab=billing" });
@@ -176,7 +179,7 @@ public sealed class ReferenceJourneyTests(DashboardE2EFixture fixture)
         var actual = nativeContext.GetProperty("organizations").EnumerateArray().Single(item => item.GetProperty("kind").GetString() == "personal");
         await Assert.That(actual.GetProperty("id").GetString()).IsEqualTo(captured.GetProperty("id").GetString());
         await Assert.That(actual.GetProperty("createdAt").GetDateTimeOffset()).IsEqualTo(captured.GetProperty("createdAt").GetDateTimeOffset());
-        await Assert.That(actual.GetProperty("slug").GetString()).IsEqualTo(captured.GetProperty("slug").GetString());
+        await Assert.That(actual.GetProperty("slug").GetString()).IsEqualTo(AccountService.Slug(captured.GetProperty("name").GetString()!));
         var project = captured.GetProperty("projects")[0];
         var actualProject = actual.GetProperty("projects").GetProperty(project.GetProperty("id").GetString()!);
         await Assert.That(actualProject.GetProperty("name").GetString()).IsEqualTo(project.GetProperty("name").GetString());
@@ -203,8 +206,13 @@ public sealed class ReferenceJourneyTests(DashboardE2EFixture fixture)
             foreach (var expected in captured.GetProperty("members").EnumerateArray())
             {
                 var row = actual.GetProperty("members").EnumerateArray().Single(item => item.GetProperty("id").GetString() == expected.GetProperty("id").GetString());
-                foreach (var field in new[] { "name", "email", "role", "joinedAt" })
+                foreach (var field in new[] { "email", "role" })
                     await Assert.That(row.GetProperty(field).GetString()).IsEqualTo(expected.GetProperty(field).GetString());
+                await Assert.That(row.GetProperty("name").GetString()).IsEqualTo(
+                    expected.GetProperty("id").GetString() == principal.Subject ? principal.Name : expected.GetProperty("email").GetString());
+                // The captured Personal member has only a date; ts-auth's timestamp cannot be invented from it.
+                await Assert.That(row.GetProperty("joinedAt").GetString()).IsEqualTo(
+                    organization.GetProperty("organizationId").GetString() == ReferenceFixtures.LabsId ? expected.GetProperty("joinedAt").GetString() : "");
                 foreach (var field in new[] { "isOwner", "isSelf", "canEdit" })
                     await Assert.That(row.GetProperty(field).GetBoolean()).IsEqualTo(expected.GetProperty(field).GetBoolean());
             }
@@ -214,10 +222,8 @@ public sealed class ReferenceJourneyTests(DashboardE2EFixture fixture)
         var native = await JsonAsync(client, "/api/v1/dashboard/context");
         var personal = native.GetProperty("organizations").EnumerateArray().Single(item => item.GetProperty("kind").GetString() == "personal");
         var own = personal.GetProperty("members").GetProperty(principal.Subject);
-        var capturedPersonal = persona.GetProperty("members").EnumerateArray().Single(item => item.GetProperty("organizationId").GetString() == personal.GetProperty("id").GetString());
-        var capturedOwn = capturedPersonal.GetProperty("result").GetProperty("members").EnumerateArray().Single(item => item.GetProperty("id").GetString() == principal.Subject);
-        await Assert.That(own.GetProperty("joinedOn").GetString()).IsEqualTo(capturedOwn.GetProperty("joinedAt").GetString());
+        await Assert.That(own.GetProperty("joinedOn").ValueKind).IsEqualTo(JsonValueKind.Null);
         await Assert.That(!own.TryGetProperty("createdAt", out var timestamp) || timestamp.ValueKind == JsonValueKind.Null).IsTrue()
-            .Because("The captured Personal member has a known join date, while its creation timestamp is not exposed by the source.");
+            .Because("Canonical member metadata cannot invent a ts-auth timestamp from the source's date-only Personal record.");
     }
 }

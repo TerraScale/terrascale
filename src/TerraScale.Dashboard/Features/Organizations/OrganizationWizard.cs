@@ -10,7 +10,7 @@ public static class OrganizationWizard
     public static IEndpointRouteBuilder MapOrganizationWizard(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapPost("/api/v1/dashboard/organization/new-organization", async (HttpContext http, DashboardSessions sessions,
-            AccountService accounts, IWorkspaceGateway gateway, IWorkspacePlacement placement, StripeBilling payments) =>
+            AccountService accounts, IWorkspacePlacement placement, StripeBilling payments) =>
         {
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
@@ -35,7 +35,7 @@ public static class OrganizationWizard
                 if (form["step"] != "project") throw new AccountAccessException("Choose an organization setup step.", 400);
                 if (!context.Organization.CanProvision(context.UserId)) throw new AccountAccessException("Confirm this organization's billing before creating its first project.", 409);
                 if (context.Organization.Projects.Count > 0) return AuthEndpoints.SeeOther("/organization?tab=projects");
-                return await OrganizationEndpoints.MutateAsync(http, sessions, accounts, gateway, placement, "projects");
+                return await OrganizationEndpoints.MutateAsync(http, sessions, accounts, placement, "projects");
             }
             catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
             {

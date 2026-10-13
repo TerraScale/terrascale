@@ -8,7 +8,7 @@ public sealed record OrganizationFilters(string Query = "", string Role = "all",
         http.Request.Query["q"].ToString().Trim(), http.Request.Query["role"].LastOrDefault() is { Length: > 0 } role ? role : "all",
         int.TryParse(http.Request.Query["page"], out var page) ? Math.Max(1, page) : 1,
         http.Request.Query["search"].ToString().Trim(), http.Request.Query["action"].ToString() is { Length: > 0 } action ? action : "all",
-        http.Request.Query["severity"].ToString() is "info" or "warn" or "critical" ? http.Request.Query["severity"].ToString() : "all",
+        http.Request.Query["severity"].ToString() is "info" or "warn" or "critical" or "unknown" ? http.Request.Query["severity"].ToString() : "all",
         http.Request.Query["range"].ToString() is "24h" or "30d" or "90d" ? http.Request.Query["range"].ToString() : "7d",
         http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow());
 
@@ -26,7 +26,8 @@ public sealed record OrganizationFilters(string Query = "", string Role = "all",
     {
         "high" or "critical" => "critical",
         "medium" or "warn" or "warning" => "warn",
-        _ => "info"
+        "low" or "info" or "informational" => "info",
+        _ => "unknown"
     };
     // These presentation classifiers preserve the original Go rules over the
     // event's reported fields; they do not grant permissions or create events.
@@ -77,10 +78,10 @@ public sealed partial record OrganizationPage
         get
         {
             var now = Filter.Now ?? DateTimeOffset.UtcNow;
-            var canonical = Shell.Context.Organization?.Invitations.Values.AsEnumerable() ?? Enumerable.Empty<InvitationRecord>();
-            var rows = canonical.Select(invite => new InvitationRow(invite.Id, invite.Email, invite.Role,
-                invite.Status == "pending" && invite.ExpiresAt != DateTimeOffset.MinValue && invite.ExpiresAt <= now ? "expired" : invite.Status, invite.CreatedAt, invite.ExpiresAt, invite.Status == "pending")).ToDictionary(invite => invite.Id);
-            foreach (var invite in Access?.Invitations ?? []) rows.TryAdd(invite.Id, new(invite.Id, invite.Email, invite.Role.ToString().ToLowerInvariant(), invite.ExpiresAt != DateTimeOffset.MinValue && invite.ExpiresAt <= now ? "expired" : "pending", invite.CreatedAt, invite.ExpiresAt, true));
+            var rows = (Access?.Invitations ?? []).Select(invite => new InvitationRow(invite.Id, invite.Email, invite.Role,
+                invite.Status == "pending" && invite.ExpiresAt != DateTimeOffset.MinValue && invite.ExpiresAt <= now ? "expired" : invite.Status,
+                // An expired invitation stays manageable: the owner can replace or cancel it.
+                invite.CreatedAt, invite.ExpiresAt, invite.Status is "pending" or "expired")).ToDictionary(invite => invite.Id);
             return rows.Values.OrderBy(invite => !invite.Open).ThenBy(invite => invite.Email, StringComparer.Ordinal).ToArray();
         }
     }

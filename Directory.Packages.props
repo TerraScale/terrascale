@@ -5,11 +5,13 @@
   </PropertyGroup>
   <ItemGroup Label="Application">
     <PackageVersion Include="Cronos" Version="0.13.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
     <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
     <PackageVersion Include="RazorSlices" Version="0.12.1" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.18.0" />
     <PackageVersion Include="Stripe.net" Version="53.0.0" />
     <!-- Local candidate from vendor/dotnet (NuGet.Config maps it there); see vendor/dotnet/README.md. -->
-    <PackageVersion Include="TerraScale.DotNet" Version="0.1.0-dashboard.g130925898daf0207134d9582b7b672a5a1c3233b" />
+    <PackageVersion Include="TerraScale.DotNet" Version="0.0.3" />
   </ItemGroup>
   <ItemGroup Label="E2E">
     <PackageVersion Include="TUnit" Version="1.73.19" />

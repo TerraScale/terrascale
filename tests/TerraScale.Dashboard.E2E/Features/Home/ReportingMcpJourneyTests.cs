@@ -6,8 +6,7 @@ using TerraScale.Dashboard.Features.Home;
 
 namespace TerraScale.Dashboard.E2E.Features.Home;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class ReportingMcpJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]

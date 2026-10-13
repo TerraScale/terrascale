@@ -4,26 +4,30 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using TerraScale.Dashboard.Features.Auth;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class DatabaseSdkJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
-    public async Task NativeSignupAndIssuedCustomerCredentialCompleteUnmodifiedOfficialDotNetSdkCrud()
+    public async Task NativeIssuedKeyStaysAtTsAuthAndCustomerSdkCrudUsesAnExchangedProjectToken()
     {
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+        TestAuth auth = null!;
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, CaptureAuth(value => auth = value));
         using var controls = scenario.CreateProviderClient();
         using var client = scenario.CreateClient();
-        await NativeWorkspaceAsync(client);
+        var account = await NativeWorkspaceAsync(client);
         using var identityResponse = await client.GetAsync("/api/v1/auth/me");
         identityResponse.EnsureSuccessStatusCode();
         using var identity = JsonDocument.Parse(await identityResponse.Content.ReadAsStringAsync());
+        var organizationId = identity.RootElement.GetProperty("organizationId").GetString()!;
         var projectId = identity.RootElement.GetProperty("projectId").GetString()!;
         Check(TerraScaleIds.IsValid(projectId), "Account activation keeps the current producer's canonical ULID project identity");
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
@@ -37,81 +41,123 @@ public sealed class DatabaseSdkJourneyTests(DashboardE2EFixture fixture)
         using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
         { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["name"] = "users" }))
             Check(collection.StatusCode == HttpStatusCode.Created, "The native database has an SDK-backed collection");
+        Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0,
+            "Database and collection setup issues no hidden project key at ts-auth");
         string keyId; string secret;
         using (var credential = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/key", new()
         { ["_csrf"] = csrf, ["name"] = "Customer SDK", ["databaseId"] = databaseId, ["scopes"] = "database:read,database:write" }))
         {
-            Check(credential.StatusCode == HttpStatusCode.Created, "Native issuance returns an actual producer-scoped customer credential");
+            Check(credential.StatusCode == HttpStatusCode.Created, "Native issuance returns a ts-auth project key once");
             using var json = JsonDocument.Parse(await credential.Content.ReadAsStringAsync());
-            keyId = json.RootElement.GetProperty("apiKey").GetProperty("keyId").GetString()!;
+            var key = json.RootElement.GetProperty("apiKey");
+            keyId = key.GetProperty("keyId").GetString()!;
             secret = json.RootElement.GetProperty("secret").GetString()!;
+            Check(TerraScaleIds.IsValid(keyId) && secret.StartsWith(keyId + "_", StringComparison.Ordinal) &&
+                key.GetProperty("databaseName").GetString() == "customer-sdk" &&
+                string.Join(',', key.GetProperty("scopes").EnumerateArray().Select(value => value.GetString()).Order(StringComparer.Ordinal)) == "documents:read,documents:write",
+                "The revealed key keeps its ts-auth identity, database restriction and documents:* scopes");
         }
-        await RunCustomerSdkAsync(fixture.Root, scenario, controls, projectId, "customer-sdk", secret);
-        Console.WriteLine("PROTOCOL E2E: native signup/database/collection/customer key and unchanged official TerraScale.DotNet SDK CRUD succeeded in-process against the test-only current producer compatibility contract; live project-JWT qualification remains outstanding.");
+        var issued = (await ObservationsAsync(controls)).GetProperty("credentials").EnumerateArray().Single();
+        Check(issued.GetProperty("id").GetString() == keyId && issued.GetProperty("database").GetString() == "customer-sdk" &&
+            string.Join(',', issued.GetProperty("scopes").EnumerateArray().Select(value => value.GetString()).Order(StringComparer.Ordinal)) == "documents:read,documents:write",
+            "ts-auth holds exactly the requested restrictions; the dashboard did not broaden them");
+        await RunCustomerSdkAsync(fixture.Root, scenario, controls, auth, account, organizationId, projectId, "customer-sdk", secret);
+        Console.WriteLine("PROTOCOL E2E: native signup/database/collection, a ts-auth issued key refused as a data bearer, and unchanged official TerraScale.DotNet SDK CRUD under the customer's exchanged documents:* project token, in-process against test-only producers; the key's client-credentials exchange and live qualification remain outstanding.");
         using (var revoked = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/" + keyId + "/revoke", new() { ["_csrf"] = csrf }))
-            Check(revoked.StatusCode == HttpStatusCode.NoContent, "Native cleanup revokes the issued customer key at its producer");
+            Check(revoked.StatusCode == HttpStatusCode.NoContent, "Native cleanup revokes the issued key at ts-auth");
+        Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0, "The revoked key is gone at its issuer");
         using (var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new()
         { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["confirmName"] = "customer-sdk" }))
             Check(deleted.StatusCode == HttpStatusCode.NoContent, "Native cleanup deletes the canonical database");
-        CheckProtocol(await ObservationsAsync(controls));
-
+        var observed = await ObservationsAsync(controls);
+        CheckNoStoredDataKey(observed);
+        CheckProtocol(observed);
     }
 
     [Test]
-    public async Task ProductionSdkEncryptsPrivateKeysAndRereadsEnrollmentBeforePublishingCredentialLists()
+    public async Task DataCallsExchangeActionScopedSessionTokensAndNoHiddenKeyIsIssuedOrStored()
     {
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
+        TestAuth auth = null!;
+        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, CaptureAuth(value => auth = value));
         using var controls = scenario.CreateProviderClient();
         using var client = scenario.CreateClient();
         using var replica = scenario.CreateClient(replica: true);
         var journey = await SignInAsync(client, replica);
         var database = await journey.CallAsync(client, "create_database", new() { ["name"] = "sdk-credentials", ["region"] = "GRU" });
         var id = database.GetProperty("id").GetString()!;
+        var csrf = await HttpJourney.CsrfAsync(client, "/databases");
+        using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
+        { ["_csrf"] = csrf, ["databaseId"] = id, ["name"] = "users" }))
+            Check(created.StatusCode == HttpStatusCode.Created, "Native collection creation passes through the official SDK");
         await ControlAsync(controls, new { command = "pause-key-list" });
         var listing = journey.CallAsync(client, "list_api_keys");
         await WaitAsync(controls, "pausedLists", 1);
         using (var console = await replica.GetAsync("/databases/" + id + "/documents"))
-            Check(console.StatusCode == HttpStatusCode.OK, "The real Documents SDK enrolls and opens the database while another replica lists keys");
+            Check(console.StatusCode == HttpStatusCode.OK, "The other replica opens the documents console while ts-auth key listing is in flight");
         await ControlAsync(controls, new { command = "release-key-list" });
         Check((await listing).GetProperty("credentials").GetArrayLength() == 0,
-            "A private credential enrolled after producer listing began is hidden by the post-list registry reread");
+            "Opening the console enrolls no private key: the ts-auth listing stays empty");
+
+        var reference = new Dictionary<string, object?> { ["databaseId"] = id, ["collection"] = "users", ["documentId"] = "scoped" };
+        await journey.CallAsync(client, "create_document", new(reference) { ["document"] = new { scoped = true } });
+        await journey.CallAsync(replica, "get_document", reference);
         var observed = await ObservationsAsync(controls);
         CheckProtocol(observed);
-        var privateKey = observed.GetProperty("credentials").EnumerateArray().Single();
-        var privateId = privateKey.GetProperty("id").GetString()!;
-        var privateSecret = privateKey.GetProperty("secret").GetString()!;
-        var encrypted = observed.GetProperty("encrypted").EnumerateArray().Single().GetString()!;
-        Check(!encrypted.Contains(privateSecret, StringComparison.Ordinal) && !encrypted.Contains(privateId, StringComparison.Ordinal),
-            "Persistent console credentials contain neither the plaintext secret nor its credential ID");
-        using (var json = JsonDocument.Parse(encrypted))
-            Check(json.RootElement.EnumerateObject().All(field => field.Value.ValueKind == JsonValueKind.String) && json.RootElement.EnumerateObject().Count() == 3,
-                "Only the nonce, authenticated ciphertext and tag are persisted");
-        var reads = observed.GetProperty("credentialReads").GetInt32();
-        using (var console = await client.GetAsync("/databases/" + id + "/documents"))
-            Check(console.StatusCode == HttpStatusCode.OK, "The other replica decrypts the existing credential");
-        observed = await ObservationsAsync(controls);
-        Check(observed.GetProperty("credentials").GetArrayLength() == 1 && observed.GetProperty("encrypted").GetArrayLength() == 1 &&
-            observed.GetProperty("credentialReads").GetInt32() > reads, "Cross-replica reuse rereads encrypted state without issuing a second key");
-        await journey.ErrorAsync(replica, "revoke_api_key", new() { ["keyId"] = privateId });
-        Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 1,
-            "A caller cannot revoke the console's private credential by guessing its ID");
+        CheckNoStoredDataKey(observed);
+        Check(observed.GetProperty("credentials").GetArrayLength() == 0, "Document reads and writes issue no ts-auth key");
+        var bearers = observed.GetProperty("requests").EnumerateArray().Select(request =>
+        {
+            var authorization = request.GetProperty("authorization").GetString()!;
+            var grant = authorization.StartsWith("Bearer ", StringComparison.Ordinal) ? auth.ResolveProjectToken(authorization[7..]) : null;
+            var scope = request.GetProperty("method").GetString() == "GET" || request.GetProperty("path").GetString()!.EndsWith("/query", StringComparison.Ordinal) ? "documents:read" : "documents:write";
+            Check(grant is { } admitted && admitted.UserId == journey.User && admitted.OrganizationId == journey.Organization &&
+                admitted.ProjectId == journey.Project && admitted.Scopes.SequenceEqual([scope]),
+                "Each data request carries a current-session project token for exactly its tenant, project and " + scope);
+            return authorization;
+        }).ToArray();
+        Check(bearers.Length >= 2 && bearers.Distinct(StringComparer.Ordinal).Count() == bearers.Length,
+            "Every action exchanges its own token; no project-wide data credential is cached and reused");
 
-        var issued = await journey.CallAsync(client, "create_api_key", new() { ["name"] = "Public SDK key", ["scopes"] = new[] { "database:read" } });
+        await journey.ErrorAsync(replica, "revoke_api_key", new() { ["keyId"] = new TerraScaleIdGenerator().NewId() });
+        Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0,
+            "Revoking a guessed key ID is refused by ts-auth and changes nothing");
+        await journey.ErrorAsync(client, "create_api_key", new() { ["name"] = "Foreign", ["scopes"] = new[] { "database:read" }, ["projectId"] = new TerraScaleIdGenerator().NewId() });
+        Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0,
+            "A key is never issued outside the signed-in tenant's selected project");
+        var issued = await journey.CallAsync(client, "create_api_key", new() { ["name"] = "Public SDK key", ["scopes"] = new[] { "database:read" }, ["databaseId"] = id });
         var publicId = issued.GetProperty("apiKey").GetProperty("keyId").GetString()!;
+        var publicSecret = issued.GetProperty("secret").GetString()!;
+        var held = (await ObservationsAsync(controls)).GetProperty("credentials").EnumerateArray().Single();
+        Check(held.GetProperty("id").GetString() == publicId && held.GetProperty("database").GetString() == "sdk-credentials" &&
+            held.GetProperty("scopes").EnumerateArray().Select(value => value.GetString()).SequenceEqual(["documents:read"]),
+            "ts-auth issues the explicit key with exactly its read scope and database restriction");
         var keys = await journey.CallAsync(replica, "list_api_keys");
         Check(keys.GetProperty("credentials").GetArrayLength() == 1 && keys.GetProperty("credentials")[0].GetProperty("keyId").GetString() == publicId &&
-            !keys.GetRawText().Contains(privateSecret, StringComparison.Ordinal), "Only the explicit public credential is exposed without either secret");
+            !keys.GetRawText().Contains(publicSecret, StringComparison.Ordinal), "The other replica lists the explicit key from ts-auth without its secret");
         await journey.CallAsync(replica, "revoke_api_key", new() { ["keyId"] = publicId });
-        await ControlAsync(controls, new { command = "credential-conflict", value = true });
-        var before = (await ObservationsAsync(controls)).GetProperty("documentsRequests").GetInt32();
-        var deniedList = await journey.ErrorAsync(client, "list_api_keys");
-        var deniedRead = await journey.ErrorAsync(replica, "list_collections", new() { ["databaseId"] = id });
-        Check(!deniedList.GetRawText().Contains(privateSecret, StringComparison.Ordinal) && !deniedRead.GetRawText().Contains(privateSecret, StringComparison.Ordinal),
-            "A causal credential conflict does not disclose encrypted or decrypted credential material");
-        Check((await ObservationsAsync(controls)).GetProperty("documentsRequests").GetInt32() == before,
-            "A causal credential conflict fails closed before any customer-data request");
-        await ControlAsync(controls, new { command = "credential-conflict", value = false });
-        await journey.CallAsync(client, "delete_database", new() { ["databaseId"] = id, ["confirmName"] = "sdk-credentials" });
+        Check((await ObservationsAsync(controls)).GetProperty("credentials").GetArrayLength() == 0, "Explicit revocation reaches ts-auth");
+        CheckNoStoredDataKey(await ObservationsAsync(controls));
+
+        var keyRequests = (await ObservationsAsync(controls)).GetProperty("authKeys").GetProperty("requests").EnumerateArray().ToArray();
+        Check(keyRequests.Length > 0 && keyRequests.All(request =>
+        {
+            var authorization = request.GetProperty("authorization").GetString()!;
+            return request.GetProperty("bearerKind").GetString() == "original-session" &&
+                authorization.StartsWith("Bearer ", StringComparison.Ordinal) && auth.ResolveAccessToken(authorization[7..])?.UserId == journey.User &&
+                auth.ResolveProjectToken(authorization[7..]) is null;
+        }), "Every project-key call uses the original admitted user session, never an exchanged data bearer");
+
+        var beforeFailure = (await ObservationsAsync(controls)).GetProperty("documentsRequests").GetInt32();
+        auth.ExchangeError = new HttpRequestException("Synthetic token exchange unavailable", null, HttpStatusCode.ServiceUnavailable);
+        try
+        {
+            await journey.ErrorAsync(replica, "get_document", reference);
+            Check((await ObservationsAsync(controls)).GetProperty("documentsRequests").GetInt32() == beforeFailure,
+                "A token exchange failure keeps the sign-in alive and sends no document request or stored-key fallback");
+        }
+        finally { auth.ExchangeError = null; }
+        await journey.CallAsync(replica, "get_document", reference);
+
         CheckProtocol(await ObservationsAsync(controls));
     }
 
@@ -216,7 +262,8 @@ public sealed class DatabaseSdkJourneyTests(DashboardE2EFixture fixture)
         using var response = await client.GetAsync("/api/v1/auth/me");
         response.EnsureSuccessStatusCode();
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        return new(secret, body.RootElement.GetProperty("organizationId").GetString()!, body.RootElement.GetProperty("projectId").GetString()!);
+        return new(secret, body.RootElement.GetProperty("userId").GetString()!, body.RootElement.GetProperty("organizationId").GetString()!,
+            body.RootElement.GetProperty("projectId").GetString()!);
     }
 
     internal static async Task<(string Email, string Password)> NativeWorkspaceAsync(HttpClient client)
@@ -255,7 +302,10 @@ public sealed class DatabaseSdkJourneyTests(DashboardE2EFixture fixture)
         }
     }
 
-    internal static async Task RunCustomerSdkAsync(string root, DatabaseSdkScenario scenario, HttpClient controls, string projectId, string databaseName, string secret)
+    // A ts-auth issued key is not a TerraBase bearer. Until the client-credentials exchange fake exists, the customer's
+    // own sign-in is exchanged at the same ts-auth boundary for exactly documents:read/write on this project.
+    internal static async Task RunCustomerSdkAsync(string root, DatabaseSdkScenario scenario, HttpClient controls, TestAuth auth,
+        (string Email, string Password) account, string organizationId, string projectId, string databaseName, string issuedSecret)
     {
         using (var provenance = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "vendor", "dotnet", "provenance.json"))))
         {
@@ -267,10 +317,29 @@ public sealed class DatabaseSdkJourneyTests(DashboardE2EFixture fixture)
         }
         Check(TerraScaleIds.IsValid(projectId), "Use the canonical ULID project returned by the current producer, without translating it");
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var rawTransport = new CustomerTransport(scenario.ProviderOrigin);
+        using (var rawHttp = new HttpClient(rawTransport))
+        {
+            try
+            {
+                await Customer(rawHttp, issuedSecret).Database(projectId, databaseName).GetDocumentAsync("users", "raw-key-probe", deadline.Token);
+                throw new InvalidOperationException("A raw issued key must not be accepted as a data-plane bearer");
+            }
+            catch (TerraBaseAuthenticationException error)
+            {
+                Check(error.StatusCode == HttpStatusCode.Unauthorized && rawTransport.LastStatus == HttpStatusCode.Unauthorized &&
+                    JsonDocument.Parse(rawTransport.LastBody).RootElement.GetProperty("error").GetProperty("code").GetString() == "unauthorized",
+                    "The canonical data API answers 401 unauthorized to the raw ts-auth key");
+            }
+        }
+        var session = await auth.PasswordAsync(account.Email, account.Password, "127.0.0.1", deadline.Token);
+        var token = await auth.GetAsync(session, organizationId, projectId, ["documents:read", "documents:write"], deadline.Token);
+        var readOnly = await auth.GetAsync(session, organizationId, projectId, ["documents:read"], deadline.Token);
+        Check(auth.ResolveProjectToken(token) is { } grant && grant.OrganizationId == organizationId && grant.ProjectId == projectId &&
+            grant.Scopes.SequenceEqual(["documents:read", "documents:write"]), "The exchanged customer token holds exactly this project and documents:* scopes");
         var transport = new CustomerTransport(scenario.ProviderOrigin);
         using var http = new HttpClient(transport);
-        var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("https://gru.api.terrascale.tech"), ApiKey = secret })
-            .Database(projectId, databaseName);
+        var database = Customer(http, token).Database(projectId, databaseName);
         var id = new TerraScaleIdGenerator().NewId();
         try
         {
@@ -311,12 +380,76 @@ public sealed class DatabaseSdkJourneyTests(DashboardE2EFixture fixture)
                 " Producer contract failures: " + (await ObservationsAsync(controls)).GetProperty("failures").GetRawText(), error);
         }
         Check(transport.Requests == 8,
-            "The official .NET SDK performs customer CRUD, stale-write rejection and absent-read checks with the producer-owned project and native-issued customer key");
+            "The official .NET SDK performs customer CRUD, stale-write rejection and absent-read checks with the exchanged project token");
+        var readTransport = new CustomerTransport(scenario.ProviderOrigin);
+        using (var readHttp = new HttpClient(readTransport))
+        {
+            try
+            {
+                await Customer(readHttp, readOnly).Database(projectId, databaseName).PutDocumentAsync("users", id,
+                    JsonSerializer.SerializeToElement(new { title = "denied" }), TerraBasePrecondition.Absent, deadline.Token);
+                throw new InvalidOperationException("A documents:read token must not write");
+            }
+            catch (TerraBaseForbiddenException error)
+            {
+                Check(error.StatusCode == HttpStatusCode.Forbidden && readTransport.LastStatus == HttpStatusCode.Forbidden,
+                    "The canonical data API answers 403 to a write under a read-only exchanged token");
+            }
+        }
         var observed = await ObservationsAsync(controls);
-        var publicRequests = observed.GetProperty("requests").EnumerateArray().Where(request => request.GetProperty("authorization").GetString() == "Bearer " + secret).ToArray();
-        Check(publicRequests.Length == 8 && publicRequests.All(request => request.GetProperty("path").GetString()!.EndsWith("/documents/by-key", StringComparison.Ordinal)),
-            "Every customer SDK request reaches the current producer's point route using its actually issued customer credential");
+        var requests = observed.GetProperty("requests").EnumerateArray().ToArray();
+        var customerRequests = requests.Where(request => request.GetProperty("authorization").GetString() == "Bearer " + token).ToArray();
+        Check(customerRequests.Length == 8 && customerRequests.All(request => request.GetProperty("path").GetString()!.EndsWith("/documents/by-key", StringComparison.Ordinal)),
+            "Every customer SDK request reaches the current producer's point route with the exchanged project token");
+        Check(!requests.Any(request => request.GetProperty("authorization").GetString()!.Contains(issuedSecret, StringComparison.Ordinal)),
+            "The producer never admitted a request carrying the raw issued key");
     }
+
+    private static TerraBaseDocumentsClient Customer(HttpClient http, string bearer) => new(http, new TerraBaseDocumentsClientOptions
+    { BaseAddress = new Uri("https://gru.api.terrascale.tech"), AccessTokenProvider = _ => ValueTask.FromResult(bearer) });
+
+    // Each scenario owns one TestAuth shared by its host pair; tests read its exchange grants to check bearers exactly.
+    internal static Action<WebApplicationBuilder> CaptureAuth(Action<TestAuth> captured) => application =>
+        captured((TestAuth)application.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!);
+
+    // A producer fault stays on the pinned home and a current-session bearer exchanged for exactly this tenant, project and scope.
+    internal static void DemandProjectToken(TestAuth auth, HttpContext http, string organizationId, string projectId, string scope)
+    {
+        var text = http.Request.Headers.Authorization.ToString();
+        var grant = text.StartsWith("Bearer ", StringComparison.Ordinal) ? auth.ResolveProjectToken(text[7..]) : null;
+        if (http.Request.Host.Host != "gru.api.terrascale.tech" || grant is not { } admitted || admitted.OrganizationId != organizationId ||
+            admitted.ProjectId != projectId || !admitted.Scopes.SequenceEqual([scope]))
+            throw new InvalidOperationException("A producer fault must stay on the home region with an exchanged " + scope + " bearer for this project.");
+    }
+
+    // Lets a fault observe or rewrite the real producer's answer: the request is replayed once to the producer, marked so
+    // the extension passes it through, and the answer keeps the producer's region headers.
+    internal const string Forwarded = "X-Test-Forwarded";
+    internal static async Task<(int Status, JsonNode? Body)> ForwardAsync(HttpContext http, Uri producer)
+    {
+        http.Request.EnableBuffering();
+        using var body = new MemoryStream();
+        await http.Request.Body.CopyToAsync(body, http.RequestAborted);
+        using var request = new HttpRequestMessage(new HttpMethod(http.Request.Method), new Uri(producer, http.Request.Path + http.Request.QueryString));
+        if (body.Length > 0) request.Content = new ByteArrayContent(body.ToArray());
+        foreach (var header in http.Request.Headers)
+            if (!header.Key.StartsWith("Content-", StringComparison.OrdinalIgnoreCase) && header.Key is not ("Host" or "Transfer-Encoding" or "Connection"))
+                request.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
+        if (request.Content is not null && http.Request.ContentType is { } type) request.Content.Headers.TryAddWithoutValidation("Content-Type", type);
+        request.Headers.Host = http.Request.Host.Value;
+        request.Headers.Add(Forwarded, "1");
+        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+        using var response = await client.SendAsync(request, http.RequestAborted);
+        foreach (var header in response.Headers.Where(header => header.Key.StartsWith("X-TerraBase-", StringComparison.OrdinalIgnoreCase)))
+            http.Response.Headers[header.Key] = header.Value.ToArray();
+        var text = await response.Content.ReadAsStringAsync(http.RequestAborted);
+        return ((int)response.StatusCode, text.Length == 0 ? null : JsonNode.Parse(text));
+    }
+
+    // The removed data-key registry collection stays untouched: no hidden durable key is written or read.
+    private static void CheckNoStoredDataKey(JsonElement observation) =>
+        Check(observation.GetProperty("encrypted").GetArrayLength() == 0 && observation.GetProperty("credentialReads").GetInt32() == 0,
+            "The dashboard neither writes nor reads a stored data credential");
 
     // Only the physical destination changes for the local HTTP producer; project/document IDs, routes, headers and bodies remain SDK-owned.
     private sealed class CustomerTransport(Uri origin) : DelegatingHandler(new HttpClientHandler { AllowAutoRedirect = false })
@@ -338,8 +471,11 @@ public sealed class DatabaseSdkJourneyTests(DashboardE2EFixture fixture)
         }
     }
 
-    private sealed class Journey(string secret, string organization, string project)
+    private sealed class Journey(string secret, string user, string organization, string project)
     {
+        public string User => user;
+        public string Organization => organization;
+        public string Project => project;
         public async Task<JsonElement> RawAsync(HttpClient client, string name, Dictionary<string, object?>? fields = null)
         {
             fields ??= new(); fields.TryAdd("organizationId", organization); fields.TryAdd("projectId", project);

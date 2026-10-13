@@ -15,7 +15,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
 {
     public const string Collection = "dashboard_billing";
     public const string CustomersCollection = "dashboard_stripe_customers";
-    internal const string Origin = "https://dashboard.terrascale.tech";
+    internal const string Origin = "https://dash.terrascale.tech";
     internal static IReadOnlySet<string> WebhookEvents { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "checkout.session.completed", "checkout.session.async_payment_succeeded", "checkout.session.async_payment_failed",
@@ -39,8 +39,8 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
         context = await OwnerAsync(context, cancellationToken);
         var plan = PlanCatalog.For(planKey);
         var org = context.Organization!;
-        if (plan.PriceCents == 0 && org.Kind != "personal")
-            throw new OnboardingValidationException("The Free plan is available to personal organizations.");
+        if (plan.PriceCents == 0)
+            throw new OnboardingValidationException("The Free plan does not require Stripe checkout.");
         var wizardReturn = "/organization?newOrganization=project&organizationID=" + Uri.EscapeDataString(org.Id);
         if (interval is not ("monthly" or "annual") || returnPath is not ("/onboarding" or "/billing" or "/organization?tab=billing") && returnPath != wizardReturn)
             throw new OnboardingValidationException("Choose a valid billing interval.");
@@ -270,6 +270,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
                 // Keep Stripe's canonical subscription binding for portal and
                 // replacement decisions, but revoke an unqualified plan even
                 // when this organization previously held paid entitlements.
+                if (org.Kind == "personal") org.PlanId = OrganizationRecord.FreePlanId;
                 org.BillingStatus = "billing_required";
                 binding.EffectivePlan = "";
                 binding.EffectiveInterval = "";

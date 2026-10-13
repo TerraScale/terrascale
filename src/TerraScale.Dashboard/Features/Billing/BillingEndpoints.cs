@@ -7,6 +7,7 @@ using AccountService = TerraScale.Dashboard.Features.Accounts.AccountService;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Features.Databases;
 
 namespace TerraScale.Dashboard.Features.Billing;
 
@@ -72,7 +73,19 @@ public static class BillingEndpoints
             try { return AuthEndpoints.SeeOther(await billing.StartCheckoutAsync(context, form["plan"].ToString(), form["interval"].ToString(), form["return"].ToString(), http.RequestAborted)); }
             catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
             { return Results.Problem(error.Message, statusCode: error is AccountAccessException access ? access.StatusCode : 422); }
-        });
+            catch (Exception error) when (error is StripeException or HttpRequestException or IOException ||
+                error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
+            {
+                if (!DatabaseEndpoints.WantsHtml(http)) return Results.Problem("Checkout is temporarily unavailable. Return to billing to reconcile before trying again.", statusCode: 503);
+                var page = BillingCheckoutUnavailable.Create(new DocumentModel("Checkout unavailable", DocumentModel.NonceFor(http)));
+                page.StatusCode = 503;
+                return (IResult)page;
+            }
+        }).WithGroupName("integration").WithName("startDashboardCheckout").WithTags("Billing")
+            .WithSummary("Start or resume a bound Stripe checkout")
+            .WithDescription("Requires the current session, organization-owner permission and a same-origin CSRF form token. An unavailable provider returns 503; return to billing to resume or cancel rather than automatically retrying a mutation.")
+            .Accepts<CheckoutRequest>("application/x-www-form-urlencoded")
+            .Produces(303).Produces(401).Produces(403).ProducesProblem(422).ProducesProblem(503).Produces(503, contentType: "text/html");
         endpoints.MapGet("/billing/portal", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
         {
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
@@ -117,3 +130,6 @@ public static class BillingEndpoints
         catch (StripeWebhookRejectedException) { return Results.BadRequest(); }
     }
 }
+
+public sealed record CheckoutRequest([property: System.Text.Json.Serialization.JsonPropertyName("_csrf")] string Csrf,
+    string Plan, string Interval, [property: System.Text.Json.Serialization.JsonPropertyName("return")] string Return);

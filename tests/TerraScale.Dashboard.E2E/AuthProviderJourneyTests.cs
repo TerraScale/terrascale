@@ -5,8 +5,7 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
@@ -171,13 +170,10 @@ public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
         var secondCookie = SessionCookie(secondLogin);
         var csrf = await HttpJourney.CsrfAsync(second, "/profile?tab=security");
         const string newPassword = "new-provider-password-123";
-        using (var changed = await HttpJourney.PostFormAsync(second, "/api/v1/dashboard/profile/password", new()
-        {
-            ["_csrf"] = csrf,
-            ["currentPassword"] = "test-password",
-            ["newPassword"] = newPassword,
-            ["confirmPassword"] = newPassword
-        }))
+        using (var started = await StartPasswordForm(second, csrf))
+            Check(started.StatusCode == HttpStatusCode.SeeOther && started.Headers.Location?.OriginalString == "/profile?tab=security&status=code-sent",
+                "Current-password proof starts the owning producer reset while the older refresh is leased");
+        using (var changed = await CompletePasswordForm(second, csrf, newPassword))
         {
             Check(changed.StatusCode == HttpStatusCode.SeeOther && changed.Headers.Location?.OriginalString == "/login",
                 "Native signed-in password change completes and signs the current browser out");
@@ -190,16 +186,17 @@ public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
         using (var oldFirst = await Request(first, "/api/v1/auth/me", firstCookie))
         using (var oldSecond = await Request(second, "/api/v1/auth/me", secondCookie))
             Check(oldFirst.StatusCode == HttpStatusCode.Unauthorized && oldSecond.StatusCode == HttpStatusCode.Unauthorized,
-                "Revoke-all wins over the leased refresh and invalidates both captured browser cookies");
+                "Confirmed password reset wins over the leased refresh and invalidates both captured browser cookies");
         using (var oldPassword = await HttpJourney.LoginAsync(second, returnTo: "/api/v1/auth/me"))
             Check(oldPassword.StatusCode == HttpStatusCode.Unauthorized, "The previous password no longer obtains a provider grant");
         using (var newLogin = await HttpJourney.LoginAsync(second, password: newPassword, returnTo: "/api/v1/auth/me"))
             Check(newLogin.StatusCode == HttpStatusCode.SeeOther, "The new password obtains a fresh provider grant after all sessions ended");
         _ = await User(second);
         var observed = await Observations(controls);
-        var mutations = observed.GetProperty("actions").EnumerateArray().Select(item => item.GetString()).Where(item => item?.StartsWith("management/", StringComparison.Ordinal) == true).ToArray();
-        Check(observed.GetProperty("managementMutations").GetInt32() == 2 && mutations.SequenceEqual(new[] { "management/password", "management/revoke-all" }),
-            "Official SDK management uses a distinct service credential, changes only the admitted subject, and then revokes every family");
+        var resetActions = observed.GetProperty("actions").EnumerateArray().Select(item => item.GetString()).Where(item => item?.StartsWith("password-reset/", StringComparison.Ordinal) == true).ToArray();
+        Check(resetActions.SequenceEqual(new[] { "password-reset/start", "password-reset/complete" }) &&
+            observed.GetProperty("managementRequests").GetInt32() == 0 && observed.GetProperty("managementMutations").GetInt32() == 0,
+            "One admitted reset completes once, revokes the provider families, and uses no unsupported management contract");
         Check(observed.GetProperty("refreshes").GetInt32() == 1, "Password change never retries the leased refresh secret");
         CheckProtocol(observed);
     }
@@ -338,8 +335,10 @@ public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
         await Control(controls, new { command = "fault", value = "signup-policy" });
         using (var policy = await HttpJourney.PostFormAsync(browser, "/onboarding", registration))
         {
-            Check(policy.StatusCode == HttpStatusCode.UnprocessableEntity && (await policy.Content.ReadAsStringAsync()).Contains("That password is too common.", StringComparison.Ordinal),
-                "A known producer signup policy error is displayed on its native password field");
+            var policyHtml = await policy.Content.ReadAsStringAsync();
+            Check(policy.StatusCode == HttpStatusCode.UnprocessableEntity && policyHtml.Contains("Choose a different password.", StringComparison.Ordinal) &&
+                !policyHtml.Contains("That password is too common.", StringComparison.Ordinal),
+                "The native password field maps the known producer error code without exposing producer text");
             Check(!(await policy.Content.ReadAsStringAsync()).Contains(initialPassword, StringComparison.Ordinal), "Rejected native signup never echoes the submitted password");
         }
         await Control(controls, new { command = "advance", seconds = 61 });
@@ -420,124 +419,133 @@ public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
     }
 
     [Test]
-    public async Task NativePasswordGuardsNeverMutateAnotherIdentityOrExposeVendorErrors()
+    public async Task NativePasswordGuardsBindCurrentIdentityAndValidateTheCodeFormBeforeMutation()
     {
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var controls = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
-        using (var signedIn = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me"))
-            Check(signedIn.StatusCode == HttpStatusCode.SeeOther, "The browser obtains an actual provider grant before password management");
+        using var signedIn = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me");
+        Check(signedIn.StatusCode == HttpStatusCode.SeeOther, "Password change starts with an admitted browser grant");
         var csrf = await HttpJourney.CsrfAsync(browser, "/profile?tab=security");
-        await PasswordError(browser, csrf, "test-password", "short", "short", "Use at least 12 characters.");
-        await PasswordError(browser, csrf, "test-password", new string('é', 513), new string('é', 513), "Use a password with 1024 bytes or fewer.");
-        await PasswordError(browser, csrf, "test-password", "replacement-password", "other-password", "Passwords do not match.");
-        await PasswordError(browser, csrf, "wrong-current-password", "replacement-password", "replacement-password", "Current password is incorrect.");
+        await PasswordError(browser, csrf, false, new() { ["currentPassword"] = "wrong-current-password" }, "Current password is incorrect.");
         await Control(controls, new { command = "fault", value = "password-substitution" });
-        await PasswordError(browser, csrf, "test-password", "replacement-password", "replacement-password", "Current password is incorrect.");
-        Check((await Observations(controls)).GetProperty("managementRequests").GetInt32() == 0,
-            "Validation, failed reauthentication and an independently valid foreign subject never call privileged management");
-        await Control(controls, new { command = "fault", value = "management-policy" });
-        await PasswordError(browser, csrf, "test-password", "replacement-password", "replacement-password", "Choose a different password.");
+        await PasswordError(browser, csrf, false, new() { ["currentPassword"] = "test-password" }, "Current password is incorrect.");
+        Check(!(await Observations(controls)).GetProperty("actions").EnumerateArray().Any(item => item.GetString() == "password-reset/start"),
+            "Failed or foreign reauthentication sends no reset code to another identity");
+        await Control(controls, new { command = "fault", value = "" });
+        using var started = await StartPasswordForm(browser, csrf);
+        Check(started.StatusCode == HttpStatusCode.SeeOther && started.Headers.Location?.OriginalString == "/profile?tab=security&status=code-sent",
+            "The current password requests a reset code for this session's email");
+        foreach (var (password, confirmation, error) in new[] {
+            ("short", "short", "Use at least 12 characters."),
+            (new string('é', 513), new string('é', 513), "Use a password with 1024 bytes or fewer."),
+            ("replacement-password", "other-password", "Passwords do not match.") })
+            await PasswordError(browser, csrf, true, new() { ["code"] = "123456", ["newPassword"] = password, ["confirmPassword"] = confirmation }, error);
+        var beforeCode = (await Observations(controls)).GetProperty("actions").EnumerateArray().Count(item => item.GetString() == "password-reset/complete");
+        Check(beforeCode == 0, "Local password validation never reaches the producer");
+        await PasswordError(browser, csrf, true, new() { ["code"] = "000000", ["newPassword"] = "replacement-password", ["confirmPassword"] = "replacement-password" },
+            "The code is incorrect or has expired.");
+        await Control(controls, new { command = "fault", value = "reset-password-policy" });
+        await PasswordError(browser, csrf, true, new() { ["code"] = "123456", ["newPassword"] = "replacement-password", ["confirmPassword"] = "replacement-password" },
+            "Choose a different password.");
+        await Control(controls, new { command = "fault", value = "" });
         var observed = await Observations(controls);
-        Check(observed.GetProperty("managementRequests").GetInt32() == 1 && observed.GetProperty("managementMutations").GetInt32() == 0,
-            "Only the admitted password policy request reaches the real SDK management contract and its rejection changes no credential");
-        Check(observed.GetProperty("revocations").GetInt32() >= 5, "Every extra admitted reauthentication family is revoked after validation or provider rejection");
-        Check(observed.GetProperty("enrollmentSecretsEncrypted").GetBoolean(), "Reauthentication never saves a submitted password in plaintext");
+        Check(observed.GetProperty("actions").EnumerateArray().Count(item => item.GetString() == "password-reset/complete") == 2,
+            "Both code and password-policy refusals reach the canonical reset-complete operation");
+        Check(observed.GetProperty("managementRequests").GetInt32() == 0 && observed.GetProperty("managementMutations").GetInt32() == 0,
+            "The canonical code flow never calls an unsupported password management route");
+        Check(observed.GetProperty("revocations").GetInt32() == 2, "Foreign and admitted current-password proof families are revoked");
+        Check(observed.GetProperty("enrollmentSecretsEncrypted").GetBoolean(), "Submitted passwords never enter plaintext state");
         _ = await User(browser);
         CheckProtocol(observed);
     }
 
     [Test]
-    public async Task AbsentPasswordManagementRouteReportsUnavailableWithoutChangingThePasswordOrEndingTheBrowser()
+    public async Task AbsentResetStartReportsUnavailableWithoutChangingThePasswordOrEndingTheBrowser()
     {
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var controls = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
         using var replica = scenario.CreateClient(replica: true);
-        using var credentials = scenario.CreateClient();
         using var signedIn = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me");
-        Check(signedIn.StatusCode == HttpStatusCode.SeeOther, "A real signed-in browser precedes the unavailable producer route");
+        Check(signedIn.StatusCode == HttpStatusCode.SeeOther, "A signed-in browser precedes the missing reset route");
         var cookie = SessionCookie(signedIn);
         var csrf = await HttpJourney.CsrfAsync(browser, "/profile?tab=security");
-        const string replacement = "unavailable-provider-password-123";
-        await Control(controls, new { command = "fault", value = "management-missing" });
-        using (var unavailable = await PasswordForm(browser, csrf, replacement))
-            await PasswordUnavailable(unavailable, replacement);
-        _ = await User(browser);
-        using (var stillSignedIn = await Request(replica, "/api/v1/auth/me", cookie))
-            Check(stillSignedIn.StatusCode == HttpStatusCode.OK, "An absent PATCH does not claim or perform browser revocation on another replica");
-        var observed = await Observations(controls);
-        Check(observed.GetProperty("managementRequests").GetInt32() == 1 && observed.GetProperty("managementMutations").GetInt32() == 0 &&
-            observed.GetProperty("revocations").GetInt32() == 1,
-            "The actual SDK sees one404, mutates nothing, and revokes only the extra current-password proof family");
-        await Control(controls, new { command = "fault", value = "" });
-        using (var original = await HttpJourney.LoginAsync(credentials, returnTo: "/api/v1/auth/me"))
-            Check(original.StatusCode == HttpStatusCode.SeeOther, "The owning producer still admits the original password");
-        using (var unchanged = await HttpJourney.LoginAsync(credentials, password: replacement, returnTo: "/api/v1/auth/me"))
-            Check(unchanged.StatusCode == HttpStatusCode.Unauthorized, "The proposed replacement was never accepted or saved by a fallback");
-        CheckProtocol(await Observations(controls));
-    }
-
-    [Test]
-    public async Task MissingRevokeAllAfterAPasswordPatchNeverClaimsBrowserOrPatFamiliesAreInvalidated()
-    {
-        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
-        using var controls = scenario.CreateProviderClient();
-        using var browser = scenario.CreateClient();
-        using var replica = scenario.CreateClient(replica: true);
-        using var credentials = scenario.CreateClient();
-        using var signedIn = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me");
-        Check(signedIn.StatusCode == HttpStatusCode.SeeOther, "The native browser owns a valid provider family before the partial operation");
-        var cookie = SessionCookie(signedIn);
-        var pat = await HttpJourney.CreatePatAsync(browser, "Password failure independent family");
-        await ActivePat(replica, pat);
-        var csrf = await HttpJourney.CsrfAsync(browser, "/profile?tab=security");
-        const string replacement = "partially-updated-password-123";
-        await Control(controls, new { command = "fault", value = "management-revoke-all-missing" });
-        using (var unavailable = await PasswordForm(browser, csrf, replacement))
-            await PasswordUnavailable(unavailable, replacement);
-        _ = await User(browser);
+        await Control(controls, new { command = "fault", value = "reset-start-missing" });
+        using (var unavailable = await StartPasswordForm(browser, csrf)) await PasswordUnavailable(unavailable, "test-password");
         using (var retained = await Request(replica, "/api/v1/auth/me", cookie))
-            Check(retained.StatusCode == HttpStatusCode.OK, "The app does not falsely declare a still-active remote browser family revoked");
-        await ActivePat(replica, pat);
+            Check(retained.StatusCode == HttpStatusCode.OK, "A missing reset route leaves the original browser family active");
         var observed = await Observations(controls);
-        Check(observed.GetProperty("managementRequests").GetInt32() == 2 && observed.GetProperty("managementMutations").GetInt32() == 1 &&
-            observed.GetProperty("actions").EnumerateArray().Count(action => action.GetString() == "management/password") == 1 &&
-            !observed.GetProperty("actions").EnumerateArray().Any(action => action.GetString() == "management/revoke-all") &&
-            observed.GetProperty("revocations").GetInt32() == 1,
-            "A served PATCH followed by404 revokes only the extra proof family and never invents authoritative all-family invalidation");
+        Check(observed.GetProperty("actions").EnumerateArray().Count(item => item.GetString() == "password-reset/start") == 1 &&
+            observed.GetProperty("revocations").GetInt32() == 1 && observed.GetProperty("managementRequests").GetInt32() == 0,
+            "One reset start failed, only its extra proof family was revoked, and no management fallback ran");
         await Control(controls, new { command = "fault", value = "" });
-        using (var original = await HttpJourney.LoginAsync(credentials, returnTo: "/api/v1/auth/me"))
-            Check(original.StatusCode == HttpStatusCode.Unauthorized, "The deliberately partial producer actually applied the password PATCH");
-        using (var changed = await HttpJourney.LoginAsync(credentials, password: replacement, returnTo: "/api/v1/auth/me"))
-            Check(changed.StatusCode == HttpStatusCode.SeeOther, "Its new password is admitted despite failed revoke-all, making the partial outcome observable");
+        using var credentials = scenario.CreateClient();
+        using var original = await HttpJourney.LoginAsync(credentials, returnTo: "/api/v1/auth/me");
+        Check(original.StatusCode == HttpStatusCode.SeeOther, "The original password remains unchanged");
         CheckProtocol(await Observations(controls));
     }
 
     [Test]
-    public async Task LostPasswordManagementReplyNeverAutomaticallyReplaysTheMutationOrReportsSuccess()
+    public async Task CorrectResetCodeInvalidatesBrowserAndPatFamiliesAcrossReplicas()
     {
         await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
         using var controls = scenario.CreateProviderClient();
         using var browser = scenario.CreateClient();
+        using var replica = scenario.CreateClient(replica: true);
+        using var signedIn = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me");
+        Check(signedIn.StatusCode == HttpStatusCode.SeeOther, "The browser owns an active provider family");
+        var cookie = SessionCookie(signedIn);
+        var pat = await HttpJourney.CreatePatAsync(browser, "Independent password-change family");
+        await ActivePat(replica, pat);
+        var csrf = await HttpJourney.CsrfAsync(browser, "/profile?tab=security");
+        using var started = await StartPasswordForm(browser, csrf);
+        Check(started.StatusCode == HttpStatusCode.SeeOther, "Current-password proof sends the owning reset code");
+        await ActivePat(replica, pat);
+        const string replacement = "code-confirmed-password-123";
+        using var completed = await CompletePasswordForm(browser, csrf, replacement);
+        Check(completed.StatusCode == HttpStatusCode.SeeOther && completed.Headers.Location?.OriginalString == "/login",
+            "Only confirmed reset completion ends the browser");
+        using (var ended = await Request(replica, "/api/v1/auth/me", cookie))
+            Check(ended.StatusCode == HttpStatusCode.Unauthorized, "The previous browser is refused on another replica");
+        using var patRequest = new HttpRequestMessage(HttpMethod.Get, "/api/v1/auth/me");
+        patRequest.Headers.Authorization = new("Bearer", pat);
+        using var endedPat = await replica.SendAsync(patRequest);
+        Check(endedPat.StatusCode == HttpStatusCode.Unauthorized, "The independent PAT family lost owning issuer authority");
         using var credentials = scenario.CreateClient();
+        using var oldPassword = await HttpJourney.LoginAsync(credentials, returnTo: "/api/v1/auth/me");
+        Check(oldPassword.StatusCode == HttpStatusCode.Unauthorized, "Reset replaced the original password");
+        using var newPassword = await HttpJourney.LoginAsync(credentials, password: replacement, returnTo: "/api/v1/auth/me");
+        Check(newPassword.StatusCode == HttpStatusCode.SeeOther, "The confirmed new password obtains a grant");
+        var observed = await Observations(controls);
+        Check(observed.GetProperty("managementRequests").GetInt32() == 0, "Reset uses no invented PATCH or revoke-all contract");
+        CheckProtocol(observed);
+    }
+
+    [Test]
+    public async Task LostPasswordResetReplyNeverReplaysTheMutationOrReportsSuccess()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var controls = scenario.CreateProviderClient();
+        using var browser = scenario.CreateClient();
         using var signedIn = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me");
         Check(signedIn.StatusCode == HttpStatusCode.SeeOther, "The native request starts from an admitted browser grant");
         var csrf = await HttpJourney.CsrfAsync(browser, "/profile?tab=security");
-        const string replacement = "lost-management-reply-password-123";
-        await Control(controls, new { command = "fault", value = "management-drop-password-response" });
-        using (var lost = await PasswordForm(browser, csrf, replacement))
-            await PasswordUnavailable(lost, replacement);
-        _ = await User(browser);
+        using var started = await StartPasswordForm(browser, csrf);
+        Check(started.StatusCode == HttpStatusCode.SeeOther, "The code was requested before completion");
+        const string replacement = "lost-reset-reply-password-123";
+        await Control(controls, new { command = "fault", value = "reset-drop-completion-response" });
+        using (var lost = await CompletePasswordForm(browser, csrf, replacement)) await PasswordUnavailable(lost, replacement);
         var observed = await Observations(controls);
-        Check(observed.GetProperty("managementRequests").GetInt32() == 1 && observed.GetProperty("managementMutations").GetInt32() == 1 &&
-            observed.GetProperty("revocations").GetInt32() == 1,
-            "The producer applied one PATCH before losing delivery; the dashboard submits it once and cleans up the unpersisted proof family");
-        Check(!observed.GetProperty("actions").EnumerateArray().Any(action => action.GetString() == "management/revoke-all"),
-            "An uncertain password mutation does not silently proceed to a claimed revoke-all outcome");
+        Check(observed.GetProperty("actions").EnumerateArray().Count(item => item.GetString() == "password-reset/complete") == 1 &&
+            observed.GetProperty("managementRequests").GetInt32() == 0,
+            "The producer applied one reset before losing delivery; no replay or privileged fallback ran");
+        using (var ended = await browser.GetAsync("/api/v1/auth/me"))
+            Check(ended.StatusCode == HttpStatusCode.Unauthorized, "The next request observes the producer's actual revocation despite the lost reply");
         await Control(controls, new { command = "fault", value = "" });
-        using (var changed = await HttpJourney.LoginAsync(credentials, password: replacement, returnTo: "/api/v1/auth/me"))
-            Check(changed.StatusCode == HttpStatusCode.SeeOther, "Producer evidence confirms the mutation happened even though the app reported unavailable");
+        using var credentials = scenario.CreateClient();
+        using var changed = await HttpJourney.LoginAsync(credentials, password: replacement, returnTo: "/api/v1/auth/me");
+        Check(changed.StatusCode == HttpStatusCode.SeeOther, "Producer evidence confirms the reported uncertain reset happened");
         CheckProtocol(await Observations(controls));
     }
 
@@ -598,9 +606,13 @@ public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
         CheckProtocol(observed);
     }
 
-    private static Task<HttpResponseMessage> PasswordForm(HttpClient browser, string csrf, string replacement) =>
+    private static Task<HttpResponseMessage> StartPasswordForm(HttpClient browser, string csrf) =>
         HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/profile/password", new()
-        { ["_csrf"] = csrf, ["currentPassword"] = "test-password", ["newPassword"] = replacement, ["confirmPassword"] = replacement });
+        { ["_csrf"] = csrf, ["currentPassword"] = "test-password" });
+
+    private static Task<HttpResponseMessage> CompletePasswordForm(HttpClient browser, string csrf, string replacement) =>
+        HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/profile/password/complete", new()
+        { ["_csrf"] = csrf, ["code"] = "123456", ["newPassword"] = replacement, ["confirmPassword"] = replacement });
 
     private static async Task PasswordUnavailable(HttpResponseMessage response, string replacement)
     {
@@ -623,17 +635,17 @@ public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
             "The preserved PAT resolves its own owning grant and profile across replicas");
     }
 
-    private static async Task PasswordError(HttpClient browser, string csrf, string currentPassword, string newPassword, string confirmPassword, string error)
+    private static async Task PasswordError(HttpClient browser, string csrf, bool complete, Dictionary<string, string> fields, string error)
     {
-        using var rejected = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/profile/password", new()
-        { ["_csrf"] = csrf, ["currentPassword"] = currentPassword, ["newPassword"] = newPassword, ["confirmPassword"] = confirmPassword });
+        fields["_csrf"] = csrf;
+        using var rejected = await HttpJourney.PostFormAsync(browser, "/api/v1/dashboard/profile/password" + (complete ? "/complete" : ""), fields);
         Check(rejected.StatusCode == HttpStatusCode.SeeOther && rejected.Headers.Location?.OriginalString == "/profile?tab=security&error=" + Uri.EscapeDataString(error),
-            "Native password management reports its known safe validation error: " + error);
+            "The canonical password form reports its known safe validation error: " + error);
         using var profile = await browser.GetAsync(rejected.Headers.Location);
         Check(profile.StatusCode == HttpStatusCode.OK, "A rejected password form retains the current browser session");
         var html = await profile.Content.ReadAsStringAsync();
         Check(html.Contains(error, StringComparison.Ordinal) && !html.Contains("Secret vendor payload", StringComparison.Ordinal),
-            "The rendered native profile exposes only the known safe error");
+            "The native profile exposes only the known safe error");
     }
 
     private static async Task<Uri> Authorize(HttpClient browser, HttpClient producer)

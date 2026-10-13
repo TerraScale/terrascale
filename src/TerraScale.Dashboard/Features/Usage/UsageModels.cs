@@ -23,7 +23,7 @@ public sealed record UsageSelection(AccountContext Context, string Range, string
         return range switch { "1h" => ("hour", hour), "24h" => ("hour", hour.AddHours(-23)), "30d" => ("day", new DateTimeOffset(utc.Date, TimeSpan.Zero).AddDays(-29)), _ => ("hour", hour.AddHours(-167)) };
     }
 }
-public enum UsageSourceState { Measured, NotMetered, Unauthorized, Unavailable, NoProducer }
+public enum UsageSourceState { Measured, NotMetered, Unauthorized, Unavailable, NoProducer, Restricted, QueryTooExpensive }
 public sealed record UsagePeriod(DateTimeOffset From, DateTimeOffset To, string Granularity, long Reads, long Writes);
 public sealed record UsageReading(string ProjectId, string DatabaseId, long LogicalBytes, long Documents, UsagePeriod Period, IReadOnlyList<ActivityPoint> Series, IReadOnlyList<UsageReading> Items);
 public sealed record UsageObservation(UsageSourceState State, UsageReading? Reading = null);

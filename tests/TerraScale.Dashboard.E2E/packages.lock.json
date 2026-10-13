@@ -69,6 +69,11 @@
         "resolved": "10.0.10",
         "contentHash": "rfZA1RjR021RPqSmIPovfz2aOd79TGqJ9BengbjnzIISOVwjLmuSDnhCMmiY/1c6iYvGolQ1iNGzkav0u11XEA=="
       },
+      "Microsoft.OpenApi": {
+        "type": "Transitive",
+        "resolved": "2.12.0",
+        "contentHash": "0xB/be+f6qYOhvQPUrVsLrau+fkowYv6gt9RIkajMhwT7sZnqtcA797yW3bS5kgSje+AQW4xZgyLnW641YFioQ=="
+      },
       "Microsoft.Testing.Extensions.CodeCoverage": {
         "type": "Transitive",
         "resolved": "18.12.0",
@@ -198,10 +203,12 @@
         "type": "Project",
         "dependencies": {
           "Cronos": "[0.13.0, )",
+          "Microsoft.AspNetCore.OpenApi": "[10.0.12, )",
           "ModelContextProtocol.AspNetCore": "[2.2.0, )",
           "RazorSlices": "[0.12.1, )",
+          "Scalar.AspNetCore": "[2.18.0, )",
           "Stripe.net": "[53.0.0, )",
-          "TerraScale.DotNet": "[0.1.0-dashboard.g130925898daf0207134d9582b7b672a5a1c3233b, )"
+          "TerraScale.DotNet": "[0.0.3, )"
         }
       },
       "Cronos": {
@@ -209,6 +216,15 @@
         "requested": "[0.13.0, )",
         "resolved": "0.13.0",
         "contentHash": "Nkve+Yi0+ol3ntSBRHeW0ka9cJQ8vndSUvvkXqF9LVqwpoqWueyxu/HS275r98RDOmF7/mzRnZW5XXUBXob+TA=="
+      },
+      "Microsoft.AspNetCore.OpenApi": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.12, )",
+        "resolved": "10.0.12",
+        "contentHash": "7RnQ/UKn+kK3JDLmTpW+vVqNErWthGPAVAy1aIiBzv4ucQ6g9NFvOJUuT0PHcpvcJxGVxctMxj6t+NESWMrgHQ==",
+        "dependencies": {
+          "Microsoft.OpenApi": "[2.12.0, 3.0.0)"
+        }
       },
       "ModelContextProtocol.AspNetCore": {
         "type": "CentralTransitive",
@@ -225,6 +241,12 @@
         "resolved": "0.12.1",
         "contentHash": "jjgUCvKVbfpjQWJNR0dmRx9dQ1zQ2LHhSq4OTee9t3W6S/ZWyp5bxc4xK7uNuLCzF1/i7/u1WfqVc822X4Sd3Q=="
       },
+      "Scalar.AspNetCore": {
+        "type": "CentralTransitive",
+        "requested": "[2.18.0, )",
+        "resolved": "2.18.0",
+        "contentHash": "wwI3khcYNM7oL6axr4a41G29fJYOS3ckusgYZ4NiIccL8Amh2LOeu4HSK1SrQWiMJNrgoFqyWfDkOkunQCiRDw=="
+      },
       "Stripe.net": {
         "type": "CentralTransitive",
         "requested": "[53.0.0, )",
@@ -237,9 +259,9 @@
       },
       "TerraScale.DotNet": {
         "type": "CentralTransitive",
-        "requested": "[0.1.0-dashboard.g130925898daf0207134d9582b7b672a5a1c3233b, )",
-        "resolved": "0.1.0-dashboard.g130925898daf0207134d9582b7b672a5a1c3233b",
-        "contentHash": "Q6I9jkJrime6s+aJzoFiICcacmL+00HDLWmzCMUbwGtGWb6Fxy9KEWKOSRSCj9J27PnOwG95Y2Uv7Mek8jsjKQ==",
+        "requested": "[0.0.3, )",
+        "resolved": "0.0.3",
+        "contentHash": "KI8tx303PiuGi5VAFhFhBhiZCrGpNIJ3RhpVoETRiMdcE5kQNoaxZnlvVVpK1TASg6wfu0PlbXQ9lk5VItfgnA==",
         "dependencies": {
           "NUlid": "1.7.3"
         }

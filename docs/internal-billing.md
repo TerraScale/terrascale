@@ -3,17 +3,18 @@
 The `terrascale` organization uses the hidden **TerraScale Internal** plan.
 Usage comes from TerraBase's usage API
 (`src/TerraScale.Dashboard/Features/Usage/UsageBackend.cs`
-calls it over HTTP because the pinned ts-dotnet SDK has no usage client); the
+calls the canonical project usage route through ts-dotnet); the
 dashboard owns the plan, estimate and report-only cap. The cap never
 suspends projects, databases or API keys.
 Internal billing cannot enter Stripe checkout or accept Stripe projections.
 
 ## Configure the existing organization
 
-Run the command where OCI Vault has delivered the dashboard identity
-(`/run/secrets/terrascale/dashboard.json`). It needs an existing platform
-admin and the exact organization ID. The command prints a `/cli/approve` link
-and user code on `https://dashboard.terrascale.tech`; the admin named by
+Run the command with the dashboard's configured environment credentials,
+delivered through Fly secrets in production. It needs an existing platform
+admin who is a member of the target organization and the exact organization ID.
+The command prints a `/cli/approve` link
+and user code on `https://dash.terrascale.tech`; the admin named by
 `--admin-email` approves it in the browser. The command revokes that access
 token when it ends. Configuration requires the active projects
 `ts-dashboard`, `ts-auth`, `ts-router`, `ts-status`, `ts-orchestrator`, `ku` and
@@ -53,8 +54,10 @@ These best-effort counters are for dogfooding, not settlement-grade invoices.
 
 The UTC month starts at midnight on the first day. The dashboard sums every
 project's windowed usage, including projects added later. Project snapshots
-can have different endpoints; the estimate ends at the latest measured
-observation within that month. If any project is
+can have different endpoints; the estimate retains the latest producer-reported
+UTC day boundary within that month, at most the rounded end of the current UTC
+day. This boundary includes the producer's partial current-day bucket, not an
+observation timestamp. If any project is
 missing, unavailable or lacks a windowed period, the bill and cap evaluation
 are unavailable; partial usage never becomes a zero bill. `ts-status` keeps
 its approved D1 storage exception; D1 activity is not TerraBase usage.

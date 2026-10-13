@@ -46,10 +46,12 @@ public static class InvitationEndpoints
         http.Response.Headers.CacheControl = "no-store";
         // Retain the origin on native form POSTs without exposing the token path.
         http.Response.Headers["Referrer-Policy"] = "strict-origin";
-        var pending = await invitations.FindAsync(token, http.RequestAborted);
+        // ts-auth looks an invitation up only for a signed-in holder of its token.
+        var session = await sessions.ReadAsync(http);
+        var pending = await invitations.FindAsync(session, token, http.RequestAborted);
         var slice = InvitationView.Create(new(new("Organization invitation", DocumentModel.NonceFor(http)), Csrf.Token(http), token,
-            pending, await sessions.ReadAsync(http), error));
-        slice.StatusCode = pending is null ? 404 : status;
+            pending, session, error));
+        slice.StatusCode = pending is null && session is not null ? 404 : status;
         return slice;
     }
 }

@@ -183,7 +183,7 @@ public sealed partial class StripeBilling
 
     private static string PaymentOutcome(string path, string outcome)
     {
-        var uri = new Uri("https://dashboard.terrascale.tech" + path);
+        var uri = new Uri(Origin + path);
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
         query["payment"] = outcome;
         return Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(uri.AbsolutePath, query);

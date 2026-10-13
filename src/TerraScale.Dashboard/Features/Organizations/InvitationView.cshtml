@@ -2,7 +2,12 @@
 @implements IUsesLayout<TerraScale.Dashboard.UI.Slices.Document, DocumentModel>
 @inject AssetUrls Assets
 <main class="ts-auth"><section class="ts-auth-card" aria-labelledby="invitation-title"><div class="ts-auth-brand"><img class="ts-brand-logo" src="@Assets.Url("brand/logo-terrascale-blue.svg")" alt="TerraScale" decoding="async" /></div>
-@if (Model.Pending is not { } pending)
+@if (Model.Pending is null && Model.Session is null)
+{
+    <div class="ts-auth-heading"><p class="ts-eyebrow">Organization invitation</p><h1 class="ts-auth-title" id="invitation-title">Sign in to view this invitation</h1><p class="ts-auth-subtitle">Sign in with the invited email to see and answer it. New to TerraScale? Create an account with that email, then open this link again.</p></div>
+    <div class="ts-stack-sm"><a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="@Model.Login">Sign in</a><a class="ts-btn ts-btn-secondary ts-btn-lg ts-btn-block" href="/onboarding">Create account</a></div>
+}
+else if (Model.Pending is not { } pending)
 {
     <div class="ts-auth-heading"><p class="ts-eyebrow">Organization invitation</p><h1 class="ts-auth-title" id="invitation-title">This invitation is no longer valid</h1><p class="ts-auth-subtitle">The link has expired, was canceled, or has already been used. Ask an organization owner to send you a new invitation.</p></div>
     <a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="@(Model.Session is null ? "/login" : "/")">@(Model.Session is null ? "Sign in" : "Go to dashboard")</a>

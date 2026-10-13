@@ -24,7 +24,8 @@ nice -n 19 make build      # locked Release build
 nice -n 19 make lint       # CSS check, SDK/E2E guards, dotnet format
 nice -n 19 make dev        # development host with hot reload
 nice -n 19 make demo       # test-only demo host
-nice -n 19 make test-e2e   # all TUnit E2E journeys
+nice -n 19 make check      # required build, lint, security and Fast
+nice -n 19 make test-slow  # independent, non-blocking Slow journeys
 ```
 More: [development](docs/development.md), [migration status](docs/csharp-migration.md),
 [zero-configuration contract](docs/zero-configuration.md).

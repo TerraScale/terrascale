@@ -9,6 +9,7 @@ using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.UI;
 using TerraScale.DotNet.TerraBase;
+using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Features.Databases;
 
@@ -17,7 +18,7 @@ public static class DatabaseEndpoints
     public static IServiceCollection AddDatabaseFeatures(this IServiceCollection services) => services
         .AddSingleton<IDatabaseBackend, DatabaseBackend>().AddSingleton<DatabaseService>()
         .AddSingleton<DocumentBackend>().AddSingleton<IDocumentBackend>(services => services.GetRequiredService<DocumentBackend>())
-        .AddSingleton<IDataCredentialRegistry>(services => services.GetRequiredService<DocumentBackend>()).AddSingleton<DataService>().AddSingleton<SavedQueryService>()
+        .AddSingleton<DataService>().AddSingleton<SavedQueryService>().AddSingleton<DocumentChangesService>()
         .AddSingleton<ApiKeyService>().AddSingleton<IWorkspacePlacement, WorkspacePlacement>()
         .AddSingleton<IOnboardingProjectProvisioner, OnboardingProjectProvisioner>()
         .AddSingleton<IBackupBackend, BackupBackend>().AddSingleton<BackupService>();
@@ -105,18 +106,32 @@ public static class DatabaseEndpoints
         try { choices = await backend.RegionsAsync(http.RequestAborted); }
         catch (HttpRequestException) { regionsError = "Region discovery is unavailable. Try again shortly."; }
         var contents = new List<CollectionStats>();
+        var contentsAvailable = true;
         if (context.Project is not null)
         {
             foreach (var database in context.Project.Databases.Values)
             {
-                try { contents.AddRange(await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), database.Id, http.RequestAborted)); }
-                catch (HttpRequestException) { if (error.Length == 0) error = "Database counts are unavailable. The data plane did not answer."; }
+                try
+                {
+                    var reported = await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), database.Id, http.RequestAborted);
+                    DatabaseService.ValidateContents(reported);
+                    contents.AddRange(reported);
+                    // Collection names can repeat across databases; validate only the combined totals.
+                    _ = contents.Sum(item => item.Documents);
+                    _ = contents.Sum(item => item.Bytes);
+                }
+                catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested &&
+                    (failure is HttpRequestException or IOException or System.Text.Json.JsonException or OverflowException || KnownFailure(failure)))
+                {
+                    contentsAvailable = false;
+                    if (error.Length == 0) error = "Database counts are unavailable. The data plane did not answer.";
+                }
             }
         }
         var search = http.Request.Query["q"].ToString().Trim();
         var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
         var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
-        var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regions, regionsError));
+        var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regions, regionsError) { ContentsAvailable = contentsAvailable });
         result.StatusCode = status;
         return result;
     }
@@ -159,8 +174,14 @@ public static class DatabaseEndpoints
     }
 
     internal static bool WantsHtml(HttpContext http) => http.Request.GetTypedHeaders().Accept?.Any(value => value.MediaType.Value == "text/html") == true;
-    internal static bool KnownFailure(Exception error) => error is AccountAccessException or TerraBaseValidationException or TerraBaseAuthenticationException or TerraBaseForbiddenException or TerraBaseNotFoundException or TerraBaseConflictException or TerraBasePreconditionFailedException or TerraBaseUnavailableException or DatabaseProviderException;
-    internal static int Status(Exception error) => error switch { AccountAccessException access => access.StatusCode, DatabaseWrongRegionException => 409, HttpRequestException { StatusCode: { } status } => (int)status, _ => 503 };
-    internal static string Message(Exception error) => error is AccountAccessException or DatabaseWrongRegionException ? error.Message : Status(error) switch { 401 => "The data plane requires valid authentication.", 404 => "The requested resource is unavailable.", 403 => "Organization access is required.", 409 => "The request conflicts with the current database state.", 412 => "The document changed. Reload it before saving again.", 400 or 422 => "The data plane refused the submitted input.", _ => "The data plane could not complete the request. Try again shortly." };
-    internal static IResult Failure(Exception error) => Results.Problem(Message(error), statusCode: Status(error));
+    internal static bool KnownFailure(Exception error) => error is AccountAccessException or TerraScaleAuthException or TerraBaseValidationException or TerraBaseAuthenticationException or TerraBaseForbiddenException or TerraBaseNotFoundException or TerraBaseConflictException or TerraBasePreconditionFailedException or TerraBaseUnavailableException or DatabaseProviderException;
+    internal static int Status(Exception error) => error switch { AccountAccessException access => access.StatusCode, DatabaseWrongRegionException => 409, HttpRequestException { StatusCode: { } status } when (int)status is >= 400 and <= 599 => (int)status, _ => 503 };
+    internal static string Message(Exception error) => error is AccountAccessException or DatabaseWrongRegionException or DocumentWriteOutcomeUnknownException ? error.Message : Status(error) switch { 401 => "The data plane requires valid authentication.", 404 => "The requested resource is unavailable.", 403 => "Organization access is required.", 409 => "The request conflicts with the current database state.", 412 => "The document changed. Reload it before saving again.", 400 or 422 => "The data plane refused the submitted input.", _ => "The data plane could not complete the request. Try again shortly." };
+    internal static IResult Failure(Exception error) => Results.Problem(Message(error), statusCode: Status(error),
+        extensions: error is DocumentWriteOutcomeUnknownException unknown ? new Dictionary<string, object?>
+        {
+            ["operationId"] = unknown.OperationId,
+            ["documentId"] = unknown.DocumentId,
+            ["outcome"] = "unknown"
+        } : null);
 }

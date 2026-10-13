@@ -12,10 +12,11 @@ namespace TerraScale.Dashboard.E2E;
 
 // External test controls prepare provider-owned rows and inject storage/network
 // failures. Journeys exercise the running app and its public CLI entry only.
-sealed class InternalBillingProducer(TestState state, Func<DateTimeOffset> now, Func<string> subject,
+sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, Func<DateTimeOffset> now, Func<string> subject,
     Action<OrganizationRecord>? seedOrganization = null) : IDashboardState
 {
     private readonly ConcurrentQueue<object> usageRequests = new();
+    private readonly ConcurrentQueue<object> scopeRequests = new();
     private readonly ConcurrentQueue<string> stripeRequests = new();
     private readonly ConcurrentQueue<object> writes = new();
     private string usageMode = "coherent";
@@ -170,9 +171,11 @@ sealed class InternalBillingProducer(TestState state, Func<DateTimeOffset> now, 
             foreach (var name in new[] { "ts-dashboard", "ts-auth", "ts-router", "ts-status", "ts-orchestrator", "ku", "ts-reviewer" })
             {
                 var project = new ProjectRecord { Id = ids.NewId(), OrganizationId = organization.Id, Name = name, Slug = name, Region = "GRU", Regions = ["GRU"], CreatedAt = now() };
+                var database = new DatabaseRecord { Id = ids.NewId(), ProjectId = project.Id, Name = "app", Region = "GRU", Regions = ["GRU"], CreatedAt = now() };
+                project.Databases[database.Id] = database;
                 organization.Projects[project.Id] = project;
             }
-            lock (TestWorkspace.Gate) TestWorkspace.Organizations[organization.Id] = TestWorkspace.Clone(organization);
+            lock (workspace.Gate) workspace.Organizations[organization.Id] = TestWorkspace.Clone(organization);
             await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), TerraBasePrecondition.Absent, cancellationToken);
             seedOrganization?.Invoke(organization);
             account.OrganizationIds.Add(organization.Id);
@@ -183,52 +186,92 @@ sealed class InternalBillingProducer(TestState state, Func<DateTimeOffset> now, 
         return Results.Json(new { targets });
     }
 
-    public async Task<IResult> UsageAsync(HttpContext http, string? activeSubject)
+    // TerraBase GET /v1/projects/{project}/usage (contracts/terrabase/fixtures/project-usage.json). The dispatcher has already
+    // validated the exchanged project bearer and supplies its principal, organization and scopes.
+    public async Task<IResult> UsageAsync(HttpContext http, string principal, string organizationId, string projectId, IReadOnlyList<string> scopes)
     {
-        if (http.Request.Method != "GET" || activeSubject is null || activeSubject != subject()) return Results.Unauthorized();
-        var parts = http.Request.Path.Value!.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (parts is not ["v1", "management", "organizations", var organizationId, "projects", var projectId, "usage"] ||
-            http.Request.Headers["X-TerraBase-User-Id"] != activeSubject || http.Request.Headers["X-TerraBase-Organization-Id"] != organizationId)
-            return Results.BadRequest(new { error = "The usage producer requires exact native principal and organization scope." });
-        if (!state.Items.TryGetValue(AccountService.OrganizationsCollection + "/" + organizationId, out var document)) return Results.NotFound();
-        var organization = AccountService.Read<OrganizationRecord>(document);
-        if (!organization.ContainsMember(activeSubject) || TestWorkspace.ScopedRole(activeSubject, organizationId).Length == 0 ||
-            !organization.Projects.TryGetValue(projectId, out var project) || project.OrganizationId != organizationId) return Results.StatusCode(403);
-        var query = http.Request.Query;
-        if (query.Count != 2 || query["granularity"].ToString() != "day" ||
-            !DateTimeOffset.TryParse(query["from"], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var from) || from.Offset != TimeSpan.Zero)
-            return Results.BadRequest(new { error = "Invalid exact usage period." });
-        usageRequests.Enqueue(new { organizationId, projectId, userId = activeSubject, granularity = "day", from });
-        var month = new DateTimeOffset(now().Year, now().Month, 1, 0, 0, 0, TimeSpan.Zero);
-        var end = now() < from.AddMonths(1) ? now() : from.AddMonths(1);
+        if (http.Request.Method != "GET" || http.Request.Path.Value!.Split('/', StringSplitOptions.RemoveEmptyEntries) is not ["v1", "projects", var routed, "usage"] || routed != projectId)
+            return Error(HttpStatusCode.NotFound, "not_found", "Only project usage is produced by this fixture.");
+        if (!scopes.Contains("databases:read")) return Error(HttpStatusCode.Forbidden, "forbidden", "databases:read is required.");
+        // ts-auth owns identity, membership and projects; dashboard storage owns the database references.
+        OrganizationRecord? live;
+        lock (workspace.Gate) live = workspace.Organizations.GetValueOrDefault(organizationId) is { } found ? TestWorkspace.Clone(found) : null;
+        if (live is null || !live.Projects.TryGetValue(projectId, out var project) || project.OrganizationId != organizationId)
+            return Error(HttpStatusCode.NotFound, "not_found", "Project not found.");
+        if (workspace.ScopedRole(principal, organizationId).Length == 0) return Error(HttpStatusCode.Forbidden, "forbidden", "Not a member of the organization.");
+        var settings = state.Items.GetValueOrDefault(AccountService.OrganizationsCollection + "/" + organizationId)?.Document.Deserialize<OrganizationRecord>();
+        var databases = settings?.Projects.GetValueOrDefault(projectId)?.Databases.Values.Where(database => database.ProjectId == projectId).OrderBy(database => database.CreatedAt).ToArray() ?? [];
+        if (!Window(http.Request.Query, now(), out var granularity, out var from, out var to))
+            return Error(HttpStatusCode.BadRequest, "invalid_request", "from and to must be RFC 3339 instants; granularity must be hour or day.");
+        (granularity == "day" ? usageRequests : scopeRequests).Enqueue(new { organizationId, projectId, userId = principal, granularity, from, to });
         if (usageGate is { } gate)
         {
             Interlocked.Increment(ref pausedUsage);
             await gate.Task.WaitAsync(http.RequestAborted);
         }
-        var ordinal = organization.Projects.Keys.ToList().IndexOf(projectId);
-        if (usageMode == "offline") return Results.StatusCode(503);
-        if (usageMode == "partial" && ordinal == 0) return Results.NotFound();
-        long writes = ordinal == 0 ? 75_000_000 : 0;
-        long logicalBytes = ordinal == 0 ? (5L << 40) + (2L << 30) : 0;
-        if (usageMode == "overflow" && ordinal < 2) writes = long.MaxValue;
+        var ordinal = live.Projects.Keys.ToList().IndexOf(projectId);
+        if (usageMode == "offline") return Error(HttpStatusCode.ServiceUnavailable, "unavailable", "Usage is unavailable.");
+        if (usageMode == "partial" && ordinal == 0) return Error(HttpStatusCode.NotFound, "not_found", "Project usage not found.");
+        var period = new
+        {
+            from = usageMode == "wrong-month" ? from.AddMonths(-1) : from,
+            to = usageMode == "incoherent-end" && ordinal == 0 ? to.AddSeconds(1) : to,
+            granularity
+        };
+        // All metered counts sit in the first database's first bucket of the window, so series, items and totals agree.
+        var items = databases.Select((database, index) =>
+        {
+            long reads = ordinal == 0 && index == 0 ? 123_456 : 0;
+            long writes = usageMode == "overflow" && ordinal < 2 && index == 0 ? long.MaxValue : ordinal == 0 && index == 0 ? 75_000_000 : 0;
+            long bytes = ordinal == 0 && index == 0 ? (5L << 40) + (2L << 30) : 0;
+            return new
+            {
+                databaseId = database.Id,
+                storageBytes = bytes,
+                logicalBytes = bytes,
+                collections = bytes > 0 ? 1 : 0,
+                documents = bytes > 0 ? 17 : 0,
+                reads,
+                writes,
+                period = new { period.from, period.to, period.granularity, reads, writes },
+                series = reads > 0 || writes > 0 ? new[] { new { start = from, reads, writes } } : []
+            };
+        }).ToArray();
+        long totalReads = items.Sum(item => item.reads), totalWrites = items.Sum(item => item.writes), totalBytes = items.Sum(item => item.logicalBytes);
         return Results.Json(new
         {
             projectId = usageMode == "foreign-project" ? "foreign-project" : projectId,
-            databaseId = "",
-            logicalBytes,
-            documents = ordinal == 0 ? 17 : 0,
-            period = new
-            {
-                from = usageMode == "wrong-month" ? month.AddMonths(-1) : from,
-                to = usageMode == "incoherent-end" && ordinal == 0 ? month.AddMonths(1).AddSeconds(1) : end,
-                granularity = "day",
-                reads = ordinal == 0 ? 123_456 : 0,
-                writes
-            },
-            series = Array.Empty<object>(),
-            items = Array.Empty<object>()
+            databases = items.Length,
+            storageBytes = totalBytes,
+            logicalBytes = totalBytes,
+            documents = items.Sum(item => item.documents),
+            reads = totalReads,
+            writes = totalWrites,
+            period = new { period.from, period.to, period.granularity, reads = totalReads, writes = totalWrites },
+            series = totalReads > 0 || totalWrites > 0 ? new[] { new { start = from, reads = totalReads, writes = totalWrites } } : [],
+            items
         });
+    }
+
+    private static IResult Error(HttpStatusCode status, string code, string message) => Results.Json(new { error = new { code, message } }, statusCode: (int)status);
+
+    // TerraBase UsageWindow: UTC hour or day buckets, from rounded down, to (default now) rounded up, at most 840 hours or 400 days.
+    private static bool Window(IQueryCollection query, DateTimeOffset current, out string granularity, out DateTimeOffset from, out DateTimeOffset to)
+    {
+        string[] formats = ["yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'", "yyyy-MM-dd'T'HH:mm:sszzz", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFzzz"];
+        granularity = query["granularity"].ToString() is "" or "hour" ? "hour" : query["granularity"].ToString();
+        from = to = default;
+        if (granularity is not ("hour" or "day")) return false;
+        DateTimeOffset requestedTo = current, requestedFrom = default;
+        if (query.TryGetValue("to", out var rawTo) && !DateTimeOffset.TryParseExact(rawTo, formats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out requestedTo)) return false;
+        if (query.TryGetValue("from", out var rawFrom) && (!DateTimeOffset.TryParseExact(rawFrom, formats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out requestedFrom) || requestedFrom >= requestedTo)) return false;
+        var ticks = granularity == "day" ? TimeSpan.TicksPerDay : TimeSpan.TicksPerHour;
+        var end = (requestedTo.UtcTicks + ticks - 1) / ticks;
+        var first = query.ContainsKey("from") ? requestedFrom.UtcTicks / ticks : end - (granularity == "hour" ? 24 : 30);
+        if (end - first < 1 || end - first > (granularity == "hour" ? 840 : 400)) return false;
+        from = new DateTimeOffset(first * ticks, TimeSpan.Zero);
+        to = new DateTimeOffset(end * ticks, TimeSpan.Zero);
+        return true;
     }
 
     public void ObserveStripe(HttpRequestMessage request) => stripeRequests.Enqueue(request.Method + " " + request.RequestUri!.AbsolutePath);
@@ -247,6 +290,7 @@ sealed class InternalBillingProducer(TestState state, Func<DateTimeOffset> now, 
         now = now(),
         usageMode,
         usageRequests = usageRequests.ToArray(),
+        scopeRequests = scopeRequests.ToArray(),
         stripeRequests = stripeRequests.ToArray(),
         pausedWrites,
         pausedUsage,

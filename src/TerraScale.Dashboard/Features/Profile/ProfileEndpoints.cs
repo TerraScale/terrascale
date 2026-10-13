@@ -6,6 +6,8 @@ namespace TerraScale.Dashboard.Features.Profile;
 
 public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", string Error = "", string Status = "", IReadOnlyList<ProfileToken>? Tokens = null, CreatedProfileToken? CreatedToken = null, IReadOnlyList<DashboardSessionInfo>? Sessions = null)
 {
+    public string? DraftName { get; init; }
+    public string? DraftPhone { get; init; }
     public string[] Permissions
     {
         get
@@ -35,7 +37,8 @@ public static class ProfileEndpoints
             if (tab is not ("security" or "sessions" or "access-tokens")) tab = "profile";
             var list = tab == "access-tokens" ? await tokens.ListAsync(context, http.RequestAborted) : null;
             var active = await sessions.ListAsync(http, context.Session);
-            return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Error: PasswordError(http.Request.Query["error"].ToString()), Tokens: list, Sessions: active));
+            return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Error: PasswordError(http.Request.Query["error"].ToString()),
+                Status: http.Request.Query["status"] == "code-sent" ? "We emailed a code to your address. Enter it with your new password." : "", Tokens: list, Sessions: active));
         });
         endpoints.MapPost("/api/v1/dashboard/profile", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
             await SaveAsync(http, sessions, accounts, false));
@@ -47,7 +50,8 @@ public static class ProfileEndpoints
     private static string PasswordError(string value)
     {
         if (value is "Current password is incorrect." or "Use at least 12 characters." or
-            "Use a password with 1024 bytes or fewer." or "Passwords do not match." or "Choose a different password.") return value;
+            "Use a password with 1024 bytes or fewer." or "Passwords do not match." or "Choose a different password." or
+            "The code is incorrect or has expired.") return value;
         const string prefix = "Too many sign-in attempts. Try again in ";
         if (value.StartsWith(prefix, StringComparison.Ordinal) && value.EndsWith(" seconds.", StringComparison.Ordinal) &&
             int.TryParse(value.AsSpan(prefix.Length, value.Length - prefix.Length - 9), out var seconds) && seconds is >= 1 and <= 300 &&
@@ -78,7 +82,11 @@ public static class ProfileEndpoints
         }
         catch (AccountAccessException error)
         {
-            var slice = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: error.Message, Sessions: await sessions.ListAsync(http, context.Session)));
+            var slice = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: error.Message, Sessions: await sessions.ListAsync(http, context.Session))
+            {
+                DraftName = language ? null : form["name"].ToString(),
+                DraftPhone = language ? null : form["phoneNumber"].ToString()
+            });
             slice.StatusCode = error.StatusCode;
             return slice;
         }

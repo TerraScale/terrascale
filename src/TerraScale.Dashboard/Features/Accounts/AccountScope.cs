@@ -13,6 +13,7 @@ public static class AccountScope
         var organization = fresh.Organizations.SingleOrDefault(item => item.Id == context.Organization?.Id)
             ?? throw new AccountAccessException("Organization is unavailable.", 404);
         if (organization.RoleFor(fresh.UserId).Length == 0) throw new AccountAccessException("Organization membership is required.");
+        if (organization.Id != fresh.Organization?.Id) await accounts.HydrateAccessAsync(organization, fresh.Session, cancellationToken);
         var project = context.Project is null ? null : organization.Projects.GetValueOrDefault(context.Project.Id);
         if (requireProject && project is null || context.Project is not null && project is null ||
             project is not null && project.OrganizationId != organization.Id)

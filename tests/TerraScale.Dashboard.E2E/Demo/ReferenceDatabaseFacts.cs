@@ -145,7 +145,6 @@ internal sealed class ReferenceDatabaseBackend(IDatabaseBackend inner, Reference
     { var contents = await inner.CollectionsAsync(scope, home, id, ct); facts.ValidateMeasurements(scope, home, id, contents); return contents; }
     public Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken ct) => inner.RegionsAsync(ct);
     public Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken ct) => inner.ListAsync(scope, home, ct);
-    public Task RegisterAsync(DatabaseScope scope, DatabaseRegion region, CancellationToken ct) => inner.RegisterAsync(scope, region, ct);
     public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, CancellationToken ct) => inner.CreateAsync(scope, name, placement, ct);
     public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string id, string name, CancellationToken ct) => inner.BranchAsync(scope, home, id, name, ct);
     public Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct) => inner.DeleteAsync(scope, home, id, ct);
@@ -154,7 +153,4 @@ internal sealed class ReferenceDatabaseBackend(IDatabaseBackend inner, Reference
     public Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct) => inner.IndexesAsync(scope, home, id, ct);
     public Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string id, string collection, IReadOnlyList<string> fields, CancellationToken ct) => inner.CreateIndexAsync(scope, home, id, collection, fields, ct);
     public Task DropIndexAsync(DatabaseScope scope, DatabaseRegion home, string id, string name, CancellationToken ct) => inner.DropIndexAsync(scope, home, id, name, ct);
-    public Task<IReadOnlyList<ProjectCredential>> CredentialsAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken ct) => inner.CredentialsAsync(scope, home, ct);
-    public Task<CreatedProjectCredential> CreateCredentialAsync(DatabaseScope scope, DatabaseRegion home, string name, IReadOnlyList<string> scopes, string? id, CancellationToken ct) => inner.CreateCredentialAsync(scope, home, name, scopes, id, ct);
-    public Task RevokeCredentialAsync(DatabaseScope scope, DatabaseRegion home, string id, CancellationToken ct) => inner.RevokeCredentialAsync(scope, home, id, ct);
 }

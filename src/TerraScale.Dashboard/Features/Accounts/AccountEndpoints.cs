@@ -1,10 +1,11 @@
 using TerraScale.Dashboard.Features.Auth;
+using System.Text.Json.Serialization;
 
 namespace TerraScale.Dashboard.Features.Accounts;
 
 public static class AccountEndpoints
 {
-    public static IServiceCollection AddAccountFeatures(this IServiceCollection services) => services.AddSingleton<IWorkspaceGateway, TsWorkspaceGateway>().AddSingleton<AccountService>();
+    public static IServiceCollection AddAccountFeatures(this IServiceCollection services) => services.AddSingleton<AccountService>();
 
     public static IEndpointRouteBuilder MapAccountFeatures(this IEndpointRouteBuilder endpoints)
     {
@@ -12,20 +13,13 @@ public static class AccountEndpoints
         {
             var context = await RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
-            return Results.Json(new
-            {
-                userId = context.UserId,
-                accountId = context.Account.Id,
-                name = context.Account.Name,
-                email = context.Account.Email,
-                phoneNumber = context.Account.Phone,
-                locale = context.Account.Locale,
-                onboardingCompleted = context.Account.OnboardingCompleted,
-                organizationId = context.Organization?.Id,
-                projectId = context.Project?.Id,
-                role = context.Role
-            });
-        });
+            return Results.Json(new AccountIdentityResponse(context.UserId, context.Account.Id,
+                context.Account.Name, context.Account.Email, context.Account.Phone, context.Account.Locale,
+                context.Account.OnboardingCompleted, context.Organization?.Id, context.Project?.Id, context.Role),
+                AccountContractJson.Default.AccountIdentityResponse);
+        }).WithGroupName("integration").WithName("getDashboardIdentity").WithTags("Session")
+            .WithSummary("Read the current dashboard session and workspace")
+            .Produces<AccountIdentityResponse>().Produces(StatusCodes.Status401Unauthorized);
         endpoints.MapPost("/api/v1/dashboard/switch-organization", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
             var session = await sessions.ReadAsync(http);
@@ -35,7 +29,11 @@ public static class AccountEndpoints
             try { await accounts.SwitchOrganizationAsync(session, form["organizationId"].ToString(), http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
             return AuthEndpoints.SeeOther(Csrf.LocalRedirect(form["returnUrl"]));
-        });
+        }).WithGroupName("integration").WithName("switchDashboardOrganization").WithTags("Workspace")
+            .WithSummary("Select an organization the current user can access")
+            .Accepts<SwitchOrganizationRequest>("application/x-www-form-urlencoded")
+            .Produces(StatusCodes.Status303SeeOther).Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized).ProducesProblem(StatusCodes.Status403Forbidden);
         endpoints.MapPost("/api/v1/dashboard/switch-project", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
             var session = await sessions.ReadAsync(http);
@@ -45,7 +43,11 @@ public static class AccountEndpoints
             try { await accounts.SwitchProjectAsync(session, form["projectId"].ToString(), http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
             return AuthEndpoints.SeeOther(Csrf.LocalRedirect(form["returnUrl"]));
-        });
+        }).WithGroupName("integration").WithName("switchDashboardProject").WithTags("Workspace")
+            .WithSummary("Select a project the current user can access")
+            .Accepts<SwitchProjectRequest>("application/x-www-form-urlencoded")
+            .Produces(StatusCodes.Status303SeeOther).Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized).ProducesProblem(StatusCodes.Status403Forbidden);
         return endpoints;
     }
 
@@ -58,3 +60,18 @@ public static class AccountEndpoints
 
     public static IResult LoginRedirect(HttpContext http) => Results.Redirect("/login?returnTo=" + Uri.EscapeDataString(http.Request.Path + http.Request.QueryString));
 }
+
+public sealed record AccountIdentityResponse(string UserId, string AccountId, string Name, string Email,
+    string PhoneNumber, string Locale, bool OnboardingCompleted, string? OrganizationId, string? ProjectId, string Role);
+
+public sealed record SwitchOrganizationRequest(
+    [property: JsonPropertyName("_csrf")] string Csrf, string OrganizationId, string? ReturnUrl);
+
+public sealed record SwitchProjectRequest(
+    [property: JsonPropertyName("_csrf")] string Csrf, string ProjectId, string? ReturnUrl);
+
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(AccountIdentityResponse))]
+[JsonSerializable(typeof(SwitchOrganizationRequest))]
+[JsonSerializable(typeof(SwitchProjectRequest))]
+internal sealed partial class AccountContractJson : JsonSerializerContext;
