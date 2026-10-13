@@ -185,7 +185,9 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(adminProjects.Contains("commandfor=\"create-project\"", StringComparison.Ordinal)).IsFalse();
         await Assert.That(adminProjects.Contains("commandfor=\"rename-project-", StringComparison.Ordinal)).IsFalse();
         await ErrorAsync(member, memberSecret, "rename_organization", new { organizationId = businessId, name = "Admin cannot rename" });
-        await ErrorAsync(owner, ownerSecret, "update_member_role", new { organizationId = businessId, userId = memberId, role = "viewer" });
+        // ts-auth offers a read-only viewer role.
+        await ToolAsync(owner, ownerSecret, "update_member_role", new { organizationId = businessId, userId = memberId, role = "viewer" });
+        await Assert.That(Organization(await ContextAsync(member, memberSecret), businessId).GetProperty("role").GetString()).IsEqualTo("viewer");
         using (var restoreMember = await HttpJourney.PostFormAsync(owner, "/__test/organization/members/role", new()
         { ["_csrf"] = ownerCsrf, ["userId"] = memberId, ["role"] = "member" }))
             await Assert.That(restoreMember.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
