@@ -1,6 +1,6 @@
 # Free replication reads for TerraBase (the ElectricSQL trick)
 
-- **Status:** plan, checked against `main` at `a537727b` (2026-10-13). Shape reads remain proposed; merged prerequisites are listed in section 2.
+- **Status:** plan, checked against `main` at `519c9ff9` (2026-10-13). Shape reads remain proposed; merged prerequisites are listed in section 2.
   Decisions are in section 7. No CDN (T2) is selected.
 - **Protocol:** v1. Handle domain `TB-SHAPE-HANDLE-V1`, handle prefix `h1-`, shape id domain `TB-SHAPE-V1`.
 - **Normative contract:** [`shape-reads.md`](shape-reads.md) defines the wire protocol and exact byte layouts.
@@ -34,8 +34,8 @@ point at `main`'s layout.
 6. **Committed-only until FR-25.** A chunk is sealed from committed rows, and every write transaction is FULL (#181).
    Until the remote-ack frontier exists (FR-25), a host loss can erase writes that were already published in a chunk.
    The contract says so (3.10). This plan does not claim host-loss durability.
-7. **Fix these first:** peer authentication (C1, FR-05) and per-origin stamp order (C7, FR-01). C3 is done (#165).
-8. **Work shape:** 33 open items in 7 waves (section 6). Items whose tests take at most 10 minutes go to Claude Haiku
+7. **Fix this first:** peer authentication (C1, FR-05). C3 is done (#165), and per-origin stamp order is done (#222).
+8. **Work shape:** 30 open items in 7 waves (section 6). Items whose tests take at most 10 minutes go to Claude Haiku
    5.5. The rest go to Claude Opus 5.5 (section 5).
 
 ---
@@ -69,6 +69,9 @@ Electric references: <https://electric.ax/docs/api/http> and <https://electric.a
 | #181: every write transaction syncs the WAL at commit | merged ([SqliteDatabaseStore.cs#L226](../../src/TerraBase/Engine/Sqlite/SqliteDatabaseStore.cs#L226)) | A committed row is locally durable on Turso, subject to FR-07 |
 | #184: new databases placed in at least two regions | merged | Cross-region resume is the normal path, not an edge case (3.7) |
 | #191: own CDC commit marker, `CommitMarker(Incarnation, ChangeId)` ([CommitResult.cs#L6](../../src/TerraBase/Engine/CommitResult.cs#L6)) | merged | FR-25 maps it to a feed sequence (3.4) |
+| #221: persistent feed sequence and derived shape storage (B1) | merged | FR-03 is done; `_tb_feed.seq` and the shape tables are persisted ([shape-storage.md](shape-storage.md)) |
+| #222: local origin stamps stay increasing across restarts (A2) | merged | FR-01 is done; removes the C7 prerequisite for vector resume |
+| #223: shape fan-out benchmark harness and baseline (B2) | merged | FR-06 is done; the baseline is measured against the current changes feed, before shape caching |
 | #207: opaque changes cursor with per-origin proofs ([ChangeCursor.cs](../../src/TerraBase/Features/Documents/ChangeCursor.cs)) | merged | Failover resume builds on it (3.7) |
 
 ### 2.2 Still open or not wired
@@ -78,7 +81,6 @@ Electric references: <https://electric.ax/docs/api/http> and <https://electric.a
 | Decision 0013a: success only after two regional durable copies ([0013a](decisions/0013a-remote-durable-acknowledgement.md)) | **proposed** (revision 4). Its write wait is not wired: `DocumentRoute.Durability` is still `"local_durable"` ([DocumentRoute.cs#L58](../../src/TerraBase/Features/Documents/DocumentRoute.cs#L58)) | Gates the frontier move from local to remote (3.4, FR-25) |
 | #211 `fix/feed-prefix-persisted` | open | Persisted prefix proofs across restarts, and replay to the issuing machine. Planned gate for resume (3.7) |
 | C1 peer RPCs unauthenticated | open | Blocks T1 headers and any shared caching (FR-05) |
-| C7 per-origin stamp order | open | Blocks vector resume (FR-01) |
 | #210 production deployment ([ci.yml](../../.github/workflows/ci.yml)) | merged: the deploy job is enabled again | Production deployment still requires the existing CI and live gates |
 
 ### 2.3 Read paths today
@@ -120,7 +122,6 @@ lookup", which was never built
 | C1 | Peer RPCs are unauthenticated; the network is the trust boundary ([Listeners.cs#L16-L18](https://github.com/TerraScale/terrascale/blob/f7d5c3c45a45c58495068f1874e4a0c7e5465608/src/TerraBase/Hosting/Listeners.cs#L16-L18)) | A forged write would be sealed and cached | FR-05 (blocks FR-24 shared headers) |
 | C2 | Acknowledged after the local commit (FULL since #181), with no remote wait | A published chunk can contain a write that a host loss later erases | FR-25; remote ack is item A3 |
 | C4 | A replicated collection drop deletes newer writes on the receiver ([Join.cs#L107-L125](https://github.com/TerraScale/terrascale/blob/f7d5c3c45a45c58495068f1874e4a0c7e5465608/src/TerraBase/Engine/Sqlite/SqliteStorageTransaction.Join.cs#L107-L125)) | Shape clients see deletes that anti-entropy later undoes. The handle rotates on drop, so clients refetch. The cost is churn, not wrong data | Not in this plan (lane A7) |
-| C7 | One origin's stamps can go backwards after a future remote stamp ([States.cs#L65-L66](https://github.com/TerraScale/terrascale/blob/f7d5c3c45a45c58495068f1874e4a0c7e5465608/src/TerraBase/Engine/Sqlite/SqliteStorageTransaction.States.cs#L65-L66)), and the clock is not persisted | Vector-cursor resume can skip events | FR-01 (lane A2) |
 
 ---
 
@@ -165,10 +166,16 @@ fields = organization ‖ project ‖ database ‖ incarnation ‖ replica_id �
   `incarnation` is the store incarnation, drawn on every create, copy, restore and rebuild.
 - `collection_name` and `collection_generation` identify the collection and its current create. Generation changes on
   drop or re-create.
-- `canonical_filter` is compact JSON of `where` (whitespace removed, member order kept). Empty when `where` is absent.
+- `canonical_filter` is the normalized compact UTF-8 JSON defined in [protocol section 2](shape-reads.md#2-route-and-validation):
+  order-independent flattened/sorted/deduplicated `and`/`or` (deterministically regrouped at 64 children), sorted/deduplicated
+  `in`/`nin` (singletons become `eq`/`ne`), negation aliases/double-negation removal, whole binary64 values in the int64
+  range written as integers, and canonical JSON Pointer escaping. Literal types and parsed values, including exact
+  int64 values, are preserved. Both raw and canonical filters remain valid query v1 filters of at most 8 KiB UTF-8,
+  within the depth/node limits. Empty when `where` is absent; equivalence is limited to those normalization rules.
 - `wire_format` is the literal `1`. It names the wire contract rather than the engine's `StorageFormat.Id`.
 - `shape_id` uses the same fields under its own domain, so it names the shape and the lineage together.
-- Input fields and the expected `handle` and `shape_id` are in `shape-vectors.json` (`identity_vectors`).
+- Input fields and the expected `handle` and `shape_id` are in `shape-vectors.json` (`identity_vectors`);
+  `filter_vectors` checks raw `where`, its canonical bytes and the derived handle, shape id and resume scope.
 
 **Per machine, not per region.** `replica_id` names one machine. Two machines in one region have different handles and
 do not share cache entries. A request whose handle this machine does not know answers `409 must_refetch`; the client
@@ -478,12 +485,12 @@ Test-time classes. Measured values are cited; everything else is an estimate.
 
 | ID | Work | Files owned | Depends | Tests | Time | Model |
 | --- | --- | --- | --- | --- | --- | --- |
-| FR-01 | Per-origin stamp order (C7, lane A2): a mint never goes below this node's last mint; `Observe` stays capped; seed from the largest stored stamp at open | `Engine/MemberClock.cs`, `Engine/Sqlite/SqliteStorageTransaction.States.cs` | — | Fast filtered: `Replication/OriginStampOrderTests` | ~3 min | Haiku |
+| FR-01 | **Done (#222).** Per-origin stamp order (C7, lane A2): a mint never goes below this node's last mint; `Observe` stays capped; seed from the largest stored stamp at open | `Engine/MemberClock.cs`, `Engine/Sqlite/SqliteStorageTransaction.States.cs` | — | Fast filtered: `Replication/OriginStampOrderTests` | ~3 min | Haiku |
 | FR-02 | Repairs in the feed (C3) | — | — | — | — | **Done** (#165) |
-| FR-03 | Storage (lane B1): `_tb_feed.seq` from a persisted counter row; `_tb_shape_chunk`, `_tb_shape_snapshot`; storage format version bump (greenfield reset) | `Engine/Sqlite/SqliteDatabaseStore.cs` (schema), `Engine/Sqlite/StorageFormat.cs`, `SqliteStorageTransaction.Feed.cs` (`AppendFeed` only) | — (coordinate with #211) | Fast filtered: `Shapes/FeedSequenceTests` (an emptied feed plus a reopen keeps growing) | ~3 min | Haiku |
+| FR-03 | **Done (#221).** Storage (lane B1): `_tb_feed.seq` from a persisted counter row; `_tb_shape_chunk`, `_tb_shape_snapshot`; storage format version bump (greenfield reset) | `Engine/Sqlite/SqliteDatabaseStore.cs` (schema), `Engine/Sqlite/StorageFormat.cs`, `SqliteStorageTransaction.Feed.cs` (`AppendFeed` only) | — (coordinate with #211) | Fast filtered: `Shapes/FeedSequenceTests` (an emptied feed plus a reopen keeps growing) | ~3 min | Haiku |
 | FR-04 | Protocol and vectors (lane B0): `shape-reads.md` as v1, and `shape-vectors.json` | `docs/terrabase/shape-reads.md`, `docs/terrabase/shape-vectors.json` | — | none (docs) | 0 | Haiku |
 | FR-05 | Peer authentication (C1, lane A1): a shared credential from a fly secret on every internal RPC; anything without it is refused | `Features/Replication/*`, `Hosting/Listeners.cs` | — | Fast with 2 nodes, plus process-separated E2E | >10 min | Opus |
-| FR-06 | Fan-out benchmark harness (lane B2): N readers per shape; origin reads, bytes, p99; results as `.md` in `benchmark/bench/` | `benchmark/cmd/shape-bench/` | — | benchmark run | >10 min | Opus |
+| FR-06 | **Done (#223).** Fan-out benchmark harness (lane B2): N readers per shape; origin reads, bytes, p99; results as `.md` in `benchmark/bench/` | `benchmark/cmd/shape-bench/` | — | benchmark run | >10 min | Opus |
 | FR-07 | Turso FULL crash and power-loss evidence for tenant databases (lane B3): an acknowledged write survives power loss, and a commit's sync covers earlier frames | `tests/TerraBase.Slow/WalFaults/TenantDatabasePowerLossTests.cs` | — | E2E (fault shim) | >10 min | Opus |
 
 ### Wave 2: core (each needs FR-03; all parallel)
@@ -492,7 +499,7 @@ Test-time classes. Measured values are cited; everything else is an estimate.
 | --- | --- | --- | --- | --- | --- | --- |
 | FR-10 | Slice and endpoint skeleton: route, parameter validation, `307` from `-1`, `409 must_refetch`, headers, OpenAPI/Scalar, serializer context, `documents:read`, client listener | `Features/Shapes/{GetShapeEndpoint,ShapeModels,ShapesExtensions}.cs`, one line in `Program.cs` | FR-03 | Fast filtered: `ShapeApiTests` | ~4 min | Haiku |
 | FR-11 | Handle and shape id (3.3), canonical filter, rotation triggers | `Features/Shapes/ShapeHandle.cs` | FR-03 | Fast filtered: `ShapeHandleTests` (rotates on drop and re-create, copy, restore, unclean start) | ~4 min | Haiku |
-| FR-12 | Chunk sealer (3.4): commit-boundary chunks, `values_at`, publication gate, FULL seal, capture suspended, memory reserved, damaged rows refused as in #152, `503 shape_too_large` | `Features/Shapes/ShapeSealer.cs`, `Engine/Sqlite/SqliteStorageTransaction.Shapes.cs` | FR-03 | Fast filtered: `ShapeSealTests` (1 node; 2 nodes with joined writes) | ~5 min | Haiku |
+| FR-12 | Chunk sealer (3.4): commit-boundary chunks, `values_at`, publication gate, committed seal (no extra FULL barrier), capture suspended, memory reserved, damaged rows refused as in #152, `503 shape_too_large` | `Features/Shapes/ShapeSealer.cs`, `Engine/Sqlite/SqliteStorageTransaction.Shapes.cs` | FR-03 | Fast filtered: `ShapeSealTests` (1 node; 2 nodes with joined writes) | ~5 min | Haiku |
 | FR-13 | Snapshot sealer (3.5): one read transaction at `S`, gate `F ≥ S` | `Features/Shapes/ShapeSnapshots.cs`, `Engine/Sqlite/SqliteStorageTransaction.ShapeSnapshots.cs` | FR-03 | Fast filtered: `ShapeSnapshotTests` | ~5 min | Haiku |
 | FR-14 | Live tail (3.6): 20 s long-poll, cursor buckets, flights, seal-on-wake | `Features/Shapes/ShapeFlights.cs` | FR-03 | Fast filtered: `ShapeLiveTests` | ~5 min | Haiku |
 | FR-15 | Filtered shapes: canonical `where` (the query v1 subset), evaluated at seal, 64 per database, eviction answers `409` | `Features/Shapes/ShapeFilters.cs` | FR-03 | Fast filtered: `ShapeFilterTests` | ~5 min | Haiku |
@@ -542,7 +549,7 @@ If an SDK's suite runs longer than 10 minutes, that item moves to Opus.
 
 **Critical path:** FR-03 → FR-12 → FR-20 → FR-24, which needs FR-05 and FR-21 → FR-32.
 
-**Totals:** 33 open items (FR-02 is done): 20 for Haiku and 13 for Opus.
+**Totals:** 30 open items (FR-01, FR-02, FR-03 and FR-06 are done): 18 for Haiku and 12 for Opus.
 
 **Lane mapping** (`.cos/replication-improvement-plan.md`, section 2): FR-01 = A2; FR-05 = A1; FR-25 depends on A3
 (and A4/A5 where they touch ack code); FR-03 = B1; FR-06 = B2; FR-07 = B3; FR-04 = B0; FR-30..34 = V1..V4 (V5 is live
@@ -611,7 +618,7 @@ qualification of wave A). FR-40..42 and FR-44 = S1..S3 and S4; FR-43 (ts-cli) ha
 ## 10. References
 
 - Replication audit, 2026-10-12/13: findings C1–C10 and H1–H6, base `e30ffdc`, re-checked at `f7d5c3c`.
-- Changes merged since `f7d5c3c`, on `main` at `a537727b`: #165, #181, #184, #191, #207. #211 open.
+- Changes merged since `f7d5c3c`, on `main` at `519c9ff9`: #165, #181, #184, #191, #207. #211 open.
 - Opaque changes cursor: [`ChangeCursor.cs`](../../src/TerraBase/Features/Documents/ChangeCursor.cs) (#207).
 - Wire protocol: [`shape-reads.md`](shape-reads.md). Conformance vectors: [`shape-vectors.json`](shape-vectors.json).
 - TS-474 shape reads: `TS474/docs/terrabase/shape-reads.md` (permalink in 2.4).

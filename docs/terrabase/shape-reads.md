@@ -52,17 +52,48 @@ byte and never parse it. They use the query form when the full target fits and t
 (`QueryDocumentsEndpoint`): `{"and"|"or":[F…]}` with 1 to 64 children, `{"not":F}`,
 `{"eq"|"ne"|"lt"|"lte"|"gt"|"gte":[P,V]}`, `{"in"|"nin":[P,[V…]]}` with 1 to 256 values, `{"exists":P}`,
 `{"prefix":[P,"str"]}`, `{"contains":[P,V]}`. At most 8 levels and 256 nodes. `P` is a JSON Pointer or `"$id"`;
-`V` is a JSON scalar. There is no sort, limit, cursor, projection or count. The canonical filter is the compact JSON
-of `where`: whitespace removed, member order kept, relaxed escaping so `<` stays literal. It is the empty string when
-`where` is absent. **(TS-474)**
+`V` is a JSON scalar. There is no sort, limit, cursor, projection or count. Both the raw `where` string (after URL
+decoding) and its canonical filter must be at most 8 KiB of UTF-8, and both must satisfy the query v1 grammar and
+its depth/node limits. Validate the input before normalization; normalization does not admit an invalid input.
+Absent `where` has the empty canonical string; a present empty string is `400 invalid_request`, and JSON `null`
+is `400 invalid_query`. **(TS-474; canonicalization updated by FR-15)**
+
+**Canonical filter (FR-15).** Normalize the parsed query v1 filter recursively, then emit compact UTF-8 JSON with
+`Utf8JsonWriter` and `JavaScriptEncoder.UnsafeRelaxedJsonEscaping` (so `<` stays literal). These are the identity rules:
+
+1. For `and` and `or`, normalize children, flatten children with the same operator, sort by each child's emitted
+   canonical UTF-8 bytes (unsigned lexicographic order), and remove byte-identical duplicates. A single remaining
+   child replaces the group. Input child order and same-operator nesting do not affect identity.
+2. If flattening leaves `n > 64` children, emit `g = ceil((n - 64) / 63)` additional groups of the same operator.
+   Order children by descending emitted subtree depth (a leaf has depth 1), breaking ties by emitted UTF-8 bytes.
+   Keep the first `64 - g` children at the root; partition the remainder into consecutive groups of at most 64.
+   Sort each new group's children by emitted bytes, then sort the root children, including the new groups, by
+   emitted bytes. This deterministic regrouping keeps every group within 64 children and preserves the grammar's
+   depth and node bounds; revalidate the emitted filter under the same query limits.
+3. For `in` and `nin`, normalize scalar values, sort by each value's emitted canonical UTF-8 bytes, and remove
+   byte-identical duplicates. One remaining value emits `eq` or `ne`, respectively. Treat `ne` as `not(eq)` and
+   `nin` as `not(in)` during normalization; cancel double `not`, and emit `not(eq)` as `ne` and `not(in)` as `nin`.
+   Other `not` expressions retain `not`.
+4. Preserve literal JSON types and parsed values. Parse exact signed 64-bit integers without converting them to
+   double, including `9007199254740993`; other accepted numbers use the query parser's finite binary64 value.
+   A whole binary64 value in `[-2^63, 2^63)` emits as an integer (`1.0` → `1`, `-0` → `0`), including values in
+   `contains`. Strings, booleans and null remain distinct from numbers. Numeric token spelling is not preserved.
+5. Re-emit paths from their decoded JSON Pointer segments, escaping `~` as `~0` and `/` as `~1`; `$id` stays `$id`.
+   JSON string escaping follows the compact relaxed writer above. Whitespace and original JSON escaping are not
+   preserved.
+
+Only the normalization rules above define equivalent filter spellings for identity. They do not promise that every
+pair of predicates with the same results has the same canonical filter (for example, no distributive or De Morgan
+rewrites). Member order is not an identity input: each valid filter object has exactly one operator. The canonical
+filter is itself a valid `where` and canonicalizing it again yields the same bytes.
 
 Validation, `400 invalid_request` unless noted **(TS-474)**:
 
 - Only the parameters above, each at most once and non-empty.
 - Decimals are canonical: no sign, no leading zeros, at most `9223372036854775807`. `P` is `0` or the canonical
   unpadded base64url of a document id's UTF-8 bytes.
-- A `where` that is not JSON or not a valid filter is `400 invalid_query`. So is a filter over the query budget
-  (5 million SQLite VM instructions or 5 seconds).
+- A `where` that is not JSON or not a valid filter, or whose raw or canonical UTF-8 exceeds 8 KiB, is
+  `400 invalid_query`. So is a filter over the query budget (5 million SQLite VM instructions or 5 seconds).
 - A resume envelope that does not decode canonically, or whose inner R8 cursor fails `ChangeCursor.Decode`, is
   `400 invalid_request`.
 - Unknown database, or one the credential cannot reach: `404 unknown_database`. Unknown collection:
@@ -454,6 +485,7 @@ TerraBase process. Top level: `format` (`TB-SHAPE-VECTORS-V1`), `protocol_versio
 | Group | Checks |
 | --- | --- |
 | `identity_vectors` | Section 5 inputs → `shape_id`, `handle` |
+| `filter_vectors` | Section 2 raw `where` → canonical filter and section 5/9 identities, using `fixture.scope` |
 | `offset_vectors` | Offset grammar, valid and invalid |
 | `cursor_vectors` | Opaque R8 token bytes and verbatim passthrough; live-bucket arithmetic and the max rejection |
 | `http_vectors` | Request → status, required header subset, `body` (parsed JSON), `body_utf8` (exact JSON bytes as a string) or `body_hex` (binary bytes), `expected_action`, plus per-vector `fixture` state |
@@ -462,6 +494,13 @@ TerraBase process. Top level: `format` (`TB-SHAPE-VECTORS-V1`), `protocol_versio
 | `tbs1_vectors` | Positive decryptions with every intermediate: `K_e`, `K_o`, binding, header, per-frame word, nonce, AAD and tag |
 | `tbs1_rejection_vectors` | Whole-object rejections (section 12) |
 | `tbs1_generated_vectors` | `plaintext_recipe` (`repeat_byte_hex`, `length`): encrypt with fixed keys and salt, compare `ciphertext_size`, `ciphertext_sha256` and frame tags, decrypt, then apply the mutations |
+
+Each `filter_vectors` row has an `id`, `input_where_utf8` (the exact raw JSON string, or JSON `null` for an absent
+parameter), `equivalence_group`, and `expected` with `canonical_filter`, `handle`, `shape_id` and `resume_scope_hex`.
+The string `"null"` is a present invalid filter, not an absent parameter. Canonicalize the input, replace only
+`fixture.scope.canonical_filter` with the result, and derive the identities by sections 5 and 9. Compare canonical
+UTF-8 bytes and every expected identity. Rows with the same `equivalence_group` must have equal canonical bytes and
+identities; the group labels cover the specified normalization rules, not arbitrary semantic equivalence.
 
 A failed negative vector means the client rejects the complete object or response, applies nothing, and keeps its
 offset.
