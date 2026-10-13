@@ -749,6 +749,11 @@ ts-dotnet until R12 makes ts-auth lattice-native.
   while the refill runs, after it fails (acked refused, the sender asks again) and on the origin's next stream when the
   stream ends first. A newer stream of an origin starts only after the older one ended, refills included. One refill of
   a database runs at a time.
+- **Refill admission.** One receiver admits at most four refills across all origins. Each reserves 16 MiB plus 128 KiB
+  from the process bulk memory budget before reading digests or opening a peer channel, and keeps that reservation
+  through repair completion or cancellation. Excess work is immediately refused, without an admission queue. Its
+  database stays cut until a later refill succeeds; healthy databases keep flowing. The reservation accounts for two
+  digests and a page's wire, decompressed, parsed and decoded payloads; it is not a measured bound on total managed heap.
 - **Not copy-refill.** Without garbage collection (R7) merging old state is safe, so a refill merges. Once R7 collects
   tombstones, a machine away past the horizon must delete its file and copy from a peer (section 10), or it would bring
   collected deletions back. Per-database readiness during a refill is not built either.

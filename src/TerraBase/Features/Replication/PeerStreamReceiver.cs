@@ -4,6 +4,7 @@ using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -21,6 +22,9 @@ namespace TerraBase.Features.Replication;
 /// </summary>
 internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 {
+    private const int MaxRefills = 4;
+    // Two digests and one page's wire, decompressed, parsed and decoded payloads; held until the sink finishes.
+    private const long RefillBytes = (2 * 4096 * 16) + (4L * ReplicationProtocol.MaxApplicationBytes);
     private readonly IChangeGroupSink _sink;
     private readonly IReplicaStates _states;
     private readonly AntiEntropy _antiEntropy;
@@ -33,14 +37,17 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private readonly Histogram<double> _delay;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<PeerStreamReceiver> _logger;
+    private readonly IMemoryBudget _memory;
+    private int _refilling;
 
     // A test observes a replacement while its predecessor's cancelled repair is still ending.
     internal Func<ReplicaId, CancellationToken, Task>? Replacing { get; set; }
 
     public PeerStreamReceiver(
         IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime,
-        ILogger<PeerStreamReceiver> logger)
+        ILogger<PeerStreamReceiver> logger, IMemoryBudget memory)
     {
+        _memory = memory;
         _logger = logger;
         _sink = sink;
         _states = states;
@@ -253,7 +260,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         finally
         {
             // A refill ends with its stream; one not acknowledged leaves its database cut for the origin's next stream.
-            await stream.CancelAsync().ConfigureAwait(false);
+            await CancelPreviousAsync(stream, ended.Task).ConfigureAwait(false);
             if (precedingStop is not null)
             {
                 // Also when cancellation ended the replacement before it could stop its predecessor.
@@ -322,6 +329,18 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     {
         try
         {
+            // Refuse excess work immediately; a queue or an admission wait here would grow with reconnecting databases.
+            if (Interlocked.Increment(ref _refilling) > MaxRefills)
+            {
+                return null;
+            }
+
+            using var reservation = _memory.TryReserve(MemoryLane.Bulk, RefillBytes, tenant: null);
+            if (reservation is null)
+            {
+                return null;
+            }
+
             return await _antiEntropy.RefillAsync(database, machine, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
@@ -329,9 +348,13 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             _logger.ZLogWarning(error, $"A refill from machine {machine:@Peer} failed; the database is refused until its sender asks again");
             return null;
         }
+        finally
+        {
+            _ = Interlocked.Decrement(ref _refilling);
+        }
     }
 
-    private static async Task CancelPreviousAsync(CancellationTokenSource stop, Task ended)
+    private async Task CancelPreviousAsync(CancellationTokenSource stop, Task ended)
     {
         try
         {
@@ -340,6 +363,11 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         catch (ObjectDisposedException) when (ended.IsCompleted)
         {
             // A completed predecessor can dispose its token before the replacement requests cancellation.
+        }
+        catch (AggregateException error)
+        {
+            // Cancellation already took effect; callback failures must not skip joining work or publishing its cut.
+            _logger.ZLogWarning(error, $"A peer stream's cancellation callback failed; its outstanding work is still joined");
         }
     }
 
