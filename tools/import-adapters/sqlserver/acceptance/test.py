@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -22,9 +23,9 @@ ARTIFACT = (OUTPUT / "import.sql").read_bytes()
 PREVIEW_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
 
-def cli(*args, error=None):
-    result = subprocess.run([sys.executable, "-B", str(HERE / "check.py"), *map(str, args)],
-                            capture_output=True, timeout=15)
+def cli(*args, error=None, env=None):
+    result = subprocess.run([sys.executable, "-I", "-B", str(HERE / "check.py"), *map(str, args)],
+                            capture_output=True, timeout=15, env=env)
     if error:
         assert result.returncode == 1, "invalid input was accepted"
         assert result.stdout == b"", "refusal printed input"
@@ -62,7 +63,7 @@ def seal_case(change=None, error=None, raw=None):
             assert destination.stat().st_mode & 0o777 == 0o700
             assert all(p.stat().st_mode & 0o777 == 0o600 for p in destination.iterdir())
             output = root / "output"
-            subprocess.run([sys.executable, "-B", str(HERE.parent / "convert.py"),
+            subprocess.run([sys.executable, "-I", "-B", str(HERE.parent / "convert.py"),
                             str(destination / "manifest.json"), str(output)],
                            check=True, capture_output=True, timeout=15)
             cli("artifact", output)
@@ -148,9 +149,26 @@ def file_safety():
         assert not (root / "new").exists()
 
 
+def import_isolation():
+    with tempfile.TemporaryDirectory(dir=HERE / "runs") as temporary:
+        shadow = Path(temporary)
+        for name in ("sitecustomize.py", "json.py"):
+            (shadow / name).write_text("raise RuntimeError('private-synthetic-sentinel')\n", encoding="utf-8")
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(shadow)
+        cli("artifact", OUTPUT, env=environment)
+        output = shadow / "output"
+        result = subprocess.run([sys.executable, "-I", "-B", str(HERE.parent / "convert.py"),
+                                 str(CAPTURE / "manifest.json"), str(output)],
+                                capture_output=True, timeout=15, env=environment)
+        assert result.returncode == 0, "converter used injected imports"
+        assert (output / "import.sql").read_bytes() == ARTIFACT
+
+
 def main():
     (HERE / "runs").mkdir(mode=0o700, exist_ok=True)
-    cases = [("seal/converter/golden pipeline", lambda: seal_case()), ("file safety", file_safety)]
+    cases = [("seal/converter/golden pipeline", lambda: seal_case()), ("file safety", file_safety),
+             ("isolated Python imports", import_isolation)]
     display_rows = copy.deepcopy(ROWS)
     display_rows[0][6] = display_rows[0][6].upper()
     display_rows[0][8] = "0x" + display_rows[0][8][2:].upper()
@@ -202,6 +220,7 @@ def main():
             (("preview", "tables", 0, "primaryKey"), ["edge"], "acceptance_table_plan"),
             (("preview", "tables", 0, "columns", 1, "mapping"), "float", "acceptance_column_plan"),
             (("preview", "tables", 0, "columns", 7, "name"), "note", "acceptance_column_plan"),
+            (("preview", "tables", 0, "columns", 7, "name"), '"note.名"', "acceptance_column_plan"),
             (("preview", "tables", 0, "columns", 7, "nullable"), False, "acceptance_column_plan"),
             (("preview", "tables", 0, "excluded"), True, "acceptance_table_plan"),
             (("preview", "id"), "invalid", "acceptance_preview_id"),

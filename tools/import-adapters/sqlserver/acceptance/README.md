@@ -127,11 +127,11 @@ nice -n 19 sqlcmd -S "tcp:127.0.0.1,$FIXTURE_SQL_PORT" -E -N -I \
   -f 65001 -h -1 -y 0 -w 65535 -b -r1 -l 5 -t 30 \
   -i "$fixture_acceptance/export.sql" \
   >"$fixture_run/source-rows.raw" 2>"$fixture_run/source-export.stderr"
-nice -n 19 python3 -B "$fixture_acceptance/check.py" seal \
+nice -n 19 python3 -I -B "$fixture_acceptance/check.py" seal \
   "$fixture_run/source-rows.raw" "$fixture_run/capture"
-nice -n 19 python3 -B "$fixture_adapter/convert.py" \
+nice -n 19 python3 -I -B "$fixture_adapter/convert.py" \
   "$fixture_run/capture/manifest.json" "$fixture_run/output"
-nice -n 19 python3 -B "$fixture_acceptance/check.py" artifact "$fixture_run/output"
+nice -n 19 python3 -I -B "$fixture_acceptance/check.py" artifact "$fixture_run/output"
 ```
 
 `seal` allows only blank sqlcmd display separators outside records. It strictly
@@ -146,6 +146,13 @@ Never relabel the committed synthetic golden files as a real source run.
 The endpoints come from `docs/terrabase/import.md@54c0c4d9` and the repository
 Documents API. Get/list document responses have `{id,version,state,document}`;
 the list has `{items,next_cursor}`. No alternate IDs, auth or server format.
+
+**Known readiness gap:** contract §6 quotes non-bare preview column names
+(`"note.名"`); accessible core `70ec9570` returns raw `note.名`. The checker follows
+that core source and refuses changed names. Resolve this discrepancy during the
+future approved core-readiness preflight before running acceptance; this task
+does not edit the contract/core or add a compatibility fallback. Document body
+keys and the supported COPY artifact remain exactly as declared in the manifest.
 
 Supply the existing local test context; keep its curl config private. Verify the
 ready build's OpenAPI includes `createImport`, `uploadImportSource`, `startImport`
@@ -212,7 +219,7 @@ wait_state() {
   return 1
 }
 wait_state ready preview.json
-nice -n 19 python3 -B "$fixture_acceptance/check.py" preview \
+nice -n 19 python3 -I -B "$fixture_acceptance/check.py" preview \
   "$fixture_run/preview.json" "$fixture_run/output"
 ```
 
@@ -230,12 +237,12 @@ nice -n 19 jq '{previewId:.preview.id}' "$fixture_run/preview.json" >"$fixture_r
 request 202 POST "$fixture_database/import/start" started.json \
   -H 'Content-Type: application/json' --data-binary "@$fixture_run/start.json"
 wait_state completed completed.json
-nice -n 19 python3 -B "$fixture_acceptance/check.py" completed \
+nice -n 19 python3 -I -B "$fixture_acceptance/check.py" completed \
   "$fixture_run/completed.json" "$fixture_run/output"
 nice -n 19 jq -e --slurpfile ready "$fixture_run/preview.json" \
   '.confirmedPreviewId == $ready[0].preview.id' "$fixture_run/completed.json" >/dev/null
 request 200 GET "$fixture_database/collections/dbo_sqlserver_acceptance/documents?limit=5" documents.json
-nice -n 19 python3 -B "$fixture_acceptance/check.py" documents "$fixture_run/documents.json"
+nice -n 19 python3 -I -B "$fixture_acceptance/check.py" documents "$fixture_run/documents.json"
 ```
 
 Acceptance requires `completed`, validation passed, sourceRows=documents=4, matching
@@ -273,10 +280,12 @@ an error path. No shell removal command or database drop is provided.
 ## Offline preparation check
 
 ```sh
-nice -n 19 python3 -B tools/import-adapters/sqlserver/acceptance/test.py
+nice -n 19 python3 -I -B tools/import-adapters/sqlserver/acceptance/test.py
 ```
 
 This test runs only new local CLI preparation checks with synthetic data and
 receipts, in parallel, using exclusive temporary directories under ignored
 `acceptance/runs/`. It does not execute the SQL scripts, curl commands or a
 core binary and does not repeat/build the shared engine or the original 74 suite.
+Python commands use isolated mode (`-I`) to ignore `PYTHONPATH`, user site packages
+and working-directory import injection; `-B` prevents bytecode writes.
