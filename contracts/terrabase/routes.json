@@ -98,6 +98,48 @@
       "path": "/v1/projects/{project}/databases/{database}/transactions"
     },
     {
+      "client": "documents",
+      "operation": "createImport",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/import"
+    },
+    {
+      "client": "documents",
+      "operation": "getImport",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/import"
+    },
+    {
+      "client": "documents",
+      "operation": "uploadImportSource",
+      "method": "PUT",
+      "path": "/v1/projects/{project}/databases/{database}/import/source"
+    },
+    {
+      "client": "documents",
+      "operation": "updateImport",
+      "method": "PATCH",
+      "path": "/v1/projects/{project}/databases/{database}/import"
+    },
+    {
+      "client": "documents",
+      "operation": "startImport",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/import/start"
+    },
+    {
+      "client": "documents",
+      "operation": "cancelImport",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/import/cancel"
+    },
+    {
+      "client": "documents",
+      "operation": "resumeImport",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/import/resume"
+    },
+    {
       "client": "management",
       "operation": "createOrganization",
       "method": "POST",

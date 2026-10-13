@@ -72,7 +72,7 @@ public sealed class TerraBaseDocumentsClient
 }
 
 /// <summary>One TerraBase database of the Documents API. Thread-safe; obtain it from <see cref="TerraBaseDocumentsClient.Database"/>.</summary>
-public sealed class TerraBaseDatabase
+public sealed partial class TerraBaseDatabase
 {
     private const string MergePatchMediaType = "application/merge-patch+json";
     private const string OpsPatchMediaType = "application/vnd.terrabase.ops+json";
