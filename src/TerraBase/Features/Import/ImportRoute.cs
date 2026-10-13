@@ -40,7 +40,8 @@ public static class ImportRoute
         ArgumentNullException.ThrowIfNull(tenants);
         ArgumentNullException.ThrowIfNull(options);
         if (context.Features.Get<ProjectAccess>() is not { } access
-            || !DatabaseName.TryParse(context.Request.RouteValues["database"] as string, out var name)
+            // The project catalog resolved the route's database name to its id (databaseName keeps the name).
+            || !DatabaseName.TryParse((context.Request.RouteValues["databaseName"] ?? context.Request.RouteValues["database"]) as string, out var name)
             || (access.DatabaseName is not null && access.DatabaseName != name.Value))
         {
             return UnknownDatabase;
@@ -60,10 +61,17 @@ public static class ImportRoute
         {
             TenantDatabaseRecord record when record.Placement.Home != options.Region =>
                 new ImportElsewhere(DatabaseRegions.WrongRegion(record.Placement.Home, record.Placement.Regions)),
-            TenantDatabaseRecord => new ImportDestination(database, name.Value),
+            // Usage metering attributes the request (and an upload's bytes) to the destination, as for document routes.
+            TenantDatabaseRecord => Attribute(context, new ImportDestination(database, name.Value)),
             NotFound => UnknownDatabase,
             Unavailable error => error,
         };
+    }
+
+    private static ImportDestination Attribute(HttpContext context, ImportDestination destination)
+    {
+        context.Features.Set(destination.Database);
+        return destination;
     }
 
     /// <summary>The HTTP answer for a job result: <paramref name="status"/> with the job, or the failure's error.</summary>

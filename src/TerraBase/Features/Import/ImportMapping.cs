@@ -225,9 +225,21 @@ internal static partial class ImportMapping
         }
     }
 
-    /// <summary>One document's term of a table checksum, over its id and its body as TerraBase stores it.</summary>
-    public static void Add(Span<ulong> sum, string id, ReadOnlySpan<byte> stored)
+    /// <summary>
+    /// One document's term of a table checksum: SHA-256 over its id and its canonical body. TerraBase may store a body in
+    /// another byte layout than it was written in, so the body is canonical: members sorted by name, numbers as exact
+    /// decimals (<see cref="ExactNumber"/>), strings re-escaped. Equal terms mean equal values as TerraBase compares them.
+    /// </summary>
+    public static void Add(Span<ulong> sum, string id, ReadOnlySpan<byte> body)
     {
+        var canonical = new ArrayBufferWriter<byte>(body.Length + 16);
+        using (var document = JsonDocument.Parse(body.ToArray(), JsonOptions))
+        using (var writer = Writer(canonical))
+        {
+            WriteCanonical(writer, document.RootElement);
+        }
+
+        var stored = canonical.WrittenSpan;
         var buffer = ArrayPool<byte>.Shared.Rent(Encoding.UTF8.GetMaxByteCount(id.Length) + 1 + stored.Length);
         try
         {
@@ -252,6 +264,38 @@ internal static partial class ImportMapping
         finally
         {
             ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement value)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.Object:
+                writer.WriteStartObject();
+                foreach (var member in value.EnumerateObject().OrderBy(member => member.Name, StringComparer.Ordinal))
+                {
+                    writer.WritePropertyName(member.Name);
+                    WriteCanonical(writer, member.Value);
+                }
+
+                writer.WriteEndObject();
+                break;
+            case JsonValueKind.Array:
+                writer.WriteStartArray();
+                foreach (var item in value.EnumerateArray())
+                {
+                    WriteCanonical(writer, item);
+                }
+
+                writer.WriteEndArray();
+                break;
+            case JsonValueKind.Number when ExactNumber.TryParse(Encoding.UTF8.GetBytes(value.GetRawText()), out var number):
+                writer.WriteRawValue(number.Mantissa.ToString(CultureInfo.InvariantCulture) + "e" + number.Exponent.ToString(CultureInfo.InvariantCulture));
+                break;
+            default:
+                value.WriteTo(writer);
+                break;
         }
     }
 

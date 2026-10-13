@@ -129,7 +129,7 @@ internal sealed class TablePlan
             throw new ImportValueException("unsupported_primary_key", "the data does not hold every primary key column", null);
         }
 
-        layout = (key, [.. columns.Select(column => !ExcludedColumns.Contains(column) && !column.Generated)]);
+        layout = (key, [.. columns.Select(column => !ExcludedColumns.Contains(column))]);
         _layouts[columns] = layout;
         return layout;
     }
@@ -189,7 +189,8 @@ internal static class ImportPlanner
                     plan.Classes[column] = 0;
                 }
 
-                if (Excludes(table, column.Name) || column.Generated)
+                // A SQLite STORED generated column is data in the file; every other generated column is computed.
+                if (Excludes(table, column.Name) || (column.Generated && !(sqlite && column.Stored)))
                 {
                     plan.ExcludedColumns.Add(column);
                     if (column.Generated && !sqlite)

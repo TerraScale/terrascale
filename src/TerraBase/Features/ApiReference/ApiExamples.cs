@@ -108,7 +108,7 @@ internal static class ApiExamples
         "createImport" => """{"format":"postgres_plain","sourceBytes":8165,"sourceSha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08","options":{"missingPrimaryKey":"reject","exclude":["public.audit_log"]}}""",
         "updateImport" => """{"options":{"missingPrimaryKey":"generate","exclude":["public.tagged.tags"]}}""",
         "startImport" => """{"previewId":"01ARZ3NDEKTSV4RRFFQ69G5FAA"}""",
-        "uploadImportSource" => """"<up to 4 MiB of the source file, starting at offset>"""",
+        "uploadImportSource" => "\"<up to 4 MiB of the source file, starting at offset>\"",
         _ => "{}",
     };
 

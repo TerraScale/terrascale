@@ -25,7 +25,7 @@ public sealed class CancelImportEndpoint(IImportJobs jobs, ITenantDirectory tena
         Produces<ErrorBody>(StatusCodes.Status421MisdirectedRequest);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
-        Metadata(ListenerMetadata.Client, new DatabaseRegions.PlacementAware());
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management, new DatabaseRegions.PlacementAware());
     }
 
     /// <inheritdoc />

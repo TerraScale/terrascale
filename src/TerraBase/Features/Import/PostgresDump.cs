@@ -431,6 +431,11 @@ internal sealed class PostgresDump : IImportSource
             Element(table, element, sqlite: false);
         }
 
+        foreach (var check in table.Checks)
+        {
+            Schema.Skip("check_constraint", table.Display + "." + ImportNames.Quote(check));
+        }
+
         for (var j = close + 1; j < tokens.Count; j++)
         {
             if (tokens[j].Is("INHERITS") && SqlTokens.NameList(tokens, j + 1, out _) is not null)
@@ -540,7 +545,11 @@ internal sealed class PostgresDump : IImportSource
 
     private static void TableConstraint(SourceTable table, List<SqlToken> element, int i, string? name)
     {
-        if (element[i].Is("PRIMARY") && SqlTokens.NameList(element, i + 2, out _) is { } key)
+        if (element[i].Is("CHECK") || element[i].Is("EXCLUDE"))
+        {
+            table.Checks.Add(name ?? "check");
+        }
+        else if (element[i].Is("PRIMARY") && SqlTokens.NameList(element, i + 2, out _) is { } key)
         {
             table.PrimaryKey = key;
             table.Constraints.Add(new("primary_key", name, key, null, false));

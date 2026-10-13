@@ -226,6 +226,11 @@ internal sealed class SqliteFile : IImportSource
             PostgresDump.Element(table, element, sqlite: true);
         }
 
+        foreach (var check in table.Checks)
+        {
+            Schema.Skip("check_constraint", table.Display + "." + ImportNames.Quote(check));
+        }
+
         // A rowid table's single INTEGER PRIMARY KEY column is stored as the rowid (its record value is NULL).
         if (!withoutRowid && table.PrimaryKey is [var key] && table.Column(key, ignoreCase: true) is { Type: "integer" } alias)
         {

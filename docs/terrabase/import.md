@@ -42,8 +42,9 @@ into a database that holds data, schema/constraint enforcement in TerraBase.
 ## 2. Ownership and routing
 
 - Service: TerraBase (`ts-terrabase`), client listener (TLS), `/v1`, ts-auth **project access tokens** (Bearer JWT,
-  `project_id` = the route's project). No new scopes, no ts-auth change. Legacy `tb_` API keys, membership tokens and
-  `X-TerraBase-User-Id` get `404`. Create the destination with the canonical `POST P/databases` and the same project
+  `project_id` = the route's project). No new scopes, no ts-auth change. Import routes are project management routes,
+  like `createDatabase`: a request without a project token (legacy `tb_` API keys, `X-TerraBase-User-Id`) gets `401`, a
+  token of another project, a membership token or a token narrowed to another database gets `404`. Create the destination with the canonical `POST P/databases` and the same project
   access token, so the import routes resolve it; a database created through the hidden organization routes is reachable
   by a project token only once its project binding is verified (api.md, "Authentication").
 - Code: `src/TerraBase/Features/Import/` (jobs, endpoints, PostgreSQL dump reader, SQLite file reader, mapping, runner).
@@ -82,9 +83,12 @@ Cleanup: `deleteDatabase` (existing) removes the destination and its job; TerraB
 4. Poll `GET D/import` (every 2 s is enough) until `ready` (preview) or `rejected`.
 5. Show the preview; on confirmation `POST D/import/start {"previewId":…}`; poll until `completed` or `failed`.
 
-Plan limits apply unchanged: `createDatabase` enforces the plan's database limit (a Hobby project that already has
-its database cannot create a destination), imported documents pass TerraBase's storage quota and are metered as
-document writes, and upload parts are metered as request bytes. An import never bypasses a quota.
+Plan limits apply unchanged, and an import never bypasses one. The plan's database-count limit belongs to ts-dashboard
+(the owner of plans), which checks it before it provisions a destination; TerraBase does not count databases. TerraBase
+applies its own limits to imports exactly as to other writes: every imported batch passes the organization's storage
+quota (Hobby: 1 GiB of live documents), so exceeding it fails the job with `quota_exceeded` (retryable once the plan
+allows more); every import call passes request admission (`429 tenant_busy`/`tenant_memory`); imported documents are
+metered as document writes, and import calls, upload bytes included, as requests of the destination.
 
 ### Requests
 

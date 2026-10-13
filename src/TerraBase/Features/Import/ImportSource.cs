@@ -57,6 +57,9 @@ internal sealed class SourceTable
 
     public List<ImportConstraint> Constraints { get; } = [];
 
+    /// <summary>Names of CHECK and EXCLUDE constraints, which are listed as skipped.</summary>
+    public List<string> Checks { get; } = [];
+
     /// <summary>Problems found while reading the definition (the table cannot be imported as declared).</summary>
     public List<ImportIssue> Issues { get; } = [];
 

@@ -14,11 +14,14 @@ public sealed class ImportClient : IAsyncDisposable
 {
     public const string AllScopes = "databases:read databases:write documents:read documents:write";
 
-    private ImportClient(ManagementApi api, string project, HttpClient client)
+    private readonly bool _ownsApi;
+
+    private ImportClient(ManagementApi api, string project, HttpClient client, bool ownsApi = true)
     {
         Api = api;
         Project = project;
         Client = client;
+        _ownsApi = ownsApi;
     }
 
     public ManagementApi Api { get; }
@@ -34,6 +37,9 @@ public sealed class ImportClient : IAsyncDisposable
         var project = EntityIds.New().ToString();
         return new ImportClient(api, project, api.WithToken(Token(api, project, AllScopes)));
     }
+
+    /// <summary>A client of the same server for another project, with every scope.</summary>
+    public ImportClient For(string project) => new(Api, project, Api.WithToken(Token(Api, project, AllScopes)), ownsApi: false);
 
     /// <summary>A project access token for <paramref name="project"/> with <paramref name="scopes"/>.</summary>
     public static string Token(ManagementApi api, string project, string scopes) => api.Issuer.Mint(EntityIds.New().ToString(), token =>
@@ -130,6 +136,11 @@ public sealed class ImportClient : IAsyncDisposable
         do
         {
             using var response = await Client.GetAsync(Uri($"{Data(import)}/collections/{collection}/documents?limit=1000" + (cursor is null ? "" : "&cursor=" + System.Uri.EscapeDataString(cursor))));
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return ids;
+            }
+
             var page = await ReadAsync(response);
             ids.AddRange(page.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!));
             cursor = page.GetProperty("next_cursor").GetString();
@@ -148,13 +159,16 @@ public sealed class ImportClient : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         Client.Dispose();
-        await Api.DisposeAsync();
+        if (_ownsApi)
+        {
+            await Api.DisposeAsync();
+        }
     }
 
     private static async Task<JsonElement> ReadAsync(HttpResponseMessage response)
     {
         var text = await response.Content.ReadAsStringAsync();
-        return text.Length == 0 ? default : JsonDocument.Parse(text).RootElement.Clone();
+        return text.Length == 0 ? default : JsonElement.Parse(text);
     }
 
     private static Uri Uri(string path) => new(path, UriKind.Relative);

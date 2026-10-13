@@ -334,12 +334,23 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
                 : new Change(job with { Preview = null, PlanDigest = null, Checksums = null }, resumed with { State = ImportStates.Analyzing, ConfirmedPreviewId = null }, Analyze: true);
         }, cancellationToken);
 
-    /// <summary>Reads both records of the destination's import.</summary>
+    /// <summary>Reads both records of the destination's import in one query, so they come from one snapshot.</summary>
     internal async ValueTask<ReadImportResult> ReadAsync(TenantContext database, CancellationToken cancellationToken)
     {
-        var job = await documents.GetAsync(new DocumentKey(database, ImportNames.Collection, "job"), cancellationToken).ConfigureAwait(false);
-        var state = await documents.GetAsync(new DocumentKey(database, ImportNames.Collection, "state"), cancellationToken).ConfigureAwait(false);
-        if (job is not StoredDocument { Deleted: false } jobDocument || state is not StoredDocument { Deleted: false } stateDocument)
+        var page = await documents.QueryAsync(database, new DocumentQuery(ImportNames.Collection, null, [], null, 8, DocumentRoute.MaxPageBytes), null, cancellationToken)
+            .ConfigureAwait(false);
+        if (page is not QueryOutcome outcome)
+        {
+            return page switch
+            {
+                Validation error => new Unavailable(error.Message),
+                _ => UnknownImport,
+            };
+        }
+
+        var jobDocument = outcome.Page.Rows.FirstOrDefault(row => row.Document.Id == "job")?.Document;
+        var stateDocument = outcome.Page.Rows.FirstOrDefault(row => row.Document.Id == "state")?.Document;
+        if (jobDocument is null || stateDocument is null)
         {
             return UnknownImport;
         }
