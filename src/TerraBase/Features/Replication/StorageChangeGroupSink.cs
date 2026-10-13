@@ -1,6 +1,7 @@
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replication;
@@ -10,7 +11,7 @@ namespace TerraBase.Features.Replication;
 /// whole groups per transaction, at most one transaction's worth of documents each, every transaction synced to disk
 /// before the next, so an ack means the groups survive a power loss here.
 /// </summary>
-internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirectory tenants) : IChangeGroupSink
+internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirectory tenants, DatabaseLifecycleCheckpoint checkpoint) : IChangeGroupSink
 {
     public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken)
     {
@@ -45,6 +46,7 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
 
             await transaction.RecordAppliedAsync(origin, applied, cancellationToken).ConfigureAwait(false);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            checkpoint("replication.apply.committed", database);
         }
 
         return applied;
