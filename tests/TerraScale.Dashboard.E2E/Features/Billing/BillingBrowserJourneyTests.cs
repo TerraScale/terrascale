@@ -11,9 +11,10 @@ namespace TerraScale.Dashboard.E2E.Features.Billing;
 public sealed class BillingBrowserJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
-    [Arguments(1440, 900)]
-    [Arguments(390, 844)]
-    public async Task PaidSignupInvoiceFiltersAndBranchSnapshot(int width, int height)
+    [Arguments(1440, 900, false)]
+    [Arguments(390, 844, false)]
+    [Arguments(390, 844, true)]
+    public async Task PaidSignupInvoiceFiltersAndBranchSnapshot(int width, int height, bool holdImage)
     {
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
@@ -58,19 +59,42 @@ public sealed class BillingBrowserJourneyTests(DashboardE2EFixture fixture)
             .GetByRole(AriaRole.Button, new() { Name = "Apply", Exact = true }).ClickAsync(),
             response => response.Request.Method == "GET" && new Uri(response.Url).AbsolutePath == "/organization");
         await Assert.That(applied.Status).IsEqualTo(200);
-        await page.WaitForURLAsync(url => new Uri(url).AbsolutePath == "/organization" && QueryHelpers.ParseQuery(new Uri(url).Query)["tab"] == "billing" && QueryHelpers.ParseQuery(new Uri(url).Query)["status"] == "paid");
-        await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+        await page.WaitForURLAsync(url => new Uri(url).AbsolutePath == "/organization" && QueryHelpers.ParseQuery(new Uri(url).Query)["tab"] == "billing" && QueryHelpers.ParseQuery(new Uri(url).Query)["status"] == "paid", new() { WaitUntil = WaitUntilState.DOMContentLoaded });
         await Assert.That(await page.Locator("#recent-invoices tbody tr").CountAsync()).IsEqualTo(10);
         await Assert.That(await page.Locator("#recent-invoices .ts-pager").InnerTextAsync()).Contains("of 12");
         await page.GetByRole(AriaRole.Link, new() { Name = "Next", Exact = true }).ClickAsync();
-        await page.WaitForURLAsync(url => new Uri(url).AbsolutePath == "/organization" && QueryHelpers.ParseQuery(new Uri(url).Query)["tab"] == "billing" && QueryHelpers.ParseQuery(new Uri(url).Query)["page"] == "2");
-        await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+        await page.WaitForURLAsync(url => new Uri(url).AbsolutePath == "/organization" && QueryHelpers.ParseQuery(new Uri(url).Query)["tab"] == "billing" && QueryHelpers.ParseQuery(new Uri(url).Query)["page"] == "2", new() { WaitUntil = WaitUntilState.DOMContentLoaded });
         await Assert.That(await page.Locator("#recent-invoices tbody tr").CountAsync()).IsEqualTo(2);
-        await page.GetByRole(AriaRole.Link, new() { Name = "Clear", Exact = true }).ClickAsync();
-        await page.WaitForURLAsync(url => new Uri(url).AbsolutePath == "/organization" && QueryHelpers.ParseQuery(new Uri(url).Query)["tab"] == "billing" && !QueryHelpers.ParseQuery(new Uri(url).Query).ContainsKey("status"));
-        await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
-        await Assert.That(await page.Locator("#invoice-status").InputValueAsync()).IsEqualTo("");
-        await Assert.That(await page.Locator("#recent-invoices tbody tr").CountAsync()).IsEqualTo(10);
+        // Invoice navigation must work while an unrelated image is still loading.
+        const string brandImage = "**/brand/logo-terrascale-principal.svg*";
+        var imageRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseImage = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (holdImage)
+            await page.RouteAsync(brandImage, async route =>
+            {
+                imageRequested.TrySetResult();
+                await releaseImage.Task;
+                await route.ContinueAsync();
+            });
+        try
+        {
+            await page.GetByRole(AriaRole.Link, new() { Name = "Clear", Exact = true }).ClickAsync();
+            await page.WaitForURLAsync(url => new Uri(url).AbsolutePath == "/organization" && QueryHelpers.ParseQuery(new Uri(url).Query)["tab"] == "billing" && !QueryHelpers.ParseQuery(new Uri(url).Query).ContainsKey("status"), new() { WaitUntil = WaitUntilState.DOMContentLoaded });
+            await Assert.That(await page.Locator("#invoice-status").InputValueAsync()).IsEqualTo("");
+            await Assert.That(await page.Locator("#recent-invoices tbody tr").CountAsync()).IsEqualTo(10);
+            if (holdImage)
+            {
+                await imageRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Assert.That(releaseImage.Task.IsCompleted).IsFalse();
+                await Assert.That(await page.EvaluateAsync<string>("document.readyState")).IsEqualTo("interactive");
+            }
+        }
+        finally
+        {
+            releaseImage.TrySetResult();
+            if (holdImage) await page.UnrouteAsync(brandImage);
+        }
+        if (holdImage) await page.WaitForLoadStateAsync(LoadState.Load);
 
         using var client = fixture.CreateClient();
         var cookies = await context.CookiesAsync();
@@ -118,7 +142,7 @@ public sealed class BillingBrowserJourneyTests(DashboardE2EFixture fixture)
         var screenshots = Path.Combine(fixture.Root, "test-results", "tunit", "billing");
         Directory.CreateDirectory(screenshots);
         await NavigateAsync("/organization?tab=billing");
-        await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, $"invoices-{width}.png"), FullPage = true });
+        await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, $"invoices-{width}{(holdImage ? "-pending-brand" : "")}.png"), FullPage = true });
 
         async Task NavigateAsync(string path)
         {
