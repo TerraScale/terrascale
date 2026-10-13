@@ -1,5 +1,4 @@
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Onboarding;
 
@@ -21,7 +20,7 @@ public static class OrganizationWizard
                 if (form["step"] == "organization")
                 {
                     var org = await accounts.CreateBusinessAsync(context.Session, form["name"].ToString(), http.RequestAborted);
-                    return AuthEndpoints.SeeOther("/organization?newOrganization=payment&organizationID=" + Uri.EscapeDataString(org.Id));
+                    return HttpRedirects.SeeOther("/organization?newOrganization=payment&organizationID=" + Uri.EscapeDataString(org.Id));
                 }
                 context = await SelectAsync(http, context, accounts, form["organizationID"].ToString());
                 if (context.Organization?.Kind != "business" || context.Role != "owner") throw new AccountAccessException("Business organization ownership is required.");
@@ -30,17 +29,17 @@ public static class OrganizationWizard
                     var plan = PlanCatalog.For(form["plan"].ToString());
                     if (plan.PriceCents <= 0) throw new OnboardingValidationException("Choose a paid plan for this business organization.");
                     var returnPath = "/organization?newOrganization=project&organizationID=" + Uri.EscapeDataString(context.Organization.Id);
-                    return AuthEndpoints.SeeOther(await payments.StartCheckoutAsync(context, plan.Key, form["interval"].ToString(), returnPath, http.RequestAborted));
+                    return HttpRedirects.SeeOther(await payments.StartCheckoutAsync(context, plan.Key, form["interval"].ToString(), returnPath, http.RequestAborted));
                 }
                 if (form["step"] != "project") throw new AccountAccessException("Choose an organization setup step.", 400);
                 if (!context.Organization.CanProvision(context.UserId)) throw new AccountAccessException("Confirm this organization's billing before creating its first project.", 409);
-                if (context.Organization.Projects.Count > 0) return AuthEndpoints.SeeOther("/organization?tab=projects");
+                if (context.Organization.Projects.Count > 0) return HttpRedirects.SeeOther("/organization?tab=projects");
                 return await OrganizationEndpoints.MutateAsync(http, sessions, accounts, gateway, placement, "projects");
             }
             catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
             {
                 var step = form["step"] == "payment-method" ? "payment" : form["step"] == "project" ? "project" : "organization";
-                return AuthEndpoints.SeeOther("/organization?newOrganization=" + step + "&error=" + Uri.EscapeDataString(error.Message));
+                return HttpRedirects.SeeOther("/organization?newOrganization=" + step + "&error=" + Uri.EscapeDataString(error.Message));
             }
         });
         return endpoints;

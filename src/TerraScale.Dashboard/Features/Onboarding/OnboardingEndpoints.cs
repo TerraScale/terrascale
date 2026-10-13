@@ -13,7 +13,7 @@ public static class OnboardingEndpoints
 
     public static void MapOnboarding(this WebApplication app)
     {
-        app.MapGet("/register", (HttpContext context) => AuthEndpoints.SeeOther("/onboarding" + context.Request.QueryString));
+        app.MapGet("/register", (HttpContext context) => HttpRedirects.SeeOther("/onboarding" + context.Request.QueryString));
         app.MapGet("/onboarding", GetAsync);
         app.MapPost("/onboarding", RegisterAsync);
         app.MapPost("/onboarding/step", SaveAsync);
@@ -29,7 +29,7 @@ public static class OnboardingEndpoints
         var session = await sessions.ReadAsync(context);
         if (session is null) return OnboardingView.Create(page);
         var account = await accounts.EnsureAsync(session, context.RequestAborted);
-        if (account.OnboardingCompleted) return AuthEndpoints.SeeOther("/");
+        if (account.OnboardingCompleted) return HttpRedirects.SeeOther("/");
         var payment = context.Request.Query["payment"].ToString();
         if (payment == "success" && account.OnboardingStep == "payment-method")
         {
@@ -104,8 +104,8 @@ public static class OnboardingEndpoints
         var form = await context.Request.ReadFormAsync(context.RequestAborted);
         if (!Csrf.Validate(context, form)) return Results.StatusCode(403);
         var session = await sessions.ReadAsync(context);
-        if (session is null) return AuthEndpoints.SeeOther("/login");
-        try { return AuthEndpoints.SeeOther(await service.SaveAsync(session, form, context.RequestAborted)); }
+        if (session is null) return HttpRedirects.SeeOther("/login");
+        try { return HttpRedirects.SeeOther(await service.SaveAsync(session, form, context.RequestAborted)); }
         catch (OnboardingValidationException error)
         {
             var target = "/onboarding?error=" + Uri.EscapeDataString(error.Message);
@@ -114,7 +114,7 @@ public static class OnboardingEndpoints
                 var plans = await service.PlansAsync(context.RequestAborted);
                 if (OfferedPlan(plans, form["plan"]) is { Length: > 0 } plan) target += "&plan=" + Uri.EscapeDataString(plan);
             }
-            return AuthEndpoints.SeeOther(target);
+            return HttpRedirects.SeeOther(target);
         }
         catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
     }

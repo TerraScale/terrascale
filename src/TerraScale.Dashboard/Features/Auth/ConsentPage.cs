@@ -17,7 +17,7 @@ public static class ConsentEndpoints
         app.MapGet("/oauth/consent", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            if (context is null) return (IResult)AuthEndpoints.SeeOther("/login?returnTo=" + Uri.EscapeDataString(Csrf.LocalRedirect(http.Request.Path + http.Request.QueryString)));
+            if (context is null) return (IResult)HttpRedirects.SeeOther("/login?returnTo=" + Uri.EscapeDataString(Csrf.LocalRedirect(http.Request.Path + http.Request.QueryString)));
             // Neither SDK exposes an owning, verifiable consent-request proof.
             // Query parameters can never authorize an OAuth client themselves.
             return ConsentView.Create(new(new("Authorize application", DocumentModel.NonceFor(http))));

@@ -1,5 +1,4 @@
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.AuthenticationManagement;
@@ -39,7 +38,7 @@ public static class AuthenticationConsole
         if (section is null) return Results.NotFound();
         var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
         if (context is null) return AccountEndpoints.LoginRedirect(http);
-        if (context.Project is null) return AuthEndpoints.SeeOther("/");
+        if (context.Project is null) return HttpRedirects.SeeOther("/");
         var page = AuthenticationView.Create(new(ShellModel.For(http, context, key == "overview" ? "Authentication" : "Authentication · " + section.Title), section, http.Request.Query["q"].ToString()));
         page.StatusCode = 503;
         return page;

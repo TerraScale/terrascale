@@ -1,5 +1,4 @@
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Backups;
 
 namespace TerraScale.Dashboard.Features.Settings;
@@ -36,7 +35,7 @@ public static class SettingsEndpoints
                             if (form["replace"].ToString() is "on" or "true" or "1") BackupService.RejectOverwrite();
                             await settings.RestoreBackupAsync(context, form["databaseId"].ToString(), form["backupId"].ToString(), http.RequestAborted); break;
                     }
-                    return AuthEndpoints.SeeOther(action == "delete-project" ? "/organization" : "/");
+                    return HttpRedirects.SeeOther(action == "delete-project" ? "/organization" : "/");
                 }
                 catch (AccountAccessException error) { return Results.Text(error.Message, statusCode: error.StatusCode); }
                 catch (Exception error) when (error is HttpRequestException or IOException || error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)

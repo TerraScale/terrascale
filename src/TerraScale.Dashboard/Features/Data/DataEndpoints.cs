@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.UI;
 using TerraScale.DotNet.TerraBase;
@@ -84,13 +83,13 @@ public static class DataEndpoints
                     if (action == "documents")
                     {
                         var result = await data.WriteAsync(context, id, collection, form["operation"].ToString(), form["id"].ToString(), form["document"].ToString(), form["version"].ToString(), http.RequestAborted);
-                        return DatabaseEndpoints.WantsHtml(http) ? AuthEndpoints.SeeOther(DocumentsPath(id, collection, form)) : Results.Json(new { id = result.Id, operation = form["operation"].ToString() });
+                        return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DocumentsPath(id, collection, form)) : Results.Json(new { id = result.Id, operation = form["operation"].ToString() });
                     }
                     if (action == "collections")
                     {
                         var collectionName = form["name"].ToString().Trim();
                         await data.CreateCollectionAsync(context, id, collectionName, http.RequestAborted);
-                        return DatabaseEndpoints.WantsHtml(http) ? AuthEndpoints.SeeOther(DocumentsPath(id, collectionName, form)) : Results.Json(new { collection = collectionName, status = "created" }, statusCode: 201);
+                        return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DocumentsPath(id, collectionName, form)) : Results.Json(new { collection = collectionName, status = "created" }, statusCode: 201);
                     }
                     if (action == "sql/check")
                     {
@@ -107,12 +106,12 @@ public static class DataEndpoints
                             return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, id, "sql", data, saved, collection, sql: form["sql"].ToString(), sqlResult: result) : Results.Json(new { rows = result.Rows });
                         }
                         var query = await saved.SaveAsync(context, id, form["name"].ToString(), form["sql"].ToString(), http.RequestAborted);
-                        return DatabaseEndpoints.WantsHtml(http) ? AuthEndpoints.SeeOther(DatabaseService.Path(id, "sql", collection) + (collection.Length == 0 ? "?" : "&") + "savedQueryId=" + Uri.EscapeDataString(query.Id)) : Results.Json(PublicSavedQuery(query), statusCode: 201);
+                        return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql", collection) + (collection.Length == 0 ? "?" : "&") + "savedQueryId=" + Uri.EscapeDataString(query.Id)) : Results.Json(PublicSavedQuery(query), statusCode: 201);
                     }
                     if (action == "saved-queries/delete") await saved.DeleteAsync(context, id, form["id"].ToString(), http.RequestAborted);
                     else if (action == "indexes") await data.CreateIndexAsync(context, id, collection, form["field"].ToString(), http.RequestAborted);
                     else if (action == "indexes/delete") await data.DropIndexAsync(context, id, form["name"].ToString(), http.RequestAborted);
-                    return DatabaseEndpoints.WantsHtml(http) ? AuthEndpoints.SeeOther(DatabaseService.Path(id, action.StartsWith("indexes", StringComparison.Ordinal) ? "indexes" : "sql", collection)) : Results.NoContent();
+                    return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, action.StartsWith("indexes", StringComparison.Ordinal) ? "indexes" : "sql", collection)) : Results.NoContent();
                 }
                 catch (Exception error) when (DatabaseEndpoints.KnownFailure(error))
                 {

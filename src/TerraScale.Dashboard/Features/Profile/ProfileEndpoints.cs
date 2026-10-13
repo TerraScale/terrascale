@@ -1,5 +1,4 @@
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.Profile;
@@ -74,7 +73,7 @@ public static class ProfileEndpoints
             {
                 await ProfileChanges.SaveAsync(accounts, context.Session, form["name"].ToString(), form["phoneNumber"].ToString(), http.RequestAborted);
             }
-            return AuthEndpoints.SeeOther("/profile?tab=profile");
+            return HttpRedirects.SeeOther("/profile?tab=profile");
         }
         catch (AccountAccessException error)
         {
