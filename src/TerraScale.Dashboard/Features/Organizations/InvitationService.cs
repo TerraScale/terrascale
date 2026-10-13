@@ -32,7 +32,8 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
             var members = await platform.ListMembersAsync(context.Session, org.Id, cancellationToken);
             Reconcile(org, invitations);
             Capacity(org, members, invitations, email);
-            org.InvitationReservations[reservation] = new(email, time.GetUtcNow());
+            org.InvitationReservations[reservation] = new(email, time.GetUtcNow())
+            { Known = [.. invitations.Where(invitation => invitation.Email.Equals(email, StringComparison.OrdinalIgnoreCase)).Select(invitation => invitation.Id)] };
         }, cancellationToken);
         CreatedInvitation created;
         try { created = await access.InviteAsync(context, email, role, cancellationToken); }
@@ -48,7 +49,8 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
         {
             await accounts.UpdateOrganizationAsync(context, org =>
             {
-                if (org.InvitationReservations.TryGetValue(reservation, out var current))
+                // Another reservation for this email already ended on this invitation, so this one stands for that request.
+                if (org.InvitationReservations.TryGetValue(reservation, out var current) && !current.Known.Contains(created.Invitation.Id))
                     org.InvitationReservations[reservation] = current with { InvitationId = created.Invitation.Id };
             }, cancellationToken);
         }
@@ -117,40 +119,44 @@ public sealed class InvitationService(AccountService accounts, IOrganizationAcce
         catch (Exception error) when (error is HttpRequestException or IOException or AccountAccessException or OperationCanceledException) { }
     }
 
-    // A reservation ends once ts-auth lists its invitation (by id, or by email for one whose response was lost),
-    // or after AbandonAfter with no such invitation: a request never outlives its 30-second deadline.
-    private void Reconcile(OrganizationRecord org, IReadOnlyList<TerraScaleAuthPlatformInvitation> invitations)
+    // ts-auth has no idempotency key or cancellation for invitation creation, so a request with an unknown outcome
+    // may commit at any later time, and neither elapsed time, clocks nor an absent entry end its reservation. A
+    // reservation ends only when ts-auth lists its invitation as decided (accepted, declined, revoked or expired):
+    // its recorded id or, for a lost response, an invitation for its email that it did not know and that no other
+    // reservation records. Each listed invitation ends at most one reservation, within this compare-and-set, so
+    // the reservations left for an email cover every request for it that may still commit.
+    private static void Reconcile(OrganizationRecord org, IReadOnlyList<TerraScaleAuthPlatformInvitation> invitations)
     {
-        var now = time.GetUtcNow();
-        foreach (var (id, reservation) in org.InvitationReservations.ToArray())
+        foreach (var key in org.InvitationReservations.Keys.ToArray())
         {
-            var listed = reservation.InvitationId.Length > 0
-                ? invitations.Any(invitation => invitation.Id == reservation.InvitationId)
-                : invitations.Any(invitation => invitation.Email.Equals(reservation.Email, StringComparison.OrdinalIgnoreCase) &&
-                    invitation.Status is "pending" or "accepted" && invitation.CreatedAt >= reservation.ReservedAt - ClockSkew);
-            if (listed || now - reservation.ReservedAt > AbandonAfter) org.InvitationReservations.Remove(id);
+            var reservation = org.InvitationReservations[key];
+            var recorded = org.InvitationReservations.Values.Select(other => other.InvitationId).ToHashSet(StringComparer.Ordinal);
+            var invitation = invitations.FirstOrDefault(invitation => invitation.Status is "accepted" or "declined" or "revoked" or "expired" && (reservation.InvitationId.Length > 0
+                ? invitation.Id == reservation.InvitationId
+                : invitation.Email.Equals(reservation.Email, StringComparison.OrdinalIgnoreCase) && !reservation.Known.Contains(invitation.Id) && !recorded.Contains(invitation.Id)));
+            if (invitation is null) continue;
+            org.InvitationReservations.Remove(key);
+            foreach (var (other, value) in org.InvitationReservations.ToArray())
+                if (value.Email == reservation.Email) org.InvitationReservations[other] = value with { Known = [.. value.Known, invitation.Id] };
         }
     }
 
-    // Occupied slots are distinct emails across members, ts-auth's pending invitations and reservations it
-    // does not list yet, so an invitee who just accepted counts once.
-    private void Capacity(OrganizationRecord org, IReadOnlyList<TerraScaleAuthPlatformMember> members, IReadOnlyList<TerraScaleAuthPlatformInvitation> invitations, string email)
+    // Occupied slots are distinct emails across members, ts-auth's pending invitations and open reservations,
+    // so an invitee who just accepted counts once. ts-auth decides expiry by its own clock.
+    // An email that already holds a reservation is invited again on that slot: ts-auth keeps one pending
+    // invitation per email, so a retry and the request it replaces never both hold an invitation.
+    private static void Capacity(OrganizationRecord org, IReadOnlyList<TerraScaleAuthPlatformMember> members, IReadOnlyList<TerraScaleAuthPlatformInvitation> invitations, string email)
     {
         if (org.DeletionRequested) throw new AccountAccessException("Organization deletion has been requested.", 409);
-        var now = time.GetUtcNow();
         var memberEmails = members.Select(member => member.Email.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
-        var pending = invitations.Where(invitation => invitation.Status == "pending" && invitation.ExpiresAt > now).Select(invitation => invitation.Email.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
+        var pending = invitations.Where(invitation => invitation.Status == "pending").Select(invitation => invitation.Email.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
         var reserved = org.InvitationReservations.Values.Select(reservation => reservation.Email).ToHashSet(StringComparer.Ordinal);
         if (memberEmails.Contains(email)) throw new AccountAccessException("This email is already an active member.", 409);
         if (pending.Contains(email)) throw new AccountAccessException("This email already has a pending invitation.", 409);
-        if (reserved.Contains(email)) throw new AccountAccessException("An invitation for this email is already being created.", 409);
         var plan = PlanCatalog.For(org)
             ?? throw new AccountAccessException("The organization's member allowance is unavailable.", 409);
         var limit = PlanCatalog.ResourceLimits(org).Members;
-        if (limit > 0 && memberEmails.Union(pending).Union(reserved).Count() >= limit)
+        if (limit > 0 && memberEmails.Union(pending).Union(reserved).Append(email).Distinct(StringComparer.Ordinal).Count() > limit)
             throw new AccountAccessException($"The {plan.Name} plan allows {limit} members including pending invitations.", 409);
     }
-
-    private static readonly TimeSpan ClockSkew = TimeSpan.FromMinutes(2);
-    private static readonly TimeSpan AbandonAfter = TimeSpan.FromMinutes(15);
 }

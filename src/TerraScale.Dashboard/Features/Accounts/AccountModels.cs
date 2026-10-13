@@ -194,7 +194,12 @@ public sealed record AccountContext(SessionRecord Session, AccountRecord Account
 }
 
 // One in-flight invitation: its email, when the slot was taken and, once ts-auth answered, its id.
-public sealed record InvitationReservation(string Email, DateTimeOffset ReservedAt, string InvitationId = "");
+public sealed record InvitationReservation(string Email, DateTimeOffset ReservedAt, string InvitationId = "")
+{
+    // ts-auth invitation ids for the email that cannot be this reservation's: listed when it was taken, or since
+    // accounted for by another reservation.
+    public IReadOnlyList<string> Known { get; init; } = [];
+}
 
 public sealed record CreatedInvitation(InvitationRecord Invitation, string Token)
 {
