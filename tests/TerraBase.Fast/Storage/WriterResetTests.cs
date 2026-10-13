@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -96,7 +95,7 @@ public sealed class WriterResetTests
     {
         using var response = await data.GetAsync(Document(database, id));
         return response.StatusCode == HttpStatusCode.OK
-            ? JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("document").GetRawText()
+            ? JsonElement.Parse(await response.Content.ReadAsStringAsync()).GetProperty("document").GetRawText()
             : null;
     }
 
