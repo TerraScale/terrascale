@@ -74,6 +74,14 @@ internal sealed partial class SqliteStorageTransaction
                     rows++;
                     from = reader.GetInt64(0);
                     var type = reader.GetInt64(1);
+                    // Turso's commit rows carry no table and no after-image, its delete rows no after-image. A row whose type
+                    // was damaged into one of those values still has its own table or image: taking it at its type would drop
+                    // the write it captured, so the read is refused.
+                    if ((type == 2 && (!reader.IsDBNull(2) || !reader.IsDBNull(3))) || (type == -1 && !reader.IsDBNull(3)))
+                    {
+                        throw new InvalidDataException($"a captured change of type {type} has the shape of another type");
+                    }
+
                     if (type == 2)
                     {
                         if (transaction.Deltas.Count > 0)

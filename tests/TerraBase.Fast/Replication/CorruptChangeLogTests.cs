@@ -122,6 +122,56 @@ public sealed class CorruptChangeLogTests
         }
     }
 
+    // An ack that ends right before a damaged transaction, and a new peer's first contact while the database is held: both
+    // refresh the tail-lag gauge, which reads the damaged row. Neither may throw (that would end the stream for every
+    // database to that peer); the acks still record. The gauge refreshes at most once a second, so the ack repeats for 1.5 s.
+    [Test]
+    public async Task An_ack_or_first_contact_right_before_a_damaged_transaction_does_not_throw()
+    {
+        await using var node = await Node.StartAsync("gru");
+        await node.WriteAsync(node.Database, async transaction => _ = await transaction.CreateCollectionAsync(new CollectionInfo(Items, 1), CancellationToken.None));
+        var before = await node.HeadAsync(node.Database);
+        await node.WriteAsync(node.Database, async transaction => _ = await transaction.PutAsync(Items, "a", Json("""{"n":1}"""), CancellationToken.None));
+        await node.DamageAsync(node.Database, before, Damage.Load("unknown-change-type-on-state-row"));
+        var peer = ReplicaId.Of(99, 1, 0);
+        for (var started = DateTime.UtcNow; DateTime.UtcNow - started < TimeSpan.FromSeconds(1.5); await Task.Delay(100))
+        {
+            await node.Groups.AckAsync(node.Database, peer, before, CancellationToken.None);
+        }
+
+        await Assert.That(await node.Groups.AckedAsync(node.Database, peer, CancellationToken.None)).IsEqualTo(before);
+        await Assert.That(await node.Groups.AckedAsync(node.Database, ReplicaId.Of(98, 1, 0), CancellationToken.None)).IsLessThanOrEqualTo(before);
+    }
+
+    // Recovery: a held database is read again. gru's write to `first` is damaged while sjc is unlisted, so the stream holds
+    // it (unreadable_reads, send_lag > 0). Once the row is repaired the held write reaches sjc and send_lag returns to 0.
+    [Test]
+    public async Task A_held_database_resumes_once_the_damaged_row_is_repaired()
+    {
+        await using var cluster = await Pair.StartAsync();
+        var (gru, sjc) = (cluster.Gru, cluster.Sjc);
+        var first = cluster.Databases[0];
+        await gru.WriteAsync(first, async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo(Items, 1), CancellationToken.None);
+            _ = await transaction.PutAsync(Items, "warm", Json("""{"n":0}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(first, "warm", """{"n":0}""")).IsTrue();
+
+        await cluster.UnlistAsync(sjc);
+        var before = await gru.HeadAsync(first);
+        await gru.WriteAsync(first, async transaction => _ = await transaction.PutAsync(Items, "held", Json("""{"n":1}"""), CancellationToken.None));
+        await gru.DamageAsync(first, before, Damage.Load("unknown-change-type-on-state-row"));
+        cluster.List(sjc);
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_unreadable_reads_total", value => value >= 1, "sjc")).IsTrue();
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_send_lag_seconds", value => value > 0, "sjc")).IsTrue();
+        await Assert.That(await sjc.ReadAsync(first, "held")).IsNull();
+
+        await gru.RepairAsync(first, "UPDATE turso_cdc SET change_type = 1 WHERE change_type = 7;");
+        await Assert.That(await sjc.UntilAsync(first, "held", """{"n":1}""")).IsTrue().Because("a held database is read again once its damage is gone");
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_send_lag_seconds", value => value == 0, "sjc")).IsTrue();
+    }
+
     // A batch whose second group holds bytes that are no DocumentState: the stream ends with InvalidArgument and the first,
     // valid group is not applied either. Control: the same valid group alone, on a new stream, applies.
     [Test]
@@ -443,6 +493,19 @@ public sealed class CorruptChangeLogTests
                 return write.ExecuteNonQuery();
             }, "a test damaging a CDC row", CancellationToken.None);
             await Assert.That(damaged).IsEqualTo(1);
+        }
+
+        // Runs one repair statement on the change log through the database's writer; it must change exactly one row.
+        public async Task RepairAsync(TenantContext database, string sql)
+        {
+            var store = await StoreAsync(database);
+            var repaired = await store.WithWriterAsync(session =>
+            {
+                using var write = session.Connection.CreateCommand();
+                write.CommandText = sql;
+                return write.ExecuteNonQuery();
+            }, "a test repairing a CDC row", CancellationToken.None);
+            await Assert.That(repaired).IsEqualTo(1);
         }
 
         // Whether the document's materialized JSON becomes `expected` within the deadline.

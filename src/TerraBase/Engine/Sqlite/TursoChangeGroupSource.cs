@@ -220,11 +220,14 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         }
     }
 
-    // The oldest local group above the slowest live peer's ack, looked at no more than once a second per database.
+    // The oldest local group above the slowest live peer's ack, looked at no more than once a second per database. Only a
+    // gauge: it never throws into an ack. A read that fails (a damaged change log row, a busy or closed store) keeps the
+    // last value; the held database shows in send_lag and unreadable_reads instead.
     private async ValueTask TailAsync(SqliteDatabaseStore store, long? floor, CancellationToken cancellationToken)
     {
         var now = _engine.HostTime.GetUtcNow();
-        if (_tail.TryGetValue(store.Incarnation, out var known) && now.UtcTicks - known.CheckedAt < TimeSpan.TicksPerSecond)
+        var seen = _tail.TryGetValue(store.Incarnation, out var known);
+        if (seen && now.UtcTicks - known.CheckedAt < TimeSpan.TicksPerSecond)
         {
             return;
         }
@@ -232,10 +235,17 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         long? committed = null;
         if (floor is { } after)
         {
-            var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
-            await using (transaction.ConfigureAwait(false))
+            try
             {
-                (_, _, committed) = await transaction.ReadChangeGroupsAsync(after, 1, 1, _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
+                var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+                await using (transaction.ConfigureAwait(false))
+                {
+                    (_, _, committed) = await transaction.ReadChangeGroupsAsync(after, 1, 1, _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                committed = seen ? known.Committed : null;
             }
         }
 
