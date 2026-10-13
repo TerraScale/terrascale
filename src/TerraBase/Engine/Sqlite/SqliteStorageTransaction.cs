@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
@@ -234,10 +235,10 @@ internal sealed partial class SqliteStorageTransaction(
         if (!HasTable(collection))
         {
             // An implicit collection carries the same captured identity metadata as an explicit creation.
-            CreateCollection(new CollectionInfo(collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+            CreateCollection(new CollectionInfo(collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), cancellationToken);
         }
 
-        var (state, at) = Begin(collection, id);
+        var (state, at) = BeginDocument(collection, id);
         DocumentState next;
         if (patch is not null)
         {
@@ -281,7 +282,7 @@ internal sealed partial class SqliteStorageTransaction(
             ClearUniqueConflict(collection, id);
             cancellationToken.ThrowIfCancellationRequested();
             Offset();
-            var (state, at) = Begin(collection, id);
+            var (state, at) = BeginDocument(collection, id);
             var written = Store(collection, id, state.Delete(at), at, null);
             ReconcileUnique(collection, affected, cancellationToken);
             return written;
@@ -289,6 +290,26 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     // Client commits keep per-commit limits and metadata documents; _system is never a client database.
+    private ClearEntry? CollectionDrop(string name) =>
+        (_pending.TryGetValue((DocumentDelta.Collections, name), out var pending) ? pending.State : ReadState(DocumentDelta.Collections, name))
+        .Clear is { Deleted: true } drop ? drop : null;
+
+    // Local writes keep the collection clear and mint above it even when observing a remote clock was capped.
+    private (DocumentState State, EntryVersion At) BeginDocument(string collection, string id)
+    {
+        var (state, at) = Begin(collection, id);
+        if (IsClient && CollectionDrop(collection) is { } drop)
+        {
+            state = state.Join(new DocumentState(drop, DocumentState.Bottom.Fields));
+            if (at.Stamp.Value <= drop.Version.Stamp.Value)
+            {
+                at = at with { Stamp = Member.Clock.Tick(drop.Version.Stamp) };
+            }
+        }
+
+        return (state, at);
+    }
+
     private bool IsClient => !store.IsSystem;
 
     private long Write(Action<long> apply, CancellationToken cancellationToken)
@@ -745,7 +766,7 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() =>
         {
             ThrowIfReadOnly();
-            return CreateCollection(collection);
+            return CreateCollection(collection, cancellationToken);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
@@ -761,18 +782,43 @@ internal sealed partial class SqliteStorageTransaction(
 
         Offset();
         var (state, at) = Begin(collection, name);
-        if (body is null)
+        using var parsed = body is null ? null : JsonDocument.Parse(body, DocumentState.JsonOptions);
+        var target = collection == DocumentDelta.Unique ? name
+            : collection == DocumentDelta.Indexes && parsed is not null
+                && parsed.RootElement.TryGetProperty("collection", out var named) ? named.GetString() : null;
+        if (target is not null && CollectionDrop(target) is { } drop)
+        {
+            if (at.Stamp.Value <= drop.Version.Stamp.Value)
+            {
+                at = at with { Stamp = Member.Clock.Tick(drop.Version.Stamp) };
+            }
+        }
+
+        if (parsed is null)
         {
             Store(collection, name, state.Delete(at), at, null);
             return;
         }
 
-        using var parsed = JsonDocument.Parse(body, DocumentState.JsonOptions);
-        var next = state.Put(at, parsed.RootElement);
+        DocumentState next;
+        if (collection == DocumentDelta.Collections)
+        {
+            // Collection clears only record drops; a concurrent creation must not replace the deletion barrier.
+            next = parsed.RootElement.EnumerateObject().Aggregate(state, (current, property) => current.Set(at, property.Name, property.Value));
+            foreach (var field in state.Fields.Keys.Where(field => !parsed.RootElement.TryGetProperty(field, out _)))
+            {
+                next = next.Unset(at, field);
+            }
+        }
+        else
+        {
+            next = state.Put(at, parsed.RootElement);
+        }
+
         Store(collection, name, next, at, Materialize(next));
     }
 
-    private bool CreateCollection(CollectionInfo collection)
+    private bool CreateCollection(CollectionInfo collection, CancellationToken cancellationToken)
     {
         collection = collection with { Id = collection.Id.Length == 0 ? EntityIds.New().ToString() : collection.Id };
         if (!EntityIds.IsValid(collection.Id))
@@ -804,6 +850,11 @@ internal sealed partial class SqliteStorageTransaction(
         Offset();
 
         WriteMetadata(DocumentDelta.Collections, collection.Name, string.Create(CultureInfo.InvariantCulture, $$"""{"created_at":{{collection.CreatedAt}},"entity_id":"{{collection.Id}}"}"""));
+        if (IsClient && _pending[(DocumentDelta.Collections, collection.Name)].State.Clear is { Deleted: true } drop)
+        {
+            RestoreDroppedCollectionIndexes(collection.Name, drop, cancellationToken);
+        }
+
         return true;
     }
 
@@ -890,17 +941,22 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() =>
         {
             ThrowIfReadOnly();
-            if (store.IsSystem)
+            if (IsClient)
             {
-                Command(SqliteStatements.DropDocuments, name).ExecuteNonQuery();
-                Command(SqliteStatements.DropStates, name).ExecuteNonQuery();
+                if (Command(SqliteStatements.GetCollection, name).ExecuteScalar() is null)
+                {
+                    return false;
+                }
+
+                Write(_ => { }, cancellationToken);
+                WriteMetadata(DocumentDelta.Collections, name, null);
+                var drop = _pending[(DocumentDelta.Collections, name)].State.Clear!.Value;
+                DropCoveredCollection(name, drop, cancellationToken);
+                return true;
             }
-            else if (Command(SqliteStatements.GetCollection, name).ExecuteScalar() is not null)
-            {
-                // A drop is local: the collection's documents and states go, and its own metadata document's deletion is
-                // what replicates (docs/terrabase/multi-region-replication.md section 5).
-                DropTable(name);
-            }
+
+            Command(SqliteStatements.DropDocuments, name).ExecuteNonQuery();
+            Command(SqliteStatements.DropStates, name).ExecuteNonQuery();
 
             cancellationToken.ThrowIfCancellationRequested();
             if (Command(SqliteStatements.DropCollection, name).ExecuteNonQuery() == 0)
@@ -916,6 +972,119 @@ internal sealed partial class SqliteStorageTransaction(
             WriteMetadata(DocumentDelta.Collections, name, null);
             return true;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    // A collection clear dominates the same entries as a document clear; last-applied row stamps are not lattice versions.
+    private void DropCoveredCollection(string name, ClearEntry drop, CancellationToken cancellationToken)
+    {
+        var clear = new DocumentState(drop, DocumentState.Bottom.Fields);
+        var retained = false;
+        var pendingIds = _pending.Keys.Where(key => key.Collection == name).Select(key => key.Id).ToArray();
+        foreach (var id in CollectionDropIds(name, cancellationToken).Where(id => !_pending.ContainsKey((name, id))).Concat(pendingIds))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var state = _pending.TryGetValue((name, id), out var pending) ? pending.State : ReadState(name, id);
+            var next = state.Join(clear);
+            if (next.Equals(state) && !next.Equals(clear))
+            {
+                retained = true;
+                continue;
+            }
+
+            var body = Materialize(next);
+            var affected = ReplaceUniqueKeys(name, id, body, cancellationToken, local: false);
+            ClearUniqueConflict(name, id);
+            PutRow(name, id, body);
+            _pending.Remove((name, id));
+            if (next.Equals(clear))
+            {
+                var delete = Command("DELETE FROM _tb_state WHERE collection = $collection AND id = $id;", name);
+                delete.Parameters.AddWithValue("$id", id);
+                delete.ExecuteNonQuery();
+            }
+            else
+            {
+                retained = true;
+                // Derived projection, not a new local operation: origin 0 prevents the CDC tailer from echoing it.
+                WriteState(name, id, next, new EntryVersion(drop.Version.Stamp, default));
+            }
+
+            ReconcileUnique(name, affected, cancellationToken);
+        }
+
+        foreach (var index in ReadIndexes(cancellationToken).Where(index => index.Collection == name
+            && !(ReadState(DocumentDelta.Indexes, index.Name).Clear?.Version > drop.Version)))
+        {
+            _ = DropIndex(index.Name, cancellationToken);
+        }
+
+        if (retained)
+        {
+            ReprojectUnique(name, cancellationToken);
+            SetDroppedCollectionIdentity(name, drop);
+        }
+        else
+        {
+            DropTable(name);
+            Command(SqliteStatements.DropCollection, name).ExecuteNonQuery();
+            DropUniqueCollection(name, local: false);
+        }
+
+        ChangedReaderState = true;
+    }
+
+    private IEnumerable<string> CollectionDropIds(string name, CancellationToken cancellationToken)
+    {
+        var after = string.Empty;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var command = Command("SELECT id FROM _tb_state WHERE collection = $collection AND id > $after ORDER BY id LIMIT 128;", name);
+            command.Parameters.AddWithValue("$after", after);
+            List<string> ids = [];
+            using (var reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    ids.Add(reader.GetString(0));
+                }
+            }
+
+            if (ids.Count == 0)
+            {
+                yield break;
+            }
+
+            foreach (var id in ids)
+            {
+                yield return id;
+            }
+
+            after = ids[^1];
+        }
+    }
+
+    private static string DroppedCollectionId(ClearEntry drop)
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        BinaryPrimitives.WriteUInt64BigEndian(bytes, drop.Version.Stamp.Value);
+        BinaryPrimitives.WriteUInt64BigEndian(bytes[8..], drop.Version.Node.Value);
+        return new Ulid(bytes).ToString();
+    }
+
+    private void AddDroppedCollection(string name, ClearEntry drop, CancellationToken cancellationToken)
+    {
+        AddCollection(name, drop.Version.Stamp.Milliseconds, DroppedCollectionId(drop));
+        RestoreDroppedCollectionIndexes(name, drop, cancellationToken);
+    }
+
+    private void SetDroppedCollectionIdentity(string name, ClearEntry drop)
+    {
+        var update = Command(SqliteStatements.UpdateCollection, name);
+        update.Parameters.AddWithValue("$created", drop.Version.Stamp.Milliseconds);
+        update.Parameters.AddWithValue("$entityId", DroppedCollectionId(drop));
+        update.ExecuteNonQuery();
     }
 
     // Worker-only: drops a client collection's table, documents and states. Dropping the table drops its indexes too.

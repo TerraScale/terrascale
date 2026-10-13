@@ -237,8 +237,29 @@ written with capture suspended and are omitted from database copies and backups.
 - **Metadata** stays as documents in the reserved collections `_collections`, `_indexes` and `_unique`. They replicate
   like any document. When one of them materializes, the lane runs local DDL: `CREATE TABLE`, `CREATE INDEX` or the
   `DROP`.
-- **Dropping a collection** deletes its `_collections` document at version D. The lane drops the table and its
-  `_tb_state` rows locally. Any later-arriving entry of that collection below D is dominated and dropped.
+- **Dropping a collection** deletes its `_collections` document at version D. Local drops and joined drops apply
+  that deleted clear to every document state using the document lattice, including hidden uniqueness losers. Entries
+  dominated by D disappear; newer live bases, set adds and tombstones remain. Compare entry versions by HLC **and
+  node**, never by `_tb_state.stamp` (the last applied operation can be older than the entries the row holds).
+  A state reduced to the collection's clear alone needs no separate document tombstone: the `_collections` tombstone
+  covers it. If no document state remains, the table and collection row go. Otherwise the collection stays, including
+  when only newer document tombstones remain, so a delayed older PUT cannot resurrect them.
+  Every later-arriving document delta joins with the collection's retained deleted clear, even while the table exists;
+  a newer field write brings back only fields not covered by D. Without live collection metadata above D, a retained
+  or implicitly resurrected collection has the same derived ULID on every replica (the big-endian packed HLC and node
+  of D), with `created_at` equal to D's physical milliseconds. Explicit recreation uses its replicated identity and
+  creation-time fields instead. The derived identity is a local projection, not a new metadata write. Collection
+  creation and metadata replacement write fields (and field tombstones for omitted properties), reserving the clear
+  register for drops. Recreation writes new metadata fields above D while retaining the deleted clear, so it does not
+  erase the barrier against old document deltas. Physical indexes with definitions covered by D go; definitions newer
+  than D are retained or rebuilt when the collection exists. An index definition alone does not recreate a dropped collection.
+  Unique definitions covered by D are inactive, including definitions received after the drop. Local document and
+  definition creations mint above the retained clear even when observation of a future peer clock was capped.
+  Unique visibility is reconciled as covered documents leave. Rewritten survivor states use origin 0, like a repair, so the CDC tailer
+  does not echo the collection's deletion as document writes. The wire and storage encodings are unchanged; every
+  serving replica must use field-only collection metadata writes to retain this deletion barrier. Drops scan states
+  in pages of 128 IDs within one atomic transaction; large collections hold the write lock until the scan finishes.
+  Derived projections do not count toward outbound change-group limits because only the metadata drop ships.
 - `_system.db` replicates catalog document states through CDC (section 15), with its materialized documents in one
   shared table. It has no client changes-feed tables; catalog writes do not append client feed events.
 
@@ -799,7 +820,9 @@ ts-dotnet until R12 makes ts-auth lattice-native.
 - `JoinAsync` writes the document only when the join changed it, with `stamp = S` and `origin` = the delta's node,
   and hides unique-constraint losers instead of failing. A `_collections` document runs its collection's DDL (create,
   identity, drop) without writing metadata of its own. A delta of a collection this machine lacks creates the
-  collection, unless that collection's dropped metadata document dominates the delta.
+  collection, unless that collection's dropped metadata document dominates the delta. The drop's clear joins into
+  document deltas whether the table exists or not; joined drops remove covered entries and retain newer state, so
+  receiving a newer write before or after the drop produces the same document states and collection identity.
 - The outbound status (`GET /replication`, `/health/replication`) lists connected streams. `CatchupSeconds` is the age
   of the backlog since a read first returned groups, and `Diverged` is always false until anti-entropy (R6). The status
   reports `Initialized = false` while no change group source exists, so `/health/replication` stays `degraded` for
@@ -810,7 +833,6 @@ ts-dotnet until R12 makes ts-auth lattice-native.
   - persisting `applied` from heartbeats (R7 defines the heartbeat stamp as a frontier);
   - DDL from replicated `_indexes` and `_unique` documents: those documents replicate, but indexes and constraints are
     created only where they were defined;
-  - a replicated collection drop also deletes concurrent newer documents of that collection on the receiver (R6/R7).
 
 **R6 as built** (2026-10-12; no storage format change):
 
@@ -984,8 +1006,8 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   origin's `_tb_feed_floor` row (floor 0) on its first event in the file. So the feed holds exactly the committed
   states, never a state a crash lost, and backups and copies carry it (its rows are captured; the CDC tailer skips
   them). Cost: one more captured row per document write (the floor row only on an origin's first event here).
-- **Not in the feed:** metadata documents (`_collections`, `_indexes`, `_unique`); the documents a dropped collection held
-  (the drop deletes their states without events); a uniqueness loser becoming visible when its winner goes (no state
+- **Not in the feed:** metadata documents (`_collections`, `_indexes`, `_unique`); documents wholly covered by a collection
+  drop (their states go without events; rewritten survivor states produce local repair events); a uniqueness loser becoming visible when its winner goes (no state
   write); a duplicate or dominated join (it changes nothing). `document` is read when the event is sent: null when the
   document no longer exists on the serving machine (deleted since, dropped, or a hidden uniqueness loser).
 - **Reading.** Per origin listed in `_tb_feed_floor`, the rows above the cursor's stamp (index `_tb_feed_order`, at most
