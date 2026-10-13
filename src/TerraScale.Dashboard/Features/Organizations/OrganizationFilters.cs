@@ -8,7 +8,7 @@ public sealed record OrganizationFilters(string Query = "", string Role = "all",
         http.Request.Query["q"].ToString().Trim(), http.Request.Query["role"].LastOrDefault() is { Length: > 0 } role ? role : "all",
         int.TryParse(http.Request.Query["page"], out var page) ? Math.Max(1, page) : 1,
         http.Request.Query["search"].ToString().Trim(), http.Request.Query["action"].ToString() is { Length: > 0 } action ? action : "all",
-        http.Request.Query["severity"].ToString() is "info" or "warn" or "critical" ? http.Request.Query["severity"].ToString() : "all",
+        http.Request.Query["severity"].ToString() is "info" or "warn" or "critical" or "unknown" ? http.Request.Query["severity"].ToString() : "all",
         http.Request.Query["range"].ToString() is "24h" or "30d" or "90d" ? http.Request.Query["range"].ToString() : "7d",
         http.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow());
 
@@ -26,7 +26,8 @@ public sealed record OrganizationFilters(string Query = "", string Role = "all",
     {
         "high" or "critical" => "critical",
         "medium" or "warn" or "warning" => "warn",
-        _ => "info"
+        "low" or "info" or "informational" => "info",
+        _ => "unknown"
     };
     // These presentation classifiers preserve the original Go rules over the
     // event's reported fields; they do not grant permissions or create events.

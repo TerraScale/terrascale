@@ -136,7 +136,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
     public Task<OrganizationAuditEvents> ListAuditEvents(
         [Description("Case-insensitive text matched against actor, action, target, source, and severity.")] string search = "",
         [Description("Only events with this raw action code. Omit or use all for every action.")] string action = "",
-        [Description("info, warn, critical, or all (default).")] string severity = "",
+        [Description("info, warn, critical, unknown (not reported by the provider), or all (default).")] string severity = "",
         [Description("Time window: 24h, 7d (default), 30d, or 90d, capped by the organization's retention.")] string range = "",
         [Description("1-based page number. Defaults to 1.")] int page = 1,
         [Description("Events per page, 1-100. Defaults to 10.")] int pageSize = 10,
@@ -150,7 +150,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
         var retention = snapshot.AuditRetentionDays is >= 1 and <= 90 ? snapshot.AuditRetentionDays.Value
             : throw new IOException("Audit retention policy is unavailable.");
         range = range is "24h" or "30d" or "90d" ? range : "7d";
-        severity = severity is "info" or "warn" or "critical" ? severity : "all";
+        severity = severity is "info" or "warn" or "critical" or "unknown" ? severity : "all";
         var filter = new OrganizationFilters(Search: search.Trim(), Action: action.Length == 0 ? "all" : action, Severity: severity, Range: range, Now: time.GetUtcNow());
         var matches = filter.ApplyAudit(snapshot.AuditEvents, retention);
         var pages = Math.Max(1, (matches.Count + pageSize - 1) / pageSize);
@@ -161,6 +161,7 @@ public sealed class OrganizationMcpTools(IHttpContextAccessor http, AccountServi
             item.TargetType, item.Source, OrganizationFilters.AuditSeverity(item), OrganizationFilters.AuditOutcome(item))).ToArray();
         return new OrganizationAuditEvents(rows, matches.Count, matches.Count(item => OrganizationFilters.AuditSeverity(item) == "critical"),
             matches.Count(item => OrganizationFilters.AuditSeverity(item) == "warn"), matches.Count(item => OrganizationFilters.AuditSeverity(item) == "info"),
+            matches.Count(item => OrganizationFilters.AuditSeverity(item) == "unknown"),
             page, pages, range, severity, retained.Select(item => item.Action).Distinct().Order().ToArray(), retention);
     });
 
