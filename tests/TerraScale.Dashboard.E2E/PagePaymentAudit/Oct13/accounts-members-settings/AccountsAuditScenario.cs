@@ -20,11 +20,11 @@ namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.AccountsMembersSetting
 // still run through the application; existing shared fixture files stay unchanged.
 public sealed class AccountsAuditScenario : IAsyncInitializer, IAsyncDisposable
 {
-    public const string OrganizationId = "01J000000000000000000000100";
-    public const string ProjectId = "01J000000000000000000000101";
-    public const string OwnerId = "01J000000000000000000000001";
-    public const string MemberId = "01J000000000000000000000002";
-    public const string AdminId = "01J000000000000000000000003";
+    public const string OrganizationId = "01J00000000000000000000100";
+    public const string ProjectId = "01J00000000000000000000101";
+    public const string OwnerId = "01J00000000000000000000001";
+    public const string MemberId = "01J00000000000000000000002";
+    public const string AdminId = "01J00000000000000000000003";
     public const string Password = "local-audit-password";
     private WebApplication? app;
     private TestWorkspace? workspace;
@@ -75,12 +75,12 @@ public sealed class AccountsAuditScenario : IAsyncInitializer, IAsyncDisposable
             };
         for (var index = 0; index < 10; index++)
         {
-            var id = "audit-member-" + index.ToString("D2");
+            var id = "01J" + new string('0', 20) + (200 + index).ToString("D3");
             org.Members[id] = new() { UserId = id, Name = "Page Member " + index.ToString("D2"), Email = id + "@example.test", Role = "member" };
         }
         for (var index = 0; index < 12; index++)
         {
-            var id = "audit-invitation-" + index.ToString("D2");
+            var id = "01J" + new string('0', 20) + (300 + index).ToString("D3");
             org.Invitations[id] = new()
             {
                 Id = id,
