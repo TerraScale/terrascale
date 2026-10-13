@@ -1,12 +1,16 @@
 // The TerraBase v1 client: documents, transactions, queries and shapes over
 // the project-scoped C# Documents API (decision 0004 and shape-reads.md).
 import {
-  array, boolean, decodeDocument, decodeWrite, durability, malformed, object, u64,
+  array, boolean, decodeDocument, decodeWrite, documentObject, durability, malformed, object, u64,
 } from "./decode.js";
+import { requireId } from "../ids.js";
 import { isJsonPointer, requireFilter, requirePath } from "./filter.js";
 import { requireDocumentId, requireName, requireVersion } from "./ids.js";
 import { assertJsonObject, assertJsonValue, ExactDecimal, stringifyExactJson } from "./json.js";
 import { readShape } from "./shapes.js";
+import { runSql, checkSql } from "./sql.js";
+import { streamChanges } from "./changes.js";
+import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema } from "./catalog.js";
 import { V1Transport } from "./transport.js";
 /**
  * @import { V1Document, V1Durability, V1WriteResult } from "./decode.js"
@@ -37,6 +41,7 @@ import { V1Transport } from "./transport.js";
  * @typedef {{ readonly op: "set"; readonly path: string; readonly value: JsonInput }
  *   | { readonly op: "unset"; readonly path: string }
  *   | { readonly op: "inc"; readonly path: string; readonly by: number | bigint | ExactDecimal }
+ *   | { readonly op: "add" | "remove"; readonly path: string; readonly value: import("./filter.js").V1Scalar }
  *   | { readonly op: "append"; readonly path: string; readonly value: JsonInput }} V1PatchOp
  */
 /**
@@ -67,7 +72,7 @@ import { V1Transport } from "./transport.js";
 /**
  * One op's result: `id` and `version` for writes, `asserted` for asserts, and
  * also `count` (decimal u64) for `assertCount`.
- * @typedef {{ readonly id: string; readonly version: string } | { readonly asserted: true; readonly count?: string }} V1TransactionOpResult
+ * @typedef {{ readonly id: string; readonly version: string; readonly document?: import("./json.js").JsonObject } | { readonly asserted: true; readonly count?: string }} V1TransactionOpResult
  */
 /** @typedef {{ readonly gte?: number | undefined; readonly lte?: number | undefined }} V1CountBounds */
 /**
@@ -94,13 +99,14 @@ function pointer(path) {
  */
 function patchOp(op) {
   if (typeof op !== "object" || op === null || Array.isArray(op)) throw new TypeError("A patch op is an object.");
-  if (op.path === "/id" || op.path?.startsWith("/id/")) throw new TypeError("The document key is the entity ID; payloads must not contain an id field.");
-  if (op.path === "" && op.op === "set") assertNoPayloadId(op.value);
   let allowed = ["op", "path", "value"];
   switch (op.op) {
     case "unset": allowed = ["op", "path"]; break;
     case "inc": allowed = ["op", "path", "by"]; break;
   }
+  const path = pointer(op.path);
+  if (["inc", "add", "remove"].includes(op.op) && path.split("/").length !== 2)
+    throw new TypeError("inc, add and remove require a top-level field.");
   for (const key of Object.keys(op)) if (!allowed.includes(key)) throw new TypeError(`Unknown patch op member ${key}.`);
   switch (op.op) {
     case "set":
@@ -109,14 +115,30 @@ function patchOp(op) {
       return { op: op.op, path: pointer(op.path), value: op.value };
     case "unset":
       return { op: "unset", path: pointer(op.path) };
+    case "add":
+    case "remove": {
+      const value = op.value;
+      if (value !== null && typeof value !== "boolean" && typeof value !== "string" &&
+          typeof value !== "number" && typeof value !== "bigint" && !(value instanceof ExactDecimal))
+        throw new TypeError("add and remove require a JSON scalar of at most 1 KiB.");
+      assertJsonValue(value, "set element");
+      if (new TextEncoder().encode(stringifyExactJson(value, "set element")).byteLength > 1024)
+        throw new TypeError("add and remove require a JSON scalar of at most 1 KiB.");
+      return { op: op.op, path, value };
+    }
     case "inc": {
       const by = op.by;
-      if (!(typeof by === "bigint" || by instanceof ExactDecimal || (typeof by === "number" && Number.isFinite(by))))
-        throw new TypeError("inc takes a finite number, bigint or ExactDecimal.");
-      return { op: "inc", path: pointer(op.path), by };
+      if (!(typeof by === "bigint" || by instanceof ExactDecimal || (typeof by === "number" && Number.isSafeInteger(by))))
+        throw new TypeError("inc requires a non-zero signed 64-bit integer.");
+      const text = String(by);
+      if (!/^-?(?:0|[1-9]\d*)$/u.test(text)) throw new TypeError("inc requires an integer JSON literal.");
+      const integer = BigInt(text);
+      if (integer === 0n || integer < -(1n << 63n) || integer >= (1n << 63n))
+        throw new TypeError("inc requires a non-zero signed 64-bit integer.");
+      return { op: "inc", path, by };
     }
     default:
-      throw new TypeError("Patch ops are set, unset, inc or append.");
+      throw new TypeError("Patch ops are set, unset, inc, append, add or remove.");
   }
 }
 
@@ -135,7 +157,6 @@ function normalizePatch(patch) {
   if (hasMerge) {
     const merge = /** @type {{ readonly merge: JsonInputObject }} */ (patch).merge;
     assertJsonObject(merge, "merge patch");
-    assertNoPayloadId(merge);
     return { merge };
   }
   const ops = /** @type {{ readonly ops: readonly V1PatchOp[] }} */ (patch).ops;
@@ -231,16 +252,9 @@ function rejectIdempotency(options) {
 /** @param {JsonInputObject} document @returns {string} */
 function encodeDocument(document) {
   assertJsonObject(document, "document");
-  assertNoPayloadId(document);
   const body = stringifyExactJson(document, "document");
   if (new TextEncoder().encode(body).byteLength > 1024 * 1024) throw new TypeError("A document is at most 1 MiB.");
   return body;
-}
-
-/** @param {unknown} document @returns {void} */
-function assertNoPayloadId(document) {
-  if (typeof document === "object" && document !== null && Object.hasOwn(document, "id"))
-    throw new TypeError("The document key is the entity ID; payloads must not contain an id field.");
 }
 
 /** A collection handle by name. It performs no I/O until an operation runs. */
@@ -362,6 +376,29 @@ export class V1Collection {
     return decodeQueryPage(response.value);
   }
 
+  /** @param {{ readonly limit?: number | undefined; readonly cursor?: string | undefined }} [request] @param {V1RequestOptions} [options] @returns {Promise<V1QueryPage>} */
+  async list(request = {}, options = {}) {
+    for (const key of Object.keys(request)) if (key !== "limit" && key !== "cursor") throw new TypeError(`Unknown document list member ${key}.`);
+    const query = new URLSearchParams();
+    if (request.limit !== undefined) {
+      if (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > 1000) throw new TypeError("Document list limit is 1-1000.");
+      query.set("limit", String(request.limit));
+    }
+    if (request.cursor !== undefined) {
+      if (typeof request.cursor !== "string" || request.cursor === "") throw new TypeError("Document cursor is a non-empty string.");
+      query.set("cursor", request.cursor);
+    }
+    const response = await this.#transport.call("listDocuments", this.#params, { query, signal: options.signal });
+    return decodeQueryPage(response.value);
+  }
+
+  /** @param {V1RequestOptions} [options] */
+  getSchema(options = {}) { return getCollectionSchema(this.#transport, this.#params, options); }
+  /** @param {import("./json.js").JsonInputObject | boolean} schema @param {V1RequestOptions} [options] */
+  putSchema(schema, options = {}) { return putCollectionSchema(this.#transport, this.#params, schema, options); }
+  /** @param {V1RequestOptions} [options] */
+  deleteSchema(options = {}) { return deleteCollectionSchema(this.#transport, this.#params, options); }
+
   /**
    * Iterates over every page, following `nextCursor`. `count`
    * is sent with the first page only.
@@ -372,9 +409,13 @@ export class V1Collection {
   async *pages(query = {}, options = {}) {
     /** @type {V1Query} */
     let current = query;
+    const cursors = new Set(query.cursor == null ? [] : [query.cursor]);
     while (true) {
       const page = await this.query(current, options);
+      if (page.nextCursor !== null && cursors.has(page.nextCursor)) malformed("repeated pagination cursor");
+      if (page.nextCursor !== null) cursors.add(page.nextCursor);
       yield page;
+      options.signal?.throwIfAborted();
       if (page.nextCursor === null) return;
       const { count: _count, ...rest } = current;
       current = { ...rest, cursor: page.nextCursor };
@@ -388,7 +429,12 @@ export class V1Collection {
    * @returns {AsyncGenerator<V1Document, void, undefined>}
    */
   async *items(query = {}, options = {}) {
-    for await (const page of this.pages(query, options)) yield* page.items;
+    for await (const page of this.pages(query, options)) {
+      for (const item of page.items) {
+        options.signal?.throwIfAborted();
+        yield item;
+      }
+    }
   }
   /**
    * Reads one C# shape snapshot page or change-log chunk. Bootstrap defaults to offset -1.
@@ -457,7 +503,7 @@ export class V1Transaction {
   static #precondition(precondition, allowNoneMatch) {
     if (precondition === undefined) return {};
     if ("ifMatch" in precondition && !("ifNoneMatchAny" in precondition))
-      return { if_match: precondition.ifMatch === "*" ? "*" : requireVersion(precondition.ifMatch) };
+      return { if_match: precondition.ifMatch === "*" ? "*" : `"${requireVersion(precondition.ifMatch)}"` };
     if ("ifNoneMatchAny" in precondition && precondition.ifNoneMatchAny === true && !("ifMatch" in precondition)) {
       if (!allowNoneMatch) throw new TypeError("This op does not take ifNoneMatchAny.");
       return { if_none_match: "*" };
@@ -597,19 +643,21 @@ export class V1Transaction {
           return Object.freeze(result.count === undefined
             ? { asserted: /** @type {const} */ (true) }
             : { asserted: /** @type {const} */ (true), count: u64(result.count, "assert_count count") });
-        return Object.freeze({ id: requireDocumentId(result.id), version: requireVersion(result.version) });
+        return Object.freeze({ id: requireDocumentId(result.id), version: requireVersion(result.version),
+          ...(result.document === undefined ? {} : { document: documentObject(result.document) }),
+        });
       })),
     });
   }
 }
 
-/** @typedef {{ readonly name: string; readonly createdAt: string }} V1CollectionInfo */
+/** @typedef {{ readonly id: import("../ids.js").EntityId; readonly name: string; readonly createdAt: string }} V1CollectionInfo */
 /** @typedef {{ readonly items: readonly V1CollectionInfo[]; readonly nextCursor: string | null }} V1CollectionPage */
 /** @typedef {{ readonly limit?: number | undefined; readonly cursor?: string | undefined }} V1CollectionListOptions */
 /** @param {JsonValue | undefined} value @returns {V1CollectionInfo} */
 function decodeCollection(value) {
   const raw = object(value, "collection");
-  return Object.freeze({ name: requireName("collection", raw.name), createdAt: u64(raw.created_at, "collection created_at") });
+  return Object.freeze({ id: requireId(raw.id), name: requireName("collection", raw.name), createdAt: u64(raw.created_at, "collection created_at") });
 }
 /** Collection management on the public client listener. */
 export class V1Collections {
@@ -694,7 +742,25 @@ export class V1Database {
     return new V1Transaction(this.#transport, this.name);
   }
 
+  /** @param {string} statement @param {V1RequestOptions} [options] */
+  sql(statement, options = {}) {
+    return runSql(this.#transport, this.name, statement, options);
+  }
 
+  /** @param {string} statement @param {V1RequestOptions} [options] */
+  checkSql(statement, options = {}) {
+    return checkSql(this.#transport, this.name, statement, options);
+  }
+
+  /** @param {string} statement @param {V1RequestOptions} [options] */
+  explainSql(statement, options = {}) {
+    return checkSql(this.#transport, this.name, statement, options, "explainSql");
+  }
+
+  /** @param {import("./changes.js").V1ChangeStreamRequest} [request] @param {V1RequestOptions} [options] */
+  changes(request = {}, options = {}) {
+    return streamChanges(this.#transport, this.name, request, options.signal);
+  }
 }
 
 /**
@@ -702,12 +768,15 @@ export class V1Database {
  * privately; it is never serialized, logged or forwarded to redirects.
  */
 export class TerraBaseV1Client {
+  /** @type {V1Databases} */
+  #databases;
   /** @type {V1Transport} */
   #transport;
 
   /** @param {TerraBaseV1ClientConfig} config */
   constructor(config) {
     this.#transport = new V1Transport(config);
+    this.#databases = new V1Databases(this.#transport);
     Object.freeze(this);
   }
 
@@ -718,10 +787,13 @@ export class TerraBaseV1Client {
   database(name) {
     return new V1Database(this.#transport, name);
   }
+
+  /** @returns {V1Databases} Project-scoped database catalog. */
+  get databases() { return this.#databases; }
 }
 
 /**
- * Creates a TerraBase v1 client for documents, transactions, queries and shapes.
+ * Creates a project-scoped TerraBase client for documents, SQL, changes and catalog operations.
  * @param {TerraBaseV1ClientConfig} config
  * @returns {TerraBaseV1Client}
  */

@@ -3,7 +3,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
-import { digest, producerContract, releasePin } from "../scripts/terrabase-contract.mjs";
+import { digest, historicalOperations, producerContract, releasePin } from "../scripts/terrabase-contract.mjs";
 import { v1Routes } from "../src/v1/routes.js";
 
 test("contract inputs come from one SHA-bound C# release on main", async () => {
@@ -23,7 +23,7 @@ test("released data routes use tb_ keys while the published OpenAPI declares the
   const spec = await producerContract();
   expect(spec).toMatchObject({ info: { version: releasePin.version } });
   expect(spec.components).toMatchObject({ securitySchemes: { TsAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } } });
-  for (const route of v1Routes)
+  for (const route of v1Routes.filter(route => historicalOperations.has(route.operation)))
     expect(spec.paths[route.pathTemplate]?.[route.method.toLowerCase()]).toHaveProperty("security", [{ TsAuth: [] }]);
   expect(spec.paths["/v1/management/organizations"]).toBeUndefined(); // Management-user routes are source-bound, not public.
   expect(spec.paths["/v1/projects/{project}/databases"]?.post).toBeDefined();
@@ -38,11 +38,12 @@ test("released data routes use tb_ keys while the published OpenAPI declares the
 test("vendored contracts and security evidence stay bound to the repository-backed release pin", async () => {
   const fixture = await mkdtemp(path.join(tmpdir(), "terrabase-contract-"));
   try {
-    for (const file of ["scripts/terrabase-contract.mjs", "scripts/ci/contract-digest.mjs", "src/v1/routes.js"]) {
+    for (const file of ["scripts/terrabase-contract.mjs", "scripts/terrabase-current-source.mjs", "scripts/ci/contract-digest.mjs", "src/v1/routes.js"]) {
       const target = path.join(fixture, file);
       await mkdir(path.dirname(target), { recursive: true });
       await cp(new URL(`../${file}`, import.meta.url), target);
     }
+    await cp(new URL("../contracts/terrabase-current-source", import.meta.url), path.join(fixture, "contracts/terrabase-current-source"), { recursive: true });
     await cp(new URL("../contracts/terrabase-csharp", import.meta.url), path.join(fixture, "contracts/terrabase-csharp"), { recursive: true });
     await writeFile(path.join(fixture, "package.json"), JSON.stringify({ type: "module" }));
     const repo = path.join(fixture, "producer");

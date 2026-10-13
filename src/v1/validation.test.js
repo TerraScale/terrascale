@@ -160,17 +160,19 @@ describe("C# v1 pure contract validation", () => {
     expect(result.stdout.trim()).toBe("TimeoutError");
   }, 40_000);
 
-  it("uses only the twelve current producer routes and scopes", () => {
-    expect(v1Routes).toHaveLength(12);
+  it("inventories current producer routes and the historical shape route", () => {
+    expect(v1Routes).toHaveLength(26);
     expect(v1RoutePath(v1Route("readShape"), { project, database: "app", collection: "users" })).toBe(`/v1/projects/${project}/databases/app/collections/users/shape`);
     expect(v1Route("readShape").permission).toBe("shapes:read");
     expect(v1Routes.every(route => route.idempotencyKey === "none")).toBe(true);
     expect(v1Route("dropCollection").successStatuses).toEqual([200]);
   });
 
-  it("rejects non-ULID point ids before dispatch", () => {
-    expect(requireDocumentId(id)).toBe(id);
-    for (const bad of ["", ".", "..", "legacy/id ?#%+é", "019a0000-0000-7000-8000-000000000002", "a\nb", "\ud800", "a".repeat(257)]) expect(() => requireDocumentId(bad)).toThrow(TypeError);
+  it("keeps caller-supplied document keys distinct and rejects invalid UTF-8 or bounds", () => {
+    for (const key of [id, ".", "..", "a/b", "a%2Fb", "%", "%2E", "?", "#", "+", " ", "é", "e\u0301", "😀".repeat(128)])
+      expect(requireDocumentId(key)).toBe(key);
+    for (const bad of [undefined, null, 1, "", "a\nb", "\u007f", "\u0085", "\ud800", "\udc00", "a".repeat(257), "😀".repeat(129)])
+      expect(() => requireDocumentId(bad)).toThrow(TypeError);
   });
 
   it("treats tbv1 and tbv2 version tokens as opaque If-Match-safe strings", () => {

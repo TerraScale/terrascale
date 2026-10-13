@@ -1,10 +1,19 @@
 # @terrascale/sdk
 
 The JavaScript/JSDoc SDK for the project-scoped C#/.NET TerraBase server
-(`terrabase`, `origin/main`). Version 0.0.1 replaces the retired Rust client.
+(`TerraScale/terrascale`). Current source compatibility is pinned at
+`e30ffdc287530551b161b0130220be53d3c0475e`; see the
+[compatibility audit](docs/api-compatibility-20261013.md) for exact evidence and open gates.
 The package targets Node.js 22 and 24 and current Chrome, Firefox, Safari, and Edge.
 Plain ES modules ship as written; `nice -n 19 npm run build` generates the
 TypeScript declarations in `types/`.
+The latest published standard is [ECMAScript 2026](https://ecma-international.org/publications-and-standards/standards/ecma-262/).
+The compiler uses [`ESNext`](https://www.typescriptlang.org/tsconfig/target.html),
+its latest supported ECMAScript target. Source stays
+in `.js` files; JSDoc supplies types through `allowJs` and `checkJs`. JSDoc typing
+is a [tooling feature](https://www.typescriptlang.org/docs/handbook/jsdoc-supported-types.html),
+independent of the ECMAScript edition. Published runtime
+support remains Node.js 22/24 and the browser targets listed above.
 
 ```sh
 npm install @terrascale/sdk
@@ -36,9 +45,11 @@ for await (const page of todos.pages({ filter: v1Filter.eq("/done", true), limit
 ```
 
 Provision the project, database and collection before using their handles.
-The pinned producer still requires a C# `tb_` key as `token`. The example also
-accepts a ts-auth project access JWT for the published TS-589 target, whose
-server implementation remains pending. Credentials travel as
+Current project routes authenticate ts-auth project access JWTs. Legacy C# `tb_`
+keys remain accepted for their narrower data scopes; they cannot grant
+`databases:read` or `databases:write`. The historical immutable release harness
+still uses `tb_` keys and does not qualify the current JWT implementation.
+Credentials travel as
 `Authorization: Bearer <token>` and are held privately. The SDK validates
 header-safe syntax; authentication and authorization belong to the producer.
 Reads and queries require `documents:read`; writes and transactions require
@@ -60,8 +71,9 @@ The current implementation requires exactly one of `baseUrl` or
 `endpointResolver`. In these examples, `discoveredOrigin` is a trusted HTTPS
 origin supplied by an authorized integration, not an SDK-created value.
 A resolver receives
-`{ project, database }` and returns the service URL, synchronously or asynchronously.
-The URL is resolved once per database session and reused by its operations.
+`{ project, database?, signal }` and returns the service URL, synchronously or asynchronously.
+Project catalog operations omit `database`; each project/catalog or database session
+resolves once and reuses its URL.
 Shared resolution expires after 30 seconds and supplies a cancellation signal
 to the resolver; a later operation can retry an expired or failed resolution.
 Cancelling one operation leaves other callers' shared resolution running.
@@ -84,47 +96,43 @@ region and the location of a project/database. The resolver seam allows that
 choice to stay pinned for the session. Atlas discovery integration is deferred
 to TS-507; this release requires an explicit URL or caller-supplied resolver.
 
-## Documents, queries, transactions and shapes
+## Documents, SQL, change streams and catalog
 
-The published TS-589 route table (`terrabase/docs/api.md`) keeps these data
-paths unchanged. Management moves to project-scoped paths using database names;
-this SDK's Management and Admin entrypoints still make no HTTP calls.
-Database creation belongs to Management (`POST /v1/projects/{project}/databases`)
-in that target contract.
+Current handler source implements project-scoped database names and point
+addresses as `/documents/by-key?id=…`. The complete method/path/scope inventory
+is in [sdk-v1-route-manifest.json](sdk-v1-route-manifest.json), with 25 current
+source-backed routes and one retained historical shape route. Current generated
+OpenAPI and immutable release qualification remain open gates.
 
-The current immutable producer release implements the renamed `TerraBase`
-assembly, but still authenticates data calls with `tb_` keys and exposes the old
-Management routes. Its real-release integration harness uses those existing
-bootstrap operations. JWT server compatibility and the new Management routes
-remain unqualified until the producer publishes their implementation; accepting
-a JWT in SDK configuration does not establish server compatibility.
-
-The C# producer owns these routes:
-
-| Operation | Method and path |
+| Surface | Public methods |
 | --- | --- |
-| Documents | `GET/PUT/PATCH/DELETE /v1/projects/{project}/databases/{db}/collections/{c}/documents/{id}`; `POST …/documents` |
-| Query | `POST /v1/projects/{project}/databases/{db}/collections/{c}/query` |
-| Transaction | `POST /v1/projects/{project}/databases/{db}/transactions` |
-| Shape | `GET /v1/projects/{project}/databases/{db}/collections/{c}/shape` |
+| Documents | `collection.get/put/create/patch/delete/list/query/pages/items` |
+| Collections and declared JSON Schema | `db.collections.create/get/list/drop`; `collection.getSchema/putSchema/deleteSchema` |
+| Databases | `client.databases.create/list/get/update/delete/branch` |
+| SQL | `db.sql/checkSql/explainSql` |
+| Changes | `db.changes` (SSE async iterator) |
 
-Collection methods are `get`, `put`, `create`, `patch`, `delete`, `query`,
-`pages` and `items`. Every entity ID is a plain 26-character Crockford ULID,
-canonical uppercase, without a prefix. `generateId()` uses the maintained
-`ulid` library and increases monotonically within a millisecond. `isValidId`
-checks IDs; `requireId` throws for invalid IDs. UUIDs and legacy IDs are rejected.
-The document key is the entity ID: keep it out of the JSON payload. Natural
-keys belong in indexed document fields, not deterministic UUID IDs. Documents return
+Project, collection catalog, and database catalog IDs are canonical uppercase
+26-character ULIDs. `generateId()`, `isValidId()` and `requireId()` retain that
+entity-ID contract. Document keys independently accept 1–256 UTF-16 code units,
+without controls or lone surrogates; natural keys, slashes and Unicode travel as
+one query parameter. A root payload `id` is ordinary data unless it equals the
+key; the producer then strips that redundant member.
+Documents return
 `{ id, version, state: "value", document }`; a causal read can answer
 `state: "conflict"` with `siblings`, and unknown states pass through. Versions
 (`tbv1-…`, `tbv2-…`) are opaque tokens. Writes return the version and a
-decimal-string commit `offset`; preserve those opaque positions and use
+decimal-string commit `offset`; PATCH also returns the stored `document`.
+Ops PATCH supports top-level `inc`, `add` and `remove` alongside `set`, `unset`
+and `append`. `inc` requires a nonzero signed Int64 integer; set elements are
+JSON scalars of at most 1 KiB under the producer serializer.
+Preserve those opaque positions and use
 `ifMatch` or `ifNoneMatchAny` for conditional writes.
 
 Queries support typed filters, sorting, projection and bounded cursor pages.
 `query` returns one page; `pages` and `items` follow `nextCursor`.
 `count.exact: false` means the count is a lower bound. The current C# producer
-does not support `lower` paths or `explain`; query number comparisons use its
+does not support `lower` paths or query-body `explain`; query number comparisons use its
 64-bit integer/double arithmetic, even when the SDK preserves exact JSON numbers.
 `ExactDecimal` and bigint serialization require Node.js 22+ or a current browser.
 
@@ -136,29 +144,47 @@ or replay mutations after an uncertain result; this release does not promise
 mutation deduplication. Validation, authentication, authorization and
 precondition failures are not automatically retried.
 
-Shapes require `shapes:read` and use the collection's GET route with a `where`
-filter, handle, offset and live cursor. Snapshot bootstrap and checkpoint resume
-provide correctness; `must_refetch` requires discarding local state and starting
-a fresh snapshot. The C# producer has no shape gatekeeper, SSE route, edge shape
-token or projection support. Origin responses require private cache revalidation. Fresh shape bootstrap is
-server-only in this release: browsers hide the initial 307 redirect metadata.
-Browser callers need a handle and snapshot offset obtained on their server.
-
-The same public SDK supplies this metadata on the server. Pass the position to
-the browser and repeat that immutable snapshot page with the identical filter
-and collection:
+SQL is the producer's bounded read-only subset: `{ matched, truncated, rows }`,
+with row `{ id, value }` and no pagination cursor. `checkSql` returns `ok: false`
+for invalid SQL; `explainSql` returns an HTTP error for invalid SQL. All three
+require `databases:read`, granted by a project access JWT.
 
 ```js
-// Server: use the public client with the caller's shapes:read key.
-const snapshot = await serverCollection.shape({ where });
-const position = { handle: snapshot.handle, offset: snapshot.offset };
-// Browser: resume using position supplied by your application server.
-const page = await browserCollection.shape({ where, ...position });
+const result = await db.sql("SELECT * FROM todos LIMIT 10");
+const controller = new AbortController();
+for await (const event of db.changes({ cursor: "now", collections: ["todos"] }, {
+  signal: controller.signal,
+})) {
+  console.log(event);
+  // Stop with controller.abort(), or break to close this iterator.
+}
 ```
 
-Failures throw `TerraBaseV1Error` with the HTTP status and producer error code;
-transaction failures may also identify the failing `op`. Request cancellation
-uses `AbortSignal`.
+SSE emits `cursor` and `change` events. Cursors are opaque and must retain the
+same collection filter. `lastEventId` takes precedence over `cursor`; normal
+valid EOF reconnects with the latest issued cursor. Delivery is at least once;
+deduplicate by origin, version, collection and id. `document` is its current
+serving value, including null. Network failures, malformed streams, terminal
+errors, denials, expired history (410) and overload (429) propagate. The SDK
+never silently resets to `now` or broadens the view. Iterator `return()` also
+interrupts an already pending read.
+
+The exported collection `shape()` remains compatible with the historical
+`6cb9745…` release. Its route is absent from the audited current server source;
+do not use it as current producer evidence. SSE changes are a separate database
+feed, not authorized bounded-query snapshots or the planned reactive WebSocket API.
+
+Failures throw `TerraBaseV1Error` with status, code, optional transaction `op`,
+parsed `body`, raw `responseText`, response `headers`, and a received
+`X-Request-ID` as `requestId`. The actual producer uses `application/json`
+`{error:{code,message,op,details}}`, not RFC 9457. The SDK preserves RFC 9457
+bodies when received but does not invent producer support or request IDs.
+Cancellation preserves the supplied `AbortSignal` reason.
+
+**Browser gate remains red:** Chrome and Edge native fetch resend a buffered
+mutation once after HTTP 421. Node uses one-shot request streams to prevent that
+replay. Browser Fetch has no retry-control option; its one-wire assertions remain
+failing in this draft. See the audit for exact results and producer dependencies.
 
 ## Ouroboros and qualification
 

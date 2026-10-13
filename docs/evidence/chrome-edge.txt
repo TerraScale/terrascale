@@ -1,0 +1,151 @@
+
+Running 24 tests using 1 worker
+
+[1/24] [chrome-current] › browser-tests/public-contract.spec.js:3:1 › packed browser exposes the C# client and exact decimal values
+[2/24] [chrome-current] › browser-tests/public-contract.spec.js:23:1 › packed browser generates monotonic ULIDs and rejects noncanonical ids
+[3/24] [chrome-current] › browser-tests/v1-transport.spec.js:82:1 › packed browser uses native fetch and preserves query keys and PATCH data
+[4/24] [chrome-current] › browser-tests/v1-transport.spec.js:104:1 › packed browser preserves typed denied errors and exposed diagnostic headers
+[5/24] [chrome-current] › browser-tests/v1-transport.spec.js:121:1 › packed browser terminates pagination, rejects cycles, and cancels buffered items
+[6/24] [chrome-current] › browser-tests/v1-transport.spec.js:146:1 › packed browser retains AbortSignal reasons before fetch and during partial bodies
+[7/24] [chrome-current] › browser-tests/v1-transport.spec.js:174:1 › packed browser rejects empty and malformed successful responses
+[8/24] [chrome-current] › browser-tests/v1-transport.spec.js:190:1 › packed browser exposes read-only SQL, document listing and declared schemas
+[9/24] [chrome-current] › browser-tests/v1-transport.spec.js:210:1 › packed browser resumes SSE with latest cursor and closes the iterator
+[10/24] [chrome-current] › browser-tests/v1-transport.spec.js:226:1 › packed browser requires one wire PATCH despite native 421 retransmission
+  1) [chrome-current] › browser-tests/v1-transport.spec.js:226:1 › packed browser requires one wire PATCH despite native 421 retransmission 
+
+    Error: expect(received).toHaveLength(expected)
+
+    Expected length: 1
+    Received length: 2
+    Received array:  [{"authorization": "Bearer fixture.payload.signature", "body": "{\"ops\":[{\"op\":\"inc\",\"path\":\"/count\",\"by\":1}]}", "contentType": "application/vnd.terrabase.ops+json", "key": "key", "lastEventId": undefined, "method": "PATCH", "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/app/collections/misdirected/documents/by-key"}, {"authorization": "Bearer fixture.payload.signature", "body": "{\"ops\":[{\"op\":\"inc\",\"path\":\"/count\",\"by\":1}]}", "contentType": "application/vnd.terrabase.ops+json", "key": "key", "lastEventId": undefined, "method": "PATCH", "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/app/collections/misdirected/documents/by-key"}]
+
+      237 |   expect(result).toEqual({ code: "wrong_region", fetchCalls: 1 });
+      238 |   expect(mutationEffects).toBe(0);
+    > 239 |   expect(requests).toHaveLength(1);
+          |                    ^
+      240 | });
+      241 |
+      242 | test("native browser request streams reject HTTP/1 instead of providing a portable mitigation", async ({ page }) => {
+        at /home/mariogk/.t3/worktrees/ts-js/sdk-js-api-contracts-20261013/browser-tests/v1-transport.spec.js:239:20
+
+    Error Context: test-results/v1-transport-packed-browse-f6dd7-e-native-421-retransmission-chrome-current/error-context.md
+
+    Error Context: test-results/v1-transport-packed-browse-f6dd7-e-native-421-retransmission-chrome-current/error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/v1-transport-packed-browse-f6dd7-e-native-421-retransmission-chrome-current/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/v1-transport-packed-browse-f6dd7-e-native-421-retransmission-chrome-current/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+[11/24] [chrome-current] › browser-tests/v1-transport.spec.js:242:1 › native browser request streams reject HTTP/1 instead of providing a portable mitigation
+[12/24] [chrome-current] › browser-tests/v1-transport.spec.js:258:1 › packed browser requires one wire DELETE despite native 421 retransmission
+  2) [chrome-current] › browser-tests/v1-transport.spec.js:258:1 › packed browser requires one wire DELETE despite native 421 retransmission 
+
+    Error: expect(received).toHaveLength(expected)
+
+    Expected length: 1
+    Received length: 2
+    Received array:  [{"authorization": "Bearer fixture.payload.signature", "body": "", "contentType": undefined, "key": "key", "lastEventId": undefined, "method": "DELETE", "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/app/collections/misdirected/documents/by-key"}, {"authorization": "Bearer fixture.payload.signature", "body": "", "contentType": undefined, "key": "key", "lastEventId": undefined, "method": "DELETE", "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/app/collections/misdirected/documents/by-key"}]
+
+      269 |   expect(result).toEqual({ code: "wrong_region", fetchCalls: 1 });
+      270 |   expect(mutationEffects).toBe(0);
+    > 271 |   expect(requests).toHaveLength(1);
+          |                    ^
+      272 | });
+      273 |
+        at /home/mariogk/.t3/worktrees/ts-js/sdk-js-api-contracts-20261013/browser-tests/v1-transport.spec.js:271:20
+
+    Error Context: test-results/v1-transport-packed-browse-bdfb7-e-native-421-retransmission-chrome-current/error-context.md
+
+    Error Context: test-results/v1-transport-packed-browse-bdfb7-e-native-421-retransmission-chrome-current/error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/v1-transport-packed-browse-bdfb7-e-native-421-retransmission-chrome-current/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/v1-transport-packed-browse-bdfb7-e-native-421-retransmission-chrome-current/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+[13/24] [edge-current] › browser-tests/public-contract.spec.js:3:1 › packed browser exposes the C# client and exact decimal values
+[14/24] [edge-current] › browser-tests/public-contract.spec.js:23:1 › packed browser generates monotonic ULIDs and rejects noncanonical ids
+[15/24] [edge-current] › browser-tests/v1-transport.spec.js:82:1 › packed browser uses native fetch and preserves query keys and PATCH data
+[16/24] [edge-current] › browser-tests/v1-transport.spec.js:104:1 › packed browser preserves typed denied errors and exposed diagnostic headers
+[17/24] [edge-current] › browser-tests/v1-transport.spec.js:121:1 › packed browser terminates pagination, rejects cycles, and cancels buffered items
+[18/24] [edge-current] › browser-tests/v1-transport.spec.js:146:1 › packed browser retains AbortSignal reasons before fetch and during partial bodies
+[19/24] [edge-current] › browser-tests/v1-transport.spec.js:174:1 › packed browser rejects empty and malformed successful responses
+[20/24] [edge-current] › browser-tests/v1-transport.spec.js:190:1 › packed browser exposes read-only SQL, document listing and declared schemas
+[21/24] [edge-current] › browser-tests/v1-transport.spec.js:210:1 › packed browser resumes SSE with latest cursor and closes the iterator
+[22/24] [edge-current] › browser-tests/v1-transport.spec.js:226:1 › packed browser requires one wire PATCH despite native 421 retransmission
+  3) [edge-current] › browser-tests/v1-transport.spec.js:226:1 › packed browser requires one wire PATCH despite native 421 retransmission 
+
+    Error: expect(received).toHaveLength(expected)
+
+    Expected length: 1
+    Received length: 2
+    Received array:  [{"authorization": "Bearer fixture.payload.signature", "body": "{\"ops\":[{\"op\":\"inc\",\"path\":\"/count\",\"by\":1}]}", "contentType": "application/vnd.terrabase.ops+json", "key": "key", "lastEventId": undefined, "method": "PATCH", "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/app/collections/misdirected/documents/by-key"}, {"authorization": "Bearer fixture.payload.signature", "body": "{\"ops\":[{\"op\":\"inc\",\"path\":\"/count\",\"by\":1}]}", "contentType": "application/vnd.terrabase.ops+json", "key": "key", "lastEventId": undefined, "method": "PATCH", "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/app/collections/misdirected/documents/by-key"}]
+
+      237 |   expect(result).toEqual({ code: "wrong_region", fetchCalls: 1 });
+      238 |   expect(mutationEffects).toBe(0);
+    > 239 |   expect(requests).toHaveLength(1);
+          |                    ^
+      240 | });
+      241 |
+      242 | test("native browser request streams reject HTTP/1 instead of providing a portable mitigation", async ({ page }) => {
+        at /home/mariogk/.t3/worktrees/ts-js/sdk-js-api-contracts-20261013/browser-tests/v1-transport.spec.js:239:20
+
+    Error Context: test-results/v1-transport-packed-browse-f6dd7-e-native-421-retransmission-edge-current/error-context.md
+
+    Error Context: test-results/v1-transport-packed-browse-f6dd7-e-native-421-retransmission-edge-current/error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/v1-transport-packed-browse-f6dd7-e-native-421-retransmission-edge-current/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/v1-transport-packed-browse-f6dd7-e-native-421-retransmission-edge-current/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+[23/24] [edge-current] › browser-tests/v1-transport.spec.js:242:1 › native browser request streams reject HTTP/1 instead of providing a portable mitigation
+[24/24] [edge-current] › browser-tests/v1-transport.spec.js:258:1 › packed browser requires one wire DELETE despite native 421 retransmission
+  4) [edge-current] › browser-tests/v1-transport.spec.js:258:1 › packed browser requires one wire DELETE despite native 421 retransmission 
+
+    Error: expect(received).toHaveLength(expected)
+
+    Expected length: 1
+    Received length: 2
+    Received array:  [{"authorization": "Bearer fixture.payload.signature", "body": "", "contentType": undefined, "key": "key", "lastEventId": undefined, "method": "DELETE", "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/app/collections/misdirected/documents/by-key"}, {"authorization": "Bearer fixture.payload.signature", "body": "", "contentType": undefined, "key": "key", "lastEventId": undefined, "method": "DELETE", "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FA1/databases/app/collections/misdirected/documents/by-key"}]
+
+      269 |   expect(result).toEqual({ code: "wrong_region", fetchCalls: 1 });
+      270 |   expect(mutationEffects).toBe(0);
+    > 271 |   expect(requests).toHaveLength(1);
+          |                    ^
+      272 | });
+      273 |
+        at /home/mariogk/.t3/worktrees/ts-js/sdk-js-api-contracts-20261013/browser-tests/v1-transport.spec.js:271:20
+
+    Error Context: test-results/v1-transport-packed-browse-bdfb7-e-native-421-retransmission-edge-current/error-context.md
+
+    Error Context: test-results/v1-transport-packed-browse-bdfb7-e-native-421-retransmission-edge-current/error-context.md
+
+    attachment #3: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/v1-transport-packed-browse-bdfb7-e-native-421-retransmission-edge-current/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/v1-transport-packed-browse-bdfb7-e-native-421-retransmission-edge-current/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+  4 failed
+    [chrome-current] › browser-tests/v1-transport.spec.js:226:1 › packed browser requires one wire PATCH despite native 421 retransmission 
+    [chrome-current] › browser-tests/v1-transport.spec.js:258:1 › packed browser requires one wire DELETE despite native 421 retransmission 
+    [edge-current] › browser-tests/v1-transport.spec.js:226:1 › packed browser requires one wire PATCH despite native 421 retransmission 
+    [edge-current] › browser-tests/v1-transport.spec.js:258:1 › packed browser requires one wire DELETE despite native 421 retransmission 
+  20 passed (29.8s)

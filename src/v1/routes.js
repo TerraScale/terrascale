@@ -1,11 +1,11 @@
-// Routes owned by the C# Documents API at 6cb9745 (decision 0004 and shape-reads.md).
-/** @typedef {"getDocument" | "putDocument" | "createDocument" | "patchDocument" | "deleteDocument" | "commitTransaction" | "queryDocuments" | "createCollection" | "getCollection" | "listCollections" | "dropCollection" | "readShape"} V1Operation */
+// Current TerraBase routes at e30ffdc; readShape is retained from release 6cb9745 only.
+/** @typedef {"getDocument" | "putDocument" | "createDocument" | "patchDocument" | "deleteDocument" | "commitTransaction" | "queryDocuments" | "createCollection" | "getCollection" | "listCollections" | "dropCollection" | "readShape" | "runSql" | "checkSql" | "explainSql" | "streamDatabaseChanges" | "listDocuments" | "getCollectionSchema" | "putCollectionSchema" | "deleteCollectionSchema" | "createDatabase" | "listDatabases" | "getDatabase" | "updateDatabase" | "deleteDatabase" | "branchDatabase"} V1Operation */
 /**
  * @typedef {object} V1Route
  * @property {V1Operation} operation
  * @property {"GET" | "PUT" | "POST" | "PATCH" | "DELETE"} method
  * @property {string} pathTemplate
- * @property {"documents:read" | "documents:write" | "shapes:read"} permission
+ * @property {"documents:read" | "documents:write" | "shapes:read" | "databases:read" | "databases:write"} permission
  * @property {readonly string[]} requestMediaTypes
  * @property {string} responseMediaType
  * @property {readonly number[]} successStatuses
@@ -18,6 +18,7 @@ const database = "/v1/projects/{project}/databases/{database}";
 const collections = `${database}/collections`;
 const collection = `${collections}/{collection}`;
 const documents = `${collection}/documents`;
+const databases = "/v1/projects/{project}/databases";
 /** @type {readonly V1Route[]} */
 export const v1Routes = Object.freeze(/** @type {V1Route[]} */ ([
   { operation: "getDocument", method: "GET", pathTemplate: `${documents}/by-key`, permission: "documents:read", requestMediaTypes: [], successStatuses: [200] },
@@ -32,10 +33,25 @@ export const v1Routes = Object.freeze(/** @type {V1Route[]} */ ([
   { operation: "listCollections", method: "GET", pathTemplate: collections, permission: "documents:read", requestMediaTypes: [], successStatuses: [200] },
   { operation: "dropCollection", method: "DELETE", pathTemplate: collection, permission: "documents:write", requestMediaTypes: [], successStatuses: [200] },
   { operation: "readShape", method: "GET", pathTemplate: `${collection}/shape`, permission: "shapes:read", requestMediaTypes: [], successStatuses: [200, 307] },
+  { operation: "runSql", method: "POST", pathTemplate: `${database}/sql`, permission: "databases:read", requestMediaTypes: ["application/json"], successStatuses: [200] },
+  { operation: "checkSql", method: "POST", pathTemplate: `${database}/sql/check`, permission: "databases:read", requestMediaTypes: ["application/json"], successStatuses: [200] },
+  { operation: "explainSql", method: "POST", pathTemplate: `${database}/sql/explain`, permission: "databases:read", requestMediaTypes: ["application/json"], successStatuses: [200] },
+  { operation: "streamDatabaseChanges", method: "GET", pathTemplate: `${database}/changes`, permission: "documents:read", requestMediaTypes: [], successStatuses: [200] },
+  { operation: "listDocuments", method: "GET", pathTemplate: documents, permission: "documents:read", requestMediaTypes: [], successStatuses: [200] },
+  { operation: "getCollectionSchema", method: "GET", pathTemplate: `${collection}/schema`, permission: "documents:read", requestMediaTypes: [], successStatuses: [200] },
+  { operation: "putCollectionSchema", method: "PUT", pathTemplate: `${collection}/schema`, permission: "documents:write", requestMediaTypes: ["application/json"], successStatuses: [200] },
+  { operation: "deleteCollectionSchema", method: "DELETE", pathTemplate: `${collection}/schema`, permission: "documents:write", requestMediaTypes: [], successStatuses: [200] },
+  { operation: "createDatabase", method: "POST", pathTemplate: databases, permission: "databases:write", requestMediaTypes: ["application/json"], successStatuses: [201] },
+  { operation: "listDatabases", method: "GET", pathTemplate: databases, permission: "databases:read", requestMediaTypes: [], successStatuses: [200] },
+  { operation: "getDatabase", method: "GET", pathTemplate: database, permission: "databases:read", requestMediaTypes: [], successStatuses: [200] },
+  { operation: "updateDatabase", method: "PATCH", pathTemplate: database, permission: "databases:write", requestMediaTypes: ["application/json"], successStatuses: [200] },
+  { operation: "deleteDatabase", method: "DELETE", pathTemplate: database, permission: "databases:write", requestMediaTypes: [], successStatuses: [204] },
+  { operation: "branchDatabase", method: "POST", pathTemplate: `${database}/branches`, permission: "databases:write", requestMediaTypes: ["application/json"], successStatuses: [201] },
 ].map(route => ({
-  ...route, responseMediaType: "application/json", idempotencyKey: "none",
-  replaySafe: route.permission !== "documents:write",
-  contract: route.operation === "readShape" ? "docs/shape-reads.md" : "docs/decisions/0004-document-api-v1.md",
+  ...route, responseMediaType: route.operation === "deleteDatabase" ? "" : route.operation === "streamDatabaseChanges" ? "text/event-stream" : "application/json", idempotencyKey: "none",
+  replaySafe: !route.permission.endsWith(":write"),
+  contract: route.operation === "readShape" ? "docs/shape-reads.md" :
+    ["runSql", "checkSql", "explainSql", "streamDatabaseChanges"].includes(route.operation) ? "docs/terrabase/api.md" : "docs/decisions/0004-document-api-v1.md",
   contractText: [],
 }))).map(route => Object.freeze({
   ...route, requestMediaTypes: Object.freeze(route.requestMediaTypes),

@@ -5,11 +5,13 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { v1Routes } from "../src/v1/routes.js";
 import { openapiDigest } from "./ci/contract-digest.mjs";
+import { currentSourcePin, verifyCurrentSourceRoutes } from "./terrabase-current-source.mjs";
 
 export const releasePin = JSON.parse(await readFile(new URL("./ci/terrabase-release.json", import.meta.url), "utf8"));
 export const contractDirectory = new URL("../contracts/terrabase-csharp/", import.meta.url);
 /** @param {Buffer | string} bytes @returns {string} */
 export const digest = bytes => createHash("sha256").update(bytes).digest("hex");
+export const historicalOperations = new Set(["getDocument", "putDocument", "createDocument", "patchDocument", "deleteDocument", "commitTransaction", "queryDocuments", "createCollection", "getCollection", "listCollections", "dropCollection", "readShape"]);
 const endpointSources = await Promise.all(Object.keys(releasePin.inputs).filter(name => name.endsWith("Endpoint.cs")).map(name => readFile(new URL(name, contractDirectory), "utf8")));
 const scopeSource = await readFile(new URL("IApiKeyStore.cs", contractDirectory), "utf8");
 
@@ -41,7 +43,8 @@ export async function producerContract() {
 
 /** @param {readonly import("../src/v1/routes.js").V1Route[]} routes @param {ProducerOpenApi} spec */
 export function verifyProducerRoutes(routes, spec) {
-  for (const route of routes) {
+  verifyCurrentSourceRoutes(routes.filter(route => route.operation !== "readShape"));
+  for (const route of routes.filter(route => historicalOperations.has(route.operation))) {
     // SDK placeholder names are internal; the producer names the database parameter "database".
     const template = route.pathTemplate.replaceAll("{db}", "{database}");
     const operation = spec.paths[template]?.[route.method.toLowerCase()];
@@ -73,9 +76,12 @@ export async function generateV1Manifest() {
   const spec = await producerContract();
   verifyProducerRoutes(v1Routes, spec);
   return {
-    manifestVersion: 2,
+    manifestVersion: 3,
     contractVersion: "terrabase-csharp-v1",
     contractSource: releasePin,
+    currentSource: currentSourcePin,
+    currentRouteEvidence: verifyCurrentSourceRoutes(v1Routes.filter(route => route.operation !== "readShape")),
+    currentGeneratedOpenApi: "Unavailable: current route parity is source-bound, not runtime qualification.",
     routeCount: v1Routes.length,
     routes: v1Routes.map(route => {
       const template = route.pathTemplate.replaceAll("{db}", "{database}");
@@ -85,12 +91,13 @@ export async function generateV1Manifest() {
         permission: route.permission, requestMediaTypes: route.requestMediaTypes,
         responseMediaType: route.responseMediaType, successStatuses: route.successStatuses,
         idempotencyKey: route.idempotencyKey, replaySafe: route.replaySafe,
-        producerOperation: spec.paths[template]?.[route.method.toLowerCase()],
+        evidence: route.operation === "readShape" ? "historical-release-only; absent from current source" : "current-handler-source",
+        historicalProducerOperation: historicalOperations.has(route.operation) ? spec.paths[template]?.[route.method.toLowerCase()] : undefined,
       };
     }),
     // Keep the producer's complete schema bytes, including its current nullability/requiredness limitations.
     schemas: spec.components.schemas,
     securityEvidence: Object.keys(releasePin.inputs).filter(name => name.endsWith(".cs")),
-    openapiLimitations: "Producer OpenAPI omits some conditional statuses and the 307 shape redirect; pinned source and real integration tests supplement it. Administrative bootstrap routes are source-bound and excluded from the public document.",
+    openapiLimitations: "Producer OpenAPI omits some conditional statuses and the 307 shape redirect; pinned source and real integration tests supplement it. Historical bootstrap routes remain source-bound. Current sources cover 25 SDK routes; shape is retained only for historical compatibility. Current generated OpenAPI and immutable runtime qualification remain required separately.",
   };
 }

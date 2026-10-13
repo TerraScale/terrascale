@@ -1,6 +1,6 @@
 export { createTerraBaseV1Client as createTerraBaseClient, TerraBaseV1Client as TerraBaseClient } from "./v1/terrabase-v1.js";
 export { terraScaleReleaseBlockers, TerraScaleCapabilityUnavailableError } from "./management-contracts.js";
-// TerraBase v1: name-based documents, transactions, queries and shapes.
+// Project-scoped TerraBase API; shape support is retained for the historical release.
 export {
   createTerraBaseV1Client,
   TerraBaseV1Client,
@@ -54,6 +54,7 @@ export { ExactDecimal } from "./v1/json.js";
 /** @typedef {import("./v1/shapes.js").V1ShapeOp} V1ShapeOp */
 
 export { staticBaseUrlResolver } from "./v1/transport.js";
+export { V1Databases } from "./v1/catalog.js";
 /** @typedef {import("./v1/transport.js").TerraBaseV1ClientConfig} TerraBaseClientConfig */
 /** @typedef {import("./v1/transport.js").V1EndpointContext} V1EndpointContext */
 /** @typedef {import("./v1/transport.js").V1EndpointResolver} V1EndpointResolver */
@@ -61,3 +62,17 @@ export { staticBaseUrlResolver } from "./v1/transport.js";
 /** @typedef {import("./v1/terrabase-v1.js").V1CollectionPage} V1CollectionPage */
 /** @typedef {import("./v1/terrabase-v1.js").V1CollectionListOptions} V1CollectionListOptions */
 /** @typedef {import("./v1/shapes.js").V1ShapePage} V1ShapePage */
+/** @typedef {import("./v1/sql.js").V1SqlRow} V1SqlRow */
+/** @typedef {import("./v1/sql.js").V1SqlResult} V1SqlResult */
+/** @typedef {import("./v1/sql.js").V1SqlIndexSuggestion} V1SqlIndexSuggestion */
+/** @typedef {import("./v1/sql.js").V1SqlCheck} V1SqlCheck */
+/** @typedef {import("./v1/changes.js").V1ChangeStreamRequest} V1ChangeStreamRequest */
+/** @typedef {import("./v1/changes.js").V1DatabaseChange} V1DatabaseChange */
+/** @typedef {import("./v1/changes.js").V1DatabaseChangeCursor} V1DatabaseChangeCursor */
+/** @typedef {import("./v1/catalog.js").V1ManagedDatabase} V1ManagedDatabase */
+/** @typedef {import("./v1/catalog.js").V1DatabaseCreateRequest} V1DatabaseCreateRequest */
+/** @typedef {import("./v1/catalog.js").V1DatabaseUpdateRequest} V1DatabaseUpdateRequest */
+/** @typedef {import("./v1/catalog.js").V1DatabaseBranchRequest} V1DatabaseBranchRequest */
+/** @typedef {import("./v1/catalog.js").V1DatabaseListRequest} V1DatabaseListRequest */
+/** @typedef {import("./v1/catalog.js").V1DatabasePage} V1DatabasePage */
+/** @typedef {import("./v1/catalog.js").V1CollectionSchema} V1CollectionSchema */
