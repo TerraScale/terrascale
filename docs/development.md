@@ -108,8 +108,8 @@ the automatically delivered identity. Missing delivery or unavailable
 services fail this test. It covers state readiness; the live account-to-SDK
 flow, authentication and Stripe delivery need their own qualification.
 
-`audit-stripe` runs the read-only Stripe.net report using the fixed machine
-identity descriptor at `/run/secrets/terrascale/dashboard.json`; it accepts no
+`audit-stripe` runs the read-only Stripe.net report using the Stripe keys from
+the dashboard's Fly secrets ([secrets](identity-descriptor.md)); it accepts no
 configuration options. Run it with:
 
 ```sh
@@ -137,7 +137,7 @@ Brand marks are file-backed SVG assets under `web/static/brand`.
 The application consumes the locked ts-dotnet package, whose source revision
 and digest are recorded in [SDK provenance](../vendor/dotnet/README.md).
 Production state belongs in TerraBase, authorization belongs to ts-auth,
-and secrets must arrive automatically from OCI Vault. Feature flags,
+and secrets arrive only as Fly secrets ([secrets](identity-descriptor.md)). Feature flags,
 production demo selection and manual endpoint/secret overrides are prohibited.
 
 Do not deploy until the live SDK, persistence, identity delivery and release
