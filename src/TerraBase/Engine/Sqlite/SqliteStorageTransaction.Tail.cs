@@ -151,26 +151,42 @@ internal sealed partial class SqliteStorageTransaction
             ?? throw new InvalidDataException("database incarnation is missing")), cancellationToken);
 
     /// <summary>
-    /// See <see cref="IChangeGroupSource.AckedAsync"/>; null when <paramref name="peer"/> has no row yet, when its row
-    /// acknowledged another incarnation than <paramref name="incarnation"/> (the file's), or when its row is above the newest
-    /// change id: an ack from another file's <c>turso_cdc</c>, whose ids this file does not continue (copies and restores
-    /// also reset acks to 0 in <see cref="TursoCopy"/>; retention always keeps the newest row, so an acknowledged id never
-    /// passes it).
+    /// See <see cref="IChangeGroupSource.AckedAsync"/>; a row of another incarnation returns a zero cursor requiring refill.
+    /// Null when the peer has no ACK scope yet, or its position exceeds the current head. Copies and restores reset stored
+    /// ACKs in <see cref="TursoCopy"/> while preserving their old scope until a new-incarnation ACK commits.
     /// </summary>
-    internal ValueTask<long?> GetAckedAsync(ReplicaId peer, Ulid incarnation, CancellationToken cancellationToken) =>
+    internal ValueTask<SourceCursor?> GetAckedAsync(ReplicaId peer, Ulid incarnation, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
-            var command = Command("SELECT acked FROM _tb_peers WHERE node = $node AND incarnation = $incarnation;");
+            var command = Command("SELECT acked, incarnation FROM _tb_peers WHERE node = $node;");
             command.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
-            command.Parameters.AddWithValue("$incarnation", incarnation.ToString());
-            if (command.ExecuteScalar() is not long acked)
+            long acked;
+            string scope;
+            using (var reader = command.ExecuteReader())
+            {
+                if (!reader.Read())
+                {
+                    return (SourceCursor?)null;
+                }
+
+                acked = reader.GetInt64(0);
+                scope = reader.GetString(1);
+            }
+
+            if (scope.Length == 0)
             {
                 return null;
             }
 
+            if (scope != incarnation.ToString())
+            {
+                // Keep the old scope until a refill ACK commits: reconnects must not lose this requirement.
+                return new SourceCursor(incarnation, 0) { RequiresRefill = true };
+            }
+
             var newest = Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null ? 0
                 : Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long id ? id : 0;
-            return acked <= newest ? acked : (long?)null;
+            return acked <= newest ? new SourceCursor(incarnation, acked) : (SourceCursor?)null;
         }, cancellationToken);
 
     /// <summary>

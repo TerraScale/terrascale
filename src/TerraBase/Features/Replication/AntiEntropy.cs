@@ -191,12 +191,15 @@ internal sealed class AntiEntropy : BackgroundService
                     .Select(state => (state.Collection, state.Id)));
             }
             while (after is not null);
-            if (await _states.ForgetAsync(database, local.Incarnation, lacking, collected, cancellationToken).ConfigureAwait(false) is not { } forgotten)
+            if (lacking.Count > 0)
             {
-                return null;
-            }
+                if (await _states.ForgetAsync(database, local.Incarnation, lacking, collected, cancellationToken).ConfigureAwait(false) is not { } forgotten)
+                {
+                    return null;
+                }
 
-            changed += forgotten;
+                changed += forgotten;
+            }
         }
 
         // The repairs joined into whatever copy was in place: they cover only the one compared, if it still is.

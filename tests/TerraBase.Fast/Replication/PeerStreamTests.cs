@@ -1245,6 +1245,66 @@ public sealed class PeerStreamTests
         }
     }
 
+    // A copied peer row (review of A4, finding 3): the sender's cursor requires a refill even though the change log still
+    // retains every group after the ack. The sender sends a refill pinned to its copy before any batch, keeps asking after
+    // a refused one, and goes back to batches only once the refill's head is acknowledged.
+    [Test]
+    public async Task A_cursor_that_requires_a_refill_refills_before_any_batch_until_the_refill_is_acknowledged()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var stamp = Stamp();
+        var (lost, pending, live) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, lost, """{"n":1}"""));
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+        var peer = sjc.Node;
+        using (var deadline = new CancellationTokenSource(Deadline))
+        {
+            await gru.Source.UntilAckedAsync(cluster.Database, peer, 1, deadline.Token);
+        }
+
+        // sjc loses a document no group will ship again, so only a refill restores it. While sjc is down its row requires a
+        // refill and gru writes one more group, which the log still retains after the ack.
+        await sjc.LoseAsync("items", lost);
+        await sjc.StopAsync();
+        await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        gru.Source.RequireRefill(cluster.Database, peer);
+        await gru.CommitAsync(Put(gru, stamp + 1, pending, """{"n":2}"""));
+        await Assert.That(await gru.Source.RetainsAsync(cluster.Database, await gru.IncarnationAsync(), 1, CancellationToken.None)).IsEqualTo(true);
+
+        // The refill comes first: its repair is held, and while it is in flight no batch has brought the newer group.
+        var held = sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        await sjc.StartAsync();
+        await sjc.RepairWaits.Task.WaitAsync(Deadline);
+        await Assert.That(await sjc.ReadAsync(pending)).IsNull();
+
+        // The refill fails and is refused: the cursor still requires one, so a second refill restores both documents and
+        // its head is acknowledged.
+        sjc.HeldRepairs = null;
+        held.SetException(new IOException("a test fails the repair"));
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+        await Assert.That(await sjc.UntilAsync(pending, """{"n":2}""")).IsTrue();
+        using (var deadline = new CancellationTokenSource(Deadline))
+        {
+            await gru.Source.UntilAckedAsync(cluster.Database, peer, 2, deadline.Token);
+        }
+
+        await Assert.That(gru.Source.RequiresRefill(cluster.Database, peer)).IsFalse();
+
+        // Then a batch brings the next group: repairs are held, so no further refill could.
+        var blocked = sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            await gru.CommitAsync(Put(gru, stamp + 2, live, """{"n":3}"""));
+            await Assert.That(await sjc.UntilAsync(live, """{"n":3}""")).IsTrue();
+        }
+        finally
+        {
+            sjc.HeldRepairs = null;
+            blocked.SetResult();
+        }
+    }
+
     // The changes feed relies on this order (R8): a database's later batches on a link never join before its refill's
     // repairs commit, through a failed refill, a retry and a second refill, while other databases' batches go on.
     [Test]
@@ -1345,6 +1405,63 @@ public sealed class PeerStreamTests
         await newer.BatchAsync(cluster.Database, 2, later);
         await Assert.That((await newer.AckAsync()) is { ChangeId: 2, Refused: false }).IsTrue();
         await Assert.That(await sjc.ReadAsync(later)).IsEqualTo("""{"n":1}""");
+    }
+
+    // A refill that failed keeps the database cut across the sender's incarnations (review of A4, finding 3): a copy or
+    // restore of the sender starts a new change log that never asks for the refill the old one owed, so its batches are
+    // refused until a refill of the new copy commits. Change ids restart with each incarnation: a lower id of the new one
+    // joins after the old one's higher id.
+    [Test]
+    public async Task A_failed_refill_keeps_the_database_cut_after_the_sender_becomes_a_new_incarnation()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (lost, before, held, other) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", lost, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+        await sjc.LoseAsync("items", lost);
+        using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
+
+        // Control on another database: the old copy's id 5, then the new copy's id 1, both join.
+        var second = await sjc.CreateOtherDatabaseAsync();
+        push.Pin(second, Ulid.NewUlid());
+        await push.BatchAsync(second, 5, before);
+        await Assert.That((await push.AckAsync()) is { ChangeId: 5, Refused: false }).IsTrue();
+        push.Pin(second, Ulid.NewUlid());
+        await push.BatchAsync(second, 1, other);
+        var renewedOther = await push.AckAsync();
+        await Assert.That((renewedOther.Database, renewedOther.ChangeId, renewedOther.Refused)).IsEqualTo((await push.WireAsync(second), 1UL, false));
+        await Assert.That(await sjc.ReadAsync(second, other)).IsEqualTo("""{"n":1}""");
+
+        // The old copy X is no copy gru holds: its refill is refused at the digest, and the database stays cut.
+        var old = Ulid.NewUlid();
+        push.Pin(cluster.Database, old);
+        await push.RefillAsync(cluster.Database, 5);
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database, old), Refused = true });
+        await push.BatchAsync(cluster.Database, 6, held);
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database, old), Refused = true });
+
+        // The sender is now gru's real copy Y, whose change ids restart: its batch is still refused.
+        var renewed = await gru.IncarnationAsync();
+        push.Pin(cluster.Database, renewed);
+        var wire = ChangeGroups.Wire(cluster.Database, renewed);
+        await push.BatchAsync(cluster.Database, 2, held);
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = wire, Refused = true }).Because("the cut outlives the old incarnation");
+        await Assert.That(await sjc.ReadAsync(held)).IsNull();
+        await Assert.That(await sjc.ReadAsync(lost)).IsNull();
+
+        // A refill pinned to Y commits, repairing what the cut stood for; then the same batch joins.
+        await push.RefillAsync(cluster.Database, 1);
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = wire, ChangeId = 1 });
+        await Assert.That(await sjc.ReadAsync(lost)).IsEqualTo("""{"n":1}""");
+        await push.BatchAsync(cluster.Database, 2, held);
+        var joined = await push.AckAsync();
+        await Assert.That((joined.Database, joined.ChangeId, joined.Refused)).IsEqualTo((wire, 2UL, false));
+        await Assert.That(await sjc.ReadAsync(held)).IsEqualTo("""{"n":1}""");
     }
 
     [Test]
@@ -1958,18 +2075,15 @@ public sealed class PeerStreamTests
 
     internal sealed class Machine(Cluster cluster, string region, string[] replicas) : IAsyncDisposable
     {
-        private readonly string _name = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
         private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-peer-streams-").FullName;
         private ManagementApi? _api;
 
         public string Region { get; } = region;
 
-        private FakeChangeGroupSource? _source;
-
         // The fake names this machine's own file of each database: the copy a refill's anti-entropy digests.
-        public FakeChangeGroupSource Source => _source ??= new(async (database, token) => (await Engine.OpenDatabaseAsync(database, token))?.Incarnation);
+        public FakeChangeGroupSource Source => field ??= new(async (database, token) => (await Engine.OpenDatabaseAsync(database, token))?.Incarnation);
 
-        public string Name => _name;
+        public string Name { get; } = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
 
         public Cluster Cluster => cluster;
 
@@ -2004,7 +2118,7 @@ public sealed class PeerStreamTests
             _api = await ManagementApi.StartAsync(settings =>
             {
                 settings["region"] = Region;
-                settings["node-name"] = _name;
+                settings["node-name"] = Name;
                 settings["data-directory"] = _directory;
             }, services =>
             {
@@ -2624,6 +2738,9 @@ public sealed class PeerStreamTests
 
             return ChangeGroups.Wire(database, incarnation);
         }
+
+        // From now on this stream's frames name `incarnation` for the database: the sender was copied or restored.
+        public void Pin(TenantContext database, Ulid incarnation) => _incarnations[database] = incarnation;
 
         public async Task RefillAsync(TenantContext database, ulong changeId) =>
             await _call.RequestStream.WriteAsync(new PushFrame { Refill = new Refill { Database = await WireAsync(database), ChangeId = changeId } });

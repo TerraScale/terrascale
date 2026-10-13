@@ -138,9 +138,9 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         _tracked[incarnation] = database;
         await using (transaction.ConfigureAwait(false))
         {
-            if (await transaction.GetAckedAsync(peer, incarnation, cancellationToken).ConfigureAwait(false) is { } acked)
+            if (await transaction.GetAckedAsync(peer, incarnation, cancellationToken).ConfigureAwait(false) is { } cursor)
             {
-                return new SourceCursor(incarnation, acked);
+                return cursor;
             }
         }
 
@@ -331,7 +331,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     {
         // Discovery pins the copy in place first; the transaction then checks it is still that copy.
         var incarnation = expected
-            ?? (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is { } store ? store.Incarnation : null);
+            ?? (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is { } store ? (Ulid?)store.Incarnation : null);
         if (incarnation is not { } named
             || await BeginAsync(database, named, write: false, cancellationToken).ConfigureAwait(false) is not (_, var transaction))
         {

@@ -9,7 +9,7 @@ using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
-using Cluster = TerraBase.Fast.Replication.PeerStreamTests.Cluster;
+using ReplicaCluster = TerraBase.Fast.Replication.PeerStreamTests.Cluster;
 using Machine = TerraBase.Fast.Replication.PeerStreamTests.Machine;
 
 namespace TerraBase.Fast.Replication;
@@ -28,7 +28,7 @@ public sealed class IncarnationContractTests
     public async Task A_copy_refuses_an_ack_of_its_sources_incarnation_and_keeps_its_change_log()
     {
         var clock = new PeerStreamTests.ShiftedTime();
-        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        await using var cluster = await ReplicaCluster.StartAsync(cdc: true, clock, "gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         for (var write = 0; write < 5; write++)
         {
@@ -83,6 +83,7 @@ public sealed class IncarnationContractTests
         var cursor = (await groups.AckedAsync(restored, peer, token))!.Value;
         await Assert.That(cursor.Incarnation).IsNotEqualTo(source);
         await Assert.That(cursor.Acked).IsEqualTo(0);
+        await Assert.That(cursor.RequiresRefill).IsTrue().Because("the restored peer row names the backed-up file");
         var engine = services.GetRequiredService<IStorageEngine>();
         await WriteUntilAsync(engine, groups, restored, cursor.Incarnation, "people", stale);
 
@@ -104,7 +105,7 @@ public sealed class IncarnationContractTests
     [Test]
     public async Task Digest_and_bucket_reads_answer_only_for_the_incarnation_they_name()
     {
-        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        await using var cluster = await ReplicaCluster.StartAsync(cdc: true, "gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         var id = EntityIds.New().ToString();
         await gru.WriteAsync(async transaction =>
@@ -168,7 +169,7 @@ public sealed class IncarnationContractTests
     [Test]
     public async Task A_batch_without_its_senders_incarnation_ends_the_stream()
     {
-        await using var cluster = await Cluster.StartAsync("gru");
+        await using var cluster = await ReplicaCluster.StartAsync("gru");
         var gru = cluster["gru"];
         await gru.WriteAsync(async transaction => _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None));
         using var channel = PeerChannel.Create(gru.Api.Server.BaseAddress);
@@ -202,7 +203,7 @@ public sealed class IncarnationContractTests
     [Test]
     public async Task An_ack_started_while_the_writer_is_held_is_refused_after_the_file_is_renewed()
     {
-        await using var cluster = await Cluster.StartAsync(cdc: true, "gru");
+        await using var cluster = await ReplicaCluster.StartAsync(cdc: true, "gru");
         var gru = cluster["gru"];
         await gru.WriteAsync(async transaction =>
         {
@@ -242,7 +243,12 @@ public sealed class IncarnationContractTests
         await Assert.That(stale).IsLessThanOrEqualTo(head).Because("the old ack names a change id the new file has, which a bound check passes");
         var engine = services.GetRequiredService<SqliteStorageEngine>();
         var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
+        // The peer row came with the copy and names the old file: the peer must refill this one, on every read until it acks.
+        var refill = new SourceCursor(incarnation, 0) { RequiresRefill = true };
+        await Assert.That(await groups.AckedAsync(database, peer, CancellationToken.None)).IsEqualTo(refill);
         var before = await LogAsync(store);
+        await Assert.That(await groups.AckedAsync(database, peer, CancellationToken.None)).IsEqualTo(refill);
+        await Assert.That(await LogAsync(store)).IsEqualTo(before).Because("reading the cursor keeps the old scope that requires the refill");
         var retains = await groups.RetainsAsync(database, incarnation, 0, CancellationToken.None);
         var written = (await groups.ReadAsync(database, incarnation, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None))!.Groups;
         var all = written.Count;
@@ -261,7 +267,7 @@ public sealed class IncarnationContractTests
         var page = await states.ReadBucketsAsync(database, incarnation, [bucket], null, 4096, int.MaxValue, CancellationToken.None);
         await Assert.That(page is { } kept && kept.States.Any(state => (state.Collection, state.Id) == key)).IsTrue().Because("the refused forget kept the document");
         await Assert.That((await states.DigestAsync(database, incarnation, CancellationToken.None))?.Incarnation).IsEqualTo(incarnation);
-        await Assert.That(await groups.AckedAsync(database, peer, CancellationToken.None)).IsEqualTo(new SourceCursor(incarnation, 0));
+        await Assert.That(await groups.AckedAsync(database, peer, CancellationToken.None)).IsEqualTo(refill);
         await Assert.That(await groups.RetainsAsync(database, incarnation, 0, CancellationToken.None)).IsEqualTo(retains);
         await Assert.That((await groups.ReadAsync(database, incarnation, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None))!.Groups.Count).IsEqualTo(all);
         await Assert.That(await groups.AckAsync(database, Ulid.NewUlid(), peer, stale, default, CancellationToken.None)).IsFalse();
@@ -284,10 +290,11 @@ public sealed class IncarnationContractTests
         var seeded = await LogAsync(store);
         await Assert.That((seeded.Rows, seeded.Oldest, seeded.Newest)).IsEqualTo((before.Rows, before.Oldest, before.Newest))
             .Because("retention counts another incarnation's ack as 0");
-        await Assert.That(await groups.AckedAsync(database, peer, CancellationToken.None)).IsEqualTo(new SourceCursor(incarnation, 0));
+        await Assert.That(await groups.AckedAsync(database, peer, CancellationToken.None)).IsEqualTo(refill);
 
         await Assert.That(await groups.AckAsync(database, incarnation, peer, stale, default, CancellationToken.None)).IsTrue();
-        await Assert.That(await groups.AckedAsync(database, peer, CancellationToken.None)).IsEqualTo(new SourceCursor(incarnation, stale));
+        await Assert.That(await groups.AckedAsync(database, peer, CancellationToken.None)).IsEqualTo(new SourceCursor(incarnation, stale))
+            .Because("the accepted ack of this incarnation scopes the row to it and clears the refill requirement");
         await Assert.That((await LogAsync(store)).Oldest).IsGreaterThan(before.Oldest).Because("the same ack of this incarnation releases the rows it covers");
     }
 

@@ -10,6 +10,13 @@ persistence requires the expected incarnation and checks it under the database w
 The persisted peer ACK position is scoped to that incarnation. A mismatch refuses the ACK without updating peer
 bookkeeping or running ACK-driven retention.
 
+A copied peer row returns a zero cursor marked `RequiresRefill`. Its old persisted scope holds retention at zero and
+keeps the refill requirement across reconnects until a successful ACK records the new scope. A failed refill blocks
+the database's batches and frontiers even if the sender changes incarnation; only a completed refill clears that block.
+If a rebuilt sender has no scoped peer row, that blocked database stays stalled until a refill is requested; a new
+incarnation alone proves no recovery of the receiver's missing state. Automatic refill for this case is tracked in
+[issue #219](https://github.com/TerraScale/terrascale/issues/219).
+
 Peer replication carries the source incarnation alongside database identity. A batch ACK echoes the sender's
 incarnation; it does not name the receiver's own file incarnation. A sender discards cursors from another incarnation.
 Each replica has its own file incarnation, even when replicas hold the same logical database.

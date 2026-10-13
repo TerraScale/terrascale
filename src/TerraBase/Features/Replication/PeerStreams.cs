@@ -198,7 +198,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             link.Connected = true;
             foreach (var cursor in link.Cursors.Values)
             {
-                (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups) = (null, null, null, 0);
+                (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.RequiresRefill) = (null, null, null, 0, false);
             }
         }
 
@@ -276,7 +276,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
 
             // The cursor is pinned to one incarnation of this machine's copy: its change ids mean nothing in another.
-            var position = cursor is { Incarnation: { } pinned, Acked: { } resume } ? new SourceCursor(pinned, resume)
+            var position = cursor is { Incarnation: { } pinned, Acked: { } resume } ? new SourceCursor(pinned, resume) { RequiresRefill = cursor.RequiresRefill }
                 : await _source.AckedAsync(database, peer, cancellationToken).ConfigureAwait(false);
             if (position is not (var incarnation, var acked))
             {
@@ -285,7 +285,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
             lock (link.Gate)
             {
-                (cursor.Incarnation, cursor.Acked) = (incarnation, acked);
+                (cursor.Incarnation, cursor.Acked, cursor.RequiresRefill) = (incarnation, acked, position.Value.RequiresRefill);
             }
 
             if (cursor.InFlight is not null || _time.GetTimestamp() < cursor.RetryAt)
@@ -326,7 +326,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 continue;
             }
 
-            if (retains is false)
+            if (retains is false || cursor.RequiresRefill)
             {
                 // Retention cut groups after the peer's ack (it was silent or far behind, or it is new): it refills from this
                 // copy, then the stream goes on from its newest change.
@@ -417,6 +417,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         {
             Reset(link, cursor);
         }
+        else
+        {
+            lock (link.Gate)
+            {
+                cursor.RequiresRefill = false;
+            }
+        }
     }
 
     // Forgets a cursor's incarnation and position: the next pass reads both again from the copy in place.
@@ -424,7 +431,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     {
         lock (link.Gate)
         {
-            (cursor.Incarnation, cursor.Acked, cursor.Head) = (null, null, 0);
+            (cursor.Incarnation, cursor.Acked, cursor.Head, cursor.RequiresRefill) = (null, null, 0, false);
         }
     }
 
@@ -497,6 +504,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         // The incarnation of this machine's copy the cursor belongs to and the peer's last ack in it (null until read from the
         // source on this connection, or after the copy was replaced), the batch in flight and when it went.
         public Ulid? Incarnation { get; set; }
+
+        public bool RequiresRefill { get; set; }
 
         public long? Acked { get; set; }
 

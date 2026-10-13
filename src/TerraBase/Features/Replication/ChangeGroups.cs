@@ -27,7 +27,11 @@ public sealed record ChangeDelta(string Collection, string Id, Hlc Stamp, Docume
 /// </summary>
 /// <param name="Incarnation">The copy the cursor belongs to.</param>
 /// <param name="Acked">The last change id the peer acknowledged in it, or 0.</param>
-public readonly record struct SourceCursor(Ulid Incarnation, long Acked);
+public readonly record struct SourceCursor(Ulid Incarnation, long Acked)
+{
+    /// <summary>A copied or restored peer row must refill this incarnation before resuming its change log.</summary>
+    public bool RequiresRefill { get; init; }
+}
 
 /// <summary>Groups read from one incarnation of this machine's copy of a database.</summary>
 /// <param name="Incarnation">The incarnation the read's own storage transaction found in place.</param>
@@ -56,8 +60,9 @@ public interface IChangeGroupSource
 
     /// <summary>
     /// The copy in place and the last change id <paramref name="peer"/> acknowledged in it (its <c>_tb_peers.acked</c>), or 0
-    /// when it acknowledged nothing of this incarnation; null when this machine does not hold the database, or when its copy
-    /// was replaced during this read (ask again).
+    /// when it acknowledged nothing of this incarnation. A copied peer row sets <see cref="SourceCursor.RequiresRefill"/>
+    /// until a refill ACK persists the new scope. Null when this machine does not hold the database, or when its copy was
+    /// replaced during this read (ask again).
     /// </summary>
     ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken);
 

@@ -15,6 +15,7 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
     private readonly Lock _gate = new();
     private readonly Dictionary<TenantContext, List<OriginGroup>> _groups = [];
     private readonly Dictionary<(TenantContext Database, ReplicaId Peer), long> _ackedBy = [];
+    private readonly HashSet<(TenantContext Database, ReplicaId Peer)> _refills = [];
     private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource _acked = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Action? _beforeRead;
@@ -46,6 +47,27 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
 
         changed.SetResult();
         return id;
+    }
+
+    /// <summary>
+    /// Marks <paramref name="peer"/>'s row as a copied one: its cursor requires a refill, as storage reports a foreign scope,
+    /// until an ack of this copy succeeds.
+    /// </summary>
+    public void RequireRefill(TenantContext database, ReplicaId peer)
+    {
+        lock (_gate)
+        {
+            _ = _refills.Add((database, peer));
+        }
+    }
+
+    /// <summary>Whether <paramref name="peer"/>'s cursor still requires a refill.</summary>
+    public bool RequiresRefill(TenantContext database, ReplicaId peer)
+    {
+        lock (_gate)
+        {
+            return _refills.Contains((database, peer));
+        }
     }
 
     /// <summary>The last change id <paramref name="peer"/> acknowledged, or 0.</summary>
@@ -103,7 +125,9 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
     }
 
     public async ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) =>
-        await incarnation(database, cancellationToken) is { } current ? new SourceCursor(current, AckedBy(database, peer)) : null;
+        await incarnation(database, cancellationToken) is { } current
+            ? new SourceCursor(current, AckedBy(database, peer)) { RequiresRefill = RequiresRefill(database, peer) }
+            : null;
 
     public async ValueTask<bool> AckAsync(TenantContext database, Ulid expected, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken)
     {
@@ -116,6 +140,7 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
         lock (_gate)
         {
             _ackedBy[(database, peer)] = Math.Max(_ackedBy.GetValueOrDefault((database, peer)), changeId);
+            _ = _refills.Remove((database, peer));
             (acked, _acked) = (_acked, new(TaskCreationOptions.RunContinuationsAsynchronously));
         }
 

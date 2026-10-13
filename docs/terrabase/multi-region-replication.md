@@ -943,7 +943,8 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   tailer's bookkeeping). A peer's first `AckedAsync` returns the file incarnation and gives it a row at 0, so it holds
   retention from first contact. Reads, heads and retention checks require that incarnation. ACK persistence checks the
   expected incarnation under the writer and refuses another file's ACK, including one whose numeric position fits the
-  current head. Copies and restores reset stored ACKs; mismatched peer rows reset to 0. The internal v1 wire and
+  current head. Copies and restores reset stored ACKs; mismatched peer rows return 0 and require refill before their
+  persisted scope advances. The internal v1 wire and
   digest/bucket reads pin the source incarnation as described in [the incarnation contract](replication-incarnations.md).
 - **Retention** (`SqliteStorageTransaction.Retention`, run after every ack and by the backup tap's trim): delete below the
   newest COMMIT row that is at or below every peer's `acked` (peers heard from in the last 24 h), at or below the backup

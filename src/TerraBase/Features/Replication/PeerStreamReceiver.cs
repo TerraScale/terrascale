@@ -31,9 +31,8 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private readonly LocalReplica _self;
     private readonly TimeProvider _time;
     private readonly ConcurrentDictionary<ReplicaId, (CancellationTokenSource Stop, Task Ended)> _streams = new();
-    // Per origin, the databases (each of one incarnation of the origin's copy) whose last refill did not commit when its
-    // stream ended.
-    private readonly ConcurrentDictionary<ReplicaId, HashSet<(TenantContext Database, Ulid Incarnation)>> _cut = new();
+    // Per origin, databases whose refill did not commit. A new sender incarnation does not repair the missing state.
+    private readonly ConcurrentDictionary<ReplicaId, HashSet<TenantContext>> _cut = new();
     private readonly Counter<long> _merged;
     private readonly Histogram<double> _delay;
     private readonly Counter<long> _undecodable;
@@ -125,11 +124,11 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         }
         // Keyed by database and the incarnation of the origin's copy its frames name: change ids of one incarnation say
         // nothing of another's, which restart.
-        var last = new Dictionary<(TenantContext Database, Ulid Incarnation), ulong>();
+        var last = new Dictionary<TenantContext, (Ulid Incarnation, ulong ChangeId)>();
         // The databases a refill runs for, and those whose last refill failed: their batches are refused until a refill of
         // them commits, so none joins before the repairs it follows.
         var refills = new Dictionary<(TenantContext Database, Ulid Incarnation), (Refill Frame, Task<int?> Done)>();
-        HashSet<(TenantContext Database, Ulid Incarnation)> cut = [];
+        HashSet<TenantContext> cut = [];
         Task<bool>? reading = null;
         try
         {
@@ -156,12 +155,12 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     _ = refills.Remove(tenant);
                     if (refilled)
                     {
-                        _ = cut.Remove(tenant);
-                        last[tenant] = asked.ChangeId;
+                        _ = cut.Remove(tenant.Database);
+                        last[tenant.Database] = (tenant.Incarnation, asked.ChangeId);
                     }
                     else
                     {
-                        _ = cut.Add(tenant);
+                        _ = cut.Add(tenant.Database);
                     }
 
                     await responseStream.WriteAsync(new AckFrame
@@ -191,6 +190,11 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 {
                     var at = Tenant(frontier.Database);
                     _ = Incarnation(frontier.Database);
+                    if (cut.Contains(at) || refills.Keys.Any(running => running.Database == at))
+                    {
+                        continue;
+                    }
+
                     await _sink.RecordFrontierAsync(at, origin, new Hlc(frontier.Hlc), stream.Token).ConfigureAwait(false);
                     await responseStream.WriteAsync(new AckFrame
                     {
@@ -210,7 +214,6 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                         continue;
                     }
 
-                    Forget(last, cut, tenant);
                     // Pinned to the copy the refill names: a replaced sender copy refuses it instead of certifying another.
                     refills[tenant] = (refill, RefillAsync(tenant.Database, hello.Machine, new Hlc(refill.Horizon), tenant.Incarnation, stream.Token));
                     continue;
@@ -224,24 +227,23 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 // A batch that names no database or incarnation cannot be refused for one: it ends the stream.
                 var database = Tenant(batch.Database);
                 var source = (Database: database, Incarnation: Incarnation(batch.Database));
-                Forget(last, cut, source);
                 List<OriginGroup> groups;
                 try
                 {
                     // Any refill of the database blocks its batches: it is still joining repairs, whichever copy it names.
-                    if (refills.Keys.Any(running => running.Database == database) || cut.Contains(source))
+                    if (refills.Keys.Any(running => running.Database == database) || cut.Contains(database))
                     {
                         await RefuseAsync(responseStream, batch.Database, stream.Token).ConfigureAwait(false);
                         continue;
                     }
 
-                    if (last.TryGetValue(source, out var previous) && batch.LastChangeId <= previous)
+                    if (last.TryGetValue(database, out var previous) && previous.Incarnation == source.Incarnation && batch.LastChangeId <= previous.ChangeId)
                     {
                         throw new InvalidDataException("a stream's batches of one database have growing change ids");
                     }
 
                     groups = ChangeGroups.Decode(database, batch.Groups, batch.LastChangeId);
-                    if (groups[0].ChangeId <= (long)previous)
+                    if (previous.Incarnation == source.Incarnation && groups[0].ChangeId <= (long)previous.ChangeId)
                     {
                         throw new InvalidDataException("a stream's groups of one database have growing change ids");
                     }
@@ -271,7 +273,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
                 if (applied is { } stamp)
                 {
-                    last[source] = batch.LastChangeId;
+                    last[database] = (source.Incarnation, batch.LastChangeId);
                     Observe(groups, region);
                 }
 
@@ -307,7 +309,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 await pending.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }
 
-            cut.UnionWith(refills.Keys);
+            cut.UnionWith(refills.Keys.Select(key => key.Database));
             if (cut.Count > 0)
             {
                 _cut[origin] = cut;
@@ -344,12 +346,12 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         ArgumentNullException.ThrowIfNull(responseStream);
         ArgumentNullException.ThrowIfNull(context);
         var database = Tenant(request.Database);
-        var incarnation = Incarnation(request.Database);
         if (database == ChangeGroups.System && !_catalogGate.Value.Trusted)
         {
             throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source catalog is unverified"));
         }
 
+        var incarnation = Incarnation(request.Database);
         if (request.Buckets.Count is 0 or > 4096 || request.Buckets.Any(bucket => bucket >= 4096))
         {
             throw new RpcException(new Status(StatusCode.InvalidArgument, "a bucket read names 1 to 4096 buckets, each 0 to 4095"));
@@ -455,20 +457,6 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         {
             throw new RpcException(new Status(StatusCode.InvalidArgument, error.Message));
         }
-    }
-
-    // A frame of `source` drops what the stream kept of the database's other incarnations of the origin's copy: they were
-    // replaced, and their change ids and cuts say nothing of this one.
-    private static void Forget(
-        Dictionary<(TenantContext Database, Ulid Incarnation), ulong> last, HashSet<(TenantContext Database, Ulid Incarnation)> cut,
-        (TenantContext Database, Ulid Incarnation) source)
-    {
-        foreach (var other in last.Keys.Where(key => key.Database == source.Database && key.Incarnation != source.Incarnation).ToList())
-        {
-            _ = last.Remove(other);
-        }
-
-        _ = cut.RemoveWhere(key => key.Database == source.Database && key.Incarnation != source.Incarnation);
     }
 
     private void Observe(List<OriginGroup> groups, string region)
