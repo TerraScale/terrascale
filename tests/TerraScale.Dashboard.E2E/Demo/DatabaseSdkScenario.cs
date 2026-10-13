@@ -1,6 +1,8 @@
 using Cronos;
 using System.Collections.Concurrent;
 using System.Net;
+using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
@@ -69,8 +71,11 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         await environment.InitializeAsync();
         void Configure(WebApplicationBuilder application)
         {
-            state ??= new((IDashboardState)application.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance!);
+            state ??= new((IDashboardState)application.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance!, environment.Workspace);
             protocol.State = state;
+            protocol.Workspace = environment.Workspace;
+            protocol.Platform ??= ProjectCounter.Wrap(environment.Workspace, protocol.CountProject);
+            application.Services.Replace(ServiceDescriptor.Singleton(protocol.Platform));
             var auth = (TestAuth)application.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
             protocol.ResolveAccessToken = auth.ResolveAccessToken;
             protocol.ResolveProjectToken = auth.ResolveProjectToken;
@@ -124,7 +129,37 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         }
     }
 
-    private sealed class RecordingState(IDashboardState inner) : IDashboardState
+    // Observes the canonical ts-auth project lifecycle of this fixture's TestWorkspace. The fake completes synchronously,
+    // so each outcome is known when the call returns or throws.
+    public class ProjectCounter : DispatchProxy
+    {
+        private ITsAuthPlatform inner = null!;
+        private Action<string, int> count = null!;
+        internal static ITsAuthPlatform Wrap(ITsAuthPlatform inner, Action<string, int> count)
+        {
+            var proxy = Create<ITsAuthPlatform, ProjectCounter>();
+            ((ProjectCounter)(object)proxy).inner = inner;
+            ((ProjectCounter)(object)proxy).count = count;
+            return proxy;
+        }
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            try
+            {
+                var result = method!.Invoke(inner, args);
+                count(method.Name, 0);
+                return result;
+            }
+            catch (TargetInvocationException error) when (error.InnerException is { } thrown)
+            {
+                count(method!.Name, (thrown as AccountAccessException)?.StatusCode ?? 500);
+                ExceptionDispatchInfo.Throw(thrown);
+                throw;
+            }
+        }
+    }
+
+    private sealed class RecordingState(IDashboardState inner, TestWorkspace workspace) : IDashboardState
     {
         // The encrypted data-key registry is gone; recording its former collection shows nothing writes customer keys again.
         private const string Credentials = "dashboard_data_credentials";
@@ -206,13 +241,13 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     throw new IOException("Test-only database metadata write interrupted.");
                 }
             }
+            // Stored project settings carry no name; ts-auth's canonical project with the armed name identifies the target.
             if (collection == AccountService.OrganizationsCollection && id == targetProjectOrg &&
-                Volatile.Read(ref projectMetadataArmed) == 1 && document.GetProperty("Projects").EnumerateObject()
-                    .Any(project => project.Value.GetProperty("Name").GetString() == targetProjectName))
+                Volatile.Read(ref projectMetadataArmed) == 1 && CanonicalProjectId(targetProjectOrg, targetProjectName) is { } targetProject &&
+                document.GetProperty("Projects").TryGetProperty(targetProject, out _))
             {
                 var prior = await inner.GetAsync(collection, id, ct);
-                if (prior is not null && !prior.Document.GetProperty("Projects").EnumerateObject()
-                    .Any(project => project.Value.GetProperty("Name").GetString() == targetProjectName) &&
+                if (prior is not null && !prior.Document.GetProperty("Projects").TryGetProperty(targetProject, out _) &&
                     Interlocked.CompareExchange(ref projectMetadataArmed, 0, 1) == 1)
                 {
                     Interlocked.Increment(ref failedProjectMetadataWrites);
@@ -237,6 +272,11 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             if (collection == Credentials) encrypted.Enqueue(document.GetRawText());
         }
         public Task DeleteAsync(string collection, string id, string version, CancellationToken ct) => inner.DeleteAsync(collection, id, version, ct);
+        private string? CanonicalProjectId(string organizationId, string name)
+        {
+            lock (workspace.Gate)
+                return workspace.Organizations.GetValueOrDefault(organizationId)?.Projects.Values.SingleOrDefault(project => project.Name == name)?.Id;
+        }
     }
 
     private sealed class DatabaseProducer
@@ -246,8 +286,6 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         private readonly TerraScaleIdGenerator ids = new();
         private readonly object gate = new();
         private readonly Dictionary<string, ManagedDatabase> databases = [];
-        private readonly Dictionary<string, TerraBaseOrganization> organizations = [];
-        private readonly Dictionary<string, TerraBaseProject> projects = [];
         private readonly Dictionary<string, ProducerSnapshot> snapshots = [];
         private readonly Dictionary<string, ProducerBackupPolicy> policies = [];
         private string backupFailure = "";
@@ -275,16 +313,34 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         private int branchConflicts;
         private int documentsRequests;
         private long offset;
-        private string role = "owner";
         public RecordingState State { get; set; } = null!;
+        // ts-auth's canonical organizations, projects and memberships for this fixture; the producer stores no identity.
+        public TestWorkspace Workspace { get; set; } = null!;
+        public ITsAuthPlatform? Platform { get; set; }
         public Func<string, (string UserId, string Email)?> ResolveAccessToken { get; set; } = null!;
         public Func<string, (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)?> ResolveProjectToken { get; set; } = null!;
         public TestAuthApiKeys? ApiKeys { get; set; }
-        // ts-auth's view of the same tenant: the producer-owned organization's creator holds the controlled role.
-        public string KeyRole(string userId, string organizationId, string projectId)
+        // ts-auth's current project role; the role control is ts-auth's own override for current members ("" removes them).
+        public string KeyRole(string userId, string organizationId, string projectId) => Workspace.ProjectRole(userId, organizationId, projectId);
+        private bool CanonicalProject(string organizationId, string projectId)
         {
-            lock (gate) return organizations.TryGetValue(organizationId, out var org) && org.CreatedBy == userId &&
-                projects.TryGetValue(projectId, out var project) && project.OrganizationId == organizationId ? role : "";
+            lock (Workspace.Gate) return Workspace.Organizations.GetValueOrDefault(organizationId)?.Projects.ContainsKey(projectId) == true;
+        }
+        // The stored dashboard record omits ts-auth identity, so ownership comes from the fixture's ts-auth registry.
+        private string Owner(string organizationId)
+        {
+            lock (Workspace.Gate)
+                return Workspace.Organizations.GetValueOrDefault(organizationId) is { } org && org.RoleFor(org.OwnerUserId) == "owner" ? org.OwnerUserId : "";
+        }
+        public void CountProject(string operation, int status)
+        {
+            switch (operation, status)
+            {
+                case ("CreateProjectAsync", 0): Interlocked.Increment(ref projectCreates); break;
+                case ("CreateProjectAsync", 409): Interlocked.Increment(ref projectConflicts); break;
+                case ("DeleteProjectAsync", 0): Interlocked.Increment(ref projectDeletes); break;
+                case ("DeleteProjectAsync", 404): Interlocked.Increment(ref projectDeleteNotFound); break;
+            }
         }
         public Func<HttpContext, Task<IResult?>>? Extension { get; set; }
         // The region that answers api.terrascale.tech, as Fly picks it for the dashboard's machine.
@@ -306,10 +362,9 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     var grant = text.StartsWith("Bearer ", StringComparison.Ordinal) ? ResolveProjectToken(text[7..]) : null;
                     Require(projectId.Length > 0 && grant is not null && grant.Value.ProjectId == projectId,
                         "Project reporting and schema use an exchanged project-scoped bearer for the selected project");
+                    Require(CanonicalProject(grant!.Value.OrganizationId, projectId), "Project replication bearer organization matches the canonical project");
                     lock (gate)
                     {
-                        Require(projects.TryGetValue(projectId, out var project) && project!.OrganizationId == grant!.Value.OrganizationId,
-                            "Project replication bearer organization matches the canonical project");
                         var databaseId = http.Request.Query["database"].ToString();
                         Require(databaseId.Length == 0 || databases.TryGetValue(databaseId, out var database) && database.ProjectId == projectId,
                             "Project replication database filter is inside the bearer project");
@@ -384,7 +439,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 case "pause-quota-commits": State.PauseQuotaCommits(); break;
                 case "release-quota-commits": State.ReleaseQuotaCommits(); break;
                 case "credential-conflict": State.ConflictCredentials = body.GetProperty("value").GetBoolean(); break;
-                case "role": role = body.GetProperty("value").GetString()!; break;
+                case "role": Workspace.Role = body.GetProperty("value").GetString()!; break;
                 case "backup-failure": backupFailure = body.GetProperty("value").GetString()!; break;
                 // Another TerraBase client placed a replica: the producer's placement is wider than the dashboard asked for.
                 case "api-region": ApiRegion = body.GetProperty("value").GetString()!; break;
@@ -402,12 +457,10 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                         ?? throw new InvalidOperationException("Database fixture control targets a canonical organization");
                     var databaseOrg = databaseValue.Document.Deserialize<OrganizationRecord>()!;
                     databaseOrg.Projects.TryGetValue(databaseProjectId, out var fixtureProject);
-                    Require(role == "owner" && databaseValue.Id == databaseOrg.Id && databaseOrg.Id == databaseOrgId && databaseOrg.Status == "active" &&
-                        databaseOrg.RoleFor(databaseOrg.OwnerUserId) == "owner" && fixtureProject is not null,
+                    Require(Workspace.Role == "owner" && databaseValue.Id == databaseOrg.Id && databaseOrg.Id == databaseOrgId && databaseOrg.Status == "active" &&
+                        Owner(databaseOrgId).Length > 0 && fixtureProject is not null,
                         "Database fixture control targets its current owner's canonical project");
-                    lock (gate) Require(organizations.TryGetValue(databaseOrgId, out var databaseOwned) && databaseOwned.CreatedBy == databaseOrg.OwnerUserId &&
-                        projects.TryGetValue(databaseProjectId, out var databaseRemoteProject) && databaseRemoteProject.OrganizationId == databaseOrgId,
-                        "Database fixture control agrees with actual producer ownership");
+                    Require(CanonicalProject(databaseOrgId, databaseProjectId), "Database fixture control agrees with ts-auth's canonical project");
                     if (body.GetProperty("command").GetString() == "fail-database-metadata")
                     {
                         var databaseName = body.GetProperty("name").GetString()!;
@@ -435,11 +488,11 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     var faultValue = await State.GetAsync(AccountService.OrganizationsCollection, faultOrganizationId, http.RequestAborted)
                         ?? throw new InvalidOperationException("Project metadata failure targets an existing organization");
                     var faultOrg = faultValue.Document.Deserialize<OrganizationRecord>()!;
+                    bool faultNameTaken;
+                    lock (Workspace.Gate) faultNameTaken = Workspace.Organizations.GetValueOrDefault(faultOrganizationId)?.Projects.Values.Any(project => project.Name == faultName) != false;
                     Require(TerraScaleIds.IsValid(faultOrganizationId) && faultValue.Id == faultOrg.Id && faultOrg.Id == faultOrganizationId &&
-                        faultOrg.Status == "active" && faultOrg.ContainsMember(faultOrg.OwnerUserId) && faultName.Length > 0 &&
-                        !faultOrg.Projects.Values.Any(project => project.Name == faultName), "Project metadata fault is limited to a new project of a current canonical owner");
-                    lock (gate) Require(organizations.TryGetValue(faultOrganizationId, out var ownedOrg) && ownedOrg.CreatedBy == faultOrg.OwnerUserId,
-                        "Project metadata fault matches the producer-owned organization");
+                        faultOrg.Status == "active" && Owner(faultOrganizationId).Length > 0 && faultName.Length > 0 && !faultNameTaken,
+                        "Project metadata fault is limited to a new project of a current canonical owner");
                     State.ArmProjectMetadataFailure(faultOrganizationId, faultName);
                     break;
                 case "fail-project-deletion-metadata":
@@ -450,13 +503,11 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     var deletionOrg = deletionValue.Document.Deserialize<OrganizationRecord>()!;
                     Require(TerraScaleIds.IsValid(deletionOrgId) && TerraScaleIds.IsValid(deletionProjectId) &&
                         deletionValue.Id == deletionOrgId && deletionOrg.Id == deletionOrgId && deletionOrg.Status == "active" &&
-                        deletionOrg.RoleFor(deletionOrg.OwnerUserId) == "owner" && deletionOrg.Projects.Count > 1 &&
+                        Owner(deletionOrgId).Length > 0 && deletionOrg.Projects.Count > 1 &&
                         deletionOrg.Projects.TryGetValue(deletionProjectId, out var deleting) && deleting.Id == deletionProjectId &&
-                        deleting.OrganizationId == deletionOrgId && !deleting.IsDefault && deleting.Databases.Count == 0,
+                        !deleting.IsDefault && deleting.Databases.Count == 0,
                         "Project deletion metadata fault is limited to an existing empty nondefault project of a current canonical owner");
-                    lock (gate) Require(role == "owner" && organizations.TryGetValue(deletionOrgId, out var deletionOwned) &&
-                        deletionOwned.CreatedBy == deletionOrg.OwnerUserId && projects.TryGetValue(deletionProjectId, out var deletionRemote) &&
-                        deletionRemote.OrganizationId == deletionOrgId, "Project deletion metadata fault matches the producer-owned project");
+                    Require(Workspace.Role == "owner" && CanonicalProject(deletionOrgId, deletionProjectId), "Project deletion metadata fault matches ts-auth's canonical project");
                     State.ArmProjectDeletionMetadataFailure(deletionOrgId, deletionProjectId);
                     break;
                 case "plan":
@@ -475,6 +526,9 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
 
         private IResult Observations()
         {
+            object[] workspaceProjects;
+            lock (Workspace.Gate) workspaceProjects = Workspace.Organizations.Values.SelectMany(org => org.Projects.Values)
+                .Select(value => new { value.Id, value.OrganizationId, value.Name }).ToArray();
             lock (gate) return Results.Json(new
             {
                 failures = failures.ToArray(),
@@ -496,7 +550,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 failedProjectMetadataWrites = State.FailedProjectMetadataWrites,
                 failedProjectDeletionMetadataWrites = State.FailedProjectDeletionMetadataWrites,
                 failedDatabaseMetadataWrites = State.FailedDatabaseMetadataWrites,
-                workspaceProjects = projects.Values.Select(value => new { value.Id, value.OrganizationId, value.Name }).ToArray(),
+                workspaceProjects,
                 backups = snapshots.Values.Select(value => value.Backup).ToArray(),
                 credentials = (ApiKeys?.Issued() ?? []).Select(value => new { value.Key.Id, value.Key.Name, Secret = value.Secret, Host = "auth.terrascale.tech", value.Key.Scopes, value.Key.Database }).ToArray(),
                 authKeys = ApiKeys?.Observations(),
@@ -515,92 +569,24 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             var subject = (string)http.Items["producer-subject"]!;
             if (http.Request.Headers.TryGetValue("X-TerraBase-User-Id", out var acting))
                 Require(acting == subject, "Official management SDK acting subject matches admitted bearer");
-            if (parts.Length == 3 && parts[2] == "organizations")
-            {
-                Require(acting == subject, "Organization bootstrap uses the official acting-user contract");
-                if (http.Request.Method == "GET")
-                { lock (gate) return Results.Json(new { items = organizations.Values.Where(org => org.CreatedBy == subject).ToArray(), next = (string?)null }); }
-                var body = await JsonAsync(http);
-                var organization = new TerraBaseOrganization(ids.NewId(), body.GetProperty("name").GetString()!, subject, DateTimeOffset.UtcNow, TerraBasePlan.Hobby);
-                lock (gate) organizations[organization.Id] = organization;
-                return Results.Json(organization, statusCode: 201);
-            }
-            var org = parts.Length > 3 ? parts[3] : "";
-            Require(http.Request.Headers["X-TerraBase-Organization-Id"] == org, "Management organization header matches route");
-            lock (gate) Require(organizations.TryGetValue(org, out var owned) ? owned.CreatedBy == subject : subject == "test-user", "Management tenant membership matches admitted subject");
-            if (parts.Length == 4 && http.Request.Method == "GET")
-            { lock (gate) return organizations.TryGetValue(org, out var organization) ? Results.Json(organization) : Results.Json(new { id = org, name = "Personal", createdBy = subject, createdAt = DateTimeOffset.UtcNow, plan = "hobby" }); }
-            if (parts.Length == 5 && parts[4] == "members")
-            {
-                Require(acting == subject, "Official membership SDK acting subject");
-                return Results.Json(new { items = role.Length == 0 ? Array.Empty<object>() : new object[] { new { userId = subject, role, joinedAt = DateTimeOffset.UtcNow } }, next = (string?)null });
-            }
-            if (parts.Length == 5 && http.Request.Method == "GET")
-            {
-                Require(acting == subject, "Official organization read SDK acting subject");
-                if (parts[4] == "audit-retention") return Results.Json(new { days = 90 });
-                if (parts[4] is "invitations" or "audit-events") return Results.Json(new { items = Array.Empty<object>(), next = (string?)null });
-                if (parts[4] == "ownership-transfer") return Error(404, "not_found");
-            }
-            if (parts.Length == 5 && parts[4] == "projects")
-            {
-                Require(acting == subject, "Project bootstrap uses the official acting-user contract");
-                if (http.Request.Method == "GET")
-                { lock (gate) return Results.Json(new { items = projects.Values.Where(project => project.OrganizationId == org).ToArray(), next = (string?)null }); }
-                var body = await JsonAsync(http);
-                var projectName = body.GetProperty("name").GetString()!;
-                lock (gate)
-                {
-                    if (projects.Values.Any(project => project.OrganizationId == org && project.Name == projectName))
-                    { Interlocked.Increment(ref projectConflicts); return Error(409, "conflict"); }
-                    var createdProject = new TerraBaseProject(ids.NewId(), org, projectName, DateTimeOffset.UtcNow);
-                    projects[createdProject.Id] = createdProject;
-                    Interlocked.Increment(ref projectCreates);
-                    return Results.Json(createdProject, statusCode: 201);
-                }
-            }
-            Require(parts.Length >= 6 && parts[4] == "projects", "Scoped project management route");
+            // Organization and project identity left management for ts-auth. Backup aliases and the restored-database
+            // confirmation consult the fixture's canonical ts-auth membership; nothing here creates or stores identity.
+            Require(parts.Length >= 8 && parts[2] == "organizations" && parts[4] == "projects" && parts[6] == "databases", "Scoped management database route");
+            var org = parts[3];
             var project = parts[5];
-            if (parts.Length == 6 && http.Request.Method == "DELETE")
-            {
-                Require(acting == subject, "Official project delete SDK acting subject");
-                lock (gate)
-                {
-                    if (!projects.TryGetValue(project, out var remote) || remote.OrganizationId != org)
-                    { Interlocked.Increment(ref projectDeleteNotFound); return Error(404, "not_found"); }
-                    if (role != "owner" && role != "admin") return Error(403, "forbidden");
-                    if (databases.Values.Any(database => database.ProjectId == project))
-                        return Error(409, "conflict");
-                    projects.Remove(project);
-                    Interlocked.Increment(ref projectDeletes);
-                    return Results.NoContent();
-                }
-            }
-            if (parts.Length == 6 && http.Request.Method == "GET")
-            { lock (gate) return projects.TryGetValue(project, out var remote) ? Results.Json(remote) : Results.Json(new { id = project, organizationId = org, name = "Personal", createdAt = DateTimeOffset.UtcNow }); }
-            if (parts.Length == 6 && http.Request.Method == "PATCH")
-            {
-                var body = await JsonAsync(http);
-                lock (gate)
-                {
-                    Require(projects.TryGetValue(project, out var remote) && remote.OrganizationId == org, "Official project rename binds the canonical project");
-                    var renamed = remote! with { Name = body.GetProperty("name").GetString()! }; projects[project] = renamed; return Results.Json(renamed);
-                }
-            }
-            // Databases, keys, branches, placement and collection statistics left management: only backups and the restored
-            // database confirmation still use it.
-            Require(parts.Length >= 8 && parts[6] == "databases", "Scoped management database route");
+            Require(http.Request.Headers["X-TerraBase-Organization-Id"] == org, "Management organization header matches route");
+            Require(Workspace.ProjectRole(subject, org, project).Length > 0, "Management tenant membership matches admitted subject");
             ManagedDatabase current;
             lock (gate) { Require(databases.TryGetValue(parts[7], out current!) && current.ProjectId == project, "Database ownership matches project"); }
             if (parts.Length >= 9 && parts[8] is "backups" or "backup-policy")
-                return await BackupsAsync(http, parts, project, current);
+                return await BackupsAsync(http, parts, project, current, KeyRole(subject, org, project));
             if (parts.Length == 8 && http.Request.Method == "GET")
             {
                 Require(acting == subject, "Official restored-database confirmation acting subject");
                 // The real managed GET uses ManagedDatabaseBody, whose replica
                 // list is normalized even though raw restore201 permits null.
-                var confirmed = current with { ReplicaRegions = current.ReplicaRegions ?? [] };
-                return Results.Json(backupFailure == "foreign-confirm" && current.BranchedFrom is not null ? confirmed with { ProjectId = ids.NewId() } : confirmed);
+                var confirmed = backupFailure == "foreign-confirm" && current.BranchedFrom is not null ? current with { ProjectId = ids.NewId() } : current;
+                return Results.Json(Wire(confirmed, http.Response.Headers["X-TerraBase-Region"].ToString()));
             }
             throw new InvalidOperationException("Unsupported management protocol route");
         }
@@ -609,12 +595,12 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         // aliases, full-only policy, complete snapshots, new-database restore.
         // The test producer really copies its stored snapshot; it is not live
         // engine/storage admission or scheduler qualification.
-        private async Task<IResult> BackupsAsync(HttpContext http, string[] parts, string project, ManagedDatabase source)
+        private async Task<IResult> BackupsAsync(HttpContext http, string[] parts, string project, ManagedDatabase source, string callerRole)
         {
             var subject = (string)http.Items["producer-subject"]!;
             Require(http.Request.Headers["X-TerraBase-User-Id"] == subject, "Backup acting subject equals admitted bearer");
-            if (role.Length == 0) return Error(404, "not_found");
-            if (http.Request.Method != "GET" && role is not ("owner" or "admin")) return Error(403, "role_too_low");
+            if (callerRole.Length == 0) return Error(404, "not_found");
+            if (http.Request.Method != "GET" && callerRole is not ("owner" or "admin")) return Error(403, "role_too_low");
             if (backupFailure == "outage") return Error(503, "unavailable");
             if (parts.Length == 9 && parts[8] == "backup-policy")
             {
@@ -719,6 +705,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 _ => "databases:write"
             };
             if (Authorize(http, project, scope) is { } denied) return denied;
+            var callerRole = (string)http.Items["producer-role"]!;
             if (parts.Length == 4 && method == "GET")
             {
                 var query = http.Request.Query;
@@ -765,7 +752,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             {
                 case (5, "GET", _): return Results.Json(Wire(current, answering));
                 case (5, "PATCH", _):
-                    if (role is not ("owner" or "admin")) return Error(403, "role_too_low");
+                    if (callerRole is not ("owner" or "admin")) return Error(403, "role_too_low");
                     if (!atHome) return WrongRegion(http, current);
                     var body = await JsonAsync(http);
                     Require(body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "replicaRegions" }),
@@ -786,7 +773,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     }
                     return Results.NoContent();
                 case (6, "POST", "branches"):
-                    if (role is not ("owner" or "admin")) return Error(403, "role_too_low");
+                    if (callerRole is not ("owner" or "admin")) return Error(403, "role_too_low");
                     if (!atHome) return WrongRegion(http, current);
                     var request = await JsonAsync(http);
                     Require(request.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "name" }), "The branch body accepts only its new database name");
@@ -880,16 +867,12 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             var grant = text.StartsWith("Bearer ", StringComparison.Ordinal) ? ResolveProjectToken(text[7..]) : null;
             if (grant is not { } admitted) return Error(401, "unauthorized");
             Require(TerraScaleIds.IsValid(project), "The current producer accepts canonical ULID projects");
-            lock (gate)
-            {
-                // The seeded personal workspace predates producer ownership; management admits only test-user there too.
-                var tenant = projects.TryGetValue(project, out var owned)
-                    ? owned.OrganizationId == admitted.OrganizationId && organizations.TryGetValue(owned.OrganizationId, out var org) && org.CreatedBy == admitted.UserId
-                    : admitted.UserId == "test-user";
-                if (admitted.ProjectId != project || !tenant || role.Length == 0) return Error(404, "not_found");
-            }
+            // The grant's tenant is re-checked against ts-auth's current membership, so a removed member's bearer stops working.
+            var callerRole = admitted.ProjectId == project ? KeyRole(admitted.UserId, admitted.OrganizationId, project) : "";
+            if (callerRole.Length == 0) return Error(404, "not_found");
             if (!admitted.Scopes.Contains(scope, StringComparer.Ordinal)) return Error(403, "forbidden_scope");
             http.Items["producer-subject"] = admitted.UserId;
+            http.Items["producer-role"] = callerRole;
             return null;
         }
 
