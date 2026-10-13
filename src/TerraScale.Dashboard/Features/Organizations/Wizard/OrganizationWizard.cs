@@ -1,7 +1,7 @@
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Shared.Validation;
 
-namespace TerraScale.Dashboard.Features.Organizations;
+namespace TerraScale.Dashboard.Features.Organizations.Wizard;
 
 public static class OrganizationWizard
 {

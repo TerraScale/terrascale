@@ -1,6 +1,6 @@
 using TerraScale.Dashboard.UI;
 
-namespace TerraScale.Dashboard.Features.Organizations;
+namespace TerraScale.Dashboard.Features.Organizations.Invitations;
 
 public sealed record InvitationPage(DocumentModel Document, string CsrfToken, string Token, PendingInvitation? Pending, SessionRecord? Session, string Error = "")
 {

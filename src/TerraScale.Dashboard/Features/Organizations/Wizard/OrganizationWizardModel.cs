@@ -1,4 +1,4 @@
-namespace TerraScale.Dashboard.Features.Organizations;
+namespace TerraScale.Dashboard.Features.Organizations.Wizard;
 
 public sealed record OrganizationWizardModel(OrganizationPage Page, string Suffix)
 {

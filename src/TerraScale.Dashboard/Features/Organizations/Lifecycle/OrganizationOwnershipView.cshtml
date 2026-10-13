@@ -9,7 +9,7 @@
     var expiry = transfer?.ExpiresAt.UtcDateTime.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture) ?? "";
     @if (org.Kind != "personal" && Model.Shell.Context.Role != "owner")
     {
-        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationLifecycleView, OrganizationPage>(Model))
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Lifecycle.OrganizationLifecycleView, OrganizationPage>(Model))
     }
     @if (transfer?.ToUserId == Model.Shell.Context.UserId)
     {
@@ -30,7 +30,7 @@
         else { <p class="ts-meta">Invite another member before transferring ownership.</p> }
         @if (org.Kind != "personal")
         {
-            @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationLifecycleView, OrganizationPage>(Model))
+            @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Lifecycle.OrganizationLifecycleView, OrganizationPage>(Model))
         }
     }
 }

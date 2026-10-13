@@ -1,4 +1,4 @@
-namespace TerraScale.Dashboard.Features.Organizations;
+namespace TerraScale.Dashboard.Features.Organizations.Projects;
 
 public sealed record ProjectDialogModel(OrganizationPage Page, ProjectRecord? Project = null)
 {

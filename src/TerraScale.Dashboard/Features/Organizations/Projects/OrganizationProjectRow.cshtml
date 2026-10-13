@@ -1,5 +1,6 @@
-@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.ProjectDialogModel>
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialogModel>
 @using TerraScale.Dashboard.Features.Organizations
+@using TerraScale.Dashboard.Features.Organizations.Projects
 @if (Model.Project is { } project)
 {
     <tr>
@@ -16,7 +17,7 @@
             @if (Model.Page.CanManage)
             {
                 <button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" command="show-modal" commandfor="rename-project-@project.Id">@Icons.Render("Pencil", 14)<span>Rename</span></button>
-                @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.ProjectDialog, ProjectDialogModel>(Model))
+                @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialog, ProjectDialogModel>(Model))
             }
         </div></td>
     </tr>

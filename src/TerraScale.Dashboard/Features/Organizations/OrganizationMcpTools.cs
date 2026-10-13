@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Features.Organizations.Invitations;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.DotNet.TerraBase;
 

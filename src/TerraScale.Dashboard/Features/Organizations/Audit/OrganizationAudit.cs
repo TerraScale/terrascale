@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.Json;
 
-namespace TerraScale.Dashboard.Features.Organizations;
+namespace TerraScale.Dashboard.Features.Organizations.Audit;
 
 public static class OrganizationAudit
 {
