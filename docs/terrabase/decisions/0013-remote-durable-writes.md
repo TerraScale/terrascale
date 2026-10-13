@@ -1,7 +1,7 @@
 # 0013: A client write answers success only after a durable copy exists in another region
 
 - Status: **proposed** (2026-10-13). The contract was approved by the user through COS; this record defines it for
-  review before step 2 is coded. Owner: R6-FIX.
+  review before step 2 is coded. Placement option A was decided by the user through COS on 2026-10-13. Owner: R6-FIX.
 - Scope:
   - `Features/Replication`: the receiver's ack (`PeerStreamReceiver`, `StorageChangeGroupSink`) and the sender's acks
     (`PeerStreams`).
@@ -38,17 +38,18 @@ Under design C a write answers after one local commit, with `synchronous = NORMA
 
 ### Step 1: the receiver acks only a remote durable commit
 
-This already holds on main:
-- `StorageChangeGroupSink.ApplyAsync` and `RepairAsync` join in `BeginDurableTransactionAsync` transactions
-  (`synchronous = FULL`).
+The configuration on main points this way, but configuration is not proof:
+- `StorageChangeGroupSink.ApplyAsync` and `RepairAsync` join in `BeginDurableTransactionAsync` transactions, which set
+  `synchronous = FULL`.
 - The receiver acks after `CommitAsync` returns.
 
-Step 1 pins this with an end-to-end power-loss test (`tests/TerraBase.E2E/WalFaults/ReplicatedApplyPowerLossTests`):
+No ack is claimed durable until an end-to-end power-loss test (`tests/TerraBase.E2E/WalFaults/ReplicatedApplyPowerLossTests`) passes:
 1. A real node runs under the write-ahead log fault shim and acknowledges pushed groups.
 2. Its power is cut: every unsynced byte of every log is dropped.
 3. After the restart, every acknowledged group must be present.
 
-A mutation that applies in a plain transaction must fail that test.
+A mutation that applies in a plain transaction (ack before the sync) must fail that test. If the test fails on main, step 1
+becomes a code fix.
 
 ### Step 2: the commit wait
 
@@ -109,19 +110,27 @@ A mutation that applies in a plain transaction must fail that test.
 10. **Retention.** A record lives **24 h** after `committed_at`, the same horizon as CDC retention and refill. Then the
     accepting machine deletes it, and the delete replicates. A retry after 24 h is a new operation.
 
-### Placement (open: COS decision needed)
+### Placement: at least two distinct regions (option A, decided)
 
 Today a database created without `replica_regions` is placed in its home region only, so no other region can hold a
-durable copy. The options:
+durable copy. Decision (option A): every database this contract covers is placed in **at least two distinct regions**.
 
-- **(A, recommended)** Every database is placed in at least two regions:
-  - A create without `replica_regions` places replicas in every other serving region.
-  - A placement with one region is rejected (`400`) on create and update.
-  - Every serving region can then confirm a write, which fits zero configuration and "every region always serves".
-- **(B)** Databases placed in one region are exempt. They answer after a local durable commit with
-  `durability: "local_durable"`. This keeps a weaker class of database under the same API.
-- **(C)** A write to a database placed in one region always fails with `remote_region_unavailable`. This is literal,
-  but it breaks every database created with the default placement today.
+- **New databases.**
+  - A create may name its replica regions among the configured, supported serving regions.
+  - A create without `replica_regions` places replicas in every other serving region the membership lists.
+  - A placement with fewer than two distinct regions is rejected with `400 placement_needs_two_regions`, on create and
+    on update. Validation is explicit and covered by tests.
+- **Existing databases placed in one region.**
+  - They are never relocated, and their data is never dropped.
+  - Their writes fail clearly: `503 remote_region_unavailable`, with a message naming the single-region placement.
+  - Their reads keep working.
+  - An explicit, controlled backfill adds a region through the placement update. The new region refills from the
+    home region. Writes succeed again once a machine of the added region acknowledges them, which comes after its
+    refill, as for any write.
+- **Disposable test datasets.** The approved pre-production reset and reseed rebuilds them with a correct placement.
+- The options not taken were:
+  - (B) exempting single-region databases with `local_durable`;
+  - (C) failing them forever.
 
 ## API contract for the SDKs (ts-dotnet first, separate repository)
 
@@ -135,6 +144,7 @@ durable copy. The options:
   - `503 write_outcome_unknown` with `operation_id` and `region`: applied locally, not confirmed. Retry with
     `Idempotency-Key: <operation_id>` and the same request, or reconcile.
   - `409 idempotency_key_reused`: the key names another request.
+  - `400 placement_needs_two_regions`, on database create and placement update: fewer than two distinct regions.
 - **Reconciliation:** `GET .../operations/{operation}`, as in step 2.9.
 - **SDK rule:**
   - Never surface `write_outcome_unknown` as failure or success. It is a distinct outcome, with the operation id.
@@ -176,11 +186,22 @@ For a write answered `2xx`:
   - In a full partition, writes fail: `remote_region_unavailable` before the write, or `write_outcome_unknown` after
     it. None answers success.
 
+## Acceptance
+
+- **Fast integration tests**, per behavior, parallel-safe, each with its fail-first and its mutation.
+- **End to end:** the existing three-region test topology (gru, sjc, fra), with no new services and no new regions.
+  - A write accepted in each region is confirmed by each other region: all six directed edges.
+  - A write that fails is never confirmed by a region.
+- **Restore:** a point-in-time restore of a non-empty database succeeds, and the restored database is placed in two
+  regions or more.
+
 ## Delivery (separate PRs against main)
 
 1. Step 1: the power-loss test and the ack definition in section 9 of the design.
 2. Client database commits sync, with a before/after write benchmark.
-3. Commit wait and precheck, the ambiguous answer, operation ids minted and returned, idempotent retry and
+3. Placement of two regions or more: validation on create and update, the default, and the clear failure of
+   single-region databases.
+4. Commit wait and precheck, the ambiguous answer, operation ids minted and returned, idempotent retry and
    reconciliation, for documents and transactions. Tests:
    - a remote crash before and after the durable ack;
    - a lost ack response;
@@ -190,5 +211,5 @@ For a write answered `2xx`:
    - a restart.
 
    Mutations: ack before the sync, success before the remote ack, a non-idempotent retry.
-4. The DDL routes on the same wait.
-5. The `api.md` and design-section updates land with the PR that changes the behavior.
+5. The DDL routes on the same wait.
+6. The `api.md` and design-section updates land with the PR that changes the behavior.
