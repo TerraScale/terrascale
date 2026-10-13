@@ -203,7 +203,7 @@ internal sealed class TursoChangeTap : IWalTap
         }, cancellationToken).ConfigureAwait(false);
         if (end < 0)
         {
-            return new(0, false, false);
+            return new(0, false, false, null);
         }
 
         var buffer = new ArrayBufferWriter<byte>();
@@ -216,7 +216,7 @@ internal sealed class TursoChangeTap : IWalTap
             var (next, placed, stop) = await _io.RunAsync(() => ReadPage(after, end, budget - bytes, schema, buffer), cancellationToken).ConfigureAwait(false);
             if (!placed)
             {
-                return new(0, false, false);
+                return new(0, false, false, null);
             }
 
             await destination.WriteAsync(buffer.WrittenMemory, cancellationToken).ConfigureAwait(false);
@@ -225,17 +225,19 @@ internal sealed class TursoChangeTap : IWalTap
             (after, spent) = (next, stop);
         }
 
+        DateTimeOffset? mark = null;
         if (after == end && bytes > 0)
         {
             // This read appended through the newest commit when it started: mark when that was.
             ChangeLog.WriteReadMark(buffer, started);
             await destination.WriteAsync(buffer.WrittenMemory, cancellationToken).ConfigureAwait(false);
             bytes += buffer.WrittenCount;
+            mark = started;
         }
 
         // The caller publishes the anchor to CDC retention (BackupAnchor) once its cleanup is done.
         (_anchor, _schema) = (after, schema);
-        return new(bytes, true, after < end);
+        return new(bytes, true, after < end, mark);
     }
 
     // Appends rows after `after`, up to `end`, and returns the last one read; Placed is false when a schema row cannot be
