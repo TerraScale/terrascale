@@ -652,7 +652,7 @@ public sealed class ShapeLiveTests
 
         public Task Canceled => _canceled.Task;
 
-        public ShapeHeadProbe Probe => (store, _) =>
+        public ShapeHeadProbe Probe => (store, cancellationToken) =>
         {
             _ = Interlocked.Increment(ref _probes);
             _probeEntered.TrySetResult();
