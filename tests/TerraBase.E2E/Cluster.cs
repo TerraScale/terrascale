@@ -111,10 +111,10 @@ public sealed class Cluster : IAsyncDisposable
             return StartLocalAsync([Gru, Sjc, Fra], new Dictionary<string, TimeSpan>(), new FakeS3());
         }
 
-        if (!FlyPinned || Environment.GetEnvironmentVariable(DisposableTarget.AppVariable) != "ts-terrabase-e2e"
-            || Environment.GetEnvironmentVariable(DisposableTarget.OrgVariable) != "terrascale-previews-515")
+        if (!FlyPinned || Environment.GetEnvironmentVariable(DisposableTarget.AppVariable) != DisposableTarget.ApprovedApp
+            || Environment.GetEnvironmentVariable(DisposableTarget.OrgVariable) != DisposableTarget.ApprovedOrg)
         {
-            throw new InvalidOperationException("backup qualification on Fly requires pinned ts-terrabase-e2e in terrascale-previews-515");
+            throw new InvalidOperationException($"backup qualification on Fly requires pinned {DisposableTarget.ApprovedApp} in {DisposableTarget.ApprovedOrg}");
         }
 
         return StartFlyAsync([Gru, Sjc, Fra], backup: true);

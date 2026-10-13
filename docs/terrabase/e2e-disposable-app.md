@@ -82,17 +82,19 @@ Plus a test Tigris bucket (< 1 GB, < $0.02/month) and stopped rootfs between run
 A run with the three machines started ≈ 3 h costs ≈ $0.06 plus traffic. The ledger entry to propose: the three
 machines, volumes and bucket for the duration of the proof, machines stopped between runs, with this per-hour basis.
 
-## Account and isolation (choice for the user; no existing resource is deleted for quota)
+## Account and isolation (current target and historical alternatives)
 
-- **`terrascale-previews-515` is not usable**: it is at its 20-machine limit (Fly 422 since 08:16Z), and freeing quota
-  by deleting existing resources is excluded.
-- **Option A (existing, non-preview account): org `terrascale` with a custom private network.** `flyctl apps create
+- **Current approved target: `ts-terrabase-e2e` in `terrascale-previews-515`**, the exact pair accepted by the pinned
+  guard ([review](https://github.com/TerraScale/terrascale/pull/164#issuecomment-6137093531)). The earlier 20-machine-limit
+  observation blocked new provisioning at that time; it does not make this existing target unusable. No existing
+  resource is deleted to free quota.
+- **Historical option A (existing, non-preview account): org `terrascale` with a custom private network.** `flyctl apps create
   <app> --org terrascale --network <app>-net` places the app on its own 6PN: Fly documents that apps on separate 6PNs can
   never communicate unless configured to, so it cannot reach production's apps and they cannot reach it. Current use
   (read-only, 21:58Z): 7 machines (ts-terrabase 3, ts-auth 3, one builder). The org's machine limit is not readable with
   existing access: whether +3 fits must be confirmed before creation. Shared with production: the org itself (billing,
   members, tokens with org scope).
-- **Option B: a new dedicated org** (user-only to create), on unified billing: full separation, no shared org.
+- **Historical option B: a new dedicated org** (user-only to create), on unified billing: full separation, no shared org.
 
 ## Credentials (user-executed handoff only)
 
