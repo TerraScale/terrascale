@@ -5,10 +5,10 @@ using TerraBase.Engine.Lattices;
 
 namespace TerraBase.Engine;
 
-/// <summary>A retained origin prefix: its retention floor and a hash of every scanned event above it.</summary>
+/// <summary>An origin's running prefix hash and the retention floor required to resume it.</summary>
 public sealed record FeedPrefix(Hlc Floor, ReadOnlyMemory<byte> Hash)
 {
-    /// <summary>The empty prefix above a retention floor.</summary>
+    /// <summary>The initial prefix of an origin with no history.</summary>
     public static FeedPrefix Empty(Hlc floor) => new(floor, new byte[32]);
 
     /// <summary>Appends an event's identity, including events excluded by a collection filter.</summary>

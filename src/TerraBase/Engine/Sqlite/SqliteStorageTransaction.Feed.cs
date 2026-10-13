@@ -14,19 +14,19 @@ internal sealed partial class SqliteStorageTransaction
     // Rows read per origin and page, before completing the last stamp: a stamp is never split between pages.
     private const int FeedOriginRows = 512;
 
-    private const string InsertFeed = "INSERT INTO _tb_feed (seq, commit_offset, origin, stamp, collection, id, deleted) VALUES ($seq, $commit, $origin, $stamp, $collection, $id, $deleted);";
+    private const string InsertFeed = "INSERT INTO _tb_feed (seq, commit_offset, origin, stamp, collection, id, deleted, prefix) VALUES ($seq, $commit, $origin, $stamp, $collection, $id, $deleted, $prefix);";
 
-    private const string InsertFeedOrigin = "INSERT INTO _tb_feed_floor (origin, stamp) SELECT $origin, 0 WHERE NOT EXISTS (SELECT 1 FROM _tb_feed_floor WHERE origin = $origin);";
+    private const string InsertFeedOrigin = "INSERT INTO _tb_feed_floor (origin, stamp, prefix) SELECT $origin, 0, zeroblob(32) WHERE NOT EXISTS (SELECT 1 FROM _tb_feed_floor WHERE origin = $origin);";
 
     private const string FeedFloors = "SELECT origin, stamp FROM _tb_feed_floor;";
 
     private const string FeedAfter = """
-        SELECT stamp, collection, id, deleted, rowid FROM _tb_feed WHERE origin = $origin AND stamp > $after
+        SELECT stamp, collection, id, deleted, rowid, prefix FROM _tb_feed WHERE origin = $origin AND stamp > $after
         ORDER BY stamp, rowid LIMIT $limit;
         """;
 
     private const string FeedSameStamp = """
-        SELECT stamp, collection, id, deleted, rowid FROM _tb_feed WHERE origin = $origin AND stamp = $stamp AND rowid > $rowid
+        SELECT stamp, collection, id, deleted, rowid, prefix FROM _tb_feed WHERE origin = $origin AND stamp = $stamp AND rowid > $rowid
         ORDER BY rowid LIMIT 1025;
         """;
 
@@ -65,12 +65,13 @@ internal sealed partial class SqliteStorageTransaction
             foreach (var (origin, floor) in Floors())
             {
                 var node = unchecked((long)origin.Value);
-                var oldest = Command("SELECT rowid, stamp FROM _tb_feed WHERE origin = $origin AND stamp < $before ORDER BY stamp, rowid LIMIT $limit;");
+                var oldest = Command("SELECT rowid, stamp, prefix FROM _tb_feed WHERE origin = $origin AND stamp < $before ORDER BY stamp, rowid LIMIT $limit;");
                 oldest.Parameters.AddWithValue("$origin", node);
                 oldest.Parameters.AddWithValue("$before", Version(before));
                 oldest.Parameters.AddWithValue("$limit", (long)(limit - deleted));
                 var rows = new List<long>();
                 var highest = (long)floor.Value;
+                byte[]? prefix = null;
                 CountRead("feed");
                 using (var reader = oldest.ExecuteReader())
                 {
@@ -78,6 +79,7 @@ internal sealed partial class SqliteStorageTransaction
                     {
                         rows.Add(reader.GetInt64(0));
                         highest = Math.Max(highest, reader.GetInt64(1));
+                        prefix = SqliteSession.Bytes(reader, 2);
                     }
                 }
 
@@ -90,9 +92,10 @@ internal sealed partial class SqliteStorageTransaction
 
                 if (rows.Count > 0)
                 {
-                    var raise = Command("UPDATE _tb_feed_floor SET stamp = $stamp WHERE origin = $origin;");
+                    var raise = Command("UPDATE _tb_feed_floor SET stamp = $stamp, prefix = $prefix WHERE origin = $origin;");
                     raise.Parameters.AddWithValue("$origin", node);
                     raise.Parameters.AddWithValue("$stamp", highest);
+                    raise.Parameters.AddWithValue("$prefix", prefix!);
                     raise.ExecuteNonQuery();
                 }
 
@@ -136,6 +139,7 @@ internal sealed partial class SqliteStorageTransaction
         var known = Command(InsertFeedOrigin);
         known.Parameters.AddWithValue("$origin", origin);
         known.ExecuteNonQuery();
+        var prefix = PrefixThrough(at.Node, default, at.Stamp, CancellationToken.None).Append(at.Stamp, collection, id, !live);
         var insert = Command(InsertFeed, collection);
         insert.Parameters.AddWithValue("$seq", seq);
         insert.Parameters.AddWithValue("$commit", Offset());
@@ -143,7 +147,9 @@ internal sealed partial class SqliteStorageTransaction
         insert.Parameters.AddWithValue("$stamp", Version(at.Stamp));
         insert.Parameters.AddWithValue("$id", id);
         insert.Parameters.AddWithValue("$deleted", live ? 0 : 1);
+        insert.Parameters.AddWithValue("$prefix", prefix.Hash.ToArray());
         insert.ExecuteNonQuery();
+        RehashFeedAfter(origin, at.Stamp, prefix);
     }
 
     // The stamp `age` before `stamp`'s instant (0 when that is before the epoch).
@@ -198,7 +204,7 @@ internal sealed partial class SqliteStorageTransaction
         }
 
         var before = prefixes.ToDictionary();
-        var rows = new List<(ReplicaId Origin, long Stamp, string Collection, string Id, bool Deleted, long RowId)>();
+        var rows = new List<(ReplicaId Origin, long Stamp, string Collection, string Id, bool Deleted, long RowId, byte[] Hash)>();
         var more = false;
         var cap = long.MaxValue;
         foreach (var (origin, floor) in floors)
@@ -213,7 +219,7 @@ internal sealed partial class SqliteStorageTransaction
 
             if (!prefixes.ContainsKey(origin))
             {
-                prefixes[origin] = FeedPrefix.Empty(floor);
+                prefixes[origin] = PrefixThrough(origin, floor, floor, cancellationToken);
             }
 
             var read = OriginRows(unchecked((long)origin.Value), after, cancellationToken);
@@ -224,7 +230,7 @@ internal sealed partial class SqliteStorageTransaction
                 cap = Math.Min(cap, read[^1].Stamp);
             }
 
-            rows.AddRange(read.Select(row => (origin, row.Stamp, row.Collection, row.Id, row.Deleted, row.RowId)));
+            rows.AddRange(read.Select(row => (origin, row.Stamp, row.Collection, row.Id, row.Deleted, row.RowId, row.Hash)));
         }
 
         rows.Sort((a, b) => a.Stamp != b.Stamp ? a.Stamp.CompareTo(b.Stamp)
@@ -233,7 +239,7 @@ internal sealed partial class SqliteStorageTransaction
         var tables = new Dictionary<string, bool>(StringComparer.Ordinal);
         long bytes = 0;
         (ReplicaId Origin, long Stamp)? last = null;
-        foreach (var (origin, value, collection, id, deleted, _) in rows)
+        foreach (var (origin, value, collection, id, deleted, _, hash) in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (value > cap)
@@ -250,7 +256,7 @@ internal sealed partial class SqliteStorageTransaction
             last = (origin, value);
             var stamp = new Hlc((ulong)value);
             scanned[origin] = stamp;
-            var prefix = prefixes[origin].Append(stamp, collection, id, deleted);
+            var prefix = new FeedPrefix(prefixes[origin].Floor, hash);
             prefixes[origin] = prefix;
             if (collections is not null && !collections.Contains(collection))
             {
@@ -271,29 +277,52 @@ internal sealed partial class SqliteStorageTransaction
         return new FeedPage(events, scanned, more, Expired: false) { Issuer = Member.Id, Prefixes = prefixes, Before = before };
     }
 
-    // A cross-machine resume verifies the retained prefix without materializing or reading document bodies.
+    // The chain survives retention. Both head cursors and cross-machine validation need one indexed row per origin.
     private FeedPrefix PrefixThrough(ReplicaId origin, Hlc floor, Hlc stamp, CancellationToken cancellationToken, string path = "feed")
     {
-        var prefix = FeedPrefix.Empty(floor);
-        var command = Command("SELECT stamp, collection, id, deleted FROM _tb_feed WHERE origin = $origin AND stamp > $floor AND stamp <= $stamp ORDER BY stamp, rowid;");
+        cancellationToken.ThrowIfCancellationRequested();
+        var command = Command("SELECT prefix FROM _tb_feed WHERE origin = $origin AND stamp <= $stamp ORDER BY stamp DESC, rowid DESC LIMIT 1;");
         command.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
-        command.Parameters.AddWithValue("$floor", Version(floor));
         command.Parameters.AddWithValue("$stamp", Version(stamp));
         CountRead(path);
-        using var reader = command.ExecuteReader();
-        while (reader.Read())
+        if (command.ExecuteScalar() is byte[] hash)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            prefix = prefix.Append(new Hlc((ulong)reader.GetInt64(0)), reader.GetString(1), reader.GetString(2), reader.GetInt64(3) != 0);
+            return new FeedPrefix(floor, hash);
         }
 
-        return prefix;
+        var baseline = Command("SELECT prefix FROM _tb_feed_floor WHERE origin = $origin;");
+        baseline.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
+        CountRead(path);
+        return new FeedPrefix(floor, baseline.ExecuteScalar() as byte[] ?? new byte[32]);
+    }
+
+    // Ordered CDC appends have no suffix. A late join rehashes its successors in bounded pages in the same transaction.
+    private void RehashFeedAfter(long origin, Hlc stamp, FeedPrefix prefix)
+    {
+        while (true)
+        {
+            var rows = OriginRows(origin, stamp, CancellationToken.None);
+            if (rows.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var (value, collection, id, deleted, rowid, _) in rows)
+            {
+                stamp = new Hlc((ulong)value);
+                prefix = prefix.Append(stamp, collection, id, deleted);
+                var update = Command("UPDATE _tb_feed SET prefix = $prefix WHERE rowid = $rowid;");
+                update.Parameters.AddWithValue("$prefix", prefix.Hash.ToArray());
+                update.Parameters.AddWithValue("$rowid", rowid);
+                update.ExecuteNonQuery();
+            }
+        }
     }
 
     // Worker-only: an origin's rows after `after`, and every row of the last stamp read.
-    private List<(long Stamp, string Collection, string Id, bool Deleted, long RowId)> OriginRows(long origin, Hlc after, CancellationToken cancellationToken)
+    private List<(long Stamp, string Collection, string Id, bool Deleted, long RowId, byte[] Hash)> OriginRows(long origin, Hlc after, CancellationToken cancellationToken)
     {
-        var rows = new List<(long, string, string, bool, long)>();
+        var rows = new List<(long, string, string, bool, long, byte[])>();
         var command = Command(FeedAfter);
         command.Parameters.AddWithValue("$origin", origin);
         command.Parameters.AddWithValue("$after", Version(after));
@@ -305,7 +334,7 @@ internal sealed partial class SqliteStorageTransaction
             while (reader.Read())
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                rows.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3) != 0, reader.GetInt64(4)));
+                rows.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3) != 0, reader.GetInt64(4), SqliteSession.Bytes(reader, 5)));
                 rowid = reader.GetInt64(4);
             }
         }
@@ -325,7 +354,7 @@ internal sealed partial class SqliteStorageTransaction
         {
             while (reader.Read())
             {
-                rows.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3) != 0, reader.GetInt64(4)));
+                rows.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3) != 0, reader.GetInt64(4), SqliteSession.Bytes(reader, 5)));
             }
         }
 

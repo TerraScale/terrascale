@@ -1044,14 +1044,18 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
 - **Opaque cursor.** base64url of a marker, the issue instant and issuing node, then per origin in
   ascending order its node, stamp, retention floor and SHA-256 prefix hash. Integers are 8-byte big-endian; the header
   is 17 bytes and each origin 56 bytes. The hash chains event identities (stamp, deletion bit, length-prefixed UTF-8
-  collection and document id), including filtered events. A cross-machine resume streams the retained prefix above
-  the cursor's floor through its stamp and compares hashes before sending 200; a mismatch or a newer retention floor
-  returns 410. This verification uses constant memory per origin and work proportional to its retained prefix;
-  subsequent pages on the same machine update hashes incrementally. `cursor=now` builds the prefix once.
+  collection and document id), including filtered events. Each `_tb_feed` row persists the running hash through it,
+  written in the same transaction as the state and event. The retention floor preserves the last deleted row's hash,
+  so the chain continues without rescanning or rewriting retained history. A cross-machine resume compares its
+  persisted hash before sending 200; a mismatch or a newer retention floor returns 410. Head cursors and cross-machine
+  validation need one indexed prefix lookup per named origin, with bounded memory. Ordered CDC appends extend the
+  chain once; an out-of-order join rehashes its successors in bounded pages within the same transaction.
   Every event and heartbeat re-issues the cursor at the instant the read behind it began. Decoding accepts canonical
   bytes only, at most 256 origins; encoding refuses more. Any cursor that does not decode to the current opaque
   layout returns 410 `cursor_expired`; there are no alternate layouts or compatibility branches. No public API or
-  storage schema version changes, nor changes to replication, authentication or lattice conflict semantics.
+  schema version changes (`PRAGMA user_version` remains 1), nor changes to replication, authentication or lattice
+  conflict semantics. Persisted prefix columns change the internal storage format; greenfield storage must be recreated
+  at the reviewed storage cutover, with no migration.
   An issued cursor with no origin is not
   "no cursor": it is expired by the retention rules above.
 - **410 frequency and recovery impact.** Matching retained prefixes resume with 200 in all six directed gru/sjc/fra
@@ -1068,7 +1072,9 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   machine after an outage can receive 410**; this is not limited to one pre-repair cursor. Catch-up through retained
   ordered CDC groups alone does not introduce repair events. Resync recovers state but does not make that machine's
   repair history portable: repeated switches can cause repeated 410 until the incompatible prefix is no longer named,
-  or its repair rows age out (7 days) and a new proof starts beyond them. Existing proofs retain their old baseline.
+  or that origin is forgotten after all its events age out. The persisted chain includes deleted history: trimming
+  repair rows alone does not reconcile divergent hashes. This trades fewer resume scans for conservative expiry even
+  when only the origin's older, already-consumed history differs.
   There is no fixed 410 percentage or guaranteed low frequency: it depends on repair/refill incidence, join histories,
   retention advancement and client region switches. The production rate has not been measured.
 - **Stream.** One page at a time, no queue per connection: after a page that left nothing waiting, the stream waits for

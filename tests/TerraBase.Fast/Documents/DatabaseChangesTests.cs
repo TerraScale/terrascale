@@ -430,6 +430,52 @@ public sealed class DatabaseChangesTests
         }
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Persisted_prefixes_rehash_late_joins_and_survive_retention(bool trim)
+    {
+        await using var source = await DocumentApi.StartAsync();
+        await using var destination = await DocumentApi.StartAsync();
+        var origin = ReplicaId.Of(4518, 22, 1);
+        var now = DateTimeOffset.UtcNow;
+        var events = new[]
+        {
+            (Id: DocumentApi.NewId(), Stamp: Stamp(now - TimeSpan.FromMinutes(3))),
+            (Id: DocumentApi.NewId(), Stamp: Stamp(now - TimeSpan.FromMinutes(2))),
+            (Id: DocumentApi.NewId(), Stamp: Stamp(now - TimeSpan.FromMinutes(1))),
+        };
+        foreach (var api in new[] { source, destination })
+        {
+            var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+            int[] order = api == source ? [0, 1] : [1, 0];
+            foreach (var index in order)
+            {
+                var item = events[index];
+                await using var write = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+                _ = await write.JoinAsync(DocumentApi.Collection, item.Id, Full(item.Stamp, origin), new EntryVersion(item.Stamp, origin), CancellationToken.None);
+                _ = await write.CommitAsync(CancellationToken.None);
+            }
+
+            if (trim)
+            {
+                await Assert.That(await TrimAsync(store, events[1].Stamp)).IsEqualTo(1);
+            }
+        }
+
+        string cursor;
+        using (var stream = await Sse.OpenAsync(source.Client, $"{source.DatabasePath()}/changes?cursor=now"))
+        {
+            cursor = (await stream.NextAsync()).Id;
+        }
+
+        _ = await destination.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await destination.TenantOfAsync(), origin,
+            [Group(3, events[2].Id, events[2].Stamp, origin)], CancellationToken.None);
+        using var resumed = await Sse.OpenAsync(destination.Client, $"{destination.DatabasePath()}/changes?cursor={Uri.EscapeDataString(cursor)}");
+        _ = await resumed.NextAsync();
+        await Assert.That((await resumed.ChangesAsync(1))[0].Data.GetProperty("id").GetString()).IsEqualTo(events[2].Id);
+    }
+
     // Regression: sjc's origin o writes e then p. fra's stream from o lost e (retention cut) and fra
     // refilled e through RepairAsync (origin 0) before p arrived; gru received e and p on o's stream. A reader on fra
     // gets p, then leaves before fra's repair row of e, and resumes on gru. Expected: e is delivered on gru, or 410.
