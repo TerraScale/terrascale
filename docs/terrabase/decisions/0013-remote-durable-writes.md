@@ -200,6 +200,24 @@ For a write answered `2xx`:
   - In a full partition, writes fail: `remote_region_unavailable` before the write, or `write_outcome_unknown` after
     it. None answers success.
 
+### One seam, and single-machine tests
+
+- **The seam.** The other regions, the precheck and the wait sit behind one interface in `Features/Replication`,
+  `IRemoteDurability`:
+  - `OtherRegionsAsync`: the serving regions other than this machine's, from the membership, for a new database's
+    default placement. With none listed, such a create answers `503 remote_region_unavailable`.
+  - `CanConfirm`: whether a machine of another placed region has a connected stream for the database.
+  - `WaitAsync`: whether such a machine acknowledged a change id within the bound.
+
+  Production registers the implementation the peer streams back (`PeerStreams`, which holds every link's acks). No
+  configuration selects another one.
+- **Single-machine functional tests.** Most Fast tests run one machine, which can never confirm a write.
+  - Their test servers (`TerraBaseTestServer`, `ManagementApi`, test code only) register a test implementation. It
+    names one stand-in region and confirms at once.
+  - The multi-machine suites (the `PeerStreamTests` cluster and the E2E regions) register the production
+    implementation, and test the real wait.
+  - A Fast test checks that the application's own registration is the production implementation.
+
 ## Acceptance
 
 - **Fast integration tests**, per behavior, parallel-safe, each with its fail-first and its mutation.
