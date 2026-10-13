@@ -69,8 +69,13 @@ Cleanup: `deleteDatabase` (existing) removes the destination and its job; TerraB
 
 ### Guided flow
 
-1. `POST P/databases {"name":"import-<fresh ULID, lowercase>"}`: a fresh unique name per import, so a `409 name_taken`
-   on a replay can only be the caller's own database.
+1. `POST P/databases` (existing `createDatabase`, scope `databases:write`) with body
+   `{"name":"import-<fresh ULID, lowercase>"}`: a fresh unique name per import, so a `409 name_taken` on a replay can
+   only be the caller's own database. Names: a lowercase letter, then lowercase letters, digits, `_` or `-`, at most 63.
+   `homeRegion` is optional and defaults to the region that receives the request; a request for another home region must
+   be sent to that region (`421 wrong_region` elsewhere). Omit `replicaRegions`. The `201` body is the existing
+   `ManagedDatabaseBody` (`id`, `projectId`, `name`, `branchedFrom`, `createdAt`, `region`, `homeRegion`,
+   `replicaRegions`); every later import call goes to `homeRegion`.
 2. `POST D/import` with the source's format, size, SHA-256 and options.
 3. `PUT D/import/source?offset=…` part by part (each at most 4 MiB, in order) until `source.receivedBytes` equals
    `source.bytes`; the job moves to `analyzing`.
@@ -235,7 +240,9 @@ copy whose `-wal` held 4 rows lost all of them without its `-wal`, while `VACUUM
 `.db` + `.db-wal` pair both gave 4 rows and header bytes 1. The rule is conservative: it also refuses a WAL-mode file
 that was fully checkpointed (persistent WAL); converting it as above costs one command. It is not a completeness
 proof: a rollback-mode file copied while another process wrote to it can still be torn or stale, and TerraBase cannot
-detect every such copy; take the snapshot with `VACUUM INTO` (or pg_dump) as documented.
+detect every such copy (nor a rollback-mode file whose exporter left committed rows in a stray `-wal`); take the
+snapshot with `VACUUM INTO` (or pg_dump) as documented. The Turso commands are from Turso's CLI documentation; no
+export from a real Turso account has been tested.
 Blocking issues: `INSERT` statements (`--inserts`), large objects, `COPY` in CSV/binary form, unknown statements.
 pg_dump's `\restrict`/`\unrestrict` lines (PostgreSQL 17.6+) are recognized and ignored.
 
@@ -251,7 +258,7 @@ PostgreSQL (`COPY` text values; `\N` is JSON `null`):
 | Source types | `mapping` | JSON value |
 | --- | --- | --- |
 | `smallint`, `integer`, `bigint` (and `serial` forms) | `integer` | number, exact digits |
-| `real`, `double precision` | `float` | number as dumped; `NaN`, `±Infinity` and values TerraBase cannot store exactly (below 1e-307 in magnitude) are `invalid_value` |
+| `real`, `double precision` | `float` | number as dumped; `NaN`, `±Infinity` and numbers TerraBase cannot store (nonzero magnitude below 1e-307, or 1e308 and above) are `invalid_value`; zero (`0`, `-0`) is valid |
 | `numeric`, `decimal` | `decimal_string` | string, the exact dumped digits (never rounded); `NaN` stays `"NaN"` |
 | `boolean` | `boolean` | `true` / `false` |
 | `text`, `varchar`, `char`, `name`, `citext`, enum types declared in the dump | `string` | string (char padding kept) |
@@ -261,16 +268,16 @@ PostgreSQL (`COPY` text values; `\N` is JSON `null`):
 | `date` | `date` | `"YYYY-MM-DD"` |
 | `timestamp` | `timestamp` | `"YYYY-MM-DDThh:mm:ss[.ffffff]"`, no offset |
 | `timestamptz` | `timestamptz` | RFC 3339 UTC `"…Z"`, microseconds kept |
+| `time`, `timetz`, `interval`, `inet`, `cidr`, `macaddr`, `macaddr8`, `bit`, `varbit`, `xml` | `text` | string, exactly as dumped |
 
 `date`, `timestamp` and `timestamptz` values `infinity`, `-infinity` and BC values (`… BC`) are `invalid_value`: they
 have no RFC 3339 form. Years 1 to 9999 AD are imported.
-| `time`, `timetz`, `interval`, `inet`, `cidr`, `macaddr`, `macaddr8`, `bit`, `varbit`, `xml` | `text` | string, exactly as dumped |
 
 Unsupported in v1: arrays, composite, range and multirange, domain, geometric, `money`, `tsvector`/`tsquery`,
 `pg_lsn`, extension types other than `citext`.
 
 SQLite/Turso: each value maps by its **storage class**, never inferred from the declared type: `INTEGER` → number,
-`REAL` → number (`±Infinity` and magnitudes below 1e-307 are `invalid_value`), `TEXT` → string, `BLOB` → base64
+`REAL` → number (`±Infinity`, nonzero magnitudes below 1e-307 and magnitudes of 1e308 and above are `invalid_value`; zero is valid), `TEXT` → string, `BLOB` → base64
 string, `NULL` → `null`. `mapping` names the non-NULL classes seen, joined by `+` in the order `integer`, `float`,
 `string`, `base64` (for example `integer` or `integer+string`), or `null` when every value is NULL. NULLs never make
 a column mixed; two or more non-NULL classes are a `mixed_storage_classes` warning.
