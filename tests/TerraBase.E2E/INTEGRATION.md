@@ -355,10 +355,12 @@ over #164.
 - **Delta since approval:** two merges of main (`5043c1de`, `bc752b23`), both verified clean by merge-tree. The PR's
   patch-id is unchanged (`33166da1`).
 - **Runs:** `test` run 38371399260 succeeded. Push run 38372377563: deploy and preview skipped; Fast green (auth,
-  terrabase and libs all succeeded); Slow is still running.
+  terrabase and libs all succeeded); Slow 41/42: #147 again (`An_idle_cold_node_reloads_a_retained_key_once_after_both_key_caches_expire`). Slow unverifiable for the freeze.
 
 **#170 is blocked.** Round 2 asked for changes (6139749089). The fix-up at `1d27d4d7` (6140778466) has no approving
 review yet.
+
+**#190 is outside the list:** MarioGK, SQL Server offline export adapter, opened 09:13Z. It is not merged before the freeze acceptance; COS is told first if it is approved.
 
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
