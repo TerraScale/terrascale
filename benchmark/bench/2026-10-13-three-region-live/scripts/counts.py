@@ -14,10 +14,10 @@ MACHINES = {"gru": os.environ["G"], "sjc": os.environ["S"], "fra": os.environ["F
 IPS = {region: ip for region, ip in (pair.split("=") for pair in os.environ.get("IPS", "").split()) } if os.environ.get("IPS") else {}
 
 
-def call(region, method, path, body=None):
+def call(region, method, path, body=None, content_type="application/json"):
     for attempt in range(8):
         conn = http.client.HTTPSConnection(HOST, timeout=60)
-        headers = {"Authorization": f"Bearer {KEY}", "fly-force-instance-id": MACHINES[region], "content-type": "application/json"}
+        headers = {"Authorization": f"Bearer {KEY}", "fly-force-instance-id": MACHINES[region], "content-type": content_type}
         conn.request(method, path, None if body is None else json.dumps(body), headers)
         r = conn.getresponse()
         data = r.read()
@@ -187,11 +187,16 @@ def partition(collection, n):
     with concurrent.futures.ThreadPoolExecutor(24) as pool:
         list(pool.map(lambda job: call(job[0], "PUT", f"{DB}/collections/{collection}/documents/by-key?id={job[1][0]}", job[1][1]),
                       [(r, d) for r in MACHINES for d in docs[r]]))
-    print(f"wrote {n} documents in each region during the cut ({time.time() - t0:.1f} s)")
+    # Same-document edits on both sides of the cut: each region sets its own field and the same contested field.
+    for r in MACHINES:
+        call(r, "PATCH", shared, {r: f"{r}-edit", "winner": r}, "application/merge-patch+json")
+    print(f"wrote {n} documents in each region and edited the shared document in all three during the cut ({time.time() - t0:.1f} s)")
     time.sleep(30)
     views = {r: listing(r, collection) for r in MACHINES}
     for r, (count, d) in views.items():
         print(f"during cut {r}: count={count} digest={d}")
+    edits = {r: call(r, "GET", shared)[1] for r in MACHINES}
+    print("shared document during the cut: " + "; ".join(f"{r}={canonical(v)}" for r, v in edits.items()))
     side = views[isolated][0]
     rest = {views[r][0] for r in others}
     if side != n + 1 or rest != {2 * n + 1}:
@@ -200,13 +205,23 @@ def partition(collection, n):
     cut(isolated, others, heal=True)
     healed = time.time()
     print(f"{time.strftime('%H:%M:%S', time.gmtime())} healed after {healed - t0:.0f} s")
-    expected = digest([(i, canonical(d)) for r in MACHINES for i, d in docs[r]] + [("shared", canonical({"base": True}))])
     while True:
         views = {r: listing(r, collection) for r in MACHINES}
-        if all(v == (3 * n + 1, expected) for v in views.values()):
+        sharedviews = {r: call(r, "GET", shared)[1] for r in MACHINES}
+        states = {canonical(v) for v in sharedviews.values()}
+        if len({v for v in views.values()}) == 1 and next(iter(views.values()))[0] == 3 * n + 1 and len(states) == 1:
+            merged = next(iter(sharedviews.values()))
+            merged = merged.get("document", merged) if isinstance(merged, dict) else merged
+            own = all(merged.get(r) == f"{r}-edit" for r in MACHINES)
             for r, (count, d) in views.items():
                 print(f"after heal {r}: count={count} digest={d}")
-            print(f"converged {time.time() - healed:.1f} s after the heal: {3 * n + 1} documents, digest {expected} in every region")
+            print(f"shared document in every region: {canonical(merged)}")
+            print(f"converged {time.time() - healed:.1f} s after the heal: {3 * n + 1} documents, equal digest in every region; "
+                  f"every region's own field survived: {own}; contested field 'winner' = {merged.get('winner')!r} everywhere")
+            union = digest([(i, canonical(d)) for r in MACHINES for i, d in docs[r]] + [("shared", canonical(merged))])
+            print(f"union of every write = listing in every region: {union == next(iter(views.values()))[1]}")
+            if union != next(iter(views.values()))[1] or not own or merged.get("winner") not in MACHINES or not merged.get("base"):
+                raise SystemExit("CONFLICT CONVERGENCE WRONG: a field was lost or the contested field holds no written value")
             return
         if time.time() - healed > 600:
             raise SystemExit(f"did not converge within 600 s of the heal: {views}")
