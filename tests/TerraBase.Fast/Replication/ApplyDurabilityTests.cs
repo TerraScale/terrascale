@@ -65,11 +65,7 @@ public sealed class ApplyDurabilityTests
         await Assert.That(ack.Refused).IsFalse();
         await Assert.That(ack.ChangeId).IsEqualTo(3UL);
         await Assert.That(ack.Database).IsEqualTo(ChangeGroups.Wire(tenant));
-        await Assert.That(modes.Count).IsEqualTo(2);
-        foreach (var mode in modes)
-        {
-            await Assert.That(mode).IsEqualTo(2).Because("every receiver transaction commits with synchronous FULL");
-        }
+        await Assert.That(string.Join(", ", modes)).IsEqualTo("2, 2").Because("every receiver transaction commits with synchronous FULL");
 
         foreach (var group in groups)
         {
