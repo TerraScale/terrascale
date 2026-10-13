@@ -28,9 +28,10 @@ count, while reads answered from a document or sealed-body cache do not execute 
 
 Feed enumeration, continuation, head/floor, retention and prefix-verification SELECTs count individually, as does each
 document body SELECT performed for a feed event. A feed page can therefore increment the counter many times.
-Collection existence checks, dedicated schema metadata reads, replication-log reads and general accounting scans are outside this
-counter. Point version and size lookups, including write preconditions, are included because they perform document
-SELECTs. System-database document reads also count. A query or document-list reader counts one execution,
+Collection existence checks, dedicated schema metadata reads, CRDT-state/repair reads, replication-log reads and general
+accounting scans are outside this counter. Point version and size lookups, including write preconditions, and
+write/join uniqueness document lookups are included because they perform document SELECTs. System-database document
+reads also count. A query or document-list reader counts one execution,
 independently of the rows returned; an additional sort-budget pre-scan counts separately. Query body-fetch SELECTs
 also count individually under `path="query"`, so a query can perform more than one backend read.
 
