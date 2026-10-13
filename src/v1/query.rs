@@ -1,7 +1,7 @@
 //! Queries (query-v1.md): the filter grammar, sort, projection, cursors and
 //! counts.
 
-use reqwest::Method;
+use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Deserialize, Serialize, Serializer};
@@ -467,7 +467,7 @@ pub struct QueryPage<T = Box<RawValue>> {
     pub items: Vec<Document<T>>,
     /// `None` after the last page. A page may be empty and still carry a
     /// cursor (bounded collection scans).
-    #[serde(default)]
+    #[serde(deserialize_with = "super::ids::cursor")]
     pub next_cursor: Option<String>,
     /// Set when the query requested a count.
     #[serde(default)]
@@ -484,7 +484,10 @@ impl Collection {
         query.validate()?;
         let mut req = Req::new(Method::POST, self.query_segments()).json(query)?;
         req.replay_safe = true;
-        self.client().send(req).await?.decode()
+        self.client()
+            .send(req)
+            .await?
+            .decode_status(&[StatusCode::OK])
     }
 
     /// Iterates over every page of `query`, starting at `query.cursor`.
@@ -492,8 +495,9 @@ impl Collection {
     pub fn pages<T: DeserializeOwned>(&self, query: Query) -> Pages<T> {
         Pages {
             collection: self.clone(),
-            query,
+            query: query.clone(),
             done: false,
+            cursors: query.cursor.iter().cloned().collect(),
             _marker: std::marker::PhantomData,
         }
     }
@@ -525,6 +529,7 @@ pub struct Pages<T> {
     collection: Collection,
     query: Query,
     done: bool,
+    cursors: std::collections::HashSet<String>,
     _marker: std::marker::PhantomData<fn() -> T>,
 }
 
@@ -539,6 +544,11 @@ impl<T: DeserializeOwned> Pages<T> {
         let page = self.collection.query::<T>(&self.query).await?;
         match &page.next_cursor {
             Some(c) => {
+                if c.is_empty() || !self.cursors.insert(c.clone()) {
+                    return Err(Error::Decode(
+                        "pagination cursor is empty or repeated".into(),
+                    ));
+                }
                 self.query.cursor = Some(c.clone());
                 self.query.count = false;
                 self.query.explain = None;

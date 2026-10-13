@@ -77,7 +77,7 @@ pub struct ClientBuilder {
     retry: RetryPolicy,
     max_response_bytes: usize,
     user_agent: Option<String>,
-    project: Option<uuid::Uuid>,
+    project: Option<String>,
     atlas: Option<String>,
     region_pin: Option<String>,
 }
@@ -120,8 +120,8 @@ impl ClientBuilder {
     /// already exchanged ts-auth access token; legacy producer credentials
     /// are accepted for explicitly configured producer qualification.
     #[must_use]
-    pub fn project(mut self, project: uuid::Uuid) -> Self {
-        self.project = Some(project);
+    pub fn project(mut self, project: impl ToString) -> Self {
+        self.project = Some(project.to_string());
         self
     }
 
@@ -192,6 +192,15 @@ impl ClientBuilder {
 
     /// Validates the configuration and builds the client.
     pub fn build(self) -> Result<Client> {
+        if self
+            .project
+            .as_deref()
+            .is_some_and(|p| !super::ids::valid_entity_id(p))
+        {
+            return Err(Error::InvalidInput(
+                "project must be a canonical uppercase ULID".into(),
+            ));
+        }
         let discovery = self.base_url.is_empty();
         let base = parse_base_url(if discovery {
             "https://atlas.terrascale.tech"
@@ -292,7 +301,7 @@ impl ClientBuilder {
                 auth,
                 retry: self.retry,
                 max_response: self.max_response_bytes,
-                project: self.project.map(|p| p.to_string()),
+                project: self.project,
                 atlas,
                 region_pin: self.region_pin,
             }),
@@ -402,7 +411,7 @@ impl Client {
     /// Builds a project-scoped C# TerraBase client using Atlas by default.
     /// Supply a ts-auth access token obtained through the authentication SDK.
     /// Use [`ClientBuilder::endpoint`] for an explicit static override.
-    pub fn for_project(project: uuid::Uuid, token: impl Into<String>) -> ClientBuilder {
+    pub fn for_project(project: impl ToString, token: impl Into<String>) -> ClientBuilder {
         ClientBuilder::new("", token).project(project)
     }
     /// Starts a [`ClientBuilder`].
@@ -474,20 +483,46 @@ pub(crate) struct Resp {
     pub body: Vec<u8>,
     /// The request was a mutation, so a 2xx means it was applied.
     pub mutation: bool,
+    pub project: bool,
 }
 
 impl Resp {
     pub fn decode<T: DeserializeOwned>(&self) -> Result<T> {
-        serde_json::from_slice(&self.body).map_err(|e| {
-            if self.mutation && self.status.is_success() {
-                Error::UndecodableAck {
-                    status: self.status.as_u16(),
-                    message: e.to_string(),
-                }
-            } else {
-                Error::Decode(e.to_string())
+        serde_json::from_slice(&self.body).map_err(|e| self.invalid(e.to_string()))
+    }
+
+    pub fn decode_status<T: DeserializeOwned>(&self, allowed: &[StatusCode]) -> Result<T> {
+        self.check_status(allowed)?;
+        self.decode()
+    }
+
+    pub fn check_status(&self, allowed: &[StatusCode]) -> Result<()> {
+        if allowed.contains(&self.status) {
+            Ok(())
+        } else {
+            Err(self.invalid(format!("unexpected HTTP status {}", self.status.as_u16())))
+        }
+    }
+
+    pub fn invalid(&self, message: String) -> Error {
+        let error = if self.mutation && !self.status.is_client_error() {
+            Error::UndecodableAck {
+                status: self.status.as_u16(),
+                message,
             }
-        })
+        } else {
+            Error::Decode(message)
+        };
+        if self.project {
+            Error::Response {
+                status: self.status.as_u16(),
+                error: Box::new(error),
+                body: self.body.clone(),
+                request_id: self.header("X-Request-ID").map(str::to_owned),
+            }
+        } else {
+            error
+        }
     }
 
     pub fn header(&self, name: &str) -> Option<&str> {
@@ -501,6 +536,10 @@ enum Attempt {
 }
 
 impl Client {
+    pub(crate) fn is_project(&self) -> bool {
+        self.inner.project.is_some()
+    }
+
     pub(crate) async fn send_project(&self, req: Req<'_>) -> Result<Resp> {
         if self.inner.project.is_none() {
             return Err(Error::InvalidInput(
@@ -555,11 +594,7 @@ impl Client {
                 "request body exceeds the {MAX_REQUEST_BYTES} byte limit"
             )));
         }
-        let project = self
-            .inner
-            .project
-            .as_deref()
-            .map(|p| uuid::Uuid::parse_str(p).expect("validated project"));
+        let project = self.inner.project.as_deref();
         let database = req.segments.get(2).copied();
         let mut origin = self.inner.base.clone();
         let mut region = self.inner.region_pin.clone();
@@ -613,23 +648,25 @@ impl Client {
                         }
                     }
                     let retry = attempt < policy.max_retries
-                        && match &err {
-                            Error::RateLimited { .. } => true,
-                            Error::Transport(_) | Error::CommitUncertain => replay_safe,
-                            Error::Api {
-                                status: 503, code, ..
-                            } => {
-                                replay_safe
-                                    && matches!(
-                                        code.as_str(),
-                                        "capacity"
-                                            | "storage_unavailable"
-                                            | "dependencies_unavailable"
-                                    )
-                            }
-                            Error::InternalError => keyed,
-                            _ => false,
-                        };
+                        && ((matches!(err, Error::Transport(_))
+                            || matches!(&err, Error::Response { status, error, .. } if !(400..500).contains(status) && matches!(**error, Error::Transport(_))))
+                            && replay_safe
+                            || match (err.status(), err.code()) {
+                                (Some(429), Some("rate_limited")) => true,
+                                (
+                                    Some(503),
+                                    Some(
+                                        "commit_uncertain"
+                                        | "capacity"
+                                        | "storage_unavailable"
+                                        | "dependencies_unavailable"
+                                        | "storage_busy"
+                                        | "not_primary",
+                                    ),
+                                ) => replay_safe,
+                                (Some(500), Some("internal_error")) => keyed,
+                                _ => false,
+                            });
                     if !retry {
                         return Err(err);
                     }
@@ -677,48 +714,54 @@ impl Client {
         };
         let status = resp.status();
         let headers = resp.headers().clone();
-        if self.inner.project.is_some()
+        let wrong_region = self.inner.project.is_some()
             && status != StatusCode::MISDIRECTED_REQUEST
             && !(status.is_redirection() && status != StatusCode::NOT_MODIFIED)
             && region.is_some_and(|r| {
                 let mut values = headers.get_all("X-TerraBase-Region").iter();
                 values.next().and_then(|h| h.to_str().ok()) != Some(r) || values.next().is_some()
-            })
-        {
-            let message = "TerraBase response region does not match the session pin".into();
-            return Attempt::Failed(
-                if req.replay_safe || status.is_client_error() {
-                    Error::Decode(message)
-                } else {
-                    Error::UndecodableAck {
-                        status: status.as_u16(),
-                        message,
-                    }
-                },
-                None,
-            );
-        }
+            });
         let mut body = Vec::new();
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(chunk) => {
                     if body.len() + chunk.len() > self.inner.max_response {
+                        let error = Error::ResponseTooLarge {
+                            limit: self.inner.max_response,
+                            status: status.as_u16(),
+                            // A mutation answered with anything but a
+                            // client error may have been applied.
+                            may_have_applied: !req.replay_safe && !status.is_client_error(),
+                        };
+                        body.extend_from_slice(&chunk[..self.inner.max_response - body.len()]);
                         return Attempt::Failed(
-                            Error::ResponseTooLarge {
-                                limit: self.inner.max_response,
-                                status: status.as_u16(),
-                                // A mutation answered with anything but a
-                                // client error may have been applied.
-                                may_have_applied: !req.replay_safe && !status.is_client_error(),
-                            },
+                            self.response_error(error, status, &headers, body),
                             None,
                         );
                     }
                     body.extend_from_slice(&chunk);
                 }
-                Err(e) => return Attempt::Failed(Error::Transport(describe(&e)), None),
+                Err(e) => {
+                    return Attempt::Failed(
+                        self.response_error(Error::Transport(describe(&e)), status, &headers, body),
+                        None,
+                    )
+                }
             }
+        }
+        if wrong_region {
+            let response = Resp {
+                status,
+                headers,
+                body,
+                mutation: !req.replay_safe,
+                project: self.is_project(),
+            };
+            return Attempt::Failed(
+                response.invalid("TerraBase response region does not match the session pin".into()),
+                None,
+            );
         }
         if status.is_success() || status == StatusCode::NOT_MODIFIED {
             return Attempt::Done(Resp {
@@ -726,6 +769,7 @@ impl Client {
                 headers,
                 body,
                 mutation: !req.replay_safe,
+                project: self.is_project(),
             });
         }
         let retry_after = headers
@@ -733,8 +777,40 @@ impl Client {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()));
         let etag = headers.get(ETAG).and_then(|v| v.to_str().ok());
-        let err = errors::from_response(status.as_u16(), etag, retry_after, &body);
+        let err = if self.is_project() {
+            errors::from_project_response(
+                status.as_u16(),
+                etag,
+                retry_after,
+                headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
+                &body,
+            )
+        } else {
+            errors::from_response(status.as_u16(), etag, retry_after, &body)
+        };
         Attempt::Failed(err, retry_after)
+    }
+
+    fn response_error(
+        &self,
+        error: Error,
+        status: StatusCode,
+        headers: &HeaderMap,
+        body: Vec<u8>,
+    ) -> Error {
+        if self.is_project() {
+            Error::Response {
+                status: status.as_u16(),
+                error: Box::new(error),
+                body,
+                request_id: headers
+                    .get("X-Request-ID")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_owned),
+            }
+        } else {
+            error
+        }
     }
 }
 
@@ -795,7 +871,7 @@ mod tests {
 
     #[test]
     fn project_routes_and_credentials_are_separate_from_legacy_v1() {
-        let project = uuid::Uuid::new_v4();
+        let project = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
         let client = Client::builder("https://example.com/prefix", "already-exchanged.jwt")
             .project(project)
             .build()
@@ -837,7 +913,7 @@ mod tests {
     #[tokio::test]
     async fn project_rejects_legacy_control_and_keyed_writes_before_dispatch() {
         let client = Client::builder("http://127.0.0.1:1", "jwt")
-            .project(uuid::Uuid::new_v4())
+            .project("01ARZ3NDEKTSV4RRFFQ69G5FAV")
             .build()
             .unwrap();
         let err = client

@@ -1,13 +1,13 @@
 # TerraScale Rust SDK
 
-`terrascale::v1` supports the C# TerraBase project-scoped document API with verified Atlas routing. Start with [docs/csharp-api.md](docs/csharp-api.md). The older name-based `/v1/databases` and `/v1/dashboard` client remains available for its original producer ([docs/v1-api.md](docs/v1-api.md)). The native UUID/shard API described below is deprecated and will be removed with those routes.
+`terrascale::v1` implements the current C# TerraBase ULID project, raw-key document and HTTP SQL contracts with verified Atlas routing. See the [compatibility audit](docs/compatibility-20261013.md) for exact commits, deterministic test evidence and release gaps. Start with [docs/csharp-api.md](docs/csharp-api.md). The older name-based `/v1/databases` and `/v1/dashboard` client remains available for its original producer ([docs/v1-api.md](docs/v1-api.md)). The native UUID/shard API described below is deprecated and will be removed with those routes.
 
 ```rust,no_run
 use terrascale::v1::Client;
-# async fn example(project: uuid::Uuid, access_token: &str) -> terrascale::v1::Result<()> {
+# async fn example(project: &str, access_token: &str) -> terrascale::v1::Result<()> {
 let client = Client::for_project(project, access_token).build()?;
 let items = client.database("main").collection("items");
-let document = items.get::<serde_json::Value>(uuid::Uuid::new_v4()).await?;
+let document = items.get::<serde_json::Value>("customer/a+b").await?;
 # let _ = document;
 # Ok(())
 # }
@@ -17,7 +17,7 @@ Project requests use an already exchanged ts-auth bearer token and resolve throu
 producer qualification; they remain implementation inventory, not production
 onboarding. Normal first-party routing uses verified automatic discovery. C# TerraBase currently rejects `Idempotency-Key`, which project clients reject locally.
 
-`nice -n 19 python3 scripts/terrabase/run.py` runs the required integration journey against a SHA-256-pinned C# release binary in an isolated temporary database. CI runs this journey without `nice`. Its legacy bootstrap credentials qualify that pinned producer; they do not establish the successor JWT-only server contract.
+`scripts/terrabase/run.py` still targets the older SHA-256-pinned C# producer `263598b47ffc79398db394550e3c074acf4fc57d`, with UUID project IDs and legacy bootstrap credentials. It cannot qualify this current client. Updating that release pin and provisioning a current project-token test fixture is a release dependency; this draft does not claim live qualification.
 
 The SDK speaks TerraBase's native JSON document protocol. Native paths carry UUID tenant, database, collection and document identities and a canonical full-range decimal shard. Numeric field IDs and tagged values preserve missing/null, signed 64-bit integers, bytes, maps and arrays. Point reads retain observed context, tombstones and all concurrent siblings. Native values have at most 16 levels, arrays cannot occur under an ancestor array, and the entire encoded document is capped at 1 MiB.
 
@@ -60,8 +60,6 @@ The current auth client still requires origin/credential inputs; automatic
 acquisition remains a runtime implementation gap. Customer issuer trust and
 consumer authorization remain necessary. TerraBase credentials and routing selectors never reach ts-auth. Authentication mutations are never automatically replayed. The canonical issuer is unchanged by regional endpoint selection.
 
-The obsolete HTTP SQL, management, file, schema and reactive shim APIs have been removed. SQL is a required integration capability through TerraBase's actual PostgreSQL `sql_wire`; the PostgreSQL consumer exists in `src/postgres.rs`, currently behind a Cargo
-feature inventoried for removal. Actual admitted-listener and packaged
-qualification remain open; source presence does not prove that runtime works. Native unique/schema extensions, actual Atlas/native packaged caller and clock qualification, durable security authority and real packaged producer evidence remain release blockers. Local codec tests are not deployment or serving evidence.
+Current project SQL uses the implemented HTTP `sql`, `sql/check` and `sql/explain` routes through `Database::run_sql`, `check_sql` and `explain_sql`. The optional PostgreSQL consumer in `src/postgres.rs` belongs to the older producer; it does not qualify the current C# server. Its Cargo feature remains inventoried for removal. Actual admitted-listener and packaged qualification remain open; source presence does not prove that runtime works. Native unique/schema extensions, actual Atlas/native packaged caller and clock qualification, durable security authority and real packaged producer evidence remain release blockers. Local codec tests are not deployment or serving evidence.
 
 Run `cargo fmt --all --check`, `cargo clippy --locked --all-targets --all-features -- -D warnings`, and `cargo test --locked --all-features`. `scripts/check-native-contract.py` verifies the exact producer contract pin and `scripts/check-atlas-contract.py` separately verifies the frozen receiver contract and fixed-clock raw codec fixtures; `scripts/qualification/run.sh` exercises a separately unpacked `.crate` against a real native producer and fails when required fixture configuration is absent.

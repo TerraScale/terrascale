@@ -176,7 +176,10 @@ async fn document_crud_preconditions_and_tombstones() {
         .await
         .unwrap();
     assert!(
-        w1.created && w1.id == id && w1.durability == Durability::LocalDurable && w1.offset >= 1
+        w1.created
+            && w1.id == id.to_string()
+            && w1.durability == Durability::LocalDurable
+            && w1.offset >= 1
     );
     let again = users
         .put(id, &ana(), WriteOptions::new().if_none_match_any())
@@ -325,8 +328,8 @@ async fn create_raw_bodies_and_exact_numbers() {
         w.location.as_deref(),
         Some(format!("/v1/databases/main/collections/items/documents/{}", w.id).as_str())
     );
-    assert_eq!(w.id.get_version_num(), 7);
-    let doc = items.get::<Box<RawValue>>(w.id).await.unwrap();
+    assert_eq!(uuid::Uuid::parse_str(&w.id).unwrap().get_version_num(), 7);
+    let doc = items.get::<Box<RawValue>>(&w.id).await.unwrap();
     assert_eq!(doc.value().unwrap().get(), body);
 
     #[derive(Deserialize)]
@@ -335,7 +338,7 @@ async fn create_raw_bodies_and_exact_numbers() {
         n: Number,
     }
     let exact = items
-        .get::<Exact>(w.id)
+        .get::<Exact>(&w.id)
         .await
         .unwrap()
         .into_value()
@@ -360,7 +363,7 @@ async fn create_raw_bodies_and_exact_numbers() {
         data(&f)
             .database("Main")
             .collection("items")
-            .get::<Box<RawValue>>(w.id)
+            .get::<Box<RawValue>>(&w.id)
             .await,
         Err(Error::InvalidInput(_))
     ));
@@ -488,31 +491,35 @@ async fn transactions_commit_atomically_with_op_indexed_errors() {
         .unwrap();
 
     let mut tx = Tx::new();
-    tx.create("orgs", Some(org), &json!({"name": "Acme", "owner": ana_id}))
-        .create("items", None, &json!({"org": org}))
-        .patch(
-            "users",
-            ana_id,
-            Patch::ops(vec![PatchOp::inc("/logins", 1)]),
-            Some(w.version.clone()),
-        )
-        .assert(
-            "users",
-            bob,
-            Filter::eq(Path::lower("/email"), "BOB@example.com"),
-        )
-        .assert_absent("orgs", uuidv5_for("orgs", "other"))
-        .assert_count(
-            "tokens",
-            Filter::eq("/user", ana_id),
-            CountBounds::at_most(24),
-        );
+    tx.create(
+        "orgs",
+        Some(org.to_string()),
+        &json!({"name": "Acme", "owner": ana_id}),
+    )
+    .create("items", None, &json!({"org": org}))
+    .patch(
+        "users",
+        ana_id,
+        Patch::ops(vec![PatchOp::inc("/logins", 1)]),
+        Some(w.version.clone()),
+    )
+    .assert(
+        "users",
+        bob,
+        Filter::eq(Path::lower("/email"), "BOB@example.com"),
+    )
+    .assert_absent("orgs", uuidv5_for("orgs", "other"))
+    .assert_count(
+        "tokens",
+        Filter::eq("/user", ana_id),
+        CountBounds::at_most(24),
+    );
     let res = db.commit(&tx).await.unwrap();
     assert_eq!(res.results.len(), 6);
-    assert_eq!(res.results[0].id(), Some(org));
+    assert_eq!(res.results[0].id(), Some(org.to_string().as_str()));
     assert!(res.results[1]
         .id()
-        .is_some_and(|id| id.get_version_num() == 7));
+        .is_some_and(|id| uuid::Uuid::parse_str(id).unwrap().get_version_num() == 7));
     let patched = res.results[2].version().unwrap().clone();
     assert_eq!(res.results[3], OpResult::Asserted { count: None });
     assert_eq!(res.results[5], OpResult::Asserted { count: Some(0) });
@@ -521,7 +528,7 @@ async fn transactions_commit_atomically_with_op_indexed_errors() {
     // A failing op names its index, and nothing is written.
     let sess = uuidv5_for("sessions", "s1");
     let mut tx = Tx::new();
-    tx.create("sessions", Some(sess), &json!({"user": ana_id}))
+    tx.create("sessions", Some(sess.to_string()), &json!({"user": ana_id}))
         .put(
             "users",
             ana_id,
@@ -798,7 +805,7 @@ async fn queries_filter_sort_project_count_and_page() {
     for i in 0..25 {
         tx.create(
             "items",
-            Some(uuidv5_for("items", &i.to_string())),
+            Some(uuidv5_for("items", &i.to_string()).to_string()),
             &json!({"n": i, "kind": if i % 2 == 0 { "even" } else { "odd" }, "name": format!("Item {i}"), "meta": {"x": i, "y": "drop"}}),
         );
     }
@@ -1078,7 +1085,7 @@ async fn control_plane_provisions_keys_that_work_until_revoked() {
         .database("main")
         .collection("users");
     assert!(matches!(
-        other_db.get::<Box<RawValue>>(w.id).await,
+        other_db.get::<Box<RawValue>>(&w.id).await,
         Err(Error::Forbidden { .. })
     ));
 
@@ -1090,9 +1097,9 @@ async fn control_plane_provisions_keys_that_work_until_revoked() {
     let todos2 = data_with(&f, &rotated.token)
         .database("app")
         .collection("todos");
-    todos2.get::<Box<RawValue>>(w.id).await.unwrap();
+    todos2.get::<Box<RawValue>>(&w.id).await.unwrap();
     assert!(matches!(
-        todos.get::<Box<RawValue>>(w.id).await,
+        todos.get::<Box<RawValue>>(&w.id).await,
         Err(Error::InvalidKey)
     ));
     let revoked = ctl
@@ -1101,7 +1108,7 @@ async fn control_plane_provisions_keys_that_work_until_revoked() {
         .unwrap();
     assert!(revoked.revoked_at.is_some());
     assert!(matches!(
-        todos2.get::<Box<RawValue>>(w.id).await,
+        todos2.get::<Box<RawValue>>(&w.id).await,
         Err(Error::InvalidKey)
     ));
     assert_eq!(
@@ -1129,7 +1136,7 @@ async fn control_plane_provisions_keys_that_work_until_revoked() {
         as_control
             .database("main")
             .collection("users")
-            .get::<Box<RawValue>>(w.id)
+            .get::<Box<RawValue>>(&w.id)
             .await,
         Err(Error::Forbidden { .. })
     ));
@@ -1379,13 +1386,13 @@ async fn numbers_compare_and_round_trip_exactly() {
     ] {
         tx.create(
             "items",
-            Some(uuidv5_for("items", key)),
+            Some(uuidv5_for("items", key).to_string()),
             &std::collections::BTreeMap::from([("n", n(value)), ("one", n("1.0"))]),
         );
     }
     let raw = RawValue::from_string(format!(r#"{{"big":{big},"tiny":-1.5e-30}}"#)).unwrap();
     let big_id = uuidv5_for("items", "big");
-    tx.create("items", Some(big_id), &raw);
+    tx.create("items", Some(big_id.to_string()), &raw);
     db.commit(&tx).await.unwrap();
 
     let count = |filter: Filter| {
@@ -1784,7 +1791,7 @@ async fn number_exponents_are_bounded_and_kept_exact() {
     let items = data(&f).database("main").collection("items");
     let raw = RawValue::from_string(r#"{"ten":1e0000000001,"zero":0e5}"#.into()).unwrap();
     let w = items.create(&raw, WriteOptions::new()).await.unwrap();
-    let doc = items.get::<Box<RawValue>>(w.id).await.unwrap();
+    let doc = items.get::<Box<RawValue>>(&w.id).await.unwrap();
     assert_eq!(
         doc.value().unwrap().get(),
         r#"{"ten":1e0000000001,"zero":0e5}"#
@@ -1864,7 +1871,7 @@ async fn invalid_collections_and_pointers_are_rejected() {
         PatchOp::unset("/a~"),
     ] {
         let err = items
-            .patch(w.id, &Patch::ops(vec![op]), WriteOptions::new())
+            .patch(&w.id, &Patch::ops(vec![op]), WriteOptions::new())
             .await
             .unwrap_err();
         assert!(
@@ -1882,14 +1889,14 @@ async fn invalid_collections_and_pointers_are_rejected() {
     );
     items
         .patch(
-            w.id,
+            &w.id,
             &Patch::ops(vec![PatchOp::set("/a~1b~0", &2).unwrap()]),
             WriteOptions::new(),
         )
         .await
         .unwrap();
     let doc = items
-        .get::<serde_json::Value>(w.id)
+        .get::<serde_json::Value>(&w.id)
         .await
         .unwrap()
         .into_value()
@@ -1919,7 +1926,7 @@ async fn cursors_distinguish_present_values_from_missing_keys() {
         .query_all::<Box<RawValue>>(Query::new().sort(SortKey::asc("/v")).limit(1), 10)
         .await
         .unwrap();
-    let mut ids: Vec<_> = all.iter().map(|d| d.id).collect();
+    let mut ids: Vec<_> = all.iter().map(|d| d.id.as_str()).collect();
     assert_eq!(ids.len(), 3, "{ids:?}");
     ids.sort();
     ids.dedup();

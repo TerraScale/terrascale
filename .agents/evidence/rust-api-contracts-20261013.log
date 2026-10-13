@@ -1,0 +1,472 @@
+SDK baseline: 8a5d983684a5b26f2992a9e7ee07969a7bc2c12a
+Server source: e30ffdc287530551b161b0130220be53d3c0475e
+Toolchain: rustc 1.98.1 (48a229cea 2026-09-01), cargo 1.98.1 (797e8a9bc 2026-08-05)
+Scope: deterministic local fixtures only; csharp_live/v1_live excluded, no live qualification.
+Final candidate SHA recorded in draft PR.
+
+COMMAND: nice -n 19 cargo test --locked --no-default-features --test csharp_current_contract --test csharp_problem_contract --test csharp_sql_contract --test v1_atlas --test v1_fast
+EXIT: 0
+   Compiling terrascale v0.1.0 (/home/mariogk/.t3/worktrees/ts-rust/sdk-rust-api-contracts-20261013)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.63s
+     Running tests/csharp_current_contract.rs (target/debug/deps/csharp_current_contract-1a5e5381a4f288a9)
+
+running 14 tests
+test project_ids_are_canonical_ulids_before_any_request ... ok
+test invalid_keys_and_project_idempotency_keys_never_dispatch ... ok
+test cancellation_during_streamed_body_closes_the_connection ... ok
+test current_crud_headers_generated_ulids_and_collection_identity ... ok
+test malformed_empty_wrong_status_and_identity_keep_diagnostics ... ok
+test database_create_uses_management_post_and_preserves_placement ... ok
+test truncated_denial_keeps_status_and_never_retries ... ok
+test pinned_region_mismatch_keeps_acknowledgement_for_reconciliation ... ok
+test transaction_raw_keys_and_generated_ulids_match_the_acknowledgement ... ok
+test oversized_project_errors_preserve_a_bounded_body_and_request_id ... ok
+test pagination_keeps_empty_intermediate_pages_and_stops_without_extra_requests ... ok
+test explicit_retry_keeps_client_generated_key_and_exact_bytes ... ok
+test pagination_refuses_missing_empty_and_cyclic_cursors ... ok
+test raw_keys_are_query_encoded_once_and_remain_distinct ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/csharp_problem_contract.rs (target/debug/deps/csharp_problem_contract-27cb976076d236bc)
+
+running 5 tests
+test rfc9457_keeps_exact_extensions_and_http_status_wins ... ok
+test rfc9457_optional_and_malformed_fields_keep_valid_diagnostics ... ok
+test problem_not_found_uses_the_real_status_and_exact_code ... ok
+test malformed_and_empty_errors_preserve_bytes_status_and_request_id ... ok
+test implemented_envelopes_keep_denial_and_transaction_diagnostics ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/csharp_sql_contract.rs (target/debug/deps/csharp_sql_contract-be35b2259c764f20)
+
+running 11 tests
+test sql_requires_a_project_client_before_dispatch ... ok
+test sql_rows_preserve_exact_json_and_truncation ... ok
+test sql_empty_result_and_typed_rows_decode ... ok
+test dropping_sql_future_cancels_the_pending_http_request ... ok
+test sql_routes_send_only_the_actual_project_contract ... ok
+test sql_check_and_explain_keep_distinct_invalid_sql_semantics ... ok
+test sql_read_only_retry_resends_identical_sql_after_disconnect ... ok
+test sql_preserves_denied_credentials_and_does_not_retry_them ... ok
+test sql_rejects_inconsistent_plan_bodies ... ok
+test sql_retries_current_server_read_admission_failures ... ok
+test sql_rejects_malformed_results_and_unexpected_success_statuses ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/v1_atlas.rs (target/debug/deps/v1_atlas-78f4e98e92907d46)
+
+running 13 tests
+test atlas::tests::lease_expires_with_either_clock_and_rejects_wall_regression ... ok
+test atlas::tests::production_rejects_loopback_and_accepts_new_regional_origin ... ok
+test public_project_client_routes_to_verified_endpoint_with_only_region_pin ... ok
+test keeps_still_valid_session_when_fresh_atlas_request_cannot_connect ... ok
+test nullable_database_scope_is_bound_and_key_rotation_refetches ... ok
+test public_static_endpoint_bypasses_atlas_entirely ... ok
+test verifies_real_es256_pin_reuses_session_and_refreshes_explicitly ... ok
+test rejects_oversized_and_incomplete_responses_before_using_an_endpoint ... ok
+test public_mutations_refresh_on_421_and_redirect_without_replay ... ok
+test rejects_malicious_origins_and_invalid_scopes ... ok
+test public_reads_refresh_on_421_and_redirect_but_retry_only_once ... ok
+test rejects_expired_future_overlong_and_mismatched_signed_claims ... ok
+test expires_session_refreshes_atlas_and_bounds_cached_scopes ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.11s
+
+     Running tests/v1_fast.rs (target/debug/deps/v1_fast-929ebb5fbf00e0c6)
+
+running 35 tests
+test created_keys_must_carry_a_tbk1_token ... ok
+test control_resources_named_query_stay_idempotent ... ok
+test create_raw_bodies_and_exact_numbers ... ok
+test ids_names_and_builder_validation ... ok
+test conflicted_documents_expose_siblings_and_resolve_with_if_match ... ok
+test cursors_distinguish_present_values_from_missing_keys ... ok
+test grants_scope_data_keys ... ok
+test inc_is_exact_across_decimals_and_the_i64_boundary ... ok
+test document_crud_preconditions_and_tombstones ... ok
+test lower_uses_unicode_default_case_folding ... ok
+test numbers_and_filters_encode_exactly ... ok
+test idempotent_replay_and_uncertain_commits ... ok
+test completed_deletions_remove_the_resource ... ok
+test non_4xx_mutation_failures_are_uncertain ... ok
+test malformed_acknowledgements_and_documents_are_rejected ... ok
+test only_rate_limited_429s_are_retried ... ok
+test number_exponents_are_bounded_and_kept_exact ... ok
+test operations_with_unknown_status_stop_polling ... ok
+test invalid_collections_and_pointers_are_rejected ... ok
+test oversized_mutation_responses_are_uncertain ... ok
+test numbers_compare_and_round_trip_exactly ... ok
+test oversized_responses_are_not_retried ... ok
+test tenant_updates_validate_before_applying ... ok
+test retry_after_http_dates_are_honoured ... ok
+test unique_constraint_violations_name_the_constraint ... ok
+test tls_requires_the_configured_root ... ok
+test undecodable_mutation_acks_are_uncertain ... ok
+test transactions_commit_atomically_with_op_indexed_errors ... ok
+test control_plane_provisions_keys_that_work_until_revoked ... ok
+test retry_policy_follows_the_contract ... ok
+test queries_filter_sort_project_count_and_page ... ok
+test fixture_rejects_malformed_preconditions_and_control_bodies ... ok
+test fixture_rejects_wrong_media_types_and_malformed_members ... ok
+test if_none_match_create_race_has_one_winner ... ok
+test future_retry_after_dates_delay_the_retry ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.24s
+
+
+COMMAND: nice -n 19 cargo test --locked --all-features --lib --test auth_idp --test auth_idp_edge --test native_discovery --test postgres --test serde_base64 --test transport --test typed_documents --test typed_routing --test v1_atlas --test v1_fast --test v1_proxy --test csharp_current_contract --test csharp_problem_contract --test csharp_sql_contract
+EXIT: 0
+   Compiling terrascale v0.1.0 (/home/mariogk/.t3/worktrees/ts-rust/sdk-rust-api-contracts-20261013)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.92s
+     Running unittests src/lib.rs (target/debug/deps/terrascale-60b968a452e40235)
+
+running 9 tests
+test auth_idp::tests::hmac_sha256_matches_rfc_4231_vectors ... ok
+test v1::client::tests::retry_after_accepts_seconds_and_http_dates ... ok
+test v1::atlas::tests::production_rejects_loopback_and_accepts_new_regional_origin ... ok
+test auth_idp::tests::webhook_tolerance_window_bounds_the_timestamp ... ok
+test v1::client::tests::backoff_is_bounded_and_overflow_safe ... ok
+test v1::atlas::tests::lease_expires_with_either_clock_and_rejects_wall_regression ... ok
+test auth_idp::tests::webhook_verifier_accepts_only_intact_signatures ... ok
+test v1::client::tests::project_routes_and_credentials_are_separate_from_legacy_v1 ... ok
+test v1::client::tests::project_rejects_legacy_control_and_keyed_writes_before_dispatch ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/auth_idp.rs (target/debug/deps/auth_idp-6795f49c47bd1b62)
+
+running 21 tests
+test actual_accepted_token_and_device_successes_decode_without_invented_optional_fields ... ok
+test client_idempotency_key_never_reaches_ts_auth_mutations ... ok
+test list_all_walks_the_id_cursor_to_a_short_page ... ok
+test auth_discovery_rejects_a_mismatched_origin_before_credentials ... ok
+test decodes_snake_case_oauth_clients_and_camel_case_passkeys ... ok
+test decodes_snake_case_users_and_the_data_envelope ... ok
+test decodes_bare_array_families ... ok
+test oidc_routes_are_public_and_post_exact_form_bodies ... ok
+test management_routes_carry_the_ts_auth_bearer_and_accept_headers ... ok
+test maps_flat_oauth_token_errors ... ok
+test maps_nested_management_errors ... ok
+test originating_roles_preserve_exact_resources_and_refresh_scope_presence ... ok
+test public_auth_proxy_opt_in_skips_discovery ... ok
+test public_auth_origin_discovers_regions_and_fails_over_safe_reads ... ok
+test resource_introspection_decodes_actual_user_service_and_inactive_wire ... ok
+test validates_configuration_and_inputs_before_transport ... ok
+test terrabase_headers_do_not_leak_to_ts_auth_requests ... ok
+test webhook_verifier_accepts_only_valid_deliveries ... ok
+test user_patch_is_tri_state_on_the_wire ... ok
+test resource_management_decodes_actual_policy_wire_and_checked_updates ... ok
+test retries_reads_but_never_mutations ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/auth_idp_edge.rs (target/debug/deps/auth_idp_edge-137bf76a0455e6ca)
+
+running 60 tests
+test a7_non_json_html_body_is_invalid_response ... ok
+test a3_unknown_extra_fields_are_ignored ... ok
+test a4_wrong_typed_created_at_is_invalid_response ... ok
+test a2_ban_reason_present_null_and_absent_both_decode_to_none ... ok
+test a11_unicode_round_trips_through_decode_and_patch_bytes ... ok
+test a9_null_data_array_is_invalid_response ... ok
+test a5_malformed_json_body_is_invalid_response ... ok
+test a6_empty_body_on_a_json_route_is_invalid_response ... ok
+test a1_missing_or_null_id_is_invalid_response ... ok
+test b12_b13_b15_status_kinds_and_codes_are_mapped ... ok
+test a8_envelope_mixups_are_invalid_response_both_directions ... ok
+test b17_503_checkout_errors_map_to_unavailable_kind ... ok
+test b14_404_codes_are_preserved_and_route_derived_when_absent ... ok
+test b18_flat_oauth_error_maps_despite_extra_headers ... ok
+test b19_flat_oauth_error_without_description_falls_back_to_the_code ... ok
+test b20_null_error_fields_fall_back_to_status_derived_error ... ok
+test b21_non_json_error_bodies_derive_from_status ... ok
+test c24_blank_inputs_fail_validation_without_http ... ok
+test c25_starting_after_is_encoded_once_exactly ... ok
+test c27_slug_rules_reject_bad_slugs_and_accept_long_ones ... ok
+test c28_api_keys_with_control_or_whitespace_bytes_are_rejected_at_build ... ok
+test b22_delete_requires_exactly_204 ... ok
+test c26_limit_boundaries_are_sent_or_rejected_preflight ... ok
+test c23_path_segment_encoding_pins_exact_bytes ... ok
+test c32_create_with_every_optional_omitted_sends_an_empty_object ... ok
+test c33_form_encoding_escapes_reserved_characters_exactly_once ... ok
+test c34_metadata_patch_serializes_nested_values_faithfully ... ok
+test d37_post_503_is_never_retried ... ok
+test d40_unpolled_future_issues_no_http ... ok
+test c29_c30_c31_tri_state_patch_carries_exactly_the_configured_fields ... ok
+test d38_client_errors_never_retry_even_for_gets ... ok
+test d42_hanging_request_hits_the_30_second_deadline ... ok
+test f47_f48_f49_signature_shape_edges_are_rejected ... ok
+test f51_empty_payload_is_a_signable_input ... ok
+test f52_empty_secret_never_verifies ... ok
+test e45_unknown_cursor_decodes_the_servers_resume_point ... ok
+test f50_non_numeric_timestamps_fail_in_both_variants ... ok
+test f53_tolerance_boundary_is_inclusive_one_second_past_fails ... ok
+test f54_unicode_payload_bytes_verify ... ok
+test f55_different_secrets_produce_different_valid_signatures ... ok
+test g56_g57_auth_base_url_origin_rules ... ok
+test http_error_oauth_diagnostic_keeps_response_context ... ok
+test http_error_malformed_replies_retain_response_context ... ok
+test g58_trailing_slashes_normalize_to_the_same_urls ... ok
+test http_error_native_decode_and_status_failures_retain_response_context ... ok
+test e43_e44_list_all_walks_full_and_short_final_pages ... ok
+test resource_binding_checks_exact_registered_identity_and_current_time ... ok
+test d39_transport_errors_retry_reads_but_never_mutations ... ok
+test resource_introspection_denials_are_not_cached_and_keep_server_status ... ok
+test http_error_secret_reply_diagnostics_are_sanitized ... ok
+test resource_validation_denies_before_dispatch_and_preserves_u64_epochs ... ok
+test resource_introspection_rejects_missing_duplicate_extra_and_malformed_claims ... ok
+test d35_get_503_surfaces_after_exactly_three_attempts ... ok
+test http_error_ordinary_unavailable_reply_still_retries ... ok
+test a10_large_page_of_100_users_decodes ... ok
+test http_error_oversized_reply_retains_response_context ... ok
+test http_error_oversized_status_replies_are_not_retried ... ok
+test d41_mid_flight_cancellation_by_future_drop_is_honored ... ok
+test d36_retry_delay_honors_retry_after_else_exponential_backoff ... ok
+test b16_429_rate_limited_surfaces_without_retries_and_retries_when_configured ... ok
+
+test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s
+
+     Running tests/csharp_current_contract.rs (target/debug/deps/csharp_current_contract-10343caef763fca9)
+
+running 14 tests
+test project_ids_are_canonical_ulids_before_any_request ... ok
+test invalid_keys_and_project_idempotency_keys_never_dispatch ... ok
+test cancellation_during_streamed_body_closes_the_connection ... ok
+test oversized_project_errors_preserve_a_bounded_body_and_request_id ... ok
+test database_create_uses_management_post_and_preserves_placement ... ok
+test pinned_region_mismatch_keeps_acknowledgement_for_reconciliation ... ok
+test transaction_raw_keys_and_generated_ulids_match_the_acknowledgement ... ok
+test truncated_denial_keeps_status_and_never_retries ... ok
+test pagination_keeps_empty_intermediate_pages_and_stops_without_extra_requests ... ok
+test explicit_retry_keeps_client_generated_key_and_exact_bytes ... ok
+test pagination_refuses_missing_empty_and_cyclic_cursors ... ok
+test current_crud_headers_generated_ulids_and_collection_identity ... ok
+test raw_keys_are_query_encoded_once_and_remain_distinct ... ok
+test malformed_empty_wrong_status_and_identity_keep_diagnostics ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/csharp_problem_contract.rs (target/debug/deps/csharp_problem_contract-c74bba9ce067bced)
+
+running 5 tests
+test rfc9457_keeps_exact_extensions_and_http_status_wins ... ok
+test rfc9457_optional_and_malformed_fields_keep_valid_diagnostics ... ok
+test problem_not_found_uses_the_real_status_and_exact_code ... ok
+test malformed_and_empty_errors_preserve_bytes_status_and_request_id ... ok
+test implemented_envelopes_keep_denial_and_transaction_diagnostics ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/csharp_sql_contract.rs (target/debug/deps/csharp_sql_contract-086a7ad169bd7a4c)
+
+running 11 tests
+test sql_requires_a_project_client_before_dispatch ... ok
+test sql_rows_preserve_exact_json_and_truncation ... ok
+test sql_empty_result_and_typed_rows_decode ... ok
+test dropping_sql_future_cancels_the_pending_http_request ... ok
+test sql_routes_send_only_the_actual_project_contract ... ok
+test sql_check_and_explain_keep_distinct_invalid_sql_semantics ... ok
+test sql_read_only_retry_resends_identical_sql_after_disconnect ... ok
+test sql_preserves_denied_credentials_and_does_not_retry_them ... ok
+test sql_rejects_inconsistent_plan_bodies ... ok
+test sql_retries_current_server_read_admission_failures ... ok
+test sql_rejects_malformed_results_and_unexpected_success_statuses ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/native_discovery.rs (target/debug/deps/native_discovery-af64d63964029a4a)
+
+running 38 tests
+test actual_forbidden_response_is_typed_and_not_retried ... ok
+test clock_failure_and_monotonic_regression_never_use_cached_admission ... ok
+test derived_receiver_codec_bytes_preserve_full_u64_and_fixed_clock_provenance ... ok
+test default_commit_discovery_denial_never_dispatches_mutation ... ok
+test credentials_custom_origin_nil_scope_and_zero_shard_fail_before_transport ... ok
+test default_client_discovery_timeout_releases_work_without_native_dispatch ... ok
+test concurrent_public_point_and_resolver_waits_share_only_their_original_budget ... ok
+test default_point_routes_discovery_then_native_and_transport_loss_never_replays_commit ... ok
+test default_client_selects_authenticated_native_origin_and_status_after_downshift ... ok
+test default_client_discovery_failures_never_dispatch_native_or_cache_a_bypass ... ok
+test dropping_public_preflight_or_native_dispatch_releases_work_for_a_new_operation ... ok
+test equal_epoch_equal_revision_publisher_substitution_does_not_advance_floor ... ok
+test explicit_provisioned_origins_skip_even_custom_atlas_without_leaking_auth_credentials ... ok
+test late_ready_native_success_obeys_the_deadline_and_retains_uncertain_commit_identity ... ok
+test json_media_is_required_on_success_and_error_responses ... ok
+test every_public_native_call_shares_discovery_and_dispatch_budget_with_commit_uncertainty ... ok
+test public_commit_deadline_after_admission_before_native_send_is_definite ... ok
+test direct_resolver_checks_deadline_after_synchronous_processing_and_keeps_observation ... ok
+test receiver_ranking_dynamic_regions_residency_and_operation_capabilities_are_respected ... ok
+test receiver_unix_bounds_are_inclusive_and_publication_span_is_at_most_ten ... ok
+test observation_floors_survive_expiry_and_reject_cross_cell_deployment_or_regression ... ok
+test safe_retry_delay_and_dispatch_never_renew_the_public_budget ... ok
+test same_epoch_registered_publisher_replacement_with_new_revision_is_allowed ... ok
+test simultaneous_failed_discovery_waiters_never_dispatch_after_their_deadline ... ok
+test structured_rtt_hints_are_bounded_unique_and_do_not_use_static_catalog ... ok
+test timed_out_refresh_and_queued_deadline_keep_the_last_observation_floor ... ok
+test lifecycle_failed_initial_admissions_release_empty_scope_capacity ... ok
+test ttl_clamps_down_and_consumed_lease_and_backward_clocks_fail_closed ... ok
+test lifecycle_timed_out_admissions_release_transport_and_scope_capacity ... ok
+test closed_schema_nullable_fields_duplicates_and_invalid_native_metadata_fail ... ok
+test lifecycle_cancelled_owner_and_waiter_preserve_remaining_singleflight_reservation ... ok
+test lifecycle_cancelled_and_failed_refreshes_preserve_observation_floor_and_capacity ... ok
+test concurrent_scope_resolution_publishes_once_and_capacity_never_evicts_floors ... ok
+test lifecycle_cancelled_admissions_release_all_reservations_without_bypassing_capacity ... ok
+test fresh_lease_native_retry_classes_are_terminal_by_default_and_bounded_when_opted_in ... ok
+test lifecycle_validated_observations_survive_initial_lease_or_capability_failure ... ok
+test safe_native_retry_refreshes_expired_routing_before_second_dispatch ... ok
+test public_commit_failed_refresh_after_admission_before_native_send_is_definite ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.32s
+
+     Running tests/postgres.rs (target/debug/deps/postgres-734a0a90c749663a)
+
+running 8 tests
+test postgres_invalid_parameter_sizes_nul_and_counts_fail_before_dispatch ... ok
+test postgres_descriptors_preserve_int8_extrema_and_hostile_text ... ok
+test postgres_configuration_fails_before_socket_and_redacts_password ... ok
+test postgres_pem_roots_require_valid_complete_certificates ... ok
+test postgres_dropped_open_transaction_discards_instead_of_background_rollback_reuse ... ok
+test postgres_completed_operations_remain_reusable_but_unknown_completion_closes ... ok
+test postgres_requires_selected_alpn_and_verified_ca_name_before_startup ... ok
+test postgres_cancelled_driver_operations_fence_owner_and_close_without_reuse ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/serde_base64.rs (target/debug/deps/serde_base64-9fc778615fe60021)
+
+running 1 test
+test bytes_fields_use_canonical_base64_and_preserve_optional_values ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/transport.rs (target/debug/deps/transport-24c3108b6eb50ca9)
+
+running 1 test
+test production_transport_returns_redirects_without_replaying_mutations ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/typed_documents.rs (target/debug/deps/typed_documents-2c01ccd0baee89c9)
+
+running 12 tests
+test canonical_values_preserve_integer_bytes_missing_and_null ... ok
+test hostile_scalar_and_field_encodings_fail ... ok
+test predicates_distinguish_missing_null_and_scalar_comparisons ... ok
+test effect_digest_matches_independent_full_range_grammar_vector ... ok
+test recursive_values_enforce_producer_bounds ... ok
+test empty_projected_groups_advance_sequence_without_changing_rows ... ok
+test subscription_pages_publish_complete_groups_and_remove_from_view ... ok
+test subscription_view_rejects_unrelated_streams_and_invalid_phase_or_cursor ... ok
+test point_shapes_preserve_conflicts_and_require_nullable_token ... ok
+test shared_producer_golden_vectors_match_all_values_and_authority_hashes ... ok
+test native_document_depth_array_and_exact_size_limits_match_producer ... ok
+test request_capacity_and_nullable_cursor_boundaries_are_strict ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running tests/typed_routing.rs (target/debug/deps/typed_routing-f577199eab2ad9a5)
+
+running 10 tests
+test full_u64_uuid_path_and_native_credentials_are_exact ... ok
+test invalid_custom_ca_fails_before_transport ... ok
+test unexpected_commit_statuses_and_zero_event_incarnation_remain_uncertain ... ok
+test commit_transport_failure_is_uncertain_and_never_automatically_replayed ... ok
+test status_unknown_and_expired_never_claim_definitive_rejection ... ok
+test status_and_receipt_substitution_fail_closed ... ok
+test malformed_native_discovery_credentials_fail_before_transport ... ok
+test native_query_uses_actual_collection_route_and_rejects_malformed_pages ... ok
+test valid_native_read_pages_require_http_200 ... ok
+test unexpected_success_statuses_never_claim_a_durable_commit ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/v1_atlas.rs (target/debug/deps/v1_atlas-1138d6f1273354cf)
+
+running 13 tests
+test atlas::tests::lease_expires_with_either_clock_and_rejects_wall_regression ... ok
+test atlas::tests::production_rejects_loopback_and_accepts_new_regional_origin ... ok
+test nullable_database_scope_is_bound_and_key_rotation_refetches ... ok
+test keeps_still_valid_session_when_fresh_atlas_request_cannot_connect ... ok
+test public_static_endpoint_bypasses_atlas_entirely ... ok
+test public_project_client_routes_to_verified_endpoint_with_only_region_pin ... ok
+test verifies_real_es256_pin_reuses_session_and_refreshes_explicitly ... ok
+test rejects_oversized_and_incomplete_responses_before_using_an_endpoint ... ok
+test public_mutations_refresh_on_421_and_redirect_without_replay ... ok
+test public_reads_refresh_on_421_and_redirect_but_retry_only_once ... ok
+test rejects_malicious_origins_and_invalid_scopes ... ok
+test rejects_expired_future_overlong_and_mismatched_signed_claims ... ok
+test expires_session_refreshes_atlas_and_bounds_cached_scopes ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.11s
+
+     Running tests/v1_fast.rs (target/debug/deps/v1_fast-4182e5d0350dade0)
+
+running 35 tests
+test created_keys_must_carry_a_tbk1_token ... ok
+test control_resources_named_query_stay_idempotent ... ok
+test create_raw_bodies_and_exact_numbers ... ok
+test ids_names_and_builder_validation ... ok
+test conflicted_documents_expose_siblings_and_resolve_with_if_match ... ok
+test cursors_distinguish_present_values_from_missing_keys ... ok
+test document_crud_preconditions_and_tombstones ... ok
+test inc_is_exact_across_decimals_and_the_i64_boundary ... ok
+test lower_uses_unicode_default_case_folding ... ok
+test grants_scope_data_keys ... ok
+test numbers_and_filters_encode_exactly ... ok
+test idempotent_replay_and_uncertain_commits ... ok
+test completed_deletions_remove_the_resource ... ok
+test malformed_acknowledgements_and_documents_are_rejected ... ok
+test only_rate_limited_429s_are_retried ... ok
+test non_4xx_mutation_failures_are_uncertain ... ok
+test number_exponents_are_bounded_and_kept_exact ... ok
+test operations_with_unknown_status_stop_polling ... ok
+test invalid_collections_and_pointers_are_rejected ... ok
+test numbers_compare_and_round_trip_exactly ... ok
+test retry_after_http_dates_are_honoured ... ok
+test tls_requires_the_configured_root ... ok
+test oversized_responses_are_not_retried ... ok
+test oversized_mutation_responses_are_uncertain ... ok
+test tenant_updates_validate_before_applying ... ok
+test unique_constraint_violations_name_the_constraint ... ok
+test undecodable_mutation_acks_are_uncertain ... ok
+test transactions_commit_atomically_with_op_indexed_errors ... ok
+test control_plane_provisions_keys_that_work_until_revoked ... ok
+test retry_policy_follows_the_contract ... ok
+test queries_filter_sort_project_count_and_page ... ok
+test fixture_rejects_malformed_preconditions_and_control_bodies ... ok
+test if_none_match_create_race_has_one_winner ... ok
+test fixture_rejects_wrong_media_types_and_malformed_members ... ok
+test future_retry_after_dates_delay_the_retry ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s
+
+     Running tests/v1_proxy.rs (target/debug/deps/v1_proxy-f19f6e5761a64386)
+
+running 1 test
+test loopback_http_bypasses_environment_proxies ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+COMMAND: nice -n 19 cargo test --locked --all-features --doc
+EXIT: 0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+   Doc-tests terrascale
+
+running 1 test
+test src/v1/mod.rs - v1 (line 17) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+COMMAND: nice -n 19 cargo clippy --locked --all-targets --all-features -- -D warnings
+EXIT: 0
+    Checking terrascale v0.1.0 (/home/mariogk/.t3/worktrees/ts-rust/sdk-rust-api-contracts-20261013)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.36s
+
+COMMAND: nice -n 19 cargo fmt --all --check
+EXIT: 0
+(no output)
