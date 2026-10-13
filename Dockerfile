@@ -4,7 +4,10 @@
 # ts-auth builds ts-dotnet from source (named context `ts-dotnet`, a checkout); its tests start the TerraBase built from
 # this same tree (Makefile TERRABASE_BINARY).
 
-FROM mcr.microsoft.com/dotnet/sdk:11.0 AS base
+# Match global.json and keep the SDK's targeting packs aligned with locked NuGet dependencies.
+FROM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.1-resolute@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675 AS sdk
+
+FROM sdk AS base
 # BuildKit exposes the shared host's CPUs; test hosts use the alpha slot's eight-CPU budget.
 # Publish/runtime stages have their own base and retain Fly's automatic CPU discovery.
 ARG DOTNET_PROCESSOR_COUNT=8
@@ -98,7 +101,7 @@ COPY --from=slow-terrabase-run /slow /terrabase/
 # runtime-deps base (6 MB: no shell, no package manager). These stages skip the test stages: CI deploys only a tree whose
 # `test` passed (scripts/fly/fast-gate.sh). Run admin commands with `fly ssh console -C '/app/<binary> ...'`.
 # root: Fly mounts volumes root-owned.
-FROM mcr.microsoft.com/dotnet/sdk:11.0 AS publish-terrabase
+FROM sdk AS publish-terrabase
 # CI=true turns on locked-mode restore (Directory.Build.props).
 ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 NUGET_SCRATCH=/nuget-scratch
 WORKDIR /src/terrascale
@@ -108,7 +111,7 @@ ARG TERRABASE_REVISION
 RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
     dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --output /out
 
-FROM mcr.microsoft.com/dotnet/sdk:11.0 AS publish-ts-auth
+FROM sdk AS publish-ts-auth
 ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 NUGET_SCRATCH=/nuget-scratch
 COPY --from=ts-dotnet --exclude=.git . /src/ts-dotnet
 WORKDIR /src/terrascale
