@@ -1,0 +1,106 @@
+{
+  "coreCommit": "567bfd33fe1257a922c4f8df4e8217517fc06268",
+  "tables": [
+    {
+      "name": "orders",
+      "source": "public.orders",
+      "collection": "orders",
+      "primaryKey": ["order_id"],
+      "columns": [
+        ["order_id", "text", "string", false],
+        ["amount", "numeric", "decimal_string", false],
+        ["label", "text", "string", false],
+        ["note", "text", "string", true],
+        ["raw", "bytea", "base64", false],
+        ["optional_raw", "bytea", "base64", true],
+        ["day", "date", "date", false],
+        ["local_time", "timestamp", "timestamp", false],
+        ["instant", "timestamptz", "timestamptz", false],
+        ["state", "text", "string", false],
+        ["tags", "text", "string", false],
+        ["duration", "text", "string", false]
+      ],
+      "constraints": [{"kind": "primary_key", "name": null, "columns": ["order_id"], "references": null, "enforced": false}],
+      "coreChecksum": "3d55db667a1e8c18b490792bc247197ce519fd10bf2b3c512326048540fd681d",
+      "documents": [
+        {
+          "id": "18446744073709551615",
+          "document": {
+            "order_id": "18446744073709551615",
+            "amount": "12345678901234567890123456789012345.123456789012345678901234567890",
+            "label": "Olá 漢字\tline\nquote' slash\\",
+            "note": "\\N",
+            "raw": "AApc/w==",
+            "optional_raw": "AQ==",
+            "day": "2024-02-29",
+            "local_time": "2024-02-29T12:34:56.123456",
+            "instant": "2024-02-29T12:34:56.123456Z",
+            "state": "paid",
+            "tags": "red,blue",
+            "duration": "-838:59:59.123456"
+          }
+        },
+        {
+          "id": "0",
+          "document": {
+            "order_id": "0",
+            "amount": "0.000000000000000000000000000000",
+            "label": "",
+            "note": null,
+            "raw": "/////w==",
+            "optional_raw": null,
+            "day": "1000-01-01",
+            "local_time": "1000-01-01T00:00:00.000000",
+            "instant": "1970-01-01T00:00:01.000000Z",
+            "state": "a'b",
+            "tags": "",
+            "duration": "00:00:00.000000"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Line \"Items\"",
+      "source": "public.\"Line \"\"Items\"\"\"",
+      "collection": "line__items_",
+      "primaryKey": ["order", "part:id"],
+      "columns": [
+        ["order", "text", "string", false],
+        ["part:id", "text", "string", false],
+        ["a`b", "bigint", "integer", false]
+      ],
+      "constraints": [
+        {"kind": "primary_key", "name": null, "columns": ["order", "part:id"], "references": null, "enforced": false},
+        {"kind": "unique", "name": "item_unique", "columns": ["part:id"], "references": null, "enforced": false},
+        {"kind": "foreign_key", "name": "item_order", "columns": ["order"], "references": "public.orders(order_id)", "enforced": false}
+      ],
+      "coreChecksum": "f765268918899d7fa33a0cef22ee900ea734b1c388633f027cbc9e4383e06f30",
+      "documents": [
+        {
+          "id": "18446744073709551615:x%3A%25",
+          "document": {"order": "18446744073709551615", "part:id": "x:%", "a`b": 1}
+        }
+      ]
+    },
+    {
+      "name": "chunked",
+      "source": "public.chunked",
+      "collection": "chunked",
+      "primaryKey": ["id"],
+      "columns": [["id", "bigint", "integer", false], ["payload", "text", "string", false]],
+      "constraints": [{"kind": "primary_key", "name": null, "columns": ["id"], "references": null, "enforced": false}],
+      "coreChecksum": "97931feea9aea377947ea0ef79f7b2ac499ec765e2b5328c3e62c48cfd8e0070",
+      "documents": [{"id": "100", "document": {"id": 100, "payload": {"$repeat": ["漢", 25000]}}}]
+    },
+    {
+      "name": "empty_table",
+      "source": "public.empty_table",
+      "collection": "empty_table",
+      "primaryKey": ["id"],
+      "columns": [["id", "bigint", "integer", false]],
+      "constraints": [{"kind": "primary_key", "name": null, "columns": ["id"], "references": null, "enforced": false}],
+      "coreChecksum": "0000000000000000000000000000000000000000000000000000000000000000",
+      "documents": []
+    }
+  ]
+}
