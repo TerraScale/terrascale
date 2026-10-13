@@ -268,6 +268,14 @@ happens until its acceptance finishes. Acceptance on the freeze SHA, in this ord
 `terrascale-previews-515`, user-approved (Q-E2E-APP, 21:39Z) and verified by the coordinator. It needs no new
 machines.
 - Machines: `68379eec015e58` (gru), `18556ddb9d2548` (sjc) and `7811155eb22568` (fra). **E2E-LIVE owns the app.**
+- **#173** (E2E-LIVE, exploratory): a three-region live run on `ts-terrabase-e2e` against candidate `9667b7ef` (the
+  R10a stack `0facba2f`, #149, `e406d61a` and #151's harness), **not main**. It shows two **acceptance gaps for the
+  freeze**:
+  - **Partition and rejoin cannot run on Fly without a faults image, and that image is not approved.** The freeze
+    acceptance requires partition and rejoin. It needs a decision: approve the faults image, or accept partition and
+    rejoin from the local `RegionProcesses` and `PeerLink` E2E as the evidence, labelled not-live.
+  - **The PITR / non-empty backup restore has not run yet** (prepared in `scripts/counts.py pitr`).
+  - Run 3 was invalidated by CPU throttling (F5); its failures are not counted.
 - **The only open item is the tenant credential.** E2E-LIVE is moving its runs to the internal operator path, which
   needs no credential. If that path cannot cover a scenario, a **user-run key handoff** is listed as pending; agents
   never handle the key.
