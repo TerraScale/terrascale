@@ -141,6 +141,44 @@ public sealed class TsAuthPlatformJourneyTests
         await Assert.That(platform.Producer.Failures).IsEmpty();
     }
 
+    [Test]
+    public async Task WritesValidateAgainstCurrentTsAuthIdentityNotStoredCopies()
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var owner = platform.Principal("platform-writer");
+        using var client = platform.Client();
+        using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var personal = (await Me(client)).GetProperty("organizationId").GetString()!;
+        // Review of #13 at 2a04b403: a project made at ts-auth showed in context but saving its cap answered 404.
+        var outside = platform.Producer.AddProject(personal, "Made outside", owner.Subject);
+        var csrf = await HttpJourney.CsrfAsync(client, "/organization");
+        using (var cap = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/usage/spending-controls", new() { ["_csrf"] = csrf, ["projCap_" + outside] = "12.50" }))
+        {
+            await Assert.That(cap.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(cap.Headers.Location?.OriginalString).IsEqualTo("/usage?tab=settings&saved=ok");
+        }
+        var project = (await Context(client)).GetProperty("organizations").EnumerateArray().Single(org => org.GetProperty("id").GetString() == personal)
+            .GetProperty("projects").GetProperty(outside);
+        await Assert.That(project.GetProperty("spendCapCents").GetInt64()).IsEqualTo(1250);
+        await Assert.That(project.GetProperty("name").GetString()).IsEqualTo("Made outside");
+
+        // Review of #13 at 2a04b403: confirming deletion with the name ts-auth now holds answered 422.
+        var business = platform.Producer.AddOrganization("Named before", owner.Subject, owner.Email);
+        csrf = await HttpJourney.CsrfAsync(client, "/organization");
+        using (var switched = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-organization", new()
+        { ["_csrf"] = csrf, ["organizationId"] = business, ["returnUrl"] = "/organization" }))
+            await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        platform.Producer.Rename(business, "Renamed at ts-auth");
+        csrf = await HttpJourney.CsrfAsync(client, "/organization");
+        using (var deletion = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/organization/deletion", new()
+        { ["_csrf"] = csrf, ["confirmation"] = "Renamed at ts-auth" }))
+            await Assert.That(deletion.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var organization = (await Context(client)).GetProperty("organizations").EnumerateArray().Single(org => org.GetProperty("id").GetString() == business);
+        await Assert.That(organization.GetProperty("deletionRequested").GetBoolean()).IsTrue();
+        await Assert.That(organization.GetProperty("name").GetString()).IsEqualTo("Renamed at ts-auth");
+        await Assert.That(platform.Producer.Failures).IsEmpty();
+    }
+
     private static async Task<JsonElement> Me(HttpClient client) => JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me")).RootElement.Clone();
     private static async Task<JsonElement> Context(HttpClient client) => JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/context")).RootElement.Clone();
 
