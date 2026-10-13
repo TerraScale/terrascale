@@ -1,9 +1,6 @@
 --- a/src/TerraScale.Dashboard/Features/Profile/ProfileEndpoints.cs
 +++ b/src/TerraScale.Dashboard/Features/Profile/ProfileEndpoints.cs
-@@ -4,7 +4,7 @@
- 
- namespace TerraScale.Dashboard.Features.Profile;
- 
+@@ -7,4 +7,4 @@
 -public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", string Error = "", string Status = "", IReadOnlyList<ProfileToken>? Tokens = null, CreatedProfileToken? CreatedToken = null, IReadOnlyList<DashboardSessionInfo>? Sessions = null)
 +public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", string Error = "", string Status = "", IReadOnlyList<ProfileToken>? Tokens = null, CreatedProfileToken? CreatedToken = null, IReadOnlyList<DashboardSessionInfo>? Sessions = null, string? DraftName = null, string? DraftPhone = null)
  {
