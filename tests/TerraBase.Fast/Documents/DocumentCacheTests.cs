@@ -2,6 +2,8 @@ using System.Diagnostics.Metrics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
@@ -272,10 +274,13 @@ public sealed class DocumentCacheTests
     {
         using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         const long Budget = 4 * 1024 * 1024;
+        var completed = new CompletedCacheRead();
+        // This reservation check owns telemetry flushing; hosted ticks must not retain new observations.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var management = await ManagementApi.StartAsync(settings =>
         {
             settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        });
+        }, services => services.AddSingleton<IStartupFilter>(completed), clock);
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "closing", cancellationToken: operationTimeout.Token);
         var client = tenant.Data;
@@ -314,7 +319,9 @@ public sealed class DocumentCacheTests
         await StorageFixture.ObserveBodiesAsync(store, "paused_body");
 
         var path = $"/v1/projects/{tenant.ProjectId}/databases/closing/collections/items/documents" + (list ? "" : $"/by-key?id={StorageFixture.Id("a")}");
-        var pending = client.GetAsync(new Uri(path, UriKind.Relative), operationTimeout.Token);
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(path, UriKind.Relative));
+        request.Headers.Add("X-Observe-Cache-Completion", "true");
+        var pending = client.SendAsync(request, operationTimeout.Token);
         HttpResponseMessage? response = null;
         Exception? primaryFailure = null;
         try
@@ -329,6 +336,9 @@ public sealed class DocumentCacheTests
             using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(operationTimeout.Token));
             var document = list ? json.RootElement.GetProperty("items")[0] : json.RootElement;
             await Assert.That(document.GetProperty("document").GetProperty("name").GetString()).IsEqualTo("first");
+
+            // Reading the body does not await the server's middleware cleanup or final usage observation.
+            await completed.Completion.Task.WaitAsync(operationTimeout.Token);
 
             // Authentication also cached an API-key document; disposal must release it synchronously,
             // and the completed storage read must retain no reservation.
@@ -691,39 +701,39 @@ public sealed class DocumentCacheTests
         var transaction = await store.BeginTransactionAsync(write: false, deadline.Token);
         await using var transactionCleanup = transaction;
         var observed = new System.Collections.Concurrent.ConcurrentQueue<(string Name, string Version)>();
-        var done = false;
         var stale = 0;
         var reads = 0;
 
         async Task ReadAsync(bool list, CancellationToken cancellationToken)
         {
-            while (!Volatile.Read(ref done))
+            var floor = Volatile.Read(ref acknowledged);
+            var document = list
+                ? await ListedDocumentAsync(tenant, cancellationToken)
+                : await GetAsync(tenant, "race", "items", "hot", cancellationToken);
+            var version = long.Parse(document.Name, System.Globalization.CultureInfo.InvariantCulture);
+            observed.Enqueue((document.Name, document.Version));
+            Interlocked.Increment(ref reads);
+            if (version < floor)
             {
-                var floor = Volatile.Read(ref acknowledged);
-                var document = list
-                    ? await ListedDocumentAsync(tenant, cancellationToken)
-                    : await GetAsync(tenant, "race", "items", "hot", cancellationToken);
-                var version = long.Parse(document.Name, System.Globalization.CultureInfo.InvariantCulture);
-                observed.Enqueue((document.Name, document.Version));
-                Interlocked.Increment(ref reads);
-                if (version < floor)
-                {
-                    Interlocked.Increment(ref stale);
-                }
+                Interlocked.Increment(ref stale);
             }
         }
 
-        var readers = Enumerable.Range(0, 6).Select(i => Task.Run(() => ReadAsync(list: i % 3 == 0, deadline.Token), deadline.Token)).ToList();
+        var readers = new List<Task>();
         Exception? primaryFailure = null;
         try
         {
             for (var i = 1; i < Writes; i++)
             {
                 var name = (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                // Each writer wave owns six overlapping reads; scheduling cannot create an unbounded read flood.
+                readers = [.. Enumerable.Range(0, 6).Select(reader => ReadAsync(list: reader % 3 == 0, deadline.Token))];
                 written[name] = await PutAsync(tenant, "race", "items", "hot", name, deadline.Token);
                 Volatile.Write(ref acknowledged, i + 1);
+                await Task.WhenAll(readers).WaitAsync(deadline.Token);
             }
-            Volatile.Write(ref done, true);
+
+            readers = [.. Enumerable.Range(0, 6).Select(reader => ReadAsync(list: reader % 3 == 0, deadline.Token))];
             await Task.WhenAll(readers).WaitAsync(deadline.Token);
         }
         catch (Exception error)
@@ -733,13 +743,12 @@ public sealed class DocumentCacheTests
         }
         finally
         {
-            Volatile.Write(ref done, true);
             deadline.Cancel();
             await StoragePoolTests.JoinCleanupAsync(readers, primaryFailure);
         }
 
         await Assert.That(acknowledged).IsEqualTo(Writes);
-        await Assert.That(reads).IsGreaterThan(0);
+        await Assert.That(reads).IsEqualTo(6 * Writes);
         await Assert.That(stale).IsEqualTo(0);
         // Every body read came with the token its write answered.
         await Assert.That(observed.Where(read => written[read.Name] != read.Version).ToList()).IsEmpty();
@@ -812,6 +821,29 @@ public sealed class DocumentCacheTests
         using var page = JsonDocument.Parse(text);
         return [.. page.RootElement.GetProperty("items").EnumerateArray().Select(document =>
             $"{document.GetProperty("id").GetString()}:{document.GetProperty("document").GetProperty("name").GetString()}")];
+    }
+
+    private sealed class CompletedCacheRead : IStartupFilter
+    {
+        public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use(async (context, following) =>
+            {
+                if (context.Request.Headers.ContainsKey("X-Observe-Cache-Completion"))
+                {
+                    context.Response.OnCompleted(() =>
+                    {
+                        Completion.TrySetResult();
+                        return Task.CompletedTask;
+                    });
+                }
+
+                await following(context);
+            });
+            next(app);
+        };
     }
 
     private sealed class ObservedMemoryBudget(IMemoryBudget inner, long cacheLimit) : IMemoryBudget
