@@ -1,6 +1,11 @@
 using System.Net;
 using System.Text.Json;
 using TerraBase.Primitives;
+using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
+using TerraBase.Features.Qos;
+using TerraBase.Tenancy;
+using TerraBase.Fast.Storage;
 
 namespace TerraBase.Fast.Documents;
 
@@ -204,6 +209,18 @@ public sealed class TransactionApiTests
 
         var tooMany = await api.TransactAsync([.. Enumerable.Range(0, 1025).Select(_ => new { op = "create", collection = "items", document = new { } })]);
         var counts = await api.TransactAsync([.. Enumerable.Range(0, 17).Select(_ => new { op = "assert_count", collection = "items", lte = 1 })]);
+        // The operation limit is plan-independent; this boundary does not need per-document storage-quota accounting.
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var directory = api.Server.Services.GetRequiredService<ITenantDirectory>();
+        var actualPlan = await directory.PlanAsync(api.Tenant.OrganizationId, CancellationToken.None);
+        await Assert.That(actualPlan is PlanTier.Enterprise).IsTrue();
+        var database = await api.Tenant.ContextAsync(api.Server, DocumentApi.Database);
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
+        var entry = await api.Server.Services.GetRequiredService<IStorageQuota>().EnterAsync(database, store, CancellationToken.None);
+        using (var lease = entry is StorageQuotaLease admitted ? admitted : throw new InvalidOperationException("quota unavailable"))
+        {
+            await Assert.That(lease.RequiresAccounting).IsFalse();
+        }
         var maximum = await api.TransactAsync([.. Enumerable.Range(0, 1024).Select(_ => new { op = "create", collection = "items", document = new { } })]);
         var listed = await api.SendAsync(HttpMethod.Post, api.Query, new { limit = 1, count = true });
 
