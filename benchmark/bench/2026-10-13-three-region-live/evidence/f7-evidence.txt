@@ -1,0 +1,19 @@
+03:04:48
+{"open":false,"trusted":false,"pending":["restored to an older copy: an operator's decision"],"digest":"c4ef45bc56f1e5a8c89eeea8441c04ef70381c52f7e40a11addaa9eb60906b1d"}
+{"open":true,"trusted":true,"pending":[],"digest":"c4ef45bc56f1e5a8c89eeea8441c04ef70381c52f7e40a11addaa9eb60906b1d"}
+{"open":false,"trusted":true,"pending":["68379eec015e58"],"digest":"1c056ebaec9dd862f416e66db46dd7c69a480b303ab58b2e52ee08c86ab2aed3"}
+2026-10-13T03:02:36Z app[68379eec015e58] gru [info] INFO Sending signal SIGINT to main child process w/ PID 650
+2026-10-13T03:02:41Z app[68379eec015e58] gru [info] INFO Sending signal SIGTERM to main child process w/ PID 650
+2026-10-13T03:02:46Z app[68379eec015e58] gru [warn]Virtual machine exited abruptly
+2026-10-13T03:02:54Z app[68379eec015e58] gru [info]{"time":"2026-10-13T03:02:54.061150Z","level":"WARN","msg":"This machine's catalog (head {_startHead}) is behind its anchor (head {head}): it was restored to an older copy; the catalog gate stays closed until an operator decides","service":"terrabase","component":"TerraBase.Features.Replication.CatalogGate","_startHead":33972,"head":33986}
+2026-10-13T03:03:47Z app[7811155eb22568] fra [info]{"time":"2026-10-13T03:03:47.166119Z","level":"WARN","msg":"The catalog could not be pulled from machine {Peer} in {Region}; this machine stays closed and tries again","service":"terrabase","component":"TerraBase.Features.Replication.CatalogGate","Peer":"68379eec015e58","Region":"gru","error":"System.Threading.Tasks.TaskCanceledException: The request was canceled due
+# gru machine log (flyctl logs -i 68379eec015e58), 2026-10-13:
+03:01:15Z INFO Sending signal SIGINT to main child process; 03:01:16Z Main child exited normally with code: 0   (stop 1: clean)
+03:01:23Z Machine started; 03:01:30Z "The catalog is verified against 2 other machines; this machine serves"
+03:02:36Z INFO Sending signal SIGINT to main child process w/ PID 650
+03:02:41Z INFO Sending signal SIGTERM to main child process w/ PID 650
+03:02:46Z [warn] Virtual machine exited abruptly                                                                  (stop 2: shutdown did not finish in 10 s)
+03:02:50Z Machine started
+03:02:53Z WARN Preserved database file without a catalog registration: /data/data/.backup/01M4SKACGK87NS6NJV51Q63CCZ.frames (and 01M4SKACVMF6TK3BT6ZVEME9M2, 01M4SKACR437RWCTBG2H9NTJ8F)
+03:02:54Z WARN This machine's catalog (head 33972) is behind its anchor (head 33986): it was restored to an older copy; the catalog gate stays closed until an operator decides
+# /catalog-gate at 03:04Z: gru {open:false, trusted:false, pending:["restored to an older copy: an operator's decision"]}; sjc {open:true, trusted:true}; fra {open:false, trusted:true, pending:["68379eec015e58"]}

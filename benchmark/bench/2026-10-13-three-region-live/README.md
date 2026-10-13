@@ -6,16 +6,18 @@ benchmark numbers. Final acceptance needs the same run at one main SHA (prod-reb
 
 ## Not proven yet (read first)
 
-- **Run 3 was invalidated by CPU throttling (F5).** Partway through, Fly throttled the shared-cpu-1x machines to their
-  baseline. The run was stopped and no result from that point on is counted.
-- **Point-in-time restore did not run.** It is prepared (`scripts/counts.py pitr`) and waits for a run on machines that
-  are not throttled.
-- **Partition and rejoin did not run.** Fly cannot cut 6PN between two machines, and the harness skips this case on Fly
-  by design. A partition would need a faults image with `ip6tables` (runbook in `docs/terrabase/e2e-disposable-app.md`),
-  which is not approved.
-- **R8 (changes feed), R9 (SQL writes) and R11 are not in the candidate.** E10, E11, E13 and E15 stay expected failures.
-  E11's failure signature is a 401 on `/sql` with an API key, not R9.
-- **Two fault tests failed (run 2a).** Their causes are a harness timing gap and F3; see Failures.
+- **Point-in-time restore still has not run.** Run 5 wrote 500 documents and then 100 later ones, but the restore-window
+  call failed in the script: the internal listener speaks h2c, and the checker used HTTP/1.1 (fixed since). Then F7 closed
+  two of the three gates. The restore runs once the cluster is reopened.
+- **F7: a hard stop lost anchored catalog commits.** A machine whose shutdown passed Fly's kill timeout came back with its
+  catalog head behind its restore anchor. Its gate now waits for an operator, and so does fra's, which waits for it. The
+  cluster is stopped in that state (2 of 3 gates closed) for the owners.
+- **The synchronous-second-region semantics are not tested.** They wait for R6-FIX.
+- **Run 3 (shared-cpu-1x) was invalidated by CPU throttling (F5).** It was stopped. Runs 4 and 5 ran on performance-1x.
+- **R8, R9 and R11 are not in the candidate.** E10, E11 and E15 stay expected failures; E11's signature is a 401 on
+  `/sql` with an API key, not R9.
+- **Two fault tests still fail in run 5.** The cause is the restarted machine's closed gate (F7), not a lost write; see
+  Failures.
 
 ## What was tested
 
@@ -24,9 +26,9 @@ benchmark numbers. Final acceptance needs the same run at one main SHA (prod-reb
 | App / org | `ts-terrabase-e2e` / `terrascale-previews-515` (disposable; synthetic data only) |
 | Commit | `9667b7efa18ee99ef4614bfdad68aac78932dda3`, local branch `test/e2e-live-candidate` |
 | Commit contents | R10a `0facba2f` (R6, R7, R10a-1/2/3, review fixes, F1/F2 fixes) + #149 health identity + `e406d61a` + #151 harness + a candidate-only Gaps list. Product code equals `b54bf0a0`; the last two commits touch `tests/` only. |
-| Image | `registry.fly.io/ts-terrabase-e2e:9667b7ef` (`sha256:8d4cf4c7…`). Self-contained `terrabase` built locally on the chiseled runtime-deps base (`scripts/Containerfile`). |
+| Image | Runs 1–3: `registry.fly.io/ts-terrabase-e2e:9667b7ef` (`sha256:8d4cf4c7…`), the self-contained `terrabase` on the chiseled runtime-deps base (`scripts/Containerfile`). Runs 4–5: the **test-only faults image** `:9667b7ef-faults` (`sha256:84260b8d…`): the same binary on debian-slim with `ip6tables` (`scripts/Containerfile.faults`). It exists only for ts-terrabase-e2e, as COS approved, and never in production. |
 | Storage format | `4-44d5cdc5b81c` |
-| Machine size | shared-cpu-1x, 512 MB, 1 GB swap, one 1 GB volume each |
+| Machine size | runs 1–3: shared-cpu-1x, 512 MB, 1 GB swap. Runs 4–5: **performance-1x, 2 GB** (COS Q-E2E-CPU = A). One 1 GB volume each. |
 | Pinning | Every request carries `fly-force-instance-id`. Every answer must name the expected `X-TerraBase-Region` and `X-TerraBase-Machine`. Each machine's `/healthz` `revision` was checked before any write. |
 | Tests | `tests/TerraBase.E2E` at `9667b7ef`, plus the independent checker `scripts/counts.py` (its own canonical form and SHA-256 digest) |
 
@@ -41,6 +43,35 @@ The Tigris bucket `terrascale-ts-terrabase-e2e` was reused across every genesis.
 objects, and `/backupz` answered 200 on all three machines (E5g).
 
 ## Results
+
+### Runs 4 and 5 on performance-1x (2026-10-13 02:38–03:04Z; `evidence/live-run-r4.txt`, `evidence/live-run-r5.txt`)
+
+| Check | Result |
+| --- | --- |
+| Six directions ×3, machine-pinned | **18/18 pass.** Latency (ms): SJC→GRU 29/25/26, SJC→FRA 296/620/294, GRU→SJC 251/495/226, GRU→FRA 370/293/297, FRA→SJC 221/218/218, FRA→GRU 38/81/28 |
+| ThreeRegionE2ETests | **14/14 pass.** Bulk 3,000 converged in 3.2 s; three-way same field in 0.9 s; burst of 40 overwrites per region in 13 s |
+| LatticeE2ETests | E8, E9, E14 **pass**. E10, E11, E15 are expected failures (slices absent) |
+| ReplicationE2ETests | **6/6 pass** |
+| Independent 3,000-doc load | count 3000 and digest `fd841fae7db7c267f391466a6e7a6c36b5bbe03a9a934b656747f8a495597898` in gru, sjc and fra, 8.8 s after the last ack; unchanged after the fault tests and after every kill and restart below |
+| SIGKILL, then clean restart, of each machine | gru: `readyz` 200 after 10 s and 7 s. sjc: 38 s and 8 s. fra: 57 s and 8 s. Each time, gates equal within 5–30 s and the 3,000 docs had the same digest in all 3 regions |
+| Region_down_then_back…, FlyOutageE2ETests | pass |
+| **Partition (fra cut off from gru + sjc)** | **pass**, see below |
+| Fault tests with the start-after-stopped shim (`scripts/shim/flyctl`, H1 workaround outside R3's files) | Writes_acknowledged_just_before… **pass**. A_restarted_region… and Restart_in_the_middle… **fail**: after gru's second stop, its gate answered 503 `catalog_unverified` (F7) |
+
+**Partition and rejoin** (`counts.py partition`). The mechanism uses `ip6tables` on the test-only image, through
+`fly ssh console`. On fra, every packet to and from gru's and sjc's 6PN addresses is dropped; on gru and sjc, every
+packet to and from fra's. Both directions, both ends. Fly Proxy's client traffic still reaches every machine, so all
+three keep accepting writes.
+
+| Step (UTC) | gru | sjc | fra |
+| --- | --- | --- | --- |
+| 02:59:43 cut; each region writes 300 docs of its own (10.8 s) | | | |
+| +30 s, during the cut | 601 docs | 601 docs (same digest as gru) | **301 docs**: only its own 300 + the shared one |
+| 03:00:55 healed (72 s after the cut) | | | |
+| +10.4 s | 901 | 901 | 901, digest `c3ea48e9…` equal in all three = the union of every write |
+
+This proves the cut was real: no write crossed it for 30 s, in either direction. Concurrent same-document edits under
+partition are covered by the ThreeRegion suites (unpartitioned), not by this step.
 
 ### Genesis (F1 fix) and the runbook's G2 procedure
 
@@ -125,6 +156,8 @@ count and digest re-read from every region.
 | **F4** | R3 / storage | After all three restarted together, sjc held one database's writer for 311 s "between storage calls" (holder: "a write transaction"). Incoming `Replication/Push` durable writes waited 15 s and were cancelled, backups failed with `StorageBusy`, and `readyz` stayed 503 for 5 min. It cleared by itself at 02:03:03Z. This happened while sjc was CPU-throttled (F5). | `evidence/r2b-all-restart.txt` |
 | **F5** | COS / capacity | **shared-cpu-1x cannot hold TerraBase's steady CPU.** Measured demand (user + system) is 5–16 % of one vCPU per machine at low load. The baseline is 6.25 %, so the burst balance (about 4,400–5,000 s at start) drains. After that Fly throttles: steal reached 92 % in sjc from 01:31 to 02:26Z and in gru from 02:01Z, while user CPU stayed at about 8 %. Effects: durable commits took 3.5–5 s, peers logged "did not acknowledge a batch in time", streams reconnected, anti-entropy failed, and run-3 latencies rose to 0.6–30 s (burst: 362 s). Production's shared-cpu-2x has a 12.5 % baseline: idle fits, but bursts drain it. | `evidence/cpu-history.txt` (Fly Prometheus `fly_instance_cpu` by mode, `fly_instance_cpu_balance`) |
 | **F6** | R10a | An API-key revocation (`DELETE …/api-keys/{id}`, which is anchored) on throttled gru hung for more than 4 minutes with no answer: neither the 500 the invariants describe nor success. The same revocation on sjc answered at once. | `evidence/live-run-r3.out` |
+| **F7** | R10a + T1 (durability) | A stop whose shutdown did not finish in time lost catalog commits that were already anchored. gru got SIGINT at 03:02:36Z and SIGTERM at 03:02:41Z, then "Virtual machine exited abruptly" at 03:02:46Z. After the restart: "catalog (head 33972) is behind its anchor (head 33986): it was restored to an older copy". gru's gate stays closed until an operator decides, and fra's gate (pending `68379eec015e58`) stays closed with it: one hard stop takes 2 of 3 regions down. This candidate lacks main's #144 (`_system` synchronous=FULL), which may be why 14 anchored commits were not on disk. Either way the anchor got ahead of local durability. | `evidence/f7-evidence.txt` |
+| **F8** | TerraBase / deploy config | Graceful shutdown did not finish within Fly's 5 s SIGINT window, and its SIGTERM window ended in an abrupt VM exit. The first stop of the same machine (03:01:15Z) exited cleanly in 1 s. Either shutdown must bound itself, or `kill_timeout` must be raised. | `evidence/f7-evidence.txt` |
 | H1 | R3 (#151 harness) | `Restart_in_the_middle_of_replication_loses_no_write` fails on Fly: `StartAgainAsync` runs `flyctl machine start` while the machine is still stopping ("machine still active, refusing to start"). The harness should wait for `stopped` first. | `evidence/outcomes.txt` (run 2a) |
 | H2 | R3 (harness) | `Writes_acknowledged_just_before_their_region_stops…` failed at teardown: gru was crash-looping on F3 after its restart, so the collection `DELETE` got no TerraBase answer. | `evidence/outcomes.txt` |
 | — | — | A key minted on gru answered 401 on fra for a few seconds after fra's SIGKILL: the key had not replicated there yet. Catalog changes are eventually consistent across regions, so this is not counted as a failure. | `evidence/r2b-restarts.txt` |
@@ -132,6 +165,32 @@ count and digest re-read from every region.
 Run 3 (02:05–02:26Z) was stopped on purpose. Its six-direction runs passed (18/18). After that the suites failed on
 timeouts while gru and sjc were throttled (F5): ThreeRegion 12/14, Lattice 3/6, Replication 0/6, and every fault test
 failed. These are recorded in `evidence/live-run-r3.out` and not counted as replication defects.
+
+## Capacity and production sizing (F5)
+
+| Machine | Mean busy (user + system) during the run | p50 | p90 | Max | Min free memory |
+| --- | --- | --- | --- | --- | --- |
+| gru, performance-1x | 33 % of 1 vCPU | 20 % | 73 % | 99 % | 1,516 MB of 2 GB |
+| sjc, performance-1x | 24 % | 15 % | 48 % | 91 % | 1,475 MB |
+| fra, performance-1x | 24 % | 13 % | 54 % | 100 % | 1,463 MB |
+
+These are 26 one-minute samples per machine from Fly's Prometheus, 02:38–03:04Z, under the full test load
+(`evidence/cpu-perf1x.txt`). At rest on shared-cpu-1x, demand was 5–8 % (`evidence/cpu-history.txt`).
+
+What shared-cpu-2x 512 MB (production's plan) would have needed:
+- **CPU.** Its baseline is 12.5 % of one vCPU (2 × 6.25 %). The test load's mean is 2–2.7× that baseline and its p90 is
+  4–6×. On shared-cpu-1x the same load drained a full burst balance in about 25–35 minutes, after which Fly throttled
+  the machines (steal up to 92 %). shared-cpu-2x would last longer, roughly twice the balance and baseline, but any
+  sustained load above about 12.5 % throttles it the same way.
+- **Memory.** Free memory on 2 GB never fell below 1.46 GB, so TerraBase used about 0.5–0.55 GB. On 512 MB that runs
+  into swap; on shared-cpu-1x 512 MB, free memory fell to 135 MB.
+
+Recommendation (a user and COS decision, because it is recurring spend):
+1. **Dedicated CPU for TerraBase in production:** performance-1x 2 GB per region. List price is $33.00/30 days in iad.
+   With the regional multipliers that is $53.5 (gru), $39.3 (sjc) and $38.0 (fra), about $131/month for three. The spend ledger estimates
+   shared-cpu-2x 512 MB at about $7.5 per machine.
+2. **If shared CPU must stay:** treat 12.5 % of a vCPU as the sustained ceiling. Alert on `fly_instance_cpu_balance`
+   falling and on steal; expect throttling under replication catch-up and bulk loads. Use at least 1 GB of memory.
 
 ## Credentials (no values anywhere)
 
@@ -143,11 +202,14 @@ failed. These are recorded in `evidence/live-run-r3.out` and not counted as repl
   inherited environment, and revoked at exit. 0 were listed on the current tenant after the run.
 - **Run 3.** One key, `01M4SG3YY86SS55QKEXBKQJWW8` (24 h expiry, documents read/write on one project), revoked at
   02:30Z through sjc; 0 listed afterwards.
+- **Runs 4 and 5.** Key `01M4SJ0QJ23AB7CEBD8VTWA2PH` (02:38:41Z) was revoked at 02:55Z; key
+  `01M4SK5FV80P67MBQJ4N8Q2GHB` (02:58:46Z) was revoked at 03:03:51Z through sjc. Both were 24 h keys, documents read/write
+  on project `01M4SD7D7B2C3CZ4W41F3ZY2FK` only, held in memory only.
 - Key ids and expiries are recorded in `.cos/fly-resource-ledger.md`.
 
 ## Cost
 
-About 7.5 machine-hours of shared-cpu-1x 512 MB (≈ $0.05 at $0.0058–0.0083/h). Volumes peaked at 9 × 1 GB from 01:07 to 02:04Z; 3 GB
+About 7.5 machine-hours of shared-cpu-1x 512 MB (≈ $0.05), plus performance-1x 2 GB × 3 from 02:37 to 03:05Z (≈ 0.47 h × $0.181/h ≈ $0.09). Total ≈ $0.15. Volumes peaked at 9 × 1 GB from 01:07 to 02:04Z; 3 GB
 remain. Transfer was a few hundred MB. The three machines are stopped. Recurring now: ≈ $0.45/month for volumes plus
 stopped rootfs.
 
