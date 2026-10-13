@@ -181,6 +181,35 @@ public sealed class TsAuthPlatformJourneyTests
         await Assert.That(platform.Producer.Failures).IsEmpty();
     }
 
+    // Page audit UAN-01: ts-auth audit events carry no severity, which must not become "info".
+    [Test]
+    public async Task AuditEventsWithoutSeverityStayNotReportedInFiltersAndExports()
+    {
+        await using var platform = await PlatformScenario.StartAsync();
+        var owner = platform.Principal("platform-auditor");
+        using var client = platform.Client();
+        using (var login = await HttpJourney.LoginAsync(client, owner.Email, owner.Password)) await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        var business = platform.Producer.AddOrganization("Audit company", owner.Subject, owner.Email);
+        var target = "unreported-" + business;
+        platform.Producer.AddAudit(business, owner.Subject, "member.role_changed", target);
+        var csrf = await HttpJourney.CsrfAsync(client, "/organization");
+        using (var switched = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/switch-organization", new()
+        { ["_csrf"] = csrf, ["organizationId"] = business, ["returnUrl"] = "/organization" }))
+            await Assert.That(switched.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+
+        var all = await client.GetStringAsync("/organization?tab=audit&range=24h");
+        await Assert.That(all.Contains(target, StringComparison.Ordinal)).IsTrue();
+        await Assert.That(all.Contains("Severity is not reported for some provider events.", StringComparison.Ordinal)).IsTrue();
+        await Assert.That((await client.GetStringAsync("/organization?tab=audit&range=24h&severity=info")).Contains(target, StringComparison.Ordinal)).IsFalse();
+        await Assert.That((await client.GetStringAsync("/organization?tab=audit&range=24h&severity=unknown")).Contains(target, StringComparison.Ordinal)).IsTrue();
+
+        var csv = (await client.GetStringAsync("/audit/export?format=csv&range=24h")).Split("\r\n").Single(line => line.Contains(target, StringComparison.Ordinal));
+        await Assert.That(csv.Split(',')[7]).IsEqualTo("\"unknown\"");
+        using var info = JsonDocument.Parse(await client.GetStringAsync("/audit/export?format=json&range=24h&severity=info"));
+        await Assert.That(info.RootElement.GetProperty("count").GetInt32()).IsEqualTo(0);
+        await Assert.That(platform.Producer.Failures).IsEmpty();
+    }
+
     private static async Task<JsonElement> Me(HttpClient client) => JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me")).RootElement.Clone();
     private static async Task<JsonElement> Context(HttpClient client) => JsonDocument.Parse(await client.GetStringAsync("/api/v1/dashboard/context")).RootElement.Clone();
 
