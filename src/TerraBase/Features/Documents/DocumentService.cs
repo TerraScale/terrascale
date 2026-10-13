@@ -362,7 +362,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
         using var lease = admission;
         var delta = 0L;
-        var (outcome, offset) = await store.WriteAsync(
+        var (outcome, commit) = await store.WriteAsync(
             async (transaction, token) =>
             {
                 var (result, change, growthOp) = await ApplyAllAsync(store, transaction, operations, indexErrors, admission.RequiresAccounting, token).ConfigureAwait(false);
@@ -396,7 +396,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             logger.ZLogError(error, $"Accounting a committed write to database {database.DatabaseId:@Database} failed; the write is answered as committed");
         }
 
-        return written with { Offset = offset };
+        return written with { Offset = commit.Offset };
     }
 
     // Quota, usage and statistics of a committed client write.

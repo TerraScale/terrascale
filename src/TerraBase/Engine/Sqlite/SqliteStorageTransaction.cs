@@ -70,7 +70,7 @@ internal sealed partial class SqliteStorageTransaction(
     internal bool LimitsReached { get; private set; }
 
     /// <summary>The offset this transaction committed at, set as soon as its SQLite commit succeeded; null before.</summary>
-    internal long? Committed { get; private set; }
+    internal CommitResult? Committed { get; private set; }
 
     /// <summary>
     /// Whether this transaction created or dropped a collection, state readers see beside its documents: the store forgets
@@ -932,9 +932,9 @@ internal sealed partial class SqliteStorageTransaction(
         }
     }
 
-    public async ValueTask<long> CommitAsync(CancellationToken cancellationToken)
+    public async ValueTask<CommitResult> CommitAsync(CancellationToken cancellationToken)
     {
-        var offset = await RunAsync(() =>
+        var result = await RunAsync(() =>
         {
             if (_faulted || Aborted)
             {
@@ -971,7 +971,22 @@ internal sealed partial class SqliteStorageTransaction(
 
             // On the write thread right after the commit, so readers see stale collection names only
             // briefly. Every step runs, each even when one before it failed.
-            Committed = offset;
+            CommitResult result;
+            try
+            {
+                result = new CommitResult(offset, IsClient && _captured > 0 && !_captureSuspended ? ReadCommitMarker() : null);
+            }
+            catch
+            {
+                if (_offset is not null)
+                {
+                    Follow("the commit notification", committed);
+                }
+
+                throw;
+            }
+
+            Committed = result;
             Follow("the after-commit hook", store.AfterSqliteCommit);
             if (ChangedReaderState)
             {
@@ -984,7 +999,7 @@ internal sealed partial class SqliteStorageTransaction(
                 Follow("moving the statistics generation", store.StatisticsChanged);
             }
 
-            return offset;
+            return result;
         }, cancellationToken).ConfigureAwait(false);
 
         // A failed wake-up only delays its waiter, which also wakes on its own timeout.
@@ -998,7 +1013,26 @@ internal sealed partial class SqliteStorageTransaction(
             ExceptionDispatchInfo.Throw(failure);
         }
 
-        return offset;
+        return result;
+    }
+
+    // Worker-only, after COMMIT and before releasing the exclusive writer; never read a later connection's head.
+    private CommitMarker ReadCommitMarker()
+    {
+        if (store.Tenant is { } tenant)
+        {
+            store.Checkpoint?.Invoke("writer.marker", tenant);
+        }
+
+        using var command = session.Connection.CreateCommand();
+        command.CommandText = "SELECT change_id, change_type FROM turso_cdc ORDER BY change_id DESC LIMIT 1;";
+        using var reader = command.ExecuteReader();
+        if (!reader.Read() || reader.GetInt64(0) <= 0 || reader.GetInt64(1) != 2)
+        {
+            throw new InvalidDataException("a client mutation has no final CDC commit row");
+        }
+
+        return new CommitMarker(store.Incarnation, reader.GetInt64(0));
     }
 
     // The first step after the commit that failed: CommitAsync throws it once every step ran.
@@ -1022,6 +1056,9 @@ internal sealed partial class SqliteStorageTransaction(
     // batched write pays no extra thread hop for them.
     private bool _savepointPending;
     private bool _releasePending;
+
+    /// <summary>Whether the current request added client state rows since its savepoint, after flushing them.</summary>
+    internal bool SavepointHasChanges => _savepoint is { } saved && _captured > saved.Captured;
 
     /// <summary>Starts the savepoint one queued write of a group commit runs in. Runs no statement yet.</summary>
     internal void Savepoint()

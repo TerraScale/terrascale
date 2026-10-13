@@ -393,7 +393,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             return inner.PutAsync(collection, id, json, cancellationToken);
         }
 
-        public async ValueTask<long> CommitAsync(CancellationToken cancellationToken)
+        public async ValueTask<CommitResult> CommitAsync(CancellationToken cancellationToken)
         {
             if (_intercepted && hook._commits.TryDequeue(out var gate))
             {

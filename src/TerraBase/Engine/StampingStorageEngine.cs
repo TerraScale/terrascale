@@ -128,7 +128,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) =>
             new Transaction(engine, database, await inner.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false));
 
-        public async ValueTask<(T Result, long Offset)> WriteAsync<T>(
+        public async ValueTask<(T Result, CommitResult Commit)> WriteAsync<T>(
             Func<IStorageTransaction, CancellationToken, ValueTask<T>> work, Func<T, bool> keep, CancellationToken cancellationToken)
         {
             Transaction? stamped = null;
@@ -317,7 +317,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         public ValueTask<bool> DropCollectionAsync(string name, CancellationToken cancellationToken) =>
             WriteCollectionAsync(() => inner.DropCollectionAsync(name, cancellationToken), cancellationToken);
 
-        public ValueTask<long> CommitAsync(CancellationToken cancellationToken) => RunAsync(async () =>
+        public ValueTask<CommitResult> CommitAsync(CancellationToken cancellationToken) => RunAsync(async () =>
         {
             if (_writeFailed)
             {

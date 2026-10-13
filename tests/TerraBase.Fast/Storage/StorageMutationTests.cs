@@ -42,7 +42,7 @@ public sealed class StorageMutationTests
         Task? blocked = null;
         Task? earlier = null;
         Task? cancelled = null;
-        Task<long>? commit = null;
+        Task? commit = null;
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         await using (var writer = await store.BeginTransactionAsync(write: true, deadline.Token))
         {
