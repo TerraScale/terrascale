@@ -1022,8 +1022,9 @@ public sealed class PeerStreamTests
         await gru.CommitAsync(Op(late, Ago(TimeSpan.FromSeconds(10)), (state, at) => state.Unset(at, "f")));
         await gru.CommitAsync(Op(late, Ago(TimeSpan.FromMinutes(5)), (state, at) => state.Unset(at, "g")));
 
-        // The horizon passes 5 min ago (the control goes) but not 10 s ago.
+        // The horizon passes 5 min ago (the control goes) but not 10 s ago; one more collection pass changes nothing.
         await Assert.That(await gru.UntilNoStateAsync("items", control)).IsTrue();
+        await Task.Delay(TimeSpan.FromSeconds(6));
         await Assert.That(await gru.HasStateAsync("items", late)).IsTrue();
         clock.Offset = TimeSpan.FromMinutes(3);
         await Assert.That(await gru.UntilNoStateAsync("items", late)).IsTrue();
