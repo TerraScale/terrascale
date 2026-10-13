@@ -5,6 +5,10 @@ the test host and agent usage. Owner: the 100M backup/PITR program lead. Sources
 (`flyctl` listings, GitHub's billing usage API with the existing token's scope), official price pages, this program's
 measurements and figures other owners supply. No credential value and no cancelled thread history is read.
 
+CI runner decision (2026-10-13): keep self-hosted alpha. Its five slots share 44 visible CPUs; each test job gets
+8 CPUs and 8 .NET server-GC heaps. [PR #212](https://github.com/TerraScale/terrascale/pull/212) tracks the sizing
+implementation and hosted qualification. The inventory below retains its observation date.
+
 ## Rules (user, 2026-10-12)
 
 - **Cap: US$200 per calendar month, total across all testing services.** Ask the user before any action whose
@@ -36,7 +40,6 @@ measurements and figures other owners supply. No credential value and no cancell
 | --- | --- | --- | --- | --- | --- | --- |
 | GitHub Actions (private repo) | GitHub org `TerraScale` | CI owners | 528 Linux minutes, 17 GB-hours of Actions storage, cache 12.1 GB in 61 entries | **$0 net** ($3.17 gross, fully discounted) | grows with GitHub-hosted runners since #139 | the plan's included minutes; when discounts end |
 | CI on self-hosted "alpha" runners (#142, merged 2026-10-12; a `CI_RUNNER` switch selects them) | host alpha | CI owners | — | not provider-billed as far as seen | unknown (power, hardware) | ownership and incremental cost not verified; GitHub minutes drop while alpha runs CI |
-| Blacksmith runners (used earlier this month, removed by #139) | Blacksmith | CI owners | — | unknown | $0 after removal | no read access |
 | PR preview volumes | Fly org `terrascale-previews-515` | preview owners | 17 × 1 GB (gru) | unknown | **$2.55 per month** while retained | — |
 | PR preview machines | same | preview owners | 15 stopped shared-cpu-1x 1GB (gru); 2 apps without machines | unknown | rootfs × $0.15 per GB-month while stopped; runtime when previews run | rootfs size; runtime hours this month; gru price |
 | PR preview buckets | Tigris via Fly, `terrascale-previews-515` | preview owners | 17 buckets | unknown | $0.02 per GiB-month | sizes (not shown by `flyctl storage status`) |
@@ -59,7 +62,7 @@ keeps the rest of the cap as reserve.
 | --- | --- |
 | Fly billed amounts and machine runtime | owners of previews and deploys supply figures; `flyctl` has no billing listing and the API token is not read |
 | Tigris bucket sizes | owners supply them, or the bucket owners list them with their own access |
-| Blacksmith, agent gateway billing, beta's incremental cost | owners supply them; otherwise these become user questions |
+| Agent gateway billing, beta's incremental cost | owners supply them; otherwise these become user questions |
 | GitHub included minutes | an owner with org-billing access |
 
 ## Staged forecast (this program and the replication requirement)
