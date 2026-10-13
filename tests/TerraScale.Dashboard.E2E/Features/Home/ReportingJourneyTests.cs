@@ -100,7 +100,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             foreach (var value in new[] { "no-period", "foreign-project", "foreign-database", "negative", "oversized", "offline", "unauthorized" })
             {
                 await ScenarioAsync(value);
-                await flow.GotoAsync(ownerPage, "/usage?database=" + orders);
+                await flow.GotoAsync(ownerPage, value == "foreign-project" ? "/usage" : "/usage?database=" + orders);
                 await Assert.That(await Stat("#usage-summary", "Reads").CountAsync()).IsEqualTo(0).Because(value + " never presents lifetime reads as period usage");
                 await Assert.That(await Stat("#usage-summary", "Writes").CountAsync()).IsEqualTo(0).Because(value + " never presents lifetime writes as period usage");
                 await Assert.That(await Stat("#usage-summary", "Logical storage").InnerTextAsync()).IsEqualTo("0 B").Because(value + " keeps the independently read empty database storage known");
@@ -357,9 +357,11 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             var guestId = Text(await flow.MeAsync(guestContext), "userId")!;
             var roleForm = "#team-members form[action*=\"/" + Uri.EscapeDataString(guestId) + "/role\"]";
             await ownerPage.Locator("#team-members tbody tr").Filter(new() { HasText = guestUser.Email }).Locator("select[name=role]").SelectOptionAsync("viewer");
-            await Assert.That((await flow.SubmitAsync(ownerPage, roleForm, "Save role")).Status).IsEqualTo(422);
-            await ownerPage.GetByText("The identity provider does not offer a viewer role. No membership was changed.", new() { Exact = true }).WaitForAsync();
-            await Assert.That(Text(await flow.MeAsync(guestContext), "role")).IsEqualTo("member");
+            await Assert.That((await flow.SubmitAsync(ownerPage, roleForm, "Save role")).Status).IsEqualTo(303);
+            await Assert.That(Text(await flow.MeAsync(guestContext), "role")).IsEqualTo("viewer");
+            await flow.PostAsync(guestContext, guestPage, "/api/v1/dashboard/organization/rename", new() { ["name"] = "Forbidden viewer" }, 403);
+            await flow.PostAsync(ownerContext, ownerPage, "/api/v1/access/members/" + Uri.EscapeDataString(guestId) + "/role", new() { ["role"] = "unsupported" }, 422);
+            await Assert.That(Text(await flow.MeAsync(guestContext), "role")).IsEqualTo("viewer").Because("an unsupported role never changes membership");
             await ownerPage.Locator("#team-members tbody tr").Filter(new() { HasText = guestUser.Email }).Locator("select[name=role]").SelectOptionAsync("member");
             await flow.SubmitAsync(ownerPage, roleForm, "Save role");
             await Assert.That(Text(await flow.MeAsync(guestContext), "role")).IsEqualTo("member");
@@ -369,7 +371,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await ownerPage.SetViewportSizeAsync(390, 844);
             await flow.ShotAsync(ownerPage, "members-owner-mobile");
             await ownerPage.SetViewportSizeAsync(1440, 900);
-            flow.Checks.Add("invitation decline/wrong account/anonymous prompt, native session-isolated switch-account and invited-user reauthentication, revoke-and-resend, consumed-token rejection and scoped accepted Member changes and unsupported Viewer denial before mutation");
+            flow.Checks.Add("invitation decline/wrong account/anonymous prompt, native session-isolated switch-account and invited-user reauthentication, revoke-and-resend, consumed-token rejection, Viewer read-only authority and unsupported role denial before mutation");
 
             await flow.GotoAsync(ownerPage, "/organization?tab=members");
             await RequestTransferAsync(ownerPage, guestId);
@@ -380,16 +382,19 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await flow.GotoAsync(guestPage, "/organization");
             await flow.SubmitAsync(guestPage, "form[action$=\"/ownership/confirm\"]", "Accept ownership");
             await Assert.That(Text(await flow.MeAsync(guestContext), "role")).IsEqualTo("owner");
-            await Assert.That(Text(await flow.MeAsync(ownerContext), "role")).IsEqualTo("member");
-            await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/organization/rename", new() { ["name"] = "Not owner" }, 403);
+            await Assert.That(Text(await flow.MeAsync(ownerContext), "role")).IsEqualTo("admin");
+            await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/organization/members/ownership", new() { ["userID"] = guestId }, 403);
             await RequestTransferAsync(guestPage, Text(original, "userId")!);
             await flow.GotoAsync(ownerPage, "/organization");
             await flow.SubmitAsync(ownerPage, "form[action$=\"/ownership/confirm\"]", "Accept ownership");
             await Assert.That(Text(await flow.MeAsync(ownerContext), "role")).IsEqualTo("owner");
-            await Assert.That(Text(await flow.MeAsync(guestContext), "role")).IsEqualTo("member");
+            await Assert.That(Text(await flow.MeAsync(guestContext), "role")).IsEqualTo("admin");
             flow.Checks.Add("native ownership start/cancel/recipient confirmation and reverse transfer with fresh role authorization");
 
             await flow.GotoAsync(ownerPage, "/organization?tab=members");
+            await ownerPage.Locator("#team-members tbody tr").Filter(new() { HasText = guestUser.Email }).Locator("select[name=role]").SelectOptionAsync("member");
+            await flow.SubmitAsync(ownerPage, roleForm, "Save role");
+            await Assert.That(Text(await flow.MeAsync(guestContext), "role")).IsEqualTo("member");
             await ownerPage.Locator("#member-search").FillAsync(ownerUser.Email);
             await ownerPage.Locator("#access-filter-form summary").ClickAsync();
             var filtered = ownerPage.WaitForResponseAsync(response => new Uri(response.Url).AbsolutePath == "/organization"
@@ -469,7 +474,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
                 await flow.ShotAsync(ownerPage, key);
             }
             await Assert.That(flow.Errors).IsEmpty().Because("no browser runtime errors including Datastar expressions");
-            flow.Gaps.Add("The producer does not support Viewer membership; enrollment fails before mutation. Queued organization deletion preserves data pending the external worker completion contract.");
+            flow.Gaps.Add("Queued organization deletion preserves data pending the external worker completion contract.");
 
             async Task<string> InviteAsync()
             {
