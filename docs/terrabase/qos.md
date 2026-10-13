@@ -59,6 +59,11 @@ statement evaluates per row, about what SQLite's VM ran for it, so the former in
 Existing sort/page bounds still apply. A stopped read rolls back its whole write transaction (Turso), so a group commit
 answers only the write that read, and the writes of its batch run again in the next one.
 
+Cancelling at a consumer boundary between streamed SQL rows resets the unfinished reader before native finalization.
+It executes no unread rows or later batch statements and preserves the surrounding transaction. Cleanup retains the
+operation gate until the native reader is released. Cancellation during native execution still follows Turso's rollback
+semantics; query budgets and failure detection remain active.
+
 ## Storage scope
 
 Client document writes serialize through a bounded organization gate. The quota checks net live JSON

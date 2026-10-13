@@ -145,6 +145,9 @@ internal static class TursoInterop
         out IntPtr statement,
         out IntPtr errorPtr);
 
+    [DllImport(DllName, EntryPoint = "turso_statement_reset", CallingConvention = CallingConvention.Cdecl)]
+    public static extern TursoStatusCode StatementReset(TursoStatementHandle statement, out IntPtr errorPtr);
+
     [DllImport(DllName, EntryPoint = "turso_statement_finalize", CallingConvention = CallingConvention.Cdecl)]
     public static extern TursoStatusCode StatementFinalize(IntPtr statement, out IntPtr errorPtr);
 

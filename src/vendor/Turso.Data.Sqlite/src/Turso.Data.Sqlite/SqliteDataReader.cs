@@ -868,6 +868,37 @@ public class SqliteDataReader : DbDataReader
 
     public override void Close() => CloseCore();
 
+    /// <summary>Closes the reader without executing unread rows or the remaining statements of its batch.</summary>
+    public void Abort()
+    {
+        if (_isClosed)
+            return;
+
+        try
+        {
+            if (_statement is not null)
+                TursoBindings.ResetStatement(_statement);
+        }
+        catch (TursoException ex)
+        {
+            _command.Connection?.CheckTransactionAfterFailure();
+            throw SqliteCommand.ToSqliteException(ex);
+        }
+        finally
+        {
+            try
+            {
+                _statement?.Dispose();
+                _statement = null;
+                _remainingSql.Clear();
+            }
+            finally
+            {
+                FinishClose();
+            }
+        }
+    }
+
     private void CloseCore(bool throwOnError = true)
     {
         if (_isClosed)
