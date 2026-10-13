@@ -85,6 +85,50 @@ public sealed class ConfigurationTests
     }
 
     [Test]
+    [Arguments("ts-auth", "sjc", "http://sjc.ts-terrabase.internal:8081", "http://gru.ts-terrabase.internal:8081")]
+    [Arguments("ts-auth", "fra", "http://fra.ts-terrabase.internal:8081", "http://gru.ts-terrabase.internal:8081")]
+    [Arguments("ts-auth", "gru", "http://gru.ts-terrabase.internal:8081", "http://gru.ts-terrabase.internal:8081")]
+    [Arguments("ts-pr-42", "sjc", "http://sjc.ts-pr-42.internal:8081", "http://sjc.ts-pr-42.internal:8081")]
+    public async Task On_fly_discovery_and_jwks_read_the_terrabase_of_its_own_region_and_the_rest_the_designated_one(string app, string region, string local, string designated)
+    {
+        // Fly's machine environment, per server; RegionalStorageTests covers what goes where and the move to another region.
+        var reads = new System.Collections.Concurrent.ConcurrentQueue<Uri>();
+        var rest = new System.Collections.Concurrent.ConcurrentQueue<Uri>();
+        await using var server = await AuthTestServer.StartAsync(
+            settings: values => values.Remove("environment"),
+            services: services =>
+            {
+                services.AddSingleton(new HttpClient(new RecordingTransport(reads)));
+                services.AddKeyedSingleton(App.StorageAuthority, new HttpClient(new RecordingTransport(rest)));
+            },
+            configure: builder =>
+            {
+                builder.Configuration["FLY_APP_NAME"] = app;
+                builder.Configuration["FLY_REGION"] = region;
+            });
+
+        // The JWKS reads signing keys (a GET); startup provisioning writes.
+        using var jwks = await server.Client.GetAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json");
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(!reads.IsEmpty && !rest.IsEmpty), TimeSpan.FromSeconds(15))).IsTrue();
+        await Assert.That(reads.Select(uri => uri.GetLeftPart(UriPartial.Authority)).Distinct()).IsEquivalentTo([local]);
+        await Assert.That(rest.Select(uri => uri.GetLeftPart(UriPartial.Authority)).Distinct()).IsEquivalentTo([designated]);
+    }
+
+    [Test]
+    public async Task On_fly_without_a_region_refuses_to_start()
+    {
+        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(
+            settings: values => values.Remove("environment"),
+            configure: builder =>
+            {
+                builder.Configuration["FLY_APP_NAME"] = "ts-auth";
+                builder.Configuration["FLY_REGION"] = "";
+            }));
+
+        await Assert.That(exception!.Message).IsEqualTo("FLY_REGION is unset: on Fly ts-auth stores in its own region's TerraBase");
+    }
+
+    [Test]
     public async Task Production_requires_an_audit_signing_key()
     {
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>
@@ -340,7 +384,7 @@ public sealed class ConfigurationTests
         settings.Remove("environment");
         // On Fly: storage comes from the Fly identity alone (App.TerraBaseOrigin), with no setting. Off Fly a production
         // ts-auth refuses to start (Production_off_fly_refuses_to_start_instead_of_storing_on_loopback).
-        await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string> { ["FLY_APP_NAME"] = "ts-auth" });
+        await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string> { ["FLY_APP_NAME"] = "ts-auth", ["FLY_REGION"] = "gru" });
 
         using var health = await service.Client.GetAsync("/healthz");
 

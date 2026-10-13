@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
@@ -25,23 +26,63 @@ public static class App
     public const string ApiTitle = "TerraScale Auth API";
 
     /// <summary>
-    /// TerraBase's internal listener on Fly's private network: app <c>ts-terrabase</c> in gru, the home region of the
-    /// platform databases, from every region; in a <c>ts-pr-&lt;n&gt;</c> preview, whose one machine (in another Fly org)
-    /// runs TerraBase next to ts-auth, that machine. Off Fly (local development), the TerraBase on this machine, whose
-    /// internal listener is on loopback there, in Development only: a production ts-auth off Fly has no storage to fall
-    /// back on and refuses to start (<see cref="AuthConfigurationException"/>) instead of writing to whatever listens there.
+    /// The region whose TerraBase takes every ts-auth write and every read but discovery's and the JWKS's, from every region.
+    /// TerraBase checks a precondition only against the copy it is sent to, so single-use codes and tokens, unique claims
+    /// and attempt counters hold only while one copy orders them; reading sessions, tokens, revocations and memberships
+    /// there too makes a revocation or removal take effect everywhere at once. When this region's TerraBase does not answer,
+    /// those operations fail closed (503) instead of moving elsewhere. Replication slice R12 (lattice-native ts-auth)
+    /// removes the need.
     /// </summary>
-    // shortcut: every region stores in gru's copy, because TerraBase does not replicate documents between regions yet (the
-    // client replication paths were deleted in R2a; peer streams come with R4a). Nearest-region storage would give each
-    // region its own signing keys and users. Switch back to top1.nearest.of.ts-terrabase.internal once R4a replicates.
-    public static Uri TerraBaseOrigin(AuthOptions options) => new(Environment.GetEnvironmentVariable("FLY_APP_NAME") switch
+    public const string AuthorityRegion = "gru";
+
+    /// <summary>Service key of the authority's <see cref="TerraBaseDatabase"/> and <see cref="HttpClient"/>.</summary>
+    public const string StorageAuthority = "terrabase-authority";
+
+    /// <summary>
+    /// TerraBase's internal listener on Fly's private network in this machine's region (<c>FLY_REGION</c>), for the reads of
+    /// discovery and the JWKS (<see cref="AuthStore.GetLocalAsync"/>, <c>KeyRing.GetPublishedAsync</c>): app <c>ts-terrabase</c>, which replicates the platform
+    /// databases between regions; in a <c>ts-pr-&lt;n&gt;</c> preview, whose one machine (in another Fly org) runs TerraBase
+    /// next to ts-auth, that machine. When it does not answer, <see cref="TerraBaseOtherRegions"/> do. Off Fly (local
+    /// development), the TerraBase on this machine, whose internal listener is on loopback there, in Development only: a
+    /// production ts-auth off Fly has no storage to fall back on and refuses to start (<see cref="AuthConfigurationException"/>)
+    /// instead of writing to whatever listens there. <paramref name="fly"/> holds Fly's machine environment
+    /// (<c>FLY_APP_NAME</c>, <c>FLY_REGION</c>).
+    /// </summary>
+    public static Uri TerraBaseOrigin(AuthOptions options, IConfiguration fly) => TerraBaseApp(options, fly) switch
     {
-        null or "" when options?.Development == true => "http://127.0.0.1:8081",
+        null => new("http://127.0.0.1:8081"),
+        var app when fly["FLY_REGION"] is { Length: > 0 } region => new($"http://{region}.{app}.internal:8081"),
+        _ => throw new AuthConfigurationException("FLY_REGION is unset: on Fly ts-auth stores in its own region's TerraBase"),
+    };
+
+    /// <summary>
+    /// Where storage goes when this region's TerraBase does not answer: the nearest started machine of the app, then every
+    /// started machine (the nearest can be this region's own, started but not answering). None off Fly.
+    /// </summary>
+    public static IReadOnlyList<DnsEndPoint> TerraBaseOtherRegions(AuthOptions options, IConfiguration fly) => TerraBaseApp(options, fly) switch
+    {
+        null => [],
+        var app => [new($"top1.nearest.of.{app}.internal", 8081), new($"{app}.internal", 8081)],
+    };
+
+    /// <summary>
+    /// The TerraBase that takes every write (<see cref="AuthorityRegion"/>'s), with no fallback; in a preview, its one machine.
+    /// Null off Fly, where the local TerraBase is the only one.
+    /// </summary>
+    public static Uri? TerraBaseAuthority(AuthOptions options, IConfiguration fly) =>
+        string.IsNullOrEmpty(fly["FLY_APP_NAME"]) ? null
+        : TerraBaseApp(options, fly) == "ts-terrabase" ? new($"http://{AuthorityRegion}.ts-terrabase.internal:8081")
+        : TerraBaseOrigin(options, fly);
+
+    // The Fly app serving ts-auth's storage; null off Fly in Development (loopback).
+    private static string? TerraBaseApp(AuthOptions options, IConfiguration fly) => fly["FLY_APP_NAME"] switch
+    {
+        null or "" when options.Development => null,
         null or "" => throw new AuthConfigurationException(
             "Off Fly (FLY_APP_NAME unset) ts-auth stores in the loopback TerraBase only in Development: set TS_AUTH_ENVIRONMENT=Development, or run it on Fly"),
-        var app when app.StartsWith("ts-pr-", StringComparison.Ordinal) => $"http://top1.nearest.of.{app}.internal:8081",
-        _ => "http://gru.ts-terrabase.internal:8081",
-    });
+        var app when app.StartsWith("ts-pr-", StringComparison.Ordinal) => app,
+        _ => "ts-terrabase",
+    };
 
     /// <summary>
     /// The TerraBase project holding the platform's own databases. TerraBase seeds it with this fixed id on every start
@@ -83,13 +124,26 @@ public static class App
         }
 
         builder.Services.AddSingleton(TimeProvider.System);
-        builder.Services.AddSingleton(_ => new HttpClient(TerraBaseHttp.CreateHandler()));
-        // The nearest TerraBase machine's private listener: no credential, it trusts the private network.
+        // TerraBase machines' private listeners: no credential, they trust the private network. This region's, for discovery
+        // and JWKS reads, falls back to other regions; the authority, for everything else, never does.
+        builder.Services.AddSingleton(services => new HttpClient(TerraBaseTransport.CreateHandler(
+            TerraBaseOtherRegions(options, services.GetRequiredService<IConfiguration>()),
+            services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>())));
         builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
         {
-            BaseAddress = TerraBaseOrigin(options),
+            BaseAddress = TerraBaseOrigin(options, services.GetRequiredService<IConfiguration>()),
         }).Database(StorageProject, StorageDatabase));
-        builder.Services.AddSingleton<AuthStore>();
+        builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) => new HttpClient(TerraBaseTransport.CreateHandler(
+            [], services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)), services.GetService<TerraBaseTransport.HostResolver>())));
+        builder.Services.AddKeyedSingleton(StorageAuthority, (services, _) =>
+            TerraBaseAuthority(options, services.GetRequiredService<IConfiguration>()) is { } authority
+                ? new TerraBaseDocumentsClient(services.GetRequiredKeyedService<HttpClient>(StorageAuthority), new TerraBaseDocumentsClientOptions
+                {
+                    BaseAddress = authority,
+                }).Database(StorageProject, StorageDatabase)
+                : services.GetRequiredService<TerraBaseDatabase>());
+        builder.Services.AddSingleton(services => new AuthStore(services.GetRequiredService<TerraBaseDatabase>(),
+            services.GetRequiredKeyedService<TerraBaseDatabase>(StorageAuthority), services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<Users>();
         builder.Services.AddSingleton<Sessions>();
         builder.Services.AddSingleton<Passcodes>();
@@ -104,7 +158,8 @@ public static class App
         builder.Services.AddSingleton<GitHubActionsKeys>();
         builder.Services.AddSingleton<Invitations>();
         builder.Services.AddHostedService<SessionPruner>();
-        builder.Services.AddSingleton<TerraBaseStorageHealth>();
+        // Ready means the authority takes writes.
+        builder.Services.AddSingleton(services => new TerraBaseStorageHealth(services.GetRequiredKeyedService<TerraBaseDatabase>(StorageAuthority)));
         builder.Services.AddSingleton<IStorageHealth, SigningKeyReadiness>();
         builder.Services.AddSingleton<ReadinessProbe>();
         builder.Services.AddHostedService(services => services.GetRequiredService<ReadinessProbe>());

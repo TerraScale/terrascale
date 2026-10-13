@@ -76,19 +76,54 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
   signing key check, retrying after five seconds and backing off; `/readyz` answers 503 until both succeed, so ts-auth
   may start before TerraBase and recovers on its own once the issuer's key is provisioned
   ([signing-keys.md](signing-keys.md)). `TS_AUTH_DATABASE` is gone.
-- **Storage endpoint:** fixed in code (`App.TerraBaseOrigin`). Off Fly only Development uses the loopback TerraBase (`http://127.0.0.1:8081`); a Production ts-auth off Fly refuses to start (exit 2) rather than store there. On Fly:
-  `http://gru.ts-terrabase.internal:8081`, TerraBase's internal listener on
-  Fly's private network in gru, the home region of the platform databases,
-  from every region: TerraBase does not replicate documents between regions
-  until replication slice R4a, and nearest-region storage gave each region its
-  own signing key (observed on Fly 2026-10-12). It returns to
-  `top1.nearest.of.ts-terrabase.internal` once R4a lands. It needs no credential, so there is no API key, member
-  list, CA or failover setting. In a PR preview (`FLY_APP_NAME` is
-  `ts-pr-<n>`, in the separate org `terrascale-previews`) the app's one machine
-  runs TerraBase next to ts-auth, so the address is
-  `http://top1.nearest.of.ts-pr-<n>.internal:8081`: that same machine. Off Fly
-  (`FLY_APP_NAME` unset, local development) it is `http://127.0.0.1:8081`, the
-  TerraBase on the same machine.
+- **Storage endpoints:** fixed in code (`App.TerraBaseOrigin`, `App.TerraBaseOtherRegions`, `App.TerraBaseAuthority`,
+  `App.AuthorityRegion`, `Hosting/TerraBaseTransport.cs`, `AuthStore`). Off Fly only Development uses the loopback
+  TerraBase (`http://127.0.0.1:8081`) for everything; a Production ts-auth off Fly refuses to start (exit 2) rather than
+  store there. On Fly (without `FLY_REGION`, which Fly sets on every machine, it refuses to start):
+  - **Every write and every authorization read goes to the designated region, gru**
+    (`http://gru.ts-terrabase.internal:8081`), from every region: all reads but discovery's and the JWKS's, GET requests
+    and background work included. Every ts-auth write is conditional (`If-None-Match: *`, `If-Match`, transaction
+    asserts), and TerraBase checks a precondition only against the copy it is sent to, so single-use passcodes,
+    challenges, authorization codes and refresh-token rotation, email and name claims, lockout counters and every other
+    check-then-write hold only while one copy orders them. Session validation, token checks, refresh-token state,
+    revocations and membership and role checks read the same copy, so a revocation or removal takes effect everywhere at
+    once. When gru's TerraBase does not answer, these operations fail closed: 503 `temporarily_unavailable`, never
+    another region. Replication slice R12 (lattice-native ts-auth) removes this limit.
+  - **Discovery and the JWKS read the own region** (`http://<FLY_REGION>.ts-terrabase.internal:8081`), through two
+    explicit calls only (`AuthStore.GetLocalAsync` for a project tenant's existence, `KeyRing.GetPublishedAsync` for the
+    keys); they decide nothing about authorization. The key ring keeps the two sources apart: this region's copy has its
+    own cache, in-flight reads and failure backoff, used only for publication, while signing, signature checks (ts-auth's
+    own included), readiness, rotation and first keys read gru's. A JWKS read never becomes a security decision, and gru
+    being down never fails a healthy JWKS. A copy without a tenant's keys yet publishes gru's, which creates a project's
+    first key there; a missing local key set never causes a create of its own. A project tenant's key is stored only in
+    a gru transaction that also asserts the project still exists there, so a copy that still lists a deleted project
+    never adds a key for it (the JWKS answers 404). Instances that race to create a live project's first key each add
+    one, all kept and published: at most one per ts-auth instance. A point read the own copy lacks (a project
+    created moments ago) is read from gru. When no machine of the own region answers a new connection (none is started,
+    so the name does not resolve; it refuses; or it does not answer within 2 s), the connection goes to the nearest started
+    machine (`top1.nearest.of.ts-terrabase.internal`), then to any (`ts-terrabase.internal`).
+  - Only connections move; a request is never resent. Connections are replaced every 30 s and HTTP/2 pings (every 5 s)
+    drop one to a machine that vanished, so these reads are back in the own region within about 30 s of it answering
+    again. A TerraBase that cannot be reached answers 503 `temporarily_unavailable`. `/readyz` is ready only while gru
+    takes writes.
+  - No credential, so there is no API key, member list, CA or failover setting. In a PR preview (`FLY_APP_NAME` is
+    `ts-pr-<n>`, in the separate org `terrascale-previews`) the app's one machine runs TerraBase next to ts-auth, so
+    reads and writes go to `http://<FLY_REGION>.ts-pr-<n>.internal:8081`: that same machine.
+- **Consistency across regions.** Writes and authorization reads see one copy, gru's, so every conditional write keeps
+  the guarantee it had with a single region and every revocation applies at once. What remains:
+  - While gru's TerraBase is down or unreachable, ts-auth authenticates and authorizes nothing, in any region (503):
+    sign-in, passcodes, token issuance, refresh and introspection, session checks, userinfo, sign-out, platform reads
+    and changes. Discovery and the JWKS keep working from the own region, so relying parties (TerraBase) keep validating
+    tokens already issued offline. R12 removes this limit.
+  - **Key removal staleness.** ts-auth itself stops accepting a key removed at gru within one key-ring refresh interval
+    (60 s): its signature checks read gru, and a key-ring read answered more than 60 s after it was sent is refused
+    (503), never served, so a read already in flight cannot extend the bound. Another region's JWKS keeps publishing the
+    key for up to the replication lag plus 60 s (its publication cache, under the same rule); during a partition there is
+    no bound. TerraBase, which
+    validates tokens offline, refreshes the JWKS every 10 minutes and keeps the keys it has when a fetch fails, so it
+    stops accepting the key within the replication lag plus about 11 minutes and the fetch time, and with no bound while
+    its fetches fail; token expiry still applies. A scheduled retirement keeps a superseded key published for two days,
+    longer than any token it signed; the bound matters for the emergency removal of a compromised key.
 - **Listeners.** The public API listens on `0.0.0.0:8090` (`TS_AUTH_LISTEN`)
   behind Fly Proxy, which terminates TLS. Prometheus `GET /metrics` is served
   only on a second listener, `0.0.0.0:9092` (`TS_AUTH_METRICS_LISTEN`), which
@@ -840,9 +875,9 @@ The rest of the platform management API (contract section 7), in
 
 ts-auth creates its collections at startup in the seeded `platform-auth` database (see "Storage database" above);
 qualification and storage-integrity requirements still gate safe serving.
-Every auth replica stores through the nearest TerraBase machine's internal
-listener (`http://top1.nearest.of.ts-terrabase.internal:8081`) and never
-resends a request.
+Every auth replica reads and writes through gru's TerraBase internal listener
+(`http://gru.ts-terrabase.internal:8081`, with no fallback; discovery and the JWKS read its own region's,
+see "Storage endpoints") and never resends a request.
 
 The pinned server's [decision 0003](https://git.terrascale.tech/TerraScale-Old/terrabase-premonorepo/src/commit/ff256067015433c8c40b59879f1282d2a40480ce/docs/decisions/0003-sqlite-synchronous-normal.md)
 uses SQLite WAL with `synchronous=NORMAL`. A TerraBase process crash alone
