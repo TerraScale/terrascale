@@ -375,6 +375,8 @@ carries:
 delta). #171 (the design) has its APPROVE at `40464691` (6139562004); its head is now `9e747421`, and the delta is not
 yet checked. #184 has no review, and its `test` run is red.
 
+**#187 merged OUTSIDE the train** (MarioGK, squash, 10:46Z): `test(auth): derive SDK route parameter values from templates`, head `b6f46cd6` → main **`901ea068`**. Push run 38385706284 must be green before the next train merge.
+
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
 **Outside the queue (COS, 03:30Z):** **#167** (`feat/postgres-turso-import-core`, `62f251f6`, one-time PostgreSQL and
