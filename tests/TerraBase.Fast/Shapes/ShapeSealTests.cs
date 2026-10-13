@@ -609,13 +609,16 @@ public sealed class ShapeSealTests
         await gru.PutAsync(warm, """{"n":0}""");
         await TerraBaseTestServer.EventuallyAsync(async token => await sjc.ReadAsync(warm, token) is not null);
         await Task.WhenAll(gru.PutAsync(x, """{"from":"gru"}"""), sjc.PutAsync(x, """{"from":"sjc"}"""), gru.PutAsync(a, """{"n":1}"""), sjc.PutAsync(b, """{"n":2}"""));
-        await TerraBaseTestServer.ReplicatedAsync(gru.Api.Server, sjc.Api.Server);
-        await TerraBaseTestServer.EventuallyAsync(async token => await sjc.ReadAsync(x, token) is { } value && value == await gru.ReadAsync(x, token));
+        await TerraBaseTestServer.EventuallyAsync(async token => await gru.ReadAsync(b, token) is not null
+            && await sjc.ReadAsync(a, token) is not null
+            && await sjc.ReadAsync(x, token) is { } value && value == await gru.ReadAsync(x, token));
 
         Dictionary<Machine, (ShapeSealDefinition Shape, long Head, Sealed[] Chunks)> sealedBy = [];
         foreach (var machine in new[] { gru, sjc })
         {
             var db = await machine.DatabaseAsync();
+            await Assert.That(await db.ScalarAsync($"SELECT COUNT(DISTINCT origin) FROM _tb_feed WHERE collection = '{Collection}';"))
+                .IsGreaterThanOrEqualTo(2L).Because("both local and joined writes are committed before sealing");
             var shape = await ShapeAsync(db);
             var head = await db.SealAsync(shape, 0);
             await Assert.That(head).IsEqualTo(await db.HeadAsync());
@@ -633,7 +636,6 @@ public sealed class ShapeSealTests
 
         var y = DocumentApi.NewId();
         await gru.PutAsync(y, """{"n":3}""");
-        await TerraBaseTestServer.ReplicatedAsync(gru.Api.Server, sjc.Api.Server);
         foreach (var machine in new[] { gru, sjc })
         {
             await TerraBaseTestServer.EventuallyAsync(async token => await machine.ReadAsync(y, token) is not null);
