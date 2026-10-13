@@ -817,10 +817,15 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     {
                         if (!collections.TryGetValue(project + "/" + current.Name + "/" + parts[6], out var inferredRows)) return Error(404, "not_found");
                         // I2 inferred-schema.json: sampled document presence and type counts, separate from declared schema.
-                        var sampled = inferredRows.Values.Take(1000).ToArray();
+                        var sampled = inferredRows.Values.OrderBy(row => row.Id, StringComparer.Ordinal).Take(1000).ToArray();
                         var inferredFields = sampled.SelectMany(row => row.Document.EnumerateObject()).GroupBy(field => field.Name)
-                            .Select(field => new { path = field.Key, present = field.Count(), types = field.GroupBy(value => value.Value.ValueKind.ToString().ToLowerInvariant())
-                                .ToDictionary(kind => kind.Key, kind => kind.Count()) }).ToArray();
+                            .OrderBy(field => field.Key, StringComparer.Ordinal)
+                            .Select(field => new { path = field.Key, present = field.Count(), types = field.GroupBy(value => value.Value.ValueKind switch
+                                {
+                                    JsonValueKind.Number => value.Value.TryGetInt64(out _) ? "integer" : "number",
+                                    JsonValueKind.True or JsonValueKind.False => "boolean",
+                                    _ => value.Value.ValueKind.ToString().ToLowerInvariant()
+                                }).ToDictionary(kind => kind.Key, kind => kind.Count()) }).ToArray();
                         return Results.Json(new { collection = parts[6], documents = inferredRows.Count, sampledDocuments = sampled.Length, fields = inferredFields, uniqueConstraints = Array.Empty<object>() });
                     }
                 case (6, "POST", "sql"):
