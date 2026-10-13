@@ -459,7 +459,7 @@ without a signed-in user.
   preferences such as a user's current organization. It reads identity through
   this API and suspends a project through section 8.1.
 - **ts-auth's own storage.** ts-auth reaches TerraBase at
-  `http://top1.nearest.of.ts-terrabase.internal:8081`, TerraBase's internal
+  `http://<FLY_REGION>.ts-terrabase.internal:8081` (another region's when its own does not answer), TerraBase's internal
   listener on Fly's private network, which trusts the network and needs no
   credential. The design below, a token ts-auth signs itself, is superseded:
   - `iss` the `terrascale` issuer, `sub` `ts-auth`, `org_id` and `project_id`

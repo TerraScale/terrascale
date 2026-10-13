@@ -76,19 +76,39 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
   signing key check, retrying after five seconds and backing off; `/readyz` answers 503 until both succeed, so ts-auth
   may start before TerraBase and recovers on its own once the issuer's key is provisioned
   ([signing-keys.md](signing-keys.md)). `TS_AUTH_DATABASE` is gone.
-- **Storage endpoint:** fixed in code (`App.TerraBaseOrigin`). Off Fly only Development uses the loopback TerraBase (`http://127.0.0.1:8081`); a Production ts-auth off Fly refuses to start (exit 2) rather than store there. On Fly:
-  `http://gru.ts-terrabase.internal:8081`, TerraBase's internal listener on
-  Fly's private network in gru, the home region of the platform databases,
-  from every region: TerraBase does not replicate documents between regions
-  until replication slice R4a, and nearest-region storage gave each region its
-  own signing key (observed on Fly 2026-10-12). It returns to
-  `top1.nearest.of.ts-terrabase.internal` once R4a lands. It needs no credential, so there is no API key, member
-  list, CA or failover setting. In a PR preview (`FLY_APP_NAME` is
-  `ts-pr-<n>`, in the separate org `terrascale-previews`) the app's one machine
-  runs TerraBase next to ts-auth, so the address is
-  `http://top1.nearest.of.ts-pr-<n>.internal:8081`: that same machine. Off Fly
-  (`FLY_APP_NAME` unset, local development) it is `http://127.0.0.1:8081`, the
-  TerraBase on the same machine.
+- **Storage endpoint:** fixed in code (`App.TerraBaseOrigin`, `App.TerraBaseOtherRegions`,
+  `Hosting/TerraBaseTransport.cs`). Off Fly only Development uses the loopback TerraBase (`http://127.0.0.1:8081`); a
+  Production ts-auth off Fly refuses to start (exit 2) rather than store there. On Fly:
+  `http://<FLY_REGION>.ts-terrabase.internal:8081`, TerraBase's internal listener on Fly's private network in ts-auth's
+  own region (without `FLY_REGION`, which Fly sets on every machine, it refuses to start). TerraBase replicates
+  `platform-auth` between its regions (peer streams, anti-entropy), so each region's copy serves. When no machine of the
+  own region answers a new connection (none is started, so the name does not resolve; it refuses; or it does not answer
+  within 2 s), the connection goes to the nearest started machine of the app (`top1.nearest.of.ts-terrabase.internal`),
+  then to any (`ts-terrabase.internal`). Only connections move: a request is never resent, so a write is never applied
+  twice. Connections are replaced every 30 s and HTTP/2 pings (every 5 s) drop one to a machine that vanished, so ts-auth
+  is back in its own region within about 30 s of it answering again. It needs no credential, so there is no API key,
+  member list, CA or failover setting. In a PR preview (`FLY_APP_NAME` is `ts-pr-<n>`, in the separate org
+  `terrascale-previews`) the app's one machine runs TerraBase next to ts-auth, so the address is
+  `http://<FLY_REGION>.ts-pr-<n>.internal:8081`: that same machine. Off Fly (`FLY_APP_NAME` unset, local development)
+  it is `http://127.0.0.1:8081`, the TerraBase on the same machine.
+- **Consistency across regions.** Within a region, a read after a write sees it: each region runs one TerraBase machine,
+  which acknowledges a write once it committed it. Replication between regions is asynchronous, and a conditional write
+  (`If-None-Match`, `If-Match`, transaction asserts) is checked against the local copy only. Until replication slice R12
+  makes ts-auth lattice-native (consumed sets that revoke a token family on reuse, a lockout counter), this means:
+  - A flow whose steps land in different regions can miss a write made a moment before in another region: Fly Proxy
+    sends each request to the nearest ts-auth, so a client that changes region mid-flow, or a request with
+    `fly-prefer-region`, can find a fresh passcode, session or authorization code unknown (it fails closed) or a just
+    rotated refresh token still unconsumed.
+  - After a failover, writes the own region acknowledged but had not replicated yet are missing until it is back:
+    sessions and codes created just before look unknown (sign in again), and a refresh token rotated just before can be
+    redeemed again.
+  - Single-use redemption (passcodes, authorization codes, refresh tokens), email and name uniqueness, and the lockout
+    count hold per region. Two regions can each accept the same single-use credential, or the same email, within the
+    replication lag, and for as long as a partition lasts; the merge keeps one value per field (last writer wins) and
+    reports no conflict, so a double use is not detected.
+  - A signing key created or rotated in one region reaches the other regions' JWKS after replication; until then a
+    token signed with it fails validation where the JWKS lacks it.
+  - With more than one TerraBase machine in a region, read-after-write holds only within one connection (30 s).
 - **Listeners.** The public API listens on `0.0.0.0:8090` (`TS_AUTH_LISTEN`)
   behind Fly Proxy, which terminates TLS. Prometheus `GET /metrics` is served
   only on a second listener, `0.0.0.0:9092` (`TS_AUTH_METRICS_LISTEN`), which
@@ -840,9 +860,9 @@ The rest of the platform management API (contract section 7), in
 
 ts-auth creates its collections at startup in the seeded `platform-auth` database (see "Storage database" above);
 qualification and storage-integrity requirements still gate safe serving.
-Every auth replica stores through the nearest TerraBase machine's internal
-listener (`http://top1.nearest.of.ts-terrabase.internal:8081`) and never
-resends a request.
+Every auth replica stores through its own region's TerraBase machine's internal
+listener (`http://<FLY_REGION>.ts-terrabase.internal:8081`, another region's when
+it does not answer; see "Storage endpoint") and never resends a request.
 
 The pinned server's [decision 0003](https://git.terrascale.tech/TerraScale-Old/terrabase-premonorepo/src/commit/ff256067015433c8c40b59879f1282d2a40480ce/docs/decisions/0003-sqlite-synchronous-normal.md)
 uses SQLite WAL with `synchronous=NORMAL`. A TerraBase process crash alone

@@ -85,6 +85,42 @@ public sealed class ConfigurationTests
     }
 
     [Test]
+    [Arguments("ts-auth", "sjc", "http://sjc.ts-terrabase.internal:8081")]
+    [Arguments("ts-auth", "fra", "http://fra.ts-terrabase.internal:8081")]
+    [Arguments("ts-auth", "gru", "http://gru.ts-terrabase.internal:8081")]
+    [Arguments("ts-pr-42", "sjc", "http://sjc.ts-pr-42.internal:8081")]
+    public async Task On_fly_storage_is_the_terrabase_of_its_own_region(string app, string region, string origin)
+    {
+        // Fly's machine environment, per server; RegionalStorageTests covers the move to another region.
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<Uri>();
+        await using var server = await AuthTestServer.StartAsync(
+            settings: values => values.Remove("environment"),
+            services: services => services.AddSingleton(new HttpClient(new RecordingTransport(sent))),
+            configure: builder =>
+            {
+                builder.Configuration["FLY_APP_NAME"] = app;
+                builder.Configuration["FLY_REGION"] = region;
+            });
+
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(!sent.IsEmpty), TimeSpan.FromSeconds(15))).IsTrue();
+        await Assert.That(sent.Select(uri => uri.GetLeftPart(UriPartial.Authority)).Distinct()).IsEquivalentTo([origin]);
+    }
+
+    [Test]
+    public async Task On_fly_without_a_region_refuses_to_start()
+    {
+        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(
+            settings: values => values.Remove("environment"),
+            configure: builder =>
+            {
+                builder.Configuration["FLY_APP_NAME"] = "ts-auth";
+                builder.Configuration["FLY_REGION"] = "";
+            }));
+
+        await Assert.That(exception!.Message).IsEqualTo("FLY_REGION is unset: on Fly ts-auth stores in its own region's TerraBase");
+    }
+
+    [Test]
     public async Task Production_requires_an_audit_signing_key()
     {
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>
@@ -340,7 +376,7 @@ public sealed class ConfigurationTests
         settings.Remove("environment");
         // On Fly: storage comes from the Fly identity alone (App.TerraBaseOrigin), with no setting. Off Fly a production
         // ts-auth refuses to start (Production_off_fly_refuses_to_start_instead_of_storing_on_loopback).
-        await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string> { ["FLY_APP_NAME"] = "ts-auth" });
+        await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string> { ["FLY_APP_NAME"] = "ts-auth", ["FLY_REGION"] = "gru" });
 
         using var health = await service.Client.GetAsync("/healthz");
 

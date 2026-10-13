@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Email;
@@ -25,23 +26,40 @@ public static class App
     public const string ApiTitle = "TerraScale Auth API";
 
     /// <summary>
-    /// TerraBase's internal listener on Fly's private network: app <c>ts-terrabase</c> in gru, the home region of the
-    /// platform databases, from every region; in a <c>ts-pr-&lt;n&gt;</c> preview, whose one machine (in another Fly org)
-    /// runs TerraBase next to ts-auth, that machine. Off Fly (local development), the TerraBase on this machine, whose
-    /// internal listener is on loopback there, in Development only: a production ts-auth off Fly has no storage to fall
-    /// back on and refuses to start (<see cref="AuthConfigurationException"/>) instead of writing to whatever listens there.
+    /// TerraBase's internal listener on Fly's private network in this machine's region (<c>FLY_REGION</c>): app
+    /// <c>ts-terrabase</c>, which replicates the platform databases between regions; in a <c>ts-pr-&lt;n&gt;</c> preview,
+    /// whose one machine (in another Fly org) runs TerraBase next to ts-auth, that machine. When it does not answer,
+    /// <see cref="TerraBaseOtherRegions"/> do. Off Fly (local development), the TerraBase on this machine, whose internal
+    /// listener is on loopback there, in Development only: a production ts-auth off Fly has no storage to fall back on and
+    /// refuses to start (<see cref="AuthConfigurationException"/>) instead of writing to whatever listens there.
+    /// <paramref name="fly"/> holds Fly's machine environment (<c>FLY_APP_NAME</c>, <c>FLY_REGION</c>).
     /// </summary>
-    // shortcut: every region stores in gru's copy, because TerraBase does not replicate documents between regions yet (the
-    // client replication paths were deleted in R2a; peer streams come with R4a). Nearest-region storage would give each
-    // region its own signing keys and users. Switch back to top1.nearest.of.ts-terrabase.internal once R4a replicates.
-    public static Uri TerraBaseOrigin(AuthOptions options) => new(Environment.GetEnvironmentVariable("FLY_APP_NAME") switch
+    public static Uri TerraBaseOrigin(AuthOptions options, IConfiguration fly) => TerraBaseApp(options, fly) switch
     {
-        null or "" when options?.Development == true => "http://127.0.0.1:8081",
+        null => new("http://127.0.0.1:8081"),
+        var app when fly["FLY_REGION"] is { Length: > 0 } region => new($"http://{region}.{app}.internal:8081"),
+        _ => throw new AuthConfigurationException("FLY_REGION is unset: on Fly ts-auth stores in its own region's TerraBase"),
+    };
+
+    /// <summary>
+    /// Where storage goes when this region's TerraBase does not answer: the nearest started machine of the app, then every
+    /// started machine (the nearest can be this region's own, started but not answering). None off Fly.
+    /// </summary>
+    public static IReadOnlyList<DnsEndPoint> TerraBaseOtherRegions(AuthOptions options, IConfiguration fly) => TerraBaseApp(options, fly) switch
+    {
+        null => [],
+        var app => [new($"top1.nearest.of.{app}.internal", 8081), new($"{app}.internal", 8081)],
+    };
+
+    // The Fly app serving ts-auth's storage; null off Fly in Development (loopback).
+    private static string? TerraBaseApp(AuthOptions options, IConfiguration fly) => fly["FLY_APP_NAME"] switch
+    {
+        null or "" when options.Development => null,
         null or "" => throw new AuthConfigurationException(
             "Off Fly (FLY_APP_NAME unset) ts-auth stores in the loopback TerraBase only in Development: set TS_AUTH_ENVIRONMENT=Development, or run it on Fly"),
-        var app when app.StartsWith("ts-pr-", StringComparison.Ordinal) => $"http://top1.nearest.of.{app}.internal:8081",
-        _ => "http://gru.ts-terrabase.internal:8081",
-    });
+        var app when app.StartsWith("ts-pr-", StringComparison.Ordinal) => app,
+        _ => "ts-terrabase",
+    };
 
     /// <summary>
     /// The TerraBase project holding the platform's own databases. TerraBase seeds it with this fixed id on every start
@@ -83,11 +101,13 @@ public static class App
         }
 
         builder.Services.AddSingleton(TimeProvider.System);
-        builder.Services.AddSingleton(_ => new HttpClient(TerraBaseHttp.CreateHandler()));
-        // The nearest TerraBase machine's private listener: no credential, it trusts the private network.
+        builder.Services.AddSingleton(services => new HttpClient(TerraBaseTransport.CreateHandler(
+            TerraBaseOtherRegions(options, services.GetRequiredService<IConfiguration>()),
+            services.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(TerraBaseTransport)))));
+        // This region's TerraBase machine's private listener: no credential, it trusts the private network.
         builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
         {
-            BaseAddress = TerraBaseOrigin(options),
+            BaseAddress = TerraBaseOrigin(options, services.GetRequiredService<IConfiguration>()),
         }).Database(StorageProject, StorageDatabase));
         builder.Services.AddSingleton<AuthStore>();
         builder.Services.AddSingleton<Users>();

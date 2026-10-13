@@ -1,5 +1,8 @@
+using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet.TerraBase;
 using TUnit.Core.Interfaces;
@@ -44,6 +47,17 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         services.AddSingleton(provider => new TerraBaseDocumentsClient(provider.GetRequiredService<HttpClient>(), apiKey is null
             ? new TerraBaseDocumentsClientOptions { BaseAddress = this.Server.InternalAddress }
             : new TerraBaseDocumentsClientOptions { BaseAddress = this.Server.ClientAddress, ApiKey = apiKey }).Database(tenant.Project.Id, databaseName));
+    }
+
+    /// <summary>
+    /// Points storage at the tenant's database as ts-auth reaches it on Fly (the internal listener, no credential), through
+    /// ts-auth's own transport: <paramref name="ownRegion"/> first, <paramref name="otherRegion"/> when it does not answer.
+    /// </summary>
+    public static void UseRegionalStorage(IServiceCollection services, TerraBaseTestTenant tenant, Uri ownRegion, TcpRelay otherRegion)
+    {
+        services.AddSingleton(new HttpClient(TerraBaseTransport.CreateHandler([new DnsEndPoint("127.0.0.1", otherRegion.Port)], NullLogger.Instance)));
+        services.AddSingleton(provider => new TerraBaseDocumentsClient(provider.GetRequiredService<HttpClient>(),
+            new TerraBaseDocumentsClientOptions { BaseAddress = ownRegion }).Database(tenant.Project.Id, "auth"));
     }
 
     public static HttpClient NewHttpClient() => new(NewHandler());
