@@ -1,4 +1,5 @@
 using System.Text.Json;
+using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet;
 
@@ -7,7 +8,9 @@ namespace TerraScale.Dashboard.Features.Auth;
 public interface IProjectAccessTokens
 {
     // Requests exactly the action's scopes for the signed-in user. The user-project exchange cannot restrict a
-    // database, so a token carrying a database claim is refused.
+    // database, so a token carrying a database claim is refused. ts-auth refusals arrive as AccountAccessException:
+    // 404 invalid_target (not a project the user reaches), 403 forbidden_scope (the role lacks a scope),
+    // 401 invalid_grant (sign in again), 429 rate_limited. Anything else is HttpRequestException (dependency down).
     Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, IReadOnlyList<string> scopes, CancellationToken cancellationToken);
 }
 
@@ -50,8 +53,7 @@ public sealed partial class TsAuthGateway : IProjectAccessTokens
                 ["scope"] = scope
             });
             using var response = await http.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-                throw new HttpRequestException("Project authorization is unavailable.", null, response.StatusCode);
+            if (!response.IsSuccessStatusCode) throw await ExchangeRefusalAsync(response, cancellationToken);
             using var body = await PlatformJson.ReadAsync(response.Content, cancellationToken);
             var result = body.RootElement;
             var token = result.GetProperty("access_token").GetString();
@@ -76,6 +78,27 @@ public sealed partial class TsAuthGateway : IProjectAccessTokens
         }
         catch (Exception error) when (error is SignInRejectedException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
         { throw new HttpRequestException("The issuer returned invalid project authorization."); }
+    }
+
+    // ts-auth answers token-exchange refusals with RFC 6749 errors (PlatformGrants.cs: invalid_target, invalid_scope).
+    private static async Task<Exception> ExchangeRefusalAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        var error = "";
+        if (response.StatusCode is System.Net.HttpStatusCode.BadRequest)
+            try
+            {
+                using var body = await PlatformJson.ReadAsync(response.Content, cancellationToken);
+                if (body.RootElement.TryGetProperty("error", out var code) && code.ValueKind == JsonValueKind.String) error = code.GetString() ?? "";
+            }
+            catch (JsonException) { }
+        return (response.StatusCode, error) switch
+        {
+            (System.Net.HttpStatusCode.BadRequest, "invalid_target") => new AccountAccessException("The project is unavailable.", StatusCodes.Status404NotFound, "invalid_target"),
+            (System.Net.HttpStatusCode.BadRequest, "invalid_scope") => new AccountAccessException("Your role does not allow this action.", StatusCodes.Status403Forbidden, "forbidden_scope"),
+            (System.Net.HttpStatusCode.BadRequest, "invalid_grant") => new AccountAccessException("Sign in again to continue.", StatusCodes.Status401Unauthorized, "invalid_grant"),
+            (System.Net.HttpStatusCode.TooManyRequests, _) => new AccountAccessException("Too many requests. Try again shortly.", StatusCodes.Status429TooManyRequests, "rate_limited"),
+            _ => new HttpRequestException("Project authorization is unavailable.", null, response.StatusCode)
+        };
     }
 
     // A scope string is an unordered space-separated set (RFC 6749 section 3.3).
