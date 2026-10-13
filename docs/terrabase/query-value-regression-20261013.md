@@ -39,7 +39,7 @@ The existing Slow project references ts-auth, which references the sibling SDK. 
 The Makefile's Slow target builds the entire TerraBase solution filter. To respect the requested focused local validation, use the project directly with the existing shared build lock:
 
 ```sh
-flock -w 600 /tmp/ts-heavy.lock timeout 240 nice -n 19 \
+flock -w 1800 /tmp/ts-heavy.lock timeout 240 nice -n 19 \
   env TsDotnetRoot=/home/mariogk/Projects/TerraScale/ts-dotnet \
   dotnet build tests/TerraBase.Slow/TerraBase.Slow.csproj \
   --configuration Debug -p:RestoreLockedMode=true --nologo -v minimal
@@ -64,4 +64,6 @@ The composite JSON fixture and all 13 other raw JSON literals were parsed locall
 
 Full repository checks and the complete Fast/Slow suites have not run. Shared release CI is contended and no duplicate full build is requested.
 
-Residual dependency: obtain a focused build slot under the existing lock, compile the unchanged Slow project, and run the seven filtered tests above. No shared fixture or project edit is needed. Root `AGENTS.md` requires successful pre-push checks; with compilation unavailable, this artifact remains local and no draft PR has been created. The tests must remain enabled and any actual regression must be reported without changing its expected invariant.
+A third, single focused build request is queued with a 30-minute admission bound and a 4-minute build bound; its output goes to `/tmp/query-value-focused-build-queued.log`. Earlier waiters from this task have exited; there is no duplicate waiter. Sanitized snapshots showed one holder and five other queued requests before this request joined, then one holder and six queued requests. Holder PID `1950439` (`flock`, state `Ss`, elapsed 1,400 seconds at the second snapshot) advanced from `dotnet`/`TerraBase.Fast` children `2028307`/`2028386` to children `2033319`/`2033414`. This process turnover shows work progressing, but does not establish test success. No environment values or command-line arguments were read for this inspection.
+
+Residual dependency: let release work retain priority, acquire the existing lock, compile the unchanged Slow project, and run the seven filtered tests above. No shared fixture or project edit is needed. The requested two-file draft records pending validation; required checks remain outstanding and no merge is authorized. The tests must remain enabled and any actual regression must be reported without changing its expected invariant.
