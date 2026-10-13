@@ -31,6 +31,10 @@ internal sealed class RegionProcesses : IAsyncDisposable
     private readonly string _project = EntityIds.New().ToString();
     private readonly string _database = EntityIds.New().ToString();
 
+    // Set by StartAnchoredAsync: each process has a backup bucket kept on disk (its restore anchor) and the write-ahead log
+    // fault shim, so a power loss can be simulated.
+    private string? _masterKey;
+
     private RegionProcesses()
     {
     }
@@ -47,9 +51,17 @@ internal sealed class RegionProcesses : IAsyncDisposable
     public Uri Document(string id) => new($"{DatabasePath}/collections/{Collection}/documents/by-key?id={Uri.EscapeDataString(id)}", UriKind.Relative);
 
     /// <summary>Starts one process per region, registers the database placed in all of them, and waits until each serves it.</summary>
-    public static async Task<RegionProcesses> StartAsync(params string[] regions)
+    public static Task<RegionProcesses> StartAsync(params string[] regions) => StartAsync(new RegionProcesses(), regions);
+
+    /// <summary>
+    /// <see cref="StartAsync(string[])"/> with a backup bucket per process kept on disk (restore anchors that outlive the
+    /// process) and the write-ahead log fault shim loaded (<see cref="PowerLossAsync"/>). Needs Linux and cc.
+    /// </summary>
+    public static Task<RegionProcesses> StartAnchoredAsync(params string[] regions) =>
+        StartAsync(new RegionProcesses { _masterKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)) }, regions);
+
+    private static async Task<RegionProcesses> StartAsync(RegionProcesses cluster, string[] regions)
     {
-        var cluster = new RegionProcesses();
         try
         {
             Directory.CreateDirectory(Path.Combine(cluster._root, "members"));
@@ -102,6 +114,20 @@ internal sealed class RegionProcesses : IAsyncDisposable
         node.Client = null;
     }
 
+    /// <summary>
+    /// A power loss (<see cref="StartAnchoredAsync"/> only): SIGKILL, then every write-ahead log of the region goes back to
+    /// what it synced, as the machine's disk would keep.
+    /// </summary>
+    public async Task PowerLossAsync(string region)
+    {
+        await KillAsync(region);
+        Faults(_regions[region]).DropUnsynced(_regions[region].DataDirectory);
+    }
+
+    /// <summary>The region's catalog gate (<c>GET /catalog-gate</c>): open, trusted, pending.</summary>
+    public async Task<JsonNode> GateAsync(string region) =>
+        JsonNode.Parse(await this[region].GetStringAsync(new Uri("/catalog-gate", UriKind.Relative)))!;
+
     /// <summary>Starts the region's process again on the same data directory and machine id.</summary>
     public Task StartAgainAsync(string region) =>
         _regions[region].Process is { HasExited: false } ? throw new InvalidOperationException($"{region} is still running") : LaunchAsync(_regions[region]);
@@ -125,6 +151,8 @@ internal sealed class RegionProcesses : IAsyncDisposable
     }
 
     private string MemberFile(Region node) => Path.Combine(_root, "members", node.MachineId);
+
+    private WalFaults.WalSyncFaults Faults(Region node) => new(Path.Combine(_root, $"{node.Name}.faults"));
 
     private async Task LaunchAsync(Region node)
     {
@@ -152,6 +180,12 @@ internal sealed class RegionProcesses : IAsyncDisposable
         start.Environment[RegionProcessHost.MachineVariable] = node.MachineId;
         start.Environment[RegionProcessHost.DataVariable] = node.DataDirectory;
         start.Environment[RegionProcessHost.MembersVariable] = Path.Combine(_root, "members");
+        if (_masterKey is not null)
+        {
+            start.Environment[RegionProcessHost.BucketVariable] = Path.Combine(_root, $"{node.Name}.bucket");
+            start.Environment[RegionProcessHost.MasterKeyVariable] = _masterKey;
+            Faults(node).AddTo(start.Environment);
+        }
         var process = Process.Start(start) ?? throw new InvalidOperationException($"the {node.Name} process did not start");
         process.OutputDataReceived += (_, line) => node.Append(line.Data);
         process.ErrorDataReceived += (_, line) => node.Append(line.Data);
@@ -270,6 +304,8 @@ public sealed class RegionProcessHost
     internal const string MachineVariable = "TERRABASE_E2E_REGION_MACHINE";
     internal const string DataVariable = "TERRABASE_E2E_REGION_DATA";
     internal const string MembersVariable = "TERRABASE_E2E_REGION_MEMBERS";
+    internal const string BucketVariable = "TERRABASE_E2E_REGION_BUCKET";
+    internal const string MasterKeyVariable = "TERRABASE_E2E_REGION_MASTER_KEY";
 
     [Test]
     [Timeout(6 * 3600 * 1000)]
@@ -279,15 +315,23 @@ public sealed class RegionProcessHost
         Skip.When(string.IsNullOrEmpty(info), "a region of RegionProcesses: started by the harness in a process of its own");
         var (region, machine, members) = (Environment.GetEnvironmentVariable(RegionVariable)!, Environment.GetEnvironmentVariable(MachineVariable)!,
             Environment.GetEnvironmentVariable(MembersVariable)!);
+        // A backup bucket kept in a directory, so this machine's restore anchor and keys outlive a SIGKILL of its process.
+        var bucket = Environment.GetEnvironmentVariable(BucketVariable) is { Length: > 0 } stored ? Bucket(stored) : null;
         await using var api = await ManagementApi.StartAsync(settings =>
         {
             settings["region"] = region;
             settings["node-name"] = machine;
             settings["data-directory"] = Environment.GetEnvironmentVariable(DataVariable)!;
+            if (bucket is not null)
+            {
+                bucket.Configure(settings);
+                settings["master-key"] = Environment.GetEnvironmentVariable(MasterKeyVariable)!;
+            }
         }, services =>
         {
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
             services.AddSingleton<IMemberDirectory>(new DirectoryOfMembers(members));
+            bucket?.Route(services);
         });
 
         // Listed, then announced: the harness drives the node only once its peers can find it.
@@ -297,6 +341,25 @@ public sealed class RegionProcessHost
         await File.WriteAllTextAsync(info + ".partial", new JsonObject { ["internal"] = api.Server.BaseAddress.ToString() }.ToJsonString(), cancellationToken);
         File.Move(info + ".partial", info!, overwrite: true);
         await Task.Delay(Timeout.Infinite, cancellationToken);
+    }
+
+    // shortcut: platform PUTs only (no deletes), one file per key; enough for anchors and keys, not for backup pruning.
+    private static FakeS3 Bucket(string directory)
+    {
+        _ = Directory.CreateDirectory(directory);
+        var bucket = new FakeS3();
+        foreach (var file in Directory.EnumerateFiles(directory).Where(file => !file.EndsWith(".partial", StringComparison.Ordinal)))
+        {
+            bucket.StoreObject(Uri.UnescapeDataString(Path.GetFileName(file)), File.ReadAllBytes(file));
+        }
+
+        bucket.AfterPut = (key, content) =>
+        {
+            var file = Path.Combine(directory, Uri.EscapeDataString(key));
+            File.WriteAllBytes(file + ".partial", content);
+            File.Move(file + ".partial", file, overwrite: true);
+        };
+        return bucket;
     }
 
     // The machine list: one file per started machine, named by its id, holding its region and internal listener.

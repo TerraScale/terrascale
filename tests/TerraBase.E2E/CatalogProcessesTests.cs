@@ -66,6 +66,34 @@ public sealed class CatalogProcessesTests
         }, same => same, "one database behind the twin name in gru and sjc");
     }
 
+    /// <summary>
+    /// A power loss right after an anchored revocation is acknowledged loses no anchored commit (COS, live run 5: gru's
+    /// catalog came back at head 33972 behind its anchor's 33986 and waited for an operator). The system database syncs every
+    /// commit (decision 0012), so what the anchor counted is on disk: gru comes back trusted, opens, and the deleted database
+    /// stays deleted. With the system database's commits unsynced, gru comes back behind its anchor and stays closed.
+    /// </summary>
+    [Test]
+    public async Task A_power_loss_right_after_an_anchored_revocation_keeps_the_catalog_at_or_past_its_anchor()
+    {
+        Skip.When(Cluster.FlyRequested, "runs local node processes");
+        Skip.When(WalFaults.WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
+        await using var regions = await RegionProcesses.StartAnchoredAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
+        var tenant = await Tenant.CreateAsync(regions, Cluster.Gru);
+        var doomed = await tenant.CreateDatabaseAsync(Cluster.Gru, "doomed", []);
+        _ = await Converge.UntilAsync(() => tenant.ServesAsync(Cluster.Gru, "doomed"), served => served, "the database on gru");
+
+        // Acknowledged only once gru's anchor counts it; then the power goes.
+        await tenant.CommitAsync(Cluster.Gru, new { op = "delete_database", organization = tenant.Organization, project = tenant.Project, database = doomed });
+        await regions.PowerLossAsync(Cluster.Gru);
+        await regions.StartAgainAsync(Cluster.Gru);
+
+        var gate = await Converge.UntilAsync(() => regions.GateAsync(Cluster.Gru), state => state["open"]!.GetValue<bool>()
+            || state["pending"]!.AsArray().Any(reason => reason!.GetValue<string>().StartsWith("restored", StringComparison.Ordinal)), "gru's gate decided");
+        await Assert.That(gate["open"]!.GetValue<bool>()).IsTrue().Because(gate.ToJsonString());
+        await Assert.That(gate["trusted"]!.GetValue<bool>()).IsTrue();
+        await Assert.That(await tenant.ServesAsync(Cluster.Gru, "doomed")).IsFalse();
+    }
+
     [Test]
     public async Task A_database_deleted_while_a_region_process_was_killed_stays_deleted_and_its_name_serves_a_new_one()
     {

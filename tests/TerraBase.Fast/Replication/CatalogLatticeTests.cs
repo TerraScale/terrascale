@@ -833,6 +833,41 @@ public sealed class CatalogLatticeTests
     }
 
     /// <summary>
+    /// One region's hard stop never closes a second region's gate (COS, live run 5: gru stopped hard and came back behind its
+    /// anchor, and fra, restarted meanwhile, waited for gru). gru, sjc and fra run with anchors; gru stops; fra restarts.
+    /// fra's own anchor shows it was not restored, so a pull from sjc (open, trusted) is a majority with fra itself: fra
+    /// opens without gru. gru then returns behind its anchor: it stays closed (an operator's decision) and closes nobody.
+    /// </summary>
+    [Test]
+    public async Task A_machine_whose_anchor_holds_opens_from_a_majority_of_trusted_machines_while_another_region_is_down()
+    {
+        await using var cluster = await Cluster.StartWithAnchorsAsync("gru", "sjc", "fra");
+        var (gru, sjc, fra) = (cluster["gru"], cluster["sjc"], cluster["fra"]);
+        var owner = EntityIds.New().ToString();
+        await gru.CommitAsync(owner, new { op = "create_organization", id = EntityIds.New().ToString(), name = "Quorum" });
+        var copy = await gru.CopyCatalogAsync();
+        await gru.CommitAsync(owner, new { op = "create_organization", id = EntityIds.New().ToString(), name = "Later" });
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await Until(async () => region.Anchored >= await region.HeadAsync())).IsTrue().Because(region.Name);
+        }
+
+        await gru.StopAsync();
+        await fra.StopAsync();
+        await fra.StartAsync();
+        await Assert.That(await fra.UntilOpenAsync()).IsTrue().Because("fra and sjc are a majority of the three");
+
+        gru.PutBackCatalog(copy);
+        await gru.StartAsync();
+        await Assert.That(await Until(() => Task.FromResult(gru.Pending.Contains("restored to an older copy: an operator's decision")))).IsTrue();
+        await Assert.That(await gru.IsOpenAsync()).IsFalse();
+        foreach (var region in new[] { sjc, fra })
+        {
+            await Assert.That(await region.IsOpenAsync()).IsTrue().Because(region.Name);
+        }
+    }
+
+    /// <summary>
     /// A revocation never hangs on its anchor (COS, live run: a revocation on a CPU-throttled machine had no answer after 4
     /// minutes): while the bucket takes the anchor write and never answers, the route and a management commit carrying a
     /// revocation answer 503 <c>catalog_anchor_unavailable</c> within the anchor's time bound, and once the bucket answers

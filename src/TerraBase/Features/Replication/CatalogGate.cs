@@ -140,6 +140,10 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     // be a restore whose anchor went missing, so it opens only by verified pulls from trusted peers, or the operator open.
     private bool _anchorMissing;
 
+    // Whether this machine's anchor was read and its catalog is not behind it: known not restored, so it may open from a
+    // majority of trusted machines (itself included) rather than every one.
+    private bool _anchorHeld;
+
     // The head last written to the anchor.
     private long _anchored = -1;
 
@@ -278,11 +282,16 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
                     false when _anchorMissing && _verified.Count == 0 => ["restore anchor missing: a trusted peer or an operator's decision"],
                     false => Array.Empty<string>(),
                 }];
-            if (Pending.IsEmpty && (_verified.Count > 0 || (_directory is null && !_anchorMissing)))
+            // Known not restored (its anchor holds): pulls from trusted machines that make a majority with this one are enough,
+            // so one region's hard stop never keeps another region's restarted machine closed. Without that proof, every one.
+            var machines = listed.Select(peer => peer.Name).Union(recorded, StringComparer.Ordinal).Count(name => name != _options.MachineId) + 1;
+            var majority = _anchorHeld && _restored == false && _verified.Count > 0 && (_verified.Count + 1) * 2 > machines;
+            if ((Pending.IsEmpty && (_verified.Count > 0 || (_directory is null && !_anchorMissing))) || majority)
             {
-                // Pulled from every machine needed, at least one of them, and not restored; or a single machine by configuration.
+                // Pulled from every machine needed (or a majority, see above), at least one of them, and not restored; or a
+                // single machine by configuration.
                 _open = true;
-                _logger.ZLogInformation($"The catalog is verified against {_verified.Count} other machines; this machine serves");
+                _logger.ZLogInformation($"The catalog is verified against {_verified.Count} of {machines - 1} other machines; this machine serves");
             }
             else
             {
@@ -540,6 +549,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
                 return true;
             }
 
+            _anchorHeld = true;
             return false;
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)

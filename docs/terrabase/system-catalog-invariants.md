@@ -105,6 +105,16 @@ version said a document a machine held is never missing; that holds only without
     key): an anchor edited or forged without the key fails authentication and reads as unreadable (closed). At start, before any pull, M compares its head with the anchor: behind means M's
     catalog was put back to an older copy, which a volume snapshot cannot hide (the anchor lives outside the volume). A
     restored M then never opens by pulling (its peers may be restored copies too); only the operator open does.
+  - **A majority is enough once M's own anchor holds** (COS, live run 5, 2026-10-13: gru stopped hard, and fra, restarted
+    meanwhile, waited for gru). When M read its anchor and is not behind it, M is known not restored; it then opens once
+    its pulls from trusted machines plus M itself are a majority of the machines it knows (listed and recorded), so one
+    region's hard stop never keeps another region's restarted machine closed. What M may lack is what a stopped machine
+    acknowledged and never shipped, the same as if M had kept running. Without that proof (no bucket, the anchor missing
+    or unreadable) M waits for every machine, as above.
+  - **An anchored commit survives a power loss.** The anchor counts what the catalog head holds, and the system database
+    syncs every commit (decision 0012), so after a hard stop M's head is at or past its anchor; without that sync a power
+    loss right after an acknowledged revocation brings M back behind its anchor (an e2e test, a SIGKILL plus the write-ahead
+    log fault shim's dropped unsynced frames).
   - **Anchored before acknowledged.** Every endpoint a restore could undo to a tenant's harm carries the endpoint
     metadata `AnchoredRevocation`: `deleteOrganization`, `deleteProject`, `deleteDatabase` (the project API and its legacy
     management alias reach the same endpoint), `revokeProjectApiKey`, `removeMember`, `changeMemberRole`,
