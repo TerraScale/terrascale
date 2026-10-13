@@ -13,7 +13,7 @@
 }
 
 .ts-eyebrow {
-  color: var(--ts-ink-2);
+  color: var(--ts-eyebrow);
   font-family: var(--ts-label-font);
   font-size: var(--ts-label-size);
   font-weight: var(--ts-label-weight);
