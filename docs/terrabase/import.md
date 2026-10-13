@@ -1,9 +1,11 @@
 # One-time import from PostgreSQL and Turso (contract v1)
 
-Status, 2026-10-12: **contract v1, revision 2, implementation in progress** (branch `feat/postgres-turso-import-core`,
+Status, 2026-10-12: **contract v1, revision 3, implementation in progress** (branch `feat/postgres-turso-import-core`,
 draft PR #167). This file is the single contract for import jobs. Downstream owners (ts-dashboard, ts-dotnet,
-ts-docs) build against it; changes are made here first. Revision 2 replaces revision 1: the destination is
-created with `createDatabase`, sources upload in parts, and `listImports` is gone.
+ts-docs) build against it; changes are made here first. Revision 2 replaced revision 1 (destination from
+`createDatabase`, uploads in parts, no `listImports`). Revision 3 (source integrity): SQLite files must be in rollback
+journal mode, SQLite internal/virtual/shadow tables are excluded automatically, a checksum mismatch returns the job to
+`awaiting_source`, and the preview maps every row.
 
 Scope: a guided, one-time bulk copy of a **PostgreSQL** or **Turso/libSQL/SQLite** export into a **new, empty,
 isolated TerraBase database**. Not in scope: ongoing sync or CDC, direct connections to source databases, imports
@@ -20,7 +22,8 @@ into a database that holds data, schema/constraint enforcement in TerraBase.
    data (functions, indexes, grants, …) are listed as skipped. Any statement that can hold data and is not imported
    (`INSERT`, large objects, an unknown statement) is a **blocking** issue. A SQLite file is read by TerraBase's own
    bounded, managed, read-only reader of the SQLite file format: no SQLite or Turso engine opens it, no SQL in it runs,
-   and its schema text is only tokenized. Virtual tables block until excluded.
+   and its schema text is only tokenized. A SQLite file in WAL mode is refused, because rows still in its `-wal` would be
+   missing without any sign in the file itself.
 3. **Dry run first.** Uploading produces a preview. No document is written until the caller confirms that exact
    preview (`startImport` with `previewId`). Every path back into copying (resume included) requires a confirmed
    preview that is still current.
@@ -63,6 +66,10 @@ Cleanup: `deleteDatabase` (existing) removes the destination and its job; TerraB
 4. Poll `GET D/import` (every 2 s is enough) until `ready` (preview) or `rejected`.
 5. Show the preview; on confirmation `POST D/import/start {"previewId":…}`; poll until `completed` or `failed`.
 
+Plan limits apply unchanged: `createDatabase` enforces the plan's database limit (a Hobby project that already has
+its database cannot create a destination), imported documents pass TerraBase's storage quota and are metered as
+document writes, and upload parts are metered as request bytes. An import never bypasses a quota.
+
 ### Requests
 
 `createImport` body:
@@ -88,7 +95,12 @@ answers `409 import_exists`. A database with collections answers `409 destinatio
 before `receivedBytes` is a replay and answers `200` unchanged. Any other offset answers `409 offset_mismatch`, and a
 part beyond `sourceBytes` answers `413 payload_too_large`. The part that completes the source moves the job to
 `analyzing`, which first checks the SHA-256. Allowed in `awaiting_source`, and in `failed`/`cancelled` when
-`source.staged` is false; the bytes must hash to the declared `sourceSha256`.
+`source.staged` is false.
+
+**The source of an import never changes.** Every upload must be the file whose size and SHA-256 `createImport`
+declared. When the completed bytes hash differently (a transfer fault), TerraBase discards them and the job returns
+to `awaiting_source` with `error.code` `source_checksum_mismatch` and `receivedBytes` 0: upload the identical file
+again. A different or re-exported file is a new import: create a new database and a new import.
 
 `updateImport` body: `{"options":{…}}`. Allowed in `ready` and `rejected`; re-analyzes, giving a new `preview.id`.
 
@@ -172,8 +184,9 @@ Bounds: 1000 tables, 1600 columns per table, 50 issues per table, 200 skipped en
 
 ```text
 awaiting_source --last part--> analyzing --> ready --start(previewId)--> queued --> running --> validating --> completed
-                                       \--> rejected   (blocking issues, unreadable source or SHA-256 mismatch)
-ready | rejected --update--> analyzing
+                                       |--> rejected         (blocking issues or an unreadable/unsupported source)
+                                       \--> awaiting_source  (SHA-256 mismatch: bytes discarded, upload the same file again)
+ready | rejected --update--> analyzing   (new options only; the source cannot change)
 cancel: awaiting_source | analyzing | ready | rejected | queued | running | validating --> cancelled
 failure: analyzing | running | validating --> failed  (error.retryable)
 resume from failed/cancelled:
@@ -195,11 +208,21 @@ resume from failed/cancelled:
 | `format` | Accepted input | How to produce it |
 | --- | --- | --- |
 | `postgres_plain` | `pg_dump` plain-text SQL in UTF-8 with `COPY … FROM stdin` data (pg_dump's default) | `pg_dump --format=plain --no-owner --no-privileges --encoding=UTF8 -f dump.sql <db>`; convert a custom-format archive offline with `pg_restore -f dump.sql archive.dump` |
-| `sqlite` | One SQLite 3 database file (Turso/libSQL databases in the SQLite file format), checkpointed (no `-wal`) | `sqlite3 local.db ".backup export.db"` or `VACUUM INTO 'export.db'`; for Turso, a database export in the SQLite file format (exact Turso CLI command: ts-docs to verify) |
+| `sqlite` | One consolidated SQLite 3 database file in **rollback journal mode** (header bytes 18–19 = 1), Turso/libSQL databases included | Turso: `turso db export DB --output-file turso-export.db`, then `sqlite3 turso-export.db "VACUUM INTO 'export.db'"` (with `turso-export.db-wal` beside it, if one was written); local SQLite: `sqlite3 local.db "VACUUM INTO 'export.db'"`. Upload `export.db` |
 
 Rejected (`rejected`, `error.code` `unsupported_source_format`): pg_dump custom/directory/tar archives (`PGDMP`),
-compressed files, non-UTF-8 dumps, `pg_dumpall` output (`\connect`), files that are not SQLite 3, encrypted SQLite.
+compressed files, non-UTF-8 dumps, `pg_dumpall` output (`\connect`), files that are not SQLite 3, encrypted SQLite,
+and SQLite files in WAL mode (`error.code` `wal_mode_source`). A WAL-mode file may lack rows that are still in its
+`-wal`, and no check of the file alone (`quick_check` included) can tell: `turso db export` can write a `.db` and a
+`.db-wal`, and the `.db` alone silently misses the newest rows. `sqlite3 … ".backup …"` keeps the WAL flag, so its output
+is refused too; `VACUUM INTO` reads the WAL and writes a rollback-mode file.
 Blocking issues: `INSERT` statements (`--inserts`), large objects, `COPY` in CSV/binary form, unknown statements.
+pg_dump's `\restrict`/`\unrestrict` lines (PostgreSQL 17.6+) are recognized and ignored.
+
+SQLite tables excluded **automatically** (listed in `skipped`, never imported, never blocking): virtual tables
+(`virtual_table`, with a `not_imported` warning: an FTS or R-tree index is rebuilt from its source table, but a virtual
+table holding its own content is not imported), their shadow tables (`shadow_table`), and SQLite's internal tables
+`sqlite_sequence`, `sqlite_stat1` … `sqlite_stat4` and any other `sqlite_*` (`internal_table`).
 
 ## 5. Type mapping (explicit; anything not listed is `unsupported_type`, blocking until excluded)
 
@@ -215,9 +238,12 @@ PostgreSQL (`COPY` text values; `\N` is JSON `null`):
 | `uuid` | `string` | lowercase canonical string |
 | `json`, `jsonb` | `json` | the embedded JSON value (TerraBase limits: 16 levels, 4096 values per document) |
 | `bytea` | `base64` | standard base64 string |
-| `date` | `date` | `"YYYY-MM-DD"`; BC dates and `±infinity` are `invalid_value` |
+| `date` | `date` | `"YYYY-MM-DD"` |
 | `timestamp` | `timestamp` | `"YYYY-MM-DDThh:mm:ss[.ffffff]"`, no offset |
 | `timestamptz` | `timestamptz` | RFC 3339 UTC `"…Z"`, microseconds kept |
+
+`date`, `timestamp` and `timestamptz` values `infinity`, `-infinity` and BC values (`… BC`) are `invalid_value`: they
+have no RFC 3339 form. Years 1 to 9999 AD are imported.
 | `time`, `timetz`, `interval`, `inet`, `cidr`, `macaddr`, `macaddr8`, `bit`, `varbit`, `xml` | `text` | string, exactly as dumped |
 
 Unsupported in v1: arrays, composite, range and multirange, domain, geometric, `money`, `tsvector`/`tsquery`,
@@ -225,11 +251,24 @@ Unsupported in v1: arrays, composite, range and multirange, domain, geometric, `
 
 SQLite/Turso: each value maps by its **storage class**, never inferred from the declared type: `INTEGER` → number,
 `REAL` → number (`±Infinity` and magnitudes below 1e-307 are `invalid_value`), `TEXT` → string, `BLOB` → base64
-string, `NULL` → `null`. `mapping` reports the classes seen (`integer`, `float`, `string`, `base64`, `null`), and a
-column holding several is a `mixed_storage_classes` warning.
+string, `NULL` → `null`. `mapping` names the non-NULL classes seen, joined by `+` in the order `integer`, `float`,
+`string`, `base64` (for example `integer` or `integer+string`), or `null` when every value is NULL. NULLs never make
+a column mixed; two or more non-NULL classes are a `mixed_storage_classes` warning.
+
+**The preview maps every row.** Analysis reads the whole source and applies the mapping, document ids and
+TerraBase's document limits to every row, so invalid values, invalid ids and documents over 1 MiB, 16 levels or 4096
+values are blocking issues in the preview, with their row numbers (first 50 per table), before anything is written.
+Not detectable in the preview: two rows whose distinct source keys map to one id (for example SQLite `1` and `'1'`
+in an untyped column); the copy then fails with `duplicate_document_id`.
 
 ## 6. Keys, ids and constraints
 
+- **Names in `exclude`, `source` and `columns[].name`:** dot-separated identifiers. An identifier made only of
+  `[a-z0-9_]` and not starting with a digit is written bare; any other is double-quoted with `"` doubled, as in SQL:
+  `public."Order Items"."unit.price"`. PostgreSQL names match exactly; SQLite names match case-insensitively.
+- **Partitions (PostgreSQL):** each partition holds its own rows and imports as its own collection; the partitioned
+  parent holds none and is listed in `skipped` (`partitioned_table`). A dump made with `--load-via-partition-root`
+  loads every row into the root, which then imports as one collection.
 - **Collection:** the table name (`public` and `main` drop their schema, other schemas give `schema_table`),
   lowercased, characters outside `[a-z0-9_-]` replaced by `_`, prefixed `t_` unless it starts with a letter, cut to
   63. Collisions, reserved names (`collections`, `commit_offset`, `sqlite_*`, `turso_*`) and the import's own
@@ -254,8 +293,7 @@ column holding several is a `mixed_storage_classes` warning.
 
 - **Snapshot:** the import reads exactly the uploaded bytes, bound by `sourceSha256` (checked when the upload
   completes and before every run). PostgreSQL consistency is pg_dump's: one transaction snapshot. A SQLite file is
-  its own snapshot when taken with `.backup` or `VACUUM INTO`; a file in WAL mode is a warning
-  (`wal_mode_source`: data still in its `-wal` is not in the file).
+  its own snapshot when it is a consolidated rollback-mode file (`VACUUM INTO`); WAL-mode files are refused (section 4).
 - **Writes are create-only and atomic with the checkpoint.** Each batch (at most 500 documents and 1 MiB) is one
   TerraBase transaction holding the documents, each with `if-none-match: *`, and the job's checkpoint (table, row,
   source offset). A crash, restart or resume continues after the last committed batch. A document that already
@@ -312,9 +350,10 @@ HTTP (`ErrorBody`):
 Job `error.code` and issue codes: `unsupported_source_format`, `source_checksum_mismatch`, `unsupported_statement`,
 `unsupported_type`, `unsupported_primary_key`, `missing_primary_key`, `collection_name_collision`, `too_many_tables`,
 `too_many_columns`, `preview_too_large`, `malformed_source`, `invalid_value`, `invalid_document_id`,
-`document_too_large`, `source_lost`, `destination_modified`, `write_failed`, `validation_failed`; warnings
-`mixed_storage_classes`, `wal_mode_source`, `not_imported` (a skipped object that may hold derived data, such as a
-materialized view).
+`document_too_large`, `duplicate_document_id`, `source_lost`, `destination_modified`, `quota_exceeded` (retryable
+after the plan allows more), `write_failed`, `validation_failed`, `wal_mode_source`; warnings `mixed_storage_classes`,
+`not_imported` (a skipped object that may hold data that is not imported, such as a materialized view or a virtual
+table).
 
 ## 10. Not supported, and what it would need
 
