@@ -1,23 +1,25 @@
 # TerraScale Go SDK (`terrascale.tech/sdk`)
 
-Package `v1` is the TerraBase client: documents, collections, queries and
-transactions with an API key, and the Management API for the dashboard
-backend. The root package holds the hosted TSAuth clients and the pure schema
-and SQL builders.
+Package `v1` is the TerraBase client for project JWTs: databases, collections,
+documents, queries, transactions, read-only SQL and database change streams.
+`tsauth` exchanges customer API keys and user tokens for project access tokens.
+The root package holds hosted TSAuth clients and pure schema and SQL builders.
+The [compatibility matrix](contracts/terrabase-compatibility.md) records the
+exact server revision, local test evidence and remaining qualification gaps.
 
 All entity IDs are canonical uppercase, 26-character Crockford ULIDs. Use
 `sdk.NewID()` (or `v1.NewID()`) to generate one and `ValidateID` to validate it.
-Generation is concurrency-safe and monotonic within a millisecond. UUIDs,
-prefixed IDs, lowercase IDs and legacy document keys are rejected at SDK
-boundaries. The TerraBase document key is the entity ID: document payloads
-must not contain a top-level `id` field. OAuth client names, database and
+Generation is concurrency-safe and monotonic within a millisecond. Entity
+IDs reject UUIDs, prefixes and lowercase forms. Caller-supplied document keys
+are opaque UTF-8 strings: 1 to 256 UTF-16 units, without control characters.
+Slashes, punctuation and Unicode are query-encoded once. Generated document
+keys remain canonical ULIDs; an application payload may contain its own `id`.
+OAuth client names, database and
 collection names, region/service catalog names, versions and credentials
 remain protocol names or opaque tokens, not entity IDs.
 
-This greenfield change provides no data migration or compatibility path.
-The SDK owns no persistent collections, databases or KV records; no stored
-data is deleted by this repository. Services must wipe affected data and
-recreate bootstrap state before serving the new contract.
+The SDK owns no persistent collections, databases or KV records. This contract
+alignment requires no stored-data deletion or migration.
 
 ## Zero-configuration operating contract
 
@@ -26,23 +28,25 @@ global origin `https://auth.terrascale.tech`, the default API origin is
 `https://api.terrascale.tech`, and Fly anycast handles routing. No region
 activation, endpoint pinning or manual secret copying belongs in setup.
 Customer tenant/project scope and authorized access credentials remain required.
-The examples below describe existing SDK call boundaries, not production
-onboarding. `discoveredOrigin` below is a trusted HTTPS origin supplied by an
-authorized integration, not created by this SDK. See [AGENTS.md](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
+The examples describe SDK boundaries; deployed issuer trust still requires
+qualification. See [AGENTS.md](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
 
 ## TerraBase v1 client (`terrascale.tech/sdk/v1`)
 
-Package `v1` talks to the C# TerraBase server: the Documents API v1 and the
-Management API (terrabase `docs/decisions/0004-document-api-v1.md` and
-`docs/management-api.md`). A database is addressed by its project id and name;
-the API key's organization selects the tenant.
+Package `v1` follows the implemented C# API. A database is addressed by its
+project ULID and database name. The project access token must reach that exact
+project and, when narrowed, that database. TerraBase verifies the platform
+issuer `https://auth.terrascale.tech/terrascale`, audience
+`https://api.terrascale.tech`, lifetime, signature and required scopes.
 
 ```go
 import tb "terrascale.tech/sdk/v1"
+import "terrascale.tech/sdk/tsauth"
 
-c, err := tb.New(tb.Config{BaseURL: discoveredOrigin, Token: apiKey}) // tb_…
+tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: apiKey, Project: projectID}) // tsk_…
+c, err := tb.New(tb.Config{TokenSource: tokens}) // fixed global API origin
 db := c.Database(projectID, "main")
-_, err = db.Create(ctx)                     // PUT; Created reports a 201
+_, err = db.Create(ctx)                     // POST; existing name returns name_taken
 err = db.Delete(ctx)                        // DELETE; needs databases:write
 _, err = db.CreateCollection(ctx, "users") // 409 name_taken when it exists
 cols, err := db.Collections(ctx, tb.ListOptions{Limit: 50})
@@ -53,7 +57,7 @@ doc, err := users.Get(ctx, res.ID)
 var body map[string]any
 err = doc.Decode(&body) // numbers decode as json.Number, never float64
 
-id := tb.NewID() // monotonic ULID; keep natural keys in payload fields
+id := tb.NewID() // retain this key when resolving an uncertain outcome
 _, err = users.Put(ctx, id, body, tb.IfNoneMatchAny())
 _, err = users.Patch(ctx, id, tb.Ops(tb.Inc("/logins", 1), tb.Append("/tags", "beta")), tb.IfMatch(doc.Version))
 _, err = users.Patch(ctx, id, tb.MergePatch(map[string]any{"legacy": nil}))
@@ -63,11 +67,14 @@ page, err := users.List(ctx, tb.ListOptions{Cursor: next}) // id order
 
 Every call resolves its endpoint through `tb.Resolver`. `BaseURL` wraps a
 `tb.StaticResolver`; alternatively, set `Config.Resolver` to a concurrent-safe
-resolver implementing `Resolve(context.Context) (string, error)`. Set one of
-`BaseURL` or `Resolver`. Resolved URLs are validated before credentials are
+resolver implementing `Resolve(context.Context) (string, error)`. Omit both
+for `https://api.terrascale.tech`. Resolved URLs are validated before credentials are
 sent, resolution errors stop the call, and retries keep the original endpoint.
-The same configuration applies to `NewManagement`. No production endpoint is
-built into the SDK.
+The same transport configuration applies to `NewManagement`. `Token` and
+`TokenSource` are mutually exclusive. A source with `Invalidate(string)` is
+refreshed once after a 401, with the same request and grant; a second denial
+stops the call. Explicit tokens and 403/404 responses never use a fallback.
+Legacy `tb_` keys remain usable only where the server still accepts them.
 
 ### Unique keys
 
@@ -94,14 +101,18 @@ Every write returns `WriteResult{ID, Version, Offset, Durability}` and the
 version is the `ETag`. Versions are opaque tokens (`tbv1-…`, `tbv2-…`):
 compare and pass them back, never parse them. Unknown `state` and
 `durability` values and new response members decode without error. Errors are `*tb.APIError{Status, Code, Message, Op,
-RetryAfter, ETag}`, and every error code is also an error value for
+RetryAfter, ETag, Body, RequestID}`, and every error code is also an error value for
 `errors.Is`, for example `tb.ErrNotFound`, `tb.ErrPreconditionFailed`,
 `tb.ErrUnknownDatabase` or `tb.ErrNameTaken`. A 404 for a deleted document
 carries the tombstone version in `ETag`, which recreates it with `IfMatch`.
+`Body` preserves the complete error response, including malformed JSON;
+`RequestID` preserves an `X-Request-ID` response header when supplied. Truncated
+or oversized error responses retain bounded bytes and an unwrap-able read
+cause. Successful typed responses reject empty, null and malformed envelopes.
 
 Retries: TerraBase does not deduplicate retries and rejects `Idempotency-Key`,
 so the client never sends one. Only requests a replay cannot apply twice are
-retried: reads, queries, `PUT` of a database and writes with an `IfMatch`
+retried: reads, read-only SQL, queries and writes with an `IfMatch`
 version (a transaction when every write op has one). `IfNoneMatchAny` is not
 enough, since a tombstone left by another writer satisfies it again. For
 those, 429 is retried after `Retry-After`, and the transient rejections
@@ -112,10 +123,15 @@ queries. Mutations return uncertain outcomes without a replay: use
 what to do. A transport failure matches that code and retains its original
 cause; a server response retains its `*tb.APIError`. Other writes and
 `500 internal_error` are never retried. First-party retry budgets must be fixed
-in code; existing tuning options remain implementation inventory. Point document operations use `/documents/by-key?id=…`, with the canonical
-ULID query-encoded once. IDs never enter path segments.
+in code; existing tuning options remain implementation inventory. Public
+database creation is POST and is never replayed after a transient rejection.
+Point document operations use `/documents/by-key?id=…`, with the opaque key
+query-encoded once. Keys never enter path segments.
 Listing and generated creation use GET and POST `/documents`, respectively.
 The old `/documents/{id}` point routes are removed.
+The pinned server still implements If-Match/ETags and lacks deduplicated PUT,
+read-write SQL and RFC 9457 errors. TS-748 describes future producer changes;
+this client does not assume those changes have shipped.
 
 Transactions apply up to 1024 ops atomically; failures name the op index:
 
@@ -143,15 +159,47 @@ for doc, err := range users.Items(ctx, q) { … }     // every match across page
 for page, err := range users.Pages(ctx, q) { … }    // page.NextCursor, page.Count
 ```
 
-### Management API
+### Public database tooling
 
-The ts-dashboard backend manages organizations, projects, databases, members,
+`Client.Databases` lists project databases; `Database.Info` reads metadata by
+name. `Database.SQL`, `CheckSQL` and `ExplainSQL` use `/v1/projects/{project}/databases/{name}/sql`
+and its `/check` and `/explain` routes with `databases:read`. SQL is the server's
+read-only SELECT subset, with a default LIMIT of 100, a maximum of 1000 and an
+8 MiB result bound. `CheckSQL` can return `OK: false` for an unsupported
+statement; invalid explain requests return API errors. Root SQL builders do
+not execute this HTTP API.
+
+`Client.ProjectUsage` and `Database.Usage` use public project/name routes and
+the existing `UsageOptions`. Counts are best-effort dashboard observations,
+not billing evidence.
+
+### Database changes
+
+`Database.Changes(ctx, ChangesOptions{Cursor: "now", Collections: []string{"users"}})`
+returns an iterator of `change` and `cursor` events from `GET /v1/projects/{project}/databases/{name}/changes`.
+Consume every cursor checkpoint; retain `ChangeEvent.Cursor` for a later
+subscription. Clean EOF reconnects with `Last-Event-ID`, the original endpoint
+and collection filter. The server gives that header precedence over the
+initial query cursor. Documents are the serving machine's current value,
+possibly null; deduplicate by origin, version, collection and key.
+
+Cancellation, malformed/truncated events and terminal SSE `error` events stop
+iteration. `ErrCursorExpired` is returned without resetting to `now` or
+re-reading customer data. Streams fail visibly if they end before providing a
+resume cursor. Collection/index metadata and dropped collections' former
+documents are absent from the feed.
+
+### Legacy Management API
+
+The hidden legacy `/v1/management` aliases still manage organizations, projects, databases, members,
 invitations, ownership transfers and the audit log as one ts-auth user.
 `WithToken` presents the user's ts-auth access token on the client listener.
 `As` names the user in `X-TerraBase-User-Id` with the management service
 credential (`Config.Token`), which TerraBase accepts only on its loopback admin
 listener, for bootstrap work such as `AddMember`. Take the user id from the
-session, never from browser input.
+session, never from browser input. These existing methods retain membership
+and catalog-ID semantics. New identity workflows belong in `tsauth`; public
+TerraBase tooling uses the project/name methods above.
 
 ```go
 m, err := tb.NewManagement(tb.Config{BaseURL: origin})
@@ -212,18 +260,17 @@ If Commit returns `ErrCommitUncertain`, retry the same handle with a fresh
 context; it resends the exact body without repeating existence checks or
 creating a new commit ID. Retain the handle until the outcome is resolved.
 
-Served by TerraBase but not in the client yet (TS-590 adds them): shapes,
-database tooling (backups, index recommendations, schema, project usage, SQL check) and saved queries,
-invitation lookup and general Management commits. Not served:
-query `explain`, `Idempotency-Key` and the `/v1/dashboard` control plane.
+Public client gaps include backups, branches/placement updates, index tooling,
+JSON schema, saved queries and query shapes. Existing hidden aliases do not
+prove public JWT compatibility for those methods. Collection shape/subscription
+routes were removed; query `explain` and `Idempotency-Key` remain unserved.
 
 ### Replication and analytics (TS-762)
 
-`Analytics` and `Replication` read TerraBase's unversioned project routes using
+`Analytics` and `Replication` read TerraBase's `/v1/projects` routes using
 a ts-auth **project access token**. Project and database IDs are plain ULIDs.
-The wire shape is provisional until TerraBase's TS-762 OpenAPI lands; see
-[the contract](contracts/replication-analytics.md). Do not merge the SDK PR
-before the TerraBase PR has merged and this contract has been reconciled.
+The wire shape is reconciled with the pinned server implementation; see
+[the contract](contracts/replication-analytics.md).
 
 ```go
 m, err := tb.NewManagement(tb.Config{BaseURL: origin})
@@ -231,17 +278,17 @@ u := m.WithToken(projectAccessToken)
 opts := tb.MetricsOptions{Range: tb.Range24Hours, DatabaseID: databaseID, Region: "gru"}
 analytics, err := u.Analytics(ctx, projectID, opts)
 replication, err := u.Replication(ctx, projectID, opts)
-// Fetch the next analytics page with the same filters.
-opts.After = analytics.Next // empty means the last page
 ```
 
-Each call returns one page; pass `Next` as `MetricsOptions.After` when non-empty.
-TerraBase chooses time buckets for `1h`, `24h`, `7d`, or `30d`. Analytics includes
+Each call returns the server's bounded window; these routes have no pagination.
+TerraBase chooses time buckets for `1h`, `24h`, `7d`, or `30d`. Analytics groups
+series under database/region `Items` and includes
 requests and operations by type, errors, p50/p95/p99 latency, storage, client
 bandwidth and directed replication bandwidth. Replication reports period ops
 and bytes by region pair, lag, divergence, convergence time, last applied and
-status per database and region. `replication_bytes` is a separate meter from
-client bandwidth; nullable observations distinguish missing data from zero.
+status per database and region. Replication bandwidth carries its traffic
+`Kind`; nullable storage, latency and boolean divergence distinguish missing
+observations from zero or false. Counters are best-effort, not billable totals.
 The methods share the client's context cancellation, response bounds, API
 errors and safe-read retries.
 
@@ -250,9 +297,11 @@ errors and safe-read retries.
 Tests use `httptest` fakes and fixtures. No test downloads or starts a
 TerraBase binary, and no other repo may depend on TerraBase from this module.
 Focused HTTP boundary tests check generated IDs and malformed response
-envelopes without simulating persistence. TS-762's `v1/metrics_test.go` uses
-`httptest` for the provisional replication and analytics contract while the
-server endpoints are being added in parallel.
+envelopes without simulating persistence. Metrics and SSE fixtures reflect the
+pinned producer's actual models. Fixtures verify SDK behavior, not deployed
+signature/issuer enforcement, durability, replication or retention. Existing
+live status/OIDC tests require separate authorized inputs; no new skips were
+added. The matrix records checks and unverified producer dependencies.
 
 ## TSAuth and builders
 
@@ -375,8 +424,9 @@ key, err := u.CreateAPIKey(ctx, org.ID, project.ID, tsauth.APIKeyRequest{Name: "
 tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: key.Key}) // key.Key is shown once
 ```
 
-ts-auth does not serve this contract yet. Its tests check every operation
-against the pinned contract, `tsauth/testdata/platform-api.openapi.json`.
+Management tests use the pinned local contract,
+`tsauth/testdata/platform-api.openapi.json`. They do not establish deployed
+platform compatibility; see the qualification limits in the matrix.
 
 ### ts-auth headless sign-in
 

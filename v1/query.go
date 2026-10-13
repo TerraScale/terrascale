@@ -167,12 +167,12 @@ type Query struct {
 	// Project keeps at most 64 paths (and their parent objects).
 	Project []string `json:"project,omitempty"`
 	// Limit is 1-1000; zero uses the server default of 50.
-	Limit int `json:"limit,omitempty"`
+	Limit int `json:"limit,omitzero"`
 	// Cursor continues from a previous page's NextCursor. It is bound to
 	// Filter, Sort and Project; Limit may change between pages.
 	Cursor string `json:"cursor,omitempty"`
 	// Count requests the total match count; ignored when Cursor is set.
-	Count bool `json:"count,omitempty"`
+	Count bool `json:"count,omitzero"`
 }
 
 // Count is a match count; Value is a lower bound when Exact is false.
@@ -209,6 +209,9 @@ func (c *Client) page(ctx context.Context, req request, in any) (*QueryResult, e
 		return nil, err
 	}
 	res := out.QueryResult
+	if res.Items == nil {
+		return nil, errors.New("terrabase: query response is missing an items array")
+	}
 	if out.NextCursor != nil {
 		res.NextCursor = *out.NextCursor
 	}
@@ -220,10 +223,28 @@ func (c *Client) page(ctx context.Context, req request, in any) (*QueryResult, e
 // only without a cursor, so it is sent with the first page only.
 func (col *Collection) Pages(ctx context.Context, q Query) iter.Seq2[*QueryResult, error] {
 	return func(yield func(*QueryResult, error) bool) {
+		q := q
+		// Brent's cycle detector retains one cursor regardless of page count.
+		anchor, power, length := q.Cursor, uint64(1), uint64(0)
 		for {
+			if err := ctx.Err(); err != nil {
+				yield(nil, err)
+				return
+			}
 			page, err := col.Query(ctx, q)
 			if !yield(page, err) || err != nil || page.NextCursor == "" {
 				return
+			}
+			length++
+			if page.NextCursor == anchor {
+				yield(nil, errors.New("terrabase: pagination cursor repeated"))
+				return
+			}
+			if length == power {
+				anchor, length = page.NextCursor, 0
+				if power <= ^uint64(0)/2 {
+					power *= 2
+				}
 			}
 			q.Cursor, q.Count = page.NextCursor, false
 		}
@@ -239,6 +260,10 @@ func (col *Collection) Items(ctx context.Context, q Query) iter.Seq2[Document, e
 				return
 			}
 			for _, d := range page.Items {
+				if err := ctx.Err(); err != nil {
+					yield(Document{}, err)
+					return
+				}
 				if !yield(d, nil) {
 					return
 				}

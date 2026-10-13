@@ -17,27 +17,27 @@ func TestDocumentKeyResponseValidation(t *testing.T) {
 	}{
 		{name: "missing", omit: true},
 		{name: "empty"},
-		{name: "UUID", key: "0190a6e4-7c3b-7d2e-8f00-0123456789ab"},
-		{name: "prefix", key: "doc_" + testProject},
-		{name: "lowercase", key: strings.ToLower(testProject)},
-		{name: "overflow", key: "81ARZ3NDEKTSV4RRFFQ69G5FAV"},
+		{name: "UUID", key: "0190a6e4-7c3b-7d2e-8f00-0123456789ab", valid: true},
+		{name: "prefix", key: "doc_" + testProject, valid: true},
+		{name: "lowercase", key: strings.ToLower(testProject), valid: true},
+		{name: "overflow", key: "81ARZ3NDEKTSV4RRFFQ69G5FAV", valid: true},
 		{name: "NUL", key: "a\x00b"},
 		{name: "newline", key: "a\nb"},
 		{name: "C1 control", key: "a\u0085b"},
 		{name: "too long ASCII", key: strings.Repeat("a", 257)},
 		{name: "too long BMP", key: strings.Repeat("界", 257)},
 		{name: "too long astral", key: strings.Repeat("😀", 129)},
-		{name: "raw punctuation", key: " /a%2Fb?#+ "},
-		{name: "decomposed Unicode", key: "e\u0301"},
-		{name: "BMP boundary", key: strings.Repeat("界", 256)},
-		{name: "astral boundary", key: strings.Repeat("😀", 128)},
+		{name: "raw punctuation", key: " /a%2Fb?#+ ", valid: true},
+		{name: "decomposed Unicode", key: "e\u0301", valid: true},
+		{name: "BMP boundary", key: strings.Repeat("界", 256), valid: true},
+		{name: "astral boundary", key: strings.Repeat("😀", 128), valid: true},
 		{name: "ULID", key: testProject, valid: true},
 	}
 	for _, tc := range cases {
 		for _, operation := range []string{"get", "list", "query", "sql", "put", "patch", "delete", "tx_create", "tx_put", "tx_patch", "tx_delete"} {
 			t.Run(tc.name+"/"+operation, func(t *testing.T) {
 				payload := map[string]any{"name": "Ana"}
-				row := map[string]any{"version": "opaque", "state": "value", "document": payload, "value": payload}
+				row := map[string]any{"version": "opaque", "state": "value", "document": payload, "value": payload, "offset": "1", "durability": "local_durable"}
 				if !tc.omit {
 					row["id"] = tc.key
 				}
@@ -48,7 +48,7 @@ func TestDocumentKeyResponseValidation(t *testing.T) {
 				case "sql":
 					response = map[string]any{"rows": []any{row}}
 				case "tx_create", "tx_put", "tx_patch", "tx_delete":
-					response = map[string]any{"results": []any{row}}
+					response = map[string]any{"results": []any{row}, "offset": "1", "durability": "local_durable"}
 				}
 				body, err := json.Marshal(response)
 				if err != nil {
@@ -92,7 +92,7 @@ func TestDocumentKeyResponseValidation(t *testing.T) {
 }
 
 func TestTransactionResponseKeysAreOptionalOnlyForAssertions(t *testing.T) {
-	_, db, _ := scriptedUsers(t, scripted{status: http.StatusOK, body: `{"results":[{"asserted":true},{"asserted":true},{"count":"0"}]}`})
+	_, db, _ := scriptedUsers(t, scripted{status: http.StatusOK, body: `{"offset":"1","durability":"local_durable","results":[{"asserted":true},{"asserted":true},{"asserted":true,"count":"0"}]}`})
 	zero := uint64(0)
 	_, err := db.Tx().Assert("users", testProject, v1.Eq("/active", true)).AssertAbsent("users", v1.NewID()).AssertCount("users", v1.Eq("/active", true), v1.CountBounds{Gte: &zero}).Commit(t.Context())
 	if err != nil {

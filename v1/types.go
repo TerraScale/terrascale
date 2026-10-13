@@ -79,11 +79,11 @@ const (
 
 // Document is a document as returned by GET, queries and shapes.
 type Document struct {
-	ID      string `json:"id" ulid:"required"`
+	ID      string `json:"id" documentkey:"required"`
 	Version string `json:"version"`
 	State   State  `json:"state"`
 	// Document is the exact JSON object for state "value".
-	Document json.RawMessage `json:"document,omitempty" entity:"payload"`
+	Document json.RawMessage `json:"document,omitempty"`
 	// Siblings lists every live and deleted sibling for state "conflict".
 	Siblings []Sibling `json:"siblings,omitempty"`
 }
@@ -95,7 +95,7 @@ func (d *Document) Decode(v any) error { return Decode(d.Document, v) }
 type Sibling struct {
 	Event    Event           `json:"event"`
 	Deleted  bool            `json:"deleted"`
-	Document json.RawMessage `json:"document,omitempty" entity:"payload"`
+	Document json.RawMessage `json:"document,omitempty"`
 }
 
 // Event identifies the write that produced a sibling: Replica is a ULID
@@ -112,12 +112,74 @@ func Decode(data []byte, v any) error { return decodeExact(data, v) }
 
 // WriteResult is the response to a document write.
 type WriteResult struct {
-	ID         string     `json:"id" ulid:"required"`
-	Version    string     `json:"version"`
-	Offset     Uint64     `json:"offset"`
-	Durability Durability `json:"durability"`
+	// Document is the stored object returned by PATCH.
+	Document   json.RawMessage `json:"document,omitempty"`
+	ID         string          `json:"id" documentkey:"required"`
+	Version    string          `json:"version"`
+	Offset     Uint64          `json:"offset"`
+	Durability Durability      `json:"durability"`
 	// Created is true when a PUT or POST answered 201.
 	Created bool `json:"-"`
 	// Location is the Location header of a POST create.
 	Location string `json:"-"`
+}
+
+// requiredResponseMembers rejects absent or null protocol members while allowing new ones.
+func requiredResponseMembers(data []byte, names ...string) error {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return err
+	}
+	for _, name := range names {
+		raw := members[name]
+		if len(raw) == 0 || string(raw) == "null" {
+			return fmt.Errorf("terrabase: response is missing %s", name)
+		}
+	}
+	return nil
+}
+
+// UnmarshalJSON validates the required document envelope without restricting future states.
+func (d *Document) UnmarshalJSON(data []byte) error {
+	if err := requiredResponseMembers(data, "id", "version", "state"); err != nil {
+		return err
+	}
+	type wire Document
+	var decoded wire
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if err := checkVersion(decoded.Version); err != nil {
+		return err
+	}
+	if decoded.State == "" {
+		return fmt.Errorf("terrabase: response state must not be empty")
+	}
+	if decoded.State == StateValue || len(decoded.Document) > 0 {
+		if len(decoded.Document) == 0 || decoded.Document[0] != '{' {
+			return fmt.Errorf("terrabase: response document must be a JSON object")
+		}
+	}
+	*d = Document(decoded)
+	return nil
+}
+
+// UnmarshalJSON validates the required write acknowledgement.
+func (r *WriteResult) UnmarshalJSON(data []byte) error {
+	if err := requiredResponseMembers(data, "id", "version", "offset", "durability"); err != nil {
+		return err
+	}
+	type wire WriteResult
+	var decoded wire
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if err := checkVersion(decoded.Version); err != nil {
+		return err
+	}
+	if decoded.Durability == "" {
+		return fmt.Errorf("terrabase: response durability must not be empty")
+	}
+	*r = WriteResult(decoded)
+	return nil
 }

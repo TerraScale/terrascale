@@ -1,49 +1,57 @@
 # TS-762 replication and analytics client contract
 
-This is the provisional wire shape used by the SDK's `httptest` tests, pending
-TerraBase's `cos/ts-762-replication-usage-analytics-api` OpenAPI. Reconcile paths,
-query keys, pagination and JSON fields with that OpenAPI before merging the SDK
-PR. The TerraBase PR must merge first. These routes have no version component.
+Reconciled with TerraScale/terrascale main
+`e30ffdc287530551b161b0130220be53d3c0475e`, specifically
+`src/TerraBase/Features/Management/Usage/{IUsageAnalytics,AnalyticsRoute,AnalyticsWindow}.cs`.
+These are implemented versioned routes. Local fixtures establish SDK decoding;
+deployed observations and regional completeness remain unqualified.
 
 ## Requests
 
-`GET /projects/{project}/analytics` returns `AnalyticsResponse`.
-`GET /projects/{project}/replication` returns `ReplicationResponse`.
+`GET /v1/projects/{project}/analytics` returns `AnalyticsResponse`.
+`GET /v1/projects/{project}/replication` returns `ReplicationResponse`.
 
 Both use `Authorization: Bearer <ts-auth project access token>` and the same
 optional query parameters: `range` (`1h`, `24h`, `7d`, `30d`), `database` (plain
-ULID), `region` (region identifier), `after` (opaque cursor) and `limit` (1-100).
+ULID) and `region` (observing region identifier).
 Project and database IDs in requests and responses are canonical uppercase,
 26-character Crockford ULIDs. The SDK rejects UUIDs, prefixes and noncanonical
-case without normalizing them. Omitted range/limit use server
-defaults; omitted database/region select all. `next` is empty at the last page.
-Pass it back as `after`, retaining the other filters. The SDK fetches one page
-per call and delegates bucketing to TerraBase.
+case without normalizing them. Omitted range selects `24h`; omitted
+database/region select all observations the grant reaches in this regional
+catalog. There is no `after`, `limit` or `next` contract. Windows use 1-minute,
+1-hour, 6-hour and 1-day buckets respectively. Requests are bounded to 100
+databases, 16384 database-region buckets and 5 seconds by the server.
 
 ## Responses
 
-Both responses contain `projectId`, UTC `from` (inclusive), `to` (exclusive),
-`bucketSeconds`, and `next`. Analytics has `series`; replication has `items`.
+Both responses contain `projectId`, `range`, UTC `from` (inclusive), `to`
+(exclusive), `bucketSeconds`, and `items`.
 
-Each analytics point contains `start`, `databaseId`, `region`, `requests` and
-`ops` (counts keyed by type), `errors`, `p50LatencyMs`, `p95LatencyMs`,
-`p99LatencyMs`, `storageBytes`, `clientBytesSent`, `clientBytesReceived`, and
-`replicationBandwidth` (directed region pairs).
+Analytics items contain `databaseId`, `databaseName`, `region` and `series`.
+Each series point contains `start`, `requests`, `operations` (counts keyed by
+type), `errors`, `latency` (`p50Ms`, `p95Ms`, `p99Ms`), nullable `storageBytes`,
+`clientBandwidth` and `replicationBandwidth`. Both bandwidth objects contain
+`bytesSent` and `bytesReceived`.
 
-Each replication item contains `databaseId`, `region`, period `replicatedOps`,
-`bandwidth` (directed region pairs), latest `lagMs`, `divergence` (count),
-`convergenceTimeMs`, `lastApplied` (UTC timestamp) and `status`
+Each replication item contains `databaseId`, `databaseName`, `region`, period `replicatedOps`,
+`bandwidth` (directed region pairs), latest `lagMs`, `divergence` (boolean),
+`convergenceMs`, `lastApplied` (UTC timestamp), `series`, and `status`
 (`healthy`, `lagging`, `diverged`, `stopped`). Unknown future statuses decode
-without error. Unavailable latency, lag, divergence, convergence and last-applied
-observations are nullable, preserving measured zero.
+without error. `divergence` is a nullable boolean, preserving measured false.
+Latency, storage, lag, convergence and last-applied observations preserve null
+versus measured zero. Replication series points contain `start`,
+`replicatedOps` and directed `bandwidth`.
 
 Each region pair contains `sourceRegion`, `destinationRegion`, `bytesSent`,
-`bytesReceived`, and `meter` (`replication_bytes`). `gru -> sfo` and `sfo -> gru`
+`bytesReceived`, and `kind` (`delta`, `anti_entropy`, `handoff`). `gru -> sfo` and `sfo -> gru`
 are separate pairs. Sent/received observations must not be summed as distinct
 billable transfers. Replication bytes remain separate from client bandwidth.
+Counters are best-effort observations flushed every 10 seconds, not billing.
 All counters decode as signed 64-bit integers without passing through float64.
 
 TerraBase owns metering, replication state, aggregation and pagination. The SDK
 reads those values without storing data or computing replacement measurements.
+Missing required windows, item arrays and nested observations fail decoding
+instead of becoming empty successful data. Unknown response fields remain accepted.
 Errors use TerraBase's existing `{"error":{"code":...,"message":...}}`
 envelope and the SDK's `APIError`/safe-read retry policy.

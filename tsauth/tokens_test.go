@@ -246,13 +246,13 @@ func TestExchangeSource(t *testing.T) {
 				}
 				if form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:token-exchange" || form.Get("subject_token") != "user-token" ||
 					form.Get("subject_token_type") != "urn:ietf:params:oauth:token-type:access_token" ||
-					form.Get("organization") != "01ARZ3NDEKTSV4RRFFQ69G5FA6" || form.Get("project") != "01ARZ3NDEKTSV4RRFFQ69G5FA7" || form.Get("scope") != "shapes:read" {
+					form.Get("organization") != "01ARZ3NDEKTSV4RRFFQ69G5FA6" || form.Get("project") != "01ARZ3NDEKTSV4RRFFQ69G5FA7" || form.Get("scope") != "documents:read" {
 					t.Errorf("exchange form: %v", form)
 				}
 				answer(w, "project-token", 900)
 			})
 			cfg := ExchangeConfig{Issuer: srv.URL + "/terrascale", ClientID: "ts-cli", Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6", Project: "01ARZ3NDEKTSV4RRFFQ69G5FA7",
-				Scopes: []string{ScopeShapesRead}, SubjectToken: func(context.Context) (string, error) { return "user-token", nil }}
+				Scopes: []string{ScopeDocumentsRead}, SubjectToken: func(context.Context) (string, error) { return "user-token", nil }}
 			if confidential {
 				cfg.ClientID, cfg.ClientSecret = "ts-dashboard", "s3cret"
 			}

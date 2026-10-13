@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
-	"strings"
 
 	"terrascale.tech/sdk/internal/entityid"
 )
@@ -57,15 +56,15 @@ type DatabaseInfo struct {
 	Created bool `json:"-"`
 }
 
-// Create creates the database in its project; an existing database is
-// returned unchanged (Created false).
+// Create creates the database in its project. An existing name fails with
+// ErrNameTaken. Needs the databases:write scope.
 func (d *Database) Create(ctx context.Context) (*DatabaseInfo, error) {
 	p, err := d.path()
 	if err != nil {
 		return nil, err
 	}
 	var info DatabaseInfo
-	resp, err := d.c.call(ctx, request{method: http.MethodPut, path: p, replaySafe: true}, nil, &info)
+	resp, err := d.c.call(ctx, request{method: http.MethodPost, path: p[:len(p)-1]}, map[string]string{"name": d.name}, &info)
 	if err != nil {
 		return nil, err
 	}
@@ -87,6 +86,7 @@ func (d *Database) Delete(ctx context.Context) error {
 
 // CollectionInfo is a collection.
 type CollectionInfo struct {
+	ID        string    `json:"id" ulid:"required"`
 	Name      string    `json:"name"`
 	CreatedAt Timestamp `json:"created_at"`
 }
@@ -277,7 +277,7 @@ func (col *Collection) path(extra ...string) ([]string, error) {
 }
 
 func (col *Collection) docRequest(method, id string) (request, error) {
-	if err := ValidateID(id); err != nil {
+	if err := entityid.DocumentKey(id); err != nil {
 		return request{}, fmt.Errorf("terrabase: document ID: %w", err)
 	}
 	p, err := col.path("documents", "by-key")
@@ -447,7 +447,14 @@ func (col *Collection) Create(ctx context.Context, doc any, opts ...WriteOption)
 	if err != nil {
 		return nil, err
 	}
-	return col.write(ctx, request{method: http.MethodPost, path: p, body: body})
+	res, err := col.write(ctx, request{method: http.MethodPost, path: p, body: body})
+	if err == nil {
+		err = ValidateID(res.ID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 // Patch applies a MergePatch or an Ops patch to an existing document.
@@ -494,6 +501,11 @@ func (col *Collection) write(ctx context.Context, req request) (*WriteResult, er
 	if err != nil {
 		return nil, err
 	}
+	if req.method == http.MethodPatch {
+		if err := checkResponseObject(res.Document); err != nil {
+			return nil, fmt.Errorf("terrabase: PATCH response document: %w", err)
+		}
+	}
 	res.Created = resp.status == http.StatusCreated
 	res.Location = resp.header.Get("Location")
 	return &res, nil
@@ -508,9 +520,6 @@ func encodeObject(doc any) ([]byte, error) {
 	}
 	if t := bytes.TrimLeft(body, " \t\r\n"); len(t) == 0 || t[0] != '{' {
 		return nil, errors.New("terrabase: a document must be a JSON object")
-	}
-	if err := entityid.Payload(body); err != nil {
-		return nil, err
 	}
 	return body, nil
 }
@@ -535,12 +544,6 @@ func Ops(ops ...PatchOp) Patch {
 		p.err = errors.New("terrabase: Ops needs at least one operation")
 	}
 	for _, op := range ops {
-		if op.op == "set" && op.path == "" && op.err == nil {
-			p.err = errors.Join(p.err, entityid.Payload(op.value))
-		}
-		if op.path == "/id" || strings.HasPrefix(op.path, "/id/") {
-			p.err = errors.Join(p.err, errors.New("document payload must not contain id; use the document key"))
-		}
 		p.err = errors.Join(p.err, op.err)
 	}
 	return p
@@ -614,4 +617,12 @@ func (o PatchOp) MarshalJSON() ([]byte, error) {
 		Value json.RawMessage `json:"value,omitempty"`
 		By    json.RawMessage `json:"by,omitempty"`
 	}{o.op, o.path, o.value, o.by})
+}
+
+func checkResponseObject(raw json.RawMessage) error {
+	body := bytes.TrimSpace(raw)
+	if len(body) == 0 || body[0] != '{' {
+		return errors.New("expected a nonnull JSON object")
+	}
+	return nil
 }

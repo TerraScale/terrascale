@@ -170,8 +170,25 @@ type SQLResult struct {
 // SQLRow is one selected document: all of it for SELECT *, otherwise one
 // member per selected field.
 type SQLRow struct {
-	ID    string          `json:"id" ulid:"required"`
-	Value json.RawMessage `json:"value" entity:"payload"`
+	ID    string          `json:"id" documentkey:"required"`
+	Value json.RawMessage `json:"value"`
+}
+
+// UnmarshalJSON requires the server's object-valued SQL row envelope.
+func (r *SQLRow) UnmarshalJSON(data []byte) error {
+	if err := requiredResponseMembers(data, "id", "value"); err != nil {
+		return err
+	}
+	type wire SQLRow
+	var decoded wire
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if err := checkResponseObject(decoded.Value); err != nil {
+		return err
+	}
+	*r = SQLRow(decoded)
+	return nil
 }
 
 // Index is a secondary index of a database's collection.

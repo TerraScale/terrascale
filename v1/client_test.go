@@ -145,7 +145,7 @@ func TestLocalRejection(t *testing.T) {
 		"database name":    func() error { _, err := c.Database(testProject, "Main").Create(ctx); return err },
 		"collection name":  func() error { _, err := c.Database(testProject, "main").CreateCollection(ctx, "a/b"); return err },
 		"empty id":         func() error { _, err := users.Get(ctx, ""); return err },
-		"slash id":         func() error { _, err := users.Get(ctx, "a/b"); return err },
+		"DEL in id":        func() error { _, err := users.Get(ctx, "a\x7fb"); return err },
 		"control id":       func() error { _, err := users.Get(ctx, "a\nb"); return err },
 		"long id":          func() error { _, err := users.Get(ctx, strings.Repeat("x", 257)); return err },
 		"long Unicode id":  func() error { _, err := users.Get(ctx, strings.Repeat("界", 257)); return err },

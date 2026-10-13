@@ -2,17 +2,18 @@
 //
 // It talks to the C# TerraBase server: the Documents API v1 (databases,
 // collections, documents, queries and transactions under
-// /v1/projects/{project}/databases/{database}) with a tb_ API key, and the
-// Management API (/v1/management) as a ts-auth user.
+// /v1/projects/{project}/databases/{database}) with a ts-auth project access
+// token. SQL and database tooling use the same hierarchy. The legacy
+// Management API (/v1/management) acts as a ts-auth user.
 //
 // Document values are never decoded through float64: documents are returned
 // as json.RawMessage, and Decode helpers use json.Decoder.UseNumber, so
 // numbers keep their exact decimal text as json.Number.
 //
-// A data-plane client is created with New and an API key; the Management API
+// A public client is created with New and a project token or TokenSource; the Management API
 // uses NewManagement and a user's ts-auth access token:
 //
-//	c, err := v1.New(v1.Config{BaseURL: "https://gru.terrabase.example", Token: apiKey})
+//	c, err := v1.New(v1.Config{Token: projectAccessToken})
 //	users := c.Database(projectID, "main").Collection("users")
 //	doc, err := users.Get(ctx, id)
 package v1
@@ -40,6 +41,8 @@ import (
 
 // Protocol limits and client defaults.
 const (
+	// DefaultBaseURL is the fixed global TerraBase API origin.
+	DefaultBaseURL = "https://api.terrascale.tech"
 	// MaxRequestBytes is the server's request body limit (api-v1.md).
 	MaxRequestBytes = 4 << 20
 	// DefaultMaxResponseBytes bounds how much of one response body is read.
@@ -52,7 +55,7 @@ const (
 
 // Config configures a Client or a Management client.
 type Config struct {
-	// BaseURL is the TerraBase origin, for example https://gru.terrabase.example.
+	// BaseURL is the TerraBase origin; empty uses DefaultBaseURL.
 	// It must be HTTPS; plain HTTP is accepted only for loopback hosts. A path
 	// prefix is kept; a query, fragment or user info is rejected.
 	BaseURL string
@@ -64,6 +67,9 @@ type Config struct {
 	// for the project-management routes (unique keys). For Management it is
 	// empty, or the management service credential (admin listener only, see As).
 	Token string
+	// TokenSource supplies a current project access token, for example a
+	// tsauth API key or token exchange source. Set either Token or TokenSource.
+	TokenSource TokenSource
 	// HTTPClient is used for every request. Nil uses a client that requires
 	// TLS 1.3. The client is copied and its redirect policy replaced, so the
 	// bearer token is never forwarded to a redirect target.
@@ -89,9 +95,16 @@ type Config struct {
 type Client struct {
 	resolver    Resolver
 	token       string
+	tokenSource TokenSource
 	hc          *http.Client
 	maxRetries  int
 	maxResponse int64
+}
+
+// TokenSource supplies access tokens; TerraBase validates their claims.
+// Sources also implementing Invalidate(string) refresh once on a 401.
+type TokenSource interface {
+	Token(context.Context) (string, error)
 }
 
 // Resolver resolves a TerraBase endpoint. Resolution errors stop the call;
@@ -116,17 +129,23 @@ var (
 
 // New returns a data-plane client.
 func New(cfg Config) (*Client, error) {
-	if !tokenPattern.MatchString(cfg.Token) && !jwtPattern.MatchString(cfg.Token) {
+	if cfg.TokenSource == nil && !tokenPattern.MatchString(cfg.Token) && !jwtPattern.MatchString(cfg.Token) {
 		return nil, errors.New("terrabase: Token must be a tb_ API key or a ts-auth project access token")
 	}
 	return newClient(cfg)
 }
 
 func newClient(cfg Config) (*Client, error) {
+	if cfg.Token != "" && cfg.TokenSource != nil {
+		return nil, errors.New("terrabase: set either Token or TokenSource")
+	}
 	if cfg.Resolver != nil && cfg.BaseURL != "" {
 		return nil, errors.New("terrabase: set either Resolver or BaseURL")
 	}
 	if cfg.Resolver == nil {
+		if cfg.BaseURL == "" {
+			cfg.BaseURL = DefaultBaseURL
+		}
 		if _, err := parseBaseURL(cfg.BaseURL); err != nil {
 			return nil, err
 		}
@@ -143,7 +162,7 @@ func newClient(cfg Config) (*Client, error) {
 		hc = &copied
 	}
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	c := &Client{resolver: cfg.Resolver, token: cfg.Token, hc: hc, maxRetries: cfg.MaxRetries, maxResponse: cfg.MaxResponseBytes}
+	c := &Client{resolver: cfg.Resolver, token: cfg.Token, tokenSource: cfg.TokenSource, hc: hc, maxRetries: cfg.MaxRetries, maxResponse: cfg.MaxResponseBytes}
 	switch {
 	case c.maxRetries == 0:
 		c.maxRetries = DefaultMaxRetries
@@ -156,12 +175,37 @@ func newClient(cfg Config) (*Client, error) {
 	return c, nil
 }
 
+func (c *Client) bearerToken(ctx context.Context, override string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if override != "" || c.tokenSource == nil {
+		return cmp.Or(override, c.token), nil
+	}
+	token, err := c.tokenSource.Token(ctx)
+	if err != nil {
+		return "", fmt.Errorf("terrabase: acquire access token: %w", err)
+	}
+	if !jwtPattern.MatchString(token) {
+		return "", errors.New("terrabase: TokenSource must return a ts-auth project access token")
+	}
+	return token, nil
+}
+
+func (c *Client) invalidateToken(token string) bool {
+	if source, ok := c.tokenSource.(interface{ Invalidate(string) }); ok {
+		source.Invalidate(token)
+		return true
+	}
+	return false
+}
+
 func parseBaseURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
 		return nil, fmt.Errorf("terrabase: BaseURL %q is not an absolute URL", raw)
 	}
-	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return nil, errors.New("terrabase: BaseURL must not carry user info, a query or a fragment")
 	}
 	switch u.Scheme {
@@ -241,9 +285,20 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 		return nil, err
 	}
 	readOnly := req.method == http.MethodGet || req.readOnly
+	refreshed := false
 	for attempt := 0; ; attempt++ {
-		resp, err := c.send(ctx, req, target)
+		outbound := req
+		outbound.token, err = c.bearerToken(ctx, req.token)
 		if err != nil {
+			return nil, err
+		}
+		resp, err := c.send(ctx, outbound, target)
+		if err != nil {
+			if resp != nil && (resp.status < 200 || resp.status >= 300) {
+				apiErr := parseAPIError(resp.status, resp.header, resp.body)
+				apiErr.cause = err
+				return resp, apiErr
+			}
 			if !readOnly {
 				return nil, fmt.Errorf("%w: %w", ErrCommitUncertain, err)
 			}
@@ -257,6 +312,11 @@ func (c *Client) do(ctx context.Context, req request) (*response, error) {
 		}
 		if resp.status >= 200 && resp.status < 300 {
 			return resp, nil
+		}
+		// Authentication refuses the request before an operation can execute.
+		if resp.status == http.StatusUnauthorized && req.token == "" && !refreshed && c.invalidateToken(outbound.token) {
+			refreshed = true
+			continue
 		}
 		apiErr := parseAPIError(resp.status, resp.header, resp.body)
 		if !readOnly && apiErr.Code == ErrCommitUncertain {
@@ -342,13 +402,15 @@ func (c *Client) send(ctx context.Context, req request, target string) (*respons
 	}
 	defer res.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(res.Body, c.maxResponse+1))
+	resp := &response{status: res.StatusCode, header: res.Header, body: data}
 	if err != nil {
-		return nil, fmt.Errorf("terrabase: read %s %s response: %w", method, hr.URL.Path, err)
+		return resp, fmt.Errorf("terrabase: read %s %s response: %w", method, hr.URL.Path, err)
 	}
 	if int64(len(data)) > c.maxResponse {
-		return nil, fmt.Errorf("terrabase: %s %s response exceeds %d bytes", method, hr.URL.Path, c.maxResponse)
+		resp.body = data[:c.maxResponse]
+		return resp, fmt.Errorf("terrabase: %s %s response exceeds %d bytes", method, hr.URL.Path, c.maxResponse)
 	}
-	return &response{status: res.StatusCode, header: res.Header, body: data}, nil
+	return resp, nil
 }
 
 // call sends a JSON request and decodes a JSON response into out (if non-nil).
@@ -364,7 +426,10 @@ func (c *Client) call(ctx context.Context, req request, in, out any) (*response,
 	if err != nil {
 		return resp, err
 	}
-	if out != nil && !(resp.status == http.StatusNoContent && len(bytes.TrimSpace(resp.body)) == 0) {
+	if out != nil {
+		if bytes.Equal(bytes.TrimSpace(resp.body), []byte("null")) {
+			return resp, errors.New("terrabase: expected a JSON response, received null")
+		}
 		if err := decodeExact(resp.body, out); err != nil {
 			return resp, fmt.Errorf("terrabase: decode %s response: %w", req.method, err)
 		}
@@ -382,7 +447,8 @@ func decodeExact(data []byte, v any) error {
 	if err := dec.Decode(v); err != nil {
 		return err
 	}
-	if dec.More() {
+	var trailing any
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return errors.New("trailing data after JSON value")
 	}
 	return nil

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"terrascale.tech/sdk/internal/entityid"
 )
 
 // Tx builds an atomic transaction of up to 1024 operations across the
@@ -27,7 +29,7 @@ type txOp struct {
 	Merge       json.RawMessage `json:"merge,omitempty"`
 	Ops         []PatchOp       `json:"ops,omitempty"`
 	Filter      *Filter         `json:"filter,omitempty"`
-	Absent      bool            `json:"absent,omitempty"`
+	Absent      bool            `json:"absent,omitzero"`
 	Gte         *uint64         `json:"gte,omitempty"`
 	Lte         *uint64         `json:"lte,omitempty"`
 }
@@ -43,10 +45,12 @@ type TxResult struct {
 // OpResult is the outcome of one transaction op: ID and Version for writes,
 // Asserted for asserts, and Count for AssertCount.
 type OpResult struct {
-	ID       string  `json:"id,omitempty" ulid:"optional"`
-	Version  string  `json:"version,omitempty"`
-	Asserted bool    `json:"asserted,omitempty"`
-	Count    *Uint64 `json:"count,omitempty"`
+	// Document is the stored object returned by a patch op.
+	Document json.RawMessage `json:"document,omitempty"`
+	ID       string          `json:"id,omitempty" documentkey:"optional"`
+	Version  string          `json:"version,omitempty"`
+	Asserted bool            `json:"asserted,omitzero"`
+	Count    *Uint64         `json:"count,omitempty"`
 }
 
 // CountBounds bounds an AssertCount: the count must be at least Gte and at
@@ -76,7 +80,7 @@ func (t *Tx) addOp(op txOp, pre []Precondition, collection, id string, idRequire
 		return fail(err)
 	}
 	if id != "" || idRequired {
-		if err := ValidateID(id); err != nil {
+		if err := entityid.DocumentKey(id); err != nil {
 			return fail(fmt.Errorf("document ID: %w", err))
 		}
 	}
@@ -85,7 +89,7 @@ func (t *Tx) addOp(op txOp, pre []Precondition, collection, id string, idRequire
 			if err := checkVersion(p.ifMatch); err != nil {
 				return fail(err)
 			}
-			op.IfMatch = p.ifMatch
+			op.IfMatch = `"` + p.ifMatch + `"`
 		}
 		if p.ifNoneMatchAny {
 			if !allowNoneMatch {
@@ -153,9 +157,8 @@ func (t *Tx) AssertAbsent(collection, id string) *Tx {
 }
 
 // AssertCount requires the number of documents in collection matching filter
-// to satisfy bounds. The filter is required (the contract defines no
-// filter-less count). It is evaluated inside the commit before this
-// transaction's writes, so it is serializable with every other write to the
+// to satisfy bounds. A zero filter counts every document. It is evaluated
+// inside the commit before this transaction's writes, so it is serializable with every other write to the
 // database (for example "at most 24 tokens per user"). A filter that would
 // examine more than 10000 entries fails with ErrAssertRequiresIndex; a
 // transaction holds at most 16 AssertCount ops.
@@ -164,10 +167,10 @@ func (t *Tx) AssertCount(collection string, filter Filter, bounds CountBounds) *
 	if bounds.Gte == nil && bounds.Lte == nil {
 		t.err = errors.Join(t.err, fmt.Errorf("op %d: AssertCount needs Gte or Lte", idx))
 	}
-	if filter.IsZero() {
-		t.err = errors.Join(t.err, fmt.Errorf("op %d: AssertCount needs a filter", idx))
+	op := txOp{Op: "assert_count", Gte: bounds.Gte, Lte: bounds.Lte}
+	if !filter.IsZero() {
+		op.Filter = &filter
 	}
-	op := txOp{Op: "assert_count", Filter: &filter, Gte: bounds.Gte, Lte: bounds.Lte}
 	if err := checkName("collection", collection); err != nil {
 		t.err = errors.Join(t.err, fmt.Errorf("op %d: %w", idx, err))
 	}
@@ -198,14 +201,29 @@ func (t *Tx) Commit(ctx context.Context) (*TxResult, error) {
 	}{t.ops}, &res); err != nil {
 		return nil, err
 	}
+	if len(res.Results) != len(t.ops) {
+		return nil, errors.New("terrabase: transaction response must have one result per op")
+	}
 	for i, op := range t.ops {
 		if op.Op == "assert" || op.Op == "assert_count" {
+			if !res.Results[i].Asserted || (op.Op == "assert_count" && res.Results[i].Count == nil) {
+				return nil, fmt.Errorf("terrabase: transaction result %d is missing its assertion outcome", i)
+			}
 			continue
 		}
-		if i >= len(res.Results) {
-			return nil, errors.New("terrabase: transaction response is missing a document key")
+		if err := checkVersion(res.Results[i].Version); err != nil {
+			return nil, fmt.Errorf("terrabase: invalid transaction result %d: %w", i, err)
 		}
-		if err := ValidateID(res.Results[i].ID); err != nil {
+		if op.Op == "patch" {
+			if err := checkResponseObject(res.Results[i].Document); err != nil {
+				return nil, fmt.Errorf("terrabase: transaction result %d document: %w", i, err)
+			}
+		}
+		check := entityid.DocumentKey
+		if op.Op == "create" && op.ID == "" {
+			check = ValidateID
+		}
+		if err := check(res.Results[i].ID); err != nil {
 			return nil, fmt.Errorf("terrabase: invalid transaction result %d: %w", i, err)
 		}
 	}
@@ -222,4 +240,21 @@ func (t *Tx) conditional() bool {
 		}
 	}
 	return true
+}
+
+// UnmarshalJSON validates the required transaction acknowledgement.
+func (r *TxResult) UnmarshalJSON(data []byte) error {
+	if err := requiredResponseMembers(data, "offset", "durability", "results"); err != nil {
+		return err
+	}
+	type wire TxResult
+	var decoded wire
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.Durability == "" {
+		return errors.New("terrabase: response durability must not be empty")
+	}
+	*r = TxResult(decoded)
+	return nil
 }
