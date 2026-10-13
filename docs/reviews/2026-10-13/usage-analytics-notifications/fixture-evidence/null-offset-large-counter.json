@@ -1,0 +1,135 @@
+{
+  "route": "/analytics?range=1h\u0026database=01a13320-59da-7e19-9835-c6ef0c11ad58\u0026region=GRU",
+  "Mode": "missing",
+  "DatabaseId": "01a13320-59da-7e19-9835-c6ef0c11ad58",
+  "placement": [
+    "GRU"
+  ],
+  "Reads": 2,
+  "producerPayload": {
+    "projectId": "01M4SJ0PDXFPDBBBRJAWA536NJ",
+    "range": "1h",
+    "from": "2026-10-12T22:39:00-03:00",
+    "to": "2026-10-12T23:39:00-03:00",
+    "bucketSeconds": 60,
+    "items": [
+      {
+        "databaseId": "01a13320-59da-7e19-9835-c6ef0c11ad58",
+        "region": "gru",
+        "series": [
+          {
+            "start": "2026-10-12T22:39:00-03:00",
+            "requests": {
+              "GET": 9007199254740993
+            },
+            "operations": {
+              "document_read": 4
+            },
+            "errors": 1,
+            "latency": {
+              "p50Ms": null,
+              "p95Ms": null,
+              "p99Ms": null
+            },
+            "storageBytes": null,
+            "clientBandwidth": {
+              "bytesSent": 6,
+              "bytesReceived": 7
+            },
+            "replicationBandwidth": {
+              "bytesSent": 8,
+              "bytesReceived": 9
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "stats": [
+    {
+      "label": "Requests",
+      "value": "9007199254740993"
+    },
+    {
+      "label": "Errors",
+      "value": "1"
+    },
+    {
+      "label": "Worst p95 latency",
+      "value": "Not reported"
+    },
+    {
+      "label": "Storage",
+      "value": "Not measured"
+    },
+    {
+      "label": "Operations",
+      "value": "4"
+    },
+    {
+      "label": "Client bandwidth",
+      "value": "13 B"
+    },
+    {
+      "label": "Replication sent",
+      "value": "8 B"
+    },
+    {
+      "label": "Replication received",
+      "value": "9 B"
+    }
+  ],
+  "charts": [
+    {
+      "label": "Requests by type, 1h",
+      "columns": 1,
+      "paths": [
+        "M 48.0,29.3"
+      ],
+      "missingLabels": 0
+    },
+    {
+      "label": "Operations by type, 1h",
+      "columns": 1,
+      "paths": [
+        "M 48.0,44.8"
+      ],
+      "missingLabels": 0
+    },
+    {
+      "label": "Errors, 1h",
+      "columns": 1,
+      "paths": [
+        "M 48.0,14.0"
+      ],
+      "missingLabels": 0
+    },
+    {
+      "label": "Storage (bytes), 1h",
+      "columns": 1,
+      "paths": [
+        ""
+      ],
+      "missingLabels": 2
+    },
+    {
+      "label": "Client bandwidth (bytes), 1h",
+      "columns": 1,
+      "paths": [
+        "M 48.0,75.6",
+        "M 48.0,60.2"
+      ],
+      "missingLabels": 0
+    },
+    {
+      "label": "Replication bandwidth (bytes), 1h",
+      "columns": 1,
+      "paths": [
+        "M 48.0,44.8",
+        "M 48.0,29.4"
+      ],
+      "missingLabels": 0
+    }
+  ],
+  "error": false
+}

@@ -1,0 +1,50 @@
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+
+namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13;
+
+// Local producer payloads exercise the existing signed project-token HTTP scenario.
+public sealed class AuditAnalyticsProducer
+{
+    public string Mode { get; set; } = "valid";
+    public string DatabaseId { get; set; } = "";
+    public int Reads { get; private set; }
+    public JsonElement LastBody { get; private set; }
+    public DateTimeOffset From { get; } = DateTimeOffset.FromUnixTimeSeconds((DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 60 + 1) * 60).AddHours(-1);
+
+    public Task<IResult?> RespondAsync(HttpContext http)
+    {
+        if (!http.Request.Path.Value!.EndsWith("/analytics", StringComparison.Ordinal)) return Task.FromResult<IResult?>(null);
+        Reads++;
+        if (Mode == "offline") return Task.FromResult<IResult?>(Results.StatusCode(503));
+        var projectId = http.Request.Path.Value.Split('/', StringSplitOptions.RemoveEmptyEntries)[2];
+        object Sample(DateTimeOffset start, bool missingLatency = false) => new
+        {
+            start = start.ToOffset(TimeSpan.FromHours(-3)),
+            requests = new Dictionary<string, long> { ["GET"] = Mode == "missing" ? 9_007_199_254_740_993L : 10 },
+            operations = new Dictionary<string, long> { ["document_read"] = 4 },
+            errors = 1,
+            latency = new { p50Ms = missingLatency || Mode == "missing" ? (double?)null : 0.5, p95Ms = missingLatency || Mode == "missing" ? (double?)null : 1.75, p99Ms = missingLatency || Mode == "missing" ? (double?)null : 9 },
+            storageBytes = Mode == "missing" ? (long?)null : 4096,
+            clientBandwidth = new { bytesSent = 6, bytesReceived = 7 },
+            replicationBandwidth = new { bytesSent = 8, bytesReceived = 9 }
+        };
+        var row = new
+        {
+            databaseId = DatabaseId,
+            region = Mode == "foreign-region" ? "sfo" : "gru",
+            series = Mode == "sparse" ? new[] { Sample(From), Sample(From.AddMinutes(2)) } :
+                Mode == "explicit-gap" ? new[] { Sample(From), Sample(From.AddMinutes(1), missingLatency: true), Sample(From.AddMinutes(2)) } : new[] { Sample(From) }
+        };
+        LastBody = JsonSerializer.SerializeToElement(new
+        {
+            projectId,
+            range = "1h",
+            from = From.ToOffset(TimeSpan.FromHours(-3)),
+            to = From.AddHours(1).ToOffset(TimeSpan.FromHours(-3)),
+            bucketSeconds = 60,
+            items = Mode == "duplicate" ? new[] { row, row } : new[] { row }
+        });
+        return Task.FromResult<IResult?>(Results.Json(LastBody));
+    }
+}

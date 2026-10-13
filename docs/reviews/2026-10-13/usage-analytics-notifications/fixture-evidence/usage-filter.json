@@ -1,0 +1,11 @@
+{
+  "requested": "/usage?range=30d\u0026database=01a1331d-e6f3-75bb-957a-d1a82b9db9a6",
+  "spendingControlsHref": "/usage?tab=settings\u0026project=test-project-f85ac825d102b9f2",
+  "overviewHref": "/usage?tab=overview\u0026project=test-project-f85ac825d102b9f2",
+  "query": {
+    "tab": "settings",
+    "project": "test-project-f85ac825d102b9f2"
+  },
+  "restoredRange": "7d",
+  "overviewDatabaseQuery": ""
+}
