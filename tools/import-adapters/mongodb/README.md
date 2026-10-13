@@ -11,6 +11,9 @@ nice -n 19 python3 -I -B tools/import-adapters/mongodb/test_cli.py
 ```
 
 The first command creates a **new** local file; a repeated command refuses to overwrite it.
+Success reports the artifact's byte count and SHA-256, for the documented core `sourceBytes` and
+`sourceSha256` fields in a future import. These describe the output artifact; the original JSONL hash
+is separately retained in each record's provenance.
 `fixtures/canonical.jsonl` and `fixtures/expected.sql` contain only hand-written synthetic data.
 The adapter has no network client, credentials, upload path, server dependency, or package installation.
 Database and collection arguments are nonsecret source labels, used verbatim in provenance and ID derivation.
@@ -188,12 +191,14 @@ this work performs no uploads, core integration, merge, deployment, or live/cust
 `test_cli.py` runs independent synthetic cases concurrently, each in its own temporary directory under this
 adapter directory. It drives the real CLI, checks committed golden bytes, and independently unescapes text
 COPY and decodes the resulting JSON bodies. Precision/range, null/missing, subtype/encoding, timestamps,
-identifiers, source immutability, large/chunked records, duplicate IDs, malformed records, body limits, no-clobber
-publication, and diagnostic redaction are covered. This is independent validation of the **documented** format;
+identifiers, source immutability/change detection, large/chunked records, duplicate IDs, malformed records,
+body limits, concurrent no-clobber publication, nonregular input, and diagnostic redaction are covered.
+This is independent validation of the **documented** format;
 the actual core reader and PostgreSQL are not run, so end-to-end core acceptance remains unverified.
 
 CI preflight at base `e30ffdc2`: `tools/**` matches no area filter, but `ci.yml` runs unconditional `changes`
-and `test` jobs for draft PRs, both using `${{ vars.CI_RUNNER || 'ubuntu-latest' }}`. They can share Alpha's
+and `test` jobs for draft PRs, both using `${{ vars.CI_RUNNER || 'ubuntu-latest' }}`. Read-only preflight with
+`gh variable get CI_RUNNER -R TerraScale/terrascale` returned `alpha` on 2026-10-12: these jobs share Alpha's
 release runner pool. Preview/deploy jobs are currently disabled, which does not remove that contention risk.
 **Do not publish this branch/PR under the current preflight.** A prepared local draft PR body is in
 [`PR_BODY.md`](PR_BODY.md). No workflows, root build files, or global configuration are changed. Repository-wide

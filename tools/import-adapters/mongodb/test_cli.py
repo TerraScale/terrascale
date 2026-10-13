@@ -4,6 +4,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -79,6 +80,9 @@ def accepted_fixture(directory):
     raw = FIXTURE.read_bytes()
     result, output = invoke(directory, raw)
     require(result.returncode == 0, "fixture conversion failed")
+    require(f"artifactBytes={output.stat().st_size}".encode() in result.stdout
+            and hashlib.sha256(output.read_bytes()).hexdigest().encode() in result.stdout,
+            "artifact byte/hash summary differs")
     require(output.read_bytes() == (HERE / "fixtures/expected.sql").read_bytes(), "golden artifact differs")
     require(output.stat().st_mode & 0o777 == 0o600, "artifact permissions are not private")
     rows = read_artifact(output)
@@ -163,6 +167,110 @@ def symlink_source(directory):
     require(result.returncode == 1 and not (directory / "output.sql").exists(), "source symlink accepted")
 
 
+def concurrent_publication(directory):
+    source, output = directory / "input.jsonl", directory / "output.sql"
+    source.write_bytes(FIXTURE.read_bytes())
+    command = [sys.executable, "-I", "-B", str(HERE / "convert.py"), str(source), str(output),
+               "--database", "synthetic", "--collection", "records"]
+    processes = [subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(2)]
+    for process in processes:
+        process.communicate(timeout=30)
+    require(sorted(process.returncode for process in processes) == [0, 1], "racing outputs were not exclusive")
+    require(output.read_bytes() == (HERE / "fixtures/expected.sql").read_bytes(), "race published partial data")
+    require(not list(directory.glob(".mongodb-*")), "race left temporary data")
+
+
+def changed_source(directory, grow=False):
+    source, output = directory / "input.jsonl", directory / "output.sql"
+    source.write_bytes(encode({"_id": "one"}))
+    # A separate fault injector changes the synthetic file between hashing and conversion passes.
+    replacement = encode({"_id": "two"}) + (encode({"_id": "extra"}) if grow else b"")
+    script = (
+        "import hashlib,pathlib,runpy,sys\n"
+        "original=hashlib.sha256\n"
+        "source=pathlib.Path(sys.argv[2])\n"
+        "calls=0\n"
+        "def change(*args,**kwargs):\n"
+        "    global calls\n"
+        "    calls+=1\n"
+        "    result=original(*args,**kwargs)\n"
+        f"    if calls==2: source.write_bytes({replacement!r})\n"
+        "    return result\n"
+        "hashlib.sha256=change\n"
+        "sys.argv=sys.argv[1:]\n"
+        "runpy.run_path(sys.argv[0],run_name='__main__')\n"
+    )
+    result = subprocess.run([sys.executable, "-I", "-B", "-c", script, str(HERE / "convert.py"),
+                             str(source), str(output), "--database", "synthetic", "--collection", "records"],
+                            capture_output=True, timeout=30)
+    expected = b"source grew during conversion" if grow else b"source changed during conversion"
+    require(result.returncode == 1 and expected in result.stderr and not output.exists(),
+            "changed source was not rejected")
+
+
+def hash_mismatch(directory):
+    source, output = directory / "input.jsonl", directory / "output.sql"
+    raw = encode({"_id": "one"})
+    source.write_bytes(raw)
+    source.chmod(0o444)
+    # Fault only the first pass's reported digest, preserving file metadata and both passes' input bytes.
+    script = (
+        "import hashlib,runpy,sys\n"
+        "original=hashlib.sha256\n"
+        "calls=0\n"
+        "class WrongDigest:\n"
+        "    def __init__(self,real): self.update=real.update\n"
+        "    def hexdigest(self): return '0'*64\n"
+        "def inject(*args,**kwargs):\n"
+        "    global calls\n"
+        "    calls+=1\n"
+        "    real=original(*args,**kwargs)\n"
+        "    return WrongDigest(real) if calls==1 else real\n"
+        "hashlib.sha256=inject\n"
+        "sys.argv=sys.argv[1:]\n"
+        "runpy.run_path(sys.argv[0],run_name='__main__')\n"
+    )
+    result = subprocess.run([sys.executable, "-I", "-B", "-c", script, str(HERE / "convert.py"),
+                             str(source), str(output), "--database", "synthetic", "--collection", "records"],
+                            capture_output=True, timeout=30)
+    require(result.returncode == 1 and b"source changed during conversion" in result.stderr
+            and not output.exists() and source.read_bytes() == raw, "hash mismatch was not rejected")
+
+
+def fifo_source(directory):
+    source = directory / "fifo"
+    os.mkfifo(source)
+    result = subprocess.run([sys.executable, "-I", "-B", str(HERE / "convert.py"), str(source),
+                             str(directory / "output.sql"), "--database", "synthetic", "--collection", "records"],
+                            capture_output=True, timeout=30)
+    require(result.returncode == 1 and b"regular" in result.stderr, "nonregular source blocked or was accepted")
+
+
+def byte_boundary(directory):
+    document = {"_id": "size", "x": ""}
+    provenance = {"adapter": "mongodb-ejson-v1", "sourceFormat": "mongoexport-canonical-ejson-v2-jsonl",
+                  "sourceSha256": "0" * 64, "database": "synthetic", "collection": "records", "sourceRecord": 1}
+    body = {"id": "0" * 26, "document": document, "provenance": provenance}
+    overhead = len(json.dumps(body, separators=(",", ":")).encode("ascii"))
+    document["x"] = "x" * (1024**2 - overhead)
+    result, output = invoke(directory, encode(document))
+    require(result.returncode == 0, "exact 1 MiB body rejected")
+    document["x"] += "x"
+    result, output = invoke(directory, encode(document), "too-large.sql")
+    require(result.returncode == 1 and not output.exists(), "1 MiB plus one body accepted")
+
+
+def source_size_boundary(directory):
+    source, output = directory / "sparse.jsonl", directory / "output.sql"
+    with source.open("wb") as file:
+        file.truncate(1024**3 + 1)
+    result = subprocess.run([sys.executable, "-I", "-B", str(HERE / "convert.py"), str(source), str(output),
+                             "--database", "synthetic", "--collection", "records"],
+                            capture_output=True, timeout=30)
+    require(result.returncode == 1 and b"1 GiB" in result.stderr and not output.exists(),
+            "oversized source was not rejected before reading")
+
+
 def reject_case(raw):
     def test(directory):
         result, output = invoke(directory, raw)
@@ -193,7 +301,9 @@ def final_line_and_crlf(directory):
 def main():
     tests = [(function.__name__, function) for function in
              [accepted_fixture, identifier_domains, large_chunked_records, many_records, depth_boundary,
-              value_boundary, no_clobber, symlink_source, decimal_exact, final_line_and_crlf]]
+              value_boundary, no_clobber, symlink_source, decimal_exact, final_line_and_crlf,
+              concurrent_publication, changed_source, fifo_source, byte_boundary, source_size_boundary, hash_mismatch]]
+    tests.append(("growing_source", lambda directory: changed_source(directory, grow=True)))
     malformed = {
         "empty": b"", "blank": b'{"_id":"one"}\n\n', "array": b'[{"_id":"one"}]',
         "bad_utf8": b'{"_id":"sensitive-marker","x":"\xff"}',

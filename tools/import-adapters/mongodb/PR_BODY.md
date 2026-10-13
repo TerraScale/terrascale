@@ -18,7 +18,9 @@ subset, deterministic mapping, snapshot/export limitations and read-only local w
 
 Validation performed:
 
-- `nice -n 19 python3 -I -B tools/import-adapters/mongodb/test_cli.py` — 76/76 parallel synthetic CLI tests passed.
+- `nice -n 19 python3 -I -B tools/import-adapters/mongodb/test_cli.py` — 83/83 parallel synthetic CLI tests passed,
+  including exact body-size/depth/value boundaries, read-only source/change rejection, concurrent publication,
+  nonregular inputs, hash-mismatch/source-growth faults, and oversized-source rejection before reading.
 - Synthetic output fixture: `tools/import-adapters/mongodb/fixtures/expected.sql`, three documents, independently
   decoded as PostgreSQL text COPY and compared with the original Extended JSON fixture.
 - Contract v1 revision 3 read at `54c0c4d9:docs/terrabase/import.md`; no core format/API changes or integration edits.
@@ -30,7 +32,8 @@ commands execute. No network, credentials, uploads, customer data, paid services
 Source values and labels are excluded from diagnostics. No production storage or auth/replication changes.
 
 Publication blocker: existing PR workflows run unconditional `changes` and `test` jobs on the configurable
-Alpha runner pool. `tools/**` avoids area builds, but cannot prove no competition with release CI. Keep this
+runner pool; read-only `gh variable get CI_RUNNER -R TerraScale/terrascale` returned `alpha` on 2026-10-12.
+`tools/**` avoids area builds, but those jobs compete with release CI on Alpha. Keep this
 draft local. Repository-wide `make check`, analyzer/security/OpenAPI/Fast gates, real mongoexport, PostgreSQL
 and end-to-end core acceptance were not run; no adapter tests are wired into CI. No PR was created or pushed,
 no review/auto-merge requested, and nothing was merged or deployed. Re-run preflight before future publication.

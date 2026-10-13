@@ -211,6 +211,19 @@ def signature(file):
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
+def source_digest(file, expected_bytes):
+    digest = hashlib.sha256()
+    total = 0
+    while chunk := file.read(1024**2):
+        total += len(chunk)
+        if total > expected_bytes:
+            raise ConversionError("source grew during hashing")
+        digest.update(chunk)
+    if total != expected_bytes:
+        raise ConversionError("source changed during hashing")
+    return digest.hexdigest()
+
+
 def convert(source, output, database, collection):
     for label in (database, collection):
         text(label)
@@ -225,7 +238,7 @@ def convert(source, output, database, collection):
         initial = signature(input_file)
         if not 0 < initial[2] <= MAX_SOURCE:
             raise ConversionError("source must be nonempty and at most 1 GiB")
-        source_hash = hashlib.file_digest(input_file, "sha256").hexdigest()
+        source_hash = source_digest(input_file, initial[2])
         if signature(input_file) != initial:
             raise ConversionError("source changed during hashing")
         input_file.seek(0)
@@ -236,6 +249,7 @@ def convert(source, output, database, collection):
                 seen.execute("CREATE TABLE seen (source_key BLOB PRIMARY KEY, target_id TEXT UNIQUE)")
                 seen.execute("PRAGMA cache_size = -2048")
                 second_hash = hashlib.sha256()
+                source_bytes = 0
                 row = 0
                 with os.fdopen(os.open(artifact, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as target:
                     target.write(HEADER.encode("ascii"))
@@ -244,6 +258,9 @@ def convert(source, output, database, collection):
                         try:
                             if len(raw) > MAX_LINE:
                                 raise ConversionError("source record exceeds 16 MiB")
+                            source_bytes += len(raw)
+                            if source_bytes > initial[2]:
+                                raise ConversionError("source grew during conversion")
                             second_hash.update(raw)
                             document = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=pairs,
                                                   parse_int=JsonNumber, parse_float=JsonNumber, parse_constant=reject_constant)
@@ -273,8 +290,10 @@ def convert(source, output, database, collection):
                     target.flush()
                     os.fsync(target.fileno())
                 # A hard link publishes the completed artifact atomically and refuses a racing existing output.
+                with artifact.open("rb") as verified:
+                    artifact_hash = hashlib.file_digest(verified, "sha256").hexdigest()
                 os.link(artifact, output)
-                return row
+                return row, artifact.stat().st_size, artifact_hash
             finally:
                 seen.close()
 
@@ -292,14 +311,15 @@ def main():
     parser.add_argument("--collection", required=True, help="source collection label for provenance and ID derivation")
     args = parser.parse_args()
     try:
-        rows = convert(args.source, args.output, args.database, args.collection)
+        rows, size, digest = convert(args.source, args.output, args.database, args.collection)
     except ConversionError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
     except (OSError, sqlite3.Error):
         print("error: local file/index operation failed; output was not overwritten", file=sys.stderr)
         return 1
-    print(f"converted {rows} documents; BSON types remain Extended JSON wrappers; indexes and MongoDB behavior are not imported")
+    print(f"converted {rows} documents; artifactBytes={size}; artifactSha256={digest}")
+    print("warning: BSON types remain Extended JSON wrappers; indexes and MongoDB behavior are not imported")
     return 0
 
 
