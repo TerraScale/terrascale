@@ -95,10 +95,16 @@ public sealed class ProjectApiKeyContractTests
             if (request.Method == HttpMethod.Delete) return new(HttpStatusCode.NoContent);
             var key = new
             {
-                id = KeyId, name = "Synthetic", organization_id = OrganizationId,
-                project_id = Failure == "foreign" ? "01JA0000000000000000000005" : ProjectId, database = "app",
-                scopes = new[] { "documents:read", "documents:write" }, created_by = "user",
-                created_at = "2026-01-01T00:00:00+00:00", expires_at = (string?)null, previous_secret_expires_at = (string?)null
+                id = KeyId,
+                name = "Synthetic",
+                organization_id = OrganizationId,
+                project_id = Failure == "foreign" ? "01JA0000000000000000000005" : ProjectId,
+                database = "app",
+                scopes = new[] { "documents:read", "documents:write" },
+                created_by = "user",
+                created_at = "2026-01-01T00:00:00+00:00",
+                expires_at = (string?)null,
+                previous_secret_expires_at = (string?)null
             };
             var response = request.Method == HttpMethod.Post
                 ? JsonSerializer.Serialize(new { api_key = key, key = KeyId + "_synthetic-secret" })

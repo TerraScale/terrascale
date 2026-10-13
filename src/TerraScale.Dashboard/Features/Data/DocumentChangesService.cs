@@ -22,7 +22,9 @@ public sealed class DocumentChangesService(DatabaseService databases, IProjectAc
         var token = await tokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, ["documents:read"], cancellationToken);
         var client = new TerraBaseDocumentsClient(http.CreateClient("platform"), new TerraBaseDocumentsClientOptions
         {
-            BaseAddress = home.Api, Region = home.Id, AccessTokenProvider = _ => ValueTask.FromResult(token)
+            BaseAddress = home.Api,
+            Region = home.Id,
+            AccessTokenProvider = _ => ValueTask.FromResult(token)
         });
         var seen = new HashSet<(string Origin, string Version, string Collection, string Id)>();
         var order = new Queue<(string Origin, string Version, string Collection, string Id)>();
