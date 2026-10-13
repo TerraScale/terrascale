@@ -308,12 +308,12 @@ public sealed class ShapeMetricsTests
         var before = PointReads(await ScrapeAsync(api.Server));
         await transaction.PutAsync(DocumentApi.Collection, id, "{\"a\":2}"u8.ToArray(), token);
         var afterFirst = PointReads(await ScrapeAsync(api.Server));
-        // With no uniqueness constraints, the first mutation reads only stored state plus its JSON.
-        await Assert.That(afterFirst - before).IsEqualTo(1d);
+        // The first mutation reads the collection-metadata document and stored state plus its JSON.
+        await Assert.That(afterFirst - before).IsEqualTo(2d);
 
         await transaction.PutAsync(DocumentApi.Collection, id, "{\"a\":3}"u8.ToArray(), token);
-        // The next mutation uses the pending state, so no document SELECT runs.
-        await Assert.That(PointReads(await ScrapeAsync(api.Server))).IsEqualTo(afterFirst);
+        // The next mutation uses pending state; only the collection-metadata document is read again.
+        await Assert.That(PointReads(await ScrapeAsync(api.Server)) - afterFirst).IsEqualTo(1d);
     }
 
     // The sum of terrabase_storage_reads point samples, which every document, version, size and system lookup feeds.
