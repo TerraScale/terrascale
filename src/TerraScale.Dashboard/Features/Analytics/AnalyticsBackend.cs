@@ -8,9 +8,8 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Analytics;
 
-// This existing Go producer reporting contract is not exposed by the pinned
-// official SDK. The shared endpoint resolver discovers the producer, and only
-// that producer receives the user's JWT.
+// shortcut: SDK 0.0.3 has usage but no analytics client; use the served TerraBase
+// analytics route with scoped authority until the SDK exposes it.
 public sealed class AnalyticsBackend(IHttpClientFactory factory, IProjectAccessTokens projectTokens, IDatabaseBackend databases) : IAnalyticsBackend
 {
     public async Task<AnalyticsBatch> ReadAsync(AnalyticsSelection selection, CancellationToken cancellationToken)
@@ -27,7 +26,7 @@ public sealed class AnalyticsBackend(IHttpClientFactory factory, IProjectAccessT
         var regionCodes = regions.ToDictionary(region => region.Id, region => region.Code, StringComparer.Ordinal);
         var requestedRegion = selection.Region.Length == 0 ? "" :
             DatabaseRegion.Resolve(regions, selection.Region)?.Id ?? throw new HttpRequestException("The selected region is unavailable.");
-        var scopedToken = await projectTokens.GetAsync(context.Session, organization.Id, project.Id, token);
+        var scopedToken = await projectTokens.GetAsync(context.Session, organization.Id, project.Id, ["databases:read"], token);
         var query = $"?range={selection.Range}" +
             (selection.DatabaseId.Length > 0 ? "&database=" + Uri.EscapeDataString(selection.DatabaseId) : "") +
             (requestedRegion.Length > 0 ? "&region=" + Uri.EscapeDataString(requestedRegion) : "");
