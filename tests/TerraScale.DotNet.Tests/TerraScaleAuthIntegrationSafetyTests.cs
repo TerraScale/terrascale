@@ -238,7 +238,10 @@ public sealed class TerraScaleAuthIntegrationSafetyTests
 
     private static TerraScaleAuthClient Client(HttpClient http) => new(http, new TerraScaleAuthClientOptions
     {
-        BaseAddress = new Uri("https://auth.example.test"), InstanceSlug = "terrascale", MaxRetryAttempts = 2, RetryDelay = TimeSpan.Zero
+        BaseAddress = new Uri("https://auth.example.test"),
+        InstanceSlug = "terrascale",
+        MaxRetryAttempts = 2,
+        RetryDelay = TimeSpan.Zero
     });
     private static HttpResponseMessage Response(string body, HttpStatusCode status = HttpStatusCode.OK) => new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
