@@ -43,6 +43,7 @@ internal sealed partial class SqliteStorageTransaction
             List<RepairState> states = [];
             var bytes = 0;
             var ordered = buckets.Distinct().Order().ToList();
+            var all = ordered.Count == Buckets && ordered[0] == 0 && ordered[^1] == Buckets - 1;
             var start = after is { } cursor ? ordered.FindIndex(bucket => bucket >= cursor.Bucket) : 0;
             for (var index = start < 0 ? ordered.Count : start; index < ordered.Count; index++)
             {
@@ -50,7 +51,13 @@ internal sealed partial class SqliteStorageTransaction
                 var resume = after is { } from && from.Bucket == bucket ? from : null;
                 // Keys first, then each state: Turso refuses a write on a connection while one of its reads is open, and a
                 // state read is a second statement.
-                var command = Command("""
+                // Genesis and a complete repair read all buckets. One indexed page avoids 4096 empty-bucket queries,
+                // avoiding empty-bucket work in the catalog gate's bounded startup pass.
+                var command = Command(all ? """
+                    SELECT collection, id FROM _tb_state
+                    WHERE bucket > $bucket OR (bucket = $bucket AND (collection > $collection OR (collection = $collection AND id > $id)))
+                    ORDER BY bucket, collection, id LIMIT $limit;
+                    """ : """
                     SELECT collection, id FROM _tb_state WHERE bucket = $bucket AND (collection > $collection OR (collection = $collection AND id > $id))
                     ORDER BY collection, id LIMIT $limit;
                     """);
@@ -80,6 +87,11 @@ internal sealed partial class SqliteStorageTransaction
 
                     states.Add(new RepairState(collection, id, state));
                     bytes += size;
+                }
+
+                if (all)
+                {
+                    break;
                 }
             }
 
