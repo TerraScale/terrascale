@@ -261,7 +261,12 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         }
     }
 
-    public async Task UpdateOrganizationAsync(AccountContext context, Action<OrganizationRecord> update, CancellationToken cancellationToken)
+    public Task UpdateOrganizationAsync(AccountContext context, Action<OrganizationRecord> update, CancellationToken cancellationToken) =>
+        UpdateOrganizationAsync(context, org => { update(org); return Task.CompletedTask; }, cancellationToken);
+
+    // The update runs once per compare-and-set attempt, after the stored document and ts-auth's
+    // identity are read, so ts-auth state it reads itself is never older than the document it decides on.
+    public async Task UpdateOrganizationAsync(AccountContext context, Func<OrganizationRecord, Task> update, CancellationToken cancellationToken)
     {
         var id = context.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
         for (var attempt = 0; attempt < 4; attempt++)
@@ -277,7 +282,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             await HydrateAccessAsync(org, context.Session, cancellationToken);
             Member(org, context.Session, live.Role);
             if (!org.ContainsMember(context.UserId)) throw new AccountAccessException("Organization membership is required.");
-            update(org);
+            await update(org);
             if (org.Id != id) throw new AccountAccessException("Organization identity cannot change.");
             try
             {
@@ -363,7 +368,7 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         var value = document.Document.Deserialize<T>() ?? throw new JsonException("Dashboard record is invalid.");
         if (value is AccountRecord account && (account.OrganizationIds is null || account.Notifications is null || account.Name is null || account.Email is null || account.ActiveOrganizationId is null || account.ActiveProjectId is null || account.PersonalOrganizationId is null))
             throw new JsonException("Dashboard account structure is invalid.");
-        if (value is OrganizationRecord org && (org.Members is null || org.Projects is null || org.AuditEvents is null || org.Invitations is null || org.InvitationReservations is null || org.Invitations.Values.Any(invite => invite is null) || org.Name is null || org.OwnerUserId is null || org.Members.Values.Any(member => member is null) || org.Projects.Values.Any(project => project is null || project.Databases is null || project.Regions is null)))
+        if (value is OrganizationRecord org && (org.Members is null || org.Projects is null || org.AuditEvents is null || org.Invitations is null || org.InvitationReservations is null || org.InvitationReservations.Values.Any(reservation => reservation is null) || org.Invitations.Values.Any(invite => invite is null) || org.Name is null || org.OwnerUserId is null || org.Members.Values.Any(member => member is null) || org.Projects.Values.Any(project => project is null || project.Databases is null || project.Regions is null)))
             throw new JsonException("Dashboard organization structure is invalid.");
         return value;
     }

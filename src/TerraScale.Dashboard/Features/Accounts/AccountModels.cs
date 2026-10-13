@@ -58,9 +58,9 @@ public sealed class OrganizationRecord
     public Dictionary<string, ProjectRecord> Projects { get; set; } = [];
     public List<AuditRecord> AuditEvents { get; set; } = [];
     [JsonIgnore] public Dictionary<string, InvitationRecord> Invitations { get; set; } = [];
-    // Plan member allowance: emails being invited right now, by expiry. Writes to this
-    // document are compare-and-set, so concurrent invitations count each other.
-    public Dictionary<string, DateTimeOffset> InvitationReservations { get; set; } = [];
+    // Plan member allowance: invitations this dashboard is creating at ts-auth, by operation id,
+    // until ts-auth lists them. Every change goes through the document's compare-and-set.
+    public Dictionary<string, InvitationReservation> InvitationReservations { get; set; } = [];
     [JsonIgnore] public DateTimeOffset CreatedAt { get; set; }
     public bool ContainsMember(string userId) => Status == "active" && !Archived &&
         Members.TryGetValue(userId, out var member) && member.Status == "active";
@@ -160,7 +160,7 @@ public static class DashboardAuditSeverity
         ["project.renamed"] = "info",
         ["member.left"] = "info",
         ["ownership.canceled"] = "info",
-        ["usage.spending_controls_updated"] = "info",
+        ["usage.spending_controls_updated"] = "warning",
         ["member.role_changed"] = "warning",
         ["member.removed"] = "warning",
         ["ownership.requested"] = "warning",
@@ -192,6 +192,9 @@ public sealed record AccountContext(SessionRecord Session, AccountRecord Account
     public bool CanManage => Organization?.CanManage(UserId) ?? false;
     public bool CanWrite => Organization?.CanWrite(UserId) ?? false;
 }
+
+// One in-flight invitation: its email, when the slot was taken and, once ts-auth answered, its id.
+public sealed record InvitationReservation(string Email, DateTimeOffset ReservedAt, string InvitationId = "");
 
 public sealed record CreatedInvitation(InvitationRecord Invitation, string Token)
 {
