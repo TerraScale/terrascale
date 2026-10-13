@@ -1,0 +1,207 @@
+{
+  "id": "01M4VRQD55KZP7NR42MJ36GFD4",
+  "host": "mariogk-dev",
+  "cluster_state": "local-gru,sjc",
+  "endpoint": "http://127.0.0.1:46483/",
+  "start": "2026-10-13T23:10:13.493327892Z",
+  "end": "2026-10-13T23:14:25.061744219Z",
+  "probe": {
+    "tcp_connect_ms": {
+      "min": 0,
+      "median": 0
+    },
+    "tls_handshake_ms": {
+      "min": 0,
+      "median": 0
+    },
+    "healthz_ms": {
+      "min": 0,
+      "median": 0
+    }
+  },
+  "startup": [
+    {
+      "client": "local terrabase host (1 launch)",
+      "wall_ms": {
+        "min": 10037,
+        "median": 10037
+      },
+      "init_ms": {
+        "min": 10037,
+        "median": 10037
+      },
+      "max_rss_mb": {
+        "min": 0,
+        "median": 0
+      }
+    }
+  ],
+  "clients": [
+    {
+      "client": "shape-bench",
+      "ready": {
+        "type": "",
+        "client": "shape-bench",
+        "sdk": "raw HTTP/1.1 SSE",
+        "sdk_version": "-",
+        "runtime": "go1.25.0",
+        "database": "canary",
+        "setup_ms": 230,
+        "auth_ms": 0
+      },
+      "results": [
+        {
+          "type": "result",
+          "scenario": "changes.fanout",
+          "transport": "sse-http1",
+          "payload_bytes": 256,
+          "mode": "open",
+          "concurrency": 1,
+          "rate": 20,
+          "start": "2026-10-13T23:10:28.779591286Z",
+          "duration_s": 30,
+          "ops": 600,
+          "ok": 600,
+          "errors": 0,
+          "error_rate": 0,
+          "rps": 20,
+          "status": {
+            "accounting_reads_delta": 0,
+            "admitted": 1,
+            "inferred_min_doc_selects": 600,
+            "storage_reads_delta": 2104,
+            "writes": 600
+          },
+          "latency_us": {
+            "p50": 15519,
+            "p90": 22015,
+            "p99": 37727,
+            "p999": 91327,
+            "max": 120127,
+            "mean": 17388.32
+          },
+          "bytes_out": 0,
+          "bytes_in": 329872,
+          "cpu_s": 26.213454470637714,
+          "rss_mb": 255.78515625,
+          "stopped": ""
+        },
+        {
+          "type": "result",
+          "scenario": "changes.fanout",
+          "transport": "sse-http1",
+          "payload_bytes": 256,
+          "mode": "open",
+          "concurrency": 10,
+          "rate": 20,
+          "start": "2026-10-13T23:11:15.322977649Z",
+          "duration_s": 30,
+          "ops": 6000,
+          "ok": 6000,
+          "errors": 0,
+          "error_rate": 0,
+          "rps": 200,
+          "status": {
+            "accounting_reads_delta": 0,
+            "admitted": 10,
+            "inferred_min_doc_selects": 6000,
+            "storage_reads_delta": 20998,
+            "writes": 600
+          },
+          "latency_us": {
+            "p50": 27263,
+            "p90": 37375,
+            "p99": 119551,
+            "p999": 267775,
+            "max": 269311,
+            "mean": 30902.552
+          },
+          "bytes_out": 0,
+          "bytes_in": 3298720,
+          "cpu_s": 34.0552468411967,
+          "rss_mb": 251.57421875,
+          "stopped": ""
+        },
+        {
+          "type": "result",
+          "scenario": "changes.fanout",
+          "transport": "sse-http1",
+          "payload_bytes": 256,
+          "mode": "open",
+          "concurrency": 100,
+          "rate": 20,
+          "start": "2026-10-13T23:12:06.376367264Z",
+          "duration_s": 30,
+          "ops": 19200,
+          "ok": 19200,
+          "errors": 0,
+          "error_rate": 0,
+          "rps": 640,
+          "status": {
+            "accounting_reads_delta": 0,
+            "admitted": 32,
+            "inferred_min_doc_selects": 19200,
+            "rejected_changes_busy": 68,
+            "storage_reads_delta": 67496,
+            "writes": 600
+          },
+          "latency_us": {
+            "p50": 34175,
+            "p90": 42431,
+            "p99": 71743,
+            "p999": 113855,
+            "max": 127103,
+            "mean": 35377.78291666666
+          },
+          "bytes_out": 0,
+          "bytes_in": 10555355,
+          "cpu_s": 47.52955675037751,
+          "rss_mb": 267.8671875,
+          "stopped": ""
+        },
+        {
+          "type": "result",
+          "scenario": "changes.fanout",
+          "transport": "sse-http1",
+          "payload_bytes": 256,
+          "mode": "open",
+          "concurrency": 1000,
+          "rate": 20,
+          "start": "2026-10-13T23:13:42.412059131Z",
+          "duration_s": 30,
+          "ops": 19200,
+          "ok": 19200,
+          "errors": 0,
+          "error_rate": 0,
+          "rps": 640,
+          "status": {
+            "accounting_reads_delta": 0,
+            "admitted": 32,
+            "inferred_min_doc_selects": 19200,
+            "rejected_changes_busy": 968,
+            "storage_reads_delta": 67670,
+            "writes": 600
+          },
+          "latency_us": {
+            "p50": 37311,
+            "p90": 54367,
+            "p99": 156287,
+            "p999": 214655,
+            "max": 218239,
+            "mean": 41489.98354166667
+          },
+          "bytes_out": 0,
+          "bytes_in": 10555904,
+          "cpu_s": 49.30360951495837,
+          "rss_mb": 273.40625,
+          "stopped": ""
+        }
+      ],
+      "done": {
+        "type": "done",
+        "cleanup": true,
+        "cleanup_error": ""
+      }
+    }
+  ]
+}

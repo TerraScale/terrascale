@@ -1,5 +1,56 @@
 # TerraBase R8 shape fan-out baseline — 2026-10-13
 
+## FR-17 instrumented rerun — measured origin reads
+
+The rerun after B2 PR #223 merged now measures origin feed reads with
+`terrabase.storage.reads{path="feed"}` on the gru node-scoped scrape. These are backend document/feed SELECT
+executions, including empty results and SQLite page-cache hits; they do not measure physical disk I/O.
+
+| requested N | admitted | feed counter before | feed counter after | measured origin reads (delta) | delivered in-window writes |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 2 | 2106 | 2104 | 600 |
+| 10 | 10 | 2106 | 23104 | 20998 | 6000 |
+| 100 | 32 | 23104 | 90600 | 67496 | 19200 |
+| 1000 | 32 | 90600 | 158270 | 67670 | 19200 |
+
+Every row has 600 measured writes, zero missed deliveries and an accounting-read delta of zero. The source-derived
+minimum document SELECT counts remain secondary estimates (600, 6000, 19200, 19200), distinct from the measured
+origin-read deltas above. The 32-stream database cap still rejects 68 and 968 followers in the last two rows.
+
+**Sampling scope:** before follower admission through 5 s warmup, the 30 s delivery window, 5 s grace and 6 s accounting
+settle, on gru only. Each row includes all 700 writes in warmup plus measurement, feed pages, head/floor and other feed
+SELECTs across that whole step. It excludes sjc, point-path write preconditions and system lookups. Consequently these
+read deltas cover a wider interval and more operations than the 600 in-window writes' inferred document SELECT count.
+
+| provenance | value |
+| --- | --- |
+| UTC run interval | `2026-10-13T23:10:13.493327892Z`–`2026-10-13T23:14:25.061744219Z` |
+| Run ID | `01M4VRQD55KZP7NR42MJ36GFD4` |
+| Measured HEAD / last product-host commit | `fc0cfdd7e962a3689f5ea163afc1e5dd49861a9f` |
+| Last harness commit | `8ebdf30c3ccb8f91f4bea5afdf171e74983f4e44` |
+| Working tree / build | clean; fresh Release build from measured HEAD |
+| Host / CPU | mariogk-dev; Intel Xeon E5-2660 v4 at 2.00 GHz; 46 logical CPUs, affinity 0–45 |
+| OS / RAM | Linux 7.2.10 x86_64; 33,614,655,488 bytes |
+| Toolchains | benchmark runtime Go 1.25.0; .NET SDK 11.0.100-rc.1.26425.128 |
+| Pinned ts-dotnet commit | `bcd20603f11f3aa54dc54cec6e410b4fe9e24151` |
+| Scheduling | shared host, nice 19 through two-slot `ts-heavy`; no CPU isolation |
+
+This is one local two-region test-host run, with all clients targeting gru, using the same B2 workload described below.
+The machine snapshot at `2026-10-13T23:10:11.038473+00:00` recorded load averages 28.39 / 18.14 / 14.87 and
+28,366,934,016 available RAM bytes. This rerun used a different host from the historical run;
+CPU, RSS and latency differences between these two runs do not establish performance improvement.
+
+At measured HEAD, `ts-heavy` ran all 9 focused ShapeMetricsTests, `make check` (formatting, build/analyzers,
+security/OpenAPI, Go race tests and Fast: Endpoints 88, Logging 46, Auth 668, Turso 7, TerraBase 1615), and the Release
+host build successfully. The baseline exited 0 and cleaned up its host. Slow was not run.
+
+Raw evidence: [generated report and before/after metric lines](2026-10-13-mariogk-dev-01M4VRQD55KZP7NR42MJ36GFD4.md),
+[run JSON](2026-10-13-mariogk-dev-01M4VRQD55KZP7NR42MJ36GFD4.json), [machine snapshot](2026-10-13-fr17-machine.json).
+The snapshot's root-directory Go command reported 1.27.2; the actual benchmark directory and run report confirm the
+benchmark-pinned runtime was 1.25.0.
+
+## Original B2 run — historical, uninstrumented
+
 The existing changes feed delivers each write separately to each admitted follower. SSE body bytes increased exactly
 10× from one to ten followers. The requested 100 and 1000 followers both reached the **32-stream per-database cap**;
 68 and 968 requests returned `429 changes_busy`. Every admitted follower received all 600 measured writes.
@@ -9,7 +60,7 @@ zero because this feed bypasses it. The source-derived minimum document SELECT c
 storage counter. This baseline supports byte, lag and process-resource comparisons; proving a reduction in physical
 storage reads requires instrumentation in a later lane.
 
-## Provenance and machine
+### Provenance and machine
 
 | field | value |
 | --- | --- |
@@ -30,7 +81,7 @@ The machine snapshot at 21:11:59 UTC recorded load averages 13.07 / 20.12 / 22.8
 These are one shared-host run, not repeated trials. CPU is not monotonic with N here; do not infer a precise CPU slope
 from these samples. Delivery p99 ranged from 993.791 to 2228.223 ms under this load.
 
-## Method
+### Method
 
 The harness uses `apibench.Startup`, `Ready`, `Serve`, `RunSweep` and `WriteReport`. Its fixed target list currently
 contains `changes.fanout`; a later shape target registers its endpoint, decoder and readiness adapter on the same
@@ -65,7 +116,7 @@ A temporary gru calibration stream identifies exactly one node-scoped `/metrics`
 then closes. Accounting reads and inferred document SELECTs cover **gru only**; sjc reads are excluded. The metric
 is published per closed 5 s accounting window; the harness waits 6 s after each step before its final scrape.
 
-## Measured results
+### Measured results
 
 | requested N | admitted | rejected (`changes_busy`) | writes | delivered | missed | SSE body bytes in 30 s |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -99,7 +150,7 @@ and actual disk I/O/cache behavior. It is a lower bound for this write cohort, n
 It therefore cannot substitute for physical-read metrics. Byte fan-out is directly measured; linear document SELECT
 fan-out is source-derived.
 
-## Reproduce and validation
+### Reproduce and validation
 
 From the measured commit, with the pinned sibling ts-dotnet checkout:
 
@@ -116,7 +167,7 @@ TerraBase 1586. The Release host build passed with zero warnings/errors. The ben
 Slow suites were not run locally. The initial one-region attempt failed before measurements with
 `placement_needs_two_regions`; this successful baseline uses the corrected two-region host.
 
-## Raw metric lines
+### Raw metric lines
 
 changes.fanout N=1 before:
 
@@ -174,7 +225,7 @@ terrabase_stats_operations_total{otel_scope_name="TerraScale.TerraBase",kind="re
 terrabase_stats_operations_total{otel_scope_name="TerraScale.TerraBase",kind="write"} 2800
 ```
 
-## Raw machine snapshot
+### Raw machine snapshot
 
 ```json
 {
@@ -211,7 +262,7 @@ terrabase_stats_operations_total{otel_scope_name="TerraScale.TerraBase",kind="wr
 }
 ```
 
-## Raw shared report JSON
+### Raw shared report JSON
 
 The following is the unmodified `apibench.WriteReport` JSON. Network probe, auth timing, startup RSS and `bytes_out`
 zeros are unmeasured placeholders. Its companion Markdown uses a generic “5 launches” heading; this run launched
