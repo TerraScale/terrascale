@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
+using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -17,6 +18,28 @@ namespace TerraBase.Fast.Replication;
 public sealed class CatalogLatticeTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
+
+    [Test]
+    public async Task Catalog_replication_frontiers_and_stability_use_the_system_store()
+    {
+        await using var cluster = await Cluster.StartAsync("gru");
+        var region = cluster["gru"];
+        var organization = await region.Api.CreateOrganizationAsync("System frontier");
+        var services = region.Api.Server.Services;
+        var source = services.GetRequiredService<IChangeGroupSource>();
+        var states = services.GetRequiredService<IReplicaStates>();
+        var sink = services.GetRequiredService<IChangeGroupSink>();
+        var peer = ReplicaId.Of(1, 9, 0);
+        var frontier = FeedCursor.At(DateTimeOffset.UtcNow - TimeSpan.FromMinutes(2));
+
+        await sink.RecordFrontierAsync(ChangeGroups.System, peer, frontier, CancellationToken.None);
+        await source.RecordStableAsync(ChangeGroups.System, peer, frontier, CancellationToken.None);
+
+        await Assert.That(await states.StableAsync(ChangeGroups.System, CancellationToken.None)).IsEqualTo(frontier);
+        await Assert.That((await states.HorizonAsync(ChangeGroups.System, CancellationToken.None)).Value).IsGreaterThan(0UL);
+        await Assert.That(await states.ForgetAsync(ChangeGroups.System, [("organizations", organization)], default, CancellationToken.None)).IsEqualTo(0);
+        await Assert.That(await region.ReadAsync("organizations", organization)).IsNotNull();
+    }
 
     [Test]
     public async Task An_organization_created_in_one_region_reaches_every_region_with_the_same_document_and_version()

@@ -124,7 +124,8 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
             context.Response.Headers["X-Accel-Buffering"] = "no";
             context.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
             var position = new Dictionary<ReplicaId, Hlc>(cursor?.Stamps ?? new Dictionary<ReplicaId, Hlc>());
-            Cursor(buffer, new FeedCursor(position, issued));
+            var prefixes = page.Before.ToDictionary();
+            Cursor(buffer, new FeedCursor(position, issued) { Issuer = page.Issuer, Prefixes = prefixes });
             await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
             var beat = time.GetUtcNow() + Heartbeat;
             while (true)
@@ -133,16 +134,18 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
                 foreach (var origin in position.Keys.Where(origin => !page.Scanned.ContainsKey(origin)).ToList())
                 {
                     _ = position.Remove(origin);
+                    _ = prefixes.Remove(origin);
                 }
 
                 for (var i = 0; i < page.Events.Count; i++)
                 {
                     var change = page.Events[i];
                     position[change.Origin] = change.Stamp;
+                    prefixes[change.Origin] = change.Prefix!;
                     // Only the last event of an (origin, stamp) carries the advanced cursor: a reader that leaves inside one
                     // resumes before it, never past events of that stamp it did not get.
                     var last = i + 1 == page.Events.Count || (page.Events[i + 1].Origin, page.Events[i + 1].Stamp) != (change.Origin, change.Stamp);
-                    Change(buffer, change, last ? ChangeCursor.Encode(new FeedCursor(position, issued)) : null);
+                    Change(buffer, change, last ? ChangeCursor.Encode(new FeedCursor(position, issued) { Issuer = page.Issuer, Prefixes = prefixes }) : null);
                     if (buffer.WrittenCount >= 64 * 1024)
                     {
                         await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
@@ -152,6 +155,7 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
                 // Past events the collection filter left out, without origins this machine forgot: the next event or
                 // heartbeat carries it.
                 position = page.Scanned.ToDictionary();
+                prefixes = page.Prefixes.ToDictionary();
                 await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
                 results.Dispose();
                 if (!page.More)
@@ -161,13 +165,13 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
 
                 if (time.GetUtcNow() >= beat)
                 {
-                    Cursor(buffer, new FeedCursor(position, issued));
+                    Cursor(buffer, new FeedCursor(position, issued) { Issuer = page.Issuer, Prefixes = prefixes });
                     await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
                     beat = time.GetUtcNow() + Heartbeat;
                 }
 
                 results = QosContext.Enter(database, memory);
-                cursor = new FeedCursor(position, issued);
+                cursor = new FeedCursor(position, issued) { Issuer = page.Issuer, Prefixes = prefixes };
                 issued = FeedCursor.At(time.GetUtcNow());
                 if (await ReadAsync(database, cursor, collections, stop.Token).ConfigureAwait(false) is not var (nextStore, nextSequence, nextPage))
                 {

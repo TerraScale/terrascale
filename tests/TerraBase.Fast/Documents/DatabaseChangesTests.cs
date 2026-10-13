@@ -380,7 +380,48 @@ public sealed class DatabaseChangesTests
         }
     }
 
-    // REVIEW PROBE (not committed): sjc's origin o writes e then p. fra's stream from o lost e (retention cut) and fra
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_portable_cursor_requires_the_same_origin_prefix_not_just_the_same_event_count(bool differentPrefix)
+    {
+        await using var fra = await DocumentApi.StartAsync(values => values["region"] = "fra");
+        await using var gru = await DocumentApi.StartAsync(values => values["region"] = "gru");
+        var origin = ReplicaId.Of(4518, 21, 1);
+        var now = DateTimeOffset.UtcNow;
+        var first = DocumentApi.NewId();
+        var second = DocumentApi.NewId();
+        var firstStamp = Stamp(now - TimeSpan.FromMinutes(2));
+        var excluded = DocumentApi.NewId();
+        var secondStamp = Stamp(now - TimeSpan.FromMinutes(1));
+        foreach (var api in new[] { fra, gru })
+        {
+            (await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "other" })).Status.ShouldBe(HttpStatusCode.Created);
+            var id = differentPrefix && api == gru ? DocumentApi.NewId() : first;
+            var delta = Group(1, id, firstStamp, origin).Deltas[0];
+            _ = await api.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(await api.TenantOfAsync(), origin,
+                [new OriginGroup(1, [delta, delta with { Collection = "other", Id = excluded }]), Group(2, second, secondStamp, origin)], CancellationToken.None);
+        }
+
+        string cursor;
+        using (var stream = await Sse.OpenAsync(fra.Client, $"{fra.DatabasePath()}/changes?collections={DocumentApi.Collection}"))
+        {
+            _ = await stream.NextAsync();
+            cursor = (await stream.ChangesAsync(1))[0].Id;
+        }
+
+        var uri = $"{gru.DatabasePath()}/changes?collections={DocumentApi.Collection}&cursor={Uri.EscapeDataString(cursor)}";
+        using var response = await gru.Client.GetAsync(new Uri(uri, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead);
+        await Assert.That(response.StatusCode).IsEqualTo(differentPrefix ? HttpStatusCode.Gone : HttpStatusCode.OK);
+        if (!differentPrefix)
+        {
+            using var resumed = await Sse.OpenAsync(gru.Client, uri);
+            _ = await resumed.NextAsync();
+            await Assert.That((await resumed.ChangesAsync(1))[0].Data.GetProperty("id").GetString()).IsEqualTo(second);
+        }
+    }
+
+    // Regression: sjc's origin o writes e then p. fra's stream from o lost e (retention cut) and fra
     // refilled e through RepairAsync (origin 0) before p arrived; gru received e and p on o's stream. A reader on fra
     // gets p, then leaves before fra's repair row of e, and resumes on gru. Expected: e is delivered on gru, or 410.
     [Test]

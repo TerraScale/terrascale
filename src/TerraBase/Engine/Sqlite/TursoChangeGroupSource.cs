@@ -123,7 +123,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     public async ValueTask RecordStableAsync(TenantContext database, ReplicaId peer, Hlc stable, CancellationToken cancellationToken)
     {
-        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return;
         }
@@ -144,7 +144,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     public async ValueTask<int> ForgetAsync(TenantContext database, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken)
     {
-        if (keys.Count == 0 || await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        if (keys.Count == 0 || await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return 0;
         }
@@ -161,7 +161,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     // A stamp read on a read transaction, at this machine's clock; 0 when this machine does not hold the database.
     private async ValueTask<Hlc> ReadAsync(TenantContext database, Func<SqliteStorageTransaction, Hlc, ValueTask<Hlc>> read, CancellationToken cancellationToken)
     {
-        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return default;
         }

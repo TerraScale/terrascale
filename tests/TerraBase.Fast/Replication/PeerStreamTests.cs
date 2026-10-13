@@ -1035,7 +1035,7 @@ public sealed class PeerStreamTests
                     .Because("excess refills are refused before starting work on another origin");
             }
 
-            await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(healthy), ChangeId = 1, Applied = second.LastStamp });
+            await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(healthy), ChangeId = 1, Applied = second.LastStamp, Stable = second.LastStamp });
             await Assert.That(await sjc.ReadAsync(healthy, id)).IsEqualTo("""{"n":1}""");
             await Assert.That(entered.Count).IsEqualTo(4);
             await Assert.That(sjc.RefillMemory!.Reserved).IsEqualTo(4 * RefillMemory.BytesPerRefill);
