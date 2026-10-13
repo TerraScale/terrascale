@@ -350,6 +350,16 @@ over #164.
   asked for the cause.
 - **#179** is updated to `45b30a77` on `bc752b23`; its fresh run is in progress.
 
+**#179 MERGED** at its exact head `45b30a77` → main **`5df8ccef`**, merge commit.
+- **Approval:** the independent APPROVE was at `34045b83` (issuecomment-6138287772).
+- **Delta since approval:** two merges of main (`5043c1de`, `bc752b23`), both verified clean by merge-tree. The PR's
+  patch-id is unchanged (`33166da1`).
+- **Runs:** `test` run 38371399260 succeeded. Push run 38372377563: deploy and preview skipped; Fast green (auth,
+  terrabase and libs all succeeded); Slow is still running.
+
+**#170 is blocked.** Round 2 asked for changes (6139749089). The fix-up at `1d27d4d7` (6140778466) has no approving
+review yet.
+
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
 **Outside the queue (COS, 03:30Z):** **#167** (`feat/postgres-turso-import-core`, `62f251f6`, one-time PostgreSQL and
