@@ -19,6 +19,8 @@ public sealed class ShapeApiTests
     private const string Handle = "h1-0123456789abcdef";
     private const string ShapeId = "0123456789abcdef0123456789abcdef";
     private const long Snapshot = 7;
+    private static readonly string[] ExpectedParameters = ["project", "database", "collection", "where", "handle", "offset", "live", "cursor", "TB-Shape-Resume"];
+    private static readonly string[] ExpectedResponses = ["200", "307", "304", "400", "404", "409", "414", "429", "503"];
 
     // Fixture bytes the fake page returns verbatim; the endpoint must not re-serialize them.
     private static readonly byte[] FixtureBody = Encoding.UTF8.GetBytes(
@@ -245,9 +247,16 @@ public sealed class ShapeApiTests
         await using var api = await DocumentApi.StartAsync();
         // Budget (contract step 9): path?where=<canonical, %-encoded>&handle=<19>&offset=snap.<19 digits>.<1024> must be at
         // most 8128 characters (8 KiB less 64 reserved). The client's own request is a bootstrap whose line stays under 8 KiB.
-        string Where(int padding) => "{\"eq\":[\"/t\",\"" + new string('a', padding) + "\"]}";
-        string Continuation(int padding) => Shape(api, "") + "?where=" + Uri.EscapeDataString(Where(padding))
-            + "&handle=" + Handle + "&offset=snap.9223372036854775807." + new string('x', 1024);
+        string Where(int padding)
+        {
+            return "{\"eq\":[\"/t\",\"" + new string('a', padding) + "\"]}";
+        }
+
+        string Continuation(int padding)
+        {
+            return Shape(api, "") + "?where=" + Uri.EscapeDataString(Where(padding))
+                + "&handle=" + Handle + "&offset=snap.9223372036854775807." + new string('x', 1024);
+        }
         var padding = 8129 - Continuation(0).Length;
         var target = Shape(api, "?offset=-1&where=" + Uri.EscapeDataString(Where(padding)));
         await Assert.That(Continuation(padding).Length).IsEqualTo(8129);
@@ -423,10 +432,10 @@ public sealed class ShapeApiTests
         await Assert.That(get.GetProperty("x-required-scopes").EnumerateArray().Select(scope => scope.GetString())).Contains("documents:read");
         await Assert.That(get.GetProperty("security").EnumerateArray().SelectMany(requirement => requirement.EnumerateObject()).Select(scheme => scheme.Name))
             .Contains("TsAuth");
-        var parameters = get.GetProperty("parameters").EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()).ToList();
-        await Assert.That(parameters).IsEquivalentTo(new[] { "project", "database", "collection", "where", "handle", "offset", "live", "cursor", "TB-Shape-Resume" });
+        var parameters = get.GetProperty("parameters").EnumerateArray().Select(parameter => parameter.GetProperty("name").GetString()!).ToList();
+        await Assert.That(parameters).IsEquivalentTo(ExpectedParameters);
         var responses = get.GetProperty("responses").EnumerateObject().Select(response => response.Name).ToList();
-        await Assert.That(new[] { "200", "307", "304", "400", "404", "409", "414", "429", "503" }.Where(code => !responses.Contains(code))).IsEmpty();
+        await Assert.That(ExpectedResponses.Where(code => !responses.Contains(code))).IsEmpty();
     }
 
     /// <summary>A tenant database whose shape lineage, snapshot pages and closed chunks are fixtures (isolated backend fixtures).</summary>
