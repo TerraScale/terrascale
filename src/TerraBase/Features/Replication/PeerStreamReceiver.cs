@@ -85,26 +85,46 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
         var region = TerraBaseOptions.IsRegion(hello.Region) ? hello.Region : "unknown";
         var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (_streams.TryGetValue(origin, out var older))
+        CancellationTokenSource? precedingStop = null;
+        var precedingEnded = Task.CompletedTask;
+        while (true)
         {
-            if (Replacing is { } replacing)
+            if (_streams.TryGetValue(origin, out var older))
             {
-                await replacing(origin, stream.Token).ConfigureAwait(false);
-            }
-            // The older stream ends first, with its refills: none of its repairs commits after this stream joins a batch.
-            await older.Stop.CancelAsync().ConfigureAwait(false);
-            await older.Ended.WaitAsync(stream.Token).ConfigureAwait(false);
-        }
+                if (!_streams.TryUpdate(origin, (stream, ended.Task), older))
+                {
+                    continue;
+                }
 
-        _streams[origin] = (stream, ended.Task);
+                precedingStop = older.Stop;
+                precedingEnded = older.Ended;
+                break;
+            }
+
+            if (_streams.TryAdd(origin, (stream, ended.Task)))
+            {
+                break;
+            }
+        }
         var last = new Dictionary<TenantContext, ulong>();
         // The databases a refill runs for, and those whose last refill failed: their batches are refused until a refill of
         // them commits, so none joins before the repairs it follows.
         var refills = new Dictionary<TenantContext, (Refill Frame, Task<int?> Done)>();
-        var cut = _cut.TryRemove(origin, out var carried) ? carried : [];
+        HashSet<TenantContext> cut = [];
         Task<bool>? reading = null;
         try
         {
+            if (precedingStop is not null)
+            {
+                if (Replacing is { } replacing)
+                {
+                    await replacing(origin, stream.Token).ConfigureAwait(false);
+                }
+                await CancelPreviousAsync(precedingStop, precedingEnded).ConfigureAwait(false);
+                await precedingEnded.WaitAsync(stream.Token).ConfigureAwait(false);
+            }
+
+            cut = _cut.TryRemove(origin, out var carried) ? carried : [];
             await responseStream.WriteAsync(new AckFrame { Welcome = new Welcome { Node = _self.Id.Value } }, stream.Token).ConfigureAwait(false);
             reading = requestStream.MoveNext(stream.Token);
             while (true)
@@ -234,7 +254,13 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         {
             // A refill ends with its stream; one not acknowledged leaves its database cut for the origin's next stream.
             await stream.CancelAsync().ConfigureAwait(false);
-            foreach (var pending in refills.Values.Select(refilling => (Task)refilling.Done).Append(reading ?? Task.CompletedTask))
+            if (precedingStop is not null)
+            {
+                // Also when cancellation ended the replacement before it could stop its predecessor.
+                await CancelPreviousAsync(precedingStop, precedingEnded).ConfigureAwait(false);
+            }
+            // A cancelled replacement still joins its predecessor before the next replacement can start.
+            foreach (var pending in refills.Values.Select(refilling => (Task)refilling.Done).Append(reading ?? Task.CompletedTask).Append(precedingEnded))
             {
                 await pending.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }
@@ -283,6 +309,12 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             }
         }
         while (after is not null);
+
+        // An unavailable database also reads as an empty page; its stream must not certify complete coverage.
+        if (await _states.DigestAsync(database, context.CancellationToken).ConfigureAwait(false) is null)
+        {
+            throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source no longer holds the database"));
+        }
     }
 
     // A refill that fails (the named machine unreachable, a deadline) refuses the database: the sender asks again later.
@@ -296,6 +328,18 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         {
             _logger.ZLogWarning(error, $"A refill from machine {machine:@Peer} failed; the database is refused until its sender asks again");
             return null;
+        }
+    }
+
+    private static async Task CancelPreviousAsync(CancellationTokenSource stop, Task ended)
+    {
+        try
+        {
+            await stop.CancelAsync().ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException) when (ended.IsCompleted)
+        {
+            // A completed predecessor can dispose its token before the replacement requests cancellation.
         }
     }
 
