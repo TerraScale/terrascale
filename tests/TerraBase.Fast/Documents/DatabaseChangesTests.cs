@@ -265,35 +265,36 @@ public sealed class DatabaseChangesTests
     [Arguments(0)]
     [Arguments(1)]
     [Arguments(2)]
-    public async Task A_cursor_of_the_first_format_without_an_issue_instant_is_400(int origins)
+    public async Task A_cursor_that_does_not_decode_is_410(int origins)
     {
         await using var api = await DocumentApi.StartAsync();
-        // #118's layout: the format byte, then (origin, stamp) pairs, with no issue instant.
-        byte[] old = [1, .. Enumerable.Range(1, origins).SelectMany(origin => Origin((ulong)origin, (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16))];
+        // Bytes missing the issue instant, issuer and prefix proof cannot be resumed.
+        byte[] old = [0, .. Enumerable.Range(1, origins).SelectMany(origin => Origin((ulong)origin, (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16))];
         var text = Convert.ToBase64String(old).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var changes = $"{api.DatabasePath()}/changes";
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?cursor={text}", UriKind.Relative)),
-            HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
+            HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
         using var resume = new HttpRequestMessage(HttpMethod.Get, new Uri(changes, UriKind.Relative));
         resume.Headers.Add("Last-Event-ID", text);
-        await ErrorAssert.ErrorAsync(api.Client.SendAsync(resume), HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
+        await ErrorAssert.ErrorAsync(api.Client.SendAsync(resume), HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
     }
 
     [Test]
-    public async Task Malformed_cursors_and_filters_are_400_a_missing_scope_403_and_an_unknown_database_404()
+    public async Task Undecodable_cursors_are_410_invalid_filters_400_a_missing_scope_403_and_an_unknown_database_404()
     {
         await using var api = await DocumentApi.StartAsync();
         var changes = $"{api.DatabasePath()}/changes";
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?cursor=AQ-not-a-cursor", UriKind.Relative)),
-            HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
+            HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
         // A canonical cursor names each origin once, in ascending order.
-        var unordered = Convert.ToBase64String([1, .. Origin(0, (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16)[8..], .. Origin(2, 5), .. Origin(1, 5)])
-            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var canonical = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc> { [new ReplicaId(1)] = new Hlc(5), [new ReplicaId(2)] = new Hlc(5) }, FeedCursor.At(DateTimeOffset.UtcNow)));
+        var bytes = System.Buffers.Text.Base64Url.DecodeFromChars(canonical);
+        var unordered = System.Buffers.Text.Base64Url.EncodeToString([.. bytes[..17], .. bytes[73..], .. bytes[17..73]]);
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?cursor={unordered}", UriKind.Relative)),
-            HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
+            HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
         using var lastEventId = new HttpRequestMessage(HttpMethod.Get, new Uri(changes, UriKind.Relative));
         lastEventId.Headers.Add("Last-Event-ID", "garbage");
-        await ErrorAssert.ErrorAsync(api.Client.SendAsync(lastEventId), HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
+        await ErrorAssert.ErrorAsync(api.Client.SendAsync(lastEventId), HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?collections=Bad", UriKind.Relative)),
             HttpStatusCode.BadRequest, "invalid_request", "collection must be a lowercase name of at most 63 characters");
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?since=1", UriKind.Relative)),

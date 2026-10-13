@@ -944,7 +944,7 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   the last event of an (origin, stamp) carries an `id:` (a stamp holds one document today, as stamps are minted per
   document, but a reader that leaves inside one never skips the rest of it). These rules assume a machine receives an
   origin's events within the retention (otherwise it refills, R6).
-- **Cursor (format 2).** base64url of a format byte (2), the issue instant and issuing node, then per origin in
+- **Opaque cursor.** base64url of a marker, the issue instant and issuing node, then per origin in
   ascending order its node, stamp, retention floor and SHA-256 prefix hash. Integers are 8-byte big-endian; the header
   is 17 bytes and each origin 56 bytes. The hash chains event identities (stamp, deletion bit, length-prefixed UTF-8
   collection and document id), including filtered events. A cross-machine resume streams the retained prefix above
@@ -952,9 +952,10 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   returns 410. This verification uses constant memory per origin and work proportional to its retained prefix;
   subsequent pages on the same machine update hashes incrementally. `cursor=now` builds the prefix once.
   Every event and heartbeat re-issues the cursor at the instant the read behind it began. Decoding accepts canonical
-  bytes only (400 `invalid_cursor`), at most 256 origins; encoding refuses more. Format 1 cursors are rejected with
-  400 `invalid_cursor`: clients must resync after this explicit opaque-cursor format change. No storage schema,
-  replication protocol, authentication or lattice conflict semantics change. An issued cursor with no origin is not
+  bytes only, at most 256 origins; encoding refuses more. Any cursor that does not decode to the current opaque
+  layout returns 410 `cursor_expired`; there are no alternate layouts or compatibility branches. No public API or
+  storage schema version changes, nor changes to replication, authentication or lattice conflict semantics.
+  An issued cursor with no origin is not
   "no cursor": it is expired by the retention rules above.
 - **410 frequency and recovery impact.** Matching retained prefixes resume with 200 in all six directed gru/sjc/fra
   pairs in Fast, including collection-filtered events sharing a stamp. This is controlled integration coverage, not a
