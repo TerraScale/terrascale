@@ -432,7 +432,7 @@ jobs:
         working-directory: terrascale
         run: |
           make terrabase-e2e E2E_LABEL=fly-replication-matrix E2E_RESULTS="$PWD/replication-matrix-results.jsonl" \
-            TEST_ARGS='-- --treenode-filter /*/*/*/*[Category=replication-matrix-live] --minimum-expected-tests 13 --output detailed --no-ansi' \
+            TEST_ARGS='-- --treenode-filter "/*/*/*/*[Category=replication-matrix-live]" --minimum-expected-tests 13 --output detailed --no-ansi' \
             2>&1 | tee replication-matrix.log
           jq -se 'length == 13 and all(.[]; .category == "pass" and .nodes == "Fly machines")' replication-matrix-results.jsonl
       - name: Replication e2e against Fly
