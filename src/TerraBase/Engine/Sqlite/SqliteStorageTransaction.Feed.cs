@@ -14,7 +14,7 @@ internal sealed partial class SqliteStorageTransaction
     // Rows read per origin and page, before completing the last stamp: a stamp is never split between pages.
     private const int FeedOriginRows = 512;
 
-    private const string InsertFeed = "INSERT INTO _tb_feed (origin, stamp, collection, id, deleted) VALUES ($origin, $stamp, $collection, $id, $deleted);";
+    private const string InsertFeed = "INSERT INTO _tb_feed (seq, commit_offset, origin, stamp, collection, id, deleted) VALUES ($seq, $commit, $origin, $stamp, $collection, $id, $deleted);";
 
     private const string InsertFeedOrigin = "INSERT INTO _tb_feed_floor (origin, stamp) SELECT $origin, 0 WHERE NOT EXISTS (SELECT 1 FROM _tb_feed_floor WHERE origin = $origin);";
 
@@ -127,10 +127,16 @@ internal sealed partial class SqliteStorageTransaction
         }
 
         var origin = unchecked((long)at.Node.Value);
+        // Retention may empty the feed: Turso reuses rowids even with AUTOINCREMENT after a reopen.
+        var seq = Command("UPDATE _tb_feed_sequence SET seq = seq + 1 WHERE id = 1 AND seq < 9223372036854775807 RETURNING seq;").ExecuteScalar() is long next
+            ? next
+            : throw new OverflowException("the feed sequence is exhausted");
         var known = Command(InsertFeedOrigin);
         known.Parameters.AddWithValue("$origin", origin);
         known.ExecuteNonQuery();
         var insert = Command(InsertFeed, collection);
+        insert.Parameters.AddWithValue("$seq", seq);
+        insert.Parameters.AddWithValue("$commit", Offset());
         insert.Parameters.AddWithValue("$origin", origin);
         insert.Parameters.AddWithValue("$stamp", Version(at.Stamp));
         insert.Parameters.AddWithValue("$id", id);

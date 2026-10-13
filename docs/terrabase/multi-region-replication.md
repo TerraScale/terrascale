@@ -204,15 +204,22 @@ CREATE TABLE _tb_peers (node INTEGER PRIMARY KEY,     -- every origin and every 
   acked   INTEGER NOT NULL,   -- sender side: highest local change_id this peer acknowledged
   stable  INTEGER NOT NULL,   -- the peer's last reported stable stamp (section 11)
   seen    INTEGER NOT NULL);  -- Unix ms last heard from
-CREATE TABLE _tb_feed (origin INTEGER NOT NULL, stamp INTEGER NOT NULL,
+CREATE TABLE _tb_feed (seq INTEGER NOT NULL UNIQUE, commit_offset INTEGER NOT NULL,
+  origin INTEGER NOT NULL, stamp INTEGER NOT NULL,
   collection TEXT NOT NULL, id TEXT NOT NULL, deleted INTEGER NOT NULL);
 CREATE INDEX _tb_feed_order ON _tb_feed (origin, stamp);
+CREATE TABLE _tb_feed_sequence (id INTEGER PRIMARY KEY CHECK (id = 1), seq INTEGER NOT NULL);
+INSERT INTO _tb_feed_sequence (id, seq) VALUES (1, 0);
 CREATE TABLE _tb_feed_floor (origin INTEGER PRIMARY KEY, stamp INTEGER NOT NULL); -- index complete above this
 CREATE TABLE _tb_merkle (bucket INTEGER PRIMARY KEY, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL);
 CREATE TABLE _tb_tail (id INTEGER PRIMARY KEY CHECK (id = 1), change_id INTEGER NOT NULL);
 -- plus the unique-constraint tables _tb_unique_keys, _tb_unique_invalid and _tb_unique_conflicts (rowid, UNIQUE keys),
 -- and turso_cdc, created by PRAGMA capture_data_changes_conn('after') on the writer connection.
 ```
+
+The [shape storage foundation](shape-storage.md) adds a persisted local feed sequence
+and the derived `_tb_shape_chunk` / `_tb_shape_snapshot` tables. Shape bytes are
+written with capture suspended and are omitted from database copies and backups.
 
 - **Cheap per-field merge.** A document is one `_tb_state` row plus one collection row. A merge reads both by key,
   joins two sorted entry lists in O(fields), and writes both back. That is two captured rows, not one row per field.

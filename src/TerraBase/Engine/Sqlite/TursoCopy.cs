@@ -11,7 +11,7 @@ namespace TerraBase.Engine.Sqlite;
 /// <remarks>
 /// Every rowid is kept, so a change log that names rows by rowid replays on the copy. The schema is recreated from its SQL,
 /// so <c>sqlite_schema</c> rowids may differ: the log names schema objects by name. The engine's own tables (change capture,
-/// statistics) are left out, and every peer's acknowledged change id is reset to 0.
+/// statistics) are left out, derived shape tables are copied empty, and every peer's acknowledged change id is reset to 0.
 /// </remarks>
 internal static class TursoCopy
 {
@@ -43,7 +43,11 @@ internal static class TursoCopy
         foreach (var (_, name, _, sql) in objects.Where(item => item.Type == "table"))
         {
             Execute(copy, sql);
-            CopyRows(source, copy, name, cancellationToken);
+            // Sealed shapes belong to the source lineage: copies and backups rebuild them under a new handle.
+            if (name is not ("_tb_shape_chunk" or "_tb_shape_snapshot"))
+            {
+                CopyRows(source, copy, name, cancellationToken);
+            }
         }
 
         // Peers' acknowledged ids name rows of the source's turso_cdc, which the copy does not continue (its ids restart at 1):

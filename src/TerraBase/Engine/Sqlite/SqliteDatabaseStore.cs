@@ -98,10 +98,21 @@ internal sealed partial class SqliteDatabaseStore(
             node INTEGER PRIMARY KEY, applied INTEGER NOT NULL, acked INTEGER NOT NULL, stable INTEGER NOT NULL, seen INTEGER NOT NULL
         );
         CREATE TABLE _tb_feed (
-            origin INTEGER NOT NULL, stamp INTEGER NOT NULL, collection TEXT NOT NULL, id TEXT NOT NULL, deleted INTEGER NOT NULL
+            seq INTEGER NOT NULL UNIQUE, commit_offset INTEGER NOT NULL, origin INTEGER NOT NULL, stamp INTEGER NOT NULL,
+            collection TEXT NOT NULL, id TEXT NOT NULL, deleted INTEGER NOT NULL
         );
         CREATE INDEX _tb_feed_order ON _tb_feed (origin, stamp);
+        CREATE TABLE _tb_feed_sequence (id INTEGER PRIMARY KEY CHECK (id = 1), seq INTEGER NOT NULL);
+        INSERT INTO _tb_feed_sequence (id, seq) VALUES (1, 0);
         CREATE TABLE _tb_feed_floor (origin INTEGER PRIMARY KEY, stamp INTEGER NOT NULL);
+        CREATE TABLE _tb_shape_chunk (
+            handle TEXT NOT NULL, offset INTEGER NOT NULL, end_offset INTEGER NOT NULL,
+            body BLOB NOT NULL, sealed_at INTEGER NOT NULL, UNIQUE (handle, offset)
+        );
+        CREATE TABLE _tb_shape_snapshot (
+            handle TEXT NOT NULL, offset INTEGER NOT NULL, page INTEGER NOT NULL, next_id TEXT,
+            body BLOB NOT NULL, sealed_at INTEGER NOT NULL, UNIQUE (handle, offset, page)
+        );
         CREATE TABLE _tb_merkle (bucket INTEGER PRIMARY KEY, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL);
         CREATE TABLE _tb_tail (id INTEGER PRIMARY KEY CHECK (id = 1), change_id INTEGER NOT NULL);
         CREATE TABLE collections (
