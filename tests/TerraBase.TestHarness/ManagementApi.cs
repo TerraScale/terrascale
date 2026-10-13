@@ -4,6 +4,9 @@ using System.Text;
 using System.Text.Json;
 using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
 using TerraBase.Primitives;
 
 namespace TerraBase.Testing;
@@ -69,6 +72,10 @@ public sealed class ManagementApi : IAsyncDisposable
                 }
 
                 services?.Invoke(collection);
+                // A test about query deadlines installs its own clock. Every other test gets one that stands still, so a
+                // runtime pause (another parallel test's GC) can't spend a plan's wall-clock deadline (Hobby: 1 s) on a
+                // query that does almost no work; work, scan and byte budgets still apply.
+                collection.TryAddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
             }, cancellationToken: cancellationToken, failedStartCleanup: task => failedCleanup = task);
             // Startup waited for the issuer's keys, so tokens work from the first request.
             return new ManagementApi(server, tls, issuer, EntityIds.New().ToString());
