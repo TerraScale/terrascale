@@ -218,8 +218,11 @@ A document write ends in one of three outcomes:
 
 1. **Committed:** a `2xx` answer with `local_durable`, as above. After the database's SQLite commit returned, the
    storage engine still moves its commit count, wakes what waits for commits and releases the transaction. Each of
-   these runs even when work before it failed. A failure there is logged and the write is still answered this way.
-   Only this storage engine work is covered: a failure later in the request is not, and its `5xx` is outcome 3.
+   these runs even when work before it failed. A failure there is logged and the write is still answered this way,
+   except in two cases that answer outcome 3 instead: a group commit that also created or dropped a collection or
+   adopted an incarnation (no document write does today), and a change committed in its own transaction rather than
+   a group commit, such as creating or dropping a collection or changing a schema or an index. Only this storage
+   engine work is covered: a failure later in the request is not, and its `5xx` is outcome 3.
 2. **Not committed:** a `4xx` answer. The write was refused (validation, precondition, quota, uniqueness) and rolled
    back.
 3. **Unknown:** a `5xx` answer, a lost connection or a proxy error. The write may or may not have committed. The
