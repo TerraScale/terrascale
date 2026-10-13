@@ -777,7 +777,7 @@ public sealed class PeerStreamTests
             gru.Api.Server.Services.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(),
             gru.Api.Server.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<TerraBase.Engine.Sqlite.TursoChangeGroupSource>>());
         var low = await source.HeadAsync(cluster.Database, CancellationToken.None);
-        await source.AckAsync(cluster.Database, peer, low, CancellationToken.None);
+        await source.AckAsync(cluster.Database, peer, low, default, CancellationToken.None);
         var remote = Put(peer, Stamp(), joined, """{"j":1}""");
         await gru.WriteAsync(async transaction => _ = await transaction.JoinAsync(remote.Collection, remote.Id, remote.State,
             new EntryVersion(remote.Stamp, peer), CancellationToken.None));
