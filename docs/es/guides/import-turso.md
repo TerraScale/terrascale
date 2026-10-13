@@ -19,7 +19,7 @@ Import follows the proposed import contract v1 and is not available on any servi
 
 ## 1. Rehearse with synthetic data
 
-Load this fixture into a local file with `sqlite3 rehearsal.db < fixture.sql`, then upload `rehearsal.db` with `FORMAT=sqlite`. To rehearse the Turso export as well, create a throwaway database from the file with `turso db create import-rehearsal --from-file rehearsal.db`, export it as below, and destroy it afterwards.
+Load this fixture into a local file with `sqlite3 rehearsal.db < fixture.sql`. The result is already in rollback-journal mode, so you can upload `rehearsal.db` with `FORMAT=sqlite`. To rehearse the Turso export as well, create a throwaway database from the file with `turso db create import-rehearsal --from-file rehearsal.db`, export it as below, and destroy it afterwards.
 
 ```sql
 CREATE TABLE customers (
@@ -53,43 +53,47 @@ INSERT INTO orders VALUES
 INSERT INTO audit_log VALUES ('created', 1767225599), ('created', '2026-01-01');
 ```
 
-Expect no blocking issues, and `mixed_storage_classes` warnings because `customers.balance` holds a number and the text `'12.50 EUR'`, `customers.active` holds `1` and `'yes'`, and `audit_log.logged_at` holds a Unix time and a date string. The order with key `(1, 2)` becomes document `1:2`, and the `audit_log` rows become documents `1` and `2`.
+Expect no blocking issues, and `mixed_storage_classes` warnings: `customers.balance` maps as `float+string` because it holds `10.25` and `'12.50 EUR'`, while `customers.active` and `audit_log.logged_at` map as `integer+string`. The order with key `(1, 2)` becomes document `1:2`, and the `audit_log` rows become documents `1` and `2`.
 
 ## 2. Export one consistent file
 
-The import accepts exactly one SQLite database file. Leftover WAL data is not read, so a file uploaded without folding in its `-wal` companion silently loses the newest writes.
+The import accepts exactly one SQLite database file in rollback-journal mode. A file in WAL mode is rejected with `wal_mode_source`, because rows still in its `-wal` companion would be missing without any sign in the file itself.
 
-**From Turso.** `turso db export` writes a snapshot as `<name>.db` plus a `<name>.db-wal` file beside it. Fold both into one file with SQLite's online backup:
+**From Turso.** `turso db export` can write a snapshot as `<name>.db` plus a `<name>.db-wal` file beside it. `VACUUM INTO` reads both and writes one rollback-mode file:
 
 ```bash
 turso db export YOUR_DATABASE --output-file turso-export.db
-sqlite3 turso-export.db ".backup export.db"
+sqlite3 turso-export.db "VACUUM INTO 'export.db'"
 chmod 600 export.db
 ```
 
-Keep `turso-export.db` and `turso-export.db-wal` together until the backup finishes, then delete them. The export uses your own Turso CLI login; TerraBase never receives a Turso token. You do not need `--with-metadata`.
+Keep `turso-export.db-wal` beside `turso-export.db` until `VACUUM INTO` finishes, then delete both. The export uses your own Turso CLI login; TerraBase never receives a Turso token. You do not need `--with-metadata`.
 
 **From a local SQLite or libSQL file:**
 
 ```bash
-sqlite3 local.db ".backup export.db"
+sqlite3 local.db "VACUUM INTO 'export.db'"
 ```
 
-`.backup` produces one consistent copy even while the database is in use. Never copy a live database file directly. `VACUUM INTO 'export.db'` also creates a consistent single file, but SQLite documents that a vacuum can renumber the `rowid` of tables without an `INTEGER PRIMARY KEY`, and those rowids become document IDs.
+`VACUUM INTO` reads one consistent snapshot, even while the database is in use. Do not use `.backup`: its copy keeps the WAL-mode flag and is rejected. Never copy a live database file directly. A copy taken while another process writes can be torn or stale, and no check of the file alone can detect every such copy.
 
-Check the result before you upload it:
+Alternatively, on a **copy** that keeps `copy.db` and `copy.db-wal` together, `sqlite3 copy.db "PRAGMA journal_mode=DELETE"` folds the WAL in and switches the file to rollback mode. Never run it on the live database.
+
+SQLite documents that a vacuum can renumber the `rowid` of tables without an `INTEGER PRIMARY KEY`. Such tables take their document IDs from the rowids in `export.db`.
+
+Check the journal mode before you upload:
 
 ```bash
-sqlite3 export.db "PRAGMA quick_check"
+od -An -tu1 -j18 -N2 export.db
 ```
 
-It must print `ok`. A file that fails this check, an encrypted file or a schema SQLite cannot parse, such as libSQL-only syntax, is refused with `unsupported_source_format`. Upload `export.db` with `FORMAT=sqlite`; it must be at most 1 GiB.
+It must print `1` twice; `2` twice means WAL mode. A file that is not SQLite 3, or an encrypted file, is rejected with `unsupported_source_format`. Upload `export.db` with `FORMAT=sqlite`; it must be at most 1 GiB.
 
 ## 3. Check what the export will contain
 
 Run these with `sqlite3 export.db` to plan your [options](/es/guides/import#options). The preview reports the same findings.
 
-**Columns.** Use the names in `exclude` entries as `main.table.column`. `hidden` is `2` or `3` for generated columns.
+**Columns.** Use the names in `exclude` entries as `main.table.column`; SQLite names match without regard to case. `hidden` is `2` or `3` for generated columns.
 
 ```sql
 SELECT m.name AS table_name, p.name AS column_name, p.type AS declared_type,
@@ -108,7 +112,7 @@ FROM customers
 GROUP BY 1;
 ```
 
-**Tables without a primary key.** A rowid table without a declared primary key uses its `rowid` as the document ID. A `WITHOUT ROWID` table always has a primary key.
+**Tables without a primary key.** A rowid table without a declared primary key uses its `rowid` as the document ID (`idPolicy` `rowid`). A `WITHOUT ROWID` table always has a primary key.
 
 ```sql
 SELECT m.name AS table_name
@@ -124,24 +128,33 @@ ORDER BY 1;
 PRAGMA foreign_key_check;
 ```
 
-**Virtual tables.** Views, triggers and virtual tables are skipped. A full-text (FTS5) or R*Tree table stores its index in ordinary shadow tables named after it, such as `notes_fts_data` and `notes_fts_idx`. Exclude those shadow tables, then rebuild the search index from your content.
+**Virtual tables.** Views, triggers, virtual tables, their shadow tables (such as `notes_fts_data`) and SQLite's internal `sqlite_*` tables are excluded automatically and listed in `skipped`. Rebuild a full-text (FTS5) or R*Tree index from its source table after the import. A virtual table that holds its own content gets a `not_imported` warning, and that content is not imported.
 
 ```sql
 SELECT name FROM sqlite_schema WHERE sql LIKE 'CREATE VIRTUAL TABLE%';
+```
+
+To keep such content, copy it into an ordinary table in `export.db`, never in the source, before you create the import:
+
+```sql
+CREATE TABLE notes_text AS SELECT rowid AS id, body FROM notes_fts;
 ```
 
 ## Type mapping
 
 Each value maps by its **storage class**, never by the column's declared type.
 
-| Storage class | `mapping` | JSON value |
+| Storage class | Class in `mapping` | JSON value |
 | --- | --- | --- |
 | `INTEGER` | `integer` | Number with exact 64-bit digits |
-| `REAL` | `float` | Number; `±Infinity` fails with `invalid_value` |
+| `REAL` | `float` | Number; `±Infinity` and nonzero magnitudes below 1e-307 are `invalid_value` |
 | `TEXT` | `string` | String |
 | `BLOB` | `base64` | Standard base64 string |
 | `NULL` | | `null` |
-| More than one class in a column | `mixed` | Each value by its own class; reported as a `mixed_storage_classes` warning |
+
+A column's `mapping` names the non-`NULL` classes it holds, joined by `+` in the order `integer`, `float`, `string`, `base64`, such as `integer` or `integer+string`. It is `null` when every value is `NULL`. `NULL` never makes a column mixed; two or more non-`NULL` classes give a `mixed_storage_classes` warning.
+
+Analysis maps every row, so an invalid value appears in the preview with its row number before anything is written. Two distinct keys that map to one ID, such as `1` and `'1'` in an untyped key column, are found only during the copy, which then fails with `duplicate_document_id`.
 
 What this means for common column conventions:
 

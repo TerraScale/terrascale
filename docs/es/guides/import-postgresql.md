@@ -90,7 +90,7 @@ DROP ROLE terrascale_export;
 
 Run these as the database owner to plan your [options](/es/guides/import#options) before the preview reports them.
 
-**Tables without a primary key** need `missingPrimaryKey: "generate"` or an `exclude` entry.
+**Tables without a primary key** need `missingPrimaryKey: "generate"` or an `exclude` entry. Quote names that are not plain lowercase identifiers, such as `public."Order Items"`.
 
 ```sql
 SELECT c.oid::regclass AS table_name
@@ -129,6 +129,14 @@ FROM pg_class
 WHERE relkind IN ('r', 'p') AND relrowsecurity;
 ```
 
+**Large objects** block the import. A column of type `oid` that refers to them holds only a reference and is unsupported. If this returns more than `0`, export with `--no-large-objects` (`--no-blobs` before PostgreSQL 16) and exclude the referencing columns.
+
+```sql
+SELECT count(*) AS large_objects FROM pg_largeobject_metadata;
+```
+
+**Partitioned tables.** Each partition holds its own rows and becomes its own collection; the partitioned parent holds none and is skipped. To import a partitioned table as one collection, export with `--load-via-partition-root`.
+
 ## Export the database
 
 Run `pg_dump` from a machine that can reach the database. Prompting for the password, or a `~/.pgpass` file with mode `0600`, keeps it out of the command line. Require TLS with certificate verification.
@@ -142,28 +150,31 @@ chmod 600 dump.sql
 - **Snapshot.** `pg_dump` reads every table from one transaction snapshot, so the export is consistent without stopping writes. It holds a lock that blocks schema changes on each exported table until it finishes, and a long export holds back vacuum cleanup on the server.
 - **Lower the load.** Export from a read replica, a restored backup or a provider branch when you can.
 - **Limit the size.** The file must be at most 1 GiB. Use `--table`, `--exclude-table` or `--schema` to split a large database into several imports.
-- **Accepted format.** Plain-text UTF-8 SQL with `COPY` data, which is `pg_dump`'s default output. Custom, directory and tar archives, compressed files and `--inserts` or `--column-inserts` dumps are refused. Convert a custom archive offline with `pg_restore -f dump.sql archive.dump`.
+- **Accepted format.** Plain-text UTF-8 SQL with text-format `COPY` data, which is `pg_dump`'s default output. Custom, directory and tar archives, compressed files, non-UTF-8 dumps and `pg_dumpall` output are rejected with `unsupported_source_format`. Convert a custom archive offline with `pg_restore -f dump.sql archive.dump`.
+- **Blocking statements.** Statements that can hold data but would not be imported block the preview: `INSERT` statements from `--inserts` or `--column-inserts`, large objects, `COPY` in CSV or binary form and unknown statements.
 
-Upload `dump.sql` with `FORMAT=postgres_plain`. TerraBase reads only table definitions, enum types, primary key, unique and foreign key constraints, and `COPY` data. Functions, triggers, extensions, `DO` blocks, grants and `\` commands are listed as skipped and never run.
+Upload `dump.sql` with `FORMAT=postgres_plain`. TerraBase reads only table, enum and constraint definitions and `COPY` data. Statements that hold no data, such as functions, triggers, indexes, extensions, `DO` blocks and grants, are listed as skipped and never run. `pg_dump`'s `\restrict` and `\unrestrict` lines are ignored.
 
 ## Type mapping
 
-`\N` (SQL `NULL`) becomes JSON `null` for every type. A type not listed here is `unsupported_type` and blocks its table until you exclude the column.
+`\N` (SQL `NULL`) becomes JSON `null` for every type. A type not listed here is `unsupported_type` and blocks its table until you exclude the column. Analysis maps every row, so an `invalid_value` appears in the preview with its row number before anything is written.
 
 | PostgreSQL type | `mapping` | JSON value |
 | --- | --- | --- |
 | `smallint`, `integer`, `bigint` and `serial` forms | `integer` | Number with exact 64-bit digits |
-| `real`, `double precision` | `float` | Number as dumped; `NaN` and `±Infinity` fail with `invalid_value` |
+| `real`, `double precision` | `float` | Number as dumped; `NaN`, `±Infinity` and nonzero magnitudes below 1e-307 are `invalid_value` |
 | `numeric`, `decimal` | `decimal_string` | String with the exact digits, never rounded; `NaN` stays `"NaN"` |
 | `boolean` | `boolean` | `true` or `false` |
 | `text`, `varchar`, `char`, `name`, `citext`, enums | `string` | String; `char` padding is kept |
 | `uuid` | `string` | Lowercase canonical string |
-| `json`, `jsonb` | `json` | The embedded JSON value |
+| `json`, `jsonb` | `json` | The embedded JSON value, within 16 levels and 4096 values per document |
 | `bytea` | `base64` | Standard base64 string |
-| `date` | `date` | `"YYYY-MM-DD"`; BC dates and `±infinity` fail with `invalid_value` |
+| `date` | `date` | `"YYYY-MM-DD"` |
 | `timestamp` | `timestamp` | `"YYYY-MM-DDThh:mm:ss[.ffffff]"`, no offset |
 | `timestamptz` | `timestamptz` | RFC 3339 UTC ending in `Z`, microseconds kept |
-| `time`, `timetz`, `interval`, `inet`, `cidr`, `macaddr`, `bit`, `varbit`, `xml` | `text` | String with the exact dumped text |
+| `time`, `timetz`, `interval`, `inet`, `cidr`, `macaddr`, `macaddr8`, `bit`, `varbit`, `xml` | `text` | String with the exact dumped text |
+
+`date`, `timestamp` and `timestamptz` import years 1 to 9999 AD. `infinity`, `-infinity` and BC values have no RFC 3339 form and are `invalid_value`.
 
 Unsupported in contract v1: arrays, composite, range and multirange types, domains, geometric types, `money`, `tsvector`, `tsquery`, `pg_lsn` and extension types other than `citext`.
 
