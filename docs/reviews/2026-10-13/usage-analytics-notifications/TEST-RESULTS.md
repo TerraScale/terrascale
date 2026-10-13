@@ -6,9 +6,11 @@ New journeys: **3 passed / 7 expected failures**. Additional existing AnalyticsC
 
 | Suite | Total | Passed | Failed | TRX finish time (UTC) |
 |---|---:|---:|---:|---|
-| New Analytics/Home | 6 | 1 | 5 | 2026-10-13T02:38:40.7466429Z |
-| New Notifications/Audit/Usage | 4 | 2 | 2 | 2026-10-13T02:36:00.3286664Z |
-| Existing Analytics wire contract | 1 | 1 | 0 | 2026-10-13T02:40:28.9962058Z |
+| New Analytics/Home | 6 | 1 | 5 | 2026-10-13T03:11:32.7116627Z |
+| New Notifications/Audit/Usage | 4 | 2 | 2 | 2026-10-13T03:12:50.1612681Z |
+| Existing Analytics wire contract | 1 | 1 | 0 | 2026-10-13T03:14:25.4585304Z |
+
+Evidence-preparation rerun at local test/report head **afb0f3375a2800bc10fcdd5b942c3cd77fb077e9**: the table above records fresh focused results. New test assertions and production source are unchanged. Build again passed with 0 warnings/errors; scoped formatting, stylesheet, SDK provenance and E2E boundary checks passed. The final docs/PNG head is verified again in the handoff, with raw reports retained under obj/final-head-checks. This rerun does not relabel the original b719 screenshot capture source. No CI or publication was started while Mongo has the active slot.
 
 ## Failure classification
 
@@ -63,6 +65,6 @@ Each of proposed-source.patch, analytics-contract-proposals.patch and region-pla
 
 Raw TRX/logs and generated HTML may contain synthetic CSRF values and remain uncommitted under obj. This sanitized summary excludes them. The compact CSV evidence normalizes response CRLF line endings to LF without changing field values. Compact fixture JSON/CSV contains only synthetic route IDs, payloads and observed labels/paths. Analytics window timestamps are aligned relative to the captured clock; values and relative bucket spacing are deterministic. PageAuditHost freezes TimeProvider for each host pair to test exact audit boundaries without expired authentication cookies.
 
-Not run: aggregate fast/slow, CI, live services/payments, exhaustive accessibility and delayed/stale browser responses. Draft publication is held for the coordinator's serial CI slot.
+Not run: aggregate fast/slow, CI, live services/payments, exhaustive accessibility and delayed/stale browser responses. Draft publication is held while Mongo has the active serial CI slot; explicit authorization for this workstream's slot is still pending.
 
 Test executable SHA-256: 0d2115fff1c0bc6ac7745f707c04332c8b7d1daf6cb9be98716d5cee63a794f4

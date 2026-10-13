@@ -6,8 +6,8 @@ Focused tests: **3 passed, 7 intentionally retained failures**. Two failures cov
 
 ## Source and scope
 
-- Audited source and local commit parent: **b719878083dffd9441e063bbfaccfa0dffa95abd**.
-- Bound branch: **audit/usage-analytics-notifications-20261013**. The final test/report commit is the commit containing this report; its SHA is supplied in the handoff.
+- Audited/captured production source and base SHA: **b719878083dffd9441e063bbfaccfa0dffa95abd**.
+- Bound branch: **audit/usage-analytics-notifications-20261013**. Initial test/report commit: afb0f3375a2800bc10fcdd5b942c3cd77fb077e9. The final evidence commit is supplied in the handoff; neither commit is claimed as the original browser capture head.
 - Fetched origin/main: **015b42c4825866131a00d48469650bcba04b2364**, two commits ahead. Its only changed path relative to the audited base is tests/TerraScale.Dashboard.E2E/Features/Notifications/NotificationBrowserJourneyTests.cs (existing SSE-flake work). That file was neither edited nor rerun by this workstream.
 - Actual checkout: .NET 10, RazorSlices, Datastar, TUnit. See docs/development.md:3. No Go changes or new dependency were needed.
 - Routes exercised: /, /analytics, /usage, /notifications, /notifications/dialog, /organization?tab=audit, /audit and /audit/export. Audit is an Organization tab, not a separate rendered page.
@@ -28,7 +28,7 @@ All records and producer payloads are local synthetic fixtures. HTTP journeys us
 
 **Proposed patch targets:** src/TerraScale.Dashboard/Features/Organizations/OrganizationFilters.cs and OrganizationAuditView.cshtml in proposed-source.patch. Recognized low/info/informational values stay info; missing/unrecognized values become unknown. CSV inherits the corrected classifier. Add the unknown filter/display/breakdown so unknown events remain discoverable.
 
-**Evidence:** fixture-evidence/unknown-severity.json and unknown-severity.csv; local audit desktop/mobile screenshots listed in BROWSER-EVIDENCE.md. Regression: InboxAuditUsageJourneyTests.MissingAuditSeverityDoesNotBecomeInformationalInExports (new test file:93). It fails at the CSV assertion; the info-filter exclusion assertion remains strict but is not reached after that failure.
+**Evidence:** fixture-evidence/unknown-severity.json and unknown-severity.csv; [audit desktop](png-evidence/audit-desktop.png) and [audit mobile](png-evidence/audit-mobile.png) screenshots (capture source b719, unchanged hashes in [BROWSER-EVIDENCE.md](BROWSER-EVIDENCE.md)). Regression: InboxAuditUsageJourneyTests.MissingAuditSeverityDoesNotBecomeInformationalInExports (new test file:93). It fails at the CSV assertion; the info-filter exclusion assertion remains strict but is not reached after that failure.
 
 ### UAN-02 — Usage tab navigation drops period and database (P2)
 
@@ -42,7 +42,17 @@ All records and producer payloads are local synthetic fixtures. HTTP journeys us
 
 **Proposed patch target:** src/TerraScale.Dashboard/Features/Usage/UsageService.cs in proposed-source.patch. Include escaped range and include database only when the target project is the current project.
 
-**Evidence:** fixture-evidence/usage-filter.json records the original route, both observed hrefs, missing database query and restored 7d. BROWSER-EVIDENCE.md lists desktop/mobile captures and a 21-second mobile recording. Regression: InboxAuditUsageJourneyTests.UsageTabsPreserveTheSelectedPeriodAndDatabase (new test file:122). It fails because the tab href range is empty rather than 30d. Later roundtrip assertions remain strict; observations are collected before the first failing assertion.
+**Evidence:** fixture-evidence/usage-filter.json records the original route, both observed hrefs, missing database query and restored 7d. [Usage desktop](png-evidence/usage-desktop.png) and the [mobile selection before](png-evidence/usage-filter-before-mobile.png)/[after tab navigation](png-evidence/usage-filter-after-mobile.png) show the reset (capture source b719). [BROWSER-EVIDENCE.md](BROWSER-EVIDENCE.md) preserves hashes and local-only provenance for the 21-second mobile recording. Regression: InboxAuditUsageJourneyTests.UsageTabsPreserveTheSelectedPeriodAndDatabase (new test file:122). It fails because the tab href range is empty rather than 30d. Later roundtrip assertions remain strict; observations are collected before the first failing assertion.
+
+## Reviewable presentation captures
+
+Original capture source for every image below: b719878083dffd9441e063bbfaccfa0dffa95abd. These show the existing defect state; the source patches remain unapplied. “Before/after” refers to Usage tab navigation, not a product fix. All PNG hashes match the original capture manifest.
+
+![Synthetic audit record is counted as informational, labeled info and shown as 100 percent informational while the same page says severity is not reported.](png-evidence/audit-desktop.png)
+
+| Usage selection before tab navigation | Usage selection after Spending controls then Overview |
+|---|---|
+| ![Synthetic database audit-browser and Last 30 days are selected.](png-evidence/usage-filter-before-mobile.png) | ![The return page selects All databases and Last 7 days.](png-evidence/usage-filter-after-mobile.png) |
 
 ## Analytics contract questions — preserve observations without premature bug labels
 
@@ -86,7 +96,7 @@ A current GRU-only database accepts a producer item with the valid region ID "sf
 
 Passing new journeys establish notification read idempotency, pagination clamping, scope isolation and shared-replica visibility; audit alias/filter preservation, inclusive -03:00/UTC 24-hour boundaries and consistent full-filter exports; exact rendering of 9007199254740993, null gauge/latency labels, provider-error retry and rejection of unauthorized Analytics database filters before provider access.
 
-Browser checks covered 1440×900 desktop and 390×844 narrow layouts; visible pixels, semantic controls, dialog keyboard/Close/Escape focus restoration, chart Home/End, error/empty/retry, Usage tab navigation and Back/Forward. See BROWSER-EVIDENCE.md for measured limits. Desktop images and mobile video are local evidence only, not committed attachments or current PR-head verification.
+Browser checks covered 1440×900 desktop and 390×844 narrow layouts; visible pixels, semantic controls, dialog keyboard/Close/Escape focus restoration, chart Home/End, error/empty/retry, Usage tab navigation and Back/Forward. See BROWSER-EVIDENCE.md for measured limits. Thirteen sanitized PNGs are committed under [png-evidence](png-evidence) and linked above; total 845,134 bytes (0.806 MiB). Their original capture source is b719, predating the report/evidence commits. The video remains local-only. No current PR-head capture or attachment claim is made.
 
 Not run: aggregate fast/slow suites, Alpha CI, automated WCAG/axe, delayed/out-of-order browser responses, navigation interruption during a deliberately slow request, exhaustive keyboard chart traversal with multiple columns, every range across every page, notification SSE flake tests, live provider/auth/persistence qualification and real payments. No stale-response defect is asserted. Focused checks were serialized; publication remains held for the coordinator's CI slot. Failing regressions were retained rather than disabled.
 
@@ -94,7 +104,7 @@ Not run: aggregate fast/slow suites, Alpha CI, automated WCAG/axe, delayed/out-o
 
 New tests only under tests/TerraScale.Dashboard.E2E/PagePaymentAudit/Oct13/usage-analytics-notifications: AnalyticsPageAuditJourneyTests.cs, AuditAnalyticsProducer.cs, InboxAuditUsageJourneyTests.cs and PageAuditHost.cs. Existing project default compilation includes them; no project/fixture/CI/lock changes were made.
 
-New tracked report content only under docs/reviews/2026-10-13/usage-analytics-notifications: this report, TEST-RESULTS.md, BROWSER-EVIDENCE.md, three patch proposals and compact synthetic fixture evidence. Build outputs, raw TRX/logs/HTML and images/video remain ignored under obj and are not part of the commit.
+New tracked report content only under docs/reviews/2026-10-13/usage-analytics-notifications: this report, TEST-RESULTS.md, BROWSER-EVIDENCE.md, three patch proposals, compact synthetic fixture evidence and 13 inspected PNGs in png-evidence. The updated user direction permits these small synthetic PNGs in this exclusive report directory. Build outputs, raw TRX/logs/HTML, original local capture copies and video remain ignored under obj. This evidence update changes only our own report/manifest files and adds PNGs; no test assertion or pre-existing product/shared file changes.
 
 All three patch files passed **git apply --check against the pinned audited source**. They were not applied, compiled or behavior-tested; passing test-project compilation does not validate the proposed production patches. The draft must remain a draft when publication is authorized, because the new strict regressions are red.
 
