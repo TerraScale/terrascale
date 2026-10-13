@@ -222,6 +222,27 @@ Fast tests fail out of 1433:
 Not merged. The owner is asked to name the cause: this change, or pre-existing failures that main's runs could not show
 while Healthz failed first. Main stays red.
 
+## USER ORDER (01:45Z): merge in order, automatically
+
+The integration owner merges every PR in the f354ed91 order **without asking COS**, the moment each is eligible:
+- the required checks are green on the exact head, over current main;
+- an independent **APPROVE** verdict exists on that exact head, or COS confirmed the delta;
+- no open must-fix or CHANGES REQUESTED;
+- the PR is conflict-free.
+
+**How:**
+- Stacked PRs get a merge commit.
+- After each merge, main's push run must be green before the next. If main goes red, stop and tell COS with the
+  failing tests.
+- #116 and #121 are retargeted to main when their parents merge, and R10a (thread
+  `r10a-fix-817f7897-review-2026-10-12-r1`) is told to push its re-stacked heads.
+- Owners: **#164**, GPT-6.1-Sol; **#120**, R7-FIX.
+- Reports cover only merges, blockers, or main red.
+
+**State at the order:** nothing is eligible. Main is red, and #166 (first in order, APPROVED) is red on its exact head
+because of the SQL/usage HTTP 400 (cause 2 below). `train-watch.sh` wakes the owner on any change to the next PR or
+to main.
+
 ## MAIN RED HAS TWO CAUSES (02:00Z)
 
 1. **#149** (Healthz/Readyz, revision missing in the Docker test stage). Fixed by **#166**, which an independent review
