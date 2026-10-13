@@ -1891,6 +1891,8 @@ public sealed class PeerStreamTests
 
         public FakeMemberStore Members { get; } = new();
 
+        public string User { get; } = EntityIds.New().ToString();
+
         public TenantContext Database { get; } = new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
 
         // Whether the machines keep their CDC tailer as the change group source, instead of a fake.
@@ -2001,7 +2003,7 @@ public sealed class PeerStreamTests
                 {
                     services.AddSingleton<IChangeGroupSource>(Source);
                 }
-            }, time: cluster.Clock);
+            }, time: cluster.Clock, userId: cluster.User);
             if (first)
             {
                 await RegisterAsync();
@@ -2395,6 +2397,12 @@ public sealed class PeerStreamTests
         // The organization, project and database under the cluster's ids, placed in every region of the cluster.
         private async Task RegisterAsync()
         {
+            // Startup pulls an existing catalog before its recovery creates the placed database.
+            if (await Engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None) is not null)
+            {
+                return;
+            }
+
             var database = cluster.Database;
             var commit = JsonSerializer.Serialize(new
             {

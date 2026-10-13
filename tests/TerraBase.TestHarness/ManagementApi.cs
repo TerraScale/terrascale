@@ -51,7 +51,7 @@ public sealed class ManagementApi : IAsyncDisposable
     /// </summary>
     public static async Task<ManagementApi> StartAsync(
         Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null, TimeProvider? time = null,
-        CancellationToken? cancellationToken = null, Action<Task>? failedStartCleanup = null)
+        CancellationToken? cancellationToken = null, Action<Task>? failedStartCleanup = null, string? userId = null)
     {
         var tls = new ClientTls();
         var issuer = new TestIssuer();
@@ -78,7 +78,7 @@ public sealed class ManagementApi : IAsyncDisposable
                 collection.TryAddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
             }, cancellationToken: cancellationToken, failedStartCleanup: task => failedCleanup = task);
             // Startup waited for the issuer's keys, so tokens work from the first request.
-            return new ManagementApi(server, tls, issuer, EntityIds.New().ToString());
+            return new ManagementApi(server, tls, issuer, userId ?? EntityIds.New().ToString());
         }
         catch (Exception startupError)
         {

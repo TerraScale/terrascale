@@ -1,3 +1,4 @@
+using TerraBase.Primitives;
 using Turso;
 
 namespace TerraBase.Engine.Sqlite;
@@ -52,6 +53,15 @@ internal static class TursoCopy
         if (objects.Any(item => item is { Type: "table", Name: "_tb_peers" }))
         {
             Execute(copy, "UPDATE _tb_peers SET acked = 0;");
+        }
+
+        // A snapshot is a different file history: its regenerated CDC ids cannot prove the source's anchored head.
+        if (objects.Any(item => item is { Type: "table", Name: "commit_offset" }))
+        {
+            using var identity = copy.CreateCommand();
+            identity.CommandText = "UPDATE commit_offset SET incarnation = $incarnation;";
+            identity.Parameters.Add(new TursoParameter("$incarnation", EntityIds.New().ToString()));
+            identity.ExecuteNonQuery();
         }
 
         foreach (var (_, _, _, sql) in objects.Where(item => item.Type != "table"))

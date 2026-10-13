@@ -382,7 +382,7 @@ public sealed class CorruptChangeLogTests
         public static Task<Node> StartAsync(string region, string directory, Node of) => StartAsync(region, directory, of, null, []);
 
         public static async Task<Node> StartAsync(string region, string? directory, Node? of, FakeMemberStore? members, string[] replicas, string? name = null,
-            TenantContext? database = null, TenantContext? second = null)
+            TenantContext? database = null, TenantContext? second = null, string? user = null)
         {
             var owns = directory is null;
             directory ??= Directory.CreateTempSubdirectory("terrabase-corrupt-cdc-").FullName;
@@ -400,7 +400,7 @@ public sealed class CorruptChangeLogTests
                 {
                     services.AddSingleton<IMemberDirectory>(members);
                 }
-            });
+            }, userId: of?.Api.User ?? user);
             var node = new Node(api, directory, owns, database, second) { Name = name };
             if (of is null)
             {
@@ -591,6 +591,12 @@ public sealed class CorruptChangeLogTests
         // The organization, project and both databases, placed in `replicas` besides this node's region.
         private async Task RegisterAsync(string[] replicas)
         {
+            // Startup pulls an existing catalog before its recovery creates the placed database.
+            if (await Api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(Database, CancellationToken.None) is not null)
+            {
+                return;
+            }
+
             var commit = JsonSerializer.Serialize(new
             {
                 id = EntityIds.New().ToString(),
@@ -628,7 +634,7 @@ public sealed class CorruptChangeLogTests
                 var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
                 var second = database with { DatabaseId = EntityIds.New().ToString() };
                 pair.Gru = await Node.StartAsync("gru", null, null, pair._members, ["sjc"], database: database, second: second);
-                pair.Sjc = await Node.StartAsync("sjc", null, null, pair._members, ["gru"], database: database, second: second);
+                pair.Sjc = await Node.StartAsync("sjc", null, null, pair._members, ["gru"], database: database, second: second, user: pair.Gru.Api.User);
                 return pair;
             }
             catch

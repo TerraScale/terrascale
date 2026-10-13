@@ -24,6 +24,7 @@ namespace TerraBase.Hosting;
 
 /// <summary>Source-generated JSON metadata for every request and response type (fast startup, no reflection-based serialization).</summary>
 [JsonSerializable(typeof(Ulid))]
+[JsonSerializable(typeof(Features.Replication.CatalogGateStatus))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredDocumentMaxDepth + 8)]
 [JsonSerializable(typeof(AcceptInvitationRequest))]
 [JsonSerializable(typeof(CreateImportRequest))]

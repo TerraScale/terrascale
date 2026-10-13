@@ -44,7 +44,7 @@ namespace TerraBase.Features.Management;
 internal sealed partial class EngineManagementService(
     IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
     Lazy<IDocumentService> documents, Lazy<IQueryShapeTracker> shapes, IMemoryBudget memory, IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota,
-    Lazy<IRemoteDurability> durability)
+    Lazy<IRemoteDurability> durability, Lazy<ICatalogGate> catalogGate)
     : IManagementService, IAccessService, IManagementCommits, ITenantDirectory, IHostedService, ICatalogGuard
 {
     private const string Organizations = "organizations";
@@ -1212,6 +1212,11 @@ internal sealed partial class EngineManagementService(
     // Initializes only fresh catalogs. Concurrent first calls serialize on the write transaction.
     public async ValueTask<CatalogCheck> EnsureCatalogAsync(CancellationToken cancellationToken)
     {
+        if (!catalogGate.Value.IsOpen)
+        {
+            return new Unavailable("this machine's catalog has not passed the restore gate", "catalog_unverified");
+        }
+
         if (_catalogCurrent)
         {
             return new Done();

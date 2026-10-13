@@ -691,3 +691,8 @@ its SQL), a segment is a change log, and replay applies rows instead of pages.
 - `GET /v1/backup` also shows, per file, whether this member ships it.
 - Scratch files (log waiting for upload, snapshots, sealed objects) live in `<data-directory>/.backup`, which is
   emptied at start.
+
+## Restore acceptance and catalog security
+
+See [the restore drill](restore-drill.md) for the required Fast backup/wipe/restore test,
+fail-closed system catalog gate, external revocation anchors and Fly/Tigris acceptance evidence.

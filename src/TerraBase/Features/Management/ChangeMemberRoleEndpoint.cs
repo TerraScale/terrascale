@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -16,6 +17,7 @@ public sealed class ChangeMemberRoleEndpoint(IAccessService access) : Endpoint<R
     public override void Configure()
     {
         Put(ManagementRoute.Member + "/role");
+        Metadata(AnchoredRevocation.Instance);
         Name("changeMemberRole");
         Summary("Changes a member's role");
         Description($"role: owner, admin, member or viewer. Needs admin, and owner when the member is or becomes an owner. 409 when it would demote the last owner. {ManagementRoute.IdentityDescription}");

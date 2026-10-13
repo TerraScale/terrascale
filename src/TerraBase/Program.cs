@@ -144,6 +144,7 @@ try
     });
     app.UseTerraBaseListeners();
     app.UseTerraBaseQosMemory();
+    app.UseTerraBaseCatalogGate();
     app.UseAuthentication();
     app.UseTerraBaseProjectCheck();
     app.UseAuthorization();

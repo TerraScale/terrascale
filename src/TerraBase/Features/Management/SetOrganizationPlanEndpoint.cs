@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -12,6 +13,7 @@ public sealed class SetOrganizationPlanEndpoint(IManagementService management) :
     public override void Configure()
     {
         Put(ManagementRoute.Organization + "/plan");
+        Metadata(AnchoredRevocation.Instance);
         Name("setOrganizationPlan");
         Summary("Sets an organization's plan");
         Description("Publishes a resource plan authorized by the platform: hobby (the default), pro or enterprise. Requires the platform operator (internal listener) acting as an organization owner. " + ManagementRoute.IdentityDescription);

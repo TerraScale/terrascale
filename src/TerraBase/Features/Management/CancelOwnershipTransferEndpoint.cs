@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -12,6 +13,7 @@ public sealed class CancelOwnershipTransferEndpoint(IAccessService access) : End
     public override void Configure()
     {
         Delete(ManagementRoute.OwnershipTransfer);
+        Metadata(AnchoredRevocation.Instance);
         Name("cancelOwnershipTransfer");
         Summary("Cancels the pending ownership transfer");
         Description($"Needs owner, or to be the nominee. 404 when none is pending. {ManagementRoute.IdentityDescription}");

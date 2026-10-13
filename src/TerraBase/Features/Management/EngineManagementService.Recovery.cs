@@ -17,6 +17,12 @@ internal sealed partial class EngineManagementService
     {
         _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => _unknownDatabaseFiles,
             description: "Files found at startup without a registered database; preserved for operator recovery.");
+        // A restored catalog cannot authorize deleting files before it has been verified.
+        if (!catalogGate.Value.IsOpen)
+        {
+            return;
+        }
+
         // Only the current catalog owns cleanup intents; older formats are refused.
         var (hasCatalog, version) = await CatalogStateAsync(cancellationToken).ConfigureAwait(false);
         if (version == CatalogVersion)

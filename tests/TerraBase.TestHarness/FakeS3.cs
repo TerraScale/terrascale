@@ -46,6 +46,7 @@ public sealed class FakeS3
     private int _abortedUploads;
     private int _badSignatures;
     private int _bucketDeletes;
+    private int _inconsistentAnchorReads;
     private long _snapshotVersion = 1_791_000_000_000_000_000;
     private int _generatedKeys;
     private int _listRequests;
@@ -56,6 +57,9 @@ public sealed class FakeS3
 
     /// <summary>Object PUTs refused with <c>AccessDenied</c>, without storing their content.</summary>
     public Func<string, bool> FailPut { get; set; } = _ => false;
+
+    /// <summary>Platform anchor GETs missing Tigris's consistent-read header.</summary>
+    public int InconsistentAnchorReads => Volatile.Read(ref _inconsistentAnchorReads);
 
     /// <summary>An optional asynchronous barrier before an object PUT; receives its bucket key, never its content.</summary>
     public Func<string, CancellationToken, Task>? BeforePut { get; set; }
@@ -444,6 +448,11 @@ public sealed class FakeS3
 
         if (request.Method == HttpMethod.Get)
         {
+            if (!customer && key.StartsWith("catalog-anchor/", StringComparison.Ordinal) && Header(request, "X-Tigris-Consistent") != "true")
+            {
+                Interlocked.Increment(ref _inconsistentAnchorReads);
+            }
+
             if (!customer && _keyRequests.TryGetValue(key, out var observed))
             {
                 observed.RecordGet();

@@ -1,4 +1,5 @@
 using TerraBase.Engine;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Health;
 
@@ -13,11 +14,11 @@ public interface INodeReadiness
 }
 
 internal sealed class NodeReadiness(
-    IStorageEngine engine, IHostApplicationLifetime lifetime) : INodeReadiness
+    IStorageEngine engine, IHostApplicationLifetime lifetime, ICatalogGate gate) : INodeReadiness
 {
     public async ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken)
     {
-        if (lifetime.ApplicationStopping.IsCancellationRequested)
+        if (!gate.IsOpen || lifetime.ApplicationStopping.IsCancellationRequested)
         {
             return false;
         }
