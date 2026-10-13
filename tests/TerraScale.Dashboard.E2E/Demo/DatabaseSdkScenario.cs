@@ -1,7 +1,6 @@
 using Cronos;
 using System.Collections.Concurrent;
 using System.Net;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
@@ -25,10 +24,11 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E;
 
-// An external HTTP producer for application E2E tests. The dashboard keeps its
-// production database adapter, official Documents SDK and encrypted key registry.
-// Data identity/point routes/offsets match producer72cec95a's implemented
-// compatibility contract. This fixture does not qualify a live deployment.
+// An external HTTP producer for application E2E tests. The dashboard keeps its production database, document, changes and
+// API-key adapters with the official SDK. Data routes follow I2 contracts/terrabase (canonical /v1/projects lifecycle by
+// database name, exchanged action-scoped project bearers, SSE changes); project keys follow I1 contracts/auth at the
+// global ts-auth origin only. No customer key reaches TerraBase and no key is stored by the dashboard. Management routes
+// remain only for workspace/backup callers not yet moved. This fixture does not qualify a live deployment.
 public sealed class DatabaseSdkScenario : IAsyncDisposable
 {
     private WebApplication? producer;
@@ -74,11 +74,12 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             var auth = (TestAuth)application.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
             protocol.ResolveAccessToken = auth.ResolveAccessToken;
             protocol.ResolveProjectToken = auth.ResolveProjectToken;
+            protocol.ApiKeys ??= new TestAuthApiKeys(auth.ResolveAccessToken, protocol.KeyRole);
+            transport!.ApiKeys = protocol.ApiKeys;
             application.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(state));
             application.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new ProducerFactory(transport)));
             application.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend, DatabaseBackend>());
             application.Services.Replace(ServiceDescriptor.Singleton<IDocumentBackend>(services => services.GetRequiredService<DocumentBackend>()));
-            application.Services.Replace(ServiceDescriptor.Singleton<IDataCredentialRegistry>(services => services.GetRequiredService<DocumentBackend>()));
             application.Services.AddSingleton<TsWorkspaceGateway>();
             application.Services.Replace(ServiceDescriptor.Singleton<IWorkspaceGateway>(services => services.GetRequiredService<TsWorkspaceGateway>()));
             application.Services.Replace(ServiceDescriptor.Singleton<IOrganizationAccess, TsOrganizationAccess>());
@@ -112,9 +113,11 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
 
     private sealed class ProducerTransport(Uri origin) : DelegatingHandler(new HttpClientHandler { AllowAutoRedirect = false })
     {
+        public TestAuthApiKeys? ApiKeys { get; set; }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri!;
+            if (uri.Host == "auth.terrascale.tech") return ApiKeys!.SendAsync(request, cancellationToken);
             if (uri.Scheme != "https" || !uri.IsDefaultPort || uri.UserInfo.Length != 0 || uri.Host is not
                 ("api.terrascale.tech" or "gru.api.terrascale.tech" or "sfo.api.terrascale.tech"))
                 throw new HttpRequestException("Unexpected outbound origin in the test-only database producer.");
@@ -126,6 +129,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
 
     private sealed class RecordingState(IDashboardState inner) : IDashboardState
     {
+        // The encrypted data-key registry is gone; recording its former collection shows nothing writes customer keys again.
         private const string Credentials = "dashboard_data_credentials";
         private readonly ConcurrentQueue<string> encrypted = new();
         private int credentialReads;
@@ -247,7 +251,6 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         private readonly Dictionary<string, ManagedDatabase> databases = [];
         private readonly Dictionary<string, TerraBaseOrganization> organizations = [];
         private readonly Dictionary<string, TerraBaseProject> projects = [];
-        private readonly Dictionary<string, Credential> credentials = [];
         private readonly Dictionary<string, ProducerSnapshot> snapshots = [];
         private readonly Dictionary<string, ProducerBackupPolicy> policies = [];
         private string backupFailure = "";
@@ -262,9 +265,13 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         private readonly Dictionary<string, Dictionary<string, TerraBaseDocument>> collections = [];
         private readonly ConcurrentQueue<RequestObservation> requests = new();
         private readonly ConcurrentQueue<string> failures = new();
-        private TaskCompletionSource? listGate;
         private TaskCompletionSource? createGate;
-        private int pausedLists;
+        private readonly Dictionary<string, SortedDictionary<string, ProducerIndex>> indexes = [];
+        private readonly List<ChangeRecord> changes = [];
+        private long sequence;
+        private long changeFloor;
+        private bool changesInitialCursor = true;
+        private bool changesReplayBoundary;
         private int pausedCreates;
         private int creates;
         private int branchCreates;
@@ -274,12 +281,19 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
         private string role = "owner";
         public RecordingState State { get; set; } = null!;
         public Func<string, (string UserId, string Email)?> ResolveAccessToken { get; set; } = null!;
-        public Func<string, (string UserId, string OrganizationId, string ProjectId)?> ResolveProjectToken { get; set; } = null!;
+        public Func<string, (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)?> ResolveProjectToken { get; set; } = null!;
+        public TestAuthApiKeys? ApiKeys { get; set; }
+        // ts-auth's view of the same tenant: the producer-owned organization's creator holds the controlled role.
+        public string KeyRole(string userId, string organizationId, string projectId)
+        {
+            lock (gate) return organizations.TryGetValue(organizationId, out var org) && org.CreatedBy == userId &&
+                projects.TryGetValue(projectId, out var project) && project.OrganizationId == organizationId ? role : "";
+        }
         public Func<HttpContext, Task<IResult?>>? Extension { get; set; }
         // The region that answers api.terrascale.tech, as Fly picks it for the dashboard's machine.
         public string ApiRegion { get; set; } = "gru";
 
-        public void Release() { listGate?.TrySetResult(); createGate?.TrySetResult(); State?.ReleaseQuotaCommits(); }
+        public void Release() { ApiKeys?.ReleaseLists(); createGate?.TrySetResult(); State?.ReleaseQuotaCommits(); }
 
         public async Task<IResult> DispatchAsync(HttpContext http)
         {
@@ -343,6 +357,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                         var to = DateTimeOffset.FromUnixTimeSeconds((now / bucketSeconds + 1) * bucketSeconds);
                         return Results.Json(new { projectId = parts[2], range, from = to.AddSeconds(-durationSeconds), to, bucketSeconds, items = Array.Empty<object>() });
                     }
+                    var route = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                    if (route is not [_, _, _, "databases", _, "collections", ..]) return await CanonicalAsync(http);
                     Interlocked.Increment(ref documentsRequests);
                     return await DocumentsAsync(http);
                 }
@@ -360,8 +376,12 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             var body = await JsonAsync(http);
             switch (body.GetProperty("command").GetString())
             {
-                case "pause-key-list": Interlocked.Exchange(ref pausedLists, 0); listGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
-                case "release-key-list": listGate?.TrySetResult(); listGate = null; break;
+                case "pause-key-list": ApiKeys!.PauseLists(); break;
+                case "release-key-list": ApiKeys!.ReleaseLists(); break;
+                case "expire-changes": lock (gate) changeFloor = sequence; break;
+                case "changes-initial-cursor": changesInitialCursor = body.GetProperty("value").GetBoolean(); break;
+                case "changes-replay-boundary": changesReplayBoundary = body.GetProperty("value").GetBoolean(); break;
+                case "changes-transaction": TransactionChanges(body); break;
                 case "pause-database-creates": Interlocked.Exchange(ref pausedCreates, 0); createGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
                 case "release-database-creates": createGate?.TrySetResult(); createGate = null; break;
                 case "pause-quota-commits": State.PauseQuotaCommits(); break;
@@ -462,7 +482,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             {
                 failures = failures.ToArray(),
                 requests = requests.ToArray(),
-                pausedLists,
+                pausedLists = ApiKeys?.PausedLists ?? 0,
                 pausedCreates,
                 creates,
                 branchCreates,
@@ -481,7 +501,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 failedDatabaseMetadataWrites = State.FailedDatabaseMetadataWrites,
                 workspaceProjects = projects.Values.Select(value => new { value.Id, value.OrganizationId, value.Name }).ToArray(),
                 backups = snapshots.Values.Select(value => value.Backup).ToArray(),
-                credentials = credentials.Values.Select(value => new { value.Key.Id, value.Key.Name, value.Secret, value.Host }).ToArray(),
+                credentials = (ApiKeys?.Issued() ?? []).Select(value => new { value.Key.Id, value.Key.Name, Secret = value.Secret, Host = "auth.terrascale.tech", value.Key.Scopes, value.Key.Database }).ToArray(),
+                changes = changes.Select(value => new { value.Sequence, value.Transaction, value.DatabaseId, value.Collection, value.Id, value.Op }).ToArray(),
                 encrypted = State.Encrypted,
                 credentialReads = State.CredentialReads,
                 pausedQuotaCommits = State.PausedQuotaCommits,
@@ -550,7 +571,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     if (!projects.TryGetValue(project, out var remote) || remote.OrganizationId != org)
                     { Interlocked.Increment(ref projectDeleteNotFound); return Error(404, "not_found"); }
                     if (role != "owner" && role != "admin") return Error(403, "forbidden");
-                    if (databases.Values.Any(database => database.ProjectId == project) || credentials.Values.Any(credential => credential.Key.ProjectId == project))
+                    if (databases.Values.Any(database => database.ProjectId == project))
                         return Error(409, "conflict");
                     projects.Remove(project);
                     Interlocked.Increment(ref projectDeletes);
@@ -568,69 +589,13 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                     var renamed = remote! with { Name = body.GetProperty("name").GetString()! }; projects[project] = renamed; return Results.Json(renamed);
                 }
             }
-            if (parts.Length == 7 && parts[6] == "api-keys")
-            {
-                if (http.Request.Method == "GET")
-                {
-                    if (listGate is { } paused) { Interlocked.Increment(ref pausedLists); await paused.Task.WaitAsync(http.RequestAborted); }
-                    lock (gate) return Results.Json(new { items = credentials.Values.Where(value => value.Key.ProjectId == project && value.Host == http.Request.Host.Host).Select(value => value.Key).ToArray(), next = (string?)null });
-                }
-                var body = await JsonAsync(http);
-                var secret = "tb_" + WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
-                var key = new ProjectCredential(ids.NewId(), project, body.GetProperty("name").GetString()!,
-                    body.GetProperty("scopes").EnumerateArray().Select(value => value.GetString()!).ToArray(), body.GetProperty("databaseId").GetString(), secret[^4..], DateTimeOffset.UtcNow);
-                lock (gate) credentials[key.Id] = new(key, secret, http.Request.Host.Host);
-                return Results.Json(new { key, secret }, statusCode: 201);
-            }
-            if (parts.Length == 8 && parts[6] == "api-keys" && http.Request.Method == "DELETE")
-            {
-                lock (gate) { Require(credentials.TryGetValue(parts[7], out var key) && key.Key.ProjectId == project && key.Host == http.Request.Host.Host, "Credential deletion matches issuing region and project"); credentials.Remove(parts[7]); }
-                return Results.NoContent();
-            }
-            Require(parts.Length >= 7 && parts[6] == "databases", "Scoped management database route");
-            if (parts.Length == 7)
-            {
-                if (http.Request.Method == "GET")
-                { lock (gate) return Results.Json(new { items = databases.Values.Where(value => value.ProjectId == project).ToArray(), next = (string?)null }); }
-                var body = await JsonAsync(http);
-                if (createGate is { } paused) { Interlocked.Increment(ref pausedCreates); await paused.Task.WaitAsync(http.RequestAborted); }
-                lock (gate)
-                {
-                    if (databases.Values.Any(value => value.ProjectId == project && value.Name == body.GetProperty("name").GetString())) return Error(409, "name_taken");
-                    var database = new ManagedDatabase(ids.NewId(), project, body.GetProperty("name").GetString()!, DateTimeOffset.UtcNow,
-                        HomeRegion: body.GetProperty("homeRegion").GetString()!, ReplicaRegions: body.GetProperty("replicaRegions").EnumerateArray().Select(value => value.GetString()!).ToArray());
-                    databases[database.Id] = database;
-                    Interlocked.Increment(ref creates);
-                    return Results.Json(database, statusCode: 201);
-                }
-            }
+            // Databases, keys, branches, placement and collection statistics left management: only backups and the restored
+            // database confirmation still use it.
+            Require(parts.Length >= 8 && parts[6] == "databases", "Scoped management database route");
             ManagedDatabase current;
             lock (gate) { Require(databases.TryGetValue(parts[7], out current!) && current.ProjectId == project, "Database ownership matches project"); }
             if (parts.Length >= 9 && parts[8] is "backups" or "backup-policy")
                 return await BackupsAsync(http, parts, project, current);
-            if (parts.Length == 9 && parts[8] == "branches" && http.Request.Method == "POST")
-            {
-                Require(acting == subject, "The official branch SDK acts as its admitted user");
-                if (role is not ("owner" or "admin")) return Error(403, "role_too_low");
-                var home = current.HomeRegion == "sfo" ? "sfo.api.terrascale.tech" : "gru.api.terrascale.tech";
-                if (http.Request.Host.Host != home) return WrongRegion(http, current);
-                var request = await JsonAsync(http);
-                Require(request.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "name" }),
-                    "The frozen producer branch body accepts only its new database name");
-                var name = request.GetProperty("name").GetString()!;
-                lock (gate)
-                {
-                    if (databases.Values.Any(database => database.ProjectId == project && database.Name == name))
-                    { Interlocked.Increment(ref branchConflicts); return Error(409, "name_taken"); }
-                    var branch = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, []);
-                    databases.Add(branch.Id, branch);
-                    var prefix = project + "/" + current.Name + "/";
-                    foreach (var collection in collections.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
-                        collections.Add(project + "/" + name + "/" + collection.Key[prefix.Length..], new Dictionary<string, TerraBaseDocument>(collection.Value));
-                    Interlocked.Increment(ref branchCreates);
-                    return Results.Json(branch, statusCode: 201);
-                }
-            }
             if (parts.Length == 8 && http.Request.Method == "GET")
             {
                 Require(acting == subject, "Official restored-database confirmation acting subject");
@@ -638,44 +603,6 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 // list is normalized even though raw restore201 permits null.
                 var confirmed = current with { ReplicaRegions = current.ReplicaRegions ?? [] };
                 return Results.Json(backupFailure == "foreign-confirm" && current.BranchedFrom is not null ? confirmed with { ProjectId = ids.NewId() } : confirmed);
-            }
-            if (parts.Length == 8 && http.Request.Method == "PATCH")
-            {
-                if (role is not ("owner" or "admin")) return Error(403, "role_too_low");
-                var home = current.HomeRegion == "sfo" ? "sfo.api.terrascale.tech" : "gru.api.terrascale.tech";
-                if (http.Request.Host.Host != home) return WrongRegion(http, current);
-                var body = await JsonAsync(http);
-                Require(body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "replicaRegions" }),
-                    "Placement updates send only the complete producer replicaRegions list");
-                var replicas = body.GetProperty("replicaRegions").EnumerateArray().Select(value => value.GetString()!).ToArray();
-                Require(replicas.All(value => value is "sfo" or "gru") && !replicas.Contains(current.HomeRegion, StringComparer.Ordinal) &&
-                    replicas.Distinct(StringComparer.Ordinal).Count() == replicas.Length, "Placement preserves its home and unique discovered replicas");
-                lock (gate)
-                {
-                    var changed = current with { ReplicaRegions = replicas };
-                    databases[current.Id] = changed;
-                    return Results.Json(changed);
-                }
-            }
-            if (parts.Length == 8 && http.Request.Method == "DELETE")
-            {
-                Require(acting == subject, "Official deletion SDK acting subject");
-                lock (gate)
-                {
-                    databases.Remove(current.Id);
-                    var prefix = project + "/" + current.Name + "/";
-                    foreach (var collection in collections.Keys.Where(name => name.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
-                        collections.Remove(collection);
-                }
-                return Results.NoContent();
-            }
-            if (parts.Length == 9 && parts[8] == "collections")
-            {
-                lock (gate) return Results.Json(new
-                {
-                    items = collections.Where(item => item.Key.StartsWith(project + "/" + current.Name + "/", StringComparison.Ordinal)).Select(item =>
-                    new { name = item.Key.Split('/')[2], documents = item.Value.Count, bytes = item.Value.Values.Sum(value => (long)System.Text.Encoding.UTF8.GetByteCount(value.Document.GetRawText())) }).ToArray()
-                });
             }
             throw new InvalidOperationException("Unsupported management protocol route");
         }
@@ -775,6 +702,268 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             }
         }
 
+        // I2 canonical project lifecycle and database operations. {database} is the name; each operation demands the exact
+        // action scope its SDK method documents (databases:* lifecycle/SQL/index/stats, documents:read for the feed).
+        private async Task<IResult> CanonicalAsync(HttpContext http)
+        {
+            var parts = http.Request.Path.Value!.Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Uri.UnescapeDataString).ToArray();
+            Require(parts.Length >= 4 && parts[3] == "databases", "Canonical project database route");
+            var project = parts[2];
+            var method = http.Request.Method;
+            var answering = http.Response.Headers["X-TerraBase-Region"].ToString();
+            var scope = parts switch
+            {
+                [_, _, _, _, _, "changes"] => "documents:read",
+                [_, _, _, _] or [_, _, _, _, _] when method == "GET" => "databases:read",
+                [_, _, _, _, _, "sql" or "schema"] => "databases:read",
+                [_, _, _, _, _, "indexes"] when method == "GET" => "databases:read",
+                _ => "databases:write"
+            };
+            if (Authorize(http, project, scope) is { } denied) return denied;
+            if (parts.Length == 4 && method == "GET")
+            {
+                var query = http.Request.Query;
+                Require(query.Keys.All(key => key is "after" or "limit"), "Database listing accepts only after and limit");
+                var limit = query.ContainsKey("limit") ? int.Parse(query["limit"].ToString(), System.Globalization.CultureInfo.InvariantCulture) : 20;
+                if (limit is < 1 or > 100) return Error(400, "validation");
+                var after = query["after"].ToString();
+                lock (gate)
+                {
+                    var owned = databases.Values.Where(value => value.ProjectId == project).OrderBy(value => value.Id, StringComparer.Ordinal).ToArray();
+                    if (after.Length > 0 && !owned.Any(value => value.Id == after)) return Error(400, "validation");
+                    var page = owned.Where(value => string.CompareOrdinal(value.Id, after) > 0).Take(limit + 1).ToArray();
+                    return Results.Json(new { items = page.Take(limit).Select(value => Wire(value, answering)).ToArray(), next = page.Length > limit ? page[limit - 1].Id : null });
+                }
+            }
+            if (parts.Length == 4)
+            {
+                Require(method == "POST", "Canonical database create");
+                var body = await JsonAsync(http);
+                Require(body.EnumerateObject().All(field => field.Name is "name" or "homeRegion" or "replicaRegions"), "Create sends only name and placement");
+                var name = body.GetProperty("name").GetString()!;
+                var home = body.TryGetProperty("homeRegion", out var named) ? named.GetString()! : answering;
+                var replicas = body.TryGetProperty("replicaRegions", out var listed) ? listed.EnumerateArray().Select(value => value.GetString()!).ToArray() : [];
+                if (home != answering) return WrongRegion(http, new(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas));
+                if (createGate is { } paused) { Interlocked.Increment(ref pausedCreates); await paused.Task.WaitAsync(http.RequestAborted); }
+                lock (gate)
+                {
+                    if (databases.Values.Any(value => value.ProjectId == project && value.Name == name)) return Error(409, "name_taken");
+                    var database = new ManagedDatabase(ids.NewId(), project, name, DateTimeOffset.UtcNow, HomeRegion: home, ReplicaRegions: replicas);
+                    databases[database.Id] = database;
+                    Interlocked.Increment(ref creates);
+                    return Results.Json(Wire(database, answering), statusCode: 201);
+                }
+            }
+            ManagedDatabase current;
+            lock (gate)
+            {
+                var found = databases.Values.SingleOrDefault(value => value.ProjectId == project && value.Name == parts[4]);
+                if (found is null) return Error(404, "not_found");
+                current = found;
+            }
+            var atHome = current.HomeRegion == answering;
+            switch (parts.Length, method, parts.ElementAtOrDefault(5))
+            {
+                case (5, "GET", _): return Results.Json(Wire(current, answering));
+                case (5, "PATCH", _):
+                    if (role is not ("owner" or "admin")) return Error(403, "role_too_low");
+                    if (!atHome) return WrongRegion(http, current);
+                    var body = await JsonAsync(http);
+                    Require(body.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "replicaRegions" }),
+                        "Placement updates send only the complete producer replicaRegions list");
+                    var replicas = body.GetProperty("replicaRegions").EnumerateArray().Select(value => value.GetString()!).ToArray();
+                    Require(replicas.All(value => value is "sfo" or "gru") && !replicas.Contains(current.HomeRegion, StringComparer.Ordinal) &&
+                        replicas.Distinct(StringComparer.Ordinal).Count() == replicas.Length, "Placement preserves its home and unique discovered replicas");
+                    lock (gate) { var changed = current with { ReplicaRegions = replicas }; databases[current.Id] = changed; return Results.Json(Wire(changed, answering)); }
+                case (5, "DELETE", _):
+                    if (!atHome) return WrongRegion(http, current);
+                    if (current.ReplicaRegions is { Count: > 0 }) return Error(409, "database_replicated");
+                    lock (gate)
+                    {
+                        databases.Remove(current.Id);
+                        indexes.Remove(current.Id);
+                        var prefix = project + "/" + current.Name + "/";
+                        foreach (var collection in collections.Keys.Where(name => name.StartsWith(prefix, StringComparison.Ordinal)).ToArray()) collections.Remove(collection);
+                    }
+                    return Results.NoContent();
+                case (6, "POST", "branches"):
+                    if (role is not ("owner" or "admin")) return Error(403, "role_too_low");
+                    if (!atHome) return WrongRegion(http, current);
+                    var request = await JsonAsync(http);
+                    Require(request.EnumerateObject().Select(field => field.Name).SequenceEqual(new[] { "name" }), "The branch body accepts only its new database name");
+                    var branchName = request.GetProperty("name").GetString()!;
+                    lock (gate)
+                    {
+                        if (databases.Values.Any(database => database.ProjectId == project && database.Name == branchName))
+                        { Interlocked.Increment(ref branchConflicts); return Error(409, "name_taken"); }
+                        var branch = new ManagedDatabase(ids.NewId(), project, branchName, DateTimeOffset.UtcNow, current.Id, current.HomeRegion, []);
+                        databases.Add(branch.Id, branch);
+                        var prefix = project + "/" + current.Name + "/";
+                        foreach (var collection in collections.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal)).ToArray())
+                            collections.Add(project + "/" + branchName + "/" + collection.Key[prefix.Length..], new Dictionary<string, TerraBaseDocument>(collection.Value));
+                        if (indexes.TryGetValue(current.Id, out var copied)) indexes[branch.Id] = new(copied, StringComparer.Ordinal);
+                        Interlocked.Increment(ref branchCreates);
+                        return Results.Json(Wire(branch, answering), statusCode: 201);
+                    }
+                case (6, "GET", "schema"):
+                    lock (gate) return Results.Json(new
+                    {
+                        items = collections.Where(item => item.Key.StartsWith(project + "/" + current.Name + "/", StringComparison.Ordinal)).Select(item =>
+                            new { name = item.Key.Split('/')[2], documents = (long)item.Value.Count, bytes = item.Value.Values.Sum(value => (long)System.Text.Encoding.UTF8.GetByteCount(value.Document.GetRawText())) }).ToArray()
+                    });
+                case (6, "POST", "sql"):
+                    var sql = (await JsonAsync(http)).GetProperty("sql").GetString()!;
+                    var match = System.Text.RegularExpressions.Regex.Match(sql, @"^\s*SELECT\s+\*\s+FROM\s+([A-Za-z0-9_-]+)(?:\s+LIMIT\s+(\d+))?\s*;?\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    if (!match.Success) return Error(400, "invalid_query");
+                    var take = match.Groups[2].Success ? int.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) : 100;
+                    lock (gate)
+                    {
+                        if (!collections.TryGetValue(project + "/" + current.Name + "/" + match.Groups[1].Value, out var rows)) return Error(404, "not_found");
+                        var selected = rows.Values.OrderBy(value => value.Id, StringComparer.Ordinal).ToArray();
+                        var page = selected.Take(take).Select(value => new { id = value.Id, value = value.Document }).ToArray();
+                        return Results.Json(new { matched = page.Length, truncated = page.Length < selected.Length, rows = page });
+                    }
+                case (6, "GET", "indexes"):
+                    var only = http.Request.Query["collection"].ToString();
+                    lock (gate) return Results.Json(new { items = indexes.GetValueOrDefault(current.Id)?.Values.Where(index => only.Length == 0 || index.Collection == only)
+                        .Select(index => new { name = index.Name, collection = index.Collection, fields = index.Fields, state = "active" }).ToArray() ?? [] });
+                case (6, "POST", "indexes"):
+                    var create = await JsonAsync(http);
+                    Require(create.EnumerateObject().All(field => field.Name is "collection" or "fields" or "name"), "Index create sends collection, fields and optional name");
+                    var indexCollection = create.GetProperty("collection").GetString()!;
+                    var fields = create.GetProperty("fields").EnumerateArray().Select(value => value.GetString()!).ToArray();
+                    if (fields.Length is < 1 or > 4 || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length) return Error(400, "validation");
+                    var indexName = create.TryGetProperty("name", out var given) ? given.GetString()! : indexCollection + "_" + string.Join('_', fields).Replace('.', '_');
+                    lock (gate)
+                    {
+                        var owned = indexes.TryGetValue(current.Id, out var existing) ? existing : indexes[current.Id] = new(StringComparer.Ordinal);
+                        if (owned.ContainsKey(indexName)) return Error(409, "index_exists");
+                        owned[indexName] = new(indexName, indexCollection, fields);
+                    }
+                    return Results.Json(new { name = indexName, collection = indexCollection, fields, state = "active" }, statusCode: 201);
+                case (7, "DELETE", "indexes"):
+                    lock (gate) return indexes.GetValueOrDefault(current.Id)?.Remove(parts[6]) == true ? Results.NoContent() : Error(404, "not_found");
+                case (6, "GET", "changes"):
+                    return await ChangesAsync(http, current);
+            }
+            throw new InvalidOperationException("Unsupported canonical database route: " + method + " " + http.Request.Path);
+        }
+
+        // An exchanged project bearer (TestAuth RFC 8693 grant) for exactly this project and its tenant, holding the action scope.
+        // A bare session token, a ts-auth API key secret, or another project's bearer is refused.
+        private IResult? Authorize(HttpContext http, string project, string scope)
+        {
+            var text = http.Request.Headers.Authorization.ToString();
+            var grant = text.StartsWith("Bearer ", StringComparison.Ordinal) ? ResolveProjectToken(text[7..]) : null;
+            if (grant is not { } admitted) return Error(401, "unauthorized");
+            Require(TerraScaleIds.IsValid(project), "The current producer accepts canonical ULID projects");
+            lock (gate)
+            {
+                // The seeded personal workspace predates producer ownership; management admits only test-user there too.
+                var tenant = projects.TryGetValue(project, out var owned)
+                    ? owned.OrganizationId == admitted.OrganizationId && organizations.TryGetValue(owned.OrganizationId, out var org) && org.CreatedBy == admitted.UserId
+                    : admitted.UserId == "test-user";
+                if (admitted.ProjectId != project || !tenant || role.Length == 0) return Error(404, "not_found");
+            }
+            if (!admitted.Scopes.Contains(scope, StringComparer.Ordinal)) return Error(403, "forbidden_scope");
+            http.Items["producer-subject"] = admitted.UserId;
+            return null;
+        }
+
+        // SSE per I2 contracts/terrabase changes.sse plus the COS SDK14 repair: a transaction's changes carry an id only on its
+        // final event, the opening checkpoint may be absent, and a resume at a transaction boundary may replay that transaction.
+        // The stream ends cleanly after the retained events and a closing checkpoint; the consumer reconnects with Last-Event-ID.
+        private async Task<IResult> ChangesAsync(HttpContext http, ManagedDatabase database)
+        {
+            var query = http.Request.Query;
+            Require(query.Keys.All(key => key is "cursor" or "collections"), "Changes accepts only cursor and collections");
+            string? text = http.Request.Headers.TryGetValue("Last-Event-ID", out var resume) ? resume.ToString() : query.ContainsKey("cursor") ? query["cursor"].ToString() : null;
+            var filter = query.ContainsKey("collections") ? query["collections"].ToString().Split(',').ToHashSet(StringComparer.Ordinal) : null;
+            var events = new System.Text.StringBuilder();
+            lock (gate)
+            {
+                long start;
+                if (text is null) start = changeFloor;
+                else if (text == "now") start = sequence;
+                else if (DecodeCursor(text, database.Id) is { } decoded) start = decoded;
+                else return Error(400, "invalid_cursor");
+                if (start < changeFloor) return Error(410, "cursor_expired");
+                if (changesInitialCursor) Cursor(events, database.Id, start);
+                var own = changes.Where(change => change.DatabaseId == database.Id).ToArray();
+                var replayed = changesReplayBoundary ? own.Where(change => change.Sequence == start).Select(change => change.Transaction).FirstOrDefault(-1) : -1;
+                foreach (var group in own.Where(change => change.Sequence > start || change.Transaction == replayed).GroupBy(change => change.Transaction))
+                {
+                    var delivered = group.Where(change => filter is null || filter.Contains(change.Collection)).ToArray();
+                    for (var index = 0; index < delivered.Length; index++)
+                    {
+                        var change = delivered[index];
+                        TerraBaseDocument? value = null;
+                        collections.GetValueOrDefault(database.ProjectId + "/" + database.Name + "/" + change.Collection)?.TryGetValue(change.Id, out value);
+                        events.Append("event: change\n");
+                        if (index == delivered.Length - 1) events.Append("id: ").Append(EncodeCursor(database.Id, group.Max(item => item.Sequence))).Append('\n');
+                        events.Append("data: ").Append(JsonSerializer.Serialize(new
+                        {
+                            collection = change.Collection, id = change.Id, op = change.Op,
+                            version = change.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture), origin = "00000000000000a1", document = value?.Document
+                        })).Append("\n\n");
+                    }
+                }
+                Cursor(events, database.Id, Math.Max(start, own.Select(change => change.Sequence).DefaultIfEmpty(0).Max()));
+            }
+            http.Response.Headers.CacheControl = "no-store";
+            http.Response.ContentType = "text/event-stream";
+            await http.Response.WriteAsync(events.ToString(), http.RequestAborted);
+            return Results.Empty;
+
+            static void Cursor(System.Text.StringBuilder events, string databaseId, long position)
+            {
+                var cursor = EncodeCursor(databaseId, position);
+                events.Append("event: cursor\nid: ").Append(cursor).Append("\ndata: ").Append(JsonSerializer.Serialize(new { cursor })).Append("\n\n");
+            }
+        }
+
+        // Test control: one committed multi-change transaction; only its final SSE event names the cursor after it.
+        private void TransactionChanges(JsonElement body)
+        {
+            var project = body.GetProperty("projectId").GetString()!;
+            var name = body.GetProperty("database").GetString()!;
+            var collection = body.GetProperty("collection").GetString()!;
+            var keys = body.GetProperty("ids").EnumerateArray().Select(value => value.GetString()!).ToArray();
+            Require(keys.Length >= 2 && keys.Distinct(StringComparer.Ordinal).Count() == keys.Length, "A fixture transaction holds several distinct changes");
+            lock (gate)
+            {
+                var database = databases.Values.SingleOrDefault(value => value.ProjectId == project && value.Name == name)
+                    ?? throw new InvalidOperationException("The fixture transaction targets an existing producer database");
+                Require(collections.TryGetValue(project + "/" + name + "/" + collection, out var rows), "The fixture transaction targets an existing collection");
+                var transaction = sequence + 1;
+                foreach (var key in keys)
+                {
+                    rows![key] = new(key, "tbv1-" + Guid.NewGuid().ToString("N"), "value", JsonSerializer.SerializeToElement(new { transaction }));
+                    changes.Add(new(++sequence, transaction, database.Id, collection, key, "upsert"));
+                }
+            }
+        }
+
+        private static string EncodeCursor(string databaseId, long position) =>
+            WebEncoders.Base64UrlEncode(System.Text.Encoding.UTF8.GetBytes(databaseId + ":" + position.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        private static long? DecodeCursor(string cursor, string databaseId)
+        {
+            try
+            {
+                var text = System.Text.Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(cursor));
+                return text.StartsWith(databaseId + ":", StringComparison.Ordinal) && long.TryParse(text[(databaseId.Length + 1)..], System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var position) ? position : null;
+            }
+            catch (FormatException) { return null; }
+        }
+
+        // I2 ManagedDatabaseBody: camelCase, answering region and complete placement.
+        private static object Wire(ManagedDatabase database, string region) => new
+        {
+            id = database.Id, projectId = database.ProjectId, name = database.Name, branchedFrom = database.BranchedFrom, createdAt = database.CreatedAt,
+            region, homeRegion = database.HomeRegion, replicaRegions = database.ReplicaRegions ?? Array.Empty<string>()
+        };
+
         private async Task<IResult> DocumentsAsync(HttpContext http)
         {
             // Match the current producer's public point route. Document keys
@@ -786,13 +975,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             Require(TerraScaleIds.IsValid(project), "The current producer accepts canonical ULID projects");
             lock (gate) Require(databases.Values.Any(value => value.ProjectId == project && value.Name == database), "Documents database belongs to scoped project");
             var token = http.Request.Headers.Authorization.ToString();
-            Credential key;
-            lock (gate) key = credentials.Values.SingleOrDefault(value => token == "Bearer " + value.Secret && value.Key.ProjectId == project && value.Host == http.Request.Host.Host)
-                ?? throw new InvalidOperationException("Documents use an enrolled scoped key, never the dashboard state key");
-            lock (gate) Require(string.IsNullOrEmpty(key.Key.DatabaseId) || databases.Values.Any(value => value.Id == key.Key.DatabaseId && value.ProjectId == project && value.Name == database),
-                "The credential reaches only its producer-bound database");
             var read = http.Request.Method == "GET" || parts.LastOrDefault() == "query";
-            if (!key.Key.Scopes.Contains(read ? "documents:read" : "documents:write", StringComparer.Ordinal)) return Error(403, "forbidden_scope");
+            if (Authorize(http, project, read ? "documents:read" : "documents:write") is { } denied) return denied;
             requests.Enqueue(new(http.Request.Method, raw, token, http.Request.ContentType ?? "", http.Request.Headers.IfMatch.ToString(), http.Request.Headers.IfNoneMatch.ToString(), http.Request.QueryString.Value ?? ""));
             Require(parts[5] == "collections", "SDK collection path");
             var prefix = project + "/" + database + "/";
@@ -850,6 +1034,9 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 }
                 var version = "tbv1-" + Guid.NewGuid().ToString("N");
                 if (http.Request.Method == "DELETE") rows.Remove(id); else rows[id] = new(id, version, "value", document.Clone());
+                var changed = databases.Values.Single(value => value.ProjectId == project && value.Name == database);
+                ++sequence;
+                changes.Add(new(sequence, sequence, changed.Id, parts[6], id, http.Request.Method == "DELETE" ? "delete" : "upsert"));
                 http.Response.Headers.ETag = '"' + version + '"';
                 return Results.Json(new { id, version, offset = (++offset).ToString(System.Globalization.CultureInfo.InvariantCulture), durability = "local_durable" }, statusCode: current is null ? 201 : 200);
             }
@@ -874,7 +1061,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             return target;
         }
         private sealed record ProducerSnapshot(ProducerBackup Backup, Dictionary<string, Dictionary<string, TerraBaseDocument>> Collections);
-        private sealed record Credential(ProjectCredential Key, string Secret, string Host);
+        private sealed record ProducerIndex(string Name, string Collection, string[] Fields);
+        private sealed record ChangeRecord(long Sequence, long Transaction, string DatabaseId, string Collection, string Id, string Op);
         private sealed record RequestObservation(string Method, string Path, string Authorization, string ContentType, string IfMatch, string IfNoneMatch, string Query);
     }
 }
