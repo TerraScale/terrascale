@@ -8,9 +8,14 @@ as errors. Suite times below exclude compilation; they are diagnostic observatio
 |---|---|---:|---:|---:|---|
 | Auth Slow baseline | T0 `ae4bac41` | 23 / 25 | 2 / 0 | 65.949 s | Signing-key concurrency fixtures return HTTP 404 |
 | Auth Slow fixed | Same base, project records seeded before replicas start | 25 / 25 | 0 / 0 | 43.098 s | Full suite passed |
+| Auth Slow current candidate | T0 `62b2c7bb` plus both fixes and strengthened Fast cancellation fixture | 25 / 25 | 0 / 0 | 36.840 s | Full suite passed again; identical source tree after rebase onto merged main |
 | Native unread-reader regression | Same base, reset before finalization | 1 / 1 | 0 / 0 | 0.857 s | No unread callbacks or later SQL; prior writes survive commit; repeated abort is safe |
 | TerraBase SQL cancellation regression | Same base, reader reset before cleanup | 1 / 1 | 0 / 0 | 4.458 s | Next query succeeds in the same transaction after cancellation between rows |
-| Full TerraBase Slow | Same base plus both fixes | Pending | Pending | Pending | Running; no complete result claimed |
+| Full TerraBase Slow, older base | T0 `ae4bac41` plus both fixes | 57 / 59 | 1 / 1 | 601.707 s | 100k-count test hit the existing 600 s timeout; real Tigris test lacked credentials |
+| Targeted 100k-count test | T0 `62b2c7bb` plus both fixes, temporary timing diagnostics | 1 / 1 | 0 / 0 | 451.464 s | Passed unchanged assertions and timeout; sampled SQL preparation during document seeding |
+| Fast stream lifecycle cases | Same current base, deterministic native cancellation plus boundary cases | 8 / 8 | 0 / 0 | 4.501 s | Native cancellation ends the transaction; consumer-boundary cancellation preserves its snapshot |
+| Full native driver suite | Same current base and strengthened fixture | 7 / 7 | 0 / 0 | 112.370 s | Original six finalizer regressions plus unread-reader regression all passed |
+| Full TerraBase Slow, current candidate | Same current source tree, real Tigris credentials supplied privately | Pending | Pending | Pending | Running; no complete result claimed |
 
 Auth reports [#199](https://github.com/TerraScale/terrascale/issues/199) and
 [#200](https://github.com/TerraScale/terrascale/issues/200) were fixture errors: key creation atomically requires an
@@ -24,15 +29,27 @@ unfinished read before finalization without evaluating unread rows. It also disc
 query budgets, rollback detection and the operation gate remain intact. The vendor patch includes the native regression
 and documents its provenance; no native package upgrade is required.
 
+Two Fast stream fixtures had asserted native rollback after cancelling at the consumer boundary, conflicting with the
+Slow contract. Their existing rollback and overlap assertions remain: the fixture now cancels from the existing native
+scan callback on its own writer session, proving cancellation actually happened during native execution. Two added
+boundary cases require snapshot reuse. Test parallelism is unchanged.
+
 | Docker `test` observation | Input | Total wall time | Auth Fast | TerraBase Fast | Limitation |
 |---|---|---:|---|---|---|
 | First complete run after host reboot | T0 `ae4bac41`, prepared Docker stages, no Slow fixes | 482 s | 664 / 664, 424.796 s | 1492 / 1558, 66 failures, 388.936 s | Older T0 base; `_system` replication errors; failed build; partial cache from interrupted earlier run |
-| Current candidate | T0 `62b2c7bb` plus both fixes | Pending | Pending | Pending | Running; full required `make check` also running independently |
+| Latest T0, before fixture correction | T0 `62b2c7bb` plus both fixes | Not used for comparison | Build cancelled after TerraBase failure | 1543 / 1561, 18 failures, 246.380 s | Local wrapper omitted the build revision; native/boundary cancellation fixture conflict |
+| Current candidate | Merged main plus both fixes, corrected fixture and automatic build revision | Pending | Pending | Pending | Queued after full Slow; final required `make check` running independently |
 
 Reproduce full suites with `make auth-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi` and
 `make terrabase-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi`. Run `make docker-test
 TS_DOTNET_DIR=<pinned-sdk-worktree>` for the Docker `test` target, including its required named SDK build context.
 Interrupted runs are excluded: the host reboot interrupted the first full TerraBase Slow and Docker runs.
 
-This report has no merged PR, main-job result, live e2e result or deployment speedup yet. Workflow and preview pushes
-are held for the T0 and T2 merges; production machines remain owned by T2.
+The local `make docker-test` wrapper now supplies the checkout's HEAD as `TERRABASE_REVISION`, matching CI's existing
+build input and preserving the health assertions. No manually supplied option is needed. The previous full required
+check passed formatting, security, build, OpenAPI, benchmarks, libs, Auth Fast (664/664) and native driver (7/7), then
+failed only the two old Fast cancellation fixtures (1559/1561). Final full validation includes their correction.
+
+This report has no merged fix PR, main-job result, live e2e result or deployment speedup yet. T0 PR
+[#206](https://github.com/TerraScale/terrascale/pull/206) has merged with its latest `test` green. Workflow and preview
+pushes remain held for T2's deploy re-enable; production machines remain owned by T2.
