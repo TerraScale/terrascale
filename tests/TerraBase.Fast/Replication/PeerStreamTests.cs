@@ -489,6 +489,35 @@ public sealed class PeerStreamTests
         }
     }
 
+    // A batch that fails to apply (here the stored state of its document no longer decodes) refuses its database only: the
+    // stream goes on with the other databases, and the batch joins once it is sent again after the damage is gone.
+    [Test]
+    public async Task A_batch_that_fails_to_apply_is_refused_for_its_database_only()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"n":0}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"n":0}""")).IsTrue();
+        await sjc.DamageAsync("items", id);
+
+        using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
+        var other = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
+        await push.BatchAsync(cluster.Database, 1, id);
+        await push.BatchAsync(other, 1, EntityIds.New().ToString());
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), Refused = true });
+        await Assert.That((await push.AckAsync()).Database).IsEqualTo(ChangeGroups.Wire(other));
+
+        await sjc.LoseAsync("items", id);
+        await push.BatchAsync(cluster.Database, 1, id);
+        await Assert.That((await push.AckAsync()) is { ChangeId: 1, Refused: false }).IsTrue();
+        await Assert.That(await sjc.ReadAsync(id)).IsEqualTo("""{"n":1}""");
+    }
+
     // A retention trim between the sender's read and its retention check must not ship the groups after the hole as if
     // nothing were missing: the sender sees the cut and the peer refills.
     [Test]
@@ -884,6 +913,21 @@ public sealed class PeerStreamTests
                 return command.ExecuteNonQuery();
             }, "a test losing a document", CancellationToken.None);
             store.ForgetCollections();
+        }
+
+        // Overwrites the document's stored state with bytes that do not decode, as a damaged file would hold.
+        public async Task DamageAsync(string collection, string id)
+        {
+            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+            var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+            _ = await store.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "UPDATE _tb_state SET state = '!' WHERE collection = $collection AND id = $id;";
+                command.Parameters.AddWithValue("$id", id);
+                command.Parameters.AddWithValue("$collection", collection);
+                return command.ExecuteNonQuery();
+            }, "a test damaging a document's state", CancellationToken.None);
         }
 
         // Whether the outbound streams that report connected become exactly `regions` within the deadline.

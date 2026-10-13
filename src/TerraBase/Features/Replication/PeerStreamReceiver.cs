@@ -16,7 +16,8 @@ namespace TerraBase.Features.Replication;
 /// order, and acks it after its durable commit. A newer stream from the same origin ends the older one and starts once
 /// it ended, so one origin's groups apply in order. A refill runs beside the stream: other databases' batches go on, while
 /// its own database's are refused until a refill of it commits, also on the origin's next stream when this one ends first.
-/// A malformed batch ends the stream; the sender reconnects and resumes from its last ack.
+/// A batch that fails to apply is refused for its database only. A malformed batch ends the stream; the sender reconnects
+/// and resumes from its last ack.
 /// </summary>
 internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 {
@@ -177,7 +178,19 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     throw new RpcException(new Status(StatusCode.InvalidArgument, error.Message));
                 }
 
-                var applied = await _sink.ApplyAsync(database, origin, groups, stream.Token).ConfigureAwait(false);
+                Hlc? applied;
+                try
+                {
+                    applied = await _sink.ApplyAsync(database, origin, groups, stream.Token).ConfigureAwait(false);
+                }
+                catch (Exception error) when (!stream.IsCancellationRequested)
+                {
+                    // A batch that fails to apply here (a stored state that no longer decodes, the disk) refuses its database
+                    // only: the sender sends it again later, and the other databases go on.
+                    _logger.ZLogError(error, $"A batch of database {database.DatabaseId:@Database} from machine {origin.Value:@Origin} in {region:@Region} could not be applied; it is refused");
+                    applied = null;
+                }
+
                 if (applied is { } stamp)
                 {
                     last[database] = batch.LastChangeId;
