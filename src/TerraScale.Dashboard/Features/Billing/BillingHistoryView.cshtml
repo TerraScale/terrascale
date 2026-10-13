@@ -20,14 +20,6 @@
     var price = interval == "annual" ? plan?.AnnualPriceCents ?? 0 : plan?.PriceCents ?? 0;
 }
     @if (Model.InternalBill is { } internalBill) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.InternalBillingView, InternalBill>(internalBill)) }
-    <div class="ts-toolbar">
-        <form class="ts-filters" method="get" action="/organization" role="search" aria-label="Filter payment history">
-            <input type="hidden" name="tab" value="billing" /><input type="hidden" name="project" value="@(Model.Shell.Context.Project?.Id ?? "")" />
-            <label class="ts-filter-inline" for="invoice-status"><span class="ts-filter-inline-label">Invoice status</span><select class="ts-select" id="invoice-status" name="status"><option value="" selected="@(invoicePage.Status == "" ? "selected" : null)">All statuses</option>@foreach (var option in InvoiceHistory.StatusOptions) { <option value="@option.Value" selected="@(invoicePage.Status == option.Value ? "selected" : null)">@option.Label</option> }</select></label>
-            <label class="ts-filter-inline" for="invoice-issued"><span class="ts-filter-inline-label">Issued</span><select class="ts-select" id="invoice-issued" name="issued"><option value="" selected="@(invoicePage.Issued == "" ? "selected" : null)">Any time</option>@foreach (var option in InvoiceHistory.IssuedOptions(now)) { <option value="@option.Value" selected="@(invoicePage.Issued == option.Value ? "selected" : null)">@option.Label</option> }</select></label>
-            <button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Apply</button>@if (invoicePage.Status.Length > 0 || invoicePage.Issued.Length > 0) { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="@clearHref">Clear</a> }
-        </form>
-    </div>
     <section class="ts-card" id="billing-invoice-summary" aria-labelledby="billing-invoice-summary-title">
         <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="billing-invoice-summary-title">Invoice summary</h2><p class="ts-card-description">Invoice information reported for this organization</p></div></header>
         <div class="ts-card-body">
@@ -49,10 +41,15 @@
     </section>
     @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.BillingPlanDialogs, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
     <section class="ts-card ts-card-flush" id="recent-invoices" aria-labelledby="recent-invoices-title">
-        <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="recent-invoices-title">Payment history</h2><p class="ts-card-description">Invoices recorded for this organization, newest first</p></div></header>
+        <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="recent-invoices-title">Payment history</h2><p class="ts-card-description">Invoices recorded for this organization, newest first</p></div><div class="ts-card-actions"><form class="ts-filters" method="get" action="/organization" role="search" aria-label="Filter payment history">
+            <input type="hidden" name="tab" value="billing" /><input type="hidden" name="project" value="@(Model.Shell.Context.Project?.Id ?? "")" />
+            <label class="ts-filter-inline" for="invoice-status"><span class="ts-filter-inline-label">Invoice status</span><select class="ts-select" id="invoice-status" name="status"><option value="" selected="@(invoicePage.Status == "" ? "selected" : null)">All statuses</option>@foreach (var option in InvoiceHistory.StatusOptions) { <option value="@option.Value" selected="@(invoicePage.Status == option.Value ? "selected" : null)">@option.Label</option> }</select></label>
+            <label class="ts-filter-inline" for="invoice-issued"><span class="ts-filter-inline-label">Issued</span><select class="ts-select" id="invoice-issued" name="issued"><option value="" selected="@(invoicePage.Issued == "" ? "selected" : null)">Any time</option>@foreach (var option in InvoiceHistory.IssuedOptions(now)) { <option value="@option.Value" selected="@(invoicePage.Issued == option.Value ? "selected" : null)">@option.Label</option> }</select></label>
+            <button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Apply</button>@if (invoicePage.Status.Length > 0 || invoicePage.Issued.Length > 0) { <a class="ts-btn ts-btn-ghost ts-btn-sm" href="@clearHref">Clear</a> }
+        </form></div></header>
         <div class="ts-card-body">
             @if (errorMessage.Length > 0) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">@errorMessage</p></div> }
-            else if (invoicePage.Listing.Total == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No invoices match these filters</p><p class="ts-empty-detail">Change the status or issued date, or clear the filters.</p></div> }
+            else if (invoicePage.Listing.Total == 0) { <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("ReceiptText", 16)</span><p class="ts-empty-title">No invoices match these filters</p><p class="ts-empty-detail">Change the status or issued date, or clear the filters.</p></div> }
             else
             {
                 <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Recent invoices table. Scroll horizontally to see all columns."><table class="ts-table"><caption class="ts-sr-only">Invoices for this organization matching the current filters</caption><thead><tr><th scope="col">Invoice</th><th scope="col">Issued</th><th scope="col">Period</th><th scope="col" class="ts-num">Amount</th><th scope="col">Status</th><th scope="col" class="ts-table-actions">Actions</th></tr></thead><tbody>@foreach (var invoice in invoicePage.Listing.Invoices)

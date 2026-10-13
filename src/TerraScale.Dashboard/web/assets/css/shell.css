@@ -23,27 +23,23 @@
   background: var(--ts-sidebar);
 }
 
+/* Logo top-left, in line with the nav icons; the drawer's close button
+   comes first in the DOM so it takes focus when the drawer opens. */
 .ts-sidebar-header {
   display: flex;
   align-items: center;
   gap: var(--ts-s2);
-  padding-inline: var(--ts-s2);
-}
-
-/* On desktop a header holding only the drawer close button stays hidden. */
-.ts-sidebar-header:not(:has(> :not(.ts-sidebar-close))) {
-  display: none;
+  min-height: 32px;
+  padding-inline: var(--ts-s3);
 }
 
 .ts-sidebar-brand {
-  display: grid;
-  place-items: center;
-  padding: var(--ts-s1) var(--ts-s2) var(--ts-s3);
-  border-bottom: 1px solid var(--ts-line);
+  display: inline-flex;
+  order: -1;
 }
 
 .ts-sidebar-brand img {
-  height: 22px;
+  height: 20px;
   width: auto;
 }
 
@@ -351,7 +347,7 @@ details[open] > .ts-context-trigger {
 .ts-status-link {
   display: inline-flex;
   align-items: center;
-  justify-self: center;
+  justify-self: start;
   gap: var(--ts-s2);
   height: 28px;
   padding: 0 var(--ts-s3);
@@ -601,10 +597,6 @@ details[open] > .ts-account-trigger {
     transform: none;
     visibility: visible;
     transition: transform var(--ts-base) var(--ts-ease);
-  }
-
-  .ts-sidebar-header:not(:has(> :not(.ts-sidebar-close))) {
-    display: flex;
   }
 
   .ts-sidebar .ts-sidebar-close {

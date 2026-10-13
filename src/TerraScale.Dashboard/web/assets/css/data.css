@@ -43,10 +43,10 @@
 }
 
 .ts-table tbody tr:hover {
-  background: var(--ts-surface-2);
+  background: var(--ts-surface);
 }
 
-.ts-table tbody tr:last-child td {
+.ts-table tbody tr:last-child > * {
   border-bottom: 0;
 }
 
@@ -67,14 +67,20 @@
   font-size: var(--ts-fs-sm);
 }
 
-.ts-table-actions {
+.ts-table .ts-table-actions {
   text-align: right;
   white-space: nowrap;
 }
 
+/* An inline form in the actions cell (role select + save) stays on one
+   line; the cell's own actions wrap after it, right-aligned. */
 .ts-table-actions > .ts-row {
-  flex-wrap: nowrap;
+  justify-content: flex-end;
   gap: var(--ts-s1);
+}
+
+.ts-table-actions form.ts-row {
+  flex-wrap: nowrap;
 }
 
 /* Tables align with the section edge: no outer cell padding. */

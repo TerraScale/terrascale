@@ -39,7 +39,7 @@
         }
         else
         {
-            <div class="ts-empty" role="status"><p class="ts-empty-title">No audit events match these filters</p><p class="ts-empty-detail">@Model.AuditMatches.Count events match the current policy and filters. Try a wider time range or clear the search.</p></div>
+            <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("ScrollText", 16)</span><p class="ts-empty-title">No audit events match these filters</p><p class="ts-empty-detail">@Model.AuditMatches.Count events match the current policy and filters. Try a wider time range or clear the search.</p></div>
         }
         @if (Model.Access?.AuditEvents.Any(item => item.Risk is null) == true) { <p class="ts-meta" role="status">Severity is not reported for some provider events.</p> }
     </div>

@@ -1,5 +1,10 @@
 /* Plans and billing: current plan summary, interval switch, and plan cards. */
 
+/* Billing sections sit on the page rhythm, not the tighter stack gap. */
+.ts-stack.ts-billing {
+  gap: var(--ts-s8);
+}
+
 .ts-billing-current {
   display: flex;
   flex-wrap: wrap;
@@ -12,17 +17,6 @@
   display: flex;
   align-items: center;
   gap: var(--ts-s3);
-}
-
-.ts-billing-plan-icon {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: var(--ts-radius-lg);
-  background: color-mix(in oklab, var(--tone) 16%, transparent);
-  color: var(--tone);
 }
 
 .ts-billing-plan-name {
@@ -138,4 +132,10 @@
 .ts-plan-upcoming {
   border-style: dashed;
   border-color: var(--ts-line-strong);
+}
+
+/* The payment history filters wrap under the title on narrow screens. */
+#recent-invoices .ts-card-actions > .ts-filters {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }

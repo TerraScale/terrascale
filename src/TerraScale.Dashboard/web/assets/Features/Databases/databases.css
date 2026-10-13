@@ -33,22 +33,16 @@
   color: var(--ts-ink);
 }
 
+/* The detail header's database mark: a larger accent icon tile. */
 .ts-db-icon {
   display: grid;
   flex: none;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius);
-  background: var(--ts-surface-2);
-  color: var(--ts-ink-2);
-}
-
-.ts-db-icon-lg {
   width: 48px;
   height: 48px;
   border-radius: var(--ts-radius-lg);
+  background: var(--ts-accent-soft);
+  color: var(--ts-accent);
 }
 
 .ts-db-name:hover .ts-strong {
