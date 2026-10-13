@@ -103,6 +103,60 @@ public sealed class DocumentChangesContractTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task HalfTransactionCancellationPreservesCheckpointAndReplaysEveryDocument(bool hasCheckpoint)
+    {
+        var change = "{\"collection\":\"items\",\"id\":\"a\",\"op\":\"upsert\",\"version\":\"2\",\"origin\":\"0000000000000001\",\"document\":null}";
+        var second = change.Replace("\"a\"", "\"b\"", StringComparison.Ordinal);
+        using var wire = new Wire { Payload = $"event: change\ndata: {change}\n\nevent: change\nid: {Next}\ndata: {second}\n\n" };
+        using var cancellation = new CancellationTokenSource();
+        string? checkpoint;
+        await using (var stream = Service(wire).ReadAsync(Context(), "01JA0000000000000000000004", "items", hasCheckpoint ? First : "now",
+            cancellationToken: cancellation.Token).GetAsyncEnumerator())
+        {
+            await Assert.That(await stream.MoveNextAsync()).IsTrue();
+            await Assert.That(stream.Current.Change!.Id).IsEqualTo("a");
+            checkpoint = stream.Current.Cursor;
+            await Assert.That(checkpoint).IsEqualTo(hasCheckpoint ? First : null);
+            await cancellation.CancelAsync();
+            OperationCanceledException? canceled = null;
+            try { await stream.MoveNextAsync(); }
+            catch (OperationCanceledException error) { canceled = error; }
+            await Assert.That(canceled).IsNotNull();
+        }
+        await Assert.That(wire.Content!.Disposed).IsTrue();
+        var replay = new List<DocumentChangesUpdate>();
+        await foreach (var update in Service(wire).ReadAsync(Context(), "01JA0000000000000000000004", "items", checkpoint)) replay.Add(update);
+        await Assert.That(wire.Query).IsEqualTo(checkpoint is null ? "?collections=items" : "?cursor=" + First + "&collections=items");
+        await Assert.That(replay.Where(update => update.State == "change").Select(update => update.Change!.Id))
+            .IsEquivalentTo(new[] { "a", "b" }, CollectionOrdering.Matching);
+        await Assert.That(replay.Last().Cursor).IsEqualTo(Next);
+        await Assert.That(wire.StreamRequests).IsEqualTo(2);
+        await Assert.That(wire.Content!.Disposed).IsTrue();
+    }
+
+    [Test]
+    public async Task ForeignCollectionFailsBeforePresentingItsChangeOrCheckpoint()
+    {
+        using var wire = new Wire
+        {
+            Payload = $"event: change\nid: {Next}\ndata: {{\"collection\":\"foreign\",\"id\":\"a\",\"op\":\"upsert\",\"version\":\"2\",\"origin\":\"0000000000000001\",\"document\":null}}\n\n"
+        };
+        var updates = new List<DocumentChangesUpdate>();
+        HttpRequestException? refused = null;
+        try
+        {
+            await foreach (var update in Service(wire).ReadAsync(Context(), "01JA0000000000000000000004", "items", First)) updates.Add(update);
+        }
+        catch (HttpRequestException error) { refused = error; }
+        await Assert.That(refused).IsNotNull();
+        await Assert.That(updates.Count).IsEqualTo(0);
+        await Assert.That(wire.StreamRequests).IsEqualTo(1);
+        await Assert.That(wire.Content!.Disposed).IsTrue();
+    }
+
+    [Test]
     public async Task PartialEnumerationDisposesConnection()
     {
         using var wire = new Wire();
