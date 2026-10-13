@@ -42,8 +42,9 @@ into a database that holds data, schema/constraint enforcement in TerraBase.
 ## 2. Ownership and routing
 
 - Service: TerraBase (`ts-terrabase`), client listener (TLS), `/v1`, ts-auth **project access tokens** (Bearer JWT,
-  `project_id` = the route's project). No new scopes, no ts-auth change. Legacy `tb_` API keys, membership tokens and
-  `X-TerraBase-User-Id` get `404`. Create the destination with the canonical `POST P/databases` and the same project
+  `project_id` = the route's project). No new scopes, no ts-auth change. Import routes are project management routes,
+  like `createDatabase`: a request without a project token (legacy `tb_` API keys, `X-TerraBase-User-Id`) gets `401`, a
+  token of another project, a membership token or a token narrowed to another database gets `404`. Create the destination with the canonical `POST P/databases` and the same project
   access token, so the import routes resolve it; a database created through the hidden organization routes is reachable
   by a project token only once its project binding is verified (api.md, "Authentication").
 - Code: `src/TerraBase/Features/Import/` (jobs, endpoints, PostgreSQL dump reader, SQLite file reader, mapping, runner).
@@ -82,9 +83,12 @@ Cleanup: `deleteDatabase` (existing) removes the destination and its job; TerraB
 4. Poll `GET D/import` (every 2 s is enough) until `ready` (preview) or `rejected`.
 5. Show the preview; on confirmation `POST D/import/start {"previewId":…}`; poll until `completed` or `failed`.
 
-Plan limits apply unchanged: `createDatabase` enforces the plan's database limit (a Hobby project that already has
-its database cannot create a destination), imported documents pass TerraBase's storage quota and are metered as
-document writes, and upload parts are metered as request bytes. An import never bypasses a quota.
+Plan limits apply unchanged, and an import never bypasses one. The plan's database-count limit belongs to ts-dashboard
+(the owner of plans), which checks it before it provisions a destination; TerraBase does not count databases. TerraBase
+applies its own limits to imports exactly as to other writes: every imported batch passes the organization's storage
+quota (Hobby: 1 GiB of live documents), so exceeding it fails the job with `quota_exceeded` (retryable once the plan
+allows more); every import call passes request admission (`429 tenant_busy`/`tenant_memory`); imported documents are
+metered as document writes, and import calls, upload bytes included, as requests of the destination.
 
 ### Requests
 
@@ -104,7 +108,9 @@ document writes, and upload parts are metered as request bytes. An import never 
 
 Replays: a job already attached to the database answers `200` with that job only when the **whole request** is
 identical (format, size, SHA-256 and normalized options; the project and database are the route). Anything else
-answers `409 import_exists`. A database with collections answers `409 destination_not_empty`.
+answers `409 import_exists`. A database with collections answers `409 destination_not_empty` (a database holding only
+an empty `terrascale-import` collection, left by a create whose first write failed, counts as empty). A database with
+replica regions answers `409 destination_replicated`: add replicas after the import completes.
 
 `uploadImportSource`: one part per request, `Content-Type: application/octet-stream`, 1 byte to 4 MiB,
 `offset` = bytes already received. A part at `offset` = `source.receivedBytes` is appended. A part that ends at or
@@ -248,8 +254,12 @@ pg_dump's `\restrict`/`\unrestrict` lines (PostgreSQL 17.6+) are recognized and 
 
 SQLite tables excluded **automatically** (listed in `skipped`, never imported, never blocking): virtual tables
 (`virtual_table`, with a `not_imported` warning: an FTS or R-tree index is rebuilt from its source table, but a virtual
-table holding its own content is not imported), their shadow tables (`shadow_table`), and SQLite's internal tables
-`sqlite_sequence`, `sqlite_stat1` … `sqlite_stat4` and any other `sqlite_*` (`internal_table`).
+table holding its own content is not imported), the shadow tables SQLite's own modules create for them (`shadow_table`:
+fts3/fts4 `_content`, `_segments`, `_segdir`, `_docsize`, `_stat`; fts5 `_data`, `_idx`, `_content`, `_docsize`,
+`_config`; rtree/geopoly `_node`, `_parent`, `_rowid`; any other table, `notes_tags` beside `notes` included, is
+imported), and SQLite's internal tables `sqlite_sequence`, `sqlite_stat1` … `sqlite_stat4` and any other `sqlite_*`
+(`internal_table`). Rows written before `ALTER TABLE … ADD COLUMN` get the column's literal default with the column's
+affinity, as SQLite reads them (`INTEGER DEFAULT '5'` is the number 5).
 
 ## 5. Type mapping (explicit; anything not listed is `unsupported_type`, blocking until excluded)
 
@@ -313,8 +323,11 @@ in an untyped column); the copy then fails with `duplicate_document_id`.
   Values are imported unchanged, so a foreign key to a primary key resolves to the referenced document's id. CHECK
   constraints, defaults, sequences, indexes, triggers, views, functions, policies, extensions, ownership and grants are
   listed in `skipped`.
-- **The import's record** is kept in the destination's collection `terrascale-import` (documents `job` and `state`).
-  It stays after completion as the import's audit record; dropping that collection forgets the import.
+- **The import's record** is kept in the destination's collection `terrascale-import` (documents `job` and `state`,
+  internal format `{"v":1,"rev":…,"record":"<JSON>"}`; read it through `getImport`, never directly). It stays after
+  completion as the import's audit record; dropping that collection forgets the import. The runner re-checks the record
+  before copying: a state changed outside the import (for example to `queued` under a blocked preview) fails the job
+  with `destination_modified` and copies nothing.
 
 ## 7. Consistency, streaming, retries, cancellation, validation
 
@@ -325,7 +338,11 @@ in an untyped column); the copy then fails with `duplicate_document_id`.
   TerraBase transaction holding the documents, each with `if-none-match: *`, and the job's checkpoint (table, row,
   source offset). A crash, restart or resume continues after the last committed batch. A document that already
   exists was not written by the import, so the job fails with `destination_modified` (not retryable) instead of
-  overwriting it. Do not write to the destination before it is `completed`.
+  overwriting it. Do not write to the destination before it is `completed`. Two rows that map to one id are
+  `duplicate_document_id` within one batch; across batches the second write meets the first and is reported as
+  `destination_modified`, whose message names both causes.
+- **Plan change:** if TerraBase's mapping changed between the confirmed preview and the copy (a deploy in between), the
+  job returns to `analyzing` with `error.code` `preview_changed` and no confirmed preview; the user confirms the new one.
 - **Retries:** storage pressure and capacity refusals are retried with backoff (1 s doubling to 30 s, 8 attempts),
   then `failed` with `write_failed`, `retryable: true`. Data errors fail at once with `retryable: false`.
 - **Validation** (`validating`): per table, the source row count against the documents in the collection, and an
@@ -339,7 +356,8 @@ in an untyped column); the copy then fails with `duplicate_document_id`.
 | --- | --- |
 | Source | 1 GiB per import |
 | Upload part | 4 MiB (the client listener's body limit) |
-| Staged sources on one machine | 2 GiB in total, counting every incomplete upload at its declared size |
+| Staged sources on one machine | 2 GiB in total and 1 GiB per organization, counting every incomplete upload at its declared size |
+| Schema | 1000 tables (refused while reading), 1600 columns per table, 20000 SQLite schema objects or 16 MiB of schema SQL |
 | Free volume space | an upload starts only if `2 × sourceBytes + 1 GiB` stays free; otherwise `503 capacity` |
 | Concurrent work per machine | one analysis and one copy |
 | PostgreSQL line / statement | 16 MiB per line; a statement TerraBase interprets is at most 1 MiB |
@@ -348,9 +366,19 @@ in an untyped column); the copy then fails with `duplicate_document_id`.
 | Preview | section 2 |
 
 Staged sources live in the region's TerraBase volume (`<data>/.import/`). They are deleted when the job completes,
-when the destination is deleted, when a new upload replaces them, and **7 days** after the job failed or was
-cancelled (`source.retainedUntil`). The 7 days are a constant in code (zero-configuration rule): changing it is a code
-change. This retention must be disclosed to users before any real upload.
+when the destination or its import record is deleted, when an upload has been idle for **1 day** (`awaiting_source`;
+the job stays and the upload restarts at offset 0), when a preview (`ready`/`rejected`) has been left alone for **7
+days**, and **7 days** after the job failed or was cancelled (`source.retainedUntil`, extended by any later upload).
+These periods are constants in code (zero-configuration rule): changing them is a code change. This retention must be
+disclosed to users before any real upload.
+
+One TerraBase machine serves each region today (`src/TerraBase/fly.toml`): the staged source, the job's lock and its
+runner live on that machine, and only the machine holding a job's staged source works on it. Pin every import call of a
+job to its region (`X-TerraScale-Region-Pin`). If a region ever runs several machines, import calls must also be pinned
+to the staging machine before imports are offered there.
+
+Measured locally (Debug build, low CPU priority, a busy 16-core machine): about 400 documents per second through
+TerraBase's normal write path, so a source of millions of rows takes hours. Copy throughput on Fly is unmeasured.
 
 ## 9. Error codes
 
@@ -364,6 +392,7 @@ HTTP (`ErrorBody`):
 | 404 | `unknown_import` | the database has no import |
 | 409 | `destination_not_empty` | `createImport` on a database with collections |
 | 409 | `import_exists` | `createImport` differs from the attached import |
+| 409 | `destination_replicated` | `createImport` on a database with replica regions |
 | 409 | `invalid_state` | transition not allowed from the current state |
 | 409 | `offset_mismatch` | upload part not at `receivedBytes` |
 | 409 | `source_required` | resume needs the source uploaded again |
