@@ -15,7 +15,9 @@ as errors. Suite times below exclude compilation; they are diagnostic observatio
 | Targeted 100k-count test | T0 `62b2c7bb` plus both fixes, temporary timing diagnostics | 1 / 1 | 0 / 0 | 451.464 s | Passed unchanged assertions and timeout; sampled SQL preparation during document seeding |
 | Fast stream lifecycle cases | Same current base, deterministic native cancellation plus boundary cases | 8 / 8 | 0 / 0 | 4.501 s | Native cancellation ends the transaction; consumer-boundary cancellation preserves its snapshot |
 | Full native driver suite | Same current base and strengthened fixture | 7 / 7 | 0 / 0 | 112.370 s | Original six finalizer regressions plus unread-reader regression all passed |
-| Full TerraBase Slow, current candidate | Same current source tree, real Tigris credentials supplied privately | Pending | Pending | Pending | Running; no complete result claimed |
+| Full TerraBase Slow, current candidate | Same current source tree, existing dev credentials supplied privately | 58 / 59 | 1 / 0 | 589.904 s | Count passed unchanged; real Tigris test failed because the old dev bucket had been deleted |
+| Real Tigris backup regression | Same current source tree, isolated private bucket with vendor-issued credentials | 1 / 1 | 0 / 0 | 21.412 s | Passed against real storage; not a full green Slow run |
+| Final full Slow | Same current source tree, isolated real bucket | Pending | Pending | Pending | Queued after Docker to avoid extra host contention; default Slow parallelism retained |
 
 Auth reports [#199](https://github.com/TerraScale/terrascale/issues/199) and
 [#200](https://github.com/TerraScale/terrascale/issues/200) were fixture errors: key creation atomically requires an
@@ -38,7 +40,7 @@ boundary cases require snapshot reuse. Test parallelism is unchanged.
 |---|---|---:|---|---|---|
 | First complete run after host reboot | T0 `ae4bac41`, prepared Docker stages, no Slow fixes | 482 s | 664 / 664, 424.796 s | 1492 / 1558, 66 failures, 388.936 s | Older T0 base; `_system` replication errors; failed build; partial cache from interrupted earlier run |
 | Latest T0, before fixture correction | T0 `62b2c7bb` plus both fixes | Not used for comparison | Build cancelled after TerraBase failure | 1543 / 1561, 18 failures, 246.380 s | Local wrapper omitted the build revision; native/boundary cancellation fixture conflict |
-| Current candidate | Merged main plus both fixes, corrected fixture and automatic build revision | Pending | Pending | Pending | Queued after full Slow; final required `make check` running independently |
+| Current candidate | Merged main plus both fixes, corrected fixture and automatic build revision | Pending | Pending | Pending | Running after full Slow; local required check failed only the T0-owned shutdown race |
 
 Reproduce full suites with `make auth-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi` and
 `make terrabase-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi`. Run `make docker-test
@@ -48,8 +50,13 @@ Interrupted runs are excluded: the host reboot interrupted the first full TerraB
 The local `make docker-test` wrapper now supplies the checkout's HEAD as `TERRABASE_REVISION`, matching CI's existing
 build input and preserving the health assertions. No manually supplied option is needed. The previous full required
 check passed formatting, security, build, OpenAPI, benchmarks, libs, Auth Fast (664/664) and native driver (7/7), then
-failed only the two old Fast cancellation fixtures (1559/1561). Final full validation includes their correction.
+failed only the two old Fast cancellation fixtures (1559/1561). Final `make check` (18:30:01Z–18:47:53Z, 1072 s) passed those gates and the corrected cancellation fixtures,
+then failed one T0-owned shutdown race: TerraBase Fast 1562/1563, 279.940 s.
+`Shutdown_ends_a_replacement_waiting_for_its_predecessors_refill` fails at `PeerStreamTests.cs:1505`
+when `RawPush.WelcomeAsync` sees an HTTP/2 CANCEL. No second identical retry was started.
+Auth Fast passed 664/664 in 468.610 s; the native driver passed 7/7 in 58.170 s.
 
 This report has no merged fix PR, main-job result, live e2e result or deployment speedup yet. T0 PR
-[#206](https://github.com/TerraScale/terrascale/pull/206) has merged with its latest `test` green. Workflow and preview
+[#206](https://github.com/TerraScale/terrascale/pull/206) merged with its PR `test` green, but subsequent [main run 38446893001](https://github.com/TerraScale/terrascale/actions/runs/38446893001)
+failed two Fast cases: the same shutdown race and replica-rebuild registration. T0 owns main `test` SUCCESS. Workflow and preview
 pushes remain held for T2's deploy re-enable; production machines remain owned by T2.
