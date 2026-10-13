@@ -1,7 +1,11 @@
 # 0003: SQLite `synchronous = NORMAL` in WAL mode
 
-- Status: accepted (human decision, 2026-10-04); amended by [0012](0012-system-database-synchronous-full.md): the
-  system database syncs every commit (`FULL`), tenant databases keep `NORMAL`
+- Status: accepted (human decision, 2026-10-04).
+  - Amended by [0012](0012-system-database-synchronous-full.md): the system database syncs every commit (`FULL`).
+  - Amended again on 2026-10-13 (#181, barrier B1 of the remote-durable-write contract): **every write transaction of
+    every database syncs its commit** (`FULL`).
+  - `NORMAL` stays only as the pooled session's default between transactions, and for writer work outside a
+    transaction (the backup tap's reset and truncate), which answers no write.
 - Scope: `src/TerraBase/Engine/Sqlite` (every connection: pooled sessions and the
   connection that creates a database)
 

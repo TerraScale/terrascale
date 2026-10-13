@@ -768,7 +768,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time, RecordCommittedWrite, _logger)
                 {
                     QueryBudget = QueryBudget,
-                    SyncsEveryCommit = true,
                     Member = Member,
                 };
                 try
@@ -1414,6 +1413,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         {
             QueryBudget = QueryBudget,
             Member = Member,
+            Checkpoint = _checkpoint,
         };
         var published = false;
         var admitted = false;
