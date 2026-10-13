@@ -455,6 +455,64 @@ public sealed class PeerStreamTests
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
     }
 
+    // R8 x R6 (design section 14, "Repairs"): a refill repairs what the stream cut, and gru's later event can arrive on sjc's
+    // stream with a stamp below sjc's repair row (here the clock steps back an hour, as a concurrent write would). A reader
+    // that stops on sjc between the two and resumes on gru holds a cursor past the repaired event: it must get that event
+    // or 410, never a page that skips it.
+    [Test]
+    public async Task A_feed_reader_that_resumes_on_another_machine_after_a_refill_gets_the_repaired_event_or_410()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (first, lost, later) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(first, """{"n":1}""")).IsTrue();
+        var acked = await gru.Groups.AckedAsync(cluster.Database, sjc.Node, CancellationToken.None);
+
+        // sjc is away while gru writes `lost`; 25 hours later gru no longer retains it, so sjc gets it by refill.
+        await sjc.StopAsync();
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", lost, Json("""{"n":2}"""), CancellationToken.None));
+        clock.Offset = TimeSpan.FromHours(25);
+        var deadline = DateTime.UtcNow + Deadline;
+        while (await gru.Groups.RetainsAsync(cluster.Database, acked, CancellationToken.None) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(200);
+        }
+
+        await sjc.StartAsync();
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":2}""")).IsTrue();
+
+        // gru's next write reaches sjc on the stream, stamped below sjc's repair row.
+        clock.Offset = TimeSpan.FromHours(24);
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", later, Json("""{"n":3}"""), CancellationToken.None));
+        await Assert.That(await sjc.UntilAsync(later, """{"n":3}""")).IsTrue();
+
+        // A reader on sjc reads from the start of retention and stops after two events.
+        FeedPage onSjc;
+        await using (var transaction = await (await sjc.StoreAsync()).BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            onSjc = await transaction.ReadFeedAsync(null, null, 2, long.MaxValue, CancellationToken.None);
+        }
+
+        await Assert.That(onSjc.Events.Select(change => change.Id)).IsEquivalentTo([first, later]);
+        var cursor = new FeedCursor(onSjc.Scanned, FeedCursor.At(clock.GetUtcNow()));
+
+        // It resumes on gru.
+        FeedPage onGru;
+        await using (var transaction = await (await gru.StoreAsync()).BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            onGru = await transaction.ReadFeedAsync(cursor, null, 256, long.MaxValue, CancellationToken.None);
+        }
+
+        await Assert.That(onGru.Expired || onGru.Events.Any(change => change.Id == lost)).IsTrue()
+            .Because($"the reader never got {lost}: gru answered {onGru.Events.Count} events ({string.Join(", ", onGru.Events.Select(change => change.Id))}), expired: {onGru.Expired}");
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
