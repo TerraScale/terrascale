@@ -2078,10 +2078,21 @@ public sealed class PeerStreamTests
         private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-peer-streams-").FullName;
         private ManagementApi? _api;
 
+        // The engine of the host running now: hosted services read the source while it starts, before _api is assigned.
+        private IStorageEngine? _sourceEngine;
+
         public string Region { get; } = region;
 
-        // The fake names this machine's own file of each database: the copy a refill's anti-entropy digests.
-        public FakeChangeGroupSource Source => field ??= new(async (database, token) => (await Engine.OpenDatabaseAsync(database, token))?.Incarnation);
+        // The fake names this machine's own file of each database: the copy a refill's anti-entropy digests. It outlives a
+        // restart (its groups and acks with it) and asks whichever engine the running host resolved. The system database
+        // opens as the CDC source opens it, so a catalog pin compares its persisted incarnation.
+        public FakeChangeGroupSource Source => field ??= new(async (database, token) =>
+        {
+            var engine = _sourceEngine ?? throw new InvalidOperationException($"{Region} is stopped");
+            return database == ChangeGroups.System
+                ? (await engine.OpenSystemDatabaseAsync(token)).Incarnation
+                : (await engine.OpenDatabaseAsync(database, token))?.Incarnation;
+        });
 
         public string Name { get; } = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
 
@@ -2129,7 +2140,11 @@ public sealed class PeerStreamTests
                 services.AddSingleton<IMemoryBudget>(provider => RefillMemory = new RefillMemory((IMemoryBudget)memory.ImplementationFactory!(provider)));
                 if (!cluster.Cdc)
                 {
-                    services.AddSingleton<IChangeGroupSource>(Source);
+                    services.AddSingleton<IChangeGroupSource>(provider =>
+                    {
+                        _sourceEngine = provider.GetRequiredService<IStorageEngine>();
+                        return Source;
+                    });
                 }
             }, time: cluster.Clock, userId: cluster.User);
             if (first)
@@ -2142,6 +2157,7 @@ public sealed class PeerStreamTests
         {
             await Api.DisposeAsync();
             _api = null;
+            _sourceEngine = null;
         }
 
         // The source the peer streams read: the CDC tailer, or the fake.
@@ -2615,10 +2631,16 @@ public sealed class PeerStreamTests
             return Volatile.Read(ref _lost) ? null : await states.DigestAsync(database, expected, cancellationToken);
         }
 
-        // An empty page, then no digest: only the refill's closing digest check can tell the source lost the database.
+        // An empty page, then refused reads: the closing pin check detects that the source lost the database.
         public ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)?> ReadBucketsAsync(
             TenantContext database, Ulid incarnation, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken)
         {
+            // A lost copy refuses every later read pinned to it, as storage does: the closing check of a refill among them.
+            if (Volatile.Read(ref _lost))
+            {
+                return ValueTask.FromResult<(IReadOnlyList<RepairState>, BucketCursor?)?>(null);
+            }
+
             if (machine.LoseOnBucketRead)
             {
                 Volatile.Write(ref _lost, true);

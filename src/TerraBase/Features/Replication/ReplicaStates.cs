@@ -32,6 +32,7 @@ public interface IReplicaStates
     /// The whole states of <paramref name="buckets"/> of <paramref name="incarnation"/> after <paramref name="after"/>: at most
     /// <paramref name="maxStates"/>, and <paramref name="maxBytes"/> of encoded states unless the first alone is larger; and
     /// where the next page starts, or null. Null when this machine does not hold the database or the copy in place is another.
+    /// An empty bucket list checks only that the named incarnation is still held.
     /// </summary>
     ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)?> ReadBucketsAsync(
         TenantContext database, Ulid incarnation, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken);

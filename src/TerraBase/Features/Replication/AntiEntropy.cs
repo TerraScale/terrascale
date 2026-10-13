@@ -214,7 +214,7 @@ internal sealed class AntiEntropy : BackgroundService
 
     // Whether this machine's copy in place is still `incarnation`.
     private async Task<bool> LocalHeldAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) =>
-        await _states.DigestAsync(database, incarnation, cancellationToken).ConfigureAwait(false) is not null;
+        await _states.ReadBucketsAsync(database, incarnation, [], null, 1, 1, cancellationToken).ConfigureAwait(false) is not null;
 
     /// <summary>The LZ4 envelope of a page of states of <paramref name="incarnation"/> of the source's copy.</summary>
     internal static StatePage Encode(IReadOnlyList<RepairState> states, Ulid incarnation)

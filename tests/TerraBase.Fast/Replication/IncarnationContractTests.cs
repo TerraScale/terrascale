@@ -286,9 +286,11 @@ public sealed class IncarnationContractTests
             return seed.ExecuteNonQuery();
         }, "a test seeding an old incarnation's ack", CancellationToken.None);
         await Assert.That(seededRows).IsEqualTo(1);
+        // Seeding is captured too; the trim must keep every row present after that write.
+        var seededBefore = await LogAsync(store);
         await services.GetRequiredService<TursoChangeGroupSource>().TrimAsync(store, CancellationToken.None);
         var seeded = await LogAsync(store);
-        await Assert.That((seeded.Rows, seeded.Oldest, seeded.Newest)).IsEqualTo((before.Rows, before.Oldest, before.Newest))
+        await Assert.That((seeded.Rows, seeded.Oldest, seeded.Newest)).IsEqualTo((seededBefore.Rows, seededBefore.Oldest, seededBefore.Newest))
             .Because("retention counts another incarnation's ack as 0");
         await Assert.That(await groups.AckedAsync(database, peer, CancellationToken.None)).IsEqualTo(refill);
 

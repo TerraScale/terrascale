@@ -376,7 +376,8 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         }
         while (after is not null);
 
-        if (await _states.DigestAsync(database, incarnation, context.CancellationToken).ConfigureAwait(false) is null)
+        // Recheck the answering state source without scanning its digests again.
+        if (await _states.ReadBucketsAsync(database, incarnation, [], null, 1, 1, context.CancellationToken).ConfigureAwait(false) is null)
         {
             throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source no longer holds the named incarnation of the database"));
         }
