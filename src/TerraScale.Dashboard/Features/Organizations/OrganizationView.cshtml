@@ -1,6 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
 @implements IUsesLayout<TerraScale.Dashboard.UI.Slices.ShellDocument, ShellModel>
-@using TerraScale.Dashboard.Features.Accounts
 @if (Model.Tab is "members" or "invitations")
 {
     @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationAccessPage, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))

@@ -1,8 +1,8 @@
 using System.Globalization;
 
-namespace TerraScale.Dashboard.Features.Home;
+namespace TerraScale.Dashboard.Shared.Formatting;
 
-public static class HomeMetricFormat
+public static class MetricFormat
 {
     public static string Milliseconds(double? value) => value is null ? "Not reported" : value.Value.ToString("G", CultureInfo.InvariantCulture) + " ms";
 

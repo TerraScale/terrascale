@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Http.Features;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.QuerySubscriptions;

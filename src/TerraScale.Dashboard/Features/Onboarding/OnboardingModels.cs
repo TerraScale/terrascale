@@ -1,6 +1,5 @@
 using System.Globalization;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.Onboarding;
@@ -33,9 +32,4 @@ public sealed record OnboardingPage(DocumentModel Document, string CsrfToken, bo
     public int Progress => CurrentStep * 100 / 3;
     public string SignInUrl => ReturnTo.Length == 0 ? "/login" : "/login?returnTo=" + Uri.EscapeDataString(ReturnTo);
     public string FieldError(string field) => ErrorField == field ? Error : "";
-}
-
-public sealed class OnboardingValidationException(string message, string field = "") : Exception(message)
-{
-    public string Field { get; } = field;
 }

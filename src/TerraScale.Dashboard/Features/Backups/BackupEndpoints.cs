@@ -1,14 +1,14 @@
 using System.Globalization;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.Backups;
 
 public static class BackupEndpoints
 {
-    public static IEndpointRouteBuilder MapBackupFeatures(this IEndpointRouteBuilder endpoints)
+    // detailPage re-renders the database page's backups tab: (http, context, databaseId, error, status).
+    public static IEndpointRouteBuilder MapBackupFeatures(this IEndpointRouteBuilder endpoints, Func<HttpContext, AccountContext, string, string, int, Task<IResult>> detailPage)
     {
         endpoints.MapGet("/api/v1/dashboard/backups", async (HttpContext http, DashboardSessions sessions, AccountService accounts, BackupService backups) =>
         {
@@ -23,7 +23,7 @@ public static class BackupEndpoints
         {
             var action = operation;
             endpoints.MapPost(action == "create" ? "/api/v1/dashboard/backups" : "/api/v1/dashboard/backups/" + action,
-                async (HttpContext http, DashboardSessions sessions, AccountService accounts, BackupService backups, IDatabaseBackend backend, DatabaseService databases) =>
+                async (HttpContext http, DashboardSessions sessions, AccountService accounts, BackupService backups) =>
                 {
                     var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
                     if (context is null) return Results.Unauthorized();
@@ -35,25 +35,25 @@ public static class BackupEndpoints
                         if (action == "create")
                         {
                             var backup = await backups.CreateAsync(context, databaseId, http.RequestAborted);
-                            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : Results.Json(backup, statusCode: 201);
+                            return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : Results.Json(backup, statusCode: 201);
                         }
                         if (action == "policy")
                         {
                             var days = int.TryParse(form["retentionDays"], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
                             var policy = await backups.SetPolicyAsync(context, databaseId, form["fullBackupCron"].ToString(),
                                 form["incrementalBackupCron"].ToString(), days, form["disabled"] == "1", http.RequestAborted);
-                            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : Results.Json(policy);
+                            return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : Results.Json(policy);
                         }
                         if (form["replace"] == "1") BackupService.RejectOverwrite();
                         var restored = await backups.RestoreAsync(context, databaseId, form["backupId"].ToString(), form["name"].ToString(), http.RequestAborted);
-                        return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(restored.DatabaseId)) :
+                        return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(restored.DatabaseId)) :
                             Results.Json(new { id = restored.DatabaseId, restored.Name }, statusCode: 201);
                     }
                     catch (Exception error) when (KnownFailure(error) &&
                         (error is not OperationCanceledException || !http.RequestAborted.IsCancellationRequested))
                     {
-                        if (!DatabaseEndpoints.WantsHtml(http) || DatabaseEndpoints.Status(error) == 404) return Failure(error);
-                        return await DatabaseEndpoints.DetailPageAsync(http, context, databaseId, "backups", backend, databases, Message(error), status: DatabaseEndpoints.Status(error));
+                        if (!DatabaseResults.WantsHtml(http) || DatabaseResults.Status(error) == 404) return Failure(error);
+                        return await detailPage(http, context, databaseId, Message(error), DatabaseResults.Status(error));
                     }
                 });
         }
@@ -74,7 +74,7 @@ public static class BackupEndpoints
             form is not null && form.ContainsKey("fullBackupCron") ? form["fullBackupCron"].ToString() : null,
             form is not null && form.ContainsKey("retentionDays") ? form["retentionDays"].ToString() : null);
     }
-    internal static bool KnownFailure(Exception error) => DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException or JsonException or OperationCanceledException;
-    internal static string Message(Exception error) => error is AccountAccessException ? error.Message : DatabaseEndpoints.Message(error);
-    private static IResult Failure(Exception error) => Results.Problem(Message(error), statusCode: DatabaseEndpoints.Status(error));
+    internal static bool KnownFailure(Exception error) => DatabaseResults.KnownFailure(error) || error is HttpRequestException or JsonException or OperationCanceledException;
+    internal static string Message(Exception error) => error is AccountAccessException ? error.Message : DatabaseResults.Message(error);
+    private static IResult Failure(Exception error) => Results.Problem(Message(error), statusCode: DatabaseResults.Status(error));
 }

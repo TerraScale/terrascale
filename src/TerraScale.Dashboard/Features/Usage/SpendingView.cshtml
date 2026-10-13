@@ -1,5 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Usage.UsagePage>
 @using TerraScale.Dashboard.Features.Usage
+@using TerraScale.Dashboard.Features.Billing
 <div class="ts-row-between"><div class="ts-stack-sm"><h2 class="ts-section-title">Spending controls</h2><p class="ts-meta">Manage monthly budgets and operation limits across your organization.</p></div><span class="ts-badge ts-badge-info">@Model.PlanName plan</span></div>
 @if (Model.InternalBill is not null) { <div class="ts-alert ts-alert-info" role="alert"><p class="ts-alert-title">Report-only spending cap</p><p class="ts-alert-body">Internal caps only report alerts. They never charge Stripe, restrict writes or suspend services.</p></div> }
 @if (!Model.Shell.Context.CanManage) { <div class="ts-alert ts-alert-info" role="alert"><p class="ts-alert-title">View-only access</p><p class="ts-alert-body">Only organization owners and admins can change spending controls.</p></div> }

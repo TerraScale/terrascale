@@ -1,5 +1,4 @@
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.ApiKeys;
@@ -18,7 +17,7 @@ public static class ApiKeyEndpoints
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             try { return Results.Json((await keys.ListAsync(context, http.RequestAborted)).Select(ApiKeyService.CredentialMetadata)); }
-            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.Failure(error); }
+            catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }
         });
         endpoints.MapPost("/api/v1/dashboard/credentials/{kind}", async (HttpContext http, string kind, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
@@ -29,11 +28,11 @@ public static class ApiKeyEndpoints
             try
             {
                 var credential = await keys.CreateAsync(context, kind, form["name"].ToString(), form["databaseId"].ToString(), form["scope"].Concat(form["scopes"]).SelectMany(value => (value ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)), http.RequestAborted);
-                return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), statusCode: 201);
+                return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, keys, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), statusCode: 201);
             }
-            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error))
+            catch (Exception error) when (DatabaseResults.KnownFailure(error))
             {
-                return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), kind, form["name"].ToString(), status: DatabaseEndpoints.Status(error), draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString()) : DatabaseEndpoints.Failure(error);
+                return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseResults.Message(error), kind, form["name"].ToString(), status: DatabaseResults.Status(error), draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString()) : DatabaseResults.Failure(error);
             }
         });
         endpoints.MapPost("/api/v1/dashboard/credentials/{keyId}/revoke", async (HttpContext http, string keyId, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
@@ -43,8 +42,8 @@ public static class ApiKeyEndpoints
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             try { await keys.RevokeAsync(context, keyId, http.RequestAborted); }
-            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
-            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys") : Results.NoContent();
+            catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseResults.Message(error), status: DatabaseResults.Status(error)) : DatabaseResults.Failure(error); }
+            return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys") : Results.NoContent();
         });
         endpoints.MapPost("/api/v1/dashboard/credentials/revoke", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
@@ -53,8 +52,8 @@ public static class ApiKeyEndpoints
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             try { await keys.RevokeAsync(context, form["keyId"].ToString(), http.RequestAborted); }
-            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
-            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
+            catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseResults.Message(error), status: DatabaseResults.Status(error)) : DatabaseResults.Failure(error); }
+            return DatabaseResults.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
         });
         endpoints.MapPost("/api/v1/dashboard/credentials/rotate", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
@@ -64,7 +63,7 @@ public static class ApiKeyEndpoints
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             if (!context.CanManage) return Results.StatusCode(403);
             const string message = "TerraBase keys cannot be rotated, and machine clients are not issued yet. Create a new key and revoke the old one instead.";
-            return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, message, status: 503) : Results.Problem(message, statusCode: 503);
+            return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, keys, message, status: 503) : Results.Problem(message, statusCode: 503);
         });
         return endpoints;
     }

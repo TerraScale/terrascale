@@ -3,7 +3,6 @@ using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Billing;
-using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.Usage;

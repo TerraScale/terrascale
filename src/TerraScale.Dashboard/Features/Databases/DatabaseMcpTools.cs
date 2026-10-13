@@ -33,7 +33,7 @@ public sealed class DatabaseMcpTools(IHttpContextAccessor http, AccountService a
             DatabaseService.ValidateContents(reported);
             contents = reported;
         }
-        catch (Exception error) when ((DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException or JsonException or OverflowException or OperationCanceledException) &&
+        catch (Exception error) when ((DatabaseResults.KnownFailure(error) || error is HttpRequestException or JsonException or OverflowException or OperationCanceledException) &&
             (error is not OperationCanceledException || !Cancellation.IsCancellationRequested))
         { unavailable = "Database storage measurements are unavailable."; }
         bool? backupsEnabled = null;

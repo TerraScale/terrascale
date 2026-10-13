@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Billing;
 
 namespace TerraScale.Dashboard.Platform.Mcp;
 

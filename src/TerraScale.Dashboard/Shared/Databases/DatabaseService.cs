@@ -1,9 +1,8 @@
 using System.Text.RegularExpressions;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Billing;
 using TerraScale.DotNet.TerraBase;
 
-namespace TerraScale.Dashboard.Features.Databases;
+namespace TerraScale.Dashboard.Shared.Databases;
 
 public sealed partial class DatabaseService(AccountService accounts, IDatabaseBackend backend)
 {

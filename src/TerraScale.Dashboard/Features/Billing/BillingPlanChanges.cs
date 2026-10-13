@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.ComponentModel;
 using Stripe;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Onboarding;
 using TerraScale.DotNet.TerraBase;
 using AccountService = TerraScale.Dashboard.Features.Accounts.AccountService;
 

@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.ApiKeys;

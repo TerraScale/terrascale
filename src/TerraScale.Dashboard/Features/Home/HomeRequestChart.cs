@@ -1,13 +1,10 @@
 using System.Globalization;
 using System.Text;
+using TerraScale.Dashboard.Shared.Charts;
 
 namespace TerraScale.Dashboard.Features.Home;
 
 public sealed record HomeRequestPoint(DateTimeOffset Start, IReadOnlyDictionary<string, long> Requests);
-public sealed record RequestPath(string Name, string Class, string Dash, string Path);
-public sealed record RequestDot(string X, string Y, string Class, string Dash);
-public sealed record RequestTipRow(string Name, string Value, string Class, string Dash, string Y);
-public sealed record RequestColumn(string X, string Left, string Width, string Label, string Header, string TipX, string TipWidth, string TipHeight, IReadOnlyList<RequestDot> Dots, IReadOnlyList<RequestTipRow> Rows);
 public sealed record HomeRequestChart(string Label, string GradientId, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks, IReadOnlyList<RequestPath> Paths, IReadOnlyList<RequestColumn> Columns)
 {
     public static HomeRequestChart For(HomePage page)
@@ -25,8 +22,8 @@ public sealed record HomeRequestChart(string Label, string GradientId, string Ar
         var scale = maximum == 0 ? 1 : new[] { 1d, 2d, 5d, 10d }.Select(factor => factor * magnitude).First(value => value >= maximum);
         double X(int index) => 48 + 660d * index / Math.Max(1, points.Count - 1);
         double Y(long value) => 14 + 154 * (1 - value / scale);
-        string C(double value) => OperationChart.Coordinate(value);
-        var grid = Enumerable.Range(0, 5).Select(step => new ChartGrid(C(14 + 154d * step / 4), maximum > 0 ? OperationChart.Compact(scale * (4 - step) / 4) : step == 4 ? "0" : "")).ToArray();
+        string C(double value) => ChartGeometry.Coordinate(value);
+        var grid = Enumerable.Range(0, 5).Select(step => new ChartGrid(C(14 + 154d * step / 4), maximum > 0 ? ChartGeometry.Compact(scale * (4 - step) / 4) : step == 4 ? "0" : "")).ToArray();
         var seen = new HashSet<int>();
         var ticks = Enumerable.Range(0, 5).Select(step =>
         {
@@ -35,7 +32,7 @@ public sealed record HomeRequestChart(string Label, string GradientId, string Ar
             return new ChartTick(C(X(index)), visible ? points[index].Start.UtcDateTime.ToString(page.Range is "7d" or "30d" ? "MMM d HH:mm" : "HH:mm", CultureInfo.InvariantCulture) : "", step == 0 ? "start" : step == 4 ? "end" : "middle");
         }).ToArray();
         var paths = names.Select((name, index) => new RequestPath(name, names.Length == 1 ? "ts-chart-series-1" : "ts-cat-" + (index % 3 + 1), index < 3 ? "" : 3 * (index / 3 + 1) + " 5",
-            OperationChart.Smooth(points.Select((point, i) => (X(i), Y(point.Requests.GetValueOrDefault(name)))).ToArray()))).ToArray();
+            ChartGeometry.Smooth(points.Select((point, i) => (X(i), Y(point.Requests.GetValueOrDefault(name)))).ToArray()))).ToArray();
         var stepSize = Math.Max(1, (points.Count + 59) / 60);
         var columnWidth = 660d * stepSize / Math.Max(1, points.Count - 1);
         var columns = new List<RequestColumn>();

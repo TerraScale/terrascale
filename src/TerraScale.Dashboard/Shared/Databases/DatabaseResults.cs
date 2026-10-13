@@ -1,0 +1,13 @@
+using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.DotNet.TerraBase;
+
+namespace TerraScale.Dashboard.Shared.Databases;
+
+internal static class DatabaseResults
+{
+    internal static bool WantsHtml(HttpContext http) => http.Request.GetTypedHeaders().Accept?.Any(value => value.MediaType.Value == "text/html") == true;
+    internal static bool KnownFailure(Exception error) => error is AccountAccessException or TerraBaseValidationException or TerraBaseAuthenticationException or TerraBaseForbiddenException or TerraBaseNotFoundException or TerraBaseConflictException or TerraBasePreconditionFailedException or TerraBaseUnavailableException or DatabaseProviderException;
+    internal static int Status(Exception error) => error switch { AccountAccessException access => access.StatusCode, DatabaseWrongRegionException => 409, HttpRequestException { StatusCode: { } status } => (int)status, _ => 503 };
+    internal static string Message(Exception error) => error is AccountAccessException or DatabaseWrongRegionException ? error.Message : Status(error) switch { 401 => "The data plane requires valid authentication.", 404 => "The requested resource is unavailable.", 403 => "Organization access is required.", 409 => "The request conflicts with the current database state.", 412 => "The document changed. Reload it before saving again.", 400 or 422 => "The data plane refused the submitted input.", _ => "The data plane could not complete the request. Try again shortly." };
+    internal static IResult Failure(Exception error) => Results.Problem(Message(error), statusCode: Status(error));
+}

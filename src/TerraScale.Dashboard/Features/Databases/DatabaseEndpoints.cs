@@ -7,7 +7,7 @@ using TerraScale.Dashboard.Features.Backups;
 using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.UI;
-using TerraScale.DotNet.TerraBase;
+using static TerraScale.Dashboard.Shared.Databases.DatabaseResults;
 
 namespace TerraScale.Dashboard.Features.Databases;
 
@@ -92,7 +92,8 @@ public static class DatabaseEndpoints
         }
         endpoints.MapDataFeatures();
         endpoints.MapApiKeyFeatures();
-        endpoints.MapBackupFeatures();
+        endpoints.MapBackupFeatures((http, context, databaseId, error, status) => DetailPageAsync(http, context, databaseId, "backups",
+            http.RequestServices.GetRequiredService<IDatabaseBackend>(), http.RequestServices.GetRequiredService<DatabaseService>(), error, status: status));
         return endpoints;
     }
 
@@ -156,10 +157,4 @@ public static class DatabaseEndpoints
         result.StatusCode = status;
         return result;
     }
-
-    internal static bool WantsHtml(HttpContext http) => http.Request.GetTypedHeaders().Accept?.Any(value => value.MediaType.Value == "text/html") == true;
-    internal static bool KnownFailure(Exception error) => error is AccountAccessException or TerraBaseValidationException or TerraBaseAuthenticationException or TerraBaseForbiddenException or TerraBaseNotFoundException or TerraBaseConflictException or TerraBasePreconditionFailedException or TerraBaseUnavailableException or DatabaseProviderException;
-    internal static int Status(Exception error) => error switch { AccountAccessException access => access.StatusCode, DatabaseWrongRegionException => 409, HttpRequestException { StatusCode: { } status } => (int)status, _ => 503 };
-    internal static string Message(Exception error) => error is AccountAccessException or DatabaseWrongRegionException ? error.Message : Status(error) switch { 401 => "The data plane requires valid authentication.", 404 => "The requested resource is unavailable.", 403 => "Organization access is required.", 409 => "The request conflicts with the current database state.", 412 => "The document changed. Reload it before saving again.", 400 or 422 => "The data plane refused the submitted input.", _ => "The data plane could not complete the request. Try again shortly." };
-    internal static IResult Failure(Exception error) => Results.Problem(Message(error), statusCode: Status(error));
 }

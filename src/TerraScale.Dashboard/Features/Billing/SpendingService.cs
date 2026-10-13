@@ -1,9 +1,8 @@
 using System.Globalization;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 
-namespace TerraScale.Dashboard.Features.Usage;
+namespace TerraScale.Dashboard.Features.Billing;
 
 public sealed record OperationLimitChange(long? ReadLimit = null, long? WriteLimit = null, long? ReplicationLimit = null)
 {

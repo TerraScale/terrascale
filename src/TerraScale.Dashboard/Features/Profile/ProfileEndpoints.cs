@@ -1,5 +1,6 @@
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.Features.Profile;
 

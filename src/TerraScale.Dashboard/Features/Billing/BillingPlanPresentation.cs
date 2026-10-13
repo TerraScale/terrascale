@@ -1,7 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.Primitives;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Onboarding;
 
 namespace TerraScale.Dashboard.Features.Billing;
 

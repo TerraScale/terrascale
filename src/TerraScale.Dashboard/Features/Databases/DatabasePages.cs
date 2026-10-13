@@ -15,11 +15,12 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     public IReadOnlyList<string> Selected => Selection ?? (Context.Project is null || Context.Project.Region.Length == 0 ? [] : [Context.Project.Region]);
     public bool CanProvision => Context.Organization?.CanProvision(Context.UserId) ?? false;
     public string Description => Search.Length == 0 ? $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} in this project" : $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} matching \"{Search}\"";
-    public static string Tone(string status) => status switch { "ready" => "emerald", "failed" => "rose", "provisioning" or "accepted" or "pending" => "amber", _ => "slate" };
     // Shown while the only listed region is the one that answered: TerraBase publishes no region catalog yet.
     public const string SingleRegionNotice = "TerraBase does not list its other regions yet, so adding replica regions is unavailable here.";
-    public static string RegionDisplay(string code) => code.ToUpperInvariant() switch { "SFO" => "SFO · San Francisco", "GRU" => "GRU · São Paulo", "" => "Not configured", _ => code.ToUpperInvariant() };
-    public static string Bytes(long bytes) => bytes < 1024 ? $"{bytes} B" : bytes < 1024 * 1024 ? $"{bytes / 1024d:0.0} KiB" : $"{bytes / (1024d * 1024):0.0} MiB";
+    // DatabasesView.cshtml calls these through the page model.
+    public static string Tone(string status) => DatabaseFormat.Tone(status);
+    public static string RegionDisplay(string code) => DatabaseFormat.Region(code);
+    public static string Bytes(long bytes) => DatabaseFormat.Bytes(bytes);
 }
 
 public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Database, string Tab, IReadOnlyList<DatabaseRegion> Choices,
@@ -60,15 +61,4 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
 public sealed record DatabaseReplicationModel(TerraScale.Dashboard.Features.Usage.UsageReplication Reading, string ProjectId, string DatabaseId, string Range)
 {
     public string AnalyticsPath => "/analytics?database=" + Uri.EscapeDataString(DatabaseId) + "&project=" + Uri.EscapeDataString(ProjectId) + "&range=" + Range;
-}
-
-public sealed record DatabaseFrameModel(DatabaseRecord Database, string Tab, string Collection = "")
-{
-    public static readonly (string Key, string Label)[] Tabs = [("overview", "Overview"), ("documents", "Documents"), ("sql", "SQL"), ("schema", "Schema"), ("indexes", "Indexes"), ("backups", "Backups"), ("branches", "Branches"), ("import", "Import and export")];
-    public static string Title(string section) => section switch
-    {
-        "sql" => "SQL console",
-        "history" => "Document history",
-        _ => Tabs.FirstOrDefault(tab => tab.Key == section).Label ?? section
-    };
 }

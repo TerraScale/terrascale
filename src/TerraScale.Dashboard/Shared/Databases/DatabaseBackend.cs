@@ -5,7 +5,7 @@ using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
 
-namespace TerraScale.Dashboard.Features.Databases;
+namespace TerraScale.Dashboard.Shared.Databases;
 
 public sealed record DatabaseScope(string UserId, string AccessToken, string OrganizationId, string OrganizationName, string ProjectId, string ProjectName)
 {
@@ -20,7 +20,7 @@ public sealed record DatabaseRegion(string Code, string Id, string Name, string 
     public static DatabaseRegion? FromId(string? id) =>
         id is { Length: >= 1 and <= 63 } && id[0] is >= 'a' and <= 'z' && id[^1] != '-' &&
         id.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-')
-            ? new(id.ToUpperInvariant(), id, DatabasesPage.RegionDisplay(id), "", new($"https://{id}.api.terrascale.tech/"), true)
+            ? new(id.ToUpperInvariant(), id, DatabaseFormat.Region(id), "", new($"https://{id}.api.terrascale.tech/"), true)
             : null;
 
     // A stored or producer-named region: the catalog's entry, else the region its id names. A home or replica outside
@@ -237,7 +237,7 @@ public class DatabaseProviderException(HttpStatusCode status, string message = "
 public sealed class DatabaseWrongRegionException(string? region, string? homeRegion, IReadOnlyList<string> regions)
     : DatabaseProviderException(HttpStatusCode.MisdirectedRequest, homeRegion is null
         ? "The database is served in another region. Nothing was changed."
-        : $"The database is managed in {DatabasesPage.RegionDisplay(homeRegion)}. Nothing was changed.")
+        : $"The database is managed in {DatabaseFormat.Region(homeRegion)}. Nothing was changed.")
 {
     public string? Region { get; } = region;
     public string? HomeRegion { get; } = homeRegion;
