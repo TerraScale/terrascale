@@ -375,7 +375,13 @@ carries:
 delta). #171 (the design) has its APPROVE at `40464691` (6139562004); its head is now `9e747421`, and the delta is not
 yet checked. #184 has no review, and its `test` run is red.
 
-**#187 merged OUTSIDE the train** (MarioGK, squash, 10:46Z): `test(auth): derive SDK route parameter values from templates`, head `b6f46cd6` → main **`901ea068`**. Push run 38385706284: deploy and preview skipped; Fast green (auth, terrabase and libs all succeeded).
+**#187 merged OUTSIDE the train** (MarioGK, squash, 10:46Z): `test(auth): derive SDK route parameter values from templates`, head `b6f46cd6` → main **`901ea068`**. Push run 38385706284: deploy and preview skipped; Fast green (auth, terrabase and libs all succeeded). Slow failed 3 of 42 tests:
+- `An_idle_cold_node_reloads_a_retained_key_once_after_both_key_caches_expire` (#147);
+- `A_full_65536_entry_cache_reuses_a_cold_key_for_concurrent_empty_wal_segment_restores` (new, 1m05s);
+- `Query_count_is_exact_up_to_100000_documents_and_a_lower_bound_beyond` (10m timeout).
+
+#187 is auth-test-only, so its code cannot affect TerraBase Slow. Slow on `b9a68bb9` shows whether the two new
+failures repeat.
 
 **#186 merged OUTSIDE the train** (MarioGK, merge commit, 11:26Z), head `0e70a991` → main **`b9a68bb9`**. Its remaining code beyond `5252c120` (already in main via #175) is `6212e389`, `test: preserve transaction plan deadline coverage`. Push run 38390256538: deploy and preview skipped; Fast green (auth, terrabase and libs all succeeded).
 
