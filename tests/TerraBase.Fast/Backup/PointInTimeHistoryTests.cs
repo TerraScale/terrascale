@@ -420,6 +420,33 @@ public sealed class PointInTimeHistoryTests
     }
 
     [Test]
+    public async Task A_snapshot_whose_read_transaction_cannot_end_leaves_the_tap_reading_new_commits(CancellationToken cancellationToken)
+    {
+        await using var host = await Host.StartAsync(cancellationToken);
+        var directory = Directory.CreateTempSubdirectory("terrabase-tap-snapshot-");
+        try
+        {
+            var engine = host.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            await using var tap = (TursoChangeTap)(await engine.OpenTapAsync(host.Tenant, cancellationToken))!;
+            // The snapshot's rollback fails, leaving its read transaction open.
+            tap.BeforeSnapshotEnd = _ => throw new IOException("the snapshot's rollback failed");
+            await Assert.That(async () => await tap.SnapshotAsync(Stream.Null, Path.Combine(directory.FullName, "snapshot.db"), cancellationToken))
+                .Throws<IOException>();
+
+            // A commit after it is in the tap's next read, which ends with a read mark: a pinned reader would see nothing.
+            await host.PutAsync("a", cancellationToken);
+            using var log = new MemoryStream();
+            var read = await tap.ReadAsync(log, cancellationToken);
+            await Assert.That(read.Bytes).IsGreaterThan(9);
+            await Assert.That(log.ToArray()[^9]).IsEqualTo((byte)7);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Test]
     public async Task The_system_database_restores_only_at_its_snapshot_times(CancellationToken cancellationToken)
     {
         await using var host = await Host.StartAsync(cancellationToken);
@@ -461,7 +488,7 @@ public sealed class PointInTimeHistoryTests
 
         private string File => $"v1/{Database.Organization}/{Database.Project}/{Database.Id}";
 
-        private TenantContext Tenant => new(Database.Organization, PlanTier.Pro, Database.Project, Database.Id);
+        public TenantContext Tenant => new(Database.Organization, PlanTier.Pro, Database.Project, Database.Id);
 
         public static async Task<Host> StartAsync(CancellationToken cancellationToken)
         {
