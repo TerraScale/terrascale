@@ -135,11 +135,20 @@ public sealed class ProjectTokenJourneyTests
                 case "/terrascale/.well-known/openid-configuration":
                     return Json(new
                     {
-                        issuer = Origin, authorization_endpoint = Origin + "/oauth/authorize", token_endpoint = Origin + "/oauth/token",
-                        userinfo_endpoint = Origin + "/oauth/userinfo", jwks_uri = Origin + "/.well-known/jwks.json", revocation_endpoint = Origin + "/oauth/revoke",
-                        end_session_endpoint = Origin + "/oauth/logout", response_types_supported = new[] { "code" }, grant_types_supported = new[] { "authorization_code", "refresh_token" },
-                        code_challenge_methods_supported = new[] { "S256" }, subject_types_supported = new[] { "public" }, id_token_signing_alg_values_supported = new[] { "ES256" },
-                        token_endpoint_auth_methods_supported = new[] { "client_secret_basic" }, scopes_supported = new[] { "openid", "email", "profile", "offline_access" }
+                        issuer = Origin,
+                        authorization_endpoint = Origin + "/oauth/authorize",
+                        token_endpoint = Origin + "/oauth/token",
+                        userinfo_endpoint = Origin + "/oauth/userinfo",
+                        jwks_uri = Origin + "/.well-known/jwks.json",
+                        revocation_endpoint = Origin + "/oauth/revoke",
+                        end_session_endpoint = Origin + "/oauth/logout",
+                        response_types_supported = new[] { "code" },
+                        grant_types_supported = new[] { "authorization_code", "refresh_token" },
+                        code_challenge_methods_supported = new[] { "S256" },
+                        subject_types_supported = new[] { "public" },
+                        id_token_signing_alg_values_supported = new[] { "ES256" },
+                        token_endpoint_auth_methods_supported = new[] { "client_secret_basic" },
+                        scopes_supported = new[] { "openid", "email", "profile", "offline_access" }
                     });
                 case "/terrascale/.well-known/jwks.json":
                     var point = key.ExportParameters(false).Q;
