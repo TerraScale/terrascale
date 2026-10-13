@@ -161,7 +161,17 @@ public sealed class ReplicaRebuildTests
         await adapter.Entered.Task.WaitAsync(Deadline);
         // A second rebuild answers at once; one that waited for the first would still be running here.
         var second = rebuild.RebuildAsync(pair.Database, faulted, CancellationToken.None).AsTask();
-        var answered = await Task.WhenAny(second, Task.Delay(TimeSpan.FromSeconds(5))) == second;
+        bool answered;
+        try
+        {
+            _ = await second.WaitAsync(TimeSpan.FromSeconds(5));
+            answered = true;
+        }
+        catch (TimeoutException)
+        {
+            answered = false;
+        }
+
         adapter.Hold!.SetResult();
         await Assert.That(answered).IsTrue().Because("a second rebuild on the host answers without waiting");
         await Assert.That(await second is RebuildOutcome.Busy).IsTrue();
