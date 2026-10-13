@@ -1,13 +1,21 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
+using Grpc.Core;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Sqlite;
-using TerraBase.Fast.Documents;
 using TerraBase.Features.Replication;
+using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -25,57 +33,82 @@ public sealed class ChangeLogAgeTests
     private const string Items = "items";
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
 
-    // A peer repeatedly acks c0, then advances to c1 after 25 h. Neither activity nor that slow progress renews the hold:
-    // the backup anchor (c1) still keeps rows, but without it only the newest commit (c2) stays.
+    // Inbound frontiers keep the peer live while its next batch stays in flight; a late ACK must not renew the age cap.
     [Test]
     public async Task A_peer_whose_ack_trickles_does_not_hold_rows_past_24_hours()
     {
-        await using var api = await DocumentApi.StartAsync();
-        var (store, c0, c1, c2) = await CommitsAsync(api);
-        var peer = ReplicaId.Of(2, 7, 0);
-        var start = DateTimeOffset.UtcNow;
+        await using var peer = await ScriptedPeer.StartAsync();
+        var gru = peer.Sender;
+        var store = await gru.StoreAsync();
+        var c0 = await gru.HeadAsync();
+        var first = await peer.NextAsync();
+        store.BackupAnchor = null;
+        await peer.AckAsync(first);
+        await Assert.That(await gru.UntilAckedAsync(peer.Replica, c0)).IsTrue();
+        await gru.WriteAsync(async transaction => _ = await transaction.PutAsync(Items, "slow", Json("""{"n":1}"""), CancellationToken.None));
+        var c1 = await gru.HeadAsync();
+        var pending = await peer.NextAsync();
+        await Assert.That(pending.Batch?.LastChangeId).IsEqualTo((ulong)c1);
+        await gru.WriteAsync(async transaction => _ = await transaction.PutAsync(Items, "newest", Json("""{"n":2}"""), CancellationToken.None));
+        var c2 = await gru.HeadAsync();
 
         foreach (var at in new[] { TimeSpan.FromMinutes(2), TimeSpan.FromHours(12), TimeSpan.FromHours(23) })
         {
-            await Assert.That(await AckAsync(store, peer, c0, start + at, backupAnchor: null)).IsEqualTo(c0).Because($"heard from at +{at}");
+            peer.Clock.Offset = at;
+            await peer.ReportFrontierAsync();
+            await gru.TrimAsync();
+            await Assert.That(await gru.FloorAsync(peer.Clock.GetUtcNow())).IsEqualTo(c0).Because($"heard from at +{at}");
             await Assert.That(await OldestAsync(store)).IsEqualTo(c0).Because($"inside 24 h the ack holds its rows (+{at})");
         }
 
-        await Assert.That(await AckAsync(store, peer, c0, start + TimeSpan.FromHours(25), backupAnchor: c1)).IsEqualTo(c0).Because("the peer still counts as live");
+        store.BackupAnchor = c1;
+        peer.Clock.Offset = TimeSpan.FromHours(25);
+        await peer.ReportFrontierAsync();
+        await gru.TrimAsync();
+        await Assert.That(await gru.FloorAsync(peer.Clock.GetUtcNow())).IsEqualTo(c0).Because("the peer still counts as live");
         await Assert.That(await OldestAsync(store)).IsEqualTo(c1).Because("the backup anchor still holds its rows");
 
-        await Assert.That(await AckAsync(store, peer, c1, start + TimeSpan.FromHours(25), backupAnchor: null)).IsEqualTo(c1).Because("slow progress does not renew the hold");
+        store.BackupAnchor = null;
+        await peer.AckAsync(pending);
+        await Assert.That(await gru.UntilAckedAsync(peer.Replica, c1)).IsTrue();
+        await Assert.That(await gru.FloorAsync(peer.Clock.GetUtcNow())).IsEqualTo(c1).Because("slow progress does not renew the hold");
         await Assert.That(await OldestAsync(store)).IsEqualTo(c2).Because("past 24 h the ack holds nothing; the newest commit stays");
-        var groups = api.Server.Services.GetRequiredService<IChangeGroupSource>();
-        await Assert.That(await groups.RetainsAsync(await api.TenantOfAsync(), c1, CancellationToken.None)).IsFalse().Because("the peer refills even after its ack advances");
+        await Assert.That((await peer.NextAsync()).Refill?.ChangeId).IsEqualTo((ulong)c2).Because("the live sender refills after its late ack");
     }
 
-    // The far-behind eviction sets seen to 0; within the 24 h after a start (GoneBefore is long.MinValue then) that row must
-    // not hold rows either.
     [Test]
     public async Task An_evicted_peer_holds_no_rows_during_the_first_24_hours_after_a_start()
     {
-        await using var api = await DocumentApi.StartAsync();
-        var (store, c0, _, c2) = await CommitsAsync(api);
-        var now = DateTimeOffset.UtcNow.AddMinutes(2);
+        await using var peer = await ScriptedPeer.StartAsync();
+        var gru = peer.Sender;
+        var store = await gru.StoreAsync();
+        var c0 = await gru.HeadAsync();
+        var first = await peer.NextAsync();
+        store.BackupAnchor = null;
+        await peer.AckAsync(first);
+        await Assert.That(await gru.UntilAckedAsync(peer.Replica, c0)).IsTrue();
         var evicted = ReplicaId.Of(2, 7, 0);
-        _ = await AckAsync(store, evicted, c0, now, backupAnchor: null);
-        await Assert.That(await OldestAsync(store)).IsEqualTo(c0);
-        _ = await Run(store, $"UPDATE _tb_peers SET seen = 0 WHERE node = {unchecked((long)evicted.Value)};");
-
-        await Assert.That(await AckAsync(store, ReplicaId.Of(3, 7, 0), c2, now, backupAnchor: null)).IsEqualTo(c2).Because("the evicted row is no floor");
-        await Assert.That(await OldestAsync(store)).IsEqualTo(c2);
+        _ = await Run(store, $"INSERT INTO _tb_peers (node, applied, acked, stable, seen) VALUES ({unchecked((long)evicted.Value)}, 0, {c0}, 0, 0);");
+        await gru.WriteAsync(async transaction => _ = await transaction.PutAsync(Items, "newest", Json("""{"n":1}"""), CancellationToken.None));
+        var newest = await gru.HeadAsync();
+        var pending = await peer.NextAsync();
+        peer.Clock.Offset = TimeSpan.FromMinutes(2);
+        await peer.AckAsync(pending);
+        await Assert.That(await gru.UntilAckedAsync(peer.Replica, newest)).IsTrue();
+        await Assert.That(await gru.FloorAsync(peer.Clock.GetUtcNow())).IsEqualTo(newest).Because("seen 0 is excluded even during startup's grace period");
+        await Assert.That(await OldestAsync(store)).IsEqualTo(newest);
     }
 
-    // One transaction larger than any fixed scan window (70,000 captured rows, then its commit) and a newer commit, all past
-    // 24 h, with a live peer at ack 0: retention reaches the newest commit, never stops before the first commit row.
+    // The listener holds the first real batch at ack 0 while a fixture appends a transaction beyond the old scan window.
     [Test]
     public async Task Rows_past_24_hours_go_whatever_the_size_of_the_transaction()
     {
-        await using var api = await DocumentApi.StartAsync();
-        var (store, _, _, _) = await CommitsAsync(api);
-        var peer = ReplicaId.Of(2, 7, 0);
-        _ = await AckAsync(store, peer, 0, DateTimeOffset.UtcNow.AddMinutes(2), backupAnchor: null);
+        await using var peer = await ScriptedPeer.StartAsync();
+        var gru = peer.Sender;
+        var store = await gru.StoreAsync();
+        var pending = await peer.NextAsync();
+        await Assert.That(pending.Batch).IsNotNull().Because("a real unacknowledged local group must hold the oversized fixture");
+        store.BackupAnchor = null;
         _ = await Run(store, """
             INSERT INTO turso_cdc (change_id, change_time, change_type, table_name, id)
             SELECT (SELECT max(change_id) FROM turso_cdc) + n, unixepoch(), -1, 'items', n
@@ -83,21 +116,26 @@ public sealed class ChangeLogAgeTests
             """);
         _ = await Run(store, "INSERT INTO turso_cdc (change_id, change_time, change_type) SELECT max(change_id) + 1, unixepoch(), 2 FROM turso_cdc;");
         _ = await Run(store, "INSERT INTO turso_cdc (change_id, change_time, change_type) SELECT max(change_id) + 1, unixepoch(), 2 FROM turso_cdc;");
-        _ = await Run(store, "DELETE FROM turso_cdc WHERE change_id <= (SELECT max(change_id) - 70002 FROM turso_cdc);");
         var newest = await ScalarAsync(store, "SELECT max(change_id) FROM turso_cdc;");
-        await Assert.That(await RowsAsync(store)).IsEqualTo(70_002L);
+        var rows = await RowsAsync(store);
+        await Assert.That(rows).IsGreaterThan(70_002L);
 
-        _ = await AckAsync(store, peer, 0, DateTimeOffset.UtcNow.AddMinutes(2), backupAnchor: null);
-        await Assert.That(await RowsAsync(store)).IsEqualTo(70_002L).Because("inside 24 h the ack at 0 holds every row");
-        _ = await AckAsync(store, peer, 0, DateTimeOffset.UtcNow.AddHours(25), backupAnchor: null);
+        peer.Clock.Offset = TimeSpan.FromMinutes(2);
+        await peer.ReportFrontierAsync();
+        await gru.TrimAsync();
+        await Assert.That(await gru.FloorAsync(peer.Clock.GetUtcNow())).IsEqualTo(0L);
+        await Assert.That(await RowsAsync(store)).IsEqualTo(rows).Because("inside 24 h the ack at 0 holds every row");
+        peer.Clock.Offset = TimeSpan.FromHours(25);
+        await peer.ReportFrontierAsync();
+        await peer.AckAsync(pending);
+        await Assert.That(await gru.UntilAckedAsync(peer.Replica, ScriptedPeer.ChangeId(pending))).IsTrue();
         await Assert.That(await OldestAsync(store)).IsEqualTo(newest);
+        await Assert.That(await RowsAsync(store)).IsEqualTo(1L).Because("the entire oversized transaction went");
     }
 
-    // Neither machine streams to the other; sjc is heard from at the shifted clock (a stable report, as its stream sends
-    // them) while its ack stays below gru's write, which it does not get. 25 hours later retention cuts that write's rows though sjc is live, and once gru streams
-    // to it again sjc gets the write by a refill and acks gru's head.
+    // A machine absent for longer than the retention bound gets its missing write by a real refill on return.
     [Test]
-    public async Task A_live_peer_whose_ack_is_stuck_past_24_hours_rejoins_by_a_refill()
+    public async Task A_peer_gone_past_24_hours_rejoins_by_a_refill()
     {
         var clock = new ShiftedTime();
         await using var pair = await Pair.StartAsync(clock);
@@ -118,53 +156,15 @@ public sealed class ChangeLogAgeTests
         await Assert.That(await gru.Groups.RetainsAsync(pair.Database, acked, CancellationToken.None)).IsTrue();
 
         clock.Offset = TimeSpan.FromHours(25);
-        await gru.Groups.RecordStableAsync(pair.Database, sjcNode, default, CancellationToken.None);
         await gru.TrimAsync();
         var retainedAck = await gru.Groups.AckedAsync(pair.Database, sjcNode, CancellationToken.None);
         await Assert.That(retainedAck).IsLessThan(missing).Because("quiet rows may advance the cursor, but the missing local group is never acknowledged");
-        await Assert.That(await gru.FloorAsync(clock.GetUtcNow())).IsEqualTo(retainedAck).Because("sjc still counts as heard from");
+        await Assert.That(await gru.FloorAsync(clock.GetUtcNow())).IsNull().Because("sjc has been absent past the bound");
         await Assert.That(await gru.Groups.RetainsAsync(pair.Database, acked, CancellationToken.None)).IsFalse().Because("the 24 h age cut passed the stuck ack");
 
         pair.List();
         await Assert.That(await sjc.UntilAsync("held", """{"n":1}""")).IsTrue().Because("sjc refills the cut write");
         await Assert.That(await gru.UntilAckedAsync(sjcNode, await gru.HeadAsync())).IsTrue();
-    }
-
-    private static async Task<(SqliteDatabaseStore Store, long C0, long C1, long C2)> CommitsAsync(DocumentApi api)
-    {
-        foreach (var n in new[] { 1, 2, 3 })
-        {
-            (await api.PutAsync(DocumentApi.NewId(), new { n })).Status.ShouldBe(HttpStatusCode.Created);
-        }
-
-        var store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        var commits = await store.WithWriterAsync(session =>
-        {
-            using var command = session.Connection.CreateCommand();
-            command.CommandText = "SELECT change_id FROM turso_cdc WHERE change_type = 2 ORDER BY change_id DESC LIMIT 3;";
-            using var reader = command.ExecuteReader();
-            List<long> ids = [];
-            while (reader.Read())
-            {
-                ids.Insert(0, reader.GetInt64(0));
-            }
-
-            return ids;
-        }, "a test reading the change log's commits", CancellationToken.None);
-        await Assert.That(commits.Count).IsEqualTo(3);
-        return (store, commits[0], commits[1], commits[2]);
-    }
-
-    // Records the peer's ack as an acknowledgement on the stream does, at `now`; the floor every live peer acked.
-    private static async Task<long?> AckAsync(SqliteDatabaseStore store, ReplicaId peer, long changeId, DateTimeOffset now, long? backupAnchor)
-    {
-        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None);
-        await using (transaction)
-        {
-            var (_, floor) = await transaction.RecordAckedAsync(peer, changeId, default, backupAnchor, now, CancellationToken.None);
-            _ = await transaction.CommitAsync(CancellationToken.None);
-            return floor;
-        }
     }
 
     private static Task<long> OldestAsync(SqliteDatabaseStore store) => ScalarAsync(store, "SELECT min(change_id) FROM turso_cdc;");
@@ -188,6 +188,156 @@ public sealed class ChangeLogAgeTests
         }, "a test editing the change log or the peers table", CancellationToken.None);
 
     private static ReadOnlyMemory<byte> Json(string json) => Encoding.UTF8.GetBytes(json);
+
+    /// <summary>A real sender with a real gRPC listener that holds its batches until the test acknowledges them.</summary>
+    private sealed class ScriptedPeer : Features.Replication.V1.Replication.ReplicationBase, IAsyncDisposable
+    {
+        private readonly Channel<PushFrame> _pending = Channel.CreateBounded<PushFrame>(16);
+        private readonly Channel<AckFrame> _answers = Channel.CreateBounded<AckFrame>(16);
+        private WebApplication? _app;
+
+        public TenantContext Database { get; } = new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
+
+        public ReplicaId Replica { get; } = ReplicaId.Of(1, 9, 0);
+
+        public ShiftedTime Clock { get; } = new();
+
+        public Node Sender { get; private set; } = null!;
+
+        public static async Task<ScriptedPeer> StartAsync()
+        {
+            var peer = new ScriptedPeer();
+            try
+            {
+                var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
+                builder.Configuration.Sources.Clear();
+                builder.Logging.ClearProviders();
+                builder.WebHost.ConfigureKestrel(kestrel =>
+                    kestrel.Listen(IPAddress.Loopback, 0, listen => listen.Protocols = HttpProtocols.Http2));
+                builder.Services.AddGrpc();
+                builder.Services.AddSingleton(peer);
+                peer._app = builder.Build();
+                peer._app.MapGrpcService<ScriptedPeer>();
+                await peer._app.StartAsync();
+                var address = peer._app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+                var members = new FakeMemberStore();
+                peer.Sender = await Pair.StartNodeAsync(peer.Database, members, "gru", "sjc", peer.Clock, user: null);
+                // Keep the first local group intact until the sender reaches it, even if bootstrap takes a retention tick.
+                (await peer.Sender.StoreAsync()).BackupAnchor = 0;
+                await peer.Sender.WriteAsync(async transaction =>
+                {
+                    _ = await transaction.CreateCollectionAsync(new CollectionInfo(Items, 1), CancellationToken.None);
+                    _ = await transaction.PutAsync(Items, "warm", Json("""{"n":0}"""), CancellationToken.None);
+                });
+                members.Join(new ClusterMember("zzzz-peer", address, "sjc", ""));
+                return peer;
+            }
+            catch
+            {
+                await peer.DisposeAsync();
+                throw;
+            }
+        }
+
+        public Task<PushFrame> NextAsync() => _pending.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+
+        public static long ChangeId(PushFrame frame) => checked((long)(frame.Batch?.LastChangeId ?? frame.Refill!.ChangeId));
+
+        public async Task AckAsync(PushFrame frame) => await _answers.Writer.WriteAsync(new AckFrame
+        {
+            Ack = new Ack { Database = frame.Batch?.Database ?? frame.Refill!.Database, ChangeId = checked((ulong)ChangeId(frame)) },
+        }).AsTask().WaitAsync(Deadline);
+
+        public async Task ReportFrontierAsync()
+        {
+            using var channel = PeerChannel.Create(Sender.Api.Server.BaseAddress);
+            using var deadline = new CancellationTokenSource(Deadline);
+            using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push(cancellationToken: deadline.Token);
+            await call.RequestStream.WriteAsync(new PushFrame
+            {
+                Hello = new Hello { Node = Replica.Value, Region = "sjc", Machine = "zzzz-peer" },
+            }, deadline.Token);
+            await Assert.That(await call.ResponseStream.MoveNext(deadline.Token)).IsTrue();
+            await Assert.That(call.ResponseStream.Current.Welcome).IsNotNull();
+            await call.RequestStream.WriteAsync(new PushFrame
+            {
+                Frontier = new Frontier { Database = ChangeGroups.Wire(Database) },
+            }, deadline.Token);
+            await Assert.That(await call.ResponseStream.MoveNext(deadline.Token)).IsTrue();
+            await Assert.That(call.ResponseStream.Current.Stable).IsNotNull();
+            await call.RequestStream.CompleteAsync();
+            while (await call.ResponseStream.MoveNext(deadline.Token))
+            {
+            }
+        }
+
+        public override async Task Push(IAsyncStreamReader<PushFrame> requestStream, IServerStreamWriter<AckFrame> responseStream, ServerCallContext context)
+        {
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
+            var writing = WriteAnswersAsync(responseStream, stop.Token);
+            try
+            {
+                while (await requestStream.MoveNext(stop.Token))
+                {
+                    var frame = requestStream.Current;
+                    if (frame.Hello is not null)
+                    {
+                        await _answers.Writer.WriteAsync(new AckFrame { Welcome = new Welcome { Node = Replica.Value } }, stop.Token);
+                    }
+                    else if (frame.Heartbeat is not null)
+                    {
+                        await _answers.Writer.WriteAsync(new AckFrame(), stop.Token);
+                    }
+                    else if (frame.Frontier is { } frontier)
+                    {
+                        await _answers.Writer.WriteAsync(new AckFrame { Stable = new StableReport { Database = frontier.Database } }, stop.Token);
+                    }
+                    else if ((frame.Batch?.Database ?? frame.Refill?.Database) is { } database)
+                    {
+                        if (ChangeGroups.Tenant(database) == Database)
+                        {
+                            await _pending.Writer.WriteAsync(frame, stop.Token);
+                        }
+                        else
+                        {
+                            await _answers.Writer.WriteAsync(new AckFrame { Ack = new Ack { Database = database, Refused = true } }, stop.Token);
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                await stop.CancelAsync();
+                await writing.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
+        }
+
+        private async Task WriteAnswersAsync(IServerStreamWriter<AckFrame> responseStream, CancellationToken cancellationToken)
+        {
+            await foreach (var answer in _answers.Reader.ReadAllAsync(cancellationToken))
+            {
+                await responseStream.WriteAsync(answer, cancellationToken);
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            try
+            {
+                if (Sender is not null)
+                {
+                    await Sender.DisposeAsync();
+                }
+            }
+            finally
+            {
+                if (_app is not null)
+                {
+                    await _app.DisposeAsync();
+                }
+            }
+        }
+    }
 
     /// <summary>One machine: the real server with its CDC tailer, holding the pair's database.</summary>
     private sealed class Node(ManagementApi api, TenantContext database) : IAsyncDisposable
@@ -297,8 +447,8 @@ public sealed class ChangeLogAgeTests
             var pair = new Pair();
             try
             {
-                pair.Gru = await pair.StartAsync("gru", "sjc", clock, user: null);
-                pair.Sjc = await pair.StartAsync("sjc", "gru", clock, pair.Gru.Api.User);
+                pair.Gru = await StartNodeAsync(pair.Database, pair._members, "gru", "sjc", clock, user: null);
+                pair.Sjc = await StartNodeAsync(pair.Database, pair._members, "sjc", "gru", clock, pair.Gru.Api.User);
                 return pair;
             }
             catch
@@ -308,33 +458,39 @@ public sealed class ChangeLogAgeTests
             }
         }
 
-        private async Task<Node> StartAsync(string region, string replica, TimeProvider clock, string? user)
+        public static async Task<Node> StartNodeAsync(TenantContext database, FakeMemberStore members, string region, string replica, TimeProvider clock, string? user)
         {
             var name = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
             var api = await ManagementApi.StartAsync(settings =>
             {
                 settings["region"] = region;
                 settings["node-name"] = name;
-            }, services => services.AddSingleton<IMemberDirectory>(_members), time: clock, userId: user);
-            var node = new Node(api, Database);
-            var commit = JsonSerializer.Serialize(new
+            }, services => services.AddSingleton<IMemberDirectory>(members), time: clock, userId: user);
+            try
             {
-                id = EntityIds.New().ToString(),
-                ops = new object[]
+                var commit = JsonSerializer.Serialize(new
                 {
-                    new { op = "create_organization", id = Database.OrganizationId, name = $"age-{Database.OrganizationId}" },
-                    new { op = "create_project", organization = Database.OrganizationId, id = Database.ProjectId, name = "age" },
-                    new { op = "create_database", organization = Database.OrganizationId, project = Database.ProjectId, name = "main", id = Database.DatabaseId, replica_regions = new[] { replica } },
-                },
-            });
-            using var service = api.Service(api.User);
-            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
-            return node;
+                    id = EntityIds.New().ToString(),
+                    ops = new object[]
+                    {
+                        new { op = "create_organization", id = database.OrganizationId, name = $"age-{database.OrganizationId}" },
+                        new { op = "create_project", organization = database.OrganizationId, id = database.ProjectId, name = "age" },
+                        new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "main", id = database.DatabaseId, replica_regions = new[] { replica } },
+                    },
+                });
+                using var service = api.Service(api.User);
+                using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
+                await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+                return new Node(api, database);
+            }
+            catch
+            {
+                await api.DisposeAsync();
+                throw;
+            }
         }
 
-        // Drops both machines from the DNS and waits until neither streams to the other: from then on only the test marks
-        // a peer heard from.
+        // Drops both machines from DNS and waits until neither streams to the other.
         public async Task UnlistAsync()
         {
             _unlisted.AddRange(await _members.ListAsync(CancellationToken.None));
