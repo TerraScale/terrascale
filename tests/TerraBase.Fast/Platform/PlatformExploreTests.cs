@@ -14,7 +14,7 @@ namespace TerraBase.Fast.Platform;
 /// </summary>
 public sealed class PlatformExploreTests
 {
-    private static readonly string Keys = $"/v1/projects/{PlatformDatabases.ProjectId}/databases/{PlatformDatabases.Auth}/collections/signing_keys";
+    private static readonly string Keys = $"/v1/projects/{PlatformDatabases.AuthProjectId}/databases/{PlatformDatabases.Auth}/collections/signing_keys";
     private static readonly string Explore = $"{PlatformExplore.Databases}/{PlatformDatabases.Auth}/collections/signing_keys/documents";
 
     [Test]
@@ -75,7 +75,7 @@ public sealed class PlatformExploreTests
         using var projectToken = api.WithToken(api.Issuer.Mint(user, token =>
         {
             token.Claims[PlatformExplore.RoleClaim] = PlatformExplore.AdminRole;
-            token.Claims["project_id"] = PlatformDatabases.ProjectId;
+            token.Claims["project_id"] = PlatformDatabases.AuthProjectId;
             token.Claims["scope"] = "documents:read";
         }));
         using var anonymous = api.WithToken(null);
@@ -101,6 +101,26 @@ public sealed class PlatformExploreTests
         using var storage = PeerTls.CreateClient(api.Server.BaseAddress);
         using var stored = await storage.GetAsync(ManagementApi.Uri(Keys + "/documents/by-key?id=k1"));
         await Assert.That((await stored.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("kid").GetString()).IsEqualTo("k1");
+    }
+
+    [Test]
+    public async Task Admins_explore_the_dashboard_database_in_its_own_project()
+    {
+        await using var api = await StartAsync(new ExploreLogs());
+        using var storage = PeerTls.CreateClient(api.Server.BaseAddress);
+        const string dashboard = "/v1/projects/00000000000000000000000005/databases/ts-dashboard/collections";
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            using var created = await storage.PostAsJsonAsync(ManagementApi.Uri(dashboard), new { name = "plans" }, token);
+            return created.StatusCode is HttpStatusCode.Created or HttpStatusCode.Conflict;
+        });
+        using var written = await storage.PutAsJsonAsync(ManagementApi.Uri(dashboard + "/plans/documents/by-key?id=basic"), new { name = "Basic" });
+        written.EnsureSuccessStatusCode();
+        using var client = api.WithToken(AdminToken(api, EntityIds.New().ToString()));
+        using var read = await client.GetAsync(ManagementApi.Uri(PlatformExplore.Databases + "/ts-dashboard/collections/plans/documents/by-key?id=basic"));
+
+        await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("name").GetString()).IsEqualTo("Basic");
     }
 
     private static string AdminToken(ManagementApi api, string user) =>

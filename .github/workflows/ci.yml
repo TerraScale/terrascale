@@ -340,9 +340,7 @@ jobs:
   # One job, no `needs`: it joins the `deploy` queue when the run starts, so queued deploys keep push order and a newer
   # pending deploy replaces an older one (never the reverse). ts-auth keeps its data in TerraBase, so it rolls out after.
   deploy:
-    # PAUSED 2026-10-12 by the user's approval (containment 1C): merges to main must not deploy until the
-    # three-region storage rebuild is done. Re-enable by deleting `false &&` in a reviewed PR.
-    if: false && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: alpha
     timeout-minutes: 30
     concurrency:

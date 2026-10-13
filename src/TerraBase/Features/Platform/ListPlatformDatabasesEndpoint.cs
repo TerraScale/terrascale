@@ -29,9 +29,9 @@ public sealed class ListPlatformDatabasesEndpoint(IManagementService management,
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var items = new List<PlatformDatabaseBody>();
-        foreach (var name in PlatformDatabases.Databases.Keys)
+        foreach (var (name, database) in PlatformDatabases.Databases)
         {
-            switch (await management.FindDatabaseRecordAsync(PlatformDatabases.OrganizationId, PlatformDatabases.ProjectId, name, cancellationToken))
+            switch (await management.FindDatabaseRecordAsync(PlatformDatabases.OrganizationId, database.ProjectId, name, cancellationToken))
             {
                 case ManagedDatabase record:
                     items.Add(new PlatformDatabaseBody(record.Name, record.Id, record.Home(options.Region), record.Replicas));

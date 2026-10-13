@@ -1,6 +1,10 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Platform;
@@ -10,14 +14,14 @@ using TerraBase.Testing;
 namespace TerraBase.Fast.Platform;
 
 /// <summary>
-/// Every TerraBase start seeds TerraScale's own databases (platform-auth, platform-dashboard) under fixed ids, in the
-/// background, idempotently: restarts, concurrent runs and independent regions all converge on the same records. Only the
-/// platform operator on the internal listener reaches them; customer credentials never do.
+/// Every TerraBase start seeds TerraScale's own databases (ts-auth, ts-dashboard) under fixed ids, in the
+/// background, idempotently: restarts, concurrent runs and independent regions all converge on the same records. The internal
+/// operator and correctly scoped global-issuer tokens reach them; other projects and catalog members cannot.
 /// </summary>
 public sealed class PlatformDatabasesTests
 {
-    private static readonly string Auth = $"/v1/projects/{PlatformDatabases.ProjectId}/databases/{PlatformDatabases.Auth}";
-    private static readonly string Dashboard = $"/v1/projects/{PlatformDatabases.ProjectId}/databases/{PlatformDatabases.Dashboard}";
+    private static readonly string Auth = $"/v1/projects/{PlatformDatabases.AuthProjectId}/databases/{PlatformDatabases.Auth}";
+    private static readonly string Dashboard = $"/v1/projects/{PlatformDatabases.DashboardProjectId}/databases/{PlatformDatabases.Dashboard}";
 
     [Test]
     public async Task Every_start_seeds_both_databases_and_the_operator_stores_in_them_without_a_credential()
@@ -35,6 +39,28 @@ public sealed class PlatformDatabasesTests
         await Assert.That(written.IsSuccessStatusCode).IsTrue();
         await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("name").GetString()).IsEqualTo("Ada");
         await Assert.That(dashboard.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    [Test]
+    public async Task Each_named_project_owns_exactly_its_database_and_the_other_project_cannot_resolve_it()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync(Seeding);
+        await SeededAsync(server);
+        using var storage = PeerTls.CreateClient(server.BaseAddress);
+
+        // These are the shared contracts consumed by auth and dashboard through ts-dotnet.
+        using var auth = await storage.GetAsync(ManagementApi.Uri("/v1/projects/00000000000000000000000002/databases/ts-auth/collections"));
+        using var dashboard = await storage.GetAsync(ManagementApi.Uri("/v1/projects/00000000000000000000000005/databases/ts-dashboard/collections"));
+        using var wrongAuth = await storage.GetAsync(ManagementApi.Uri("/v1/projects/00000000000000000000000005/databases/ts-auth/collections"));
+        using var wrongDashboard = await storage.GetAsync(ManagementApi.Uri("/v1/projects/00000000000000000000000002/databases/ts-dashboard/collections"));
+
+        await Assert.That(auth.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(dashboard.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(wrongAuth.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(wrongDashboard.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        var records = await RecordsAsync(server);
+        await Assert.That(records.Single(record => record.Name == "ts-auth").Id).IsEqualTo("00000000000000000000000003");
+        await Assert.That(records.Single(record => record.Name == "ts-dashboard").Id).IsEqualTo("00000000000000000000000004");
     }
 
     [Test]
@@ -104,7 +130,7 @@ public sealed class PlatformDatabasesTests
 
             foreach (var database in records[0])
             {
-                await Assert.That(database.Id).IsEqualTo(PlatformDatabases.Databases[database.Name]);
+                await Assert.That(database.Id).IsEqualTo(PlatformDatabases.Databases[database.Name].Id);
                 await Assert.That(database.HomeRegion).IsEqualTo("gru");
                 await Assert.That(database.Replicas).IsEqualTo("sjc,fra");
             }
@@ -122,10 +148,10 @@ public sealed class PlatformDatabasesTests
         await SeededAsync(api.Server);
         var organization = await api.CreateOrganizationAsync("customer");
         using var customerKey = await api.CreateClientAsync(organization, "documents:read", "documents:write");
-        // A ts-auth project token naming the platform project: TerraBase never bound that project to ts-auth.
+        // A token from another issuer naming the platform project: the seed only trusts the global issuer.
         using var projectToken = api.WithToken(api.Issuer.Mint(api.User, token =>
         {
-            token.Claims["project_id"] = PlatformDatabases.ProjectId;
+            token.Claims["project_id"] = PlatformDatabases.AuthProjectId;
             token.Claims["scope"] = "documents:read databases:read";
         }));
         using var anonymous = api.WithToken(null);
@@ -147,6 +173,89 @@ public sealed class PlatformDatabasesTests
         await Assert.That(asOperatorUser.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
+    [Test]
+    public async Task Global_issuer_project_tokens_resolve_their_seeded_database_without_auth_enrollment()
+    {
+        await using var api = await ManagementApi.StartAsync(settings =>
+        {
+            Seeding(settings);
+            settings["auth-issuer"] = TerraBaseOptions.PlatformAuthIssuer;
+        }, services => services.AddHttpClient("ts-auth").AddHttpMessageHandler(() => new GlobalIssuerRoute()));
+        await SeededAsync(api.Server);
+        foreach (var (name, database) in PlatformDatabases.Databases)
+        {
+            using var client = api.WithToken(api.Issuer.Mint(api.User, token =>
+            {
+                token.Issuer = TerraBaseOptions.PlatformAuthIssuer;
+                token.Claims["project_id"] = database.ProjectId;
+                token.Claims["database"] = name;
+                token.Claims["scope"] = "databases:read documents:read";
+            }));
+            using var read = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{database.ProjectId}/databases/{name}/collections"));
+            using var other = await client.GetAsync(ManagementApi.Uri(name == PlatformDatabases.Auth ? Dashboard + "/collections" : Auth + "/collections"));
+            await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(other.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+
+        await Assert.That(api.Issuer.ProjectFetches).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments("issuer")]
+    [Arguments("version")]
+    [Arguments("organizationId")]
+    [Arguments("authorityOrganizationId")]
+    public async Task Seeding_refuses_a_conflicting_binding_without_overwriting_it(string field)
+    {
+        await using var server = await TerraBaseTestServer.StartAsync(Seeding);
+        await SeededAsync(server);
+        var system = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        var collection = $"projects/{PlatformDatabases.DashboardProjectId}/binding";
+        byte[] conflicting;
+        await using (var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            var stored = await transaction.GetAsync(collection, "ts_auth", CancellationToken.None);
+            var binding = JsonNode.Parse(stored!.Json.Span)!;
+            if (field == "version")
+            {
+                binding[field] = 2;
+            }
+            else
+            {
+                binding[field] = field == "issuer" ? "https://auth.example.invalid/other" : EntityIds.New().ToString();
+            }
+
+            conflicting = Encoding.UTF8.GetBytes(binding.ToJsonString());
+            await transaction.PutAsync(collection, "ts_auth", conflicting, CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        var catalog = server.Services.GetRequiredService<IPlatformCatalog>();
+        await Assert.That(await catalog.EnsurePlatformAsync(CancellationToken.None) is Conflict { Code: "platform_binding_taken" }).IsTrue();
+        await using var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
+        var kept = await read.GetAsync(collection, "ts_auth", CancellationToken.None);
+        await Assert.That(kept!.Json.ToArray()).IsEquivalentTo(conflicting);
+    }
+
+    // Test-only transport: serve the production issuer's discovery/JWKS with this test's private signing keys.
+    private sealed class GlobalIssuerRoute : DelegatingHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            request.RequestUri = new Uri(request.RequestUri!.AbsoluteUri.Replace(TerraBaseOptions.PlatformAuthIssuer, TestIssuer.Issuer, StringComparison.Ordinal));
+            var response = await base.SendAsync(request, cancellationToken);
+            if (request.RequestUri.AbsoluteUri == TestIssuer.Discovery && response.IsSuccessStatusCode)
+            {
+                var discovery = await response.Content.ReadAsStringAsync(cancellationToken);
+                response.Content.Dispose();
+                response.Content = new StringContent(discovery.Replace(TestIssuer.Issuer, TerraBaseOptions.PlatformAuthIssuer, StringComparison.Ordinal),
+                    Encoding.UTF8, "application/json");
+            }
+
+            return response;
+        }
+    }
+
     private static void Seeding(Dictionary<string, string> settings) => settings[TerraBaseTestServer.PlatformSeedKey] = "true";
 
     private sealed record Seeded(string Id, string Name, string? HomeRegion, string Replicas, long Version, DateTimeOffset CreatedAt);
@@ -161,9 +270,9 @@ public sealed class PlatformDatabasesTests
     {
         var management = server.Services.GetRequiredService<IManagementService>();
         var records = new List<Seeded>();
-        foreach (var name in PlatformDatabases.Databases.Keys)
+        foreach (var (name, database) in PlatformDatabases.Databases)
         {
-            if (await management.FindDatabaseRecordAsync(PlatformDatabases.OrganizationId, PlatformDatabases.ProjectId, name, cancellationToken) is ManagedDatabase record)
+            if (await management.FindDatabaseRecordAsync(PlatformDatabases.OrganizationId, database.ProjectId, name, cancellationToken) is ManagedDatabase record)
             {
                 records.Add(new Seeded(record.Id, record.Name, record.HomeRegion, string.Join(',', record.Replicas), record.PlacementVersion, record.CreatedAt));
             }
