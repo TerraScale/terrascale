@@ -46,8 +46,9 @@ public sealed class RestoreWindowTests
 
         using var now = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), name = "main-unshipped" });
         using var afterLatest = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = latest.AddTicks(1), name = "main-after" });
-        await Assert.That(now.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(afterLatest.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        // Not in the future: the backup does not hold these times yet, a retryable 409.
+        await Assert.That(now.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(afterLatest.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         var databases = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"{database.ProjectPath}/databases"));
         await Assert.That(databases.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!)).IsEquivalentTo([database.Id]);
 
@@ -94,7 +95,8 @@ public sealed class RestoreWindowTests
         await Assert.That(latest).IsEqualTo(time.GetUtcNow());
 
         using var beforeEarliest = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = earliest.AddTicks(-1), name = "main-before" });
-        await Assert.That(beforeEarliest.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        // Within the plan's retention window, before the oldest stored snapshot: the backup does not hold it (409).
+        await Assert.That(beforeEarliest.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         var databases = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"{database.ProjectPath}/databases"));
         await Assert.That(databases.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!)).IsEquivalentTo([database.Id]);
 

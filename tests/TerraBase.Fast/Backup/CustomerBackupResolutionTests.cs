@@ -15,6 +15,8 @@ namespace TerraBase.Fast.Backup;
 
 public sealed class CustomerBackupResolutionTests
 {
+    private const string Unreadable = "continuous backup of this database cannot be read: an object fails authentication or its integrity check";
+
     [Test]
     [Arguments("unsupported-version")]
     public async Task Unresolvable_customer_destinations_return_fixed_503_on_window_and_restore_listeners(string failure)
@@ -106,10 +108,10 @@ public sealed class CustomerBackupResolutionTests
 
         using var failed = await project.PostAsJsonAsync(Uri(database.Data + "/point-in-time/restore"),
             new { pointInTime = latest, name = "corrupt-restore", destination = "customer" }, cancellationToken);
-        await Assert.That(failed.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+        await ErrorAssert.ErrorAsync(failed, HttpStatusCode.Conflict, "backup_unreadable", Unreadable);
         using var legacyFailed = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
             new { pointInTime = latest, name = "legacy-corrupt-restore", destination = "customer" }, cancellationToken);
-        await Assert.That(legacyFailed.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+        await ErrorAssert.ErrorAsync(legacyFailed, HttpStatusCode.Conflict, "backup_unreadable", Unreadable);
 
         s3.SeedObject(customer: true, key, original);
         using var restored = await project.PostAsJsonAsync(Uri(database.Data + "/point-in-time/restore"),

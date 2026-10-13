@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Bogus;
@@ -24,6 +25,8 @@ public sealed class PointInTimeHistoryTests
     private const string Code = "backup_history_incomplete";
     private const string Message = "continuous backup cannot prove this database's history complete up to pointInTime";
     private const string Unproven = "restore_point_unproven";
+    private const string Unreadable = "backup_unreadable";
+    private const string UnreadableMessage = "continuous backup of this database cannot be read: an object fails authentication or its integrity check";
     private const string Unplaced = "continuous backup cannot place pointInTime between two transactions: ";
     private static readonly Faker Faker = new();
 
@@ -344,8 +347,76 @@ public sealed class PointInTimeHistoryTests
         await host.RestoresAsync(s1.At, "at-a", ["seed", "a"], [], cancellationToken);
     }
 
+    [Test]
+    [Arguments("wrong-master-key")]
+    [Arguments("corrupted-segment")]
+    [Arguments("truncated-segment")]
+    [Arguments("corrupted-snapshot")]
+    public async Task An_unreadable_backup_object_is_refused_and_creates_nothing(string fault, CancellationToken cancellationToken)
+    {
+        await using var host = await Host.StartAsync(cancellationToken);
+        var (_, s2, s3) = await host.ShipThreeSegmentsAsync(cancellationToken);
+        var snapshot = host.SnapshotKey(host.SnapshotAt, 0);
+        // Two idle days let the node's key caches lapse, so a restore unwraps the data key from the bucket.
+        host.Time.Advance(TimeSpan.FromDays(2));
+        var (key, at, change) = fault switch
+        {
+            // The node's master key did not wrap the data key.
+            "wrong-master-key" => (host.DataKeyObject(snapshot), s3.At, (Func<byte[], byte[]>)(original => Encoding.ASCII.GetBytes(
+                new MasterKey(RandomNumberGenerator.GetBytes(32)).Wrap(host.Unwrap(Encoding.ASCII.GetString(original)))))),
+            "corrupted-segment" => (s2.Key, s3.At, Flip),
+            "truncated-segment" => (s2.Key, s3.At, original => original[..^20]),
+            _ => (snapshot, host.SnapshotAt, Flip),
+        };
+
+        await host.ReplaceAsync(key, change, () => host.RefusedAsync(at, Unreadable, UnreadableMessage, cancellationToken));
+        await host.RestoresAsync(at, "intact", at == s3.At ? ["seed", "a", "b", "c"] : ["seed"], [], cancellationToken);
+
+        static byte[] Flip(byte[] original)
+        {
+            var corrupted = original.ToArray();
+            corrupted[^20] ^= 0xff;
+            return corrupted;
+        }
+    }
+
+    [Test]
+    public async Task A_copy_of_a_segment_under_a_later_key_is_refused_as_an_overlap_after_its_original(CancellationToken cancellationToken)
+    {
+        await using var host = await Host.StartAsync(cancellationToken);
+        var (_, s2, s3) = await host.ShipThreeSegmentsAsync(cancellationToken);
+        // The same sealed bytes under a key with s2's start, a millisecond later: they are bound to s2's key and do not
+        // authenticate under this one, and they overlap s2.
+        host.StoreRaw(host.SegmentKey(s2.Start, s2.At.AddMilliseconds(1)), host.Raw(s2.Key));
+
+        await host.RefusedAsync(s3.At, cancellationToken);
+        await host.RestoresAsync(s2.At, "at-b", ["seed", "a", "b"], ["c"], cancellationToken);
+    }
+
+    [Test]
+    public async Task A_time_the_backup_does_not_hold_yet_or_any_more_is_refused_and_only_future_or_expired_times_are_invalid(CancellationToken cancellationToken)
+    {
+        await using var host = await Host.StartAsync(cancellationToken);
+        await host.PutAsync("a", cancellationToken);
+        await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+        var s1 = host.Segments(host.Generation).Single();
+        // b is committed, its segment not shipped yet.
+        await host.PutAsync("b", cancellationToken);
+        host.Time.Advance(TimeSpan.FromSeconds(1));
+        await host.RefusedAsync(s1.At.AddMilliseconds(500), cancellationToken);
+        foreach (var at in new[] { host.Time.GetUtcNow().AddSeconds(1), host.Time.GetUtcNow().AddYears(-1) })
+        {
+            await host.RefusedAsync(at, HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times", cancellationToken);
+        }
+
+        // The daily snapshot ships; then the generation's first snapshot is deleted: s1's time is no longer held.
+        await host.ShipAsync(TimeSpan.FromDays(1), cancellationToken);
+        await host.DeleteAsync(host.SnapshotKey(host.SnapshotAt, 0), cancellationToken);
+        await host.RefusedAsync(s1.At, cancellationToken);
+    }
+
     private static string Within(DateTimeOffset second) => string.Create(CultureInfo.InvariantCulture,
-        $"one committed in its second, {second:yyyy-MM-ddTHH:mm:ssZ} to {second.AddSeconds(1):yyyy-MM-ddTHH:mm:ssZ}, and transaction times are whole seconds");
+        $"one committed in its second, {second:yyyy-MM-ddTHH:mm:ssZ} to {second.AddSeconds(1):yyyy-MM-ddTHH:mm:ssZ}, and transaction times are whole seconds; the nearest earlier time it can place is {second:yyyy-MM-ddTHH:mm:ssZ}");
 
     private const string NoTime = "a transaction it needs has no recorded time (its log predates them, or the clock went back within it)";
 
@@ -427,6 +498,34 @@ public sealed class PointInTimeHistoryTests
                 .Order(StringComparer.Ordinal).Select(key => BackupLayout.ParseSegment(key)!)];
 
         public string SegmentKey(long start, DateTimeOffset at) => BackupLayout.Segment(File, Ulid.Parse(Generation), start, at);
+
+        public string SnapshotKey(DateTimeOffset at, long position) => BackupLayout.Snapshot(File, at, Ulid.Parse(Generation), position);
+
+        // The stored bytes of an object, as a bucket-side fault sees them.
+        public byte[] Raw(string key) => s3.Objects[key];
+
+        public void StoreRaw(string key, byte[] content) => s3.StoreObject(key, content);
+
+        // Runs check with the object key changed, then puts the original back.
+        public async Task ReplaceAsync(string key, Func<byte[], byte[]> change, Func<Task> check)
+        {
+            var original = s3.Objects[key];
+            s3.StoreObject(key, change(original));
+            try
+            {
+                await check();
+            }
+            finally
+            {
+                s3.StoreObject(key, original);
+            }
+        }
+
+        // The wrapped data key the sealed object key names.
+        public string DataKeyObject(string key) =>
+            BackupLayout.Key($"{Database.Organization}/{Database.Project}", Encoding.ASCII.GetString(s3.Objects[key], 4, 26));
+
+        public byte[] Unwrap(string wrapped) => s3.Unwrap(wrapped);
 
         // Seals log, such as one the shipper never stores, as the object key, under the data key of the generation's snapshot.
         public async Task StoreAsync(string key, byte[] log, CancellationToken cancellationToken)
@@ -542,11 +641,14 @@ public sealed class PointInTimeHistoryTests
 
         public Task RefusedAsync(DateTimeOffset at, CancellationToken cancellationToken) => RefusedAsync(at, Code, Message, cancellationToken);
 
-        public async Task RefusedAsync(DateTimeOffset at, string code, string message, CancellationToken cancellationToken)
+        public Task RefusedAsync(DateTimeOffset at, string code, string message, CancellationToken cancellationToken) =>
+            RefusedAsync(at, HttpStatusCode.Conflict, code, message, cancellationToken);
+
+        public async Task RefusedAsync(DateTimeOffset at, HttpStatusCode status, string code, string message, CancellationToken cancellationToken)
         {
             var catalog = await CatalogAsync(cancellationToken);
             await ErrorAssert.ErrorAsync(Api.Client.PostAsJsonAsync(ManagementApi.Uri(Database.Path + "/point-in-time/restore"), new { pointInTime = at, name = "refused" }, cancellationToken),
-                HttpStatusCode.Conflict, code, message);
+                status, code, message);
             await Assert.That(await CatalogAsync(cancellationToken)).IsEqualTo(catalog);
         }
 

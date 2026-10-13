@@ -51,9 +51,9 @@ public interface IPointInTimeRestore
     /// every transaction committed before then and none recorded as committed at or after it, whole. Validates its restore
     /// window at entry, before downloading or importing.
     /// Answers <see cref="Conflict"/> <c>backup_history_incomplete</c> unless the backup proves the history complete up to the time,
-    /// and <c>restore_point_unproven</c> when it cannot place the time between two transactions.
+    /// <c>restore_point_unproven</c> when it cannot place the time between two transactions, and <c>backup_unreadable</c> when
+    /// an object it needs fails authentication or the restored file its integrity check.
     /// </summary>
-    /// <exception cref="InvalidDataException">The backup fails authentication or its integrity check.</exception>
     Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 }
 
@@ -259,7 +259,14 @@ internal sealed class PointInTimeRestore(
 
         if (at < window.Earliest || at > window.Latest)
         {
-            return new Validation("pointInTime must lie between the restore window's earliest and latest times");
+            // Invalid only when no backup can ever hold the time: in the future, or before the plan's retention window.
+            // Otherwise the backup does not hold it yet or any more (an unshipped or lost final segment, a lost snapshot).
+            return at > now ? OutsideWindow() : await EarliestAsync(source, DateTimeOffset.MinValue, now, cancellationToken).ConfigureAwait(false) switch
+            {
+                DateTimeOffset retained when at >= retained => HistoryIncomplete(),
+                Unavailable error => error,
+                DateTimeOffset => OutsideWindow(),
+            };
         }
 
         if (snapshots?.Chosen is not { } chosen)
@@ -288,6 +295,10 @@ internal sealed class PointInTimeRestore(
         {
             return new Conflict("continuous backup cannot place pointInTime between two transactions: " + error.Message, "restore_point_unproven");
         }
+        catch (InvalidDataException)
+        {
+            return new Conflict("continuous backup of this database cannot be read: an object fails authentication or its integrity check", "backup_unreadable");
+        }
 
         try
         {
@@ -301,6 +312,8 @@ internal sealed class PointInTimeRestore(
     }
 
     private static Unavailable PlanLimit() => new("the point-in-time plan metadata scan exceeds 10000 objects", "pitr_plan_limit");
+
+    private static Validation OutsideWindow() => new("pointInTime must lie between the restore window's earliest and latest times");
 
     private static Conflict HistoryIncomplete() =>
         new("continuous backup cannot prove this database's history complete up to pointInTime", "backup_history_incomplete");

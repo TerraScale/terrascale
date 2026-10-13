@@ -73,7 +73,9 @@ public sealed class ContinuousBackupTests
         await Assert.That(earlierAfter.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(latest.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That((await latestAfter.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(after);
-        await Assert.That(tooEarly.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        // Before the oldest snapshot but within the plan's retention window: the backup does not hold it (409); only a
+        // future or expired time is invalid.
+        await Assert.That(tooEarly.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(future.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
 
