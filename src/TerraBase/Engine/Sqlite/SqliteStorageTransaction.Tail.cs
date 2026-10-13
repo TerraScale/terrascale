@@ -120,8 +120,9 @@ internal sealed partial class SqliteStorageTransaction
 
     /// <summary>
     /// See <see cref="IChangeGroupSource.AckedAsync"/>; null when <paramref name="peer"/> has no row yet, or when its row is
-    /// above the newest change id: a restore or a copy brought it back from another file's <c>turso_cdc</c>, whose ids this
-    /// file does not continue (retention always keeps the newest row, so an acknowledged id never passes it).
+    /// above the newest change id: an ack from another file's <c>turso_cdc</c>, whose ids this file does not continue
+    /// (copies and restores reset acks to 0 in <see cref="TursoCopy"/>; this guards any other path; retention always keeps
+    /// the newest row, so an acknowledged id never passes it).
     /// </summary>
     internal ValueTask<long?> GetAckedAsync(ReplicaId peer, CancellationToken cancellationToken) =>
         RunAsync(() =>
@@ -160,16 +161,16 @@ internal sealed partial class SqliteStorageTransaction
     /// past it is still here (after a cut the peer refills instead), then a peer whose
     /// unacknowledged CDC rows pass 1 GiB stops holding them (its <c>seen</c> goes to 0 until it is heard from again, and it
     /// refills when it returns), then what <see cref="Retention"/> allows is deleted. Returns the CDC rows left, and the
-    /// smallest acknowledged id of a peer still holding rows.
+    /// smallest acknowledged id of a peer still holding rows, and each raise as the range it proved to hold no local group.
     /// </summary>
-    internal async ValueTask<(long Left, long? Floor)> TrimAsync(long? backupAnchor, DateTimeOffset now, ReplicaId self, CancellationToken cancellationToken)
+    internal async ValueTask<(long Left, long? Floor, List<(long From, long To)> Quiet)> TrimAsync(long? backupAnchor, DateTimeOffset now, ReplicaId self, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         return await RunAsync(() =>
         {
             if (Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null)
             {
-                return (0L, (long?)null);
+                return (0L, (long?)null, new List<(long From, long To)>());
             }
 
             var newest = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0;
@@ -185,6 +186,7 @@ internal sealed partial class SqliteStorageTransaction
             // Peers at one id share one read. Only an ack whose following rows are all still here can rise: past a cut, the
             // deleted rows may have held groups the peer lacks, and it must refill instead. A damaged row past an ack leaves
             // that ack where it is (the read refuses, section 7).
+            List<(long From, long To)> raised = [];
             var oldest = Command("SELECT min(change_id) FROM turso_cdc;").ExecuteScalar() is long kept ? kept : newest + 1;
             foreach (var at in peers.Select(peer => peer.Acked).Where(acked => acked < newest && oldest <= acked + 1).Distinct().ToList())
             {
@@ -205,6 +207,7 @@ internal sealed partial class SqliteStorageTransaction
                     raise.Parameters.AddWithValue("$acked", at);
                     raise.ExecuteNonQuery();
                     peers = [.. peers.Select(peer => peer.Acked == at ? (peer.Node, quiet) : peer)];
+                    raised.Add((at, quiet));
                 }
             }
 
@@ -227,7 +230,7 @@ internal sealed partial class SqliteStorageTransaction
             var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
             var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $now * 1000 - 86400000;");
             floor.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
-            return (left, floor.ExecuteScalar() is long min ? min : (long?)null);
+            return (left, floor.ExecuteScalar() is long min ? min : (long?)null, raised);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 

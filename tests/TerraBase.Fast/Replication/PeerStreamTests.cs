@@ -520,6 +520,57 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.UntilAsync(held, """{"n":2}""")).IsTrue();
     }
 
+    // Review of #169: retention raises _tb_peers.acked over joined rows, but a live stream keeps its own in-memory ack. Once
+    // retention cuts past that ack, the sender must not tell a peer that never went silent to refill. sjc loses gru's
+    // document behind the streams' back: within 20 s only a refill (a forced compare) would bring it back, since
+    // anti-entropy repairs a bucket only after two differing rounds 60 s apart. Two rounds of joined writes and a cut.
+    [Test]
+    public async Task A_live_peer_is_not_told_to_refill_after_its_ack_rises_over_joined_rows()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var first = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":0}"""), CancellationToken.None);
+        });
+        var sjcNode = sjc.Node;
+        var streamAck = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, streamAck)).IsTrue();
+        List<string> rounds = [];
+        for (var round = 1; round <= 2; round++)
+        {
+            var last = string.Empty;
+            for (var write = 1; write <= 50; write++)
+            {
+                last = EntityIds.New().ToString();
+                var id = last;
+                await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", id, Json($$"""{"n":{{write}}}"""), CancellationToken.None));
+            }
+
+            await Assert.That(await gru.UntilAsync(last, """{"n":50}""")).IsTrue();
+            await sjc.LoseAsync("items", first);
+            clock.Offset += TimeSpan.FromMinutes(2);
+            await gru.TrimAsync();
+            var cut = !await gru.Groups.RetainsAsync(cluster.Database, streamAck, CancellationToken.None);
+            var dbAck = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+            string? back = null;
+            while (back is null && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(200);
+                back = await sjc.ReadAsync(first);
+            }
+
+            rounds.Add($"round {round}: stream ack {streamAck}, _tb_peers.acked {dbAck}, retains-false {cut}, lost document refilled {back is not null}");
+            streamAck = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+        }
+
+        await Assert.That(rounds.Count(round => round.EndsWith("refilled True", StringComparison.Ordinal))).IsEqualTo(0).Because(string.Join("; ", rounds));
+    }
+
     // A copy (and so a restore, which copies) must not inherit the source's _tb_peers.acked, an id of the source's
     // turso_cdc: once the copy's own ids passed it, it would be taken as the peer's ack and the copy's groups at or below it
     // never streamed (review of #106, M2). A copy's peer has acknowledged nothing of the copy.
@@ -807,12 +858,7 @@ public sealed class PeerStreamTests
         {
             var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
             var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
-            var transaction = (TerraBase.Engine.Sqlite.SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None);
-            await using (transaction)
-            {
-                _ = await transaction.TrimAsync(store.BackupAnchor, engine.HostTime.GetUtcNow(), engine.ReplicaId, CancellationToken.None);
-                _ = await transaction.CommitAsync(CancellationToken.None);
-            }
+            await Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.TursoChangeGroupSource>().TrimAsync(store, CancellationToken.None);
         }
 
         // The rows of the database's turso_cdc.

@@ -46,7 +46,9 @@ internal static class TursoCopy
         }
 
         // Peers' acknowledged ids name rows of the source's turso_cdc, which the copy does not continue (its ids restart at 1):
-        // no peer has acknowledged anything of the copy. What they applied and the copy holds stays.
+        // no peer has acknowledged anything of the copy. What they applied and the copy holds stays. Every copy, restore and
+        // backup snapshot goes through here; PITR staging replays captured _tb_peers rows (the source's acks) and is safe
+        // only because CopyRestoredAsync copies it again: a restore that skipped this copy would bring the stale acks back.
         if (objects.Any(item => item is { Type: "table", Name: "_tb_peers" }))
         {
             Execute(copy, "UPDATE _tb_peers SET acked = 0;");

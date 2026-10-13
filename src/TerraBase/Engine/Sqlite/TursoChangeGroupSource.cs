@@ -64,17 +64,11 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         await using (transaction.ConfigureAwait(false))
         {
             var (groups, quiet, _) = await transaction.ReadChangeGroupsAsync(start, maxGroups, maxBytes, _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
-            if (quiet > after)
+            // Only a read over every row past its start proves its range quiet: past a cut, the deleted rows may have held
+            // local groups (the range would then let RetainsAsync skip a refill the peer needs).
+            if (quiet > after && await transaction.RetainsAsync(start, cancellationToken).ConfigureAwait(false))
             {
-                lock (_gate)
-                {
-                    if (_quiet.Count >= MaxQuiet)
-                    {
-                        _quiet.Clear();
-                    }
-
-                    _quiet[(store.Incarnation, after)] = quiet;
-                }
+                Remember(store.Incarnation, after, quiet);
             }
 
             return groups;
@@ -98,8 +92,8 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             }
         }
 
-        // A peer's stream reaches the database for the first time, or this file is a restore or a copy: from now on its
-        // unshipped rows stay until it acks them.
+        // A peer's stream reaches the database for the first time (a copy or restore starts with every ack at 0): from now on
+        // its unshipped rows stay until it acks them.
         await RecordAsync(store, peer, 0, cancellationToken).ConfigureAwait(false);
         return 0;
     }
@@ -114,6 +108,9 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     public Task ChangedAsync(CancellationToken cancellationToken) => _engine.NextCommitAsync(cancellationToken);
 
+    // Every row the peer lacks past `after` is still here: the rows past the end of the known quiet ranges from `after` are
+    // all kept. Those ranges hold no local group, so deleted rows inside them are none a peer lacks: a live stream whose
+    // in-memory ack stayed below the acks retention raised over joined rows is not told to refill.
     public async ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken)
     {
         if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
@@ -121,10 +118,34 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             return true;
         }
 
+        var start = after;
+        lock (_gate)
+        {
+            while (_quiet.TryGetValue((store.Incarnation, start), out var end))
+            {
+                start = end;
+            }
+        }
+
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            return await transaction.RetainsAsync(after, cancellationToken).ConfigureAwait(false);
+            return await transaction.RetainsAsync(start, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // A range (from, to] of the file that holds no local group, proven by a read over all of its rows.
+    // shortcut: forgets every range at MaxQuiet entries; a live stream below them may then refill once.
+    private void Remember(Ulid incarnation, long from, long to)
+    {
+        lock (_gate)
+        {
+            if (_quiet.Count >= MaxQuiet)
+            {
+                _quiet.Clear();
+            }
+
+            _quiet[(incarnation, from)] = to;
         }
     }
 
@@ -187,18 +208,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
                         continue;
                     }
 
-                    // Retention also runs without acks: a silent (24 h) or far-behind (1 GiB) peer stops holding rows even when
-                    // no other peer acknowledges anything.
-                    long? floor;
-                    var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, stoppingToken).ConfigureAwait(false);
-                    await using (transaction.ConfigureAwait(false))
-                    {
-                        (var left, floor) = await transaction.TrimAsync(store.BackupAnchor, _engine.HostTime.GetUtcNow(), _engine.ReplicaId, stoppingToken).ConfigureAwait(false);
-                        _ = await transaction.CommitAsync(stoppingToken).ConfigureAwait(false);
-                        _backlog[incarnation] = left;
-                    }
-
-                    await TailAsync(store, floor, stoppingToken).ConfigureAwait(false);
+                    await TrimAsync(store, stoppingToken).ConfigureAwait(false);
                 }
                 catch (Exception) when (!stoppingToken.IsCancellationRequested)
                 {
@@ -206,6 +216,27 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
                 }
             }
         }
+    }
+
+    // One retention pass over a database. Retention also runs without acks: a silent (24 h) or far-behind (1 GiB) peer stops
+    // holding rows even when no other peer acknowledges anything; and acks rise over joined rows (Tail.cs), whose ranges are
+    // remembered as quiet.
+    internal async Task TrimAsync(SqliteDatabaseStore store, CancellationToken cancellationToken)
+    {
+        long? floor;
+        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            (var left, floor, var raised) = await transaction.TrimAsync(store.BackupAnchor, _engine.HostTime.GetUtcNow(), _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            _backlog[store.Incarnation] = left;
+            foreach (var (from, to) in raised)
+            {
+                Remember(store.Incarnation, from, to);
+            }
+        }
+
+        await TailAsync(store, floor, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask RecordAsync(SqliteDatabaseStore store, ReplicaId peer, long changeId, CancellationToken cancellationToken)
