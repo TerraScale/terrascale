@@ -132,7 +132,12 @@ internal sealed class PointInTimeRestore(
 
             if (at < earliest || at > storedLatest)
             {
-                return new Validation("pointInTime must lie between the restore window's earliest and latest times");
+                return await OutsideAsync(database, at, now, deadline.Token).ConfigureAwait(false) switch
+                {
+                    Validation error => error,
+                    Conflict error => error,
+                    Unavailable error => error,
+                };
             }
 
             if (snapshots.Chosen is not { } chosen)
@@ -259,13 +264,11 @@ internal sealed class PointInTimeRestore(
 
         if (at < window.Earliest || at > window.Latest)
         {
-            // Invalid only when no backup can ever hold the time: in the future, or before the plan's retention window.
-            // Otherwise the backup does not hold it yet or any more (an unshipped or lost final segment, a lost snapshot).
-            return at > now ? OutsideWindow() : await EarliestAsync(source, DateTimeOffset.MinValue, now, cancellationToken).ConfigureAwait(false) switch
+            return await OutsideAsync(source, at, now, cancellationToken).ConfigureAwait(false) switch
             {
-                DateTimeOffset retained when at >= retained => HistoryIncomplete(),
+                Validation error => error,
+                Conflict error => error,
                 Unavailable error => error,
-                DateTimeOffset => OutsideWindow(),
             };
         }
 
@@ -312,6 +315,19 @@ internal sealed class PointInTimeRestore(
     }
 
     private static Unavailable PlanLimit() => new("the point-in-time plan metadata scan exceeds 10000 objects", "pitr_plan_limit");
+
+    private readonly union OutsideResult(Validation, Conflict, Unavailable);
+
+    // A time outside the window, for restore and plan alike: invalid only when no backup can ever hold it (after now, or
+    // before the plan's retention window); otherwise the backup does not hold it yet or any more (an unshipped or lost
+    // final segment, a lost snapshot), a retryable 409.
+    private async Task<OutsideResult> OutsideAsync(TenantContext database, DateTimeOffset at, DateTimeOffset now, CancellationToken cancellationToken) =>
+        at > now ? OutsideWindow() : await EarliestAsync(database, DateTimeOffset.MinValue, now, cancellationToken).ConfigureAwait(false) switch
+        {
+            DateTimeOffset retained when at >= retained => HistoryIncomplete(),
+            Unavailable error => error,
+            DateTimeOffset => OutsideWindow(),
+        };
 
     private static Validation OutsideWindow() => new("pointInTime must lie between the restore window's earliest and latest times");
 

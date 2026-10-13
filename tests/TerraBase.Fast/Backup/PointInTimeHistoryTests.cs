@@ -403,16 +403,36 @@ public sealed class PointInTimeHistoryTests
         // b is committed, its segment not shipped yet.
         await host.PutAsync("b", cancellationToken);
         host.Time.Advance(TimeSpan.FromSeconds(1));
+        // The plan answers each time as the restore does.
         await host.RefusedAsync(s1.At.AddMilliseconds(500), cancellationToken);
+        await host.PlanRefusedAsync(s1.At.AddMilliseconds(500), HttpStatusCode.Conflict, Code, Message, cancellationToken);
         foreach (var at in new[] { host.Time.GetUtcNow().AddSeconds(1), host.Time.GetUtcNow().AddYears(-1) })
         {
             await host.RefusedAsync(at, HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times", cancellationToken);
+            await host.PlanRefusedAsync(at, HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times", cancellationToken);
         }
 
         // The daily snapshot ships; then the generation's first snapshot is deleted: s1's time is no longer held.
         await host.ShipAsync(TimeSpan.FromDays(1), cancellationToken);
         await host.DeleteAsync(host.SnapshotKey(host.SnapshotAt, 0), cancellationToken);
         await host.RefusedAsync(s1.At, cancellationToken);
+        await host.PlanRefusedAsync(s1.At, HttpStatusCode.Conflict, Code, Message, cancellationToken);
+    }
+
+    [Test]
+    public async Task The_system_database_restores_only_at_its_snapshot_times(CancellationToken cancellationToken)
+    {
+        await using var host = await Host.StartAsync(cancellationToken);
+        var reader = host.Api.Server.Services.GetRequiredService<BackupTargets>().Platform.Reader;
+        var snapshot = host.SystemSnapshot();
+        // A catalog follower applies the leader's writes without capture: its next snapshot at the same position does not
+        // show that nothing was written in between, so no time after a snapshot is proven.
+        var next = snapshot with { At = snapshot.At.AddDays(1) };
+        await Assert.That(async () => await reader.BuildAsync(BackupLayout.File(null), BackupLayout.KeyScope(null), snapshot, snapshot.At.AddHours(1), until: null, next, cancellationToken))
+            .Throws<BackupHistoryIncompleteException>();
+
+        var (restored, _) = await reader.BuildAsync(BackupLayout.File(null), BackupLayout.KeyScope(null), snapshot, snapshot.At, until: null, next, cancellationToken);
+        BackupReader.Delete(restored);
     }
 
     private static string Within(DateTimeOffset second) => string.Create(CultureInfo.InvariantCulture,
@@ -640,6 +660,14 @@ public sealed class PointInTimeHistoryTests
         }
 
         public Task RefusedAsync(DateTimeOffset at, CancellationToken cancellationToken) => RefusedAsync(at, Code, Message, cancellationToken);
+
+        public Task PlanRefusedAsync(DateTimeOffset at, HttpStatusCode status, string code, string message, CancellationToken cancellationToken) =>
+            ErrorAssert.ErrorAsync(Api.Client.PostAsJsonAsync(ManagementApi.Uri(Database.Path + "/point-in-time/plan"), new { pointInTime = at }, cancellationToken), status, code, message);
+
+        // The newest snapshot of the system database.
+        public SnapshotKey SystemSnapshot() =>
+            s3.Objects.Keys.Where(key => key.StartsWith(BackupLayout.Snapshots(BackupLayout.File(null)), StringComparison.Ordinal))
+                .Order(StringComparer.Ordinal).Select(key => BackupLayout.ParseSnapshot(key)!).Last();
 
         public Task RefusedAsync(DateTimeOffset at, string code, string message, CancellationToken cancellationToken) =>
             RefusedAsync(at, HttpStatusCode.Conflict, code, message, cancellationToken);

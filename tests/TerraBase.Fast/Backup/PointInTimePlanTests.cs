@@ -179,11 +179,15 @@ public sealed class PointInTimePlanTests
         await Assert.That(retained.Length).IsGreaterThan(0);
         var route = Uri(database.Path + "/point-in-time/plan");
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(route, new { }), HttpStatusCode.BadRequest, "invalid_request", "pointInTime is required");
-        foreach (var at in new[] { earliest.AddTicks(-1), latest.AddTicks(1), time.GetUtcNow(), time.GetUtcNow().AddTicks(1) })
+        // Outside the window but neither after now nor before the retention window, the backup does not hold the time: 409.
+        foreach (var at in new[] { earliest.AddTicks(-1), latest.AddTicks(1), time.GetUtcNow() })
         {
-            await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(route, new { pointInTime = at }), HttpStatusCode.BadRequest, "invalid_request",
-                "pointInTime must lie between the restore window's earliest and latest times");
+            await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(route, new { pointInTime = at }), HttpStatusCode.Conflict, "backup_history_incomplete",
+                "continuous backup cannot prove this database's history complete up to pointInTime");
         }
+
+        await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(route, new { pointInTime = time.GetUtcNow().AddTicks(1) }), HttpStatusCode.BadRequest, "invalid_request",
+            "pointInTime must lie between the restore window's earliest and latest times");
 
         using var missing = await outsider.PostAsJsonAsync(route, new { });
         using var invalid = await outsider.PostAsJsonAsync(route, new { pointInTime = time.GetUtcNow().AddDays(1) });
