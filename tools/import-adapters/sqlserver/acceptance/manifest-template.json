@@ -1,0 +1,152 @@
+{
+  "format": "sqlserver-jsonl-v1",
+  "source": {
+    "product": "Microsoft SQL Server",
+    "majorVersion": 16,
+    "encoding": "UTF-8",
+    "consistency": "snapshot_transaction"
+  },
+  "tables": [
+    {
+      "schema": "dbo",
+      "name": "sqlserver_acceptance",
+      "columns": [
+        {
+          "name": "id",
+          "type": "bigint",
+          "nullable": false,
+          "identity": true,
+          "computed": false
+        },
+        {
+          "name": "amount",
+          "type": "decimal",
+          "nullable": false,
+          "identity": false,
+          "computed": false,
+          "precision": 38,
+          "scale": 8
+        },
+        {
+          "name": "wallet",
+          "type": "money",
+          "nullable": false,
+          "identity": false,
+          "computed": false
+        },
+        {
+          "name": "small",
+          "type": "smallmoney",
+          "nullable": false,
+          "identity": false,
+          "computed": false
+        },
+        {
+          "name": "occurred",
+          "type": "datetime2",
+          "nullable": false,
+          "identity": false,
+          "computed": false,
+          "scale": 7
+        },
+        {
+          "name": "offset",
+          "type": "datetimeoffset",
+          "nullable": false,
+          "identity": false,
+          "computed": false,
+          "scale": 7
+        },
+        {
+          "name": "guid",
+          "type": "uniqueidentifier",
+          "nullable": false,
+          "identity": false,
+          "computed": false
+        },
+        {
+          "name": "note.\u540d",
+          "type": "nvarchar",
+          "nullable": true,
+          "identity": false,
+          "computed": false,
+          "length": "max"
+        },
+        {
+          "name": "payload",
+          "type": "varbinary",
+          "nullable": true,
+          "identity": false,
+          "computed": false,
+          "length": "max"
+        },
+        {
+          "name": "active",
+          "type": "bit",
+          "nullable": true,
+          "identity": false,
+          "computed": false
+        },
+        {
+          "name": "calculated",
+          "type": "decimal",
+          "nullable": false,
+          "identity": false,
+          "computed": true,
+          "precision": 10,
+          "scale": 2
+        },
+        {
+          "name": "padded",
+          "type": "nchar",
+          "nullable": false,
+          "identity": false,
+          "computed": false,
+          "length": 4
+        },
+        {
+          "name": "clock",
+          "type": "time",
+          "nullable": false,
+          "identity": false,
+          "computed": false,
+          "scale": 7
+        },
+        {
+          "name": "day",
+          "type": "date",
+          "nullable": false,
+          "identity": false,
+          "computed": false
+        },
+        {
+          "name": "unit",
+          "type": "decimal",
+          "nullable": false,
+          "identity": false,
+          "computed": false,
+          "precision": 8,
+          "scale": 2
+        },
+        {
+          "name": "qty",
+          "type": "int",
+          "nullable": false,
+          "identity": false,
+          "computed": false
+        },
+        {
+          "name": "edge",
+          "type": "bigint",
+          "nullable": false,
+          "identity": false,
+          "computed": false
+        }
+      ],
+      "primaryKey": [
+        "id"
+      ],
+      "chunks": []
+    }
+  ]
+}

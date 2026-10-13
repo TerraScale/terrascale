@@ -16,15 +16,6 @@ namespace TerraScale.Authentication.Fast.Store;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
 {
-    private static readonly Dictionary<string, string> Values = new(StringComparer.Ordinal)
-    {
-        ["organization"] = "01JA0000000000000000000001",
-        ["project"] = "01JA0000000000000000000002",
-        ["user"] = "01JA0000000000000000000003",
-        ["invitation"] = "01JA0000000000000000000004",
-        ["collection"] = "users",
-    };
-
     [Test]
     public async Task TerraBase_serves_every_route_the_sdk_calls()
     {
@@ -37,9 +28,8 @@ public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
             var client = operation.GetProperty("client").GetString()!;
             var method = new HttpMethod(operation.GetProperty("method").GetString()!);
             var template = operation.GetProperty("path").GetString()!;
-            // Data and platform routes name a database; management routes address it by id.
-            var database = client == "management" ? "01JA0000000000000000000005" : client == "platform" ? "platform-auth" : "app";
-            var path = Regex.Replace(template, @"\{([a-z]+)\}", match => match.Groups[1].Value == "database" ? database : Values[match.Groups[1].Value]);
+            // Routing needs only a segment; non-ULID names also stop internal management mutations at validation.
+            var path = Regex.Replace(template, @"\{([^{}]+)\}", match => match.Groups[1].Value);
             using var request = client != "management"
                 ? new HttpRequestMessage(method, new Uri(fixture.Server.ClientAddress, path))
                 : new HttpRequestMessage(method, new Uri(fixture.Server.InternalAddress, path)) { Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact };
@@ -49,7 +39,8 @@ public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
             }
 
             using var response = await fixture.Server.Http.SendAsync(request);
-            if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed
+            if (response.StatusCode is HttpStatusCode.MethodNotAllowed
+                || response.StatusCode is HttpStatusCode.NotFound
                 && (await response.Content.ReadAsStringAsync()) is var body && (body.Length == 0 || body.Contains("unknown_route", StringComparison.Ordinal)))
             {
                 missing.Add($"{operation.GetProperty("operation").GetString()}: {method} {template} answered {(int)response.StatusCode}");

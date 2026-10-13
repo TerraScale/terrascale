@@ -1,0 +1,23 @@
+{
+  "adapterCommit": "34f616ea313ddd20e91c2cf957da5ac9e5fa80a1",
+  "coreSourceCommit": "567bfd33fe1257a922c4f8df4e8217517fc06268",
+  "contractCommit": "54c0c4d9",
+  "contract": "v1 revision 3",
+  "sourceFormat": "mongoexport canonical Extended JSON v2 JSONL",
+  "mongod": {
+    "version": "8.0.12",
+    "sourceCommit": "b3376e3afaf24394ed0ab2554b280f65e50bca5b",
+    "license": "Community SSPL v1; no Enterprise/commercial components"
+  },
+  "mongoexport": {
+    "version": "100.13.0",
+    "sourceCommit": "23008ff975be028544710a5da6ae749dc7e90ab7",
+    "license": "Apache-2.0"
+  },
+  "mongoimport": {
+    "version": "100.13.0",
+    "sourceCommit": "23008ff975be028544710a5da6ae749dc7e90ab7",
+    "license": "Apache-2.0"
+  },
+  "verification": "Public source tags and license files inspected 2026-10-13 UTC; binaries absent, compatibility not executed"
+}

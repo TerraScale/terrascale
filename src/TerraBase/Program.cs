@@ -67,6 +67,8 @@ builder.Logging.AddTerraBaseLogging();
 
 var runCompletion = new ApplicationRunCompletion();
 builder.Services.AddSingleton(runCompletion);
+builder.Services.AddSingleton<Shutdown>();
+builder.Services.Configure<HostOptions>(host => host.ShutdownTimeout = Shutdown.HostedBudget);
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(TimeProvider.System);
 // Outbound clients keep one handler for the host's lifetime and recycle its connections instead (DNS changes still
@@ -122,6 +124,7 @@ try
         return 2;
     }
 
+    var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
     // Forwarded requests run through everything after it. Error bodies first, so they also cover the listener check's 404.
     app.UseTerraBaseForwardedRequests();
     app.UseTerraBasePressure();
@@ -129,6 +132,18 @@ try
     app.UseTerraBaseBadRequests();
     app.UseTerraBaseLegacyRoutes();
     app.UseRouting();
+    // Refuse new work on existing connections while preserving the probes' shutdown responses.
+    app.Use((context, next) =>
+    {
+        if (lifetime.ApplicationStopping.IsCancellationRequested
+            && !ReferenceEquals(context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Probe))
+        {
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            return Task.CompletedTask;
+        }
+
+        return next(context);
+    });
     app.UseTerraBaseListeners();
     app.UseTerraBaseQosMemory();
     app.UseTerraBaseQueryShapeAdmission();

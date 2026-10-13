@@ -227,7 +227,7 @@ The candidates on #108 run on them.
 
 | Test | Skipped when | Reason |
 | --- | --- | --- |
-| FlyOutageE2ETests: `Sjc_machine_stopped_then_started…` | locally, or on Fly without `TERRABASE_E2E_FLY_OUTAGE=1` | It stops a machine of the shared Fly app, so it runs alone through `make terrabase-e2e-fly-outage` |
+| FlyOutageE2ETests: `Sjc_machine_stopped_then_started…` | locally, or on Fly without `TERRABASE_E2E_FLY_OUTAGE=1` | It stops a machine, so it runs alone through `make terrabase-e2e-fly-outage`, and only on a pinned disposable app (`Cluster.FlyMachineFaults`), never production |
 | BenchmarkClusterHost: `Hosts_three_local_regions…` | always, unless `TERRABASE_BENCH_CLUSTER_FILE` is set | It is the benchmark's local cluster host, not a scenario |
 | ThreeRegionFaultE2ETests: partition, backlog, both skew tests | on Fly | Fly has no switch for a partition or a clock skew between machines |
 | ThreeRegionFaultE2ETests: region down, restart, ack-then-stop, restarted backlog; RepairAndContractE2ETests: deleted database | on Fly without `TERRABASE_E2E_FLY_OUTAGE=1` | They stop Fly machines |
@@ -238,3 +238,18 @@ The candidates on #108 run on them.
 Update a row in the same PR that changes its status: a slice that lands removes its `Gaps.cs` entries and marks the row
 "pass" with the commit of the run that proved it. Re-run `make terrabase-e2e` locally and `make terrabase-e2e` plus
 `make terrabase-e2e-fly-outage` on Fly at the release commit, and record both in "Last run".
+
+## Backup qualification producer (#164)
+
+`BackupQualificationE2ETests` uses a real three-node local cluster or a pinned disposable Fly app. It takes a ready
+manual backup and two shipped PIT cuts, performs actual HTTP restores, and feeds their count, canonical digest,
+versions and source/placement identity to `BackupQualification.Failures`. A pre-window cut must answer exactly
+400 `invalid_request`. Supported-cut refusals fail. The same-body rewrite regression proves version loss fails
+independently of the body digest. This row is not a `Gaps` expected failure.
+
+Local backup storage uses test-only S3 transport; a local result is not Tigris evidence. The Fly producer requires
+a project token with database scopes (`TERRABASE_E2E_FLY_PROJECT_TOKEN`), creates and cleans up its own source and
+restored databases, and fails if unpinned or missing that credential. Target: `ts-terrabase-e2e` in
+`terrascale-previews-515`; PR apps and production apps remain refused. Per-cut details are retained in the run's
+`TERRABASE_E2E_RESULTS` JSONL and console log. Exact acknowledgement-time cuts before convergence, shipping faults,
+lease handoff and restored multi-region placement are not qualified by this scenario.

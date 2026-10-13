@@ -46,6 +46,7 @@ public sealed class RegionPinTests
     [Arguments("sjc", "m-gru", false)]
     [Arguments("gru", "m-other", false)]
     [Arguments(null, null, false)]
+    [Arguments("gru", null, false)]
     public async Task A_machine_pinned_request_is_accepted_only_from_that_machine_in_its_region(string? region, string? machine, bool accepted)
     {
         string? forced = null;
@@ -55,9 +56,14 @@ public sealed class RegionPinTests
             {
                 forced = request.Headers.GetValues("fly-force-instance-id").Single();
                 var response = new HttpResponseMessage(HttpStatusCode.OK);
+                // A pre-#149 build sends the region but no machine header.
                 if (region is not null)
                 {
                     response.Headers.Add("X-TerraBase-Region", region);
+                }
+
+                if (machine is not null)
+                {
                     response.Headers.Add("X-TerraBase-Machine", machine);
                 }
 

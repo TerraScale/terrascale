@@ -1,6 +1,11 @@
 using System.Net;
 using System.Text.Json;
 using TerraBase.Primitives;
+using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
+using TerraBase.Features.Qos;
+using TerraBase.Tenancy;
+using TerraBase.Fast.Storage;
 
 namespace TerraBase.Fast.Documents;
 
@@ -204,6 +209,18 @@ public sealed class TransactionApiTests
 
         var tooMany = await api.TransactAsync([.. Enumerable.Range(0, 1025).Select(_ => new { op = "create", collection = "items", document = new { } })]);
         var counts = await api.TransactAsync([.. Enumerable.Range(0, 17).Select(_ => new { op = "assert_count", collection = "items", lte = 1 })]);
+        // The operation limit is plan-independent; this boundary does not need per-document storage-quota accounting.
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var directory = api.Server.Services.GetRequiredService<ITenantDirectory>();
+        var actualPlan = await directory.PlanAsync(api.Tenant.OrganizationId, CancellationToken.None);
+        await Assert.That(actualPlan is PlanTier.Enterprise).IsTrue();
+        var database = await api.Tenant.ContextAsync(api.Server, DocumentApi.Database);
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
+        var entry = await api.Server.Services.GetRequiredService<IStorageQuota>().EnterAsync(database, store, CancellationToken.None);
+        using (var lease = entry is StorageQuotaLease admitted ? admitted : throw new InvalidOperationException("quota unavailable"))
+        {
+            await Assert.That(lease.RequiresAccounting).IsFalse();
+        }
         var maximum = await api.TransactAsync([.. Enumerable.Range(0, 1024).Select(_ => new { op = "create", collection = "items", document = new { } })]);
         var listed = await api.SendAsync(HttpMethod.Post, api.Query, new { limit = 1, count = true });
 
@@ -211,6 +228,52 @@ public sealed class TransactionApiTests
         await Assert.That((counts.Status, counts.Op)).IsEqualTo((HttpStatusCode.BadRequest, 16));
         await Assert.That(maximum.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(listed.Json.GetProperty("count").GetProperty("value").GetString()).IsEqualTo("1024");
+    }
+
+    [Test]
+    public async Task Transaction_count_deadlines_follow_the_authenticated_plan()
+    {
+        using var clock = new TransactionQueryClock();
+        await using var api = await DocumentApi.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock));
+        var tenants = api.Server.Services.GetRequiredService<ITenantDirectory>();
+        await Assert.That(await tenants.PlanAsync(api.Tenant.OrganizationId, CancellationToken.None)).IsEqualTo(PlanTier.Hobby);
+        var before = await api.PutAsync(DocumentApi.NewId(), new { n = 1 });
+        var fresh = DocumentApi.NewId();
+        object[] operations =
+        [
+            new { op = "create", collection = "items", id = fresh, document = new { n = 2 } },
+            new { op = "assert_count", collection = "items", gte = 1, lte = 1 },
+        ];
+
+        clock.Enabled = true;
+        var hobby = await api.TransactAsync(operations);
+        clock.Enabled = false;
+        await Assert.That((hobby.Status, hobby.Code, hobby.Message, hobby.Op))
+            .IsEqualTo((HttpStatusCode.BadRequest, "invalid_query", "query too expensive", 1));
+        await Assert.That((await api.GetAsync(fresh)).Status).IsEqualTo(HttpStatusCode.NotFound);
+
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "pro");
+        await Assert.That(await tenants.PlanAsync(api.Tenant.OrganizationId, CancellationToken.None)).IsEqualTo(PlanTier.Pro);
+        clock.Enabled = true;
+        var pro = await api.TransactAsync(operations);
+        clock.Enabled = false;
+        await Assert.That(pro.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(pro.Json.GetProperty("results")[1].GetProperty("count").GetString()).IsEqualTo("1");
+        await Assert.That(Offset(pro)).IsEqualTo(Offset(before) + 1);
+        await Assert.That((await api.GetAsync(fresh)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(2);
+    }
+
+    // Advance only native writer execution: 1.5 seconds exceeds Hobby's one-second deadline but fits Pro's five.
+    private sealed class TransactionQueryClock : TimeProvider, IDisposable
+    {
+        private readonly ThreadLocal<long> _timestamps = new();
+        private bool _enabled;
+        public bool Enabled { set => Volatile.Write(ref _enabled, value); }
+        public override long TimestampFrequency => 1000;
+        public override long GetTimestamp() => Volatile.Read(ref _enabled) && Thread.CurrentThread.Name == "terrabase-sqlite-writer"
+            ? _timestamps.Value += 1500 : _timestamps.Value;
+        public void Dispose() => _timestamps.Dispose();
     }
 
     [Test]

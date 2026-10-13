@@ -1,0 +1,218 @@
+{
+  "adapter": "sqlserver-jsonl-v1",
+  "contract": "docs/terrabase/import.md@54c0c4d9:v1-r3",
+  "manifestSha256": "7f946cad8988a5e12fecf62104b2bfc3f64b5574855f707b1035af1a44f52038",
+  "output": {
+    "bytes": 50898,
+    "file": "import.sql",
+    "format": "postgres_plain",
+    "rows": 4,
+    "sha256": "41a5dcd1fb5ca9f441277181fb64801b616056dd831852577a34f3305fcee2d2"
+  },
+  "source": {
+    "consistency": "snapshot_transaction",
+    "encoding": "UTF-8",
+    "majorVersion": 16,
+    "product": "Microsoft SQL Server"
+  },
+  "tables": [
+    {
+      "chunks": [
+        {
+          "bytes": 829,
+          "file": "rows-0001.jsonl",
+          "rows": 3,
+          "sha256": "980255e6d9bbe991162375fb9e2aa59304b87e2c8677cb87e3bd74b6bf57f3ad"
+        },
+        {
+          "bytes": 49372,
+          "file": "rows-0002.jsonl",
+          "rows": 1,
+          "sha256": "556dc4f91bbc3f0ff9825f589b8f10c2307a0ee7bfd25e028413989ed8a69f47"
+        }
+      ],
+      "collection": "dbo_sqlserver_acceptance",
+      "columns": [
+        {
+          "computed": false,
+          "identity": true,
+          "mapping": "integer",
+          "name": "id",
+          "nullable": false,
+          "targetType": "bigint",
+          "type": "bigint"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "mapping": "decimal_string",
+          "name": "amount",
+          "nullable": false,
+          "precision": 38,
+          "scale": 8,
+          "targetType": "numeric(38,8)",
+          "type": "decimal"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "mapping": "decimal_string",
+          "name": "wallet",
+          "nullable": false,
+          "targetType": "numeric(19,4)",
+          "type": "money"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "mapping": "decimal_string",
+          "name": "small",
+          "nullable": false,
+          "targetType": "numeric(10,4)",
+          "type": "smallmoney"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "mapping": "string",
+          "name": "occurred",
+          "nullable": false,
+          "scale": 7,
+          "targetType": "text",
+          "type": "datetime2"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "mapping": "string",
+          "name": "offset",
+          "nullable": false,
+          "scale": 7,
+          "targetType": "text",
+          "type": "datetimeoffset"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "mapping": "string",
+          "name": "guid",
+          "nullable": false,
+          "targetType": "uuid",
+          "type": "uniqueidentifier"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "length": "max",
+          "mapping": "string",
+          "name": "note.\u540d",
+          "nullable": true,
+          "targetType": "text",
+          "type": "nvarchar"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "length": "max",
+          "mapping": "base64",
+          "name": "payload",
+          "nullable": true,
+          "targetType": "bytea",
+          "type": "varbinary"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "mapping": "boolean",
+          "name": "active",
+          "nullable": true,
+          "targetType": "boolean",
+          "type": "bit"
+        },
+        {
+          "computed": true,
+          "identity": false,
+          "mapping": "decimal_string",
+          "name": "calculated",
+          "nullable": false,
+          "precision": 10,
+          "scale": 2,
+          "targetType": "numeric(10,2)",
+          "type": "decimal"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "length": 4,
+          "mapping": "string",
+          "name": "padded",
+          "nullable": false,
+          "targetType": "text",
+          "type": "nchar"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "mapping": "string",
+          "name": "clock",
+          "nullable": false,
+          "scale": 7,
+          "targetType": "text",
+          "type": "time"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "mapping": "date",
+          "name": "day",
+          "nullable": false,
+          "targetType": "date",
+          "type": "date"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "mapping": "decimal_string",
+          "name": "unit",
+          "nullable": false,
+          "precision": 8,
+          "scale": 2,
+          "targetType": "numeric(8,2)",
+          "type": "decimal"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "mapping": "integer",
+          "name": "qty",
+          "nullable": false,
+          "targetType": "integer",
+          "type": "int"
+        },
+        {
+          "computed": false,
+          "identity": false,
+          "mapping": "integer",
+          "name": "edge",
+          "nullable": false,
+          "targetType": "bigint",
+          "type": "bigint"
+        }
+      ],
+      "primaryKey": [
+        "id"
+      ],
+      "rows": 4,
+      "schema": "dbo",
+      "table": "sqlserver_acceptance",
+      "target": "\"dbo\".\"sqlserver_acceptance\""
+    }
+  ],
+  "warnings": [
+    "Decimals and money become exact JSON strings; currency semantics are lost.",
+    "datetime2, datetimeoffset and time become strings; seven digits and offsets are retained, not normalized to UTC.",
+    "Identifiers are preserved; collections follow the core schema_table naming rules (dbo is retained).",
+    "Identity and computed values are captured only; generation rules are not recreated.",
+    "Only listed base-table rows and primary keys are represented; other constraints, indexes, defaults, collation, permissions and database objects are not recreated."
+  ]
+}
