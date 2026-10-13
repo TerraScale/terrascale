@@ -3,9 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Configuration;
 using TerraBase.Engine;
-using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Replication;
@@ -29,8 +27,11 @@ public sealed class DatabaseChangesReplayTests
     public async Task A_resume_replays_to_the_issuer_or_checks_the_fallback_prefix(string from, string to, bool issuerAvailable, bool differentPrefix)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        await using var source = await StartAsync(from, to);
-        await using var destination = await StartAsync(to, from);
+        // Bootstrap fresh catalogs independently; this fixture copies tenant identity and controls each feed explicitly.
+        await using var source = await StartAsync(from);
+        await using var destination = await StartAsync(to);
+        await Assert.That(source.Server.Services.GetRequiredService<ICatalogGate>().IsOpen).IsTrue();
+        await Assert.That(destination.Server.Services.GetRequiredService<ICatalogGate>().IsOpen).IsTrue();
         var tenant = await ReplicationTenant.CreateAsync(source.Server, [DocumentApi.Database], token, replicaRegions: [to]);
         await tenant.BindAsync(destination.Server);
         var secret = await tenant.KeyAsync(source.Server, "documents:read", "documents:write");
@@ -105,12 +106,11 @@ public sealed class DatabaseChangesReplayTests
         }
     }
 
-    private static Task<ManagementApi> StartAsync(string region, string other) => ManagementApi.StartAsync(settings =>
+    private static Task<ManagementApi> StartAsync(string region) => ManagementApi.StartAsync(settings =>
     {
         settings["region"] = region;
         settings["node-name"] = region + "-machine";
-    }, services => services.AddSingleton<IMembership>(provider => new StaticMembership(provider.GetRequiredService<TerraBaseOptions>(),
-        [new ClusterMember(other + "-machine", "http://127.0.0.1:9/", other, string.Empty)])));
+    });
 
     private static async Task CopyKeyAsync(TerraBaseTestServer source, TerraBaseTestServer destination, string secret, CancellationToken token)
     {
