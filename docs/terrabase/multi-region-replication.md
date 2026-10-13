@@ -345,6 +345,10 @@ both directions of a pair, so the receiver cannot also keep the sender's change 
 every `Ack` back. `refused` means the receiver does not hold the database yet (its catalog lags), and the sender
 retries 5 s later. R6 adds `Digest`, `ReadBucket` and `refill_required`; R7 adds `stable`.
 
+An accepted `Push` publishes its gRPC response headers before waiting for a predecessor's refill to end. The
+`Welcome` still waits for that handover; host shutdown can therefore finish the accepted response without a
+`Welcome`, and the sender reads the end of the stream rather than an unstarted response becoming gRPC Internal.
+
 - **Sender.** One `Push` stream per peer machine carries every database the pair shares. It holds at most one batch
   (≤ 1024 groups, ≤ 2 MiB) in flight per database and resumes from the receiver's acked `change_id` after a
   reconnect. The `ReplicationSender` of PR #11 takes its peers once at start. The new sender follows the directory
