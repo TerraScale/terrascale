@@ -15,7 +15,10 @@ public sealed record BucketCursor(int Bucket, string Collection, string Id);
 /// </summary>
 public interface IReplicaStates
 {
-    /// <summary>4096 × (h1, h2), little-endian: the XOR of each bucket's document digests; null when this machine does not hold the database.</summary>
+    /// <summary>
+    /// 4096 × (h1, h2), little-endian: the XOR of each bucket's digests of (collection, id, state without bookkeeping,
+    /// materialized document); null when this machine does not hold the database.
+    /// </summary>
     ValueTask<byte[]?> DigestAsync(TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>

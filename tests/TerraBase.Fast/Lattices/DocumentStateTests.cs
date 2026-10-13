@@ -53,7 +53,7 @@ public sealed class DocumentStateTests
             {
                 await Assert.That(state).IsEqualTo(converged[0]).Because($"state, seed {seed}");
                 await Assert.That(Text(state.Materialize())).IsEqualTo(Text(document)).Because($"document, seed {seed}");
-                await Assert.That(DocumentStateEncoding.Digest(state)).IsEqualTo(DocumentStateEncoding.Digest(converged[0])).Because($"digest, seed {seed}");
+                await Assert.That(DocumentStateEncoding.Digest("items", "document", state)).IsEqualTo(DocumentStateEncoding.Digest("items", "document", converged[0])).Because($"digest, seed {seed}");
             }
         }
     }

@@ -13,8 +13,9 @@ public static class StorageFormat
     /// 3: the Turso engine (one writer connection with change capture, rowid tables only). 4: no change_log, shape_history
     /// or collections.generation (R2c-2). 5: the system database is a lattice database (R10a): document states, HLC
     /// versions and tombstones, no catalog journal. 6: persisted feed sequence and derived shape storage.
+    /// 7: document digests include the length-prefixed collection and id.
     /// </summary>
-    public const int Version = 6;
+    public const int Version = 7;
 
     /// <summary>The format this build writes, for example <c>2-3f1a09c4e7b2</c>.</summary>
     public static string Id { get; } = $"{Version}-{Convert.ToHexStringLower(SqliteDatabaseStore.FormatDigest)[..12]}";
