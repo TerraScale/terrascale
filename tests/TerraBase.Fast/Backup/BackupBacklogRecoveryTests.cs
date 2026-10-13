@@ -278,6 +278,10 @@ public sealed class BackupBacklogRecoveryTests
             engine.ImportDatabaseAsync(database, file, cancellationToken);
 
         public ValueTask<byte[]> ChecksumAsync(string file, CancellationToken cancellationToken) => engine.ChecksumAsync(file, cancellationToken);
+
+        public LogCut CutLog(Stream segment, DateTimeOffset at, long? previous) => engine.CutLog(segment, at, previous);
+
+        public DateTimeOffset? ReadMark(Stream segment) => engine.ReadMark(segment);
     }
 
     private sealed class WatchedTap(IWalTap tap, WatchedBackup owner) : IWalTap

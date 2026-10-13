@@ -436,6 +436,10 @@ public sealed class BackupShippingRecoveryTests
 
         public ValueTask<byte[]> ChecksumAsync(string file, CancellationToken cancellationToken) => engine.ChecksumAsync(file, cancellationToken);
 
+        public LogCut CutLog(Stream segment, DateTimeOffset at, long? previous) => engine.CutLog(segment, at, previous);
+
+        public DateTimeOffset? ReadMark(Stream segment) => engine.ReadMark(segment);
+
         public bool TakeFailure()
         {
             if (Interlocked.Exchange(ref _armed, 0) == 0)
