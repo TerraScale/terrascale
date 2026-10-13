@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Store;
@@ -57,6 +58,14 @@ public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
         var store = await SharedStateTarget.CreateAsync(fixture);
         var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         var clock = new ManualClock(new DateTimeOffset(2026, 10, 4, 12, 0, 5, TimeSpan.Zero));
+        // First-use and rotation require an existing project, checked atomically with the new key.
+        var authStore = new AuthStore(store.Database, clock);
+        foreach (var project in new[] { "ins_race", "ins_rotate" })
+        {
+            await authStore.CreateAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, project,
+                TerraBaseFixture.Json($$"""{"id":"{{project}}"}"""));
+        }
+
         var first = await StartReplicaAsync(store, masterKey, clock);
         try
         {
