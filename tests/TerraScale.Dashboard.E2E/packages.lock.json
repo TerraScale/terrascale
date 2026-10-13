@@ -208,7 +208,7 @@
           "RazorSlices": "[0.12.1, )",
           "Scalar.AspNetCore": "[2.18.0, )",
           "Stripe.net": "[53.0.0, )",
-          "TerraScale.DotNet": "[0.1.0-dashboard.g130925898daf0207134d9582b7b672a5a1c3233b, )"
+          "TerraScale.DotNet": "[0.0.3, )"
         }
       },
       "Cronos": {
@@ -259,9 +259,9 @@
       },
       "TerraScale.DotNet": {
         "type": "CentralTransitive",
-        "requested": "[0.1.0-dashboard.g130925898daf0207134d9582b7b672a5a1c3233b, )",
-        "resolved": "0.1.0-dashboard.g130925898daf0207134d9582b7b672a5a1c3233b",
-        "contentHash": "Q6I9jkJrime6s+aJzoFiICcacmL+00HDLWmzCMUbwGtGWb6Fxy9KEWKOSRSCj9J27PnOwG95Y2Uv7Mek8jsjKQ==",
+        "requested": "[0.0.3, )",
+        "resolved": "0.0.3",
+        "contentHash": "KI8tx303PiuGi5VAFhFhBhiZCrGpNIJ3RhpVoETRiMdcE5kQNoaxZnlvVVpK1TASg6wfu0PlbXQ9lk5VItfgnA==",
         "dependencies": {
           "NUlid": "1.7.3"
         }
