@@ -450,8 +450,11 @@ public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
         using var interrupted = await HttpJourney.PostFormAsync(first, "/billing/checkout", checkoutForm);
         await Assert.That(interrupted.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         var interruptedBody = await interrupted.Content.ReadAsStringAsync();
-        await Assert.That(interruptedBody).Contains("Service unavailable");
-        await Assert.That(interruptedBody.TrimEnd().EndsWith("</html>", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(interrupted.Content.Headers.ContentType!.MediaType).IsEqualTo("application/problem+json");
+        using var interruptedProblem = JsonDocument.Parse(interruptedBody);
+        await Assert.That(interruptedProblem.RootElement.GetProperty("status").GetInt32()).IsEqualTo(503);
+        await Assert.That(interruptedProblem.RootElement.GetProperty("title").GetString()).IsEqualTo("Service Unavailable");
+        await Assert.That(interruptedProblem.RootElement.GetProperty("detail").GetString()).IsEqualTo("Checkout is temporarily unavailable. Return to billing to reconcile before trying again.");
         using var failed = JsonDocument.Parse(await first.GetStringAsync("/__test/billing/checkouts/probe"));
         await Assert.That(failed.RootElement.GetProperty("hasIndex").GetBoolean()).IsFalse();
         var checkoutId = failed.RootElement.GetProperty("checkoutId").GetString()!;
