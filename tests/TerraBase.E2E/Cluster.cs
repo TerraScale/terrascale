@@ -463,6 +463,18 @@ public sealed class Cluster : IAsyncDisposable
                 await StartNodeAsync(node);
             }
 
+            // Each catalog gate opens once it pulled from the other machines (R10a); until then the catalog answers 503. A lone
+            // node has none: it asks for a new cluster's bootstrap.
+            if (_nodes.Count == 1)
+            {
+                await CatalogBootstrap.OpenAsync(_nodes.Values.Single().Api!.Server, "a new e2e cluster");
+            }
+
+            foreach (var node in _nodes.Values)
+            {
+                await CatalogBootstrap.WaitOpenAsync(node.Api!.Server);
+            }
+
             // Registered once in the first region; every other node registers the same ids too, which a replicated catalog
             // (R10a) answers with 409 id_taken or name_taken: it already holds them. Until then each node keeps its own catalog.
             foreach (var node in _nodes.Values)
@@ -519,6 +531,13 @@ public sealed class Cluster : IAsyncDisposable
             await StartNodeAsync(node);
             try
             {
+                // A lone node has nothing to pull from after a restart: the operator open (R10a).
+                if (_nodes.Count == 1)
+                {
+                    await File.WriteAllTextAsync(Path.Combine(node.Api!.Server.DataDirectory, "catalog-open"), "e2e: a lone node restarted");
+                }
+
+                await CatalogBootstrap.WaitOpenAsync(node.Api!.Server);
                 await AuthorizeAsync(node, restart: true);
             }
             catch

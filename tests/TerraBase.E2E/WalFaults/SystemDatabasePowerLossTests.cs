@@ -59,6 +59,7 @@ public sealed class SystemDatabasePowerLossTests
         private readonly string _root = Directory.CreateTempSubdirectory("terrabase-power-").FullName;
         private readonly string _machine = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
         private Process? _process;
+        private int _started;
 
         private Node()
         {
@@ -138,6 +139,15 @@ public sealed class SystemDatabasePowerLossTests
                 DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
                 Timeout = TimeSpan.FromSeconds(30),
             };
+
+            // A lone machine of a member directory opens its catalog gate on the operator's request (R10a): a new cluster's
+            // bootstrap at the first start, the operator open after the power loss (it has no peer to pull from).
+            var (file, request) = _started++ == 0
+                ? ("catalog-bootstrap", "a new e2e cluster")
+                : ("catalog-open", "e2e: a lone node after its power loss");
+            await File.WriteAllTextAsync(Path.Combine(Data, file), request);
+            _ = await Converge.UntilAsync(async () => JsonNode.Parse(await Client.GetStringAsync(new Uri("/catalog-gate", UriKind.Relative)))!["open"]!.GetValue<bool>(),
+                open => open, "the node's catalog gate");
         }
 
         public async Task CommitAsync(string user, JsonObject commit)
