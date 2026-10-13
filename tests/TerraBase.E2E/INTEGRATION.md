@@ -222,6 +222,21 @@ Fast tests fail out of 1433:
 Not merged. The owner is asked to name the cause: this change, or pre-existing failures that main's runs could not show
 while Healthz failed first. Main stays red.
 
+## MAIN RED: THREE CAUSES, AND EACH FIX IS RED ON THE OTHERS (03:35Z)
+
+| Cause | Fix | Evidence |
+| --- | --- | --- |
+| Healthz/Readyz `ArgumentNullException (stringValue)` (#149) | **#166** (APPROVED) | #166's run 38323041647 has no health failures |
+| SQL/usage HTTP 400 from the query deadline (#118, intermittent, CI only) | **#175** (harness only; review pending) | #175's run 38340536344 has **no** SQL/usage failures |
+| `An_operator_key_with_an_expiry_stops_authenticating_when_it_expires` times out (since #118; R3 suspects #118's hourly `FeedRetention` `PeriodicTimer` against the `FakeTimeProvider`'s 90-day advance) | **none yet** | fails on #175's run and on main's runs since `71585005` |
+
+- **Neither #166 nor #175 can be green alone,** so the exact-head gate blocks both.
+- **The way out is one combined head** carrying #166, #175 and an operator-key fix, green on its exact head with each
+  delta reviewed. For example, #175's owner merges #166's branch plus the operator-key fix into #175; or each fix
+  merges into one branch.
+- The alternative is a COS exception, merging the fixes back to back on per-cause evidence. That is not the gate as
+  written, and needs COS's explicit word.
+
 ## FREEZE PLAN (COS, coordinator-consolidated direction, ~03:00Z)
 
 **Release CI first.** The required release checks (libs, auth and terrabase Fast; build; analyzers) take priority over
