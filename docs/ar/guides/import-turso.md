@@ -14,7 +14,7 @@ head: [['meta', { name: 'robots', content: 'noindex' }]]
 Create one consistent SQLite file from a Turso, libSQL or SQLite database, check it and upload it with the [import steps](/ar/guides/import#import-step-by-step).
 
 ::: warning Pending feature
-Import follows the proposed import contract v1 and is not available on any serving release yet. The commands on this page run on your own machine. SQLite commands were checked with SQLite 3.51 and Turso CLI flags with Turso CLI 1.0.26; confirm flags with `--help` for your version. TerraBase never connects to your database.
+Import follows the proposed import contract v1 and is not available on any serving release yet. The commands on this page run on your own machine. SQLite commands were checked with SQLite 3.51 and Turso CLI flags with Turso CLI 1.0.26; confirm flags with `--help` for your version. No export from a real Turso account has been tested yet. TerraBase never connects to your database.
 :::
 
 ## 1. Rehearse with synthetic data
@@ -67,7 +67,7 @@ sqlite3 turso-export.db "VACUUM INTO 'export.db'"
 chmod 600 export.db
 ```
 
-Keep `turso-export.db-wal` beside `turso-export.db` until `VACUUM INTO` finishes, then delete both. The export uses your own Turso CLI login; TerraBase never receives a Turso token. You do not need `--with-metadata`.
+Run `VACUUM INTO` even when `turso-export.db` already reads as rollback mode, and never upload the exported file directly. SQLite still applies a `-wal` file found beside it, but the uploaded file alone would miss those rows. Keep `turso-export.db-wal` beside `turso-export.db` until `VACUUM INTO` finishes, then delete both. The export uses your own Turso CLI login; TerraBase never receives a Turso token. You do not need `--with-metadata`.
 
 **From a local SQLite or libSQL file:**
 
@@ -128,7 +128,7 @@ ORDER BY 1;
 PRAGMA foreign_key_check;
 ```
 
-**Virtual tables.** Views, triggers, virtual tables, their shadow tables (such as `notes_fts_data`) and SQLite's internal `sqlite_*` tables are excluded automatically and listed in `skipped`. Rebuild a full-text (FTS5) or R*Tree index from its source table after the import. A virtual table that holds its own content gets a `not_imported` warning, and that content is not imported.
+**Virtual tables.** Views, triggers, virtual tables, the shadow tables SQLite's FTS3, FTS4, FTS5, R*Tree and Geopoly modules create for them (such as `notes_fts_data`) and SQLite's internal `sqlite_*` tables are excluded automatically and listed in `skipped`. Any other table is imported, even one named like a shadow table. Rebuild a full-text (FTS5) or R*Tree index from its source table after the import. A virtual table that holds its own content gets a `not_imported` warning, and that content is not imported.
 
 ```sql
 SELECT name FROM sqlite_schema WHERE sql LIKE 'CREATE VIRTUAL TABLE%';
@@ -147,7 +147,7 @@ Each value maps by its **storage class**, never by the column's declared type.
 | Storage class | Class in `mapping` | JSON value |
 | --- | --- | --- |
 | `INTEGER` | `integer` | Number with exact 64-bit digits |
-| `REAL` | `float` | Number; `±Infinity` and nonzero magnitudes below 1e-307 are `invalid_value` |
+| `REAL` | `float` | Number; zero is valid; `±Infinity`, nonzero magnitudes below 1e-307 and magnitudes of 1e308 or more are `invalid_value` |
 | `TEXT` | `string` | String |
 | `BLOB` | `base64` | Standard base64 string |
 | `NULL` | | `null` |
