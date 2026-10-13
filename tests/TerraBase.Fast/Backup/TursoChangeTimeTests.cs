@@ -1,16 +1,87 @@
 using System.Globalization;
 using TerraBase.Engine.Sqlite;
 using Turso;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Fast.Backup;
 
 /// <summary>
 /// What a point-in-time restore relies on from Turso's change capture, measured on the real driver with the capture mode
 /// TerraBase uses: every captured row, the commit row included, holds change_time, the wall clock's Unix time when Turso
-/// wrote that row, rounded down to the second. The clock is the machine's; nothing here controls it.
+/// wrote that row, rounded down to the second; and a commit that returned on the writer's connection is visible to the
+/// next read on another connection, as the backup tap's read mark assumes. The clock is the machine's; nothing here
+/// controls it.
 /// </summary>
 public sealed class TursoChangeTimeTests
 {
+    // Commits the writer makes while the reader checks.
+    private const int Commits = 3000;
+
+    [Test]
+    public async Task A_commit_returned_on_the_writer_is_in_the_next_newest_commit_read_on_another_connection(CancellationToken cancellationToken)
+    {
+        var directory = Directory.CreateTempSubdirectory("terrabase-read-visibility-");
+        try
+        {
+            var path = Path.Combine(directory.FullName, "visible.db");
+            // The connections a store's writer and the backup tap's reader use, with their settings.
+            using var writer = new SqliteConnection($"Data Source={path}");
+            writer.Open();
+            Execute(writer, "PRAGMA synchronous = NORMAL;", SqliteSession.CaptureOn, "CREATE TABLE visible(x);");
+            using var reader = new TursoConnection($"Data Source={path}");
+            SqliteSession.OpenExisting(reader, path);
+
+            // The newest commit row of a transaction whose commit has returned, published only after it returned.
+            long returned = 0;
+            var commits = Task.Run(() =>
+            {
+                for (var commit = 0; commit < Commits; commit++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (commit % 2 == 0)
+                    {
+                        using var transaction = writer.BeginTransaction();
+                        using var insert = writer.CreateCommand();
+                        insert.Transaction = transaction;
+                        insert.CommandText = "INSERT INTO visible VALUES (1);";
+                        insert.ExecuteNonQuery();
+                        transaction.Commit();
+                    }
+                    else
+                    {
+                        // An autocommit statement commits as it returns.
+                        Execute(writer, "INSERT INTO visible VALUES (2);");
+                    }
+
+                    Volatile.Write(ref returned, (long)Scalar(writer, Newest)!);
+                }
+            }, cancellationToken);
+
+            // The tap's order: take the time (here, what has returned by then), then query the newest commit.
+            var (checks, missed) = (0, 0);
+            while (!commits.IsCompleted)
+            {
+                var before = Volatile.Read(ref returned);
+                if ((Scalar(reader, Newest) as long? ?? 0) < before)
+                {
+                    missed++;
+                }
+
+                checks++;
+            }
+
+            await commits;
+            TestContext.Current!.OutputWriter.WriteLine(string.Create(CultureInfo.InvariantCulture, $"commits={Commits} checks={checks} missed={missed}"));
+            await Assert.That(missed).IsEqualTo(0);
+            await Assert.That(checks).IsGreaterThan(Commits / 10);
+            await Assert.That(Scalar(reader, Newest)).IsEqualTo(Volatile.Read(ref returned));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
     [Test]
     public async Task Each_captured_row_and_the_commit_row_hold_the_wall_clock_second_they_were_written_in_rounded_down(CancellationToken cancellationToken)
     {
@@ -87,14 +158,16 @@ public sealed class TursoChangeTimeTests
         return rows;
     }
 
-    private static object? Scalar(TursoConnection connection, string sql)
+    private const string Newest = "SELECT max(change_id) FROM turso_cdc WHERE change_type = 2;";
+
+    private static object? Scalar(System.Data.Common.DbConnection connection, string sql)
     {
         using var command = connection.CreateCommand();
         command.CommandText = sql;
         return command.ExecuteScalar();
     }
 
-    private static void Execute(TursoConnection connection, params string[] statements)
+    private static void Execute(System.Data.Common.DbConnection connection, params string[] statements)
     {
         foreach (var sql in statements)
         {
