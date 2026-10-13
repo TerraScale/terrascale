@@ -6,19 +6,23 @@
   "type": "module",
   "scripts": {
     "dev": "vitepress dev docs",
-    "build": "node scripts/generate-llms.mjs && vitepress build docs",
+    "build": "node scripts/generate-llms.mjs && vitepress build docs && node scripts/check-public.mjs && node scripts/build-worker.mjs",
     "canonical:sync": "node scripts/canonical-data.mjs --sync && node scripts/generate-pricing.mjs && node scripts/generate-llms.mjs && node scripts/i18n-sync.mjs",
     "preview": "vitepress preview docs",
     "i18n:sync": "node scripts/i18n-sync.mjs",
-    "i18n:status": "node scripts/i18n-status.mjs"
+    "i18n:status": "node scripts/i18n-status.mjs",
+    "test": "node scripts/canonical-data.mjs --check && node scripts/generate-pricing.mjs --check && node scripts/generate-llms.mjs --check && node scripts/i18n-sync.mjs --check && node --test scripts/*.test.mjs && npm ci --prefix examples/terrabase-js --ignore-scripts && node --test examples/terrabase-js/*.test.mjs && npm ci --prefix create-terrascale-app --ignore-scripts && npm test --prefix create-terrascale-app",
+    "deploy:site": "env -u CLOUDFLARE_API_TOKEN cf deploy --prebuilt"
   },
   "dependencies": {
     "vue": "3.5.42"
   },
   "devDependencies": {
+    "@cloudflare/build-output-utils": "0.8.4",
+    "cf": "1.0.0-beta.10",
     "vitepress": "1.6.4"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24.21.0"
   }
 }

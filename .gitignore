@@ -1,4 +1,5 @@
 node_modules/
+.cloudflare/
 examples/terrabase-dotnet/bin/
 examples/terrabase-dotnet/obj/
 docs/.vitepress/cache/

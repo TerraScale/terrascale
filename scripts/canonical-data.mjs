@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const origin = process.env.TERRASCALE_CANONICAL_ORIGIN ?? "https://terrascale.tech";
+const origin = "https://terrascale.tech";
 const files = ["pricing.json", "regions.json"];
 const mode = ["--sync", "--check", "--build"].find((flag) => process.argv.includes(flag)) ?? "--check";
 
