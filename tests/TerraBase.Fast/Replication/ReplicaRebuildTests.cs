@@ -159,10 +159,12 @@ public sealed class ReplicaRebuildTests
 
         var first = rebuild.RebuildAsync(pair.Database, faulted, CancellationToken.None).AsTask();
         await adapter.Entered.Task.WaitAsync(Deadline);
-        var second = await rebuild.RebuildAsync(pair.Database, faulted, CancellationToken.None);
-        await Assert.That(second is RebuildOutcome.Busy).IsTrue().Because(second.ToString());
-
+        // A second rebuild answers at once; one that waited for the first would still be running here.
+        var second = rebuild.RebuildAsync(pair.Database, faulted, CancellationToken.None).AsTask();
+        var answered = await Task.WhenAny(second, Task.Delay(TimeSpan.FromSeconds(5))) == second;
         adapter.Hold!.SetResult();
+        await Assert.That(answered).IsTrue().Because("a second rebuild on the host answers without waiting");
+        await Assert.That(await second is RebuildOutcome.Busy).IsTrue();
         await Assert.That(await first is RebuildOutcome.Completed).IsTrue();
     }
 
