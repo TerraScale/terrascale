@@ -31,7 +31,7 @@ public sealed class FlyOutageE2ETests
             await Docs.PutAsync(cluster[Cluster.Gru], uri, body);
             await Assert.That(Docs.Canonical(await Docs.ReadAsync(cluster[Cluster.Gru], uri))).IsEqualTo(Docs.Canonical(body));
 
-            await Flyctl.RunAsync("machine", "start", machine, "--app", app);
+            await Flyctl.StartStoppedAsync(app, machine);
             stopped = false;
             var started = Stopwatch.GetTimestamp();
             // While sjc boots, Fly serves the pinned request from gru: the pin refuses that answer, so it reads as not yet there.
@@ -53,7 +53,7 @@ public sealed class FlyOutageE2ETests
         {
             if (stopped)
             {
-                await Flyctl.RunAsync("machine", "start", machine, "--app", app);
+                await Flyctl.StartStoppedAsync(app, machine);
             }
         }
     }
