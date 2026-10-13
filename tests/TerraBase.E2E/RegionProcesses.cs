@@ -263,6 +263,7 @@ public sealed class RegionProcessHost
     internal const string MembersVariable = "TERRABASE_E2E_REGION_MEMBERS";
 
     [Test]
+    [Scenario(Nodes.Processes, Faults.ProcessKill)]
     [Timeout(6 * 3600 * 1000)]
     public async Task Hosts_one_region_until_its_process_is_killed(CancellationToken cancellationToken)
     {

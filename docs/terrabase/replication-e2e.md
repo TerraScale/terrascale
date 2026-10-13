@@ -39,12 +39,13 @@ Stops the single `sjc` machine of `TERRABASE_E2E_FLY_APP` (default `ts-terrabase
 and waits for it to catch up. It needs `flyctl` logged in. It runs alone because it stops a machine the other tests use.
 Without `TERRABASE_E2E_FLY_URL` and `TERRABASE_E2E_FLY_OUTAGE=1` it is reported as skipped.
 
-## Expected failure
+## Expected failures
 
-`Concurrent_writes_to_different_fields_both_survive_expected_to_fail_until_per_field_lattice` passes while the regions
-keep one of two concurrent field edits, which is whole-document last-writer-wins. The gap is tracked in
-`.cos/fly-migration-plan.md` (Product focus + replication design). When the per-field lattice lands, the test fails
-with a message to remove the marker. Then turn it into a plain assertion.
+`tests/TerraBase.E2E/Gaps.cs` lists the scenarios that wait on a slice not yet on main, each with the failure it shows
+today: E11 (SQL writes, R9), E12 and the deleted-database scenario (catalog lattice, R10a #116/#121; then GC, R7 #120),
+E13 (live move, R11) and E14 (GC, R7 #120: no tombstone of a deleted document is collected). A listed scenario that
+passes fails the test with a message to remove its row; one that fails any other way fails it too. Every other scenario,
+`Concurrent_writes_to_different_fields_both_survive` (per-field lattice) included, runs as a plain assertion.
 
 ## CI
 

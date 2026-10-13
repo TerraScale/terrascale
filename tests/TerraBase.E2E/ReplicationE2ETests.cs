@@ -69,7 +69,7 @@ public sealed class ReplicationE2ETests
 
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task Concurrent_writes_to_different_fields_both_survive_expected_to_fail_until_per_field_lattice()
+    public async Task Concurrent_writes_to_different_fields_both_survive()
     {
         await Gaps.RunAsync("E4", async () =>
         {

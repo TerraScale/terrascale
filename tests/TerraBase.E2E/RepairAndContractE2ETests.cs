@@ -84,7 +84,8 @@ public sealed class RepairAndContractE2ETests
     }
 
     // Two regions take the same unique email while partitioned. After the heal both hold the same answer: the document with
-    // the smaller id keeps the key and the other leaves the collection (design section 9, unique constraints).
+    // the smaller id keeps the key; the other loses it, so its GET answers 409 unique_violation and it is not listed (the
+    // schema endpoint's contract; design section 9, unique constraints).
     [Test]
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task Unique_writes_made_on_both_sides_of_a_partition_converge_to_the_smaller_id()
@@ -104,10 +105,21 @@ public sealed class RepairAndContractE2ETests
             foreach (var region in cluster.Regions)
             {
                 _ = await Converge.UntilAsync(
-                    async () => (Kept: await Docs.ReadAsync(cluster[region], cluster.Document(smaller)), Lost: await Docs.ReadAsync(cluster[region], cluster.Document(larger))),
-                    pair => pair.Kept?["from"]?.GetValue<string>() == "sjc" && pair.Lost is null, $"the unique key on {region}");
+                    async () => (
+                        Kept: await Docs.ReadAsync(cluster[region], cluster.Document(smaller)),
+                        Lost: await LostAsync(cluster[region], cluster.Document(larger)),
+                        Listed: (await Docs.ListAsync(cluster[region], cluster)).Count),
+                    state => state.Kept?["from"]?.GetValue<string>() == "sjc" && state.Lost && state.Listed == 1,
+                    $"the unique key on {region}: the smaller id keeps it, the larger answers 409 unique_violation and is not listed");
             }
         });
+    }
+
+    // Whether the document answers 409 unique_violation: it lost a replicated uniqueness conflict.
+    private static async Task<bool> LostAsync(HttpClient client, Uri uri)
+    {
+        using var response = await client.GetAsync(uri);
+        return response.StatusCode == HttpStatusCode.Conflict && (await response.Content.ReadAsStringAsync()).Contains("unique_violation", StringComparison.Ordinal);
     }
 
     // A database deleted in gru while fra is away stays deleted: fra drops its copy when it returns, and nothing brings the

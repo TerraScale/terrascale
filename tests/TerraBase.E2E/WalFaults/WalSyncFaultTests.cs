@@ -160,6 +160,8 @@ public sealed class WalSyncFaultHost
     internal const string RowsVariable = "WALFAULTS_HOST_ROWS";
 
     [Test]
+    // The child process the WAL fault tests start; the faults are the shim's, which no Faults flag names.
+    [Scenario(Nodes.Processes)]
     public async Task Commits_one_row_per_transaction_each_synced()
     {
         var database = Environment.GetEnvironmentVariable(DatabaseVariable);
