@@ -1,22 +1,10 @@
 using System.Diagnostics;
-using System.Text.Json;
 
 namespace TerraBase.E2E;
 
-/// <summary>The flyctl calls the outage test makes: finding the sjc machine, and stopping and starting it.</summary>
+/// <summary>Runs flyctl for a pinned disposable app's run: its read-only target checks and its machine stops and starts.</summary>
 internal static class Flyctl
 {
-    // The id of the app's only machine in region.
-    public static async Task<string> MachineInRegionAsync(string app, string region)
-    {
-        using var listed = JsonDocument.Parse(await RunAsync("machine", "list", "--app", app, "--json"));
-        var ids = listed.RootElement.EnumerateArray()
-            .Where(machine => machine.GetProperty("region").GetString() == region)
-            .Select(machine => machine.GetProperty("id").GetString()!)
-            .ToArray();
-        return ids.Length == 1 ? ids[0] : throw new InvalidOperationException($"{app} must have exactly one machine in {region}, found {ids.Length}");
-    }
-
     public static async Task<string> RunAsync(params string[] arguments)
     {
         var start = new ProcessStartInfo("flyctl") { RedirectStandardOutput = true, RedirectStandardError = true };
