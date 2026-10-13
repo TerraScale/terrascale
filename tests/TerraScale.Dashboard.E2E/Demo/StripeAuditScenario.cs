@@ -80,9 +80,8 @@ public sealed class StripeAuditScenario : IAsyncDisposable
     private string CaPath => Path.Combine(temporaryDirectory, "authority.pem");
     private string Proxy => "http://127.0.0.1:" + ((IPEndPoint)listener.LocalEndpoint).Port;
 
-    public DashboardCredentials Identity(string? key = null) => new("test-project", "test-api-key", "test-management", "test-instance",
-        "test-client", "test-client-secret", Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
-        new(key ?? Secret, "whsec_STRIPE_AUDIT_PRIVATE"), "sk_auth_management_test");
+    public DashboardCredentials Identity(string? key = null) => new("test-dashboard-client-secret-0123456789abcdef",
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new(key ?? Secret, "whsec_STRIPE_AUDIT_PRIVATE"));
 
     public async Task<Result> RunAsync(string[]? arguments = null, DashboardCredentials? identity = null)
     {
@@ -221,7 +220,7 @@ public sealed class StripeAuditScenario : IAsyncDisposable
                 "wrong-webhook" => ["/api/v1/billing/stripe/webhook/other"],
                 _ => ["/api/v1/billing/stripe/webhook"]
             };
-            return JsonSerializer.Serialize(new { @object = "list", url = "/v1/webhook_endpoints", has_more = false, data = paths.Select(route => new { id = "we_test", @object = "webhook_endpoint", url = "https://dashboard.terrascale.tech" + route, livemode = fault == "webhook-mode" ? !live : live, status = "enabled", api_version = ApiVersion, enabled_events = Events }) });
+            return JsonSerializer.Serialize(new { @object = "list", url = "/v1/webhook_endpoints", has_more = false, data = paths.Select(route => new { id = "we_test", @object = "webhook_endpoint", url = "https://dash.terrascale.tech" + route, livemode = fault == "webhook-mode" ? !live : live, status = "enabled", api_version = ApiVersion, enabled_events = Events }) });
         }
         if (path == "/v1/events")
         {

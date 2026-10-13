@@ -29,10 +29,6 @@ public sealed class OwnershipSdkProtocol(IDashboardState state, TimeProvider clo
     private readonly object gate = new();
     private readonly Dictionary<string, Organization> organizations = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Invitation> tokens = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> bootstrapOrganizationIds = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> originalOrganizationIds = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> bootstrapProjectIds = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> originalProjectIds = new(StringComparer.Ordinal);
     private readonly TerraScaleIdGenerator ids = new();
     private readonly ConcurrentQueue<string> failures = new();
     private readonly ConcurrentQueue<Request> requests = new();
@@ -47,14 +43,6 @@ public sealed class OwnershipSdkProtocol(IDashboardState state, TimeProvider clo
     public void Configure(WebApplicationBuilder builder)
     {
         builder.Services.Replace(ServiceDescriptor.Singleton<IOrganizationAccess, TsOrganizationAccess>());
-        builder.Services.Replace(ServiceDescriptor.Singleton<IInvitationGateway, TsInvitationGateway>());
-        var original = builder.Services.Last(descriptor => descriptor.ServiceType == typeof(IWorkspaceGateway));
-        builder.Services.Remove(original);
-        builder.Services.TryAddSingleton<TsWorkspaceGateway>();
-        builder.Services.AddSingleton<IWorkspaceGateway>(services => new Workspace(
-            (IWorkspaceGateway)(original.ImplementationInstance ?? original.ImplementationFactory?.Invoke(services) ??
-                ActivatorUtilities.CreateInstance(services, original.ImplementationType ?? throw new InvalidOperationException("Missing fixture workspace bootstrap."))),
-            services.GetRequiredService<TsWorkspaceGateway>(), this));
     }
 
     public void SeedOrganization(OrganizationRecord value)
@@ -354,47 +342,4 @@ public sealed class OwnershipSdkProtocol(IDashboardState state, TimeProvider clo
         public Offer? Transfer { get; set; }
         public int RetentionDays { get; set; } = 90;
     }
-    private sealed class Workspace(IWorkspaceGateway bootstrap, TsWorkspaceGateway real, OwnershipSdkProtocol protocol) : IWorkspaceGateway
-    {
-        public async Task<OrganizationRecord> EnsurePersonalAsync(SessionRecord session, CancellationToken ct)
-        { var org = protocol.CanonicalBootstrap(await bootstrap.EnsurePersonalAsync(session, ct)); protocol.SeedOrganization(org); return org; }
-        public async Task<OrganizationRecord> CreateOrganizationAsync(SessionRecord session, string name, CancellationToken ct)
-        { var org = protocol.CanonicalBootstrap(await bootstrap.CreateOrganizationAsync(session, name, ct)); protocol.SeedOrganization(org); return org; }
-        public async Task<ProjectRecord> CreateProjectAsync(SessionRecord session, string org, string name, CancellationToken ct) =>
-            protocol.CanonicalProject(await bootstrap.CreateProjectAsync(session, protocol.OriginalOrganization(org), name, ct), org);
-        public Task<string> RoleAsync(SessionRecord session, string org, CancellationToken ct) => real.RoleAsync(session, org, ct);
-        public Task RenameOrganizationAsync(SessionRecord session, string org, string name, CancellationToken ct) => bootstrap.RenameOrganizationAsync(session, protocol.OriginalOrganization(org), name, ct);
-        public Task RenameProjectAsync(SessionRecord session, string org, string project, string name, CancellationToken ct) => bootstrap.RenameProjectAsync(session, protocol.OriginalOrganization(org), protocol.OriginalProject(project), name, ct);
-    }
-
-    // Alias only new fixture bootstrap outputs before they reach dashboard
-    // persistence. Never rewrite an existing canonical document or admit a
-    // legacy fixture ID to an official management SDK route.
-    private OrganizationRecord CanonicalBootstrap(OrganizationRecord source)
-    {
-        lock (gate)
-        {
-            var copy = JsonSerializer.Deserialize<OrganizationRecord>(JsonSerializer.Serialize(source))!;
-            if (!bootstrapOrganizationIds.TryGetValue(source.Id, out var id))
-            { id = ids.NewId(); bootstrapOrganizationIds.Add(source.Id, id); originalOrganizationIds.Add(id, source.Id); }
-            copy.Id = id;
-            copy.Projects = source.Projects.Values.Select(project => CanonicalProject(project, id)).ToDictionary(project => project.Id);
-            return copy;
-        }
-    }
-    private ProjectRecord CanonicalProject(ProjectRecord source, string organizationId)
-    {
-        lock (gate)
-        {
-            var copy = JsonSerializer.Deserialize<ProjectRecord>(JsonSerializer.Serialize(source))!;
-            if (!bootstrapProjectIds.TryGetValue(source.Id, out var id))
-            { id = ids.NewId(); bootstrapProjectIds.Add(source.Id, id); originalProjectIds.Add(id, source.Id); }
-            copy.Id = id; copy.OrganizationId = organizationId;
-            return copy;
-        }
-    }
-    private string OriginalOrganization(string id)
-    { lock (gate) return originalOrganizationIds.GetValueOrDefault(id) ?? throw new InvalidOperationException("Unknown fixture bootstrap organization."); }
-    private string OriginalProject(string id)
-    { lock (gate) return originalProjectIds.GetValueOrDefault(id) ?? throw new InvalidOperationException("Unknown fixture bootstrap project."); }
 }

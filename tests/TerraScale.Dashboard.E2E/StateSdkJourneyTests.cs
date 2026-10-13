@@ -18,11 +18,11 @@ public sealed class StateSdkJourneyTests(DashboardE2EFixture fixture)
         var startup = scenario.StartHostsAsync(simultaneous: true);
         await WaitAsync(controls, "pausedCreates", 2);
         await ControlAsync(controls, new { command = "release-collections" });
-        Check(await startup, "Both actual dashboard replicas start from an absent state database and collections: " + scenario.StartupError);
+        Check(await startup, "Both actual dashboard replicas create missing collections in the producer-seeded platform database: " + scenario.StartupError);
         var boot = await ObserveAsync(controls);
         CheckSchema(boot);
-        Check(boot.GetProperty("databaseCreates").GetInt32() == 1 && boot.GetProperty("databasePuts").GetInt32() == 2 &&
-            boot.GetProperty("collectionConflicts").GetInt32() >= 1, "Database creation is idempotent; concurrent collection name_taken conflicts are reread through the real SDK.");
+        Check(boot.GetProperty("databaseCreates").GetInt32() == 0 && boot.GetProperty("databasePuts").GetInt32() == 0 &&
+            boot.GetProperty("collectionConflicts").GetInt32() >= 1, "The dashboard never creates or replaces the seeded platform database; concurrent collection name_taken conflicts are reread through the real SDK.");
         using var client = scenario.CreateClient();
         using var replica = scenario.CreateClient(replica: true);
         await ReadyAsync(client); await ReadyAsync(replica);
@@ -83,11 +83,11 @@ public sealed class StateSdkJourneyTests(DashboardE2EFixture fixture)
         rpc = await HttpJourney.McpAsync(coldReplica, secret, "tools/call", new { name = "get_profile", arguments = new { } });
         Check(rpc.GetProperty("result").GetProperty("structuredContent").GetProperty("locale").GetString() == "pt-BR", "The native-issued PAT remains valid on a cold replacement replica.");
 
-        await ControlAsync(controls, new { command = "rotate-key" });
+        var beforePrivateReads = (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32();
         await ReadyAsync(coldClient);
         Check((await MeAsync(coldReplica)).GetProperty("email").GetString() == account.Email &&
-            (await ObserveAsync(controls)).GetProperty("rotatedRequests").GetInt32() >= 20,
-            "Descriptor rereads use the rotated admitted state key for readiness and existing encrypted account/session reads.");
+            (await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32() >= beforePrivateReads + 18,
+            "Readiness and encrypted account/session reads use the private listener without a durable API key or public data bearer.");
         using (var deleted = await HttpJourney.PostFormAsync(coldReplica, "/api/v1/dashboard/data/saved-queries/delete", new()
         { ["_csrf"] = localeCsrf, ["id"] = queryId }))
             Check(deleted.StatusCode == HttpStatusCode.NoContent, "Native cleanup deletes the saved query through an opaque producer If-Match.");
@@ -102,7 +102,7 @@ public sealed class StateSdkJourneyTests(DashboardE2EFixture fixture)
         await ControlAsync(controls, new { command = "mode", value = "interrupted" });
         Check(!await scenario.StartHostsAsync(), "A producer outage during creation prevents the actual app from admitting traffic.");
         var partial = await ObserveAsync(controls);
-        Check(partial.GetProperty("collections").GetArrayLength() is > 0 and < 20, "The interrupted cold start leaves real, partial producer metadata.");
+        Check(partial.GetProperty("collections").GetArrayLength() is > 0 and < 18, "The interrupted cold start leaves real, partial producer metadata.");
         await ControlAsync(controls, new { command = "mode", value = "" });
         Check(await scenario.StartHostsAsync(), "The next actual app startup resumes existing collections and establishes the remainder.");
         var recovered = await ObserveAsync(controls);
@@ -117,7 +117,7 @@ public sealed class StateSdkJourneyTests(DashboardE2EFixture fixture)
         await ReadyAsync(client);
         await ControlAsync(controls, new { command = "drop-collection", name = "login_throttle" });
         var missing = await ObserveAsync(controls);
-        using (var readiness = await client.GetAsync("/readyz")) Check(readiness.StatusCode == HttpStatusCode.ServiceUnavailable, "One missing required collection fails readiness even while the other18 exist.");
+        using (var readiness = await client.GetAsync("/readyz")) Check(readiness.StatusCode == HttpStatusCode.ServiceUnavailable, "One missing required collection fails readiness even while the other17 exist.");
         using (var login = await HttpJourney.LoginAsync(client)) Check(login.StatusCode == HttpStatusCode.ServiceUnavailable, "A genuine schema404 propagates as a dependency503 instead of a misleading sign-in rate-limit429.");
         var checkedSchema = await ObserveAsync(controls);
         Check(checkedSchema.GetProperty("collectionPosts").GetInt32() == missing.GetProperty("collectionPosts").GetInt32() &&
@@ -136,9 +136,9 @@ public sealed class StateSdkJourneyTests(DashboardE2EFixture fixture)
     [Arguments("forbidden")]
     [Arguments("project-missing")]
     [Arguments("region-unavailable")]
-    [Arguments("vault-down")]
-    [Arguments("invalid-project")]
-    [Arguments("wrong-database")]
+    [Arguments("fly-secrets-unavailable")]
+    [Arguments("invalid-auth-client-secret")]
+    [Arguments("invalid-session-key")]
     [Arguments("wrong-collection")]
     [Arguments("bad-conflict-reread")]
     [Arguments("other-conflict")]
@@ -152,7 +152,7 @@ public sealed class StateSdkJourneyTests(DashboardE2EFixture fixture)
         var observation = await ObserveAsync(controls);
         Check(observation.GetProperty("documentWrites").GetInt32() == 0 && scenario.StartupError is not null,
             "Bootstrap failure cannot write user state, select a fallback store or silently admit traffic: " + failure);
-        if (failure is "authorization" or "forbidden" or "project-missing" or "region-unavailable" or "vault-down" or "invalid-project" or "wrong-database" or "wrong-missing-code")
+        if (failure is "authorization" or "forbidden" or "project-missing" or "region-unavailable" or "fly-secrets-unavailable" or "invalid-auth-client-secret" or "invalid-session-key" or "wrong-missing-code")
             Check(observation.GetProperty("collectionPosts").GetInt32() == 0, "Only a genuine missing collection in the validated fixed database can trigger schema creation.");
         CheckProtocol(observation);
     }
@@ -199,9 +199,9 @@ public sealed class StateSdkJourneyTests(DashboardE2EFixture fixture)
     private static int Count(JsonElement observation, string name) => observation.GetProperty("collections").EnumerateArray().Single(collection => collection.GetProperty("name").GetString() == name).GetProperty("documents").GetInt32();
     private static void CheckSchema(JsonElement observation)
     {
-        var expected = new[] { "sessions", "auth_credentials", "session_indexes", "login_throttle", "device_grants", "auth-flows", "auth-mail-budgets", "dashboard_accounts", "dashboard_account_identities", "dashboard_organizations", "dashboard_access_tokens", "dashboard_access_token_hashes", "dashboard_invitation_tokens", "dashboard_saved_queries", "dashboard_data_credentials", "dashboard_billing", "dashboard_internal_billing", "dashboard_stripe_customers", "dashboard_billing_changes", "dashboard_stripe_checkouts" };
+        var expected = new[] { "sessions", "auth_credentials", "session_indexes", "login_throttle", "device_grants", "auth-flows", "auth-mail-budgets", "dashboard_accounts", "dashboard_account_identities", "dashboard_organizations", "dashboard_access_tokens", "dashboard_access_token_hashes", "dashboard_saved_queries", "dashboard_billing", "dashboard_internal_billing", "dashboard_stripe_customers", "dashboard_billing_changes", "dashboard_stripe_checkouts" };
         Check(observation.GetProperty("collections").EnumerateArray().Select(collection => collection.GetProperty("name").GetString()).Order(StringComparer.Ordinal)
-            .SequenceEqual(expected.Order(StringComparer.Ordinal)), "The external producer contains exactly all20 fixed production collections, including internal billing, account identity and checkout binding indexes.");
+            .SequenceEqual(expected.Order(StringComparer.Ordinal)), "The external producer contains exactly all18 fixed production collections, including internal billing, account identity and checkout binding indexes.");
     }
     private static string Token(string html)
     { var token = Regex.Match(html, "name=\"_csrf\" value=\"([^\"]+)\"").Groups[1].Value; Check(token.Length > 0, "The native form publishes a CSRF token."); return WebUtility.HtmlDecode(token); }
