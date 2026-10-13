@@ -80,7 +80,7 @@ public static class EnrollmentEndpoints
         {
             var flow = await flows.StartOidcAsync(context, returnTo);
             var target = await auth.AuthorizationUrlAsync(flow, context.RequestAborted);
-            return AuthEndpoints.SeeOther(target);
+            return HttpRedirects.SeeOther(target);
         }
         catch (Exception error) when (DependencyFailure(error, context))
         { return Failure(context, returnTo, "Single sign-on is unavailable right now. Try again in a moment.", 503, error); }
@@ -99,7 +99,7 @@ public static class EnrollmentEndpoints
             var session = await auth.ExchangeAsync(context.Request.Query["code"].ToString(), flow, context.RequestAborted);
             var account = await AuthEndpoints.EnsureAccountAsync(context, context.RequestServices.GetRequiredService<IAuthGateway>(), session);
             await sessions.StartAsync(context, session);
-            return AuthEndpoints.SeeOther(flow.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : flow.ReturnTo);
+            return HttpRedirects.SeeOther(flow.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : flow.ReturnTo);
         }
         catch (SignInRejectedException)
         { return Failure(context, flow.ReturnTo, "ts-auth could not confirm this sign-in. Sign in again.", 401); }

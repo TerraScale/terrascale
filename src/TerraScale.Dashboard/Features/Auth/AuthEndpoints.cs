@@ -27,7 +27,7 @@ public static class AuthEndpoints
             await sessions.EndAsync(context);
             var target = await context.RequestServices.GetRequiredService<IAuthLogoutGateway>().EndSessionUrlAsync(
                 $"{context.Request.Scheme}://{context.Request.Host}", context.RequestAborted);
-            return SeeOther(target);
+            return HttpRedirects.SeeOther(target);
         });
     }
 
@@ -102,7 +102,7 @@ public static class AuthEndpoints
                 case "reset-complete":
                     await auth.CompletePasswordResetAsync(email, code, password, ip, context.RequestAborted);
                     await budget.ForgiveAsync(context, email, context.RequestAborted);
-                    return SeeOther("/login?email=" + Uri.EscapeDataString(email) + "&notice=password-reset");
+                    return HttpRedirects.SeeOther("/login?email=" + Uri.EscapeDataString(email) + "&notice=password-reset");
                 default:
                     var session = signUp is not null
                         ? await context.RequestServices.GetRequiredService<IAuthEnrollmentGateway>().VerifySignUpAsync(email, code, signUp.PendingToken, ip, context.RequestAborted)
@@ -117,7 +117,7 @@ public static class AuthEndpoints
                     }
                     var account = await EnsureAccountAsync(context, auth, session);
                     await sessions.StartAsync(context, session);
-                    return SeeOther(model.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : model.ReturnTo);
+                    return HttpRedirects.SeeOther(model.ReturnTo == "/" && !account.OnboardingCompleted ? "/onboarding" : model.ReturnTo);
             }
         }
         catch (AuthRequestRejectedException error)
@@ -137,8 +137,6 @@ public static class AuthEndpoints
         }
     }
 
-    internal static IResult SeeOther(string location) => new SeeOtherResult(location);
-
     internal static async Task<AccountRecord> EnsureAccountAsync(HttpContext context, IAuthGateway auth, SessionRecord session)
     {
         try { return await context.RequestServices.GetRequiredService<AccountService>().EnsureAsync(session, context.RequestAborted); }
@@ -152,16 +150,6 @@ public static class AuthEndpoints
                     .LogWarning("Rejected account grant cleanup failed ({ErrorType})", error.GetType().Name);
             }
             throw;
-        }
-    }
-
-    private sealed record SeeOtherResult(string Location) : IResult
-    {
-        public Task ExecuteAsync(HttpContext context)
-        {
-            context.Response.StatusCode = StatusCodes.Status303SeeOther;
-            context.Response.Headers.Location = Location;
-            return Task.CompletedTask;
         }
     }
 

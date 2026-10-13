@@ -1,6 +1,5 @@
 using Stripe;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Onboarding;
 using AccountService = TerraScale.Dashboard.Features.Accounts.AccountService;
 
@@ -22,7 +21,7 @@ public static class BillingPlanEndpoints
         {
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountEndpoints.LoginRedirect(http);
-            try { return AuthEndpoints.SeeOther(await billing.CheckoutReturnAsync(context, http.Request.Query["session_id"].ToString(), http.RequestAborted)); }
+            try { return HttpRedirects.SeeOther(await billing.CheckoutReturnAsync(context, http.Request.Query["session_id"].ToString(), http.RequestAborted)); }
             catch (Exception error) when (BillingFailure(error, http)) { return Failure(error); }
         });
         return endpoints;
@@ -35,11 +34,11 @@ public static class BillingPlanEndpoints
         if (!Csrf.Validate(http, form)) return Results.Text("Invalid CSRF token.", statusCode: 403);
         try
         {
-            if (operation == "cancel") return AuthEndpoints.SeeOther(await billing.CancelCheckoutAsync(context,
+            if (operation == "cancel") return HttpRedirects.SeeOther(await billing.CancelCheckoutAsync(context,
                 http.Request.RouteValues["sessionId"]?.ToString() ?? form["sessionId"].ToString(), http.RequestAborted));
             var outcome = operation == "undo" ? await billing.UndoPlanChangeAsync(context, http.RequestAborted)
                 : await billing.ChangePlanAsync(context, form["plan"].ToString(), form["interval"].ToString(), http.RequestAborted);
-            return AuthEndpoints.SeeOther("/organization?tab=billing" + (outcome == "current" ? "" : "&billing=" + outcome));
+            return HttpRedirects.SeeOther("/organization?tab=billing" + (outcome == "current" ? "" : "&billing=" + outcome));
         }
         catch (Exception error) when (BillingFailure(error, http)) { return Failure(error); }
     }

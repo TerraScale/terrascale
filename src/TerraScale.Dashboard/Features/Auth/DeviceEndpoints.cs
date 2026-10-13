@@ -32,7 +32,7 @@ public static class DeviceEndpoints
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
             var session = await sessions.ReadAsync(http);
-            if (session is null) return AuthEndpoints.SeeOther("/login?returnTo=" + Uri.EscapeDataString("/cli/approve?user_code=" + Uri.EscapeDataString(form["user_code"].ToString())));
+            if (session is null) return HttpRedirects.SeeOther("/login?returnTo=" + Uri.EscapeDataString("/cli/approve?user_code=" + Uri.EscapeDataString(form["user_code"].ToString())));
             await accounts.GetContextAsync(session, http.RequestAborted);
             var code = form["user_code"].ToString();
             var decision = form["decision"].ToString();

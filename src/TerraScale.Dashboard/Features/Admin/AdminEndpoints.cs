@@ -29,7 +29,7 @@ public static class AdminEndpoints
             var target = "/login";
             if (HttpMethods.IsGet(context.Request.Method))
                 target += "?returnTo=" + Uri.EscapeDataString((context.Request.PathBase + context.Request.Path + context.Request.QueryString).ToString()).Replace("%20", "+", StringComparison.Ordinal);
-            return AuthEndpoints.SeeOther(target);
+            return HttpRedirects.SeeOther(target);
         }
 
         if (await roles.PlatformRoleAsync(session, context.RequestAborted) != "admin")

@@ -1,6 +1,5 @@
 using RazorSlices;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.ApiKeys;
 using TerraScale.Dashboard.Features.Onboarding;
@@ -53,7 +52,7 @@ public static class DatabaseEndpoints
             try
             {
                 var database = await databases.CreateAsync(context, form["name"].ToString(), form["region"].Select(value => value ?? ""), http.RequestAborted);
-                return WantsHtml(http) ? AuthEndpoints.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(database, statusCode: 201);
+                return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(database.Id) + "?created=1") : Results.Json(database, statusCode: 201);
             }
             catch (Exception error) when (KnownFailure(error))
             {
@@ -76,13 +75,13 @@ public static class DatabaseEndpoints
                         if (action == "branch")
                         {
                             var branch = await databases.BranchAsync(context, id, form["name"].ToString(), http.RequestAborted);
-                            return WantsHtml(http) ? AuthEndpoints.SeeOther(DatabaseService.Path(branch.Id)) : Results.Json(branch, statusCode: 201);
+                            return WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(branch.Id)) : Results.Json(branch, statusCode: 201);
                         }
                         if (action == "regions")
                             await databases.SetRegionsAsync(context, id, form["region"].Select(value => value ?? ""), http.RequestAborted);
                         else
                             await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
-                        return WantsHtml(http) ? AuthEndpoints.SeeOther(action == "delete" ? "/databases" : DatabaseService.Path(id) + "#placement") : Results.NoContent();
+                        return WantsHtml(http) ? HttpRedirects.SeeOther(action == "delete" ? "/databases" : DatabaseService.Path(id) + "#placement") : Results.NoContent();
                     }
                     catch (Exception error) when (KnownFailure(error))
                     {
