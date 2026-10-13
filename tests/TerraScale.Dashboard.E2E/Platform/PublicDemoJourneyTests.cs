@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
@@ -27,15 +26,15 @@ public sealed class PublicDemoJourneyTests
     }
 
     [Test]
-    public async Task EveryFullDocumentCarriesOneDemoBanner()
+    public async Task FullDocumentsCarryNoDemoBanner()
     {
         await using var demo = await StartAsync();
         using var client = demo.Client();
-        await AssertLabelledAsync(client, "/login");
+        await AssertUnlabelledAsync(client, "/login");
         using (var login = await HttpJourney.LoginAsync(client))
             await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         foreach (var path in new[] { "/", "/databases", "/profile", "/organization" })
-            await AssertLabelledAsync(client, path);
+            await AssertUnlabelledAsync(client, path);
     }
 
     [Test]
@@ -67,45 +66,12 @@ public sealed class PublicDemoJourneyTests
         await Assert.That(portal.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("The fake Stripe portal stays reachable for the billing walkthrough.");
     }
 
-    [Test]
-    [Category("Slow")]
-    public async Task BannerPersistsThroughInPageNavigationAndDatastarUpdates()
-    {
-        await using var demo = await StartAsync();
-        using var playwright = await Playwright.CreateAsync();
-        await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
-        var page = await browser.NewPageAsync();
-        var banner = page.GetByRole(AriaRole.Status).Filter(new() { HasText = PublicDemo.Banner });
-        await page.GotoAsync(demo.Origin + "login");
-        await Assertions.Expect(banner).ToHaveCountAsync(1);
-        await page.Locator("#email").FillAsync("user@example.com");
-        await page.Locator("#password").FillAsync("test-password");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Sign in", Exact = true }).ClickAsync();
-        await page.WaitForURLAsync(demo.Origin.ToString());
-        await Assertions.Expect(banner).ToHaveCountAsync(1);
-        await page.GetByRole(AriaRole.Link, new() { Name = "Databases", Exact = true }).First.ClickAsync();
-        await page.WaitForURLAsync(demo.Origin + "databases");
-        await Assertions.Expect(banner).ToBeVisibleAsync();
-        // Datastar patches the open dialog in place; the banner must survive the morph.
-        await page.GetByRole(AriaRole.Button, new() { Name = "New database", Exact = true }).First.ClickAsync();
-        await page.Locator("#create-database[open]").WaitForAsync();
-        await Assertions.Expect(banner).ToHaveCountAsync(1);
-        await page.Keyboard.PressAsync("Escape");
-        await page.Locator("#create-database[open]").WaitForAsync(new() { State = WaitForSelectorState.Detached });
-        await page.GetByRole(AriaRole.Link, new() { Name = "Usage", Exact = true }).First.ClickAsync();
-        await page.WaitForURLAsync(new System.Text.RegularExpressions.Regex("/usage"));
-        await Assertions.Expect(banner).ToHaveCountAsync(1);
-        await Assert.That(await page.TitleAsync()).StartsWith("DEMO · ");
-    }
-
-    private static async Task AssertLabelledAsync(HttpClient client, string path)
+    private static async Task AssertUnlabelledAsync(HttpClient client, string path)
     {
         using var response = await client.GetAsync(path);
         var html = await response.Content.ReadAsStringAsync();
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(path);
-        await Assert.That(html.Split(PublicDemo.Banner).Length - 1).IsEqualTo(1).Because($"{path} shows the DEMO banner once.");
-        await Assert.That(html).Contains("<title>DEMO · ");
-        await Assert.That(html).Contains("href=\"/__demo/banner.css\"");
+        await Assert.That(html).DoesNotContain("DEMO").Because($"{path} shows no DEMO banner or title.");
     }
 
     private static async Task<PublicDemoHost> StartAsync()
@@ -120,7 +86,6 @@ public sealed class PublicDemoJourneyTests
         probe.Stop();
         var origin = new Uri($"http://127.0.0.1:{port}/");
         var app = environment.CreateHost(root, port, origin.ToString().TrimEnd('/'), PublicDemo.Configure);
-        PublicDemo.Use(app);
         app.MapGet("/__demo-error-probe", string () => throw new InvalidOperationException(Secret));
         await app.StartAsync();
         return new(app, origin);
