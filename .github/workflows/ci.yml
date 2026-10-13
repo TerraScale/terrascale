@@ -129,46 +129,12 @@ jobs:
           persist-credentials: false
       - name: Verify CI path filters
         run: python3 terrascale/scripts/ci/path-filter-test.py terrascale/.github/workflows/ci.yml path-filter-action/dist/index.js
-      - &test-cpus
-        name: Measure the alpha slot CPU budget and delegate nested Docker CPUs
-        id: test-cpus
-        run: |
-          # The live alpha broker has five slots; leave the indivisible CPUs to the shared host.
-          count=$(( $(nproc) / 5 ))
-          (( count > 0 ))
-          echo "count=$count" >> "$GITHUB_OUTPUT"
-          echo "quota=$(( count * 100000 ))" >> "$GITHUB_OUTPUT"
-          # cgroup v2 requires the runner's processes in a leaf before nested Docker can use CPU quotas.
-          sudo bash <<'CGROUP'
-          set -euo pipefail
-          mkdir -p /sys/fs/cgroup/runner
-          mapfile -t pids < /sys/fs/cgroup/cgroup.procs
-          while (( ${#pids[@]} )); do
-            for pid in "${pids[@]}"; do
-              printf '%s\n' "$pid" > /sys/fs/cgroup/runner/cgroup.procs || [[ ! -d /proc/$pid ]]
-            done
-            mapfile -t pids < /sys/fs/cgroup/cgroup.procs
-          done
-          printf '+cpu\n' > /sys/fs/cgroup/cgroup.subtree_control
-          CGROUP
       - &setup-builder
         uses: docker/setup-buildx-action@v3
-        id: setup-builder
         with:
-          driver: docker-container
-          # A private builder gives this job the equivalent of docker --cpus=<slot budget>.
-          driver-opts: |
-            cpu-period=100000
-            cpu-quota=${{ steps.test-cpus.outputs.quota }}
-      - &verify-builder
-        name: Verify the Docker CPU limit
-        env:
-          BUILDER_NAME: ${{ steps.setup-builder.outputs.name }}
-          EXPECTED_QUOTA: ${{ steps.test-cpus.outputs.quota }}
-        run: |
-          limits=$(docker inspect "buildx_buildkit_${BUILDER_NAME}0" --format '{{.HostConfig.CpuQuota}} {{.HostConfig.CpuPeriod}}')
-          [[ "$limits" == "$EXPECTED_QUOTA 100000" ]]
-          echo "Docker CPU quota/period: $limits"
+          # Alpha's shared daemon preserves layer and NuGet caches across jobs.
+          driver: remote
+          endpoint: unix:///run/buildkit/buildkitd.sock
       - &build-area
         uses: docker/build-push-action@v6
         with:
@@ -179,13 +145,10 @@ jobs:
           # TerraBase's tests check that /healthz reports the exact commit (unused by the other areas' stages).
           build-args: |
             TERRABASE_REVISION=${{ github.sha }}
-            DOTNET_PROCESSOR_COUNT=${{ steps.test-cpus.outputs.count }}
+            DOTNET_PROCESSOR_COUNT=${{ github.job == 'libs' && '2' || '8' }}
           # The build stage is reused for identical inputs; the tests always run on the current head.
           no-cache-filters: test-${{ github.job }}
           push: false
-          # Per-job layer cache: the base stage (apt, Playwright Chromium, ts-dotnet) is rebuilt only when it changes.
-          cache-from: type=gha,scope=${{ github.job }}
-          cache-to: type=gha,mode=max,scope=${{ github.job }}
 
   auth:
     needs: changes
@@ -195,9 +158,7 @@ jobs:
     steps:
       - *checkout
       - *checkout-ts-dotnet
-      - *test-cpus
       - *setup-builder
-      - *verify-builder
       - *build-area
 
   terrabase:
@@ -208,9 +169,7 @@ jobs:
     steps:
       - *checkout
       - *checkout-ts-dotnet
-      - *test-cpus
       - *setup-builder
-      - *verify-builder
       - *build-area
 
   test:
@@ -252,21 +211,17 @@ jobs:
     steps:
       - *checkout
       - *checkout-ts-dotnet
-      - *test-cpus
       - *setup-builder
-      - *verify-builder
       - uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
           target: test-slow
-          build-args: DOTNET_PROCESSOR_COUNT=${{ steps.test-cpus.outputs.count }}
+          build-args: DOTNET_PROCESSOR_COUNT=8
           # A rerun of the same commit runs the suites again instead of reusing the stored result.
           no-cache-filters: slow-run
           outputs: type=local,dest=slow
-          cache-from: type=gha,scope=slow
-          cache-to: type=gha,mode=max,scope=slow
       - name: Report the Slow result
         if: ${{ !cancelled() }}
         env:

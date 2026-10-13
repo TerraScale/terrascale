@@ -5,7 +5,7 @@
 # this same tree (Makefile TERRABASE_BINARY).
 
 FROM mcr.microsoft.com/dotnet/sdk:11.0 AS base
-# BuildKit can expose the builder host's CPUs; CI supplies the test runner's measured allocation.
+# BuildKit exposes the shared host's CPUs; CI supplies the alpha test-slot budget (8, or 2 for libs).
 # Publish/runtime stages have their own base and retain Fly's automatic CPU discovery.
 ARG DOTNET_PROCESSOR_COUNT
 ENV DOTNET_PROCESSOR_COUNT=$DOTNET_PROCESSOR_COUNT
