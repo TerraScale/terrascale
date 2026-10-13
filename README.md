@@ -29,7 +29,8 @@ HTTP 404 page. Publication credentials come from GitHub's secret store.
 `cf` is pinned to `1.0.0-beta.10`. Its supported `CF_API_TOKEN` credential alias
 allows `CLOUDFLARE_API_TOKEN` to remain unset for every invocation. Cloudflare's
 required `workersDev`, `previewUrls` and `buildContext.isPreview` fields describe
-hosting/output semantics; they are fixed values, not application switches.
+hosting/output semantics. `CLOUDFLARE_PREVIEW_BUILD` is cf's required platform
+build context for branch previews; application feature switches are rejected by CI.
 
 ## Edit public content
 
