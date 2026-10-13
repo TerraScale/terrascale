@@ -1,7 +1,7 @@
 name: CI
 
 # One required check: "test". It passes when every area job that ran passed. The area jobs run in parallel, each
-# building one Dockerfile stage on a Blacksmith runner (format, Release build with analyzers as errors, the area's checks and Fast
+# building one Dockerfile stage on a CPU-limited alpha runner (format, Release build with analyzers as errors, the area's checks and Fast
 # suite): test-libs, test-auth, test-terrabase. On pull requests an area runs only when its files or the shared files
 # changed (`changes`); libs changes run every area. Pushes to main run every area. `make docker-test` runs all three.
 # Next to it, without waiting for it:
@@ -42,7 +42,7 @@ env:
 jobs:
   # Runs on every event: a skipped job would skip everything downstream of "test" (deploy, slow).
   changes:
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -104,7 +104,7 @@ jobs:
   libs:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.libs == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 30
     steps:
       - &checkout
@@ -129,14 +129,33 @@ jobs:
           persist-credentials: false
       - name: Verify CI path filters
         run: python3 terrascale/scripts/ci/path-filter-test.py terrascale/.github/workflows/ci.yml path-filter-action/dist/index.js
+      - &test-cpus
+        name: Measure the alpha slot CPU budget
+        id: test-cpus
+        run: |
+          # The live alpha broker has five slots; leave the indivisible CPUs to the shared host.
+          count=$(( $(nproc) / 5 ))
+          (( count > 0 ))
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "quota=$(( count * 100000 ))" >> "$GITHUB_OUTPUT"
       - &setup-builder
         uses: docker/setup-buildx-action@v3
+        id: setup-builder
         with:
           driver: docker-container
-      - &test-cpus
-        name: Measure test runner CPU allocation
-        id: test-cpus
-        run: echo "count=$(nproc)" >> "$GITHUB_OUTPUT"
+          # A private builder gives this job the equivalent of docker --cpus=<slot budget>.
+          driver-opts: |
+            cpu-period=100000
+            cpu-quota=${{ steps.test-cpus.outputs.quota }}
+      - &verify-builder
+        name: Verify the Docker CPU limit
+        env:
+          BUILDER_NAME: ${{ steps.setup-builder.outputs.name }}
+          EXPECTED_QUOTA: ${{ steps.test-cpus.outputs.quota }}
+        run: |
+          limits=$(docker inspect "buildx_buildkit_${BUILDER_NAME}0" --format '{{.HostConfig.CpuQuota}} {{.HostConfig.CpuPeriod}}')
+          [[ "$limits" == "$EXPECTED_QUOTA 100000" ]]
+          echo "Docker CPU quota/period: $limits"
       - &build-area
         uses: docker/build-push-action@v6
         with:
@@ -158,31 +177,33 @@ jobs:
   auth:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.auth == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 30
     steps:
       - *checkout
       - *checkout-ts-dotnet
-      - *setup-builder
       - *test-cpus
+      - *setup-builder
+      - *verify-builder
       - *build-area
 
   terrabase:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.terrabase == 'true'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 30
     steps:
       - *checkout
       - *checkout-ts-dotnet
-      - *setup-builder
       - *test-cpus
+      - *setup-builder
+      - *verify-builder
       - *build-area
 
   test:
     needs: [changes, libs, auth, terrabase]
     if: ${{ !cancelled() }}
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 5
     permissions:
       contents: read
@@ -210,7 +231,7 @@ jobs:
       github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
       || contains(github.event.pull_request.labels.*.name, 'full-ci')
     continue-on-error: true
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 60
     permissions:
       contents: read
@@ -218,8 +239,9 @@ jobs:
     steps:
       - *checkout
       - *checkout-ts-dotnet
-      - *setup-builder
       - *test-cpus
+      - *setup-builder
+      - *verify-builder
       - uses: docker/build-push-action@v6
         with:
           context: terrascale
@@ -268,7 +290,7 @@ jobs:
             case $target in *TerraBase.Slow*) target="terrabase-test-slow" ;; *Authentication.Slow*) target="auth-test-slow" ;; *) target="test-slow" ;; esac
             body=$(printf '%s\n' \
               "Failed on \`$GITHUB_SHA\` in the Slow job: $RUN_URL" "" \
-              "Environment: \`slow\` job on blacksmith-8vcpu-ubuntu-2404, Dockerfile stage \`test-slow\`, Release build." \
+              "Environment: \`slow\` job on alpha, Dockerfile stage \`test-slow\`, Release build." \
               "Reproduce: \`nice -n 19 make $target TEST_ARGS=\"--treenode-filter '/*/*/*/${test%%(*}'\"\`" \
               "Expected: the test passes. Actual:" "" '```' "${excerpt:-see the run log}" '```')
             number=$(jq -r --arg t "$title" 'first(.[] | select(.title == $t) | .number) // empty' <<< "$open")
@@ -284,7 +306,7 @@ jobs:
     # OFF 2026-10-12 by the user's order: no PR preview environments until previews work again (Fly previews org
     # hit its 20-machine limit). Re-enable by deleting `false &&` in a reviewed PR.
     if: false && github.event_name == 'pull_request'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 20
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
@@ -417,7 +439,7 @@ jobs:
   e2e:
     needs: deploy
     continue-on-error: true
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 30
     env:
       TERRABASE_E2E_FLY_URL: https://ts-terrabase.fly.dev
