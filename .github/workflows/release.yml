@@ -80,7 +80,9 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: package
-          path: ${{ runner.temp }}/qualified-package/TerraScale.DotNet.${{ steps.version.outputs.version }}.nupkg
+          path: |
+            ${{ runner.temp }}/qualified-package/TerraScale.DotNet.${{ steps.version.outputs.version }}.nupkg
+            ${{ runner.temp }}/qualified-package/provenance.json
           if-no-files-found: error
 
   github-packages:
