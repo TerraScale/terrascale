@@ -224,6 +224,12 @@ public sealed class PlatformDatabasesTests
             await transaction.CommitAsync(CancellationToken.None);
         }
 
+        // Compare persisted bytes: storage canonicalizes the submitted JSON.
+        await using (var baseline = await system.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            conflicting = (await baseline.GetAsync(collection, "ts_auth", CancellationToken.None))!.Json.ToArray();
+        }
+
         var catalog = server.Services.GetRequiredService<IPlatformCatalog>();
         await Assert.That(await catalog.EnsurePlatformAsync(CancellationToken.None) is Conflict { Code: "platform_binding_taken" }).IsTrue();
         await using var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
