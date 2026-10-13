@@ -37,6 +37,23 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
     /// <summary>The response's CSP nonce, set by <see cref="Render"/>.</summary>
     public string Nonce { get; init; } = string.Empty;
 
+    /// <summary>The attempt was rate limited; <see cref="Error"/> says when to retry.</summary>
+    public bool Limited { get; init; }
+
+    /// <summary>
+    /// The state tile above the title (a Lucide icon and its tone: <c>success</c>, <c>warning</c>, <c>danger</c> or
+    /// <c>accent</c>), or <see langword="null"/> on the plain email and code steps.
+    /// </summary>
+    public (string Icon, string Tone)? Tile => this.Step switch
+    {
+        SignInStep.SignedIn => (HostedIcons.CircleCheck, "success"),
+        SignInStep.SignedOut => (HostedIcons.LogOut, "success"),
+        SignInStep.Continue => (HostedIcons.ArrowRight, "accent"),
+        SignInStep.Rejected => (HostedIcons.ShieldAlert, "danger"),
+        _ when this.Limited => (HostedIcons.Timer, "warning"),
+        _ => null,
+    };
+
     /// <summary>The page title.</summary>
     public string Title => this.Step switch
     {

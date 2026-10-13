@@ -1,6 +1,10 @@
 @inherits RazorSlice<SignInPageModel>
 @implements IUsesLayout<HostedLayout, HostedLayoutModel>
 <div>
+@if (Model.Tile is { } tile)
+{
+<span class="ts-tile ts-tile-@(tile.Tone)">@WriteHtml(tile.Icon)</span>
+}
 <h1>@Model.Title</h1>
 @switch (Model.Step)
 {
@@ -13,14 +17,20 @@ break;
 case SignInStep.Continue:
 <p class="ts-auth-sub">Returning to the application…</p>
 break;
+case SignInStep.SignedIn:
+<p class="ts-auth-sub">You are signed in. You can close this page.</p>
+break;
+case SignInStep.SignedOut:
+<p class="ts-auth-sub">You are signed out. You can close this page.</p>
+break;
 case SignInStep.Rejected:
 <p class="ts-auth-sub">Start again from the application you were signing in to.</p>
 break;
 }
 </div>
-@if (Model.Error is { } error)
+@if (Model.Error is { } error && Model.Step != SignInStep.Rejected)
 {
-<p class="ts-alert" role="alert">@WriteHtml(HostedIcons.CircleAlert)<span>@error</span></p>
+<p class="ts-alert@(Model.Limited ? " ts-alert-warning" : null)" role="alert">@WriteHtml(HostedIcons.CircleAlert)<span>@error</span></p>
 }
 @switch (Model.Step)
 {
@@ -28,7 +38,7 @@ case SignInStep.Email:
 <form method="post" action="/ui/@Model.Slug/sign-in">
 <input type="hidden" name="next" value="@Model.Next">
 <div class="ts-field"><label for="sign-in-email">Email</label>
-<input id="sign-in-email" class="ts-input" name="email" type="email" autocomplete="username" required autofocus value="@Model.Email"></div>
+<input id="sign-in-email" class="ts-input" name="email" type="email" autocomplete="username" placeholder="name@@company.com" required autofocus value="@Model.Email"></div>
 <button type="submit" class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block">Email me a sign-in code</button>
 </form>
 break;
@@ -53,17 +63,17 @@ break;
 case SignInStep.Continue:
 <a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="@Model.Next">Continue</a>
 break;
-case SignInStep.SignedIn:
-<p class="ts-alert" role="status">@WriteHtml(HostedIcons.CircleCheck)<span>You are signed in. You can close this page.</span></p>
-break;
-case SignInStep.SignedOut:
-<p class="ts-alert" role="status">@WriteHtml(HostedIcons.CircleCheck)<span>You are signed out. You can close this page.</span></p>
-break;
-case SignInStep.Rejected:
-if (Model.Detail is { } detail)
+case SignInStep.Rejected when Model.Error is not null || Model.Detail is not null:
+<div class="ts-auth-error">
+@if (Model.Error is { } reason)
+{
+<p>@reason</p>
+}
+@if (Model.Detail is { } detail)
 {
 <p class="ts-detail">Error code: @detail</p>
 }
+</div>
 break;
 }
 @if (Model.App is { } app && Model.Step is SignInStep.Email or SignInStep.Code)

@@ -58,6 +58,7 @@
     <EmbeddedResource Include="Assets/admin/logo.svg" LogicalName="assets/admin/logo.svg" />
     <EmbeddedResource Include="Assets/admin/icon.svg" LogicalName="assets/admin/icon.svg" />
     <EmbeddedResource Include="Assets/admin/logo-dark.svg" LogicalName="assets/admin/logo-dark.svg" />
+    <EmbeddedResource Include="Assets/admin/world-map-dots.svg" LogicalName="assets/admin/world-map-dots.svg" />
     <EmbeddedResource Include="Assets/email/logo.png" LogicalName="assets/email/logo.png" />
     <EmbeddedResource Include="Assets/email/logo-dark.png" LogicalName="assets/email/logo-dark.png" />
     <EmbeddedResource Include="Assets/fonts/oxanium-latin-wght-normal.woff2" LogicalName="assets/fonts/oxanium-latin-wght-normal.woff2" />

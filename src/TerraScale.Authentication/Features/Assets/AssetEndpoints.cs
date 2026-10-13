@@ -13,6 +13,8 @@ public static class EmbeddedAssets
         ["logo.svg"] = ("assets/admin/logo.svg", "image/svg+xml"),
         ["logo-dark.svg"] = ("assets/admin/logo-dark.svg", "image/svg+xml"),
         ["icon.svg"] = ("assets/admin/icon.svg", "image/svg+xml"),
+        // The landing hero's dotted world map (one currentColor path): the hosted pages' background, used as a CSS mask.
+        ["world-map-dots.svg"] = ("assets/admin/world-map-dots.svg", "image/svg+xml"),
         // Email clients do not show SVG; these are the dashboard's horizontal logos rasterized at 2x.
         ["email-logo.png"] = ("assets/email/logo.png", "image/png"),
         ["email-logo-dark.png"] = ("assets/email/logo-dark.png", "image/png"),

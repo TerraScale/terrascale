@@ -26,7 +26,8 @@ else
 <img src="/admin/logo-dark.svg" alt="TerraScale" width="116" height="28" class="ts-auth-logo">
 }
 @await RenderBodyAsync()
-<footer class="ts-auth-foot"><a href="https://status.terrascale.tech">Status</a><a href="https://terrascale.tech">terrascale.tech</a></footer>
 </main>
+@* No live state: the page has no script, so the dot stays neutral, like the dashboard's sidebar link. *@
+<footer class="ts-auth-foot"><a class="ts-status-link" href="https://status.terrascale.tech"><span class="ts-dot" aria-hidden="true"></span>System status</a><a href="https://terrascale.tech">terrascale.tech</a></footer>
 </body>
 </html>

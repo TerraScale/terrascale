@@ -10,6 +10,7 @@ public sealed class AssetTests
     [Arguments("/admin/logo.svg", "image/svg+xml")]
     [Arguments("/admin/logo-dark.svg", "image/svg+xml")]
     [Arguments("/admin/icon.svg", "image/svg+xml")]
+    [Arguments("/admin/world-map-dots.svg", "image/svg+xml")]
     [Arguments("/fonts/oxanium-latin-wght-normal.woff2", "font/woff2")]
     [Arguments("/fonts/Geist-Variable.woff2", "font/woff2")]
     [Arguments("/fonts/GeistMono-Variable.woff2", "font/woff2")]
