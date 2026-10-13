@@ -562,6 +562,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 return ContractFailure("Missing headless email/client address binding.");
             var action = path.Split("/headless/v1/", StringSplitOptions.None)[1];
             actions.Enqueue(action);
+            if (action == "password-reset/start" && fault == "reset-start-missing")
+                return OAuthError("not_found", 404);
             if (fault == "signup-policy" && action == "sign-up")
                 return Results.Json(new { error = new { code = "invalid_password", message = "That password is too common." } }, statusCode: 400);
             if (action == "sign-up")
@@ -591,6 +593,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                     principals[email] = principal with { Password = nextPassword, AuthEpoch = checked(principal.AuthEpoch + 1) };
                 else return OAuthError("invalid_code", 400);
                 foreach (var grant in access.Values.Where(grant => grant.Email == email)) grant.Revoked = true;
+                if (fault == "reset-drop-completion-response") { http.Abort(); return Results.Empty; }
             }
             return action is "email-code/start" or "password-reset/start" or "password-reset/complete" ? Results.Ok(new { }) : ContractFailure("Unknown headless operation.");
         }
