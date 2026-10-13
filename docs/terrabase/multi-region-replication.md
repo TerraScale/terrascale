@@ -944,11 +944,18 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   the last event of an (origin, stamp) carries an `id:` (a stamp holds one document today, as stamps are minted per
   document, but a reader that leaves inside one never skips the rest of it). These rules assume a machine receives an
   origin's events within the retention (otherwise it refills, R6).
-- **Cursor.** base64url of a format byte (1), the issue instant as a stamp, then per origin in ascending order node and
-  stamp, all 8-byte big-endian integers (16 bytes per origin, not LEB128: simpler, and a cursor of 5 origins is still
-  119 characters). Every event and heartbeat re-issues it at the instant the read behind it began. Decoding accepts
-  canonical bytes only (400 `invalid_cursor`), at most 256 origins; encoding refuses more (it never issues a cursor the
-  API would reject). An issued cursor with no origin is not "no cursor": it is expired by the rules above.
+- **Cursor (format 2).** base64url of a format byte (2), the issue instant and issuing node, then per origin in
+  ascending order its node, stamp, retention floor and SHA-256 prefix hash. Integers are 8-byte big-endian; the header
+  is 17 bytes and each origin 56 bytes. The hash chains event identities (stamp, deletion bit, length-prefixed UTF-8
+  collection and document id), including filtered events. A cross-machine resume streams the retained prefix above
+  the cursor's floor through its stamp and compares hashes before sending 200; a mismatch or a newer retention floor
+  returns 410. This verification uses constant memory per origin and work proportional to its retained prefix;
+  subsequent pages on the same machine update hashes incrementally. `cursor=now` builds the prefix once.
+  Every event and heartbeat re-issues the cursor at the instant the read behind it began. Decoding accepts canonical
+  bytes only (400 `invalid_cursor`), at most 256 origins; encoding refuses more. Format 1 cursors are rejected with
+  400 `invalid_cursor`: clients must resync after this explicit opaque-cursor format change. No storage schema,
+  replication protocol, authentication or lattice conflict semantics change. An issued cursor with no origin is not
+  "no cursor": it is expired by the retention rules above.
 - **Stream.** One page at a time, no queue per connection: after a page that left nothing waiting, the stream waits for
   the database's next commit (`IDatabaseStore.WaitForCommitAsync`, joins included) or the 15 s heartbeat (`event:
   cursor`). A client that takes no bytes for 10 s is dropped. Limits: 32 streams per database and 1024 per machine
@@ -966,9 +973,10 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
 - **Repairs.** An anti-entropy repair joins with origin 0 (R6), which no cursor can name. Its feed row is filed as this
   machine's event at a fresh stamp from its clock, so this machine's events stay in commit order; repairs never ship,
   so every machine files its own. Section 14's "one row per original (node, stamp)" is not built: a reader sees the
-  repaired document (its current value) under the repairing machine. Known gap (tracked, must close before R8 deploys): repair rows
-  never ship, so a reader that leaves a machine after getting an origin's later events but before that machine's repair
-  rows (refill or anti-entropy), and resumes on another machine, gets 200 and never sees the repaired events.
+  repaired document (its current value) under the repairing machine. Prefix proofs close the cross-region gap:
+  if a reader gets an origin's later event before a repaired earlier event, another machine holding the original
+  earlier event rejects that cursor with 410 rather than silently skipping it. This also covers cursors issued before
+  the repair happens; invalidating only completed repairs would not suffice.
 - **Known limit: stamps more than 1 s ahead.** A request mints `max(clock, document's stamp + 1)`, and the clock moves at
   most `MaxSkew` (1 s) ahead (section 3). A document carrying a stamp further ahead therefore gets a stamp larger than
   this origin's next writes to other documents, so one origin's stamps no longer follow its commit order, and a cursor

@@ -161,6 +161,7 @@ internal sealed partial class SqliteStorageTransaction
         var stamps = cursor?.Stamps ?? new Dictionary<ReplicaId, Hlc>();
         var floors = Floors();
         var scanned = new Dictionary<ReplicaId, Hlc>(stamps);
+        Dictionary<ReplicaId, FeedPrefix> prefixes = cursor?.Prefixes.ToDictionary() ?? [];
         if (cursor is not null)
         {
             // A named origin this machine forgot (all its events aged out long ago) leaves the cursor.
@@ -168,10 +169,27 @@ internal sealed partial class SqliteStorageTransaction
             foreach (var origin in stamps.Keys.Where(origin => stamps[origin].Value < forgotten.Value && !floors.Exists(floor => floor.Origin == origin)))
             {
                 _ = scanned.Remove(origin);
+                _ = prefixes.Remove(origin);
             }
         }
 
-        var rows = new List<(ReplicaId Origin, long Stamp, string Collection, string Id, bool Deleted)>();
+        // A stamp alone cannot prove another machine saw this origin's earlier events: refill and repair can omit them.
+        foreach (var (origin, stamp) in scanned)
+        {
+            var floor = floors.Find(item => item.Origin == origin).Floor;
+            if (!prefixes.TryGetValue(origin, out var prefix) || cursor?.Issuer.Value == 0)
+            {
+                prefixes[origin] = PrefixThrough(origin, floor, stamp, cancellationToken);
+            }
+            else if (cursor?.Issuer != Member.Id &&
+                (floor.Value > prefix.Floor.Value || !PrefixThrough(origin, prefix.Floor, stamp, cancellationToken).Hash.Span.SequenceEqual(prefix.Hash.Span)))
+            {
+                return new FeedPage([], stamps, More: false, Expired: true);
+            }
+        }
+
+        var before = prefixes.ToDictionary();
+        var rows = new List<(ReplicaId Origin, long Stamp, string Collection, string Id, bool Deleted, long RowId)>();
         var more = false;
         var cap = long.MaxValue;
         foreach (var (origin, floor) in floors)
@@ -184,6 +202,11 @@ internal sealed partial class SqliteStorageTransaction
                 return new FeedPage([], stamps, More: false, Expired: true);
             }
 
+            if (!prefixes.ContainsKey(origin))
+            {
+                prefixes[origin] = FeedPrefix.Empty(floor);
+            }
+
             var read = OriginRows(unchecked((long)origin.Value), after, cancellationToken);
             if (read.Count >= FeedOriginRows)
             {
@@ -192,15 +215,16 @@ internal sealed partial class SqliteStorageTransaction
                 cap = Math.Min(cap, read[^1].Stamp);
             }
 
-            rows.AddRange(read.Select(row => (origin, row.Stamp, row.Collection, row.Id, row.Deleted)));
+            rows.AddRange(read.Select(row => (origin, row.Stamp, row.Collection, row.Id, row.Deleted, row.RowId)));
         }
 
-        rows.Sort((a, b) => a.Stamp != b.Stamp ? a.Stamp.CompareTo(b.Stamp) : a.Origin.Value.CompareTo(b.Origin.Value));
+        rows.Sort((a, b) => a.Stamp != b.Stamp ? a.Stamp.CompareTo(b.Stamp)
+            : a.Origin != b.Origin ? a.Origin.Value.CompareTo(b.Origin.Value) : a.RowId.CompareTo(b.RowId));
         var events = new List<FeedEvent>();
         var tables = new Dictionary<string, bool>(StringComparer.Ordinal);
         long bytes = 0;
         (ReplicaId Origin, long Stamp)? last = null;
-        foreach (var (origin, value, collection, id, deleted) in rows)
+        foreach (var (origin, value, collection, id, deleted, _) in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (value > cap)
@@ -217,24 +241,49 @@ internal sealed partial class SqliteStorageTransaction
             last = (origin, value);
             var stamp = new Hlc((ulong)value);
             scanned[origin] = stamp;
+            var prefix = prefixes[origin].Append(stamp, collection, id, deleted);
+            prefixes[origin] = prefix;
             if (collections is not null && !collections.Contains(collection))
             {
+                if (events.Count > 0 && (events[^1].Origin, events[^1].Stamp) == (origin, stamp))
+                {
+                    events[^1] = events[^1] with { Prefix = prefix };
+                }
+
                 continue;
             }
 
             var document = deleted ? null : FeedDocumentJson(collection, id, tables);
             bytes += document?.Length ?? 0;
             // Typed as the nullable memory itself: a null byte[] would convert to empty memory, not to an absent document.
-            events.Add(new FeedEvent(origin, stamp, collection, id, deleted, document is null ? null : (ReadOnlyMemory<byte>?)document));
+            events.Add(new FeedEvent(origin, stamp, collection, id, deleted, document is null ? null : (ReadOnlyMemory<byte>?)document) { Prefix = prefix });
         }
 
-        return new FeedPage(events, scanned, more, Expired: false);
+        return new FeedPage(events, scanned, more, Expired: false) { Issuer = Member.Id, Prefixes = prefixes, Before = before };
+    }
+
+    // A cross-machine resume verifies the retained prefix without materializing or reading document bodies.
+    private FeedPrefix PrefixThrough(ReplicaId origin, Hlc floor, Hlc stamp, CancellationToken cancellationToken)
+    {
+        var prefix = FeedPrefix.Empty(floor);
+        var command = Command("SELECT stamp, collection, id, deleted FROM _tb_feed WHERE origin = $origin AND stamp > $floor AND stamp <= $stamp ORDER BY stamp, rowid;");
+        command.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
+        command.Parameters.AddWithValue("$floor", Version(floor));
+        command.Parameters.AddWithValue("$stamp", Version(stamp));
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            prefix = prefix.Append(new Hlc((ulong)reader.GetInt64(0)), reader.GetString(1), reader.GetString(2), reader.GetInt64(3) != 0);
+        }
+
+        return prefix;
     }
 
     // Worker-only: an origin's rows after `after`, and every row of the last stamp read.
-    private List<(long Stamp, string Collection, string Id, bool Deleted)> OriginRows(long origin, Hlc after, CancellationToken cancellationToken)
+    private List<(long Stamp, string Collection, string Id, bool Deleted, long RowId)> OriginRows(long origin, Hlc after, CancellationToken cancellationToken)
     {
-        var rows = new List<(long, string, string, bool)>();
+        var rows = new List<(long, string, string, bool, long)>();
         var command = Command(FeedAfter);
         command.Parameters.AddWithValue("$origin", origin);
         command.Parameters.AddWithValue("$after", Version(after));
@@ -245,7 +294,7 @@ internal sealed partial class SqliteStorageTransaction
             while (reader.Read())
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                rows.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3) != 0));
+                rows.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3) != 0, reader.GetInt64(4)));
                 rowid = reader.GetInt64(4);
             }
         }
@@ -264,7 +313,7 @@ internal sealed partial class SqliteStorageTransaction
         {
             while (reader.Read())
             {
-                rows.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3) != 0));
+                rows.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetInt64(3) != 0, reader.GetInt64(4)));
             }
         }
 

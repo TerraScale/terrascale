@@ -6,10 +6,9 @@ using TerraBase.Engine.Lattices;
 namespace TerraBase.Features.Documents;
 
 /// <summary>
-/// The changes feed cursor (docs/terrabase/multi-region-replication.md section 14): when it was issued, and per origin node
-/// the highest stamp delivered, valid on any machine. Opaque to clients: base64url of a format byte (1), the issue stamp,
-/// then per origin in ascending order its node and stamp, all as 8-byte big-endian integers. Decoding is a trust boundary
-/// and accepts canonical bytes only.
+/// The changes feed cursor: format 2, issue stamp and issuing node, then per origin in ascending order its node,
+/// stamp, retention floor and 32-byte prefix hash. Integers are 8-byte big-endian. Cross-machine resumes verify that
+/// no event below a named stamp was omitted by the issuing machine. Decoding accepts canonical bytes only.
 /// </summary>
 internal static class ChangeCursor
 {
@@ -19,7 +18,9 @@ internal static class ChangeCursor
     /// </summary>
     public const int MaxOrigins = 256;
 
-    private const byte Format = 1;
+    private const byte Format = 2;
+    private const int HeaderBytes = 17;
+    private const int OriginBytes = 56;
 
     /// <exception cref="InvalidOperationException">More than <see cref="MaxOrigins"/> origins: no cursor this API would accept.</exception>
     public static string Encode(FeedCursor cursor)
@@ -29,15 +30,19 @@ internal static class ChangeCursor
             throw new InvalidOperationException($"a changes feed cursor holds at most {MaxOrigins} origins");
         }
 
-        var bytes = new byte[9 + (16 * cursor.Stamps.Count)];
+        var bytes = new byte[HeaderBytes + (OriginBytes * cursor.Stamps.Count)];
         bytes[0] = Format;
         BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(1), cursor.Issued.Value);
-        var at = 9;
+        BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(9), cursor.Issuer.Value);
+        var at = HeaderBytes;
         foreach (var (origin, stamp) in cursor.Stamps.OrderBy(pair => pair.Key.Value))
         {
             BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(at), origin.Value);
             BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(at + 8), stamp.Value);
-            at += 16;
+            var prefix = cursor.Prefixes.GetValueOrDefault(origin) ?? FeedPrefix.Empty(default);
+            BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(at + 16), prefix.Floor.Value);
+            prefix.Hash.Span.CopyTo(bytes.AsSpan(at + 24, 32));
+            at += OriginBytes;
         }
 
         return Base64Url.EncodeToString(bytes);
@@ -46,7 +51,7 @@ internal static class ChangeCursor
     /// <summary>The cursor <paramref name="text"/> encodes, or null when it is not a canonical cursor.</summary>
     public static FeedCursor? Decode(string text)
     {
-        if (text.Length > Base64Url.GetEncodedLength(9 + (16 * MaxOrigins)) || !Base64Url.IsValid(text, out var length) || length % 16 != 9)
+        if (text.Length > Base64Url.GetEncodedLength(HeaderBytes + (OriginBytes * MaxOrigins)) || !Base64Url.IsValid(text, out var length) || length < HeaderBytes || (length - HeaderBytes) % OriginBytes != 0)
         {
             return null;
         }
@@ -59,21 +64,28 @@ internal static class ChangeCursor
         }
 
         var stamps = new Dictionary<ReplicaId, Hlc>();
+        var prefixes = new Dictionary<ReplicaId, FeedPrefix>();
         ulong previous = 0;
-        for (var at = 9; at < bytes.Length; at += 16)
+        for (var at = HeaderBytes; at < bytes.Length; at += OriginBytes)
         {
             var origin = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(at));
             var stamp = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(at + 8));
-            // Origin 0 is a repair, which the feed files under the original node; a stamp fits a signed 64-bit integer.
-            if (origin <= previous || stamp is 0 or > long.MaxValue)
+            var floor = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(at + 16));
+            // Origin 0 is a repair, which the feed files under the repairing node; a stamp fits a signed 64-bit integer.
+            if (origin <= previous || stamp is 0 or > long.MaxValue || floor > stamp)
             {
                 return null;
             }
 
             previous = origin;
             stamps[new ReplicaId(origin)] = new Hlc(stamp);
+            prefixes[new ReplicaId(origin)] = new FeedPrefix(new Hlc(floor), bytes.AsMemory(at + 24, 32));
         }
 
-        return new FeedCursor(stamps, new Hlc(issued));
+        return new FeedCursor(stamps, new Hlc(issued))
+        {
+            Issuer = new ReplicaId(BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(9))),
+            Prefixes = prefixes,
+        };
     }
 }
