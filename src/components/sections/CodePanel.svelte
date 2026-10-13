@@ -80,7 +80,7 @@
     display: grid;
     grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
     gap: var(--ts-s12);
-    align-items: center;
+    align-items: start;
   }
 
   .code__copy {
@@ -109,13 +109,14 @@
 
   .code__bullets li {
     display: flex;
-    align-items: center;
-    gap: var(--ts-s3);
+    align-items: flex-start;
+    gap: var(--ts-s2);
   }
 
+  /* Same check as the CTA perks: 16px, centred on the first line of text (1lh tall box). */
   .code__bullets :global(.code__bullet-icon) {
     width: var(--ts-icon);
-    height: var(--ts-icon);
+    height: 1lh;
     color: var(--ts-success);
   }
 

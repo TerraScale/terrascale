@@ -31,7 +31,7 @@
       <ul class="cta__perks" aria-label={$dict.cta.perksAria}>
         {#each perks as p (p)}
           <li>
-            <Icon name="checkCircle" className="cta__perk-icon" />
+            <Icon name="check" className="cta__perk-icon" />
             {p}
           </li>
         {/each}
@@ -40,10 +40,6 @@
 </section>
 
 <style>
-  .cta {
-    border-top: 1px solid var(--ts-line);
-  }
-
   .cta__inner {
     display: grid;
     gap: var(--ts-s5);
@@ -77,13 +73,14 @@
 
   .cta__perks li {
     display: inline-flex;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--ts-s2);
   }
 
+  /* Same check as the SDK list: 16px, centred on the first line of text (1lh tall box). */
   .cta__perks :global(.cta__perk-icon) {
     width: var(--ts-icon);
-    height: var(--ts-icon);
+    height: 1lh;
     color: var(--ts-success);
   }
 

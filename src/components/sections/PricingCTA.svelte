@@ -19,10 +19,6 @@
 </section>
 
 <style>
-  .pricing-cta {
-    border-top: 1px solid var(--ts-line);
-  }
-
   .pricing-cta__inner {
     display: grid;
     gap: var(--ts-s4);

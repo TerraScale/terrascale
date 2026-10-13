@@ -75,10 +75,6 @@
 </section>
 
 <style>
-  .faq {
-    border-top: 1px solid var(--ts-line);
-  }
-
   .faq__inner {
     display: grid;
     gap: var(--ts-s8);

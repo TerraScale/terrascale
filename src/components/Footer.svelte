@@ -77,6 +77,7 @@
     font-size: var(--ts-fs-sm);
   }
 
+  /* Same half-gap as .ts-section, so the footer sits on the section rhythm. */
   .site-footer__grid {
     display: grid;
     grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
@@ -158,6 +159,7 @@
   @media (max-width: 860px) {
     .site-footer__grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+      padding-block: var(--ts-s8);
     }
     .site-footer__brand {
       grid-column: 1 / -1;

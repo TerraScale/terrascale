@@ -53,10 +53,10 @@
   <meta property="og:url" content={canonicalUrl} />
 </svelte:head>
 
-<div class="min-h-screen">
+<div class="flex min-h-screen flex-col">
   <Header />
 
-  <main>
+  <main class="flex-1">
     <slot />
   </main>
 

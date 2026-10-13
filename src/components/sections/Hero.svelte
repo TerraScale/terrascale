@@ -66,20 +66,23 @@
 </section>
 
 <style>
-  /* The floating nav overlaps the hero, so the map shows through its frost. */
+  /* The floating nav overlaps the hero, so the map shows through its frost. The first line of
+     content sits as far below the nav as the first section of every other page. */
   .hero {
     position: relative;
     overflow: hidden;
     margin-top: calc(-1 * (var(--ts-header-h) + var(--ts-s3)));
-    padding: calc(var(--ts-header-h) + var(--ts-s20)) 0 var(--ts-s16);
-    border-bottom: 1px solid var(--ts-line);
+    padding: calc(var(--ts-header-h) + var(--ts-s3) + var(--ts-s20)) 0 var(--ts-s12);
   }
 
+  /* The whole map, right-aligned: only the polar rows run under the nav. The width keeps San Jose
+     above the eyebrow and São Paulo right of the 760px headline column (checked in en, es, pt-BR
+     from 1280 to 1920). */
   .hero__map {
     position: absolute;
     top: -48px;
-    left: 34%;
-    width: 74%;
+    right: var(--ts-gutter);
+    width: min(800px, 78% - 320px);
     aspect-ratio: 119 / 60;
     pointer-events: none;
   }
@@ -149,14 +152,25 @@
     font: inherit;
   }
 
-  @media (max-width: 860px) {
+  /* Narrower screens: the whole map moves under the content, so neither pin sits on text. */
+  @media (max-width: 1279px) {
     .hero {
-      padding: calc(var(--ts-header-h) + var(--ts-s12)) 0 var(--ts-s10);
+      display: flex;
+      flex-direction: column;
     }
     .hero__map {
-      top: -20px;
-      left: -40%;
-      width: 180%;
+      position: relative;
+      order: 1;
+      top: auto;
+      right: auto;
+      width: min(100% - 2 * var(--ts-gutter), 640px);
+      margin: var(--ts-s8) var(--ts-gutter) 0;
+    }
+  }
+
+  @media (max-width: 860px) {
+    .hero {
+      padding: calc(var(--ts-header-h) + var(--ts-s3) + var(--ts-s12)) 0 var(--ts-s8);
     }
     .hero__headline {
       font-size: var(--ts-fs-4xl);
