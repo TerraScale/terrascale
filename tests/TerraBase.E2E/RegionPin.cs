@@ -39,8 +39,9 @@ internal sealed class MachinePin(string region, string machine) : DelegatingHand
     {
         request.Headers.Add("fly-force-instance-id", machine);
         var response = await base.SendAsync(request, cancellationToken);
-        var served = $"{Header(response, "X-TerraBase-Region")}/{Header(response, "X-TerraBase-Machine")}";
-        if (served == $"{region}/{machine}")
+        // Fly's own errors carry no TerraBase headers: the status says what answered instead.
+        var served = $"{Header(response, "X-TerraBase-Region")}/{Header(response, "X-TerraBase-Machine")} (HTTP {(int)response.StatusCode})";
+        if (Header(response, "X-TerraBase-Region") == region && Header(response, "X-TerraBase-Machine") == machine)
         {
             return response;
         }

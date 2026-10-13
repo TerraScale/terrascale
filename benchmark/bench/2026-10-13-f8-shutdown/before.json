@@ -1,0 +1,10 @@
+{
+  "label": "before",
+  "pid": 1593561,
+  "shutdown_seconds": 30.111458610001137,
+  "exit_code": 0,
+  "writes": 103,
+  "active_sse": 8,
+  "incomplete_peer_frame": true,
+  "hostname": "beta"
+}
