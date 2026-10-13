@@ -55,7 +55,6 @@ jobs:
           dotnet-version: |
             10.0.401
             11.0.100-rc.1.26425.128
-          dotnet-quality: preview
       - id: version
         run: |
           version=$(dotnet msbuild src/TerraScale.DotNet -getProperty:Version)
@@ -66,11 +65,8 @@ jobs:
             echo "::error::$GITHUB_SHA is not on main."; exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - run: dotnet build TerraScale.DotNet.slnx --configuration Release -p:ContinuousIntegrationBuild=true -p:RestoreLockedMode=true
-      - run: dotnet format TerraScale.DotNet.slnx --verify-no-changes --no-restore
-      - run: dotnet run scripts/check-nuget-vulnerabilities.cs -- src/TerraScale.DotNet/TerraScale.DotNet.csproj tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj
-      - run: dotnet run --project tests/TerraScale.DotNet.Tests --configuration Release --no-build --framework net10.0
-      - run: dotnet run --project tests/TerraScale.DotNet.Tests --configuration Release --no-build --framework net11.0
+      - name: Run release build and tests
+        run: bash scripts/check-release.sh
       - id: pack
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -132,7 +128,6 @@ jobs:
           dotnet-version: |
             10.0.401
             11.0.100-rc.1.26425.128
-          dotnet-quality: preview
       - env:
           SHA256: ${{ needs.package.outputs.sha256 || inputs.sha256 }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

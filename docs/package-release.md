@@ -88,6 +88,9 @@ repository under the package's **Manage Actions access**.
 The SDK toolchain is pinned in `global.json`; source/test lock files pin the
 restored graph. CI and release builds restore in locked mode. A dependency change
 must regenerate and review the affected lock files before advancing the artifact.
+Both workflows run `bash scripts/check-release.sh`, including a locked restore
+of the vulnerability checker and tests on both frameworks. That test build keeps
+source paths intact for auth fixture lookup; only package builds normalize paths.
 
 From a clean committed worktree, run:
 
