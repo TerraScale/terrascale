@@ -55,7 +55,7 @@ class DocumentChanges extends HTMLElement {
             return false;
           }
           if (id) cursor = id;
-          if (resync && cursor && update.state === 'cursor') {
+          if (resync && cursor && (update.state === 'cursor' || update.state === 'change')) {
             // The new stream is established before reading the snapshot; never resume from the expired cursor.
             const rows = await reconcileDocuments(databaseId, collection, signal);
             for (const row of rows.slice(0, 100)) append(`Current document ${row.id}: ${JSON.stringify(row.value)}`);
