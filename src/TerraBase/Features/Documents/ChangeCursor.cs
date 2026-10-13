@@ -6,7 +6,7 @@ using TerraBase.Engine.Lattices;
 namespace TerraBase.Features.Documents;
 
 /// <summary>
-/// The changes feed cursor: format 2, issue stamp and issuing node, then per origin in ascending order its node,
+/// The opaque changes feed cursor: marker, issue stamp and issuing node, then per origin in ascending order its node,
 /// stamp, retention floor and 32-byte prefix hash. Integers are 8-byte big-endian. Cross-machine resumes verify that
 /// no event below a named stamp was omitted by the issuing machine. Decoding accepts canonical bytes only.
 /// </summary>
@@ -18,7 +18,7 @@ internal static class ChangeCursor
     /// </summary>
     public const int MaxOrigins = 256;
 
-    private const byte Format = 2;
+    private const byte Marker = 1;
     private const int HeaderBytes = 17;
     private const int OriginBytes = 56;
 
@@ -31,7 +31,7 @@ internal static class ChangeCursor
         }
 
         var bytes = new byte[HeaderBytes + (OriginBytes * cursor.Stamps.Count)];
-        bytes[0] = Format;
+        bytes[0] = Marker;
         BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(1), cursor.Issued.Value);
         BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(9), cursor.Issuer.Value);
         var at = HeaderBytes;
@@ -58,7 +58,7 @@ internal static class ChangeCursor
 
         var bytes = Base64Url.DecodeFromChars(text);
         var issued = BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(1));
-        if (bytes[0] != Format || issued is 0 or > long.MaxValue || Base64Url.EncodeToString(bytes) != text)
+        if (bytes[0] != Marker || issued is 0 or > long.MaxValue || Base64Url.EncodeToString(bytes) != text)
         {
             return null;
         }

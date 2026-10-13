@@ -944,7 +944,7 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   the last event of an (origin, stamp) carries an `id:` (a stamp holds one document today, as stamps are minted per
   document, but a reader that leaves inside one never skips the rest of it). These rules assume a machine receives an
   origin's events within the retention (otherwise it refills, R6).
-- **Cursor (format 2).** base64url of a format byte (2), the issue instant and issuing node, then per origin in
+- **Opaque cursor.** base64url of a marker, the issue instant and issuing node, then per origin in
   ascending order its node, stamp, retention floor and SHA-256 prefix hash. Integers are 8-byte big-endian; the header
   is 17 bytes and each origin 56 bytes. The hash chains event identities (stamp, deletion bit, length-prefixed UTF-8
   collection and document id), including filtered events. A cross-machine resume streams the retained prefix above
@@ -952,10 +952,28 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   returns 410. This verification uses constant memory per origin and work proportional to its retained prefix;
   subsequent pages on the same machine update hashes incrementally. `cursor=now` builds the prefix once.
   Every event and heartbeat re-issues the cursor at the instant the read behind it began. Decoding accepts canonical
-  bytes only (400 `invalid_cursor`), at most 256 origins; encoding refuses more. Format 1 cursors are rejected with
-  400 `invalid_cursor`: clients must resync after this explicit opaque-cursor format change. No storage schema,
-  replication protocol, authentication or lattice conflict semantics change. An issued cursor with no origin is not
+  bytes only, at most 256 origins; encoding refuses more. Any cursor that does not decode to the current opaque
+  layout returns 410 `cursor_expired`; there are no alternate layouts or compatibility branches. No public API or
+  storage schema version changes, nor changes to replication, authentication or lattice conflict semantics.
+  An issued cursor with no origin is not
   "no cursor": it is expired by the retention rules above.
+- **410 frequency and recovery impact.** Matching retained prefixes resume with 200 in all six directed gru/sjc/fra
+  pairs in Fast, including collection-filtered events sharing a stamp. This is controlled integration coverage, not a
+  measured production error rate. Prefix verification is conservative: a destination behind the consumed prefix,
+  different events omitted by dominated joins, or different within-stamp ordering can produce 410 without a repair.
+  A newer destination retention floor also expires the proof even if only already-consumed events were trimmed;
+  hourly feed retention can therefore invalidate cross-machine resumes of an ongoing consumer's older proof.
+  Same-machine resumes bypass prefix comparison and keep the existing retention checks.
+  A repair whose join changes no state adds no feed event. A repair that changes a document adds a machine-specific
+  event: once a cursor passes it (even via a collection filter or a later local write), another machine normally lacks
+  that event and rejects the proof. A cursor issued before repair may also differ from a machine holding the original
+  history, as the regression demonstrates. Consequently **every affected client switching away from a repaired
+  machine after an outage can receive 410**; this is not limited to one pre-repair cursor. Catch-up through retained
+  ordered CDC groups alone does not introduce repair events. Resync recovers state but does not make that machine's
+  repair history portable: repeated switches can cause repeated 410 until the incompatible prefix is no longer named,
+  or its repair rows age out (7 days) and a new proof starts beyond them. Existing proofs retain their old baseline.
+  There is no fixed 410 percentage or guaranteed low frequency: it depends on repair/refill incidence, join histories,
+  retention advancement and client region switches. The production rate has not been measured.
 - **Stream.** One page at a time, no queue per connection: after a page that left nothing waiting, the stream waits for
   the database's next commit (`IDatabaseStore.WaitForCommitAsync`, joins included) or the 15 s heartbeat (`event:
   cursor`). A client that takes no bytes for 10 s is dropped. Limits: 32 streams per database and 1024 per machine
