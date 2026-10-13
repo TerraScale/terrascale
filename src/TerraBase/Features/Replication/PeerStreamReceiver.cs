@@ -31,8 +31,9 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private readonly LocalReplica _self;
     private readonly TimeProvider _time;
     private readonly ConcurrentDictionary<ReplicaId, (CancellationTokenSource Stop, Task Ended)> _streams = new();
-    // Per origin, the databases whose last refill did not commit when its stream ended.
-    private readonly ConcurrentDictionary<ReplicaId, HashSet<TenantContext>> _cut = new();
+    // Per origin, the databases (each of one incarnation of the origin's copy) whose last refill did not commit when its
+    // stream ended.
+    private readonly ConcurrentDictionary<ReplicaId, HashSet<(TenantContext Database, Ulid Incarnation)>> _cut = new();
     private readonly Counter<long> _merged;
     private readonly Histogram<double> _delay;
     private readonly Counter<long> _undecodable;
@@ -79,6 +80,8 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         Hello hello;
         try
         {
+            // Start the accepted response before waiting for the hello, so shutdown can end it cleanly while it waits.
+            await context.WriteResponseHeadersAsync(Metadata.Empty).ConfigureAwait(false);
             if (!await requestStream.MoveNext(stream.Token).ConfigureAwait(false) || requestStream.Current.Hello is not { } first)
             {
                 throw new RpcException(new Status(StatusCode.InvalidArgument, "a push stream starts with a hello"));
@@ -120,16 +123,16 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 break;
             }
         }
-        var last = new Dictionary<TenantContext, ulong>();
+        // Keyed by database and the incarnation of the origin's copy its frames name: change ids of one incarnation say
+        // nothing of another's, which restart.
+        var last = new Dictionary<(TenantContext Database, Ulid Incarnation), ulong>();
         // The databases a refill runs for, and those whose last refill failed: their batches are refused until a refill of
         // them commits, so none joins before the repairs it follows.
-        var refills = new Dictionary<TenantContext, (Refill Frame, Task<int?> Done)>();
-        HashSet<TenantContext> cut = [];
+        var refills = new Dictionary<(TenantContext Database, Ulid Incarnation), (Refill Frame, Task<int?> Done)>();
+        HashSet<(TenantContext Database, Ulid Incarnation)> cut = [];
         Task<bool>? reading = null;
         try
         {
-            // Start the accepted response before a predecessor can delay it, so shutdown can end it without a welcome.
-            await context.WriteResponseHeadersAsync(Metadata.Empty).ConfigureAwait(false);
             if (precedingStop is not null)
             {
                 if (Replacing is { } replacing)
@@ -187,6 +190,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 if (frame.Frontier is { } frontier)
                 {
                     var at = Tenant(frontier.Database);
+                    _ = Incarnation(frontier.Database);
                     await _sink.RecordFrontierAsync(at, origin, new Hlc(frontier.Hlc), stream.Token).ConfigureAwait(false);
                     await responseStream.WriteAsync(new AckFrame
                     {
@@ -198,15 +202,17 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 if (frame.Refill is { } refill)
                 {
                     // The sender no longer holds this machine's gap: join every bucket that differs from it, then go on from its head.
-                    var tenant = Tenant(refill.Database);
-                    if (refills.ContainsKey(tenant))
+                    var tenant = (Database: Tenant(refill.Database), Incarnation: Incarnation(refill.Database));
+                    if (refills.Keys.Any(running => running.Database == tenant.Database))
                     {
                         // One refill of a database at a time.
                         await RefuseAsync(responseStream, refill.Database, stream.Token).ConfigureAwait(false);
                         continue;
                     }
 
-                    refills[tenant] = (refill, RefillAsync(tenant, hello.Machine, new Hlc(refill.Horizon), stream.Token));
+                    Forget(last, cut, tenant);
+                    // Pinned to the copy the refill names: a replaced sender copy refuses it instead of certifying another.
+                    refills[tenant] = (refill, RefillAsync(tenant.Database, hello.Machine, new Hlc(refill.Horizon), tenant.Incarnation, stream.Token));
                     continue;
                 }
 
@@ -215,18 +221,21 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     throw new RpcException(new Status(StatusCode.InvalidArgument, "a push stream carries batches and heartbeats after its hello"));
                 }
 
-                // A batch that names no database cannot be refused for one: it ends the stream.
+                // A batch that names no database or incarnation cannot be refused for one: it ends the stream.
                 var database = Tenant(batch.Database);
+                var source = (Database: database, Incarnation: Incarnation(batch.Database));
+                Forget(last, cut, source);
                 List<OriginGroup> groups;
                 try
                 {
-                    if (refills.ContainsKey(database) || cut.Contains(database))
+                    // Any refill of the database blocks its batches: it is still joining repairs, whichever copy it names.
+                    if (refills.Keys.Any(running => running.Database == database) || cut.Contains(source))
                     {
                         await RefuseAsync(responseStream, batch.Database, stream.Token).ConfigureAwait(false);
                         continue;
                     }
 
-                    if (last.TryGetValue(database, out var previous) && batch.LastChangeId <= previous)
+                    if (last.TryGetValue(source, out var previous) && batch.LastChangeId <= previous)
                     {
                         throw new InvalidDataException("a stream's batches of one database have growing change ids");
                     }
@@ -262,7 +271,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
                 if (applied is { } stamp)
                 {
-                    last[database] = batch.LastChangeId;
+                    last[source] = batch.LastChangeId;
                     Observe(groups, region);
                 }
 
@@ -313,12 +322,20 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
+        // No incarnation: discovery; a named incarnation makes the digest conditional on that copy still being held.
         var database = Tenant(request.Database);
-        var digests = database == ChangeGroups.System && !_catalogGate.Value.Trusted ? null
-            : await _states.DigestAsync(database, context.CancellationToken).ConfigureAwait(false);
-        return digests is null
+        var expected = Incarnation(request.Database, required: false);
+        var digest = database == ChangeGroups.System && !_catalogGate.Value.Trusted ? null
+            : await _states.DigestAsync(database, expected, context.CancellationToken).ConfigureAwait(false);
+        return digest is null
             ? new DigestReply { Held = false }
-            : new DigestReply { Held = true, Buckets = Google.Protobuf.UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(digests)) };
+            : new DigestReply
+            {
+                Held = true,
+                Buckets = Google.Protobuf.UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(digest.Buckets)),
+                Incarnation = Google.Protobuf.ByteString.CopyFrom(digest.Incarnation.ToByteArray()),
+                HeadChangeId = checked((ulong)digest.Head),
+            };
     }
 
     public override async Task ReadBucket(BucketRequest request, IServerStreamWriter<StatePage> responseStream, ServerCallContext context)
@@ -327,6 +344,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         ArgumentNullException.ThrowIfNull(responseStream);
         ArgumentNullException.ThrowIfNull(context);
         var database = Tenant(request.Database);
+        var incarnation = Incarnation(request.Database);
         if (database == ChangeGroups.System && !_catalogGate.Value.Trusted)
         {
             throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source catalog is unverified"));
@@ -341,24 +359,29 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         BucketCursor? after = null;
         do
         {
-            (var states, after) = await _states.ReadBucketsAsync(database, buckets, after, ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, context.CancellationToken)
-                .ConfigureAwait(false);
+            // Every page, and the end, of the incarnation the request names: a replaced copy fails the stream.
+            if (await _states.ReadBucketsAsync(database, incarnation, buckets, after, ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, context.CancellationToken)
+                .ConfigureAwait(false) is not (var states, var next))
+            {
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source no longer holds the named incarnation of the database"));
+            }
+
+            after = next;
             if (states.Count > 0)
             {
-                await responseStream.WriteAsync(AntiEntropy.Encode(states), context.CancellationToken).ConfigureAwait(false);
+                await responseStream.WriteAsync(AntiEntropy.Encode(states, incarnation), context.CancellationToken).ConfigureAwait(false);
             }
         }
         while (after is not null);
 
-        // An unavailable database also reads as an empty page; its stream must not certify complete coverage.
-        if (await _states.DigestAsync(database, context.CancellationToken).ConfigureAwait(false) is null)
+        if (await _states.DigestAsync(database, incarnation, context.CancellationToken).ConfigureAwait(false) is null)
         {
-            throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source no longer holds the database"));
+            throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source no longer holds the named incarnation of the database"));
         }
     }
 
     // A refill that fails (the named machine unreachable, a deadline) refuses the database: the sender asks again later.
-    private async Task<int?> RefillAsync(TenantContext database, string machine, Hlc horizon, CancellationToken cancellationToken)
+    private async Task<int?> RefillAsync(TenantContext database, string machine, Hlc horizon, Ulid incarnation, CancellationToken cancellationToken)
     {
         try
         {
@@ -374,7 +397,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 return null;
             }
 
-            return await _antiEntropy.RefillAsync(database, machine, horizon, cancellationToken).ConfigureAwait(false);
+            return await _antiEntropy.RefillAsync(database, machine, horizon, incarnation, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
@@ -417,6 +440,35 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         {
             throw new RpcException(new Status(StatusCode.InvalidArgument, error.Message));
         }
+    }
+
+    // The incarnation of the origin's copy a frame names; required unless it is a discovery.
+    private static Ulid Incarnation(V1.Database? database) => Incarnation(database, required: true)!.Value;
+
+    private static Ulid? Incarnation(V1.Database? database, bool required)
+    {
+        try
+        {
+            return required ? ChangeGroups.RequiredIncarnation(database) : ChangeGroups.Incarnation(database);
+        }
+        catch (InvalidDataException error)
+        {
+            throw new RpcException(new Status(StatusCode.InvalidArgument, error.Message));
+        }
+    }
+
+    // A frame of `source` drops what the stream kept of the database's other incarnations of the origin's copy: they were
+    // replaced, and their change ids and cuts say nothing of this one.
+    private static void Forget(
+        Dictionary<(TenantContext Database, Ulid Incarnation), ulong> last, HashSet<(TenantContext Database, Ulid Incarnation)> cut,
+        (TenantContext Database, Ulid Incarnation) source)
+    {
+        foreach (var other in last.Keys.Where(key => key.Database == source.Database && key.Incarnation != source.Incarnation).ToList())
+        {
+            _ = last.Remove(other);
+        }
+
+        _ = cut.RemoveWhere(key => key.Database == source.Database && key.Incarnation != source.Incarnation);
     }
 
     private void Observe(List<OriginGroup> groups, string region)

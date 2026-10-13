@@ -42,7 +42,7 @@ public sealed class CdcWriterLeaseTests
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
         var source = api.Server.Services.GetRequiredService<IChangeGroupSource>();
         var store = await engine.OpenDatabaseAsync(database, deadline.Token) ?? throw new InvalidOperationException("the database is missing");
-        _ = await source.HeadAsync(database, deadline.Token);
+        _ = await source.HeadAsync(database, store.Incarnation, deadline.Token) ?? throw new InvalidOperationException("the copy refused its own incarnation");
 
         // The read pool's only worker is taken until the end.
         using var release = new ManualResetEventSlim();
@@ -53,7 +53,7 @@ public sealed class CdcWriterLeaseTests
             release.Wait(deadline.Token);
         }, deadline.Token);
         await entered.Task.WaitAsync(deadline.Token);
-        Task? ack = null;
+        Task<bool>? ack = null;
         var writerCompleted = false;
         try
         {
@@ -64,7 +64,7 @@ public sealed class CdcWriterLeaseTests
             }
 
             // The ack commits, then queues its tail read behind the busy worker; a second writer must still get the writer.
-            ack = source.AckAsync(database, ReplicaId.Of(1, 7, 0), 0, default, deadline.Token).AsTask();
+            ack = source.AckAsync(database, store.Incarnation, ReplicaId.Of(1, 7, 0), 0, default, deadline.Token).AsTask();
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(10));
             while (engine.Io.Queued == 0)
             {
@@ -93,5 +93,6 @@ public sealed class CdcWriterLeaseTests
         }
 
         await Assert.That(writerCompleted).IsTrue();
+        await Assert.That(await ack!).IsTrue().Because("the ack names the copy in place");
     }
 }

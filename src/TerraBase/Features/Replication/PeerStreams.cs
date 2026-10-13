@@ -87,7 +87,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                         continue;
                     }
 
-                    detail.Add(new(detail.Count, database.OrganizationId, database.ProjectId!, database.DatabaseId!, Ulid.Empty, cursor.Head, cursor.Acked ?? 0,
+                    detail.Add(new(detail.Count, database.OrganizationId, database.ProjectId!, database.DatabaseId!, cursor.Incarnation ?? Ulid.Empty, cursor.Head, cursor.Acked ?? 0,
                         cursor.InFlightGroups, Diverged: false, Age(cursor.BehindSince), cursor.Convergence));
                 }
 
@@ -198,7 +198,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             link.Connected = true;
             foreach (var cursor in link.Cursors.Values)
             {
-                (cursor.Acked, cursor.InFlight, cursor.InFlightGroups) = (null, null, 0);
+                (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups) = (null, null, null, 0);
             }
         }
 
@@ -244,7 +244,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
                 if (call.ResponseStream.Current.Stable is { } report)
                 {
-                    await _source.RecordStableAsync(ChangeGroups.Tenant(report.Database), peer, new Hlc(report.Stable), cancellationToken).ConfigureAwait(false);
+                    // A report for a frontier of a replaced copy is refused there: it says nothing of the copy in place.
+                    _ = await _source.RecordStableAsync(
+                        ChangeGroups.Tenant(report.Database), ChangeGroups.RequiredIncarnation(report.Database), peer, new Hlc(report.Stable), cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
@@ -273,10 +275,17 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 cursor = link.Cursors.TryGetValue(database, out var known) ? known : link.Cursors[database] = new Cursor();
             }
 
-            var acked = cursor.Acked ?? await _source.AckedAsync(database, peer, cancellationToken).ConfigureAwait(false);
+            // The cursor is pinned to one incarnation of this machine's copy: its change ids mean nothing in another.
+            var position = cursor is { Incarnation: { } pinned, Acked: { } resume } ? new SourceCursor(pinned, resume)
+                : await _source.AckedAsync(database, peer, cancellationToken).ConfigureAwait(false);
+            if (position is not (var incarnation, var acked))
+            {
+                continue;
+            }
+
             lock (link.Gate)
             {
-                cursor.Acked = acked;
+                (cursor.Incarnation, cursor.Acked) = (incarnation, acked);
             }
 
             if (cursor.InFlight is not null || _time.GetTimestamp() < cursor.RetryAt)
@@ -287,10 +296,10 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             // Read before the retention check: retention only cuts from the oldest group on, so a trim between the two shows
             // as a cut here and never ships a batch past a hole.
             var frontier = _self.Clock.Tick();
-            IReadOnlyList<OriginGroup> groups;
+            SourceGroups? read;
             try
             {
-                groups = await _source.ReadAsync(database, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
+                read = await _source.ReadAsync(database, incarnation, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
@@ -308,15 +317,29 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 continue;
             }
 
-            if (!await _source.RetainsAsync(database, acked, cancellationToken).ConfigureAwait(false))
+            // The copy was replaced (a copy, restore or rebuild) since the cursor was read: start over from its own acks.
+            var retains = read is null || read.Incarnation != incarnation ? null
+                : await _source.RetainsAsync(database, incarnation, acked, cancellationToken).ConfigureAwait(false);
+            if (read is not { Groups: var groups } || retains is null)
+            {
+                Reset(link, cursor);
+                continue;
+            }
+
+            if (retains is false)
             {
                 // Retention cut groups after the peer's ack (it was silent or far behind, or it is new): it refills from this
-                // machine, then the stream goes on from the newest change.
-                var head = await _source.HeadAsync(database, cancellationToken).ConfigureAwait(false);
+                // copy, then the stream goes on from its newest change.
+                if (await _source.HeadAsync(database, incarnation, cancellationToken).ConfigureAwait(false) is not { } head)
+                {
+                    Reset(link, cursor);
+                    continue;
+                }
+
                 var horizon = await _states.HorizonAsync(database, cancellationToken).ConfigureAwait(false);
                 await stream.WriteAsync(new PushFrame
                 {
-                    Refill = new Refill { Database = ChangeGroups.Wire(database), ChangeId = checked((ulong)head), Horizon = horizon.Value },
+                    Refill = new Refill { Database = ChangeGroups.Wire(database, incarnation), ChangeId = checked((ulong)head), Horizon = horizon.Value },
                 }, cancellationToken).ConfigureAwait(false);
                 lock (link.Gate)
                 {
@@ -332,7 +355,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             {
                 if (_time.GetElapsedTime(cursor.FrontierAt) >= FrontierEvery || cursor.FrontierAt == 0)
                 {
-                    await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database), Hlc = frontier.Value } }, cancellationToken)
+                    await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database, incarnation), Hlc = frontier.Value } }, cancellationToken)
                         .ConfigureAwait(false);
                     cursor.FrontierAt = _time.GetTimestamp();
                 }
@@ -349,7 +372,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             var last = groups[^1].ChangeId;
             await stream.WriteAsync(new PushFrame
             {
-                Batch = new Batch { Database = ChangeGroups.Wire(database), LastChangeId = checked((ulong)last), Groups = ChangeGroups.Encode(groups) },
+                Batch = new Batch { Database = ChangeGroups.Wire(database, incarnation), LastChangeId = checked((ulong)last), Groups = ChangeGroups.Encode(groups) },
             }, cancellationToken).ConfigureAwait(false);
             lock (link.Gate)
             {
@@ -367,14 +390,17 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     {
         var database = ChangeGroups.Tenant(ack?.Database);
         Cursor? cursor;
+        Ulid incarnation;
         lock (link.Gate)
         {
             cursor = link.Cursors.GetValueOrDefault(database);
-            if (cursor?.InFlight is not { } inFlight || (!ack!.Refused && ack.ChangeId != (ulong)inFlight))
+            if (cursor?.InFlight is not { } inFlight || cursor.Incarnation is not { } pinned || ChangeGroups.RequiredIncarnation(ack!.Database) != pinned
+                || (!ack.Refused && ack.ChangeId != (ulong)inFlight))
             {
                 throw new InvalidDataException("the peer acknowledged a batch that is not in flight");
             }
 
+            incarnation = pinned;
             (cursor.InFlight, cursor.InFlightGroups, cursor.Refilling) = (null, 0, false);
             if (ack.Refused)
             {
@@ -386,7 +412,20 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             cursor.Acked = inFlight;
         }
 
-        await _source.AckAsync(database, peer, (long)ack.ChangeId, new Hlc(ack.Stable), cancellationToken).ConfigureAwait(false);
+        // Recorded only while the copy in place is still the one the batch came from; otherwise the cursor starts over.
+        if (!await _source.AckAsync(database, incarnation, peer, (long)ack.ChangeId, new Hlc(ack.Stable), cancellationToken).ConfigureAwait(false))
+        {
+            Reset(link, cursor);
+        }
+    }
+
+    // Forgets a cursor's incarnation and position: the next pass reads both again from the copy in place.
+    private static void Reset(Link link, Cursor cursor)
+    {
+        lock (link.Gate)
+        {
+            (cursor.Incarnation, cursor.Acked, cursor.Head) = (null, null, 0);
+        }
     }
 
     // Whether the database's placement includes the peer's region, read again every heartbeat. The system database is placed
@@ -455,7 +494,10 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
     private sealed class Cursor
     {
-        // The peer's last ack (null until read from the source on this connection), the batch in flight and when it went.
+        // The incarnation of this machine's copy the cursor belongs to and the peer's last ack in it (null until read from the
+        // source on this connection, or after the copy was replaced), the batch in flight and when it went.
+        public Ulid? Incarnation { get; set; }
+
         public long? Acked { get; set; }
 
         public long? InFlight { get; set; }

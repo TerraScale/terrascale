@@ -109,18 +109,19 @@ public sealed class PeerStreamTests
 
         // A database this machine does not hold: refused, nothing applied, and the stream goes on.
         var delta = Put(origin, Stamp(), EntityIds.New().ToString(), """{"n":1}""");
-        await call.RequestStream.WriteAsync(new PushFrame { Batch = new Batch { Database = ChangeGroups.Wire(other), LastChangeId = 1, Groups = ChangeGroups.Encode([new OriginGroup(1, [delta])]) } });
+        var incarnation = Ulid.NewUlid();
+        await call.RequestStream.WriteAsync(new PushFrame { Batch = new Batch { Database = ChangeGroups.Wire(other, incarnation), LastChangeId = 1, Groups = ChangeGroups.Encode([new OriginGroup(1, [delta])]) } });
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Ack.Refused).IsTrue();
 
         // Bytes that are no LZ4 envelope of groups: refused for that database, and the stream goes on.
-        await call.RequestStream.WriteAsync(new PushFrame { Batch = new Batch { Database = ChangeGroups.Wire(cluster.Database), LastChangeId = 1, Groups = ByteString.CopyFromUtf8("forged") } });
+        await call.RequestStream.WriteAsync(new PushFrame { Batch = new Batch { Database = ChangeGroups.Wire(cluster.Database, incarnation), LastChangeId = 1, Groups = ByteString.CopyFromUtf8("forged") } });
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Ack.Refused).IsTrue();
-        await Assert.That(call.ResponseStream.Current.Ack.Database).IsEqualTo(ChangeGroups.Wire(cluster.Database));
+        await Assert.That(call.ResponseStream.Current.Ack.Database).IsEqualTo(ChangeGroups.Wire(cluster.Database, incarnation));
 
         // A batch that names no valid database cannot be refused for one: the receiver ends the stream.
-        var nameless = ChangeGroups.Wire(cluster.Database);
+        var nameless = ChangeGroups.Wire(cluster.Database, incarnation);
         nameless.DatabaseId = "not-a-ulid";
         await call.RequestStream.WriteAsync(new PushFrame { Batch = new Batch { Database = nameless, LastChangeId = 1, Groups = ChangeGroups.Encode([new OriginGroup(1, [delta])]) } });
         var error = await Assert.ThrowsAsync<RpcException>(() => call.ResponseStream.MoveNext(CancellationToken.None));
@@ -186,7 +187,7 @@ public sealed class PeerStreamTests
             _ = await transaction.CommitAsync(CancellationToken.None);
         }
 
-        var groups = await gru.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+        var groups = await gru.GroupsAsync(cluster.Database, 0);
         await Assert.That(groups.Count).IsEqualTo(1);
         await Assert.That(groups[0].Deltas.Select(delta => $"{delta.Collection}/{delta.Id}").Order(StringComparer.Ordinal))
             .IsEquivalentTo(new[] { $"{DocumentDelta.Collections}/items", $"items/{first}", $"items/{second}" }.Order(StringComparer.Ordinal));
@@ -196,18 +197,18 @@ public sealed class PeerStreamTests
 
         // sjc joined both documents: its own tailer finds no group to send back, though its CDC holds the joined rows.
         await Assert.That(await sjc.UntilAsync(first, """{"n":3}""")).IsTrue();
-        await Assert.That(await sjc.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsEmpty();
+        await Assert.That(await sjc.GroupsAsync(cluster.Database, 0)).IsEmpty();
 
         // sjc acked the group, but gru keeps it for 60 s: a peer whose stream has not reached the database yet needs it.
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, groups[0].ChangeId)).IsTrue();
-        await Assert.That((await gru.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).Count).IsEqualTo(1);
+        await Assert.That((await gru.GroupsAsync(cluster.Database, 0)).Count).IsEqualTo(1);
 
         // Two minutes on, the next acknowledged group drops everything below its commit: nothing is left to send.
         clock.Offset = TimeSpan.FromMinutes(2);
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", second, Json("""{"m":2}"""), CancellationToken.None));
         await Assert.That(await sjc.UntilAsync(second, """{"m":2}""")).IsTrue();
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, groups[0].ChangeId + 1)).IsTrue();
-        await Assert.That(await gru.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsEmpty();
+        await Assert.That(await gru.GroupsAsync(cluster.Database, 0)).IsEmpty();
     }
 
     [Test]
@@ -239,7 +240,7 @@ public sealed class PeerStreamTests
         List<OriginGroup> groups = [];
         for (var after = 0L; ;)
         {
-            var page = await gru.Groups.ReadAsync(cluster.Database, after, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+            var page = await gru.GroupsAsync(cluster.Database, after);
             if (page.Count == 0)
             {
                 break;
@@ -429,7 +430,7 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.ReadAsync(kept)).IsEqualTo("""{"n":1}""");
 
         // A repair is never shipped back: gru's tailer finds no group of sjc's to send for it.
-        await Assert.That(await sjc.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsEmpty();
+        await Assert.That(await sjc.GroupsAsync(cluster.Database, 0)).IsEmpty();
     }
 
     [Test]
@@ -446,25 +447,25 @@ public sealed class PeerStreamTests
         });
         await Assert.That(await sjc.UntilAsync(first, """{"n":1}""")).IsTrue();
         var sjcNode = sjc.Node;
-        var acked = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+        var acked = await gru.AckedAsync(cluster.Database, sjcNode);
 
         // Written while sjc is away; 25 hours later sjc no longer holds back retention, so gru drops the group sjc lacks.
         await sjc.StopAsync();
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", second, Json("""{"n":2}"""), CancellationToken.None));
-        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, acked, CancellationToken.None)).IsTrue();
+        await Assert.That(await gru.RetainsAsync(cluster.Database, acked)).IsTrue();
         clock.Offset = TimeSpan.FromHours(25);
         var deadline = DateTime.UtcNow + Deadline;
-        while (await gru.Groups.RetainsAsync(cluster.Database, acked, CancellationToken.None) && DateTime.UtcNow < deadline)
+        while (await gru.RetainsAsync(cluster.Database, acked) && DateTime.UtcNow < deadline)
         {
             await Task.Delay(200);
         }
 
-        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, acked, CancellationToken.None)).IsFalse();
+        await Assert.That(await gru.RetainsAsync(cluster.Database, acked)).IsFalse();
 
         // Back, sjc cannot get the group from the stream any more: gru tells it to refill, and it joins what differs.
         await sjc.StartAsync();
         await Assert.That(await sjc.UntilAsync(second, """{"n":2}""")).IsTrue();
-        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.HeadAsync(cluster.Database))).IsTrue();
     }
 
     // A replica that only joins another region's writes: its sender has no local group to ack past them, so retention raises
@@ -519,15 +520,15 @@ public sealed class PeerStreamTests
             _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
         });
         var sjcNode = sjc.Node;
-        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.HeadAsync(cluster.Database))).IsTrue();
         await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined, Json("""{"n":3}"""), CancellationToken.None));
         await Assert.That(await gru.UntilAsync(joined, """{"n":3}""")).IsTrue();
         await sjc.StopAsync();
-        var beforeHeld = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        var beforeHeld = await gru.HeadAsync(cluster.Database);
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", held, Json("""{"n":2}"""), CancellationToken.None));
 
         await gru.TrimAsync();
-        await Assert.That(await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None)).IsLessThanOrEqualTo(beforeHeld);
+        await Assert.That(await gru.AckedAsync(cluster.Database, sjcNode)).IsLessThanOrEqualTo(beforeHeld);
         await sjc.StartAsync();
         await Assert.That(await sjc.UntilAsync(held, """{"n":2}""")).IsTrue();
     }
@@ -549,7 +550,7 @@ public sealed class PeerStreamTests
             _ = await transaction.PutAsync("items", first, Json("""{"n":0}"""), CancellationToken.None);
         });
         var sjcNode = sjc.Node;
-        var streamAck = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        var streamAck = await gru.HeadAsync(cluster.Database);
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, streamAck)).IsTrue().Because("sjc acks gru's first group");
         List<string> rounds = [];
         for (var round = 1; round <= 2; round++)
@@ -566,8 +567,8 @@ public sealed class PeerStreamTests
             await sjc.LoseAsync("items", first);
             clock.Offset += TimeSpan.FromMinutes(2);
             await gru.TrimAsync();
-            var cut = !await gru.Groups.RetainsAsync(cluster.Database, streamAck, CancellationToken.None);
-            var dbAck = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+            var cut = !await gru.RetainsAsync(cluster.Database, streamAck);
+            var dbAck = await gru.AckedAsync(cluster.Database, sjcNode);
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
             string? back = null;
             while (back is null && DateTime.UtcNow < deadline)
@@ -577,7 +578,7 @@ public sealed class PeerStreamTests
             }
 
             rounds.Add($"round {round}: stream ack {streamAck}, _tb_peers.acked {dbAck}, retains-false {cut}, lost document refilled {back is not null}");
-            streamAck = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+            streamAck = await gru.AckedAsync(cluster.Database, sjcNode);
         }
 
         await Assert.That(rounds.Count(round => round.EndsWith("refilled True", StringComparison.Ordinal))).IsEqualTo(0).Because(string.Join("; ", rounds));
@@ -598,21 +599,21 @@ public sealed class PeerStreamTests
             _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
         });
         var sjcNode = sjc.Node;
-        var streamAck = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        var streamAck = await gru.HeadAsync(cluster.Database);
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, streamAck)).IsTrue();
         gru.CdcSource.Untrack();
         await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined, Json("""{"n":3}"""), CancellationToken.None));
         await Assert.That(await gru.UntilAsync(joined, """{"n":3}""")).IsTrue();
         await sjc.StopAsync();
-        await Assert.That(await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None)).IsEqualTo(streamAck);
+        await Assert.That(await gru.AckedAsync(cluster.Database, sjcNode)).IsEqualTo(streamAck);
         // AckedAsync tracked the database again.
         gru.CdcSource.Untrack();
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", held, Json("""{"n":2}"""), CancellationToken.None));
 
         await gru.TrimAsync();
-        await Assert.That(await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None)).IsGreaterThan(streamAck);
-        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, streamAck, CancellationToken.None)).IsTrue();
-        var groups = await gru.Groups.ReadAsync(cluster.Database, streamAck, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+        await Assert.That(await gru.AckedAsync(cluster.Database, sjcNode)).IsGreaterThan(streamAck);
+        await Assert.That(await gru.RetainsAsync(cluster.Database, streamAck)).IsTrue();
+        var groups = await gru.GroupsAsync(cluster.Database, streamAck);
         await Assert.That(groups.SelectMany(group => group.Deltas).Any(delta => delta.Id == held)).IsTrue().Because("the range a raise remembers ends before the next local group");
     }
 
@@ -632,27 +633,27 @@ public sealed class PeerStreamTests
             _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
         });
         var sjcNode = sjc.Node;
-        var streamAck = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        var streamAck = await gru.HeadAsync(cluster.Database);
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, streamAck)).IsTrue();
         await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined, Json("""{"n":3}"""), CancellationToken.None));
         await Assert.That(await gru.UntilAsync(joined, """{"n":3}""")).IsTrue();
         await sjc.StopAsync();
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", held, Json("""{"n":2}"""), CancellationToken.None));
         await gru.TrimAsync();
-        var acked = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+        var acked = await gru.AckedAsync(cluster.Database, sjcNode);
 
         clock.Offset = TimeSpan.FromHours(25);
         await gru.TrimAsync();
-        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, acked, CancellationToken.None)).IsFalse();
+        await Assert.That(await gru.RetainsAsync(cluster.Database, acked)).IsFalse();
         // A live stream's in-memory ack stays below the raise: the remembered range from it ends where the cut begins.
-        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, streamAck, CancellationToken.None)).IsFalse();
-        _ = await gru.Groups.ReadAsync(cluster.Database, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
-        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, acked, CancellationToken.None)).IsFalse().Because("a read past a cut proves nothing quiet");
-        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, streamAck, CancellationToken.None)).IsFalse();
+        await Assert.That(await gru.RetainsAsync(cluster.Database, streamAck)).IsFalse();
+        _ = await gru.GroupsAsync(cluster.Database, acked);
+        await Assert.That(await gru.RetainsAsync(cluster.Database, acked)).IsFalse().Because("a read past a cut proves nothing quiet");
+        await Assert.That(await gru.RetainsAsync(cluster.Database, streamAck)).IsFalse();
         // Between a cut and the pass that prunes it, the raise's range (streamAck, acked] is still remembered: its end is
         // checked too, so RetainsAsync still sees the cut past it.
         gru.CdcSource.Remember(await gru.IncarnationAsync(), streamAck, acked);
-        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, streamAck, CancellationToken.None)).IsFalse().Because("the end of a remembered range is checked");
+        await Assert.That(await gru.RetainsAsync(cluster.Database, streamAck)).IsFalse().Because("the end of a remembered range is checked");
 
         await sjc.StartAsync();
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
@@ -678,7 +679,7 @@ public sealed class PeerStreamTests
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         await gru.WriteAsync(async transaction => _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None));
         var sjcNode = sjc.Node;
-        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.HeadAsync(cluster.Database))).IsTrue();
         var incarnation = await gru.IncarnationAsync();
         for (var round = 1; round <= 30; round++)
         {
@@ -699,7 +700,7 @@ public sealed class PeerStreamTests
             {
                 var local = EntityIds.New().ToString();
                 await gru.WriteAsync(async transaction => await transaction.PutAsync("items", local, Json("""{"local":true}"""), CancellationToken.None));
-                await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+                await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.HeadAsync(cluster.Database))).IsTrue();
             }
 
             clock.Offset += TimeSpan.FromSeconds(30);
@@ -727,28 +728,28 @@ public sealed class PeerStreamTests
             _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
         });
         var sjcNode = sjc.Node;
-        var low = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        var low = await gru.HeadAsync(cluster.Database);
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, low)).IsTrue();
         await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined1, Json("""{"j":1}"""), CancellationToken.None));
         await Assert.That(await gru.UntilAsync(joined1, """{"j":1}""")).IsTrue();
         await gru.TrimAsync();
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", held1, Json("""{"h":1}"""), CancellationToken.None));
-        var mid = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        var mid = await gru.HeadAsync(cluster.Database);
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", held2, Json("""{"h":2}"""), CancellationToken.None));
-        var top = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        var top = await gru.HeadAsync(cluster.Database);
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, top)).IsTrue();
         await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined2, Json("""{"j":2}"""), CancellationToken.None));
         await Assert.That(await gru.UntilAsync(joined2, """{"j":2}""")).IsTrue();
         await gru.TrimAsync();
-        await Assert.That(await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None)).IsGreaterThan(top);
+        await Assert.That(await gru.AckedAsync(cluster.Database, sjcNode)).IsGreaterThan(top);
 
         for (var pass = 1; pass <= 2; pass++)
         {
-            var fromLow = (await gru.Groups.ReadAsync(cluster.Database, low, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None))
+            var fromLow = (await gru.GroupsAsync(cluster.Database, low))
                 .SelectMany(group => group.Deltas).Select(delta => delta.Id).ToList();
             await Assert.That(fromLow.Contains(held1) && fromLow.Contains(held2)).IsTrue()
                 .Because($"pass {pass}: a read from {low} (ranges {gru.CdcSource.QuietRanges(await gru.IncarnationAsync())}) returns both local groups, got [{string.Join(", ", fromLow)}]");
-            var fromMid = (await gru.Groups.ReadAsync(cluster.Database, mid, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None))
+            var fromMid = (await gru.GroupsAsync(cluster.Database, mid))
                 .SelectMany(group => group.Deltas).Select(delta => delta.Id).ToList();
             await Assert.That(fromMid.Contains(held2)).IsTrue()
                 .Because($"pass {pass}: a read from {mid}, below the upper range, returns held2, got [{string.Join(", ", fromMid)}]");
@@ -776,16 +777,17 @@ public sealed class PeerStreamTests
         using var source = new TerraBase.Engine.Sqlite.TursoChangeGroupSource(engine,
             gru.Api.Server.Services.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(),
             gru.Api.Server.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<TerraBase.Engine.Sqlite.TursoChangeGroupSource>>());
-        var low = await source.HeadAsync(cluster.Database, CancellationToken.None);
-        await source.AckAsync(cluster.Database, peer, low, default, CancellationToken.None);
+        var incarnation = store.Incarnation;
+        var low = (await source.HeadAsync(cluster.Database, incarnation, CancellationToken.None))!.Value;
+        await Assert.That(await source.AckAsync(cluster.Database, incarnation, peer, low, default, CancellationToken.None)).IsTrue();
         var remote = Put(peer, Stamp(), joined, """{"j":1}""");
         await gru.WriteAsync(async transaction => _ = await transaction.JoinAsync(remote.Collection, remote.Id, remote.State,
             new EntryVersion(remote.Stamp, peer), CancellationToken.None));
         await source.TrimAsync(store, CancellationToken.None);
-        var quiet = await source.AckedAsync(cluster.Database, peer, CancellationToken.None);
+        var quiet = (await source.AckedAsync(cluster.Database, peer, CancellationToken.None))!.Value.Acked;
         await Assert.That(quiet).IsGreaterThan(low);
         await gru.WriteAsync(async transaction => _ = await transaction.PutAsync("items", held, Json("""{"h":1}"""), CancellationToken.None));
-        var heldEnd = await source.HeadAsync(cluster.Database, CancellationToken.None);
+        var heldEnd = (await source.HeadAsync(cluster.Database, incarnation, CancellationToken.None))!.Value;
 
         var stamp = Stamp();
         await gru.WriteAsync(async transaction =>
@@ -807,7 +809,7 @@ public sealed class PeerStreamTests
         await Assert.That(newest - heldEnd).IsGreaterThan(8194);
         clock.Offset = TimeSpan.FromMinutes(2);
         await source.TrimAsync(store, CancellationToken.None);
-        await Assert.That(await source.RetainsAsync(cluster.Database, low, CancellationToken.None)).IsTrue().Because("the lowest remembered range still spares a refill before eviction");
+        await Assert.That(await source.RetainsAsync(cluster.Database, incarnation, low, CancellationToken.None)).IsTrue().Because("the lowest remembered range still spares a refill before eviction");
         var other = EntityIds.New();
         source.Remember(other, 0, 1);
         for (var range = 0; range < 4097; range++)
@@ -818,10 +820,10 @@ public sealed class PeerStreamTests
 
         await Assert.That(source.QuietRanges(store.Incarnation)).IsEqualTo(4096).Because("the cap bounds one file without clearing all ranges");
         await Assert.That(source.QuietRanges(other)).IsEqualTo(1).Because("another file is unaffected by the cap");
-        await Assert.That(await source.RetainsAsync(cluster.Database, low, CancellationToken.None)).IsFalse().Because("evicting a still-needed low range requests refill");
-        var remaining = await source.ReadAsync(cluster.Database, low, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+        await Assert.That(await source.RetainsAsync(cluster.Database, incarnation, low, CancellationToken.None)).IsFalse().Because("evicting a still-needed low range requests refill");
+        var remaining = (await source.ReadAsync(cluster.Database, incarnation, low, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None))!.Groups;
         await Assert.That(remaining.SelectMany(group => group.Deltas).Any(delta => delta.Id == held)).IsTrue().Because("cap eviction cannot skip the local group between the quiet ranges");
-        await Assert.That(await source.RetainsAsync(cluster.Database, low, CancellationToken.None)).IsFalse().Because("a read below the cut cannot recreate proof for evicted rows");
+        await Assert.That(await source.RetainsAsync(cluster.Database, incarnation, low, CancellationToken.None)).IsFalse().Because("a read below the cut cannot recreate proof for evicted rows");
     }
 
     // A copy (and so a restore, which copies) must not inherit the source's _tb_peers.acked, an id of the source's
@@ -843,15 +845,15 @@ public sealed class PeerStreamTests
         }
 
         var sjcNode = sjc.Node;
-        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
-        var stale = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.HeadAsync(cluster.Database))).IsTrue();
+        var stale = await gru.AckedAsync(cluster.Database, sjcNode);
         await Assert.That(stale).IsGreaterThan(0);
 
         var engine = gru.Api.Server.Services.GetRequiredService<IStorageEngine>();
         var copy = cluster.Database with { DatabaseId = EntityIds.New().ToString() };
         await Assert.That(await engine.CopyDatabaseAsync(cluster.Database, copy, CancellationToken.None)).IsTrue();
         var store = (await engine.OpenDatabaseAsync(copy, CancellationToken.None))!;
-        for (var write = 0; write < 500 && await gru.Groups.HeadAsync(copy, CancellationToken.None) < stale; write++)
+        for (var write = 0; write < 500 && await gru.HeadAsync(copy) < stale; write++)
         {
             var id = EntityIds.New().ToString();
             _ = await store.WriteAsync(async (transaction, token) =>
@@ -861,8 +863,8 @@ public sealed class PeerStreamTests
             }, static _ => true, CancellationToken.None);
         }
 
-        await Assert.That(await gru.Groups.HeadAsync(copy, CancellationToken.None)).IsGreaterThanOrEqualTo(stale);
-        await Assert.That(await gru.Groups.AckedAsync(copy, sjcNode, CancellationToken.None)).IsEqualTo(0);
+        await Assert.That(await gru.HeadAsync(copy)).IsGreaterThanOrEqualTo(stale);
+        await Assert.That(await gru.AckedAsync(copy, sjcNode)).IsEqualTo(0);
     }
 
 
@@ -883,22 +885,22 @@ public sealed class PeerStreamTests
         });
         await Assert.That(await sjc.UntilIndexesAsync(["by_key"])).IsTrue();
         var sjcNode = sjc.Node;
-        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
-        var acked = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.HeadAsync(cluster.Database))).IsTrue();
+        var acked = await gru.AckedAsync(cluster.Database, sjcNode);
 
         await sjc.StopAsync();
         await gru.WriteAsync(async transaction => await transaction.DropIndexAsync("by_key", CancellationToken.None));
         await gru.WriteAsync(async transaction => await transaction.CreateIndexAsync(new IndexDefinition("by_key", "items", [m]), CancellationToken.None));
         clock.Offset = TimeSpan.FromHours(25);
         var deadline = DateTime.UtcNow + Deadline;
-        while (await gru.Groups.RetainsAsync(cluster.Database, acked, CancellationToken.None) && DateTime.UtcNow < deadline)
+        while (await gru.RetainsAsync(cluster.Database, acked) && DateTime.UtcNow < deadline)
         {
             await Task.Delay(200);
         }
 
-        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, acked, CancellationToken.None)).IsFalse();
+        await Assert.That(await gru.RetainsAsync(cluster.Database, acked)).IsFalse();
         await sjc.StartAsync();
-        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.HeadAsync(cluster.Database))).IsTrue();
 
         var store = await sjc.StoreAsync();
         await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
@@ -973,7 +975,7 @@ public sealed class PeerStreamTests
             await push.RefillAsync(cluster.Database, 1);
             await push.BatchAsync(other, 1, otherId);
             var acknowledged = await push.AckAsync();
-            await Assert.That(acknowledged.Database).IsEqualTo(ChangeGroups.Wire(other));
+            await Assert.That(acknowledged.Database).IsEqualTo(await push.WireAsync(other));
             await Assert.That(acknowledged is { ChangeId: 1, Refused: false }).IsTrue();
             await Assert.That(await sjc.ReadAsync(other, otherId)).IsEqualTo("""{"n":1}""");
         }
@@ -1031,16 +1033,16 @@ public sealed class PeerStreamTests
             await second.BatchAsync(healthy, 1, id);
             foreach (var database in databases.Skip(4).Append(cluster.Database))
             {
-                await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(database), Refused = true })
+                await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = await second.WireAsync(database), Refused = true })
                     .Because("excess refills are refused before starting work on another origin");
             }
 
-            await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(healthy), ChangeId = 1, Applied = second.LastStamp, Stable = second.LastStamp });
+            await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = await second.WireAsync(healthy), ChangeId = 1, Applied = second.LastStamp, Stable = second.LastStamp });
             await Assert.That(await sjc.ReadAsync(healthy, id)).IsEqualTo("""{"n":1}""");
             await Assert.That(entered.Count).IsEqualTo(4);
             await Assert.That(sjc.RefillMemory!.Reserved).IsEqualTo(4 * RefillMemory.BytesPerRefill);
             await second.BatchAsync(cluster.Database, 2, EntityIds.New().ToString());
-            await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), Refused = true });
+            await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = await second.WireAsync(cluster.Database), Refused = true });
 
             held.SetResult();
             for (var index = 0; index < 4; index++)
@@ -1051,7 +1053,7 @@ public sealed class PeerStreamTests
             await Assert.That(sjc.RefillMemory.Reserved).IsEqualTo(0);
             sjc.BeforeDigest = null;
             await second.RefillAsync(cluster.Database, 1);
-            await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), ChangeId = 1 });
+            await Assert.That(await second.AckAsync()).IsEqualTo(new Ack { Database = await second.WireAsync(cluster.Database), ChangeId = 1 });
             var after = EntityIds.New().ToString();
             await second.BatchAsync(cluster.Database, 2, after);
             await Assert.That((await second.AckAsync()) is { ChangeId: 2, Refused: false }).IsTrue();
@@ -1079,7 +1081,7 @@ public sealed class PeerStreamTests
         sjc.RefillMemory!.Refuse = true;
         using var push = await RawPush.StartAsync(sjc, peer);
         await push.RefillAsync(cluster.Database, 1);
-        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), Refused = true })
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = await push.WireAsync(cluster.Database), Refused = true })
             .Because("a refill must reserve its bytes before allocating a digest or opening a channel");
         await Assert.That(digests).IsEqualTo(0);
         await Assert.That(sjc.RefillMemory.Reserved).IsEqualTo(0);
@@ -1090,7 +1092,7 @@ public sealed class PeerStreamTests
 
         sjc.RefillMemory.Refuse = false;
         await push.RefillAsync(cluster.Database, 1);
-        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), ChangeId = 1 });
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = await push.WireAsync(cluster.Database), ChangeId = 1 });
         await Assert.That(digests).IsEqualTo(1);
         await Assert.That(sjc.RefillMemory.Reserved).IsEqualTo(0);
     }
@@ -1132,7 +1134,7 @@ public sealed class PeerStreamTests
 
         using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
         await push.RefillAsync(database, 5);
-        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(database), Refused = true });
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = await push.WireAsync(database), Refused = true });
     }
 
     // Likewise a refill whose repair page this machine refuses (it stopped holding the database) is refused.
@@ -1153,7 +1155,7 @@ public sealed class PeerStreamTests
 
         using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
         await push.RefillAsync(cluster.Database, 1);
-        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), Refused = true });
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = await push.WireAsync(cluster.Database), Refused = true });
     }
 
     [Test]
@@ -1173,7 +1175,7 @@ public sealed class PeerStreamTests
 
         using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
         await push.RefillAsync(cluster.Database, 1);
-        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), Refused = true });
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = await push.WireAsync(cluster.Database), Refused = true });
         await Assert.That(await sjc.ReadAsync(lost)).IsNull();
     }
 
@@ -1198,9 +1200,9 @@ public sealed class PeerStreamTests
         var otherId = EntityIds.New().ToString();
         await push.BatchAsync(cluster.Database, 1, id);
         await push.BatchAsync(other, 1, otherId);
-        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), Refused = true });
+        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = await push.WireAsync(cluster.Database), Refused = true });
         var acknowledged = await push.AckAsync();
-        await Assert.That(acknowledged.Database).IsEqualTo(ChangeGroups.Wire(other));
+        await Assert.That(acknowledged.Database).IsEqualTo(await push.WireAsync(other));
         await Assert.That(acknowledged is { ChangeId: 1, Refused: false }).IsTrue();
         await Assert.That(await sjc.ReadAsync(other, otherId)).IsEqualTo("""{"n":1}""");
 
@@ -1258,7 +1260,7 @@ public sealed class PeerStreamTests
         });
         await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
         using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
-        var database = ChangeGroups.Wire(cluster.Database);
+        var database = await push.WireAsync(cluster.Database);
         var refused = new Ack { Database = database, Refused = true };
 
         // sjc lacks a document gru holds, so a refill from gru has a repair to make, and sjc holds it before it joins. Meanwhile
@@ -1273,7 +1275,7 @@ public sealed class PeerStreamTests
         await Assert.That(await push.AckAsync()).IsEqualTo(refused);
         await Assert.That(await push.AckAsync()).IsEqualTo(refused);
         var acknowledged = await push.AckAsync();
-        await Assert.That(acknowledged.Database).IsEqualTo(ChangeGroups.Wire(other));
+        await Assert.That(acknowledged.Database).IsEqualTo(await push.WireAsync(other));
         await Assert.That(acknowledged is { ChangeId: 1, Refused: false }).IsTrue();
         await Assert.That(await sjc.ReadAsync(other, first)).IsEqualTo("""{"n":1}""");
 
@@ -1323,7 +1325,7 @@ public sealed class PeerStreamTests
         });
         await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
         var peer = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name;
-        var database = ChangeGroups.Wire(cluster.Database);
+        var database = ChangeGroups.Wire(cluster.Database, await gru.IncarnationAsync());
 
         await sjc.LoseAsync("items", lost);
         sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1410,13 +1412,13 @@ public sealed class PeerStreamTests
             await Assert.That(await middle.WelcomeAsync()).IsFalse().Because("the latest replacement cancels its predecessor before either can join a batch");
             await Assert.That(sjc.RefillMemory!.Reserved).IsEqualTo(0).Because("cancelled predecessor work releases its byte reservation before handover");
             await latest.BatchAsync(cluster.Database, 2, later);
-            await Assert.That(await latest.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), Refused = true });
+            await Assert.That(await latest.AckAsync()).IsEqualTo(new Ack { Database = await latest.WireAsync(cluster.Database), Refused = true });
             await Assert.That(await sjc.ReadAsync(later)).IsNull();
 
             sjc.HeldRepairs = null;
             sjc.HeldRepairExit = null;
             await latest.RefillAsync(cluster.Database, 1);
-            await Assert.That(await latest.AckAsync()).IsEqualTo(new Ack { Database = ChangeGroups.Wire(cluster.Database), ChangeId = 1 });
+            await Assert.That(await latest.AckAsync()).IsEqualTo(new Ack { Database = await latest.WireAsync(cluster.Database), ChangeId = 1 });
             await Assert.That(await sjc.ReadAsync(lost)).IsEqualTo("""{"n":1}""");
             await latest.BatchAsync(cluster.Database, 2, later);
             await Assert.That((await latest.AckAsync()) is { ChangeId: 2, Refused: false }).IsTrue();
@@ -1786,7 +1788,7 @@ public sealed class PeerStreamTests
         _ = await call.ResponseStream.MoveNext(timeout.Token);
         await call.RequestStream.WriteAsync(new PushFrame
         {
-            Batch = new Batch { Database = ChangeGroups.Wire(cluster.Database), LastChangeId = 1, Groups = ChangeGroups.Encode([new OriginGroup(1, deltas)]) },
+            Batch = new Batch { Database = ChangeGroups.Wire(cluster.Database, Ulid.NewUlid()), LastChangeId = 1, Groups = ChangeGroups.Encode([new OriginGroup(1, deltas)]) },
         });
         await Assert.That(await call.ResponseStream.MoveNext(timeout.Token)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Ack.Refused).IsFalse();
@@ -1797,7 +1799,10 @@ public sealed class PeerStreamTests
     {
         using var channel = PeerChannel.Create(machine.Api.Server.BaseAddress);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
-        var digest = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(cluster.Database) });
+        var incarnation = await machine.IncarnationAsync();
+        var digest = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(cluster.Database, incarnation) });
+        await Assert.That(digest.Held).IsTrue();
+        await Assert.That(new Ulid(digest.Incarnation.Span)).IsEqualTo(incarnation);
         return digest.Buckets.ToByteArray();
     }
 
@@ -1819,7 +1824,7 @@ public sealed class PeerStreamTests
             _ = await transaction.PutAsync("items", first, Json("""{"n":0}"""), CancellationToken.None);
         });
         var sjcNode = sjc.Node;
-        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.HeadAsync(cluster.Database))).IsTrue();
         await sjc.LoseAsync("items", first);
 
         for (var round = 1; round <= 3; round++)
@@ -1834,7 +1839,7 @@ public sealed class PeerStreamTests
                 if (write == 10)
                 {
                     await gru.WriteAsync(async transaction => await transaction.PutAsync("items", local, Json($$"""{"l":{{round}}}"""), CancellationToken.None));
-                    localHead = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+                    localHead = await gru.HeadAsync(cluster.Database);
                 }
             }
 
@@ -1844,14 +1849,14 @@ public sealed class PeerStreamTests
             // After the hold, retention cuts past gru's group (so past the stream's ack) and keeps every row after the stored ack.
             clock.Offset += TimeSpan.FromMinutes(2);
             await gru.TrimAsync();
-            var stored = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+            var stored = await gru.AckedAsync(cluster.Database, sjcNode);
             await Assert.That(await gru.RowsRetainedAsync(localHead)).IsFalse().Because($"round {round}: the cut passes the stream's ack");
             await Assert.That(await gru.RowsRetainedAsync(stored)).IsTrue().Because($"round {round}: rows after the stored ack stay");
 
             // gru's next write ships from the raised ack, and no refill brought the lost document back meanwhile.
             var next = EntityIds.New().ToString();
             await gru.WriteAsync(async transaction => await transaction.PutAsync("items", next, Json($$"""{"next":{{round}}}"""), CancellationToken.None));
-            await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+            await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.HeadAsync(cluster.Database))).IsTrue();
             await Assert.That(await sjc.ReadAsync(next)).IsEqualTo($$"""{"next":{{round}}}""");
             await Assert.That(await sjc.ReadAsync(first)).IsNull().Because($"round {round}: a refill brought back the document sjc lost");
         }
@@ -1887,7 +1892,7 @@ public sealed class PeerStreamTests
     }
 
     /// <summary>One machine per region, all listed in one fake DNS, each holding the same database.</summary>
-    private sealed class Cluster : IAsyncDisposable
+    internal sealed class Cluster : IAsyncDisposable
     {
         private readonly Dictionary<string, Machine> _machines = [with(StringComparer.Ordinal)];
 
@@ -1951,7 +1956,7 @@ public sealed class PeerStreamTests
         }
     }
 
-    private sealed class Machine(Cluster cluster, string region, string[] replicas) : IAsyncDisposable
+    internal sealed class Machine(Cluster cluster, string region, string[] replicas) : IAsyncDisposable
     {
         private readonly string _name = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
         private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-peer-streams-").FullName;
@@ -1959,7 +1964,14 @@ public sealed class PeerStreamTests
 
         public string Region { get; } = region;
 
-        public FakeChangeGroupSource Source { get; } = new();
+        private FakeChangeGroupSource? _source;
+
+        // The fake names this machine's own file of each database: the copy a refill's anti-entropy digests.
+        public FakeChangeGroupSource Source => _source ??= new(async (database, token) => (await Engine.OpenDatabaseAsync(database, token))?.Incarnation);
+
+        public string Name => _name;
+
+        public Cluster Cluster => cluster;
 
         public ManagementApi Api => _api ?? throw new InvalidOperationException($"{Region} is stopped");
 
@@ -2091,7 +2103,7 @@ public sealed class PeerStreamTests
         public async Task<bool> UntilAckedAsync(TenantContext database, ReplicaId peer, long changeId)
         {
             var deadline = DateTime.UtcNow + Deadline;
-            while (await Groups.AckedAsync(database, peer, CancellationToken.None) < changeId)
+            while (await AckedAsync(database, peer) < changeId)
             {
                 if (DateTime.UtcNow >= deadline)
                 {
@@ -2169,10 +2181,31 @@ public sealed class PeerStreamTests
 
         public TerraBase.Engine.Sqlite.TursoChangeGroupSource CdcSource => Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.TursoChangeGroupSource>();
 
-        // The database file's incarnation, which keys the CDC source's remembered quiet ranges.
-        public async Task<Ulid> IncarnationAsync() =>
-            ((TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>()
-                .OpenDatabaseAsync(cluster.Database, CancellationToken.None))!).Incarnation;
+        // The database file's incarnation, which keys the CDC source's remembered quiet ranges and which its reads and acks name.
+        public Task<Ulid> IncarnationAsync() => IncarnationAsync(cluster.Database);
+
+        public async Task<Ulid> IncarnationAsync(TenantContext database) =>
+            await HeldIncarnationAsync(database) ?? throw new InvalidOperationException("the database is missing");
+
+        public async Task<Ulid?> HeldIncarnationAsync(TenantContext database) => (await Engine.OpenDatabaseAsync(database, CancellationToken.None))?.Incarnation;
+
+        // The source's reads of the copy in place, which never refuse its own incarnation.
+        public async Task<long> HeadAsync(TenantContext database) =>
+            await Groups.HeadAsync(database, await IncarnationAsync(database), CancellationToken.None) ?? throw new InvalidOperationException("the copy refused its own incarnation");
+
+        public async Task<bool> RetainsAsync(TenantContext database, long after) =>
+            await Groups.RetainsAsync(database, await IncarnationAsync(database), after, CancellationToken.None) ?? throw new InvalidOperationException("the copy refused its own incarnation");
+
+        public async Task<IReadOnlyList<OriginGroup>> GroupsAsync(TenantContext database, long after) =>
+            (await Groups.ReadAsync(database, await IncarnationAsync(database), after, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)
+                ?? throw new InvalidOperationException("the copy refused its own incarnation")).Groups;
+
+        // The peer's ack of the copy in place: a cursor of another incarnation would be a stale ack.
+        public async Task<long> AckedAsync(TenantContext database, ReplicaId peer)
+        {
+            var cursor = await Groups.AckedAsync(database, peer, CancellationToken.None) ?? throw new InvalidOperationException("the database is missing");
+            return cursor.Incarnation == await IncarnationAsync(database) ? cursor.Acked : throw new InvalidOperationException("the cursor names another incarnation");
+        }
 
         // One retention pass over the database, as the CDC source's 5 s loop runs it.
         public async Task TrimAsync()
@@ -2245,7 +2278,8 @@ public sealed class PeerStreamTests
         {
             var states = Api.Server.Services.GetRequiredService<IReplicaStates>();
             var bucket = TerraBase.Engine.Sqlite.SqliteStorageTransaction.Bucket(collection, id);
-            var (page, _) = await states.ReadBucketsAsync(cluster.Database, [bucket], null, 4096, int.MaxValue, CancellationToken.None);
+            var (page, _) = (await states.ReadBucketsAsync(cluster.Database, await IncarnationAsync(), [bucket], null, 4096, int.MaxValue, CancellationToken.None))
+                ?? throw new InvalidOperationException("the copy refused its own incarnation");
             return page.Any(state => state.Collection == collection && state.Id == id);
         }
 
@@ -2451,35 +2485,37 @@ public sealed class PeerStreamTests
 
         public ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken) => states.HorizonAsync(database, cancellationToken);
 
-        public ValueTask<int> ForgetAsync(TenantContext database, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
-            states.ForgetAsync(database, keys, horizon, cancellationToken);
+        public ValueTask<int?> ForgetAsync(
+            TenantContext database, Ulid incarnation, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
+            states.ForgetAsync(database, incarnation, keys, horizon, cancellationToken);
 
         private bool _lost;
 
-        public async ValueTask<byte[]?> DigestAsync(TenantContext database, CancellationToken cancellationToken)
+        public async ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken)
         {
             if (machine.BeforeDigest is { } before)
             {
                 await before(database, cancellationToken);
             }
 
-            return Volatile.Read(ref _lost) ? null : await states.DigestAsync(database, cancellationToken);
+            return Volatile.Read(ref _lost) ? null : await states.DigestAsync(database, expected, cancellationToken);
         }
 
-        public ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)> ReadBucketsAsync(
-            TenantContext database, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken)
+        // An empty page, then no digest: only the refill's closing digest check can tell the source lost the database.
+        public ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)?> ReadBucketsAsync(
+            TenantContext database, Ulid incarnation, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken)
         {
             if (machine.LoseOnBucketRead)
             {
                 Volatile.Write(ref _lost, true);
-                return ValueTask.FromResult<(IReadOnlyList<RepairState>, BucketCursor?)>(([], null));
+                return ValueTask.FromResult<(IReadOnlyList<RepairState>, BucketCursor?)?>(([], null));
             }
 
-            return states.ReadBucketsAsync(database, buckets, after, maxStates, maxBytes, cancellationToken);
+            return states.ReadBucketsAsync(database, incarnation, buckets, after, maxStates, maxBytes, cancellationToken);
         }
     }
 
-    private sealed class RefillMemory(IMemoryBudget inner) : IMemoryBudget
+    internal sealed class RefillMemory(IMemoryBudget inner) : IMemoryBudget
     {
         public const long BytesPerRefill = (2 * 4096 * 16) + (4L * ReplicationProtocol.MaxApplicationBytes);
         private long _reserved;
@@ -2526,12 +2562,15 @@ public sealed class PeerStreamTests
         private readonly Grpc.Net.Client.GrpcChannel _channel;
         private readonly AsyncDuplexStreamingCall<PushFrame, AckFrame> _call;
         private readonly ReplicaId _origin;
+        private readonly Machine? _peer;
+        private readonly Dictionary<TenantContext, Ulid> _incarnations = [];
 
         public ulong LastStamp { get; private set; }
 
-        private RawPush(Machine machine, ReplicaId? origin)
+        private RawPush(Machine machine, string peer, ReplicaId? origin)
         {
             _origin = origin ?? Origin;
+            _peer = machine.Cluster.Machines.FirstOrDefault(listed => listed.Name == peer);
             _channel = PeerChannel.Create(machine.Api.Server.BaseAddress);
             _call = new Features.Replication.V1.Replication.ReplicationClient(_channel).Push();
         }
@@ -2554,7 +2593,7 @@ public sealed class PeerStreamTests
 
         public static async Task<RawPush> OpenAsync(Machine machine, string peer, ReplicaId? origin = null)
         {
-            var push = new RawPush(machine, origin);
+            var push = new RawPush(machine, peer, origin);
             await push._call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = push._origin.Value, Region = "gru", Machine = peer } });
             return push;
         }
@@ -2574,18 +2613,30 @@ public sealed class PeerStreamTests
             await Assert.That(await _call.ResponseStream.MoveNext(timeout.Token)).IsFalse();
         }
 
-        public Task RefillAsync(TenantContext database, ulong changeId) =>
-            _call.RequestStream.WriteAsync(new PushFrame { Refill = new Refill { Database = ChangeGroups.Wire(database), ChangeId = changeId } });
+        // The database as this stream's frames name it, and its acks echo: of the named peer's copy, the one a refill digests;
+        // of a made-up copy when the peer is no machine of the cluster or does not hold the database.
+        public async Task<Features.Replication.V1.Database> WireAsync(TenantContext database)
+        {
+            if (!_incarnations.TryGetValue(database, out var incarnation))
+            {
+                _incarnations[database] = incarnation = (_peer is null ? null : await _peer.HeldIncarnationAsync(database)) ?? Ulid.NewUlid();
+            }
+
+            return ChangeGroups.Wire(database, incarnation);
+        }
+
+        public async Task RefillAsync(TenantContext database, ulong changeId) =>
+            await _call.RequestStream.WriteAsync(new PushFrame { Refill = new Refill { Database = await WireAsync(database), ChangeId = changeId } });
 
         // One group putting {"n":1} under `id`.
-        public Task BatchAsync(TenantContext database, ulong changeId, string id)
+        public async Task BatchAsync(TenantContext database, ulong changeId, string id)
         {
             LastStamp = Stamp();
-            return _call.RequestStream.WriteAsync(new PushFrame
+            await _call.RequestStream.WriteAsync(new PushFrame
             {
                 Batch = new Batch
                 {
-                    Database = ChangeGroups.Wire(database),
+                    Database = await WireAsync(database),
                     LastChangeId = changeId,
                     Groups = ChangeGroups.Encode([new OriginGroup((long)changeId, [Put(_origin, LastStamp, id, """{"n":1}""")])]),
                 },
@@ -2607,7 +2658,7 @@ public sealed class PeerStreamTests
     }
 
     /// <summary>The system clock moved forward by <see cref="Offset"/>; timers keep real time, so streams keep running.</summary>
-    private sealed class ShiftedTime : TimeProvider
+    internal sealed class ShiftedTime : TimeProvider
     {
         private long _offset;
 

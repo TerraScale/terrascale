@@ -97,7 +97,16 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(string.Create(CultureInfo.InvariantCulture, $"restore at {at:O}: {body}"));
     }
 
-    public Task<string> MetricsAsync(CancellationToken cancellationToken) => Api.Server.Client.GetStringAsync(ManagementApi.Uri("/metrics"), cancellationToken);
+    /// <summary>The id of the project's database named <paramref name="name"/>, such as a restore.</summary>
+    public async Task<string> DatabaseIdAsync(string name, CancellationToken cancellationToken)
+    {
+        using var response = await Api.Client.GetAsync(ManagementApi.Uri($"/v1/management/organizations/{Database.Organization}/projects/{Database.Project}/databases"), cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var listing = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+        return listing.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("name").GetString() == name).GetProperty("id").GetString()!;
+    }
+
+        public Task<string> MetricsAsync(CancellationToken cancellationToken) => Api.Server.Client.GetStringAsync(ManagementApi.Uri("/metrics"), cancellationToken);
 
     /// <summary>
     /// Segments start at 0 and ascend in start, never back in time: no two share a start, so none overlaps another. Reads

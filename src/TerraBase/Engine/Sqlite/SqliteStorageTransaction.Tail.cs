@@ -23,13 +23,19 @@ internal sealed partial class SqliteStorageTransaction
     /// row; a database without peers keeps nothing back, and a peer that holds no row for longer refills (section 10). Deleting below a commit row keeps whole transactions and the newest row, since an empty
     /// <c>turso_cdc</c> restarts its ids at 1 after a reopen.
     /// </summary>
-    internal const string Retention = """
+    internal const string Retention = $"""
         DELETE FROM turso_cdc WHERE change_id < coalesce((
             SELECT change_id FROM turso_cdc
-            WHERE change_id <= min($below, coalesce((SELECT min(acked) FROM _tb_peers WHERE seen >= $gone), $below))
+            WHERE change_id <= min($below, coalesce((SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen >= $gone), $below))
                 AND change_type = 2 AND (change_time <= $now - 60 OR NOT EXISTS (SELECT 1 FROM _tb_peers))
             ORDER BY change_id DESC LIMIT 1), 0);
         """;
+
+    /// <summary>
+    /// A <c>_tb_peers</c> row's ack as retention may count it: an ack of another incarnation than the file's names rows of
+    /// another file's change log, so it counts as 0 (the peer still holds every row back) rather than releasing any.
+    /// </summary>
+    private const string ScopedAcked = "CASE WHEN incarnation = (SELECT incarnation FROM commit_offset WHERE id = 1) THEN acked ELSE 0 END";
 
     private const string TailPage = """
         SELECT change_id, change_type, table_name, after, change_time FROM turso_cdc
@@ -137,16 +143,26 @@ internal sealed partial class SqliteStorageTransaction
     }
 
     /// <summary>
-    /// See <see cref="IChangeGroupSource.AckedAsync"/>; null when <paramref name="peer"/> has no row yet, or when its row is
-    /// above the newest change id: an ack from another file's <c>turso_cdc</c>, whose ids this file does not continue
-    /// (copies and restores reset acks to 0 in <see cref="TursoCopy"/>; this guards any other path; retention always keeps
-    /// the newest row, so an acknowledged id never passes it).
+    /// The incarnation of this file, read in this transaction: under the writer for a write transaction, so a file reopened
+    /// at the same path while the caller waited for it (a copy, restore or rebuild) shows as the other incarnation it is.
     /// </summary>
-    internal ValueTask<long?> GetAckedAsync(ReplicaId peer, CancellationToken cancellationToken) =>
+    internal ValueTask<Ulid> GetIncarnationAsync(CancellationToken cancellationToken) =>
+        RunAsync(() => Ulid.Parse(Command(SqliteStatements.Incarnation).ExecuteScalar() as string
+            ?? throw new InvalidDataException("database incarnation is missing")), cancellationToken);
+
+    /// <summary>
+    /// See <see cref="IChangeGroupSource.AckedAsync"/>; null when <paramref name="peer"/> has no row yet, when its row
+    /// acknowledged another incarnation than <paramref name="incarnation"/> (the file's), or when its row is above the newest
+    /// change id: an ack from another file's <c>turso_cdc</c>, whose ids this file does not continue (copies and restores
+    /// also reset acks to 0 in <see cref="TursoCopy"/>; retention always keeps the newest row, so an acknowledged id never
+    /// passes it).
+    /// </summary>
+    internal ValueTask<long?> GetAckedAsync(ReplicaId peer, Ulid incarnation, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
-            var command = Command("SELECT acked FROM _tb_peers WHERE node = $node;");
+            var command = Command("SELECT acked FROM _tb_peers WHERE node = $node AND incarnation = $incarnation;");
             command.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
+            command.Parameters.AddWithValue("$incarnation", incarnation.ToString());
             if (command.ExecuteScalar() is not long acked)
             {
                 return null;
@@ -182,7 +198,8 @@ internal sealed partial class SqliteStorageTransaction
     /// smallest acknowledged id of a peer still holding rows, each raise as the range it proved to hold no local group, and
     /// the oldest change id kept.
     /// </summary>
-    internal async ValueTask<(long Left, long? Floor, List<(long From, long To)> Quiet, long Oldest)> TrimAsync(long? backupAnchor, DateTimeOffset now, ReplicaId self, CancellationToken cancellationToken)
+    internal async ValueTask<(long Left, long? Floor, List<(long From, long To)> Quiet, long Oldest)> TrimAsync(
+        long? backupAnchor, DateTimeOffset now, ReplicaId self, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         return await RunAsync(() =>
@@ -193,12 +210,17 @@ internal sealed partial class SqliteStorageTransaction
             }
 
             var newest = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0;
-            List<(long Node, long Acked)> peers = [];
-            using (var reader = Command("SELECT node, acked FROM _tb_peers WHERE seen > 0;").ExecuteReader())
+            // An ack of another incarnation counts as 0 and never rises: it names rows of another file's change log.
+            List<(long Node, long Acked, bool Current)> peers = [];
+            var incarnation = Command(SqliteStatements.Incarnation).ExecuteScalar() as string ?? throw new InvalidDataException("database incarnation is missing");
+            var peerRows = Command("SELECT node, acked, incarnation = $incarnation FROM _tb_peers WHERE seen > 0;");
+            peerRows.Parameters.AddWithValue("$incarnation", incarnation);
+            using (var reader = peerRows.ExecuteReader())
             {
                 while (reader.Read())
                 {
-                    peers.Add((reader.GetInt64(0), reader.GetInt64(1)));
+                    var current = reader.GetInt64(2) != 0;
+                    peers.Add((reader.GetInt64(0), current ? reader.GetInt64(1) : 0, current));
                 }
             }
 
@@ -207,7 +229,7 @@ internal sealed partial class SqliteStorageTransaction
             // that ack where it is (the read refuses, section 7).
             List<(long From, long To)> raised = [];
             var oldest = Command("SELECT min(change_id) FROM turso_cdc;").ExecuteScalar() is long kept ? kept : newest + 1;
-            foreach (var at in peers.Select(peer => peer.Acked).Where(acked => acked < newest && oldest <= acked + 1).Distinct().ToList())
+            foreach (var at in peers.Where(peer => peer.Current).Select(peer => peer.Acked).Where(acked => acked < newest && oldest <= acked + 1).Distinct().ToList())
             {
                 long quiet;
                 try
@@ -221,16 +243,17 @@ internal sealed partial class SqliteStorageTransaction
 
                 if (quiet > at)
                 {
-                    var raise = Command("UPDATE _tb_peers SET acked = $quiet WHERE seen > 0 AND acked = $acked;");
+                    var raise = Command("UPDATE _tb_peers SET acked = $quiet WHERE seen > 0 AND acked = $acked AND incarnation = $incarnation;");
                     raise.Parameters.AddWithValue("$quiet", quiet);
                     raise.Parameters.AddWithValue("$acked", at);
+                    raise.Parameters.AddWithValue("$incarnation", incarnation);
                     raise.ExecuteNonQuery();
-                    peers = [.. peers.Select(peer => peer.Acked == at ? (peer.Node, quiet) : peer)];
+                    peers = [.. peers.Select(peer => peer.Current && peer.Acked == at ? (peer.Node, quiet, true) : peer)];
                     raised.Add((at, quiet));
                 }
             }
 
-            foreach (var (node, acked) in peers.Where(peer => newest - peer.Acked > FarBehindRows))
+            foreach (var (node, acked, _) in peers.Where(peer => newest - peer.Acked > FarBehindRows))
             {
                 var behind = Command("SELECT coalesce(sum(length(after)), 0) FROM turso_cdc WHERE change_id > $acked;");
                 behind.Parameters.AddWithValue("$acked", acked);
@@ -248,7 +271,7 @@ internal sealed partial class SqliteStorageTransaction
             delete.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             delete.ExecuteNonQuery();
             var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
-            var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $gone;");
+            var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen >= $gone;");
             floor.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             var oldestKept = Command("SELECT coalesce(min(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long first ? first : 0;
             return (left, floor.ExecuteScalar() is long min ? min : (long?)null, raised, oldestKept);
@@ -263,36 +286,48 @@ internal sealed partial class SqliteStorageTransaction
     internal ValueTask<long?> GetFloorAsync(DateTimeOffset now, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
-            var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $gone;");
+            var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen >= $gone;");
             floor.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             return floor.ExecuteScalar() is long acked ? acked : (long?)null;
         }, cancellationToken);
 
     /// <summary>
-    /// Raises <paramref name="peer"/>'s acknowledged change id, or sets it to 0 (a new or stale row), so its unshipped rows stay, and marks
-    /// it heard from at <paramref name="now"/>; uncaptured: the tailer's own bookkeeping. Drops the rows of the peer's older
+    /// Raises <paramref name="peer"/>'s acknowledged change id of <paramref name="incarnation"/>, or sets it to 0 (a new or
+    /// stale row, or one of another incarnation), so its unshipped rows stay, and marks it heard from at
+    /// <paramref name="now"/>; uncaptured: the tailer's own bookkeeping. Drops the rows of the peer's older
     /// epochs. Then deletes what <see cref="Retention"/> allows, continuous backup's <paramref name="backupAnchor"/> included.
-    /// Returns the CDC rows left, and the smallest change id a peer heard from in the last 24 h acknowledged (null when there is none).
+    /// Returns the CDC rows left, and the smallest change id a peer heard from in the last 24 h acknowledged (null when there is none);
+    /// null, with nothing written, when the file is no longer <paramref name="incarnation"/>.
     /// </summary>
-    internal async ValueTask<(long Left, long? Floor)> RecordAckedAsync(
-        ReplicaId peer, long changeId, Hlc stable, long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
+    internal async ValueTask<(long Left, long? Floor)?> RecordAckedAsync(
+        ReplicaId peer, Ulid incarnation, long changeId, Hlc stable, long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         return await RunAsync(() =>
         {
-            // 0 resets a row GetAckedAsync found stale; an acknowledgement only raises it.
+            // Refused, with nothing written, unless the file is still the incarnation the ack names: checked again here, under
+            // the writer, so no path records an ack against a copy reopened in its place.
+            if (Command(SqliteStatements.Incarnation).ExecuteScalar() as string != incarnation.ToString())
+            {
+                return ((long Left, long? Floor)?)null;
+            }
+
+            // 0 resets a row GetAckedAsync found stale; an acknowledgement only raises an ack of the same incarnation.
             var update = Command("""
-                UPDATE _tb_peers SET acked = CASE WHEN $acked = 0 THEN 0 ELSE max(acked, $acked) END, stable = max(stable, $stable), seen = $seen
+                UPDATE _tb_peers SET acked = CASE WHEN $acked = 0 OR incarnation <> $incarnation THEN $acked ELSE max(acked, $acked) END,
+                    stable = max(stable, $stable), seen = $seen, incarnation = $incarnation
                 WHERE node = $node;
                 """);
             update.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
+            update.Parameters.AddWithValue("$incarnation", incarnation.ToString());
             update.Parameters.AddWithValue("$acked", changeId);
             update.Parameters.AddWithValue("$stable", Version(stable));
             update.Parameters.AddWithValue("$seen", now.ToUnixTimeMilliseconds());
             if (update.ExecuteNonQuery() == 0)
             {
-                var insert = Command("INSERT INTO _tb_peers (node, applied, acked, stable, seen) VALUES ($node, 0, $acked, $stable, $seen);");
+                var insert = Command("INSERT INTO _tb_peers (node, applied, acked, stable, seen, incarnation) VALUES ($node, 0, $acked, $stable, $seen, $incarnation);");
                 insert.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
+                insert.Parameters.AddWithValue("$incarnation", incarnation.ToString());
                 insert.Parameters.AddWithValue("$acked", changeId);
                 insert.Parameters.AddWithValue("$stable", Version(stable));
                 insert.Parameters.AddWithValue("$seen", now.ToUnixTimeMilliseconds());
@@ -313,7 +348,7 @@ internal sealed partial class SqliteStorageTransaction
             delete.ExecuteNonQuery();
             // change_id is turso_cdc's rowid alias: both ends are seeks, and deleted ids never come back between them.
             var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
-            var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $gone;");
+            var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen >= $gone;");
             floor.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             return (left, floor.ExecuteScalar() is long acked ? acked : (long?)null);
         }, cancellationToken, mutation: true).ConfigureAwait(false);

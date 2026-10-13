@@ -62,7 +62,8 @@ public sealed class ChangeLogRetentionTests
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, CancellationToken.None);
         await using (transaction)
         {
-            var (_, floor) = await transaction.RecordAckedAsync(peer, changeId, default, backupAnchor: null, now, CancellationToken.None);
+            var (_, floor) = await transaction.RecordAckedAsync(peer, store.Incarnation, changeId, default, backupAnchor: null, now, CancellationToken.None)
+                ?? throw new InvalidOperationException("the copy refused its own incarnation");
             _ = await transaction.CommitAsync(CancellationToken.None);
             return floor;
         }

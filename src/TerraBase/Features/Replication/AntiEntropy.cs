@@ -89,14 +89,15 @@ internal sealed class AntiEntropy : BackgroundService
     }
 
     /// <summary>
-    /// Joins every bucket of <paramref name="database"/> that differs from the machine named <paramref name="machine"/>.
-    /// Returns the documents changed, or null when the refill certifies nothing: that machine is not listed or no longer
-    /// holds the database, this one does not hold it, or a page was refused.
+    /// Joins every bucket of <paramref name="database"/> that differs from <paramref name="incarnation"/> of the copy of the
+    /// machine named <paramref name="machine"/>. Returns the documents changed, or null when the refill certifies nothing:
+    /// that machine is not listed or no longer holds that incarnation, this one does not hold the database, or a page was
+    /// refused.
     /// </summary>
-    internal async Task<int?> RefillAsync(TenantContext database, string machine, Hlc horizon, CancellationToken cancellationToken)
+    internal async Task<int?> RefillAsync(TenantContext database, string machine, Hlc horizon, Ulid incarnation, CancellationToken cancellationToken)
     {
         var peer = Peers(await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(member => member.Name == machine);
-        return peer is null ? null : await CompareAsync(database, peer, force: true, cancellationToken, horizon).ConfigureAwait(false);
+        return peer is null ? null : await CompareAsync(database, peer, force: true, cancellationToken, horizon, incarnation).ConfigureAwait(false);
     }
 
     internal Task<int?> PullAsync(TenantContext database, ClusterMember peer, CancellationToken cancellationToken) =>
@@ -108,22 +109,34 @@ internal sealed class AntiEntropy : BackgroundService
     // Compares digests with the peer and joins the buckets to repair; null when this machine does not hold the database.
     // With a horizon (a refill), it copies: a local state of a repaired bucket that the peer lacks and that lies wholly below
     // the peer's horizon was collected there (section 11), so it goes here too instead of coming back by a later round.
-    private async Task<int?> CompareAsync(TenantContext database, ClusterMember peer, bool force, CancellationToken cancellationToken, Hlc? horizon = null)
+    // A refill names the peer's incarnation it was asked for; a round discovers it from the digests. Every later read of
+    // either copy is pinned to the incarnation its digests came from.
+    private async Task<int?> CompareAsync(
+        TenantContext database, ClusterMember peer, bool force, CancellationToken cancellationToken, Hlc? horizon = null, Ulid? incarnation = null)
     {
-        if (await _states.DigestAsync(database, cancellationToken).ConfigureAwait(false) is not { } ours)
+        if (await _states.DigestAsync(database, expected: null, cancellationToken).ConfigureAwait(false) is not { } local)
         {
             return null;
         }
 
+        var ours = local.Buckets;
         using var channel = PeerChannel.Create(new Uri(peer.PeerAddress));
         var client = new V1.Replication.ReplicationClient(channel);
         // gRPC evaluates absolute deadlines against the real clock, independently of scheduling and HLC clocks.
-        var reply = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(database) },
+        var reply = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(database, incarnation) },
             deadline: TimeProvider.System.GetUtcNow().UtcDateTime + DigestTimeout, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (!reply.Held)
         {
             // Nothing to compare with: a round has nothing to repair, but a refill covered nothing.
             return force ? null : 0;
+        }
+
+        var source = ChangeGroups.Incarnation(new V1.Database { Incarnation = reply.Incarnation })
+            ?? throw new InvalidDataException("a peer's digests name the incarnation they were read from");
+        if (incarnation is { } named && source != named)
+        {
+            // The peer answered for another copy than the refill asked for: that refill certifies nothing.
+            return null;
         }
 
         var theirs = ApplicationEnvelope.Decode(reply.Buckets.Span, ReplicationProtocol.MaxApplicationBytes);
@@ -138,17 +151,18 @@ internal sealed class AntiEntropy : BackgroundService
         var repair = force ? differing : [.. differing.Where(previous.Contains)];
         if (repair.Count == 0)
         {
-            return 0;
+            // Covered only if the copy compared is still the one in place: a copy recreated meanwhile was never compared.
+            return await LocalHeldAsync(database, local.Incarnation, cancellationToken).ConfigureAwait(false) ? 0 : null;
         }
 
-        var request = new BucketRequest { Database = ChangeGroups.Wire(database) };
+        var request = new BucketRequest { Database = ChangeGroups.Wire(database, source) };
         request.Buckets.AddRange(repair.Order().Select(bucket => (uint)bucket));
         using var call = client.ReadBucket(request, deadline: TimeProvider.System.GetUtcNow().UtcDateTime + ReadTimeout, cancellationToken: cancellationToken);
         var changed = 0;
         var theirKeys = new HashSet<(string Collection, string Id)>();
         while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
         {
-            var states = Decode(database, call.ResponseStream.Current);
+            var states = Decode(database, call.ResponseStream.Current, source);
             theirKeys.UnionWith(states.Select(state => (state.Collection, state.Id)));
             if (await _sink.RepairAsync(database, states, cancellationToken).ConfigureAwait(false) is not { } repaired)
             {
@@ -165,20 +179,42 @@ internal sealed class AntiEntropy : BackgroundService
             BucketCursor? after = null;
             do
             {
-                (var local, after) = await _states.ReadBucketsAsync(database, [.. repair], after, MaxPageStates, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
-                lacking.AddRange(local.Where(state => !theirKeys.Contains((state.Collection, state.Id)) && state.State.MaxStamp.Value < collected.Value)
+                // Pinned to the copy whose digests chose the buckets: a copy replaced meanwhile certifies nothing.
+                if (await _states.ReadBucketsAsync(database, local.Incarnation, [.. repair], after, MaxPageStates, ChangeGroups.MaxBatchBytes, cancellationToken)
+                    .ConfigureAwait(false) is not (var page, var next))
+                {
+                    return null;
+                }
+
+                after = next;
+                lacking.AddRange(page.Where(state => !theirKeys.Contains((state.Collection, state.Id)) && state.State.MaxStamp.Value < collected.Value)
                     .Select(state => (state.Collection, state.Id)));
             }
             while (after is not null);
-            changed += await _states.ForgetAsync(database, lacking, collected, cancellationToken).ConfigureAwait(false);
+            if (await _states.ForgetAsync(database, local.Incarnation, lacking, collected, cancellationToken).ConfigureAwait(false) is not { } forgotten)
+            {
+                return null;
+            }
+
+            changed += forgotten;
+        }
+
+        // The repairs joined into whatever copy was in place: they cover only the one compared, if it still is.
+        if (!await LocalHeldAsync(database, local.Incarnation, cancellationToken).ConfigureAwait(false))
+        {
+            return null;
         }
 
         _repairs.Add(changed, new KeyValuePair<string, object?>("peer_region", peer.Region));
         return changed;
     }
 
-    /// <summary>The LZ4 envelope of a page of states.</summary>
-    internal static StatePage Encode(IReadOnlyList<RepairState> states)
+    // Whether this machine's copy in place is still `incarnation`.
+    private async Task<bool> LocalHeldAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) =>
+        await _states.DigestAsync(database, incarnation, cancellationToken).ConfigureAwait(false) is not null;
+
+    /// <summary>The LZ4 envelope of a page of states of <paramref name="incarnation"/> of the source's copy.</summary>
+    internal static StatePage Encode(IReadOnlyList<RepairState> states, Ulid incarnation)
     {
         var list = new StateList();
         list.States.AddRange(states.Select(state => new StateEntry
@@ -187,12 +223,22 @@ internal sealed class AntiEntropy : BackgroundService
             Id = state.Id,
             State = UnsafeByteOperations.UnsafeWrap(DocumentStateEncoding.Encode(state.State)),
         }));
-        return new StatePage { States = UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(list.ToByteArray())) };
+        return new StatePage
+        {
+            States = UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(list.ToByteArray())),
+            Incarnation = ByteString.CopyFrom(incarnation.ToByteArray()),
+        };
     }
 
-    // A page from a peer, checked: decoding is a trust boundary, as for change groups.
-    private static List<RepairState> Decode(TenantContext database, StatePage page)
+    // A page from a peer, checked: decoding is a trust boundary, as for change groups. It must name the source incarnation
+    // the read is pinned to.
+    private static List<RepairState> Decode(TenantContext database, StatePage page, Ulid source)
     {
+        if (ChangeGroups.Incarnation(new V1.Database { Incarnation = page.Incarnation }) != source)
+        {
+            throw new InvalidDataException("a peer's page names the incarnation the read is pinned to");
+        }
+
         StateList list;
         try
         {

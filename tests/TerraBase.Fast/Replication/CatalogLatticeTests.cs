@@ -33,11 +33,14 @@ public sealed class CatalogLatticeTests
         var frontier = FeedCursor.At(DateTimeOffset.UtcNow - TimeSpan.FromMinutes(2));
 
         await sink.RecordFrontierAsync(ChangeGroups.System, peer, frontier, CancellationToken.None);
-        await source.RecordStableAsync(ChangeGroups.System, peer, frontier, CancellationToken.None);
+        var incarnation = (await states.DigestAsync(ChangeGroups.System, null, CancellationToken.None))!.Incarnation;
+        await Assert.That(await source.RecordStableAsync(ChangeGroups.System, Ulid.NewUlid(), peer, frontier, CancellationToken.None)).IsFalse()
+            .Because("a stable report for another copy of the catalog is refused");
+        await Assert.That(await source.RecordStableAsync(ChangeGroups.System, incarnation, peer, frontier, CancellationToken.None)).IsTrue();
 
         await Assert.That(await states.StableAsync(ChangeGroups.System, CancellationToken.None)).IsEqualTo(frontier);
         await Assert.That((await states.HorizonAsync(ChangeGroups.System, CancellationToken.None)).Value).IsGreaterThan(0UL);
-        await Assert.That(await states.ForgetAsync(ChangeGroups.System, [("organizations", organization)], default, CancellationToken.None)).IsEqualTo(0);
+        await Assert.That(await states.ForgetAsync(ChangeGroups.System, incarnation, [("organizations", organization)], default, CancellationToken.None)).IsEqualTo(0);
         await Assert.That(await region.ReadAsync("organizations", organization)).IsNotNull();
     }
 

@@ -332,7 +332,10 @@ public sealed class ReplicaRebuildTests
                 await hold.Task.WaitAsync(cancellationToken);
             }
 
-            return !RefuseRefill && await pair.Sjc.AntiEntropy.RefillAsync(database, pair.Gru.Name, await pair.Gru.Api.Server.Services.GetRequiredService<IReplicaStates>().HorizonAsync(database, cancellationToken), cancellationToken) is not null;
+            // The refill pins gru's copy in place, as a sender's refill names its own incarnation.
+            var source = pair.Gru.Api.Server.Services.GetRequiredService<IReplicaStates>();
+            return !RefuseRefill && await source.DigestAsync(database, null, cancellationToken) is { } pinned
+                && await pair.Sjc.AntiEntropy.RefillAsync(database, pair.Gru.Name, await source.HorizonAsync(database, cancellationToken), pinned.Incarnation, cancellationToken) is not null;
         }
 
         public ValueTask<bool> CompleteAsync(TenantContext database, Ulid oldIncarnation, Ulid newIncarnation, CancellationToken cancellationToken)
