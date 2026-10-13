@@ -8,14 +8,30 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
-# One started machine m-<region> per region, running $IMAGE; a reset region's clone pins it by digest, as Fly does.
+# One machine m-<region> per region, running $IMAGE; a reset region's clone pins it by digest, as Fly does. start-* setups
+# make gru initially stopped; a start attempt sets its listed state (or makes the subsequent lookup fail).
 cat >"$tmp/bin/flyctl" <<'FAKE'
 #!/usr/bin/env bash
 echo "$*" >>"$STATE/calls"
 case "$1 $2" in
   "machine list")
-    jq -cn --arg image "$IMAGE" --arg files "$(ls "$STATE")" '[("gru", "sjc", "fra") as $r | {id: "m-\($r)", region: $r,
-      state: "started", config: {image: (if any($files | split("\n")[]; . == "reset-" + $r) then "\($image)@sha256:0f" else $image end)}}]' ;;
+    state=started
+    for setup in "$STATE"/start-*; do
+      [[ -e $setup ]] || continue
+      state=stopped
+      if [[ -e $STATE/attempted-start ]]; then
+        state=${setup##*/start-}
+        [[ $state != lookup-failed ]] || exit 1
+      fi
+    done
+    jq -cn --arg image "$IMAGE" --arg state "$state" --arg files "$(ls "$STATE")" \
+      '[("gru", "sjc", "fra") as $r | select($r != "gru" or $state != "missing") | {id: "m-\($r)", region: $r,
+        state: (if $r == "gru" then $state else "started" end),
+        config: {image: (if any($files | split("\n")[]; . == "reset-" + $r) then "\($image)@sha256:0f" else $image end)}}]' ;;
+  "machine start")
+    touch "$STATE/attempted-start"
+    [[ -e $STATE/start-normal ]] && { mv "$STATE/start-normal" "$STATE/started-normally"; exit 0; }
+    echo "fake flyctl: start rejected" >&2; exit 1 ;;
   "deploy -a") ;;
   *) echo "fake flyctl: unexpected $*" >&2; exit 1 ;;
 esac
@@ -42,7 +58,8 @@ chmod +x "$tmp/bin/flyctl" "$tmp/bin/docker" "$tmp/bin/curl"
 export PATH="$tmp/bin:$PATH" IMAGE=registry.fly.io/ts-terrabase:abc
 
 # run <name> <app> <down machines> <setup...>: deploy.sh from a repo copy with a fake volume-reset.sh; returns its exit
-# code. Setup words: refuse (the reset refuses), no-docker, <region>=<format> (the format the region serves).
+# code. Setup words: refuse (the reset refuses), no-docker, <region>=<format> (the format the region serves),
+# start-normal (an explicit start succeeds), start-<state> (the start fails, then lists that state for gru).
 run() {
   export STATE=$tmp/$1
   local app=$2 down=$3 word
@@ -97,4 +114,28 @@ run timeout ts-terrabase "m-gru" || fail "a refused gru was not reset: $(cat "$t
 ! run auth ts-auth "m-gru" || fail "ts-auth kept rolling out after a failed live check"
 [[ $(steps auth) == "deploy gru" ]] || fail "auth: $(steps auth)"
 ! grep -q "^docker" "$tmp/auth/calls" || fail "auth read a storage format"
+
+run start-normal ts-auth "" start-normal || fail "normal explicit start failed: $(cat "$tmp/start-normal/out")"
+[[ $(steps start-normal) == "deploy gru,deploy sjc,deploy fra" ]] || fail "normal start stopped the rollout"
+grep -q '^machine start m-gru ' "$tmp/start-normal/calls" || fail "stopped machine was not started"
+
+for state in starting started; do
+  run "race-$state" ts-auth "" "start-$state" || fail "concurrent $state failed: $(cat "$tmp/race-$state/out")"
+  [[ $(steps "race-$state") == "deploy gru,deploy sjc,deploy fra" ]] || fail "concurrent $state stopped the rollout"
+  grep -q '^curl m-gru$' "$tmp/race-$state/calls" || fail "concurrent $state bypassed the pinned health check"
+done
+
+run terrabase-race ts-terrabase "" start-starting || fail "TerraBase concurrent start failed: $(cat "$tmp/terrabase-race/out")"
+[[ $(steps terrabase-race) == "deploy gru,deploy sjc,deploy fra" ]] || fail "TerraBase race caused a volume reset"
+
+# A concurrent start still has to become healthy. It never turns a failed health check into success.
+! run race-unhealthy ts-auth "m-gru" start-starting || fail "concurrent start bypassed a failed health check"
+[[ $(steps race-unhealthy) == "deploy gru" ]] || fail "unhealthy concurrent start continued the rollout"
+
+# Other regions remain started: accepting any started machine instead of the rejected ID would hide these failures.
+for state in stopped crashed missing lookup-failed; do
+  ! run "start-$state" ts-auth "" "start-$state" || fail "accepted failed start: $state"
+  [[ $(steps "start-$state") == "deploy gru" ]] || fail "failed $state start continued the rollout"
+  ! grep -q '^curl' "$tmp/start-$state/calls" || fail "failed $state start reached the health check"
+done
 echo "deploy: all checks passed"

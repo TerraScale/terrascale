@@ -25,9 +25,17 @@ running_format() {
 
 # Checks the region's machine and sets id. Runs as an if condition, where set -e is off: every step returns on failure.
 live() {
+  local state
   # A machine that hit its restart limit stays stopped through a deploy that fixes it (docs/fly/spike-1a.md).
   for id in $(machines "$region" '^stopped$'); do
-    flyctl machine start "$id" -a "$app" || return 1
+    if ! flyctl machine start "$id" -a "$app"; then
+      # Fly Proxy can start this exact machine after the list above. Accept only that concurrent start; the pinned
+      # live checks below still have to pass. Missing machines, failed lookups and other states stop the rollout.
+      state=$(flyctl machine list -a "$app" --json | jq -er --arg id "$id" '.[] | select(.id == $id) | .state') \
+        || return 1
+      [[ $state == starting || $state == started ]] || return 1
+      echo "$app $region ($id) is already $state; checking health"
+    fi
   done
   # fly-force-instance-id pins the request to the region's machine; fly-prefer-region would fall back to another region.
   id=$(machines "$region" . | head -n1)
