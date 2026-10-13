@@ -23,7 +23,7 @@ type host struct {
 	stop    func() error
 }
 
-// startHost runs tests/TerraBase.E2E's BenchmarkClusterHost with one region (the Release build, as
+// startHost runs tests/TerraBase.E2E's BenchmarkClusterHost with two regions (the Release build, as
 // benchmark/scripts/repl-local.sh does) and waits for its targets file. stop deletes the file, which ends the host.
 func startHost(ctx context.Context, work string) (*host, error) {
 	project, err := filepath.Abs(hostProject)
@@ -39,7 +39,7 @@ func startHost(ctx context.Context, work string) (*host, error) {
 	defer log.Close()
 	cmd := exec.Command("dotnet", "run", "--project", project, "--configuration", "Release", "--no-build", "--",
 		"--treenode-filter", "/*/*/BenchmarkClusterHost/*")
-	cmd.Env = append(os.Environ(), "TERRABASE_BENCH_CLUSTER_FILE="+file, "TERRABASE_BENCH_REGIONS="+region)
+	cmd.Env = append(os.Environ(), "TERRABASE_BENCH_CLUSTER_FILE="+file, "TERRABASE_BENCH_REGIONS="+hostRegions)
 	cmd.Stdout, cmd.Stderr = log, log
 	// Its own process group: an interrupt reaches this process only, and a kill reaches dotnet run's child too.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -96,7 +96,8 @@ func tail(path string) string {
 }
 
 // metricsURL finds the host's Prometheus scrape. The targets file names only the client URL, so it asks every TCP port
-// the host process listens on for /metrics; the node's metrics listener is the plain HTTP one that answers.
+// the host process listens on for /metrics while exactly one calibration stream is open on gru. Only that node's
+// scoped scrape has one open stream; port order alone cannot identify a node in this two-region process.
 func metricsURL(ctx context.Context, pid int) (string, error) {
 	fds, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
 	if err != nil {
@@ -123,10 +124,12 @@ func metricsURL(ctx context.Context, pid int) (string, error) {
 	for _, p := range ports {
 		u := fmt.Sprintf("http://127.0.0.1:%d/metrics", p)
 		if body, err := get(ctx, c, u); err == nil && strings.Contains(body, "terrabase_stats_operations") {
-			return u, nil
+			if streams, ok := promValue(body, "terrabase_changes_streams", ""); ok && streams == 1 {
+				return u, nil
+			}
 		}
 	}
-	return "", fmt.Errorf("no TCP listener of process %d answers /metrics with terrabase_stats_operations (ports %v)", pid, ports)
+	return "", fmt.Errorf("no TCP listener of process %d answers /metrics with terrabase_stats_operations and one calibration stream (ports %v)", pid, ports)
 }
 
 // listenPorts are the ports of the LISTEN sockets of a /proc/net/tcp{,6} table whose inode is in inodes.

@@ -1,4 +1,4 @@
-// Command shape-bench measures the changes feed's fan-out on one local TerraBase node: a steady writer at a fixed rate
+// Command shape-bench measures the changes feed's fan-out on one of two local TerraBase nodes: a steady writer at a fixed rate
 // into one collection, and N = 1, 10, 100 and 1000 followers of the same database's GET …/changes SSE stream, one N
 // per step. It records requested, admitted and rejected followers (the server admits 32 streams per database and 1024
 // per machine), delivery lag, SSE body bytes, the server's CPU and memory and its document accounting reads.
@@ -25,9 +25,10 @@ import (
 )
 
 const (
-	// The local cluster host of benchmark/scripts/repl-local.sh, run with one region.
+	// Database placement requires two regions; all client traffic goes to gru.
 	hostProject = "../tests/TerraBase.E2E"
 	region      = "gru"
+	hostRegions = "gru,sjc"
 	reportDir   = "bench"
 
 	writeRate = 20 // writes per second, open loop
@@ -109,7 +110,7 @@ func run() error {
 		runErr = cmp.Or(runErr, fmt.Errorf("stop host: %w", err))
 	}
 	r := apibench.Run{
-		ID: ulid.Make().String(), Host: hostname, ClusterState: "local-" + region, Endpoint: h.targets.Regions[region].URL,
+		ID: ulid.Make().String(), Host: hostname, ClusterState: "local-" + hostRegions, Endpoint: h.targets.Regions[region].URL,
 		Start: start.UTC(), End: time.Now().UTC(),
 		Startup: []apibench.StartupStat{{Client: "local terrabase host (1 launch)", WallMS: apibench.NewStat([]float64{got.InitMS}),
 			InitMS: apibench.NewStat([]float64{got.InitMS})}},
@@ -197,10 +198,10 @@ func notes(results []apibench.Result, probes []probe, pid int, metricsURL, commi
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n## Fan-out notes\n\n")
 	fmt.Fprintf(&b, "- %s\n", commits)
-	fmt.Fprintf(&b, "- One local node (%s) in the tests/TerraBase.E2E BenchmarkClusterHost process, plain HTTP on loopback: no WAN, no Fly Proxy, no TLS. No network probe ran; the startup row is one host launch until its targets file appeared.\n", region)
+	fmt.Fprintf(&b, "- Two local nodes (%s) in the tests/TerraBase.E2E BenchmarkClusterHost process: placement requires two regions; writes and followers target only %s. Plain HTTP on loopback: no WAN, no Fly Proxy, no TLS. No network probe ran; the startup row is one host launch until its targets file appeared.\n", hostRegions, region)
 	fmt.Fprintln(&b, "- Shared reporter placeholders: network probe, startup max RSS, MB out, and auth ms are unmeasured here; their zeros are placeholders. The shared startup heading says 5 launches, but this run has one launch.")
 	fmt.Fprintf(&b, "- Writer: %d PUTs/s of %d-byte documents into one collection, open loop; every write must succeed. Followers: GET …/changes?cursor=now&collections=<that collection>, opened one at a time at %d/s, each awaiting its admission or rejection (the local tenant is on the Hobby QoS plan), then all read together through the measured window.\n", writeRate, payloadBytes, admitRate)
-	fmt.Fprintf(&b, "- Columns: conc = requested N; rate = writes/s; req/s = deliveries/s summed over admitted followers; p50…max = delivery lag from the write's send time (in the document) to the follower reading its change event; err %% = missed deliveries of in-window writes to admitted followers (grace %s); MB in = SSE response body bytes of admitted streams in the window; CPU %% and RSS MB = the host process (/proc/%d: the node plus the host's ts-auth stand-in and test runner), not this client.\n", grace, pid)
+	fmt.Fprintf(&b, "- Columns: conc = requested N; rate = writes/s; req/s = deliveries/s summed over admitted followers; p50…max = delivery lag from the write's send time (in the document) to the follower reading its change event; err %% = missed deliveries of in-window writes to admitted followers (grace %s); MB in = SSE response body bytes of admitted streams in the window; CPU %% and RSS MB = the combined host process (/proc/%d: both nodes, replication work, ts-auth stand-in and test runner), not this client.\n", grace, pid)
 	fmt.Fprintf(&b, "- Admission: the server admits at most 32 streams per database per machine and 1024 per machine (DatabaseChanges.cs). Above 32, only admitted followers are measured: req/s and MB in do not grow with requested N, and no gain past the cap is claimed.\n")
 	fmt.Fprintf(&b, "- accounting_reads_delta: terrabase.stats.operations{kind=\"read\"} from %s, after minus before the step. It is document accounting (document GETs and queries), published per closed 5 s window; it is not a count of storage reads, and the feed does not add to it.\n", metricsURL)
 	fmt.Fprintf(&b, "- Origin physical storage reads of the feed: N/A, not instrumented. inferred_min_doc_selects is inferred from source, not measured: SqliteStorageTransaction.Feed.cs reads each upsert's current document with one SELECT per stream, so every received upsert event cost at least one document SELECT (plus feed-table page reads per stream, not counted).\n")

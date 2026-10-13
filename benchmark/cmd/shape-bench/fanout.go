@@ -63,10 +63,37 @@ func newBench(ctx context.Context, t replbench.Targets) (*bench, error) {
 	if resp.Status/100 != 2 {
 		return nil, fmt.Errorf("create collection: HTTP %d %s", resp.Status, resp.Body)
 	}
-	if b.metrics, err = metricsURL(ctx, t.PID); err != nil {
+	if err = b.findMetrics(ctx); err != nil {
 		return nil, err
 	}
 	return b, nil
+}
+
+// findMetrics identifies gru's scoped exporter without changing the shared host's targets format. No writer runs
+// during this calibration stream, and it closes before any measured step starts.
+func (b *bench) findMetrics(ctx context.Context) error {
+	ctx, stop := context.WithTimeout(ctx, 30*time.Second)
+	defer stop()
+	b.target = targets[0]
+	m := &measure{}
+	outcomes := make(chan string, 1)
+	var wg sync.WaitGroup
+	wg.Go(func() { b.followChanges(ctx, m, outcomes) })
+	defer func() { stop(); wg.Wait() }()
+	select {
+	case outcome := <-outcomes:
+		if outcome != "admitted" {
+			return fmt.Errorf("metrics calibration stream: %s: %v", outcome, m.firstErr())
+		}
+	case <-ctx.Done():
+		return fmt.Errorf("metrics calibration stream: %w", ctx.Err())
+	}
+	var err error
+	b.metrics, err = metricsURL(ctx, b.pid)
+	if err != nil {
+		return err
+	}
+	return m.firstErr()
 }
 
 // measure is one step's delivery record.
