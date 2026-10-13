@@ -287,6 +287,19 @@ after each.
 - **Still needed:** the operator-key timeout fix (task `flaky-operator-key-expiry-2026-10-13`; R8 showed it predates
   #118) on a new head, then a complete green exact-head run and approval of the new delta.
 
+**#175 at `78226ed0`, 06:40Z: GREEN on the exact head** (run 38356650502), 0 open threads. It carries all four main-red
+fixes. **The approval does not yet cover the whole head:**
+
+| Part of `78226ed0` | Change | Approval |
+| --- | --- | --- |
+| `bc60dbf2` | #175 (query-deadline clock) plus #166 (Docker revision) | **APPROVE**, comment 6138956593 |
+| #185 `8d2e19a1` | operator-key expiry without timer replay | **APPROVE**, comment 6139387383 |
+| #183 `95797cad` | backup, heartbeat and cache Fast tests deterministic under load | **none** |
+| #186 `5252c120` | transaction and sampling fixtures under CI load (#186's branch has since moved to `6212e389`) | **none** |
+
+It merges as soon as #183's and #186's deltas are approved, or COS confirms the delta. All four are test-only changes;
+no product code is in the unreviewed part.
+
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
 **Outside the queue (COS, 03:30Z):** **#167** (`feat/postgres-turso-import-core`, `62f251f6`, one-time PostgreSQL and
