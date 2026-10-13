@@ -22,13 +22,28 @@ internal sealed partial class SqliteStorageTransaction
     /// seconds). The 60 s hold covers a peer whose stream has not reached the database yet, so it has no <c>_tb_peers</c>
     /// row; a database without peers keeps nothing back, and a peer that holds no row for longer refills (section 10). Deleting below a commit row keeps whole transactions and the newest row, since an empty
     /// <c>turso_cdc</c> restarts its ids at 1 after a reopen.
+    /// <para>
+    /// A peer's ack holds a row for at most 24 h after the row committed (its persisted <c>change_time</c>): <c>seen</c> is
+    /// refreshed by anything heard from a peer (its joined writes, stable stamps, an ack that trickles forward), so it does
+    /// not bound how long an ack holds rows. Past that age every row up to the last whole transaction before the first
+    /// younger row may go whatever the acks, never above <c>$below</c> (backup); the commit row deleted below stays, so
+    /// the newest row does too. A peer whose ack this passes refills (<see cref="RetainsAsync"/>). The rows looked at are
+    /// the aged prefix (about what is deleted) and one transaction's rows back to its commit; while the row after the
+    /// oldest is younger than 24 h, an ack only reads that row. An evicted peer (<c>seen</c> 0, see <see cref="TrimAsync"/>)
+    /// holds nothing, during the 24 h after a start too.
+    /// </para>
     /// </summary>
     internal const string Retention = $"""
-        DELETE FROM turso_cdc WHERE change_id < coalesce((
+        DELETE FROM turso_cdc WHERE change_id < max(coalesce((
             SELECT change_id FROM turso_cdc
-            WHERE change_id <= min($below, coalesce((SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen >= $gone), $below))
+            WHERE change_id <= min($below, coalesce((SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen > 0 AND seen >= $gone), $below))
                 AND change_type = 2 AND (change_time <= $now - 60 OR NOT EXISTS (SELECT 1 FROM _tb_peers))
-            ORDER BY change_id DESC LIMIT 1), 0);
+            ORDER BY change_id DESC LIMIT 1), 0), coalesce(CASE WHEN (SELECT change_time FROM turso_cdc ORDER BY change_id LIMIT 1 OFFSET 1) <= $now - 86400 THEN (
+            SELECT change_id FROM turso_cdc
+            WHERE change_id <= $below AND change_type = 2 AND change_id < coalesce((
+                SELECT change_id FROM turso_cdc WHERE change_id > $below OR change_time > $now - 86400 ORDER BY change_id LIMIT 1),
+                (SELECT max(change_id) + 1 FROM turso_cdc))
+            ORDER BY change_id DESC LIMIT 1) END, 0));
         """;
 
     /// <summary>
@@ -287,7 +302,7 @@ internal sealed partial class SqliteStorageTransaction
             delete.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             delete.ExecuteNonQuery();
             var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
-            var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen >= $gone;");
+            var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen > 0 AND seen >= $gone;");
             floor.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             var oldestKept = Command("SELECT coalesce(min(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long first ? first : 0;
             return (left, floor.ExecuteScalar() is long min ? min : (long?)null, raised, oldestKept);
@@ -302,7 +317,7 @@ internal sealed partial class SqliteStorageTransaction
     internal ValueTask<long?> GetFloorAsync(DateTimeOffset now, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
-            var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen >= $gone;");
+            var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen > 0 AND seen >= $gone;");
             floor.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             return floor.ExecuteScalar() is long acked ? acked : (long?)null;
         }, cancellationToken);
@@ -364,7 +379,7 @@ internal sealed partial class SqliteStorageTransaction
             delete.ExecuteNonQuery();
             // change_id is turso_cdc's rowid alias: both ends are seeks, and deleted ids never come back between them.
             var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
-            var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen >= $gone;");
+            var floor = Command($"SELECT min({ScopedAcked}) FROM _tb_peers WHERE seen > 0 AND seen >= $gone;");
             floor.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             return (left, floor.ExecuteScalar() is long acked ? acked : (long?)null);
         }, cancellationToken, mutation: true).ConfigureAwait(false);

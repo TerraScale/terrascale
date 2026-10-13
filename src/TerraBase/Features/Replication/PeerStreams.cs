@@ -177,7 +177,23 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         }
     }
 
+    // The peer answers every frame (a heartbeat with an empty frame), so silence for the progress timeout means a half-open
+    // connection or a peer that stopped reading, where this side's writes stall: either ends the stream, which reconnects.
     private async Task StreamAsync(Link link, Action welcomed, CancellationToken cancellationToken)
+    {
+        using var silent = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout, _time);
+        using var stream = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, silent.Token);
+        try
+        {
+            await ConnectedAsync(link, welcomed, silent, stream.Token).ConfigureAwait(false);
+        }
+        catch (Exception error) when (silent.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("the peer did not answer in time", error);
+        }
+    }
+
+    private async Task ConnectedAsync(Link link, Action welcomed, CancellationTokenSource silent, CancellationToken cancellationToken)
     {
         using var channel = PeerChannel.Create(new Uri(link.Peer.PeerAddress), _credential);
         using var call = new V1.Replication.ReplicationClient(channel).Push(cancellationToken: cancellationToken);
@@ -185,14 +201,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         {
             Hello = new Hello { Node = _self.Id.Value, Hlc = _self.Clock.Tick().Value, Region = _options.Region, Machine = _membership.Self.Name },
         }, cancellationToken).ConfigureAwait(false);
-        using (var welcome = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        if (!await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false) || call.ResponseStream.Current.Welcome is not { Node: not 0 })
         {
-            welcome.CancelAfter(ReplicationProtocol.ProgressTimeout);
-            if (!await call.ResponseStream.MoveNext(welcome.Token).ConfigureAwait(false) || call.ResponseStream.Current.Welcome is not { Node: not 0 })
-            {
-                throw new IOException("the peer did not welcome the stream");
-            }
+            throw new IOException("the peer did not welcome the stream");
         }
+
+        silent.CancelAfter(ReplicationProtocol.ProgressTimeout);
 
         var peer = new ReplicaId(call.ResponseStream.Current.Welcome.Node);
         lock (link.Gate)
@@ -244,13 +258,15 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     throw new IOException("the peer ended the stream");
                 }
 
+                silent.CancelAfter(ReplicationProtocol.ProgressTimeout);
                 if (call.ResponseStream.Current.Stable is { } report)
                 {
                     // A report for a frontier of a replaced copy is refused there: it says nothing of the copy in place.
                     _ = await _source.RecordStableAsync(
                         ChangeGroups.Tenant(report.Database), ChangeGroups.RequiredIncarnation(report.Database), peer, new Hlc(report.Stable), cancellationToken).ConfigureAwait(false);
                 }
-                else
+                // An empty frame answers a heartbeat; every other frame is an ack of a batch in flight.
+                else if (call.ResponseStream.Current.KindCase != AckFrame.KindOneofCase.None)
                 {
                     await AckedAsync(link, call.ResponseStream.Current.Ack, peer, cancellationToken).ConfigureAwait(false);
                 }

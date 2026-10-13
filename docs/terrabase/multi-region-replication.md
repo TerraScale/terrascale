@@ -291,8 +291,10 @@ until the SDKs drop them). Create-only `If-None-Match: *` goes too. Client ULIDs
      If toggling the pragma per transaction fails on 0.8.2, the tailer's own rows are captured too, recognized by
      table name and dropped at the next pass.
 - **`turso_cdc` is the outbox.** Groups are rebuilt from it on demand for each peer (`acked < change_id`), so there is
-  no second log. A peer silent for more than 24 h, or more than 1 GiB behind, stops holding CDC rows. It must refill
-  when it returns (section 10).
+  no second log. A peer cannot hold a commit for more than 24 h, even if its own writes or stable reports keep it
+  active, or it acknowledges a little at a time. The existing 1 GiB backlog eviction may release it sooner. Retention
+  still respects continuous backup's anchor and keeps whole transactions and the newest commit. A peer behind a cut
+  refills from current states before resuming (section 10); the cut does not acknowledge the missing groups.
 - **Acks over joined rows.** Joined remote writes and repairs are never shipped, so a peer never acknowledges them. Each
   5 s retention pass therefore raises a peer's `acked` to the last commit before the next local group past it (the read's
   quiet point), but only while every row past that ack is still here: after a cut the peer may lack deleted local
@@ -313,9 +315,9 @@ that is not base64url or not a `DocumentState`, or a live state without its docu
 acknowledged: that database is held, logged as an error, counted (`terrabase.replication.unreadable_reads`) and visible in
 its `send_lag`, and read again from the same ack every 30 s; the other databases on the stream go on. Acks and first
 contacts never fail on it: the `tail_lag` gauge they refresh keeps its last value for a held database. Once the damage is
-gone the next read ships the held writes. If it stays, the peer's `seen` is refreshed by its own writes to that database
-(when it writes there), so the 24 h release never fires; only the 65,536-row / 1 GiB eviction ends the hold and leads to
-a refill. Either way the data converges through anti-entropy (60 s rounds; a bucket is repaired after two differing rounds). CDC rows
+gone the next read ships the held writes. If it stays, the peer's own writes can refresh `seen`, but cannot extend the
+24 h age bound on the held CDC commits. That bound or the 65,536-row / 1 GiB eviction cuts the prefix and leads to
+a refill. Anti-entropy also compares current states (60 s rounds; a bucket is repaired after two differing rounds). CDC rows
 carry no checksum of their own: they live in the same file as the states they come from, so a checksum would only cover
 the copy that ships. Torn writes are caught by the WAL's frame checksums, damage that breaks decoding is refused as above,
 and replicas that diverge silently show in anti-entropy's bucket digests (section 10), which cannot tell which replica is
@@ -366,6 +368,13 @@ An accepted `Push` publishes its gRPC response headers before waiting for a pred
   (≤ 1024 groups, ≤ 2 MiB) in flight per database and resumes from the receiver's acked `change_id` after a
   reconnect. The `ReplicationSender` of PR #11 takes its peers once at start. The new sender follows the directory
   continuously.
+- **Liveness.** HTTP/2 keepalive pings run after 10 s with a 5 s reply timeout. Independently, a `Push` sender must
+  receive a response within 15 s, including while a write is blocked. The receiver requires another frame within
+  15 s, starting before `Hello`, and aborts the request when that deadline expires so a blocked response write ends.
+  The sender emits a heartbeat every idle second; the receiver answers it with an empty `AckFrame`. That response
+  advances only the liveness deadline, never a durable ACK or stable stamp. A live refill keeps exchanging these
+  heartbeats while its per-database ACK retains the existing 10-minute allowance. A failed stream reconnects from
+  the last durable ACK with the existing 1–30 s backoff.
 
 ## 9. Receive and merge path
 
@@ -619,7 +628,7 @@ in the primary region" shortcut. Decision 0009 is superseded.
 | Concurrent writes, different fields | both survive | per-field entries |
 | Delete vs concurrent edit | the later version wins at document level | `clear` dominates older fields; newer fields bring the document back with only themselves |
 | Clock ahead > 1 s | that writer wins concurrent LWW choices | the stamp is kept, the clock advances at most 1 s, an alert fires |
-| A peer far behind | CDC grows | retention cut at 24 h or 1 GiB, then `refill_required` |
+| A peer far behind | CDC grows | peer pinning ends at commit age 24 h or backlog 1 GiB, then `refill_required`; backup's anchor still applies |
 | Tailer behind | replication lag, the feed lags | the lane signal and a 1 s timer; lag is a metric (`terrabase.replication.tail_lag`) |
 | Corrupt or forged group | rejected | canonical decoding at the trust boundary; the stream errors and resumes from `acked` |
 | Same name created in two regions | two databases briefly | the smallest ULID wins; the other operation fails `name_taken` |
@@ -787,8 +796,9 @@ ts-dotnet until R12 makes ts-auth lattice-native.
 
 - `PeerStreams` (sender) follows the membership every heartbeat and keeps one `Push` stream per other machine. For every
   database whose placement includes the peer's region, it keeps at most one batch (≤ 1024 groups, ≤ 2 MiB) in flight.
-  It heartbeats every second when idle. A batch not acked within 15 s ends the stream, and the sender reconnects with a
-  backoff of 1 s, doubling to 30 s.
+  It heartbeats every second when idle and requires a response within 15 s, even while a write is blocked. A batch
+  not acked within 15 s also ends the stream; a refill has 10 minutes while heartbeat replies prove the link is live.
+  The sender reconnects with a backoff of 1 s, doubling to 30 s.
 - `PeerStreamReceiver` checks every batch (canonical ULIDs, growing change ids per database, at most 1024 groups and
   1024 deltas per group, valid collections and ids, canonical states). A bad batch applies nothing and is refused for
   its database alone (an error log and `terrabase.replication.undecodable_batches`): the sender holds that database and
@@ -822,8 +832,10 @@ ts-dotnet until R12 makes ts-auth lattice-native.
   bucket that differed in two consecutive rounds. It joins them with origin 0: never shipped, no origin's `applied` moves.
   Both sides run rounds, so each pulls what it lacks. Metric `terrabase.replication.repairs` (documents changed, by peer
   region).
-- **Retention cut and refill.** Retention also runs every 5 s without acks. A peer silent for 24 h stops holding rows,
-  as before. A peer whose unacknowledged CDC rows pass 1 GiB (measured once it is 65,536 rows behind) gets `seen = 0` and
+- **Retention cut and refill.** Retention also runs every 5 s without acks. A commit more than 24 h old stops being held
+  by peer acknowledgements, including those of a removed peer or an active peer whose consumption stalls. This bound
+  uses the persisted CDC commit time, so restarting the sender does not renew the hold. A peer whose unacknowledged
+  CDC rows pass 1 GiB (measured once it is 65,536 rows behind) gets `seen = 0` and
   stops holding rows until it is heard from again. A sender whose CDC no longer holds every row the peer lacks after its
   ack sends `Refill(head)` instead of groups. Retention deletes a prefix, so that is `min(change_id) > acked + 1`, except
   over remembered quiet ranges (section 7): ranges proven to hold no local group, whose deleted rows the peer cannot lack,
@@ -854,8 +866,9 @@ ts-dotnet until R12 makes ts-auth lattice-native.
 - **Stable and horizon.** Stable = min(`applied` over origins heard from in the last 24 h, own clock). Horizon =
   min(own stable, peers' reported stable) − 60 s, over the peers heard from in the last 24 h; a registered peer that never
   reported holds it at 0. A peer counts as gone (24 h) only once this process has itself been up 24 h
-  (`LocalReplica.GoneBefore`), so a machine back after a long absence never mistakes its own silence for its peers'. The
-  same boundary governs CDC retention.
+  (`LocalReplica.GoneBefore`), so a machine back after a long absence never mistakes its own silence for its peers'.
+  CDC retention also uses this activity boundary, but its independent 24 h commit-age cut does not renew on restart;
+  peers explicitly evicted from CDC retention (`seen = 0`) do not hold its floor during startup grace.
 - **Collection.** With retention (every 5 s per database a peer stream reached): up to 1024 `_tb_state` rows with
   `live = 0` whose decoded entries all lie below the horizon are deleted.
 - **No resurrection.** A refill now copies: the sender's horizon travels in `Refill`, and the refilled machine forgets
@@ -947,8 +960,8 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   persisted scope advances. The internal v1 wire and
   digest/bucket reads pin the source incarnation as described in [the incarnation contract](replication-incarnations.md).
 - **Retention** (`SqliteStorageTransaction.Retention`, run after every ack and by the backup tap's trim): delete below the
-  newest COMMIT row that is at or below every peer's `acked` (peers heard from in the last 24 h), at or below the backup
-  tap's anchor, and, once the database has a `_tb_peers` row, at least 60 s old by the host clock (Turso's `change_time`
+  newest COMMIT row that is either at or below every active peer's `acked` or more than 24 h old, always at or below the
+  backup tap's anchor, and, once the database has a `_tb_peers` row, at least 60 s old by the host clock (Turso's `change_time`
   is Unix seconds). The hold covers a peer whose stream has not reached the database yet; a database without peers keeps
   nothing back. A peer that never reached a new database before its first trim relies on refill (R6). Deleting below a
   COMMIT row keeps whole transactions and the newest row.
