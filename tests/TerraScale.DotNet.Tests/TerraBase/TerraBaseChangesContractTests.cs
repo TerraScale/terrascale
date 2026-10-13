@@ -272,6 +272,34 @@ public sealed class TerraBaseChangesContractTests
     }
 
     [Test]
+    public async Task An_expiry_callback_released_after_acquisition_cannot_cancel_the_stream()
+    {
+        using var source = new WaitingStream();
+        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(Sse(source)));
+        using var http = new HttpClient(handler);
+        using var cancellation = new CancellationTokenSource();
+        var clock = new HeldExpiryClock();
+        var connection = new TerraBaseConnection(http, new Uri("https://sjc.api.terrascale.tech"), null, "action-token", "ApiKey",
+            TimeSpan.FromSeconds(30), TerraBaseConnection.DefaultMaxResponseBytes, timeProvider: clock);
+        var db = new TerraBaseDatabase(connection, $"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app");
+        var read = DrainAsync(db.StreamChangesAsync(cancellationToken: cancellation.Token));
+        try
+        {
+            var token = await source.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(clock.Disarmed).IsTrue();
+            clock.ReleaseCallback();
+            await Assert.That(token.IsCancellationRequested).IsFalse();
+            await Assert.That(read.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            await cancellation.CancelAsync();
+            await Assert.ThrowsAsync<OperationCanceledException>(() => read);
+        }
+        await Assert.That(source.Disposed).IsTrue();
+    }
+
+    [Test]
     [Arguments("event: cursor\nid: AQ\ndata: {\"cursor\":\"different\"}\n\n")]
     [Arguments("event: change\nid: AQ\ndata: {}\n\n")]
     [Arguments("event: change\ndata: {}\n\n")]
@@ -386,6 +414,32 @@ public sealed class TerraBaseChangesContractTests
             {
                 // Simulate the deadline callback already running when acquisition tries to disable its timer.
                 if (dueTime == Timeout.InfiniteTimeSpan) callback(state);
+                return true;
+            }
+            public void Dispose() { }
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class HeldExpiryClock : TimeProvider
+    {
+        private TimerCallback? callback;
+        private object? state;
+        public bool Disarmed { get; private set; }
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            this.callback = callback;
+            this.state = state;
+            return new HeldTimer(() => Disarmed = true);
+        }
+        // Resume an expiry callback that was already queued before the timer was disarmed.
+        public void ReleaseCallback() => callback!(state);
+
+        private sealed class HeldTimer(Action disarmed) : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                if (dueTime == Timeout.InfiniteTimeSpan) disarmed();
                 return true;
             }
             public void Dispose() { }
