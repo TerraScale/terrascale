@@ -272,26 +272,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                 continue;
             }
 
-            if (!await _source.RetainsAsync(database, acked, cancellationToken).ConfigureAwait(false))
-            {
-                // Retention cut groups after the peer's ack (it was silent or far behind, or it is new): it refills from this
-                // machine, then the stream goes on from the newest change.
-                var head = await _source.HeadAsync(database, cancellationToken).ConfigureAwait(false);
-                var horizon = await _states.HorizonAsync(database, cancellationToken).ConfigureAwait(false);
-                await stream.WriteAsync(new PushFrame
-                {
-                    Refill = new Refill { Database = ChangeGroups.Wire(database), ChangeId = checked((ulong)head), Horizon = horizon.Value },
-                }, cancellationToken).ConfigureAwait(false);
-                lock (link.Gate)
-                {
-                    cursor.BehindSince ??= _time.GetTimestamp();
-                    (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (head, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true);
-                }
-
-                sent = true;
-                continue;
-            }
-
+            // Read before the retention check: retention only cuts from the oldest group on, so a trim between the two shows
+            // as a cut here and never ships a batch past a hole.
             var frontier = _self.Clock.Tick();
             IReadOnlyList<OriginGroup> groups;
             try
@@ -311,6 +293,25 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                     cursor.RetryAt = _time.GetTimestamp() + (long)(MaxBackoff.TotalSeconds * _time.TimestampFrequency);
                 }
 
+                continue;
+            }
+            if (!await _source.RetainsAsync(database, acked, cancellationToken).ConfigureAwait(false))
+            {
+                // Retention cut groups after the peer's ack (it was silent or far behind, or it is new): it refills from this
+                // machine, then the stream goes on from the newest change.
+                var head = await _source.HeadAsync(database, cancellationToken).ConfigureAwait(false);
+                var horizon = await _states.HorizonAsync(database, cancellationToken).ConfigureAwait(false);
+                await stream.WriteAsync(new PushFrame
+                {
+                    Refill = new Refill { Database = ChangeGroups.Wire(database), ChangeId = checked((ulong)head), Horizon = horizon.Value },
+                }, cancellationToken).ConfigureAwait(false);
+                lock (link.Gate)
+                {
+                    cursor.BehindSince ??= _time.GetTimestamp();
+                    (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (head, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true);
+                }
+
+                sent = true;
                 continue;
             }
 

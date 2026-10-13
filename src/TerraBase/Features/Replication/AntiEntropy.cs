@@ -90,7 +90,8 @@ internal sealed class AntiEntropy : BackgroundService
 
     /// <summary>
     /// Joins every bucket of <paramref name="database"/> that differs from the machine named <paramref name="machine"/>.
-    /// Returns the documents changed, or null when that machine is not listed or this one does not hold the database.
+    /// Returns the documents changed, or null when the refill certifies nothing: that machine is not listed or no longer
+    /// holds the database, this one does not hold it, or a page was refused.
     /// </summary>
     internal async Task<int?> RefillAsync(TenantContext database, string machine, Hlc horizon, CancellationToken cancellationToken)
     {
@@ -117,7 +118,8 @@ internal sealed class AntiEntropy : BackgroundService
             deadline: _time.GetUtcNow().UtcDateTime + DigestTimeout, cancellationToken: cancellationToken).ConfigureAwait(false);
         if (!reply.Held)
         {
-            return 0;
+            // Nothing to compare with: a round has nothing to repair, but a refill covered nothing.
+            return force ? null : 0;
         }
 
         var theirs = ApplicationEnvelope.Decode(reply.Buckets.Span, ReplicationProtocol.MaxApplicationBytes);
@@ -144,7 +146,12 @@ internal sealed class AntiEntropy : BackgroundService
         {
             var states = Decode(database, call.ResponseStream.Current);
             theirKeys.UnionWith(states.Select(state => (state.Collection, state.Id)));
-            changed += await _sink.RepairAsync(database, states, cancellationToken).ConfigureAwait(false) ?? 0;
+            if (await _sink.RepairAsync(database, states, cancellationToken).ConfigureAwait(false) is not { } repaired)
+            {
+                return null;
+            }
+
+            changed += repaired;
         }
 
         if (horizon is { } collected)
