@@ -50,3 +50,18 @@ Production acceptance is pending COS `GO DRILL`, after T2 and the live replicati
 by this drill. Tigris CLI identity verification failed twice with `ID token verification failed`; authentication must be
 renewed before live work. Scheduled object listings with timestamps, three-region digest and bidirectional replication
 proof, daily Fly snapshot settings and a snapshot restore, production timings, and PR merge remain outstanding.
+
+## Required full gate: failed, publication blocked
+
+The subsequent frozen `ts-heavy make check` exited 2: Endpoints 88/88, Logging 46/46, Auth Fast 664/664 and
+Turso driver 6/6 passed. TerraBase Fast ran 1,571 cases: 1,513 passed, 58 failed, zero skipped, in 89.706 seconds.
+Build, whitespace/style, analyzers, security/OpenAPI and benchmark checks passed before the suites.
+
+The failures repeat `id_taken` during replication fixture registration. Startup now pulls the shared catalog, but
+`RegisterAsync` treats a missing physical database file as permission to recreate its already registered catalog IDs.
+The pending fixture correction must check catalog registration and initialize the local database separately.
+This reproduces the earlier full run's duplicate-ID failure; further retries stopped under the user's failure policy.
+
+No push or PR was made because required checks are red. This full failure does not replace the passing 260-case backup
+namespace evidence above, and that evidence does not satisfy the full required gate. Raw local logs are
+`/tmp/cos-backup-namespace-final.log` and `/tmp/cos-backup-frozen-check.log`; no production proof exists.
