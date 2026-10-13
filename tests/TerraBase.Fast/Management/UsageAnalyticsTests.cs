@@ -113,8 +113,11 @@ public sealed class UsageAnalyticsTests
         long heldBeforeRefusal = 0;
         long catalogReadBytes = 0;
         long catalogBytesBeforeRefusal = 0;
-        // Catalog result buffers stay admitted through delivery, alongside the analytics observations.
-        hook.AfterRead = document => Interlocked.Add(ref catalogReadBytes, document.Json.Length * 3L + 2048);
+        // Catalog result buffers stay admitted through delivery, alongside the analytics observations. They are admitted at
+        // their stored size, which wraps a scalar in an object (StoredStates.SystemBody).
+        var scalarWrapper = StoredStates.SystemBody("0").Length - 1;
+        hook.AfterRead = document => Interlocked.Add(ref catalogReadBytes,
+            (document.Json.Length + (document.Json.Span[0] == (byte)'{' ? 0 : scalarWrapper)) * 3L + 2048);
         hook.BeforeList = collection =>
         {
             if (collection == SystemCatalog.DatabaseState(first.Id) + UsageWindow.Minute.Collection)

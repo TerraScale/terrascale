@@ -355,9 +355,15 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
         await _source.AckAsync(database, peer, (long)ack.ChangeId, cancellationToken).ConfigureAwait(false);
     }
 
-    // Whether the database's placement includes the peer's region, read again every heartbeat.
+    // Whether the database's placement includes the peer's region, read again every heartbeat. The system database is placed
+    // in every region.
     private async ValueTask<bool> PlacedAsync(Link link, TenantContext database, CancellationToken cancellationToken)
     {
+        if (database == ChangeGroups.System)
+        {
+            return true;
+        }
+
         if (link.Placements.TryGetValue(database, out var known) && _time.GetElapsedTime(known.ReadAt) < DirectoryMembership.Heartbeat)
         {
             return known.Placed;

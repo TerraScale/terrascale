@@ -769,6 +769,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 {
                     QueryBudget = QueryBudget,
                     SyncsEveryCommit = true,
+                    Member = Member,
                 };
                 try
                 {

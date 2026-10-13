@@ -8,8 +8,12 @@ namespace TerraBase.Engine.Sqlite;
 /// </summary>
 internal static class SqliteStatements
 {
-    // A tombstone has a NULL body.
-    public const string Get = "SELECT version, body, octet_length(body) FROM documents WHERE collection = $collection AND id = $id;";
+    // The system database (docs/terrabase/multi-region-replication.md section 15): its live documents in one table, their
+    // versions from _tb_state, like a client database's.
+    public const string Get = """
+        SELECT (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = $id), body, octet_length(body)
+        FROM documents WHERE collection = $collection AND id = $id;
+        """;
 
     // octet_length inspects stored JSON size without materializing or decoding its body.
     public const string DocumentBytes = """
@@ -26,8 +30,23 @@ internal static class SqliteStatements
         FROM collections;
         """;
 
-    // typeof() reads the column's type from the record header, not its content: no body is loaded.
-    public const string Version = "SELECT version, typeof(body) = 'null' FROM documents WHERE collection = $collection AND id = $id;";
+    // A document's stored version (NULL until its first request ends) and whether it is deleted; no body is loaded.
+    public const string Version = """
+        SELECT (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = $id),
+            NOT EXISTS (SELECT 1 FROM documents WHERE collection = $collection AND id = $id);
+        """;
+
+    // A system document's state and the materialized JSON the stored form leaves its values to.
+    public const string SystemGetState = """
+        SELECT s.state, d.body FROM _tb_state s LEFT JOIN documents d ON d.collection = s.collection AND d.id = s.id
+        WHERE s.collection = $collection AND s.id = $id;
+        """;
+
+    public const string SystemUpdateRow = "UPDATE documents SET body = $body WHERE collection = $collection AND id = $id;";
+
+    public const string SystemInsertRow = "INSERT INTO documents (collection, id, body) VALUES ($collection, $id, $body);";
+
+    public const string SystemDeleteRow = "DELETE FROM documents WHERE collection = $collection AND id = $id;";
 
     // A client collection's documents ({0}, its table), with their versions from _tb_state, and its retained JSON sizes.
     // octet_length reads a size from the record header without loading the JSON.
@@ -91,28 +110,16 @@ internal static class SqliteStatements
     // A replicated collection metadata document gives an existing collection its identity.
     public const string UpdateCollection = "UPDATE collections SET created_at = $created, entity_id = $entityId WHERE name = $collection;";
 
-    // The system database: the version is the commit offset of the writing transaction.
-    public const string Put = """
-        INSERT INTO documents (collection, id, version, body) VALUES ($collection, $id, $version, $body)
-        ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = excluded.body;
-        """;
-
-    public const string Delete = "DELETE FROM documents WHERE collection = $collection AND id = $id;";
-
-    public const string Tombstone = "UPDATE documents SET version = $version, body = NULL WHERE collection = $collection AND id = $id;";
-
     // Two statements, not `$after IS NULL OR id > $after`: the OR keeps SQLite from seeking to the
-    // cursor, so every page would walk the collection from its first id. Tombstones are not listed.
+    // cursor, so every page would walk the collection from its first id.
     public const string ListFirst = """
-        SELECT id, version, body, octet_length(body) FROM documents INDEXED BY documents_live
-        WHERE collection = $collection AND body IS NOT NULL AND tb_qos_scan(octet_length(body))
-        ORDER BY id LIMIT $limit;
+        SELECT d.id, (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = d.id), d.body, octet_length(d.body)
+        FROM documents d WHERE d.collection = $collection AND tb_qos_scan(octet_length(d.body)) ORDER BY d.id LIMIT $limit;
         """;
 
     public const string ListAfter = """
-        SELECT id, version, body, octet_length(body) FROM documents INDEXED BY documents_live
-        WHERE collection = $collection AND id > $after AND body IS NOT NULL AND tb_qos_scan(octet_length(body))
-        ORDER BY id LIMIT $limit;
+        SELECT d.id, (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = d.id), d.body, octet_length(d.body)
+        FROM documents d WHERE d.collection = $collection AND d.id > $after AND tb_qos_scan(octet_length(d.body)) ORDER BY d.id LIMIT $limit;
         """;
 
     public const string NextOffset = "UPDATE commit_offset SET value = value + 1 WHERE id = 1 AND value < 9223372036854775807 RETURNING value;";
@@ -128,26 +135,13 @@ internal static class SqliteStatements
         ON CONFLICT (name) DO NOTHING;
         """;
 
-    // The system database's catalog checks: retained journal deletions (changes with a NULL body) count as state.
+    // Collection state of either kind of database: documents and their tombstones (states) and collection rows.
     public const string HasCollectionState = """
-        SELECT EXISTS(SELECT 1 FROM documents WHERE collection >= $from AND collection < $to)
-            OR EXISTS(SELECT 1 FROM collections WHERE name >= $from AND name < $to)
-            OR EXISTS(SELECT 1 FROM changes WHERE collection >= $from AND collection < $to AND body IS NULL);
-        """;
-
-    public const string HasCollectionStateFrom = """
-        SELECT EXISTS(SELECT 1 FROM documents WHERE collection >= $from)
-            OR EXISTS(SELECT 1 FROM collections WHERE name >= $from)
-            OR EXISTS(SELECT 1 FROM changes WHERE collection >= $from AND body IS NULL);
-        """;
-
-    // A client database keeps no journal deletions to look at.
-    public const string ClientHasCollectionState = """
         SELECT EXISTS(SELECT 1 FROM _tb_state WHERE collection >= $from AND collection < $to)
             OR EXISTS(SELECT 1 FROM collections WHERE name >= $from AND name < $to);
         """;
 
-    public const string ClientHasCollectionStateFrom = """
+    public const string HasCollectionStateFrom = """
         SELECT EXISTS(SELECT 1 FROM _tb_state WHERE collection >= $from)
             OR EXISTS(SELECT 1 FROM collections WHERE name >= $from);
         """;
@@ -163,19 +157,20 @@ internal static class SqliteStatements
 
     public const string DropCollection = "DELETE FROM collections WHERE name = $collection;";
 
-    // Management API (TS-463). Counts walk the collection's primary-key range and test each record header's body type,
-    // never the body: documents_live would not cover the body test and would add a lookup per row.
-    public const string CountDocuments = "SELECT count(*) FROM documents WHERE collection = $collection AND body IS NOT NULL;";
+    // Management API (TS-463). Counts walk the collection's key range; every row is a live document.
+    public const string CountDocuments = "SELECT count(*) FROM documents WHERE collection = $collection;";
 
     // octet_length reads each live body's size from its record header, not the body.
     public const string ListCollectionStats = """
         SELECT collections.name, count(documents.id), coalesce(sum(octet_length(documents.body)), 0)
-        FROM collections LEFT JOIN documents ON documents.collection = collections.name AND documents.body IS NOT NULL
+        FROM collections LEFT JOIN documents ON documents.collection = collections.name
         GROUP BY collections.name ORDER BY collections.name;
         """;
 
-    // A prefix is the name range [$from, $to) of each primary key; documents and tombstones go with their collections.
+    // A prefix is the name range [$from, $to) of each key; documents and their states go with their collections.
     public const string DeleteCollectionDocuments = "DELETE FROM documents WHERE collection >= $from AND collection < $to;";
+
+    public const string DeleteCollectionStates = "DELETE FROM _tb_state WHERE collection >= $from AND collection < $to;";
 
     public const string DeleteCollectionNames = "DELETE FROM collections WHERE name >= $from AND name < $to;";
 
@@ -198,14 +193,15 @@ internal static class SqliteStatements
         [nameof(DropCollection)] = DropCollection,
         [nameof(ListIndexes)] = ListIndexes,
         [nameof(IndexExists)] = IndexExists,
+        [nameof(HasCollectionState)] = HasCollectionState,
+        [nameof(HasCollectionStateFrom)] = HasCollectionStateFrom,
+        [nameof(DropStates)] = DropStates,
     };
 
     /// <summary>Statements only client databases run, by name, for query-plan checks; <c>{0}</c> stands for a collection's table.</summary>
     public static IReadOnlyDictionary<string, string> ClientOnly { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         [nameof(GetState)] = GetState,
-        [nameof(ClientHasCollectionState)] = ClientHasCollectionState,
-        [nameof(ClientHasCollectionStateFrom)] = ClientHasCollectionStateFrom,
         [nameof(ClientDocumentBytes)] = ClientDocumentBytes,
         [nameof(ClientListFirst)] = ClientListFirst,
         [nameof(ClientListAfter)] = ClientListAfter,
@@ -217,13 +213,12 @@ internal static class SqliteStatements
         [nameof(DeleteRow)] = DeleteRow,
         [nameof(UpdateState)] = UpdateState,
         [nameof(InsertState)] = InsertState,
-        [nameof(DropStates)] = DropStates,
         [nameof(UpdateApplied)] = UpdateApplied,
         [nameof(InsertApplied)] = InsertApplied,
         [nameof(UpdateCollection)] = UpdateCollection,
     };
 
-    /// <summary>Statements only the system database runs, by name, for query-plan checks (TS-647 step 5 removes them).</summary>
+    /// <summary>Statements only the system database runs, by name, for query-plan checks.</summary>
     public static IReadOnlyDictionary<string, string> SystemOnly { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         [nameof(Get)] = Get,
@@ -235,12 +230,12 @@ internal static class SqliteStatements
         [nameof(CountDocuments)] = CountDocuments,
         [nameof(ListCollectionStats)] = ListCollectionStats,
         [nameof(DropDocuments)] = DropDocuments,
-        [nameof(Put)] = Put,
-        [nameof(Delete)] = Delete,
-        [nameof(Tombstone)] = Tombstone,
         [nameof(DeleteCollectionDocuments)] = DeleteCollectionDocuments,
         [nameof(DeleteCollectionNames)] = DeleteCollectionNames,
-        [nameof(HasCollectionState)] = HasCollectionState,
-        [nameof(HasCollectionStateFrom)] = HasCollectionStateFrom,
+        [nameof(DeleteCollectionStates)] = DeleteCollectionStates,
+        [nameof(SystemGetState)] = SystemGetState,
+        [nameof(SystemUpdateRow)] = SystemUpdateRow,
+        [nameof(SystemInsertRow)] = SystemInsertRow,
+        [nameof(SystemDeleteRow)] = SystemDeleteRow,
     };
 }

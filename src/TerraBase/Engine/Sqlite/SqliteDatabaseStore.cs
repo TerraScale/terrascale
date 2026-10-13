@@ -50,14 +50,23 @@ internal sealed partial class SqliteDatabaseStore(
 
     // Greenfield bootstrap only: an older on-disk shape must be discarded, never upgraded. Turso stores only rowid tables
     // and its provider splits command text at every ';', so there are no WITHOUT ROWID tables and no triggers
-    // (docs/terrabase/turso-spike.md). The system database keeps its
-    // journal of whole writes with a SHA-256 prefix digest per group (docs/decisions/0009) until TS-647 step 5.
+    // (docs/terrabase/turso-spike.md). The system database is a lattice database like a client one (section 15 of
+    // docs/terrabase/multi-region-replication.md): each document's DocumentState in _tb_state and its materialized JSON
+    // beside it, captured and shipped by the same CDC tailer and peer streams. Its collections are paths
+    // (projects/<id>/databases), one set per tenant, so its live documents share one documents table instead of a table
+    // per collection. collections and commit_offset are the engine tables both kinds share.
     private const string SystemSchemaSql = """
-        CREATE TABLE documents (
-            collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT,
-            PRIMARY KEY (collection, id)
+        CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, body TEXT NOT NULL, UNIQUE (collection, id));
+        CREATE TABLE _tb_state (
+            collection TEXT NOT NULL, id TEXT NOT NULL, bucket INTEGER NOT NULL, state TEXT NOT NULL,
+            stamp INTEGER NOT NULL, origin INTEGER NOT NULL, live INTEGER NOT NULL, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL,
+            UNIQUE (collection, id)
         );
-        CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;
+        CREATE INDEX _tb_state_bucket ON _tb_state (bucket, collection, id);
+        CREATE INDEX _tb_state_dead ON _tb_state (stamp) WHERE live = 0;
+        CREATE TABLE _tb_peers (
+            node INTEGER PRIMARY KEY, applied INTEGER NOT NULL, acked INTEGER NOT NULL, stable INTEGER NOT NULL, seen INTEGER NOT NULL
+        );
         CREATE TABLE collections (
             name TEXT PRIMARY KEY, created_at INTEGER NOT NULL,
             entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
@@ -66,20 +75,6 @@ internal sealed partial class SqliteDatabaseStore(
             id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
         );
         INSERT INTO commit_offset (id, value, incarnation) VALUES (1, 0, '');
-        CREATE TABLE changes (
-            sequence INTEGER NOT NULL, ordinal INTEGER NOT NULL, collection TEXT NOT NULL, id TEXT NOT NULL,
-            version INTEGER NOT NULL, body TEXT, PRIMARY KEY (sequence, ordinal)
-        );
-        CREATE INDEX changes_deleted ON changes (collection, id, version) WHERE body IS NULL;
-        CREATE TABLE replication_state (id INTEGER PRIMARY KEY CHECK (id = 1), complete INTEGER NOT NULL);
-        INSERT INTO replication_state (id, complete) VALUES (1, 1);
-        CREATE TABLE applied (
-            origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL,
-            digest BLOB CHECK (digest IS NULL OR length(digest) = 32)
-        );
-        CREATE TABLE journal_prefixes (
-            sequence INTEGER PRIMARY KEY CHECK (sequence > 0), digest BLOB NOT NULL CHECK (length(digest) = 32)
-        );
         """;
 
     // A client database (docs/terrabase/multi-region-replication.md section 5). Each collection is a table of its own, created
@@ -186,12 +181,12 @@ internal sealed partial class SqliteDatabaseStore(
 
     public TenantContext? Tenant { get; } = tenant;
 
-    // Client databases scope ETags by their ids, which every member shares, so a version read on one member matches on
-    // another (TS-574); _system uses its incarnation, which catalog followers adopt from their primary.
-    private readonly Guid? _scope = tenant?.VersionScope();
+    // ETags are scoped by the database's ids, which every member shares, so a version read on one member matches on
+    // another (TS-574); _system is the same database on every member.
+    private static readonly Guid SystemScope = new TenantContext(SqliteStorageEngine.SystemName, PlanTier.Hobby).VersionScope();
 
     /// <summary>The <see cref="IStorageTransaction.Scope"/> of this database's transactions.</summary>
-    internal Guid Scope => _scope ?? Incarnation.ToGuid();
+    internal Guid Scope { get; } = tenant?.VersionScope() ?? SystemScope;
 
     /// <summary>Set once the database is deleted or the engine shuts down; guarded by <see cref="SqliteSessionPool"/>.</summary>
     internal bool Closed
@@ -212,7 +207,7 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>Idle sessions of this database, for tests.</summary>
     internal int IdleCount => pool.IdleCountOf(this);
 
-    /// <summary>What a client database's local writes mint with; the system database writes without it.</summary>
+    /// <summary>What this database's local writes mint their stamps with.</summary>
     internal LocalReplica? Member { get; init; }
 
     /// <summary>
