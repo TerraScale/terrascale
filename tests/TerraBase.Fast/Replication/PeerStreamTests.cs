@@ -1800,6 +1800,237 @@ public sealed class PeerStreamTests
     }
 
 
+    [Test]
+    public async Task Round2_a_stale_queued_PUT_cannot_resurrect_a_newer_collected_deletion()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"a":"base"}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"a":"base"}""")).IsTrue();
+        await Assert.That(await gru.UntilAckedByAsync(cluster.Database, sjc.Node)).IsTrue();
+        cluster.Cut("gru", "sjc");
+        await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        await Assert.That(await sjc.UntilStreamsAsync([])).IsTrue();
+        await sjc.WriteAsync(async transaction => _ = await transaction.PutAsync("items", id, Json("""{"a":"stale-put"}"""), CancellationToken.None));
+        var edit = await sjc.StateAsync("items", id);
+        clock.Offset = TimeSpan.FromHours(1);
+        await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", id, CancellationToken.None));
+        var deletion = await gru.StateAsync("items", id);
+        await Assert.That(deletion.MaxStamp.Value > edit.MaxStamp.Value).IsTrue();
+        await Assert.That(deletion.Join(edit).Exists).IsFalse().Because("ordinary LWW says this deletion wins");
+        await sjc.StopAsync();
+        clock.Offset = TimeSpan.FromHours(26);
+        await Assert.That(await gru.UntilNoStateAsync("items", id)).IsTrue();
+        cluster.Heal();
+        await sjc.StartAsync();
+        await Assert.That(await sjc.UntilAckedByAsync(cluster.Database, gru.Node)).IsTrue();
+        for (var round = 0; round < 3; round++)
+        {
+            await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
+            await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        }
+
+        await Assert.That($"gru={await gru.ReadAsync(id) ?? "missing"};sjc={await sjc.ReadAsync(id) ?? "missing"}")
+            .IsEqualTo("gru=missing;sjc=missing");
+    }
+
+    [Test]
+    public async Task Round2_a_newer_queued_edit_survives_collection_of_an_older_deletion()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"a":"base"}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"a":"base"}""")).IsTrue();
+        await Assert.That(await gru.UntilAckedByAsync(cluster.Database, sjc.Node)).IsTrue();
+        cluster.Cut("gru", "sjc");
+        await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        await Assert.That(await sjc.UntilStreamsAsync([])).IsTrue();
+        clock.Offset = TimeSpan.FromHours(1);
+        await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", id, CancellationToken.None));
+        var deletion = await gru.StateAsync("items", id);
+        clock.Offset = TimeSpan.FromHours(2);
+        using var value = JsonDocument.Parse("\"newer\"");
+        await sjc.WriteAsync(async transaction => _ = await transaction.PatchAsync("items", id, Json("{}"),
+            [new FieldOperation(FieldOperationKind.Set, "a", value.RootElement)], CancellationToken.None));
+        var edit = await sjc.StateAsync("items", id);
+        await Assert.That(edit.MaxStamp.Value > deletion.MaxStamp.Value).IsTrue();
+        await Assert.That(Encoding.UTF8.GetString(deletion.Join(edit).Materialize()!)).IsEqualTo("""{"a":"newer"}""");
+        await sjc.StopAsync();
+        clock.Offset = TimeSpan.FromHours(27);
+        await Assert.That(await gru.UntilNoStateAsync("items", id)).IsTrue();
+        cluster.Heal();
+        await sjc.StartAsync();
+        await Assert.That(await sjc.UntilAckedByAsync(cluster.Database, gru.Node)).IsTrue();
+        for (var round = 0; round < 3; round++)
+        {
+            await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
+            await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        }
+
+        await Assert.That($"gru={await gru.ReadAsync(id) ?? "missing"};sjc={await sjc.ReadAsync(id) ?? "missing"}")
+            .IsEqualTo("gru={\"a\":\"newer\"};sjc={\"a\":\"newer\"}");
+    }
+
+    [Test]
+    public async Task Round2_a_refill_does_not_delete_the_last_copy_of_an_unrelated_old_lost_apply()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (live, control) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", live, Json("""{"n":1}"""), CancellationToken.None);
+            _ = await transaction.PutAsync("items", control, Json("""{"n":2}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(live, """{"n":1}""")).IsTrue();
+        await Assert.That(await sjc.UntilAsync(control, """{"n":2}""")).IsTrue();
+        await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", control, CancellationToken.None));
+        await Assert.That(await sjc.UntilAbsentAsync(control)).IsTrue();
+        clock.Offset = TimeSpan.FromMinutes(5);
+        await Assert.That(await gru.UntilNoStateAsync("items", control)).IsTrue();
+        await Assert.That(await sjc.UntilNoStateAsync("items", control)).IsTrue();
+        await sjc.LoseAsync("items", live);
+        await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        var basis = await sjc.Api.Server.Services.GetRequiredService<IReplicaStates>().RefillBasisAsync(cluster.Database, CancellationToken.None);
+        await Assert.That(await gru.AntiEntropy.RefillAsync(cluster.Database, sjc.Name, basis!, CancellationToken.None)).IsNotNull();
+        await Assert.That($"gru={await gru.ReadAsync(live) ?? "missing"};sjc={await sjc.ReadAsync(live) ?? "missing"}")
+            .IsEqualTo("gru={\"n\":1};sjc={\"n\":1}");
+    }
+
+    [Test]
+    public async Task Round2_a_directory_peer_never_registered_for_the_database_holds_GC_at_zero()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
+        var newcomer = new ClusterMember(EntityIds.New().ToString(), string.Empty, "sjc", string.Empty);
+        cluster.Members.Join(newcomer);
+        var presence = gru.Api.Server.Services.GetRequiredService<LocalReplica>().Presence;
+        var deadline = DateTime.UtcNow + Deadline;
+        while (!presence.Lists(newcomer.Name) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(100);
+        }
+
+        await Assert.That(presence.Lists(newcomer.Name)).IsTrue();
+        await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", id, CancellationToken.None));
+        await Assert.That(await sjc.UntilAbsentAsync(id)).IsTrue();
+        clock.Offset = TimeSpan.FromMinutes(5);
+        await gru.UntilNoStateAsync("items", id);
+        await Assert.That(await gru.HasStateAsync("items", id)).IsTrue().Because("a directory machine never heard from counts as zero");
+    }
+
+    [Test]
+    public async Task Round2_asymmetric_partition_with_two_hour_regional_skew_keeps_the_unacknowledged_deletion()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc", "fra");
+        var (gru, sjc, fra) = (cluster["gru"], cluster["sjc"], cluster["fra"]);
+        sjc.ClockSkew = TimeSpan.FromHours(-2);
+        fra.ClockSkew = TimeSpan.FromHours(2);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
+        await Assert.That(await fra.UntilAsync(id, """{"n":1}""")).IsTrue();
+        cluster.CutOneWay("gru", "sjc");
+        cluster.CutOneWay("fra", "sjc");
+        await Assert.That(await gru.UntilStreamsAsync(["fra"])).IsTrue();
+        await Assert.That(await fra.UntilStreamsAsync(["gru"])).IsTrue();
+        clock.Offset = TimeSpan.FromHours(25);
+        await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", id, CancellationToken.None));
+        await Assert.That(await fra.UntilAbsentAsync(id)).IsTrue();
+        clock.Offset = TimeSpan.FromHours(25) + TimeSpan.FromMinutes(5);
+        await Task.Delay(TimeSpan.FromSeconds(12));
+        await Assert.That(await gru.HasStateAsync("items", id)).IsTrue();
+        await Assert.That(await fra.HasStateAsync("items", id)).IsTrue();
+        await Assert.That(await sjc.ReadAsync(id)).IsEqualTo("""{"n":1}""");
+        cluster.Heal();
+        await Assert.That(await sjc.UntilAbsentAsync(id)).IsTrue();
+        clock.Offset = TimeSpan.FromHours(30);
+        await Assert.That(await gru.UntilNoStateAsync("items", id)).IsTrue();
+        await Assert.That(await fra.UntilNoStateAsync("items", id)).IsTrue();
+        await Assert.That(await sjc.UntilNoStateAsync("items", id)).IsTrue();
+    }
+
+    [Test]
+    public async Task Round2_a_post_GC_patch_does_not_restore_fields_deleted_before_the_patch()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"a":1,"b":2}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"a":1,"b":2}""")).IsTrue();
+        await Assert.That(await gru.UntilAckedByAsync(cluster.Database, sjc.Node)).IsTrue();
+        await sjc.StopAsync();
+        clock.Offset = TimeSpan.FromHours(25);
+        await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", id, CancellationToken.None));
+        var deletion = await gru.StateAsync("items", id);
+        clock.Offset = TimeSpan.FromHours(26);
+        await Assert.That(await gru.UntilNoStateAsync("items", id)).IsTrue();
+        cluster.Cut("gru", "sjc");
+        await sjc.StartAsync();
+        using var value = JsonDocument.Parse("3");
+        await sjc.WriteAsync(async transaction => _ = await transaction.PatchAsync("items", id, Json("{}"),
+            [new FieldOperation(FieldOperationKind.Set, "a", value.RootElement)], CancellationToken.None));
+        var edited = await sjc.StateAsync("items", id);
+        await Assert.That(Encoding.UTF8.GetString(deletion.Join(edited).Materialize()!)).IsEqualTo("""{"a":3}""");
+        cluster.Heal();
+        await Assert.That(await sjc.UntilAckedByAsync(cluster.Database, gru.Node)).IsTrue();
+        for (var round = 0; round < 3; round++)
+        {
+            await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
+            await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        }
+
+        await Assert.That($"gru={await gru.ReadAsync(id) ?? "missing"};sjc={await sjc.ReadAsync(id) ?? "missing"}")
+            .IsEqualTo("gru={\"a\":3};sjc={\"a\":3}");
+    }
+
+        private long _clockSkewTicks;
+
+        public TimeSpan ClockSkew
+        {
+            get => TimeSpan.FromTicks(Interlocked.Read(ref _clockSkewTicks));
+            set => Interlocked.Exchange(ref _clockSkewTicks, value.Ticks);
+        }
+
+        private sealed class MachineTime(TimeProvider common, Machine machine) : TimeProvider
+        {
+            public override DateTimeOffset GetUtcNow() => common.GetUtcNow() + machine.ClockSkew;
+        }
+            }, time: new MachineTime(cluster.Clock ?? TimeProvider.System, this));
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
