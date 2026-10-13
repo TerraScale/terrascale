@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readChanges, reconcileDocuments } from '../src/TerraScale.Dashboard/web/assets/js/document-changes-stream.js';
+import { copySavedQuery } from '../src/TerraScale.Dashboard/web/assets/js/code-editor/saved-query.js';
 
 const encoder = new TextEncoder();
 const signal = new AbortController().signal;
@@ -40,3 +41,17 @@ assert.equal(query.get('databaseId'), 'db /');
 assert.equal(query.get('collection'), 'one+collection');
 await assert.rejects(() => reconcileDocuments('db', 'same', signal, async () => new Response('', { status: 400 })), /HTTP 400/);
 console.log('Document changes reader: UTF-8/chunk framing, checkpoint validation, bounds, disposal and document reread passed.');
+const source = { value: 'SELECT latest FROM items' };
+let mirrored = 0;
+const target = { value: 'old draft', dispatchEvent(event) { assert.equal(event.type, 'input'); mirrored++; } };
+const dialog = { dataset: {} };
+copySavedQuery(source, target, dialog);
+assert.equal(target.value, source.value);
+target.value = 'modal edit';
+copySavedQuery(source, target, dialog);
+assert.equal(target.value, 'modal edit');
+source.value = 'new editor input';
+copySavedQuery(source, target, dialog);
+assert.equal(target.value, source.value);
+assert.equal(mirrored, 2);
+console.log('Saved query draft copies current SQL on activation and preserves subsequent modal edits.');

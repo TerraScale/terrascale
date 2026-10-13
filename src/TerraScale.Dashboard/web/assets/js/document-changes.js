@@ -1,4 +1,4 @@
-import { readChanges, reconcileDocuments } from './document-changes-stream.js';
+import { ChangesProtocolError, readChanges, reconcileDocuments } from './document-changes-stream.js';
 
 class DocumentChanges extends HTMLElement {
   connectedCallback() {
@@ -19,6 +19,7 @@ class DocumentChanges extends HTMLElement {
     const status = panel.querySelector('#document-changes-status');
     const items = panel.querySelector('#document-changes-items');
     let cursor, resync = false, historyLost = false;
+    const seen = new Set();
     const show = text => { status.textContent = text; };
     const append = text => {
       const row = document.createElement('li');
@@ -28,12 +29,13 @@ class DocumentChanges extends HTMLElement {
     };
     while (!signal.aborted) {
       let stop = false;
+      let reconnectNow = false;
       try {
         show(historyLost ? 'Reconnecting; retained changes unavailable.' : 'Connecting to document changes…');
         const query = new URLSearchParams({ collection });
         if (resync) query.set('cursor', 'now');
         const headers = { Accept: 'text/event-stream' };
-        if (cursor) headers['Last-Event-ID'] = cursor;
+        if (cursor && !resync) headers['Last-Event-ID'] = cursor;
         const response = await fetch(`/v1/dashboard/databases/${encodeURIComponent(databaseId)}/changes?${query}`,
           { headers, credentials: 'same-origin', cache: 'no-store', signal });
         if (!response.ok) {
@@ -48,6 +50,7 @@ class DocumentChanges extends HTMLElement {
         await readChanges(response.body, signal, async (update, id) => {
           if (update.state === 'resync_required') {
             cursor = undefined; resync = true; historyLost = true;
+            seen.clear(); reconnectNow = true;
             show('Retained changes unavailable. Establishing a new checkpoint before rereading documents…');
             return false;
           }
@@ -61,17 +64,23 @@ class DocumentChanges extends HTMLElement {
           } else if (update.state !== 'reconnect') show(historyLost ? 'Resynced; retained changes unavailable' : 'Connected to document changes.');
           if (update.state === 'change') {
             const change = update.change;
-            if (!change || change.collection !== collection) { stop = true; throw new Error('Changes returned a different collection.'); }
-            append(`${change.operation ?? 'Change'} · ${change.id} · ${change.version}`);
+            if (!change || change.collection !== collection) throw new ChangesProtocolError('Changes returned a different collection.');
+            const identity = JSON.stringify([change.origin, change.version, change.collection, change.id]);
+            if (!seen.has(identity)) {
+              seen.add(identity);
+              if (seen.size > 1024) seen.delete(seen.values().next().value);
+              append(`${change.op} · ${change.id} · ${change.version}`);
+            }
           }
           return update.state !== 'reconnect';
         });
       } catch (error) {
         if (signal.aborted) return;
+        if (error instanceof ChangesProtocolError) stop = true;
         show(error.message);
       }
       if (stop || signal.aborted) return;
-      if (resync) continue;
+      if (reconnectNow) continue;
       await new Promise(resolve => {
         const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); };
         const timer = setTimeout(done, 2000);

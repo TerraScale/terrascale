@@ -1,6 +1,16 @@
 // <ts-code-editor> upgrades the textarea it wraps into a Monaco editor. The
 // textarea stays in the form as the submitted value (and as the control when
 // JavaScript is unavailable); the editor and the textarea mirror each other.
+import { copySavedQuery } from './saved-query.js';
+
+document.addEventListener('click', event => {
+  const button = event.target.closest?.('[command="show-modal"][commandfor="save-query"]');
+  if (!button) return;
+  const dialog = document.getElementById('save-query');
+  const source = document.getElementById('sql');
+  const target = dialog?.querySelector('#saved-sql');
+  if (source && target) copySavedQuery(source, target, dialog);
+}, { capture: true });
 
 const fontSize = 13;
 const lineHeight = 20;
