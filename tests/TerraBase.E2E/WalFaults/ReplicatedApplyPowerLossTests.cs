@@ -46,6 +46,17 @@ public sealed class ReplicatedApplyPowerLossTests
             using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push();
             await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = origin.Value, Region = "sjc", Machine = "zzzz-sender" } });
             await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None) && call.ResponseStream.Current.Welcome is not null).IsTrue();
+
+            // A first batch makes the database's file here, whose own syncs are not the timed batch's; acknowledged first.
+            await call.RequestStream.WriteAsync(new PushFrame
+            {
+                Batch = new Batch { Database = ChangeGroups.Wire(database), LastChangeId = 1, Groups = ChangeGroups.Encode([new OriginGroup(1, [Put(origin, stamp, EntityIds.New().ToString(), -1)])]) },
+            });
+            using (var warm = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout))
+            {
+                await Assert.That(await call.ResponseStream.MoveNext(warm.Token) && call.ResponseStream.Current.Ack is { ChangeId: 1, Refused: false }).IsTrue();
+            }
+
             node.DelaySyncs(delay);
             var clock = System.Diagnostics.Stopwatch.StartNew();
             await call.RequestStream.WriteAsync(new PushFrame
@@ -53,16 +64,16 @@ public sealed class ReplicatedApplyPowerLossTests
                 Batch = new Batch
                 {
                     Database = ChangeGroups.Wire(database),
-                    LastChangeId = (ulong)ids.Length,
+                    LastChangeId = (ulong)ids.Length + 1,
                     Groups = ChangeGroups.Encode([.. ids.Select((group, index) => new OriginGroup(
-                        index + 1, [.. group.Select((id, n) => Put(origin, stamp + (ulong)(index * 2048 + n), id, index))]))]),
+                        index + 2, [.. group.Select((id, n) => Put(origin, stamp + 1 + (ulong)(index * 2048 + n), id, index))]))]),
                 },
             });
             using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
             await Assert.That(await call.ResponseStream.MoveNext(timeout.Token)).IsTrue();
             var acked = clock.Elapsed;
             node.ClearFaults();
-            await Assert.That(call.ResponseStream.Current.Ack is { ChangeId: 3, Refused: false }).IsTrue().Because(call.ResponseStream.Current.ToString());
+            await Assert.That(call.ResponseStream.Current.Ack is { ChangeId: 4, Refused: false }).IsTrue().Because(call.ResponseStream.Current.ToString());
             await Assert.That(acked).IsGreaterThanOrEqualTo(delay * 2).Because("the ack waits for both transactions' log syncs");
         }
 
