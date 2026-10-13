@@ -31,6 +31,19 @@ public sealed class InvoiceFactsJourneyTests
         var suffix = Guid.NewGuid().ToString("N");
         await BillingPlanJourneyTests.SignUpPaidAsync(client, "invoice-" + suffix + "@example.test", "E2E-invoice-" + suffix, suffix);
         await Assert.That(wire.ReturnHosts).IsEquivalentTo(new[] { "dash.terrascale.tech", "dash.terrascale.tech" });
+        using var portal = await client.GetAsync("/billing/portal?return=https%3A%2F%2Fattacker.invalid");
+        await Assert.That(portal.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await Assert.That(wire.ReturnHosts).IsEquivalentTo(new[] { "dash.terrascale.tech", "dash.terrascale.tech", "dash.terrascale.tech" });
+        await Assert.That(wire.ReturnSchemes.All(scheme => scheme == "https")).IsTrue();
+        var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
+        var vendorCalls = wire.StripeCalls;
+        foreach (var hostile in new[] { "https://attacker.invalid/", "//attacker.invalid/", "https://dash.terrascale.tech@attacker.invalid/" })
+        {
+            using var refused = await HttpJourney.PostFormAsync(client, "/billing/checkout", new()
+            { ["_csrf"] = csrf, ["plan"] = "starter", ["interval"] = "monthly", ["return"] = hostile });
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+        }
+        await Assert.That(wire.StripeCalls).IsEqualTo(vendorCalls);
         using var response = await client.GetAsync("/organization?tab=billing");
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var html = await response.Content.ReadAsStringAsync();
@@ -44,15 +57,33 @@ public sealed class InvoiceFactsJourneyTests
     private sealed class InvoiceWire(IHttpClientFactory original, string currency, long amount, long remaining) : HttpMessageHandler, IHttpClientFactory
     {
         private int calls;
+        private int stripeCalls;
         public int Calls => Volatile.Read(ref calls);
+        public int StripeCalls => Volatile.Read(ref stripeCalls);
         public ConcurrentQueue<string> ReturnHosts { get; } = new();
+        public ConcurrentQueue<string> ReturnSchemes { get; } = new();
         public HttpClient CreateClient(string name) => new(this, false);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            if (request.RequestUri is { Host: "api.stripe.com", AbsolutePath: "/v1/checkout/sessions" } && request.Method == HttpMethod.Post)
+            if (request.RequestUri is { Host: "api.stripe.com" } stripe)
             {
-                var form = QueryHelpers.ParseQuery(await request.Content!.ReadAsStringAsync(cancellationToken));
-                foreach (var field in new[] { "success_url", "cancel_url" }) ReturnHosts.Enqueue(new Uri(form[field].ToString()).Host);
+                Interlocked.Increment(ref stripeCalls);
+                string[] fields = stripe.AbsolutePath switch
+                {
+                    "/v1/checkout/sessions" => ["success_url", "cancel_url"],
+                    "/v1/billing_portal/sessions" => ["return_url"],
+                    _ => []
+                };
+                if (request.Method == HttpMethod.Post && fields.Length > 0)
+                {
+                    var form = QueryHelpers.ParseQuery(await request.Content!.ReadAsStringAsync(cancellationToken));
+                    foreach (var field in fields)
+                    {
+                        var returnUri = new Uri(form[field].ToString());
+                        ReturnHosts.Enqueue(returnUri.Host);
+                        ReturnSchemes.Enqueue(returnUri.Scheme);
+                    }
+                }
             }
             if (request.RequestUri is not { Host: "api.stripe.com", AbsolutePath: "/v1/invoices" } uri || request.Method != HttpMethod.Get)
             {
