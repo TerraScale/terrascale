@@ -92,14 +92,14 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         { ["_csrf"] = csrf, ["plan"] = "pro", ["interval"] = "monthly" });
         await Assert.That(nativeBilling.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(await owner.GetStringAsync("/__test/billing/plans/probe")).IsEqualTo(vendorBefore);
-        // Dashboard-recorded events report no severity either; they stay unknown, never inferred as info (UAN-01).
-        var audit = await ToolAsync(replica, secret, "list_audit_events", new { organizationId = businessId, action = "organization.deletion_requested", severity = "unknown", range = "7d", page = 999, pageSize = 1 });
+        // The dashboard records an explicit severity for its own events; requesting deletion is critical.
+        var audit = await ToolAsync(replica, secret, "list_audit_events", new { organizationId = businessId, action = "organization.deletion_requested", severity = "critical", range = "7d", page = 999, pageSize = 1 });
         await Assert.That(audit.GetProperty("matching").GetInt32()).IsEqualTo(1);
-        await Assert.That(audit.GetProperty("unknown").GetInt32()).IsEqualTo(1);
-        await Assert.That(audit.GetProperty("info").GetInt32()).IsEqualTo(0);
+        await Assert.That(audit.GetProperty("critical").GetInt32()).IsEqualTo(1);
+        await Assert.That(audit.GetProperty("unknown").GetInt32()).IsEqualTo(0);
         await Assert.That(audit.GetProperty("page").GetInt32()).IsEqualTo(1);
         await Assert.That(audit.GetProperty("retentionDays").GetInt32()).IsEqualTo(90);
-        await Assert.That(audit.GetProperty("events")[0].GetProperty("severity").GetString()).IsEqualTo("unknown");
+        await Assert.That(audit.GetProperty("events")[0].GetProperty("severity").GetString()).IsEqualTo("critical");
         await ErrorAsync(owner, secret, "list_audit_events", new { organizationId = businessId, pageSize = 101 });
         await ErrorAsync(owner, secret, "request_organization_deletion", new { organizationId = personalId, confirmName = "Personal" });
         await Assert.That(Organization(await ContextAsync(owner, secret), personalId).GetProperty("projects").EnumerateArray()
