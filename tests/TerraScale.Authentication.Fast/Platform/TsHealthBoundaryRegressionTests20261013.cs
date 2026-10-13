@@ -163,9 +163,16 @@ public sealed class TsHealthBoundaryRegressionTests20261013
 
         public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
         {
-            using var registration = cancellationToken.Register(() => Canceled.TrySetResult());
             Entered.TrySetResult();
-            return await Reply.Task.WaitAsync(cancellationToken);
+            try
+            {
+                return await Reply.Task.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                Canceled.TrySetResult();
+                throw;
+            }
         }
     }
 
