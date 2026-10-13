@@ -89,7 +89,7 @@ public sealed class PeerStreamTests
     }
 
     [Test]
-    public async Task A_malformed_batch_ends_the_stream_and_an_unplaced_database_is_refused()
+    public async Task A_malformed_batch_is_refused_for_its_database_an_unplaced_database_is_refused_and_a_nameless_batch_ends_the_stream()
     {
         await using var cluster = await Cluster.StartAsync("gru");
         var gru = cluster["gru"];
@@ -109,8 +109,16 @@ public sealed class PeerStreamTests
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Ack.Refused).IsTrue();
 
-        // Bytes that are no LZ4 envelope of groups: the receiver ends the stream.
+        // Bytes that are no LZ4 envelope of groups: refused for that database, and the stream goes on.
         await call.RequestStream.WriteAsync(new PushFrame { Batch = new Batch { Database = ChangeGroups.Wire(cluster.Database), LastChangeId = 1, Groups = ByteString.CopyFromUtf8("forged") } });
+        await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
+        await Assert.That(call.ResponseStream.Current.Ack.Refused).IsTrue();
+        await Assert.That(call.ResponseStream.Current.Ack.Database).IsEqualTo(ChangeGroups.Wire(cluster.Database));
+
+        // A batch that names no valid database cannot be refused for one: the receiver ends the stream.
+        var nameless = ChangeGroups.Wire(cluster.Database);
+        nameless.DatabaseId = "not-a-ulid";
+        await call.RequestStream.WriteAsync(new PushFrame { Batch = new Batch { Database = nameless, LastChangeId = 1, Groups = ChangeGroups.Encode([new OriginGroup(1, [delta])]) } });
         var error = await Assert.ThrowsAsync<RpcException>(() => call.ResponseStream.MoveNext(CancellationToken.None));
         await Assert.That(error!.StatusCode).IsEqualTo(StatusCode.InvalidArgument);
     }
