@@ -2,8 +2,7 @@ using System.Net;
 
 namespace TerraScale.Dashboard.E2E.Features.QuerySubscriptions;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class QuerySubscriptionJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]

@@ -1,10 +1,9 @@
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Databases;
-using TerraScale.Dashboard.Features.Data;
 
 namespace TerraScale.Dashboard.Features.ApiKeys;
 
-public sealed class ApiKeyService(IDatabaseBackend backend, DatabaseService databases, IDataCredentialRegistry credentials)
+public sealed class ApiKeyService(IDatabaseBackend backend, DatabaseService databases)
 {
     public async Task<IReadOnlyList<ProjectCredential>> ListAsync(AccountContext context, CancellationToken cancellationToken)
     {
@@ -51,7 +50,6 @@ public sealed class ApiKeyService(IDatabaseBackend backend, DatabaseService data
         var codes = context.Project.Regions.Prepend(context.Project.Region).Concat(context.Project.Databases.Values.SelectMany(DatabaseService.Regions));
         var regions = await databases.ConfiguredPlacementAsync(codes, cancellationToken);
         var keys = new List<(ProjectCredential Key, DatabaseRegion Region)>();
-        var privateKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var region in regions)
         {
             foreach (var key in await backend.CredentialsAsync(scope, region, cancellationToken))
@@ -60,10 +58,7 @@ public sealed class ApiKeyService(IDatabaseBackend backend, DatabaseService data
                 keys.Add((key, region));
             }
         }
-        // An enrollment may finish while the producer list is being read.
-        foreach (var region in regions)
-            if (await credentials.CredentialIdAsync(scope, region, cancellationToken) is { } privateId) privateKeys.Add(privateId);
-        return keys.Where(item => !privateKeys.Contains(item.Key.Id)).ToArray();
+        return keys;
     }
 }
 

@@ -125,9 +125,11 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
         };
         var source = measured.Scope.State switch
         {
-            UsageSourceState.Measured => "Metered by TerraBase.",
+            UsageSourceState.Measured => "Best-effort metering from TerraBase; not billing data. Counts since the last save can be lost on a crash.",
             UsageSourceState.NoProducer => "This deployment has no TerraBase, which meters reads and writes.",
-            UsageSourceState.NotMetered => "TerraBase doesn't report this " + (databaseId.Length > 0 ? "database" : "project") + ": it isn't stored there yet, or this account isn't a member of it there.",
+            UsageSourceState.NotMetered => "TerraBase does not report metering for this " + (databaseId.Length > 0 ? "database" : "project") + ".",
+            UsageSourceState.Restricted => "The usage resource was not found or is not authorized for this account.",
+            UsageSourceState.QueryTooExpensive => "TerraBase could not complete this usage query within its resource limits; no zero usage is inferred.",
             UsageSourceState.Unauthorized => error,
             _ => "TerraBase metering is unavailable."
         };
@@ -141,7 +143,7 @@ public sealed class UsageMcpTools(IHttpContextAccessor http, AccountService acco
              Allowance("Writes this month", plan?.WritesAllowance, limits.MonthlyWrites, writes),
              Allowance("Storage", plan?.StorageAllowance, limits.StorageBytes, storage)], allowanceError,
             reads is null ? "This month's reads and writes aren't metered here, so their utilization is unavailable."
-                : "Reads and writes count separately: each read is one read and each write one write. The month runs on UTC.",
+                : "UTC month-to-date best-effort counts. Estimates are not settled charges; a crash can lose counts since the last save.",
             controls.OrganizationCapCents, controls.PaidExcess, selected?.EffectiveCapCents ?? controls.OrganizationCapCents, projects, databases,
             new(scope is not null, source, error, range, scope?.Period.Reads, scope?.Period.Writes, scopeBytes, scopeBytes is not null, scope?.Series ?? []),
             context.Project?.Databases.Count ?? 0,

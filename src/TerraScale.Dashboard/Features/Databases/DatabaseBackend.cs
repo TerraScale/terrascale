@@ -9,6 +9,7 @@ namespace TerraScale.Dashboard.Features.Databases;
 
 public sealed record DatabaseScope(string UserId, string AccessToken, string OrganizationId, string OrganizationName, string ProjectId, string ProjectName)
 {
+    public SessionRecord? Session { get; init; }
     public override string ToString() => $"Database scope {OrganizationId}/{ProjectId} [REDACTED]";
 }
 

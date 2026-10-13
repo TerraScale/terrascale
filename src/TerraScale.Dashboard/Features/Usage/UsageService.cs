@@ -82,9 +82,11 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
         var scopeName = selection.DatabaseId.Length > 0 ? "database" : "project";
         var source = result.Scope.State switch
         {
-            UsageSourceState.Measured => "Metered by TerraBase.",
+            UsageSourceState.Measured => "Best-effort metering from TerraBase; not billing data. Counts since the last save can be lost on a crash.",
             UsageSourceState.NoProducer => "This deployment has no TerraBase, which meters reads and writes.",
-            UsageSourceState.NotMetered => "TerraBase doesn't report this " + scopeName + ": it isn't stored there yet, or this account isn't a member of it there.",
+            UsageSourceState.NotMetered => "TerraBase does not report metering for this " + scopeName + ".",
+            UsageSourceState.Restricted => "The usage resource was not found or is not authorized for this account.",
+            UsageSourceState.QueryTooExpensive => "TerraBase could not complete this usage query within its resource limits; no zero usage is inferred.",
             UsageSourceState.Unauthorized => "TerraBase didn't accept this sign-in. Sign out and in again to load metered reads and writes.",
             _ => "TerraBase metering is unavailable."
         };
@@ -109,7 +111,7 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
         return new(shell, selection, tab, saved, controls, projects, databaseRows, allowances, name, scope, history, source,
             result.Scope.State == UsageSourceState.Unavailable ? "Metered reads and writes could not be loaded. Try again shortly." : "", monthError,
             !complete && monthError.Length == 0 ? "This month's reads and writes aren't metered here, so their utilization is unavailable."
-                : "Reads and writes count separately: each read is one read and each write one write. The month runs on UTC.", organizationStorage is not null, await replicationRead)
+                : "UTC month-to-date best-effort counts. Estimates are not settled charges; a crash can lose counts since the last save.", organizationStorage is not null, await replicationRead)
         {
             StoredScope = stored?.Scope(selection),
             InternalBill = selection.Context.Organization!.InternalBilling is not null

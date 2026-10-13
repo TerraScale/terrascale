@@ -23,7 +23,14 @@ public sealed record McpDeleted(bool Deleted);
 public sealed record McpCollectionList(IReadOnlyList<string> Collections);
 public sealed record McpDocument(string Id, JsonElement Value, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Version = null);
 public sealed record McpDocumentList(IReadOnlyList<McpDocument> Documents);
-public sealed record McpDocumentWrite(string Id, string Operation);
+public sealed record McpDocumentWrite(string Id, string Operation)
+{
+    public string Outcome { get; init; } = "committed";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? OperationId { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Message { get; init; }
+}
 public sealed record McpHistoryVersion(string Revision, bool Deleted, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Value);
 public sealed record McpDocumentHistory(IReadOnlyList<McpHistoryVersion> Versions);
 public sealed record McpCollectionSchema(string Collection, TerraBaseCollectionSchema Schema);
@@ -317,8 +324,15 @@ public sealed partial class DashboardMcpTools
             version = current.Version;
         }
         if (operation != "create" && string.IsNullOrWhiteSpace(version)) throw new AccountAccessException("A document version is required.", 422);
-        var result = await data.WriteAsync(context, databaseId, collection, operation, id, operation == "delete" ? "" : body.GetRawText(), version ?? "", Cancellation);
-        return new(result.Id, operation);
+        try
+        {
+            var result = await data.WriteAsync(context, databaseId, collection, operation, id, operation == "delete" ? "" : body.GetRawText(), version ?? "", Cancellation);
+            return new(result.Id, operation);
+        }
+        catch (DocumentWriteOutcomeUnknownException error)
+        {
+            return new(error.DocumentId, operation) { Outcome = "unknown", OperationId = error.OperationId, Message = error.Message };
+        }
     }
     private static JsonElement Body(Dictionary<string, JsonElement>? document, JsonElement? value)
     {
