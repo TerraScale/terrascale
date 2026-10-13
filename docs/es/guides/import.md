@@ -50,7 +50,7 @@ No SDK or CLI wraps import in contract v1. The steps below use its public HTTP r
 
 - When the copy completes, or when you delete the destination or its `terrascale-import` record.
 - When an incomplete upload has been idle for 1 day. The job stays in `awaiting_source`, and the upload restarts at offset 0.
-- When a preview (`ready` or `rejected`) has been left alone for 7 days.
+- When a preview (`ready` or `rejected`) has been left alone for 7 days. **Pending:** how to continue such a job. Until that is documented, start or cancel within 7 days.
 - 7 days after the job failed or was cancelled (`source.retainedUntil`). A later upload extends this.
 
 ## Import step by step
@@ -149,7 +149,7 @@ The import runs in the destination's home region. After step 2, `api` pins every
 
 | Field | Meaning |
 | --- | --- |
-| `tables[]` | One plan per source table: `source`, target `collection`, `excluded`, `rows`, `idPolicy`, `primaryKey`, `columns`, `constraints` and `issues` |
+| `tables[]` | One plan per source table: `source`, target `collection`, `excluded`, `rows`, `idPolicy`, `primaryKey`, `columns`, `constraints` and `issues`. An unnamed constraint has `name` `null`. |
 | `columns[].mapping` | How values become JSON; see the [PostgreSQL](/es/guides/import-postgresql#type-mapping) and [Turso](/es/guides/import-turso#type-mapping) mappings |
 | `issues[]` | `blocking` issues stop the import; warnings are for you to accept. A value issue carries its `row`. At most 50 per table. |
 | `skipped[]` | Objects that are listed and never imported or run, such as functions, views, indexes, sequences, grants and SQLite internal tables. At most 200 entries; `skippedTruncated` marks more. |

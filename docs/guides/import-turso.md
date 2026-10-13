@@ -54,11 +54,11 @@ Expect no blocking issues, and `mixed_storage_classes` warnings: `customers.bala
 
 The import accepts exactly one SQLite database file in rollback-journal mode. A file in WAL mode is rejected with `wal_mode_source`, because rows still in its `-wal` companion would be missing without any sign in the file itself.
 
-**From Turso.** `turso db export` can write a snapshot as `<name>.db` plus a `<name>.db-wal` file beside it. `VACUUM INTO` reads both and writes one rollback-mode file:
+**From Turso.** `turso db export` can write a snapshot as `<name>.db` plus a `<name>.db-wal` file beside it. A read-only `VACUUM INTO` reads both and writes one new rollback-mode file:
 
 ```bash
 turso db export YOUR_DATABASE --output-file turso-export.db
-sqlite3 turso-export.db "VACUUM INTO 'export.db'"
+sqlite3 -readonly turso-export.db "VACUUM INTO 'export.db'"
 chmod 600 export.db
 ```
 
@@ -67,12 +67,10 @@ Run `VACUUM INTO` even when `turso-export.db` already reads as rollback mode, an
 **From a local SQLite or libSQL file:**
 
 ```bash
-sqlite3 local.db "VACUUM INTO 'export.db'"
+sqlite3 -readonly local.db "VACUUM INTO 'export.db'"
 ```
 
-`VACUUM INTO` reads one consistent snapshot, even while the database is in use. Do not use `.backup`: its copy keeps the WAL-mode flag and is rejected. Never copy a live database file directly. A copy taken while another process writes can be torn or stale, and no check of the file alone can detect every such copy.
-
-Alternatively, on a **copy** that keeps `copy.db` and `copy.db-wal` together, `sqlite3 copy.db "PRAGMA journal_mode=DELETE"` folds the WAL in and switches the file to rollback mode. Never run it on the live database.
+`VACUUM INTO` reads one consistent snapshot, even while the database is in use. Always pass `-readonly`. Without it, `sqlite3` checkpoints the WAL into the source file when it closes and deletes the `-wal` file, which changes your source or export pair. With it, the `.db` and `-wal` files stay byte-for-byte unchanged; only a `-shm` index file can appear beside them. Do not use `.backup`: its copy keeps the WAL-mode flag and is rejected. Never copy a live database file directly. A copy taken while another process writes can be torn or stale, and no check of the file alone can detect every such copy.
 
 SQLite documents that a vacuum can renumber the `rowid` of tables without an `INTEGER PRIMARY KEY`. Such tables take their document IDs from the rowids in `export.db`.
 
