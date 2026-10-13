@@ -49,7 +49,7 @@ public sealed partial class TerraBaseDatabase
         var region = TerraBaseException.RegionHeader(response, "X-TerraBase-Region");
         if (!string.Equals(response.Content.Headers.ContentType?.MediaType, "text/event-stream", StringComparison.OrdinalIgnoreCase))
             throw InvalidStream(region);
-        using var stream = new BoundedSseStream(await response.Content.ReadAsStreamAsync(opened.Token).ConfigureAwait(false), opened.Token);
+        using var stream = new BoundedSseStream(await response.Content.ReadAsStreamAsync(opened.Token).ConfigureAwait(false), connection.TimeProvider, opened.Token);
         var parser = SseParser.Create(stream, static (type, bytes) => (Type: type, Data: bytes.ToArray()));
         await foreach (var item in parser.EnumerateAsync(opened.Token).ConfigureAwait(false))
         {

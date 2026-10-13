@@ -33,6 +33,8 @@ internal sealed class TerraBaseConnection
     private readonly int maxResponseBytes;
     private readonly string? regionPin;
 
+    internal TimeProvider TimeProvider => timeProvider;
+
     public TerraBaseConnection(HttpClient http, Uri? baseAddress, ITerraBaseEndpointResolver? endpointResolver, string? secret, string secretName, TimeSpan timeout, int maxResponseBytes,
         Func<CancellationToken, ValueTask<string>>? accessTokenProvider = null, bool anonymousAllowed = false, string? region = null, TimeProvider? timeProvider = null)
     {
@@ -217,7 +219,8 @@ internal sealed class TerraBaseConnection
             // Stream lifetime belongs to enumeration, not the ordinary JSON request timeout.
             if (streaming) expiry.CancelAfter(Timeout.InfiniteTimeSpan);
             deadline.Token.ThrowIfCancellationRequested();
-            return new OpenResponse(request, response, deadline, expiry);
+            // An already-running expiry callback may still fire; acquired streams belong only to caller cancellation.
+            return new OpenResponse(request, response, deadline, expiry, streaming ? cancellationToken : deadline.Token);
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
         {
@@ -248,10 +251,11 @@ internal sealed class TerraBaseConnection
         }
     }
 
-    internal sealed class OpenResponse(HttpRequestMessage request, HttpResponseMessage response, CancellationTokenSource deadline, CancellationTokenSource expiry) : IDisposable
+    internal sealed class OpenResponse(HttpRequestMessage request, HttpResponseMessage response, CancellationTokenSource deadline, CancellationTokenSource expiry,
+        CancellationToken token) : IDisposable
     {
         public HttpResponseMessage Response { get; } = response;
-        public CancellationToken Token => deadline.Token;
+        public CancellationToken Token { get; } = token;
         public void Dispose()
         {
             Response.Dispose();

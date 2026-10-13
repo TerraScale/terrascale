@@ -1,7 +1,7 @@
 namespace TerraScale.DotNet;
 
 // SseParser has no event bound. Check bytes before the parser can accumulate an unbounded line or data field.
-internal sealed class BoundedSseStream(Stream source, CancellationToken cancellationToken) : Stream
+internal sealed class BoundedSseStream(Stream source, TimeProvider timeProvider, CancellationToken cancellationToken) : Stream
 {
     internal const int MaxEventBytes = 4 * 1024 * 1024;
     private int eventBytes;
@@ -16,14 +16,15 @@ internal sealed class BoundedSseStream(Stream source, CancellationToken cancella
 
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default)
     {
-        using var read = CancellationTokenSource.CreateLinkedTokenSource(token, cancellationToken);
-        read.CancelAfter(TimeSpan.FromSeconds(45)); // Producer heartbeats every 15 seconds; a stalled read has a fixed bound.
+        // Producer heartbeats every 15 seconds; each blocked read gets its own fixed idle deadline.
+        using var idle = new CancellationTokenSource(TimeSpan.FromSeconds(45), timeProvider);
+        using var read = CancellationTokenSource.CreateLinkedTokenSource(token, cancellationToken, idle.Token);
         int count;
         try
         {
             count = await source.ReadAsync(buffer, read.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException error) when (!token.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException error) when (idle.IsCancellationRequested && !token.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             throw new TimeoutException("TerraBase changes stream stopped sending bytes for 45 seconds.", error);
         }

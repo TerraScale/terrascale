@@ -272,6 +272,118 @@ public sealed class TerraBaseChangesContractTests
     }
 
     [Test]
+    public async Task An_expiry_callback_released_after_acquisition_cannot_cancel_the_stream()
+    {
+        using var source = new WaitingStream();
+        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(Sse(source)));
+        using var http = new HttpClient(handler);
+        using var cancellation = new CancellationTokenSource();
+        var clock = new HeldExpiryClock();
+        var connection = new TerraBaseConnection(http, new Uri("https://sjc.api.terrascale.tech"), null, "action-token", "ApiKey",
+            TimeSpan.FromSeconds(30), TerraBaseConnection.DefaultMaxResponseBytes, timeProvider: clock);
+        var db = new TerraBaseDatabase(connection, $"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app");
+        var read = DrainAsync(db.StreamChangesAsync(cancellationToken: cancellation.Token));
+        try
+        {
+            var token = await source.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(clock.Disarmed).IsTrue();
+            clock.ReleaseCallback();
+            await Assert.That(token.IsCancellationRequested).IsFalse();
+            await Assert.That(read.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            await cancellation.CancelAsync();
+            await Assert.ThrowsAsync<OperationCanceledException>(() => read);
+        }
+        await Assert.That(source.Disposed).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, true)]
+    [Arguments(true, true, false)]
+    public async Task Idle_deadline_ends_a_silent_stream_and_caller_cancellation_takes_precedence(bool callerCancels, bool idleExpires, bool idleFirst)
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var source = new WaitingStream(release.Task);
+        using var content = new DisposalTrackedStreamContent(source);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream");
+        using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(response));
+        using var http = new HttpClient(handler);
+        using var cancellation = new CancellationTokenSource();
+        var clock = new HeldExpiryClock();
+        var connection = new TerraBaseConnection(http, new Uri("https://sjc.api.terrascale.tech"), null, "action-token", "ApiKey",
+            TimeSpan.FromSeconds(30), TerraBaseConnection.DefaultMaxResponseBytes, timeProvider: clock);
+        var db = new TerraBaseDatabase(connection, $"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app");
+        var read = DrainAsync(db.StreamChangesAsync(cancellationToken: cancellation.Token));
+        try
+        {
+            await source.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(clock.Disarmed).IsTrue();
+            await Assert.That(clock.HasIdleTimer).IsTrue();
+            if (callerCancels && !idleFirst) await cancellation.CancelAsync();
+            if (idleExpires)
+            {
+                clock.ReleaseIdleCallback();
+                await source.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            // Hold the read's cancellation exception until both signals are set, without scheduler races.
+            if (callerCancels && idleFirst) await cancellation.CancelAsync();
+            release.TrySetResult();
+            if (callerCancels)
+                await Assert.ThrowsAsync<OperationCanceledException>(() => read);
+            else
+            {
+                var error = await Assert.ThrowsAsync<TimeoutException>(() => read);
+                await Assert.That(error!.Message).Contains("stopped sending bytes for 45 seconds");
+            }
+            await Assert.That(content.Disposed).IsTrue();
+            await Assert.That(source.Disposed).IsTrue();
+        }
+        finally
+        {
+            await cancellation.CancelAsync();
+            release.TrySetResult();
+            try { await read; }
+            catch (Exception error) when (error is OperationCanceledException or TimeoutException) { }
+        }
+    }
+
+    [Test]
+    public async Task A_completed_reads_idle_callback_cannot_cancel_the_next_read()
+    {
+        using var source = new WaitingStream(prefix: Encoding.UTF8.GetBytes("event: cursor\nid: AQ\ndata: {\"cursor\":\"AQ\"}\n\n"));
+        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(Sse(source)));
+        using var http = new HttpClient(handler);
+        using var cancellation = new CancellationTokenSource();
+        var clock = new HeldExpiryClock();
+        var connection = new TerraBaseConnection(http, new Uri("https://sjc.api.terrascale.tech"), null, "action-token", "ApiKey",
+            TimeSpan.FromSeconds(30), TerraBaseConnection.DefaultMaxResponseBytes, timeProvider: clock);
+        var db = new TerraBaseDatabase(connection, $"/v1/projects/{TerraBaseIntegrationFixture.ProjectId}/databases/app");
+        await using var enumerator = db.StreamChangesAsync(cancellationToken: cancellation.Token).GetAsyncEnumerator();
+        await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        await Assert.That(enumerator.Current.Cursor).IsEqualTo("AQ");
+        var read = enumerator.MoveNextAsync().AsTask();
+        try
+        {
+            var token = await source.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(clock.IdleTimerCount).IsEqualTo(2);
+            clock.ReleaseIdleCallback();
+            await Assert.That(token.IsCancellationRequested).IsFalse();
+            await Assert.That(read.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            await cancellation.CancelAsync();
+            await Assert.ThrowsAsync<OperationCanceledException>(() => read);
+        }
+        await Assert.That(source.Disposed).IsTrue();
+    }
+
+    [Test]
     [Arguments("event: cursor\nid: AQ\ndata: {\"cursor\":\"different\"}\n\n")]
     [Arguments("event: change\nid: AQ\ndata: {}\n\n")]
     [Arguments("event: change\ndata: {}\n\n")]
@@ -361,18 +473,31 @@ public sealed class TerraBaseChangesContractTests
         protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
     }
 
-    private sealed class WaitingStream() : MemoryStream
+    private sealed class WaitingStream(Task? releaseCancellation = null, byte[]? prefix = null) : MemoryStream(prefix ?? [])
     {
         public TaskCompletionSource<CancellationToken> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool Disposed { get; private set; }
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
+            if (Position < Length) return await base.ReadAsync(buffer, cancellationToken);
             Started.TrySetResult(cancellationToken);
             try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
+            catch (OperationCanceledException) when (releaseCancellation is not null)
+            {
+                Cancelled.TrySetResult();
+                await releaseCancellation;
+                throw;
+            }
             finally { Cancelled.TrySetResult(); }
             return 0;
         }
+        protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
+    }
+
+    private sealed class DisposalTrackedStreamContent(Stream source) : StreamContent(source)
+    {
+        public bool Disposed { get; private set; }
         protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
     }
 
@@ -386,6 +511,39 @@ public sealed class TerraBaseChangesContractTests
             {
                 // Simulate the deadline callback already running when acquisition tries to disable its timer.
                 if (dueTime == Timeout.InfiniteTimeSpan) callback(state);
+                return true;
+            }
+            public void Dispose() { }
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class HeldExpiryClock : TimeProvider
+    {
+        private readonly Dictionary<TimeSpan, List<(TimerCallback Callback, object? State)>> callbacks = [];
+        public bool Disarmed { get; private set; }
+        public bool HasIdleTimer => callbacks.ContainsKey(TimeSpan.FromSeconds(45));
+        public int IdleTimerCount => callbacks[TimeSpan.FromSeconds(45)].Count;
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            if (!callbacks.TryGetValue(dueTime, out var timers)) callbacks[dueTime] = timers = [];
+            timers.Add((callback, state));
+            return new HeldTimer(() => { if (dueTime == TimeSpan.FromSeconds(30)) Disarmed = true; });
+        }
+        // Resume an expiry callback that was already queued before the timer was disarmed.
+        public void ReleaseCallback() => Release(TimeSpan.FromSeconds(30));
+        public void ReleaseIdleCallback() => Release(TimeSpan.FromSeconds(45));
+        private void Release(TimeSpan dueTime)
+        {
+            var (callback, state) = callbacks[dueTime][0];
+            callback(state);
+        }
+
+        private sealed class HeldTimer(Action disarmed) : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                if (dueTime == Timeout.InfiniteTimeSpan) disarmed();
                 return true;
             }
             public void Dispose() { }
