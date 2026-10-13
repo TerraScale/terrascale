@@ -830,7 +830,7 @@ public sealed class ShapeSealTests
 
         public async Task ReplaceCapturedDocumentAsync(long after, string document, string table)
         {
-            var captured = await sqlite.WithWriterAsync(session =>
+            var (changeId, capturedId, capturedDocument) = await sqlite.WithWriterAsync(session =>
             {
                 using var read = session.Connection.CreateCommand();
                 read.CommandText = "SELECT change_id, after FROM turso_cdc WHERE change_id > $after AND table_name = $collection AND change_type IN (0, 1) ORDER BY change_id LIMIT 1;";
@@ -843,15 +843,15 @@ public sealed class ShapeSealTests
                 }
                 return (ChangeId: reader.GetInt64(0), Id: id, Document: body);
             }, "a test reading a captured document", CancellationToken.None);
-            await Assert.That(captured.Document).IsEqualTo("{\"a\":0}");
-            var image = SqliteTextRecord(captured.Id, document);
-            await RawWriteAsync($"UPDATE turso_cdc SET table_name = '{table}', after = X'{Convert.ToHexString(image)}' WHERE change_id = {captured.ChangeId};");
+            await Assert.That(capturedDocument).IsEqualTo("{\"a\":0}");
+            var image = SqliteTextRecord(capturedId, document);
+            await RawWriteAsync($"UPDATE turso_cdc SET table_name = '{table}', after = X'{Convert.ToHexString(image)}' WHERE change_id = {changeId};");
             if (table == CollectionName)
             {
                 return;
             }
 
-            var state = await sqlite.WithWriterAsync(session =>
+            var (stateChangeId, stateImage) = await sqlite.WithWriterAsync(session =>
             {
                 using var read = session.Connection.CreateCommand();
                 read.CommandText = "SELECT change_id, after FROM turso_cdc WHERE change_id > $after AND table_name = '_tb_state' AND change_type IN (0, 1) ORDER BY change_id;";
@@ -861,7 +861,7 @@ public sealed class ShapeSealTests
                 {
                     var candidate = SqliteSession.Bytes(reader, 1);
                     if (SqliteRecord.Decode(candidate) is [string collection, string id, _, string, long, long, 1L, _, _]
-                        && collection == CollectionName && id == captured.Id)
+                        && collection == CollectionName && id == capturedId)
                     {
                         return (ChangeId: reader.GetInt64(0), Image: candidate);
                     }
@@ -871,15 +871,15 @@ public sealed class ShapeSealTests
             var collectionBytes = Encoding.UTF8.GetBytes(CollectionName);
             var tableBytes = Encoding.UTF8.GetBytes(table);
             // These fixture names and the nine-column state header use single-byte varints; copy every other field verbatim.
-            await Assert.That(state.Image[0]).IsLessThan((byte)128);
-            await Assert.That(state.Image[1]).IsEqualTo((byte)(13 + 2 * collectionBytes.Length));
+            await Assert.That(stateImage[0]).IsLessThan((byte)128);
+            await Assert.That(stateImage[1]).IsEqualTo((byte)(13 + 2 * collectionBytes.Length));
             await Assert.That(13 + 2 * tableBytes.Length).IsLessThan(128);
-            image = [state.Image[0], (byte)(13 + 2 * tableBytes.Length), .. state.Image[2..state.Image[0]],
-                .. tableBytes, .. state.Image[(state.Image[0] + collectionBytes.Length)..]];
+            image = [stateImage[0], (byte)(13 + 2 * tableBytes.Length), .. stateImage[2..stateImage[0]],
+                .. tableBytes, .. stateImage[(stateImage[0] + collectionBytes.Length)..]];
             await Assert.That(SqliteRecord.Decode(image)[0]).IsEqualTo(table);
-            await Assert.That(SqliteRecord.Decode(image).Skip(1).SequenceEqual(SqliteRecord.Decode(state.Image).Skip(1))).IsTrue()
+            await Assert.That(SqliteRecord.Decode(image).Skip(1).SequenceEqual(SqliteRecord.Decode(stateImage).Skip(1))).IsTrue()
                 .Because("only the collection reference changes; id, live, state, stamp and origin stay intact");
-            await RawWriteAsync($"UPDATE turso_cdc SET after = X'{Convert.ToHexString(image)}' WHERE change_id = {state.ChangeId};");
+            await RawWriteAsync($"UPDATE turso_cdc SET after = X'{Convert.ToHexString(image)}' WHERE change_id = {stateChangeId};");
         }
 
         // Damages the first _tb_state row of this collection after change id `after` as the fixture's mutation says.
