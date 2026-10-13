@@ -200,32 +200,38 @@ For a write answered `2xx`:
   - In a full partition, writes fail: `remote_region_unavailable` before the write, or `write_outcome_unknown` after
     it. None answers success.
 
-### Scope: production writes, and one seam
+### Scope: every machine of a cell, and one seam
 
-- **Where the contract holds.** It holds on the production app, `ts-terrabase` (`TerraBaseOptions.ProductionApp`, the
-  identity Fly sets on every machine as `FLY_APP_NAME`). That app is where production writes are taken.
-- **Everywhere else** the machine answers after its local durable commit (B1, synced as everywhere), with
-  `durability: "local_durable"`, never `remote_durable`. That covers:
-  - PR previews (`ts-pr-<n>`, one machine in gru);
-  - disposable test apps;
-  - development off Fly (identity `local`, a cell of its own);
-  - the test servers.
+- **Where the contract holds.** On every machine that belongs to a cell of machines, which means a machine with a
+  member directory:
+  - on Fly, the internal DNS of its app. That covers the production app, the three-region acceptance app
+    `ts-terrabase-e2e` and PR previews;
+  - in tests, the directory the multi-machine suites register: the `PeerStreamTests` cluster and the E2E
+    three-region topology.
 
-  The placement rule of two regions or more applies only on the production app.
-- **Not a switch.** No setting, variable or flag turns the contract off on the production app. It follows the app
-  identity Fly assigns, as the existing production auth check does (`TerraBaseOptions`).
+  Acceptance therefore runs the same write path as the release. The rule depends on no app name and no setting.
+- **The one documented limitation: a cell of one.** A machine without a member directory (off Fly, identity `local`):
+  development, and the single-machine Fast test servers.
+  - It has no second region by construction, so its writes answer after the local durable commit (B1) with
+    `durability: "local_durable"`, never `remote_durable`.
+  - A database there may be placed in one region.
+  - This never happens on Fly. A partition does not make a Fly machine a cell of one: its directory stays, so it fails
+    closed.
+- **Single-machine Fly apps fail clearly.** A PR preview runs one machine in gru, so no other region can confirm.
+  - A database create without a replica region answers `503 remote_region_unavailable`.
+  - A write to a database placed in regions that do not serve answers `503 remote_region_unavailable` or
+    `write_outcome_unknown`.
+  - The platform databases are placed in gru, sjc and fra, so a preview's ts-auth writes fail the same way.
+  - A preview that needs writes runs a machine in a second region. That is a change to the preview tooling, outside
+    this record.
 - **The seam.** One interface in `Features/Replication`, `IRemoteDurability`, holds the following:
-  - whether this machine confirms writes remotely;
+  - whether this machine confirms writes remotely (it has a member directory);
   - `OtherRegionsAsync`: the serving regions other than this machine's, from the membership, for a new database's
     default placement. With none listed, such a create answers `503 remote_region_unavailable`;
-  - `CanConfirm`: whether a machine of another placed region has a connected stream for the database;
-  - `WaitAsync`: whether such a machine acknowledged a change id within the bound.
+  - `CanConfirm` and `WaitAsync` (step 2).
 
-  On the production app it is backed by the peer streams (`PeerStreams`, which holds every link's acks). Elsewhere it
-  confirms locally.
-- **Tests of the contract.** The multi-machine suites register the production implementation explicitly: test code,
-  using the production class. These are the `PeerStreamTests` cluster and the E2E regions of the three-region topology.
-  The single-machine Fast tests keep the local answer.
+  With a member directory it is backed by the peer streams (`PeerStreams`, which holds every link's acks). Without
+  one it confirms locally. The registration uses the same test as the membership's (`AddTerraBaseCluster`).
 
 ## Acceptance
 
