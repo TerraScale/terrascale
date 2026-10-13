@@ -11,7 +11,7 @@ using TerraScale.DotNet.TerraBase;
 namespace TerraScale.Dashboard.Features.Billing;
 
 public sealed class InternalBillingService(IDashboardState state, AccountService accounts, IPlatformRoleGateway roles,
-    IUsageMeasurements measurements, TimeProvider time)
+    IUsageMeasurements measurements, TimeProvider time, ITsAuthPlatform platform)
 {
     public const string Collection = "dashboard_internal_billing";
     public const string SingletonId = "organization";
@@ -29,8 +29,8 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             throw new AccountAccessException("An exact organization ID, paid base plan and positive cap with non-negative rates are required.", 422);
         var basePlan = PlanCatalog.For(config.BasePlanKey);
         if (basePlan.PriceCents <= 0) throw new AccountAccessException("Select an existing paid base plan key.", 422);
-        var target = await OrganizationAsync(config.OrganizationId, cancellationToken);
-        Target(target.Organization);
+        var target = await AuthorizedOrganizationAsync(principal, config.OrganizationId, cancellationToken);
+        Target(target.Organization, target.Authority);
         var reservation = await ReserveAsync(target.Organization, config, cancellationToken);
         try { await ClaimSingletonAsync(reservation, cancellationToken); }
         catch (AccountAccessException)
@@ -42,13 +42,13 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
         }
         for (var attempt = 0; attempt < 8; attempt++)
         {
-            target = await OrganizationAsync(config.OrganizationId, cancellationToken);
-            Target(target.Organization);
             var currentFence = await FenceAsync(config.OrganizationId, cancellationToken);
             if (currentFence.RequestId != reservation.RequestId || currentFence.Kind != "internal")
                 throw new AccountAccessException("Another internal billing configuration is in progress.", 409);
             await ClaimSingletonAsync(reservation, cancellationToken);
             principal = await RefreshAdministratorAsync(principal, refreshAuthority, cancellationToken);
+            target = await AuthorizedOrganizationAsync(principal, config.OrganizationId, cancellationToken);
+            Target(target.Organization, target.Authority);
             var proposal = reservation.InternalReservation!;
             if (target.Organization.InternalBilling?.ConfigurationId == proposal.Policy.ConfigurationId)
             {
@@ -77,11 +77,9 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
         Func<CancellationToken, Task<AccountContext>> refreshAuthority, CancellationToken cancellationToken)
     {
         await AdministratorAsync(principal, cancellationToken);
-        var target = await OrganizationAsync(organizationId, cancellationToken);
-        if (target.Organization.InternalBilling is null) throw new AccountAccessException("Organization has no internal billing policy.", 422);
         // The operator must also have a genuine fresh producer-authorized
         // membership. No owner impersonation or management key is borrowed.
-        var context = await AccountScope.RefreshAsync(accounts, principal with { Organization = target.Organization, Project = null }, cancellationToken);
+        var context = await AccountScope.RefreshAsync(accounts, principal with { Organization = new() { Id = organizationId }, Project = null }, cancellationToken);
         var (organization, bill) = await ReadDetailsAsync(context, cancellationToken);
         if (bill is { Available: true, CapReached: true })
             try { await RecordAlertAsync(principal, organization, bill, refreshAuthority, cancellationToken); }
@@ -97,10 +95,11 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
     private async Task<(OrganizationRecord Organization, InternalBill Bill)> ReadDetailsAsync(AccountContext context, CancellationToken cancellationToken)
     {
         context = await AccountScope.RefreshAsync(accounts, context, cancellationToken);
-        var organization = context.Organization!;
+        var target = await AuthorizedOrganizationAsync(context, context.Organization!.Id, cancellationToken);
+        var organization = target.Organization;
         if (organization.InternalBilling is null) throw new AccountAccessException("Organization has no internal billing policy.", 422);
         await ValidateClaimsAsync(state, organization, cancellationToken);
-        var selection = new UsageSelection(context, "7d", "", false);
+        var selection = new UsageSelection(context with { Organization = organization }, "7d", "", false);
         return (organization, Estimate(organization, await measurements.ReadAsync(selection, cancellationToken), time.GetUtcNow()));
     }
 
@@ -126,6 +125,10 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             from = capturedMonth;
             if (from.Offset != TimeSpan.Zero || from.Day != 1 || from.TimeOfDay != TimeSpan.Zero || from > now)
                 return initial with { Error = MissingUsage };
+            // TerraBase includes the current UTC day bucket; its upper boundary
+            // is the next midnight unless the request was made exactly at midnight.
+            var ticks = TimeSpan.TicksPerDay;
+            var roundedEnd = new DateTimeOffset(checked((now.UtcTicks + ticks - 1) / ticks * ticks), TimeSpan.Zero);
             to = from;
             long reads = 0, writes = 0, bytes = 0;
             foreach (var project in projects)
@@ -134,7 +137,8 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
                 var period = reading.Period;
                 if (organization.Projects.GetValueOrDefault(project.Id) != project || project.OrganizationId != organization.Id ||
                     reading.ProjectId != project.Id || reading.DatabaseId.Length != 0 || period.From != from || period.Granularity != "day" ||
-                    period.To <= from || period.To > from.AddMonths(1) || period.To > now ||
+                    period.To.Offset != TimeSpan.Zero || period.To.TimeOfDay != TimeSpan.Zero ||
+                    period.To <= from || period.To > from.AddMonths(1) || period.To > roundedEnd ||
                     period.Reads < 0 || period.Writes < 0 || reading.LogicalBytes < 0)
                     return initial with { Error = MissingUsage };
                 reads = checked(reads + period.Reads); writes = checked(writes + period.Writes); bytes = checked(bytes + reading.LogicalBytes);
@@ -189,7 +193,7 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             }
             else if (organization.InternalBilling is not null) throw new IOException("The internal billing fence is unavailable.");
             var planId = current?.InternalReservation!.Policy.PlanId ?? ids.NewId();
-            var requestId = Guid.CreateVersion7().ToString();
+            var requestId = ids.NewId();
             var plan = PlanCatalog.For(config.BasePlanKey) with { Id = planId, Key = "internal", Name = "TerraScale Internal" };
             var policy = new InternalBillingPolicy(organization.Id, planId, config.BasePlanKey, requestId, plan,
                 PlanCatalog.Limits(config.BasePlanKey), PlanCatalog.ResourceLimits(config.BasePlanKey), config.WriteCentsPerMillion, config.StorageCentsPerGiBMonth);
@@ -276,7 +280,8 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
         InternalBillingAlert? alert = null;
         for (var attempt = 0; attempt < 8; attempt++)
         {
-            var current = await OrganizationAsync(observed.Id, cancellationToken);
+            principal = await RefreshAdministratorAsync(principal, refreshAuthority, cancellationToken);
+            var current = await AuthorizedOrganizationAsync(principal, observed.Id, cancellationToken);
             if (current.Organization.InternalBilling?.ConfigurationId != observed.InternalBilling!.ConfigurationId ||
                 current.Organization.OwnerUserId != observed.OwnerUserId || current.Organization.SpendCapCents != bill.SpendCapCents)
                 throw new AccountAccessException("Internal billing changed while recording its cap alert.", 409);
@@ -285,7 +290,6 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             alert = new(current.Organization.OwnerUserId, observed.InternalBilling.ConfigurationId, bill.SpendCapCents,
                 alert?.Id ?? ids.NewId(), month, bill.Alert!, time.GetUtcNow());
             current.Organization.InternalBillingAlerts[alertKey] = alert;
-            principal = await RefreshAdministratorAsync(principal, refreshAuthority, cancellationToken);
             try { await state.PutAsync(AccountService.OrganizationsCollection, observed.Id, JsonSerializer.SerializeToElement(current.Organization), TerraBasePrecondition.Matches(current.Document.Version), cancellationToken); break; }
             catch (TerraBasePreconditionFailedException) when (attempt < 7) { alert = null; }
         }
@@ -299,18 +303,15 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             var identityDocument = await state.GetAsync(AccountService.IdentitiesCollection, key, cancellationToken) ?? throw new IOException("Internal billing owner identity is unavailable.");
             var identity = AccountService.Read<AccountIdentityBinding>(identityDocument);
             if (document.Id != key || identityDocument.Id != key || account.UserId != alert.OwnerUserId || identity.UserId != account.UserId ||
-                identity.AccountId != account.Id || !account.OrganizationIds.Contains(observed.Id) ||
+                identity.AccountId != account.Id ||
                 !(TerraScaleIds.IsValid(account.Id) || account.Id == key)) throw new IOException("Internal billing owner account identity is invalid.");
             principal = await RefreshAdministratorAsync(principal, refreshAuthority, cancellationToken);
             // The CLI's explicit target need not be the browser selection.
             // Re-resolve its provider membership after credential rotation,
             // then read its canonical owner/policy/cap after that awaited work.
-            var authorized = await AccountScope.RefreshAsync(accounts, principal with { Organization = observed, Project = null }, cancellationToken);
-            var latest = await OrganizationAsync(observed.Id, cancellationToken);
+            var latest = await AuthorizedOrganizationAsync(principal, observed.Id, cancellationToken);
             if (latest.Organization.OwnerUserId != alert.OwnerUserId || latest.Organization.InternalBilling?.ConfigurationId != alert.ConfigurationId ||
-                latest.Organization.SpendCapCents != alert.SpendCapCents || !latest.Organization.ContainsMember(authorized.UserId) ||
-                !latest.Organization.Members.TryGetValue(alert.OwnerUserId, out var owner) || owner.UserId != alert.OwnerUserId ||
-                owner.Status != "active" || owner.Role != "owner")
+                latest.Organization.SpendCapCents != alert.SpendCapCents)
                 throw new AccountAccessException("Internal billing changed while recording its cap alert.", 409);
             if (account.Notifications.Any(notification => notification.OrganizationId == observed.Id && notification.Type == "internal-cap" && notification.BillingMonth == month)) return;
             account.Notifications.Add(new()
@@ -359,6 +360,23 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
         return (document, organization);
     }
 
+    private async Task<(TerraBaseDocument Document, OrganizationRecord Organization, OrganizationRecord Authority)> AuthorizedOrganizationAsync(AccountContext principal, string id, CancellationToken cancellationToken)
+    {
+        // Capture the CAS version before awaited canonical reads so a newer dashboard projection cannot be overwritten.
+        var target = await OrganizationAsync(id, cancellationToken);
+        var current = await AccountScope.RefreshAsync(accounts, principal with { Organization = new() { Id = id }, Project = null }, cancellationToken);
+        var members = await platform.ListMembersAsync(current.Session, id, cancellationToken);
+        var owners = members.Where(member => member.Role == "owner").ToArray();
+        if (members.Any(member => string.IsNullOrEmpty(member.UserId)) || members.Select(member => member.UserId).Distinct(StringComparer.Ordinal).Count() != members.Count ||
+            !members.Any(member => member.UserId == current.UserId) || owners.Length != 1)
+            throw new IOException("Internal organization owner identity is invalid.");
+        // I3 keeps OwnerUserId transient; each persisted billing alert owns its owner reference.
+        target.Organization.OwnerUserId = owners[0].UserId;
+        // I3's hydrated map preserves settings for current projects; canonical project fields are JsonIgnore.
+        target.Organization.Projects = current.Organization!.Projects;
+        return (target.Document, target.Organization, current.Organization!);
+    }
+
     private async Task<BillingBinding> FenceAsync(string id, CancellationToken cancellationToken) => StripeBilling.ReadBinding(
         await state.GetAsync(StripeBilling.Collection, id, cancellationToken) ?? throw new IOException("Internal billing fence is unavailable."), id);
 
@@ -378,15 +396,13 @@ public sealed class InternalBillingService(IDashboardState state, AccountService
             throw new IOException("Internal billing fence does not match its policy.");
     }
 
-    private static void Target(OrganizationRecord organization)
+    private static void Target(OrganizationRecord organization, OrganizationRecord authority)
     {
-        if (organization.Name != "terrascale") throw new AccountAccessException("Internal billing requires the organization named exactly terrascale.");
-        if (organization.Status != "active" || organization.Archived || organization.DeletionRequested) throw new AccountAccessException("The internal organization must be active.", 409);
-        if (organization.OwnerUserId.Length == 0 || !organization.Members.TryGetValue(organization.OwnerUserId, out var owner) ||
-            owner.UserId != organization.OwnerUserId || owner.Status != "active" || owner.Role != "owner")
-            throw new IOException("Internal organization owner identity is invalid.");
+        if (authority.Id != organization.Id) throw new IOException("Internal organization identity is invalid.");
+        if (authority.Name != "terrascale") throw new AccountAccessException("Internal billing requires the organization named exactly terrascale.");
+        if (authority.Status != "active" || organization.Archived || organization.DeletionRequested) throw new AccountAccessException("The internal organization must be active.", 409);
         foreach (var name in new[] { "ts-dashboard", "ts-auth", "ts-router", "ts-status", "ts-orchestrator", "ku", "ts-reviewer" })
-            if (!organization.Projects.Any(pair => pair.Key == pair.Value.Id && pair.Value.OrganizationId == organization.Id && pair.Value.Status == "active" && pair.Value.Name == name))
+            if (!authority.Projects.Any(pair => pair.Key == pair.Value.Id && pair.Value.OrganizationId == organization.Id && pair.Value.Status == "active" && pair.Value.Name == name))
                 throw new AccountAccessException("Internal service project " + name + " is missing or inactive.", 409);
         organization.InternalBilling?.Validate(organization);
     }

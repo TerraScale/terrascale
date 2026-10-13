@@ -5,8 +5,7 @@ using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class DatabaseOverviewJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
@@ -19,8 +18,8 @@ public sealed class DatabaseOverviewJourneyTests(DashboardE2EFixture fixture)
         var measurement = "";
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
         {
-            if (http.Request.Method != "GET" || !http.Request.Path.Value!.StartsWith("/v1/management/", StringComparison.Ordinal) ||
-                !http.Request.Path.Value.EndsWith("/collections", StringComparison.Ordinal) || Volatile.Read(ref measurement).Length == 0)
+            if (http.Request.Method != "GET" || !http.Request.Path.Value!.StartsWith("/v1/projects/", StringComparison.Ordinal) ||
+                !http.Request.Path.Value.EndsWith("/schema", StringComparison.Ordinal) || Volatile.Read(ref measurement).Length == 0)
                 return Task.FromResult<IResult?>(null);
             return Task.FromResult<IResult?>(Volatile.Read(ref measurement) switch
             {

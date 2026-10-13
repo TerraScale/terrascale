@@ -4,11 +4,10 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Data;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
-    [NotInParallel("dashboard-demo")]
     public async Task LegacyDatabaseDataAndCredentialToolsWorkAcrossReplicas()
     {
         using var client = fixture.CreateClient();
@@ -130,8 +129,11 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(detail.GetProperty("bytes").GetInt64()).IsGreaterThan(0);
             await Assert.That(detail.GetProperty("regions").GetArrayLength()).IsEqualTo(2);
             var analysis = await CallAsync(replica, "check_sql", new() { ["databaseId"] = databaseId, ["sql"] = "SELECT * FROM users WHERE score > $1 ORDER BY name LIMIT 20" });
+            await Assert.That(analysis.GetProperty("ok").GetBoolean()).IsFalse();
+            await Assert.That(analysis.GetProperty("error").GetString()).Contains("cannot bind parameters");
+            analysis = await CallAsync(replica, "check_sql", new() { ["databaseId"] = databaseId, ["sql"] = "SELECT * FROM users WHERE score > 1 ORDER BY name LIMIT 20" });
             await Assert.That(analysis.GetProperty("ok").GetBoolean()).IsTrue();
-            await Assert.That(analysis.GetProperty("parameterSlots").GetInt32()).IsEqualTo(1);
+            await Assert.That(analysis.GetProperty("parameterSlots").GetInt32()).IsEqualTo(0);
             await Assert.That(analysis.GetProperty("suggestions").GetArrayLength()).IsEqualTo(2);
             var sql = await CallAsync(replica, "run_sql", new() { ["databaseId"] = databaseId, ["sql"] = "SELECT * FROM users LIMIT 100" });
             await Assert.That(sql.GetProperty("result").GetProperty("rows").GetArrayLength()).IsEqualTo(31);
@@ -153,8 +155,9 @@ public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
             var issued = await CallAsync(client, "create_api_key", new() { ["name"] = "SDK " + suffix, ["scopes"] = new[] { "database:read", "database:write" }, ["databaseId"] = databaseId });
             keyId = issued.GetProperty("apiKey").GetProperty("keyId").GetString()!;
             var keySecret = issued.GetProperty("secret").GetString()!;
-            await Assert.That(issued.GetProperty("apiKey").GetProperty("lastFour").GetString()).IsEqualTo(keySecret[^4..]);
-            var credentials = await CallAsync(replica, "list_api_keys", new() { ["search"] = "TB_", ["databaseId"] = databaseId });
+            await Assert.That(issued.GetProperty("apiKey").GetProperty("lastFour").GetString()).IsEqualTo("");
+            await Assert.That(issued.GetProperty("apiKey").GetProperty("databaseName").GetString()).IsEqualTo(databaseName);
+            var credentials = await CallAsync(replica, "list_api_keys", new() { ["search"] = "SDK " + suffix, ["databaseId"] = databaseId });
             var publicKey = credentials.GetProperty("credentials").EnumerateArray().Single(key => key.GetProperty("keyId").GetString() == keyId);
             await Assert.That(publicKey.GetProperty("kind").GetString()).IsEqualTo("api-key");
             await Assert.That(publicKey.GetProperty("isActive").GetBoolean()).IsTrue();

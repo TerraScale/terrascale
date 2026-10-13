@@ -27,7 +27,8 @@ public sealed partial class StripeBilling
                     throw new IOException("Stripe invoice identity or pagination changed.");
                 invoices.Add(new(invoice.Id, invoice.Number ?? "", invoice.Status ?? "", invoice.AmountDue, invoice.Currency ?? "",
                     new(invoice.Created, TimeSpan.Zero), Timestamp(invoice.PeriodStart), Timestamp(invoice.PeriodEnd),
-                    InvoiceHistory.SafeUrl(invoice.HostedInvoiceUrl), InvoiceHistory.SafeUrl(invoice.InvoicePdf)));
+                    InvoiceHistory.SafeUrl(invoice.HostedInvoiceUrl), InvoiceHistory.SafeUrl(invoice.InvoicePdf))
+                { RemainingCents = invoice.AmountRemaining });
             }
             if (!page.HasMore) break;
             if (page.Data.Count == 0) throw new IOException("Stripe invoice pagination did not advance.");

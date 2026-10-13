@@ -9,7 +9,8 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
 {
     public static DatabaseScope Scope(AccountContext context) => new(context.UserId, context.Session.AccessToken,
         context.Organization?.Id ?? throw new AccountAccessException("Select an organization.", 404), context.Organization.Name,
-        context.Project?.Id ?? throw new AccountAccessException("Select a project.", 404), context.Project.Name);
+        context.Project?.Id ?? throw new AccountAccessException("Select a project.", 404), context.Project.Name)
+    { Session = context.Session };
 
     public static DatabaseRecord Database(AccountContext context, string id) =>
         context.Project?.Databases.GetValueOrDefault(id) is { } database && database.ProjectId == context.Project.Id
@@ -81,7 +82,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         ManagedDatabase remote;
         var recovered = false;
         try { remote = await backend.CreateAsync(scope, name, placement, cancellationToken); }
-        catch (DatabaseProviderException error) when (error.StatusCode == System.Net.HttpStatusCode.Conflict)
+        catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.Conflict)
         {
             // A prior provision whose dashboard commit failed is recovered by name.
             remote = (await backend.ListAsync(scope, placement[0], cancellationToken)).FirstOrDefault(database => database.Name == name)

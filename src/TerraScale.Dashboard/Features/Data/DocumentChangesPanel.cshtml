@@ -1,0 +1,11 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
+<ts-document-changes>
+<section class="ts-card" id="document-changes" data-database-id="@Model.Database.Id" data-collection="@Model.Collection" aria-labelledby="document-changes-title">
+    <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="document-changes-title">Document changes</h2><p class="ts-card-description">Changes to @Model.Collection. Saved SQL results are not live query subscriptions.</p></div></header>
+    <div class="ts-card-body ts-stack">
+        <p class="ts-meta" id="document-changes-status" role="status">Changes connection not established.</p>
+        <ol class="ts-stack" id="document-changes-items" aria-label="Recent document changes" aria-live="polite" aria-relevant="additions"></ol>
+        <p class="ts-hint">An empty current document does not prove a delete. If retained changes expire, reload current documents; unavailable history cannot be recovered by this view.</p>
+    </div>
+</section>
+</ts-document-changes>

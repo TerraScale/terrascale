@@ -1,15 +1,15 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Home;
+using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Usage;
 
-// The pinned official SDK has no usage client. This is the existing ts-go
-// producer contract, preserving native provider IDs and the authenticated JWT.
-public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time) : IUsageMeasurements
+// TerraBase owns counters; dashboard billing remains separate from these best-effort observations.
+public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, IProjectAccessTokens tokens) : IUsageMeasurements
 {
     public async Task<UsageMeasurements> ReadAsync(UsageSelection selection, CancellationToken cancellationToken)
     {
@@ -47,54 +47,75 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time) 
             try
             {
                 if (project.OrganizationId != context.Organization.Id) throw new JsonException("Usage project scope is invalid.");
-                var path = $"/v1/management/organizations/{Uri.EscapeDataString(context.Organization.Id)}/projects/{Uri.EscapeDataString(project.Id)}" +
-                    (databaseId.Length > 0 ? "/databases/" + Uri.EscapeDataString(databaseId) : "") +
-                    "/usage?granularity=" + bucket + "&from=" + Uri.EscapeDataString(first.UtcDateTime.ToString("O"));
-                using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(origin, path));
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", context.Session.AccessToken);
-                request.Headers.Add("X-TerraBase-User-Id", context.UserId);
-                request.Headers.Add("X-TerraBase-Organization-Id", context.Organization.Id);
-                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
-                if (response.StatusCode == HttpStatusCode.NotFound) return new(UsageSourceState.NotMetered);
-                if (response.StatusCode == HttpStatusCode.Unauthorized) return new(UsageSourceState.Unauthorized);
-                response.EnsureSuccessStatusCode();
-                using var json = await PlatformJson.ReadAsync(response.Content, deadline.Token);
-                return new(UsageSourceState.Measured, Parse(json.RootElement, project, databaseId, first, time.GetUtcNow(), bucket, true));
+                var token = await tokens.GetAsync(context.Session, context.Organization.Id, project.Id, ["databases:read"], deadline.Token);
+                var sdk = new TerraBaseDocumentsClient(client, new TerraBaseDocumentsClientOptions
+                {
+                    BaseAddress = origin,
+                    AccessTokenProvider = _ => ValueTask.FromResult(token)
+                });
+                if (databaseId.Length > 0)
+                {
+                    if (!project.Databases.TryGetValue(databaseId, out var configured) || configured.ProjectId != project.Id)
+                        throw new JsonException("Usage database scope is invalid.");
+                    var row = await sdk.Database(project.Id, configured.Name).GetUsageAsync(bucket, first, now, deadline.Token);
+                    if (row.DatabaseId != databaseId) throw new JsonException("Usage returned a different database.");
+                    return new(UsageSourceState.Measured, DatabaseReading(row, project, first, now, bucket));
+                }
+                var totals = await sdk.Project(project.Id).GetUsageAsync(bucket, first, now, deadline.Token);
+                if (totals.ProjectId != project.Id || Count(totals.Databases) != totals.Items.Count ||
+                    totals.Items.Select(item => item.DatabaseId).Distinct(StringComparer.Ordinal).Count() != totals.Items.Count)
+                    throw new JsonException("Usage returned a different project or repeated database.");
+                if (Count(totals.StorageBytes) != totals.Items.Sum(item => Count(item.StorageBytes)) ||
+                    Count(totals.LogicalBytes) != totals.Items.Sum(item => Count(item.LogicalBytes)) ||
+                    Count(totals.Documents) != totals.Items.Sum(item => Count(item.Documents)) ||
+                    Count(totals.Reads) != totals.Items.Sum(item => Count(item.Reads)) ||
+                    Count(totals.Writes) != totals.Items.Sum(item => Count(item.Writes)) ||
+                    totals.Period.Reads != totals.Items.Sum(item => Count(item.Period.Reads)) ||
+                    totals.Period.Writes != totals.Items.Sum(item => Count(item.Period.Writes)))
+                    throw new JsonException("Project usage totals disagree with database usage.");
+                return new(UsageSourceState.Measured, new(project.Id, "", Count(totals.LogicalBytes), Count(totals.Documents),
+                    Period(totals.Period, first, now, bucket), Points(totals.Series, totals.Period, bucket),
+                    totals.Items.Select(item => DatabaseReading(item, project, first, now, bucket)).ToArray()));
             }
+            catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            { return new(UsageSourceState.Unauthorized); }
+            catch (HttpRequestException error) when (error.StatusCode == HttpStatusCode.NotFound)
+            { return new(UsageSourceState.Restricted); }
+            catch (TerraBaseException error) when (error.StatusCode == HttpStatusCode.BadRequest && error.ErrorCode == "invalid_query")
+            { return new(UsageSourceState.QueryTooExpensive); }
             catch (Exception error) when (Failure(error, cancellationToken)) { return new(UsageSourceState.Unavailable); }
         }
     }
-    private static UsageReading Parse(JsonElement row, ProjectRecord project, string databaseId, DateTimeOffset from, DateTimeOffset now, string granularity, bool includeItems)
+    private static UsageReading DatabaseReading(TerraBaseDatabaseUsage row, ProjectRecord project, DateTimeOffset from, DateTimeOffset now, string bucket)
     {
-        if (row.GetProperty("projectId").GetString() != project.Id || row.TryGetProperty("databaseId", out var database) && (database.GetString() ?? "") != databaseId)
-            throw new JsonException("Usage returned a different resource.");
-        if (databaseId.Length > 0 && (!project.Databases.TryGetValue(databaseId, out var configured) || configured.ProjectId != project.Id)) throw new JsonException("Usage returned a foreign database.");
-        var period = row.GetProperty("period");
-        if (period.ValueKind != JsonValueKind.Object) throw new JsonException("Period usage is unavailable; lifetime counters cannot describe this range.");
-        var start = period.GetProperty("from").GetDateTimeOffset(); var end = period.GetProperty("to").GetDateTimeOffset();
-        if (start != from || end <= start || end > now || period.GetProperty("granularity").GetString() != granularity) throw new JsonException("Usage returned an invalid period.");
-        var points = new List<ActivityPoint>();
-        if (row.TryGetProperty("series", out var series))
-            foreach (var point in series.EnumerateArray())
-            {
-                var timestamp = point.GetProperty("start").GetDateTimeOffset();
-                if (timestamp < start || timestamp >= end || timestamp.Offset != TimeSpan.Zero ||
-                    timestamp.TimeOfDay.Ticks % (granularity == "day" ? TimeSpan.TicksPerDay : TimeSpan.TicksPerHour) != 0)
-                    throw new JsonException("Usage returned an invalid UTC bucket.");
-                points.Add(new(timestamp, Count(point.GetProperty("reads")), Count(point.GetProperty("writes"))));
-            }
-        if (points.Select(point => point.Start).Distinct().Count() != points.Count) throw new JsonException("Usage repeated a UTC bucket.");
-        var items = new List<UsageReading>();
-        if (includeItems && row.TryGetProperty("items", out var children))
-            foreach (var child in children.EnumerateArray())
-            {
-                var id = child.GetProperty("databaseId").GetString() ?? "";
-                if (id.Length == 0 || items.Any(item => item.DatabaseId == id)) throw new JsonException("Usage returned an invalid database row.");
-                items.Add(Parse(child, project, id, from, now, granularity, false));
-            }
-        return new(project.Id, databaseId, Count(row.GetProperty("logicalBytes")), Count(row.GetProperty("documents")),
-            new(start, end, granularity, Count(period.GetProperty("reads")), Count(period.GetProperty("writes"))), points.OrderBy(point => point.Start).ToArray(), items);
+        _ = Count(row.StorageBytes); _ = Count(row.Collections); _ = Count(row.Reads); _ = Count(row.Writes);
+        if (!project.Databases.TryGetValue(row.DatabaseId, out var database) || database.ProjectId != project.Id)
+            throw new JsonException("Usage returned a foreign database.");
+        return new(project.Id, row.DatabaseId, Count(row.LogicalBytes), Count(row.Documents), Period(row.Period, from, now, bucket),
+            Points(row.Series, row.Period, bucket), []);
     }
-    private static long Count(JsonElement value) => value.GetInt64() is >= 0 and var count ? count : throw new JsonException("Usage counters must be nonnegative.");
-    private static bool Failure(Exception error, CancellationToken cancellationToken) => error is HttpRequestException or IOException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
+
+    private static UsagePeriod Period(TerraBaseUsagePeriod period, DateTimeOffset from, DateTimeOffset now, string bucket)
+    {
+        var ticks = bucket == "day" ? TimeSpan.TicksPerDay : TimeSpan.TicksPerHour;
+        var roundedEnd = new DateTimeOffset(checked((now.UtcTicks + ticks - 1) / ticks * ticks), TimeSpan.Zero);
+        if (period.From != from || period.To != roundedEnd || period.To <= period.From || period.Granularity != bucket)
+            throw new JsonException("Usage returned an invalid UTC period.");
+        return new(period.From, period.To, bucket, Count(period.Reads), Count(period.Writes));
+    }
+
+    private static IReadOnlyList<ActivityPoint> Points(IReadOnlyList<TerraBaseUsagePoint> series, TerraBaseUsagePeriod period, string bucket)
+    {
+        var ticks = bucket == "day" ? TimeSpan.TicksPerDay : TimeSpan.TicksPerHour;
+        if (series.Any(point => point.Start < period.From || point.Start >= period.To || point.Start.Offset != TimeSpan.Zero ||
+                point.Start.TimeOfDay.Ticks % ticks != 0) || series.Select(point => point.Start).Distinct().Count() != series.Count)
+            throw new JsonException("Usage returned invalid or repeated UTC buckets.");
+        var points = series.Select(point => new ActivityPoint(point.Start, Count(point.Reads), Count(point.Writes))).OrderBy(point => point.Start).ToArray();
+        if (points.Length > 0 && (points.Sum(point => point.Reads) != period.Reads || points.Sum(point => point.Writes) != period.Writes))
+            throw new JsonException("Usage totals disagree with its UTC buckets.");
+        return points;
+    }
+
+    private static long Count(long count) => count >= 0 ? count : throw new JsonException("Usage counters must be nonnegative.");
+    private static bool Failure(Exception error, CancellationToken cancellationToken) => error is HttpRequestException or IOException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException or TimeoutException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested;
 }

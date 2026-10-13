@@ -23,7 +23,7 @@ public static class InternalBillingCommands
     {
         services.AddHttpClient(DeviceClient, client =>
         {
-            client.BaseAddress = new("https://dashboard.terrascale.tech");
+            client.BaseAddress = new(StripeBilling.Origin);
             client.Timeout = TimeSpan.FromSeconds(30);
         }).ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler);
         return services;

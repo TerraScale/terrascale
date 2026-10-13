@@ -1,13 +1,12 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Data;
 
-public sealed partial class DataService(DatabaseService databases, IDocumentBackend documents, IDatabaseBackend backend, IProjectAccessTokens projectTokens)
+public sealed partial class DataService(DatabaseService databases, IDocumentBackend documents, IDatabaseBackend backend)
 {
     public async Task<IReadOnlyList<TerraBaseCollection>> CollectionsAsync(AccountContext context, string databaseId, CancellationToken cancellationToken)
     {
@@ -116,8 +115,7 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         collection = ValidCollection(collection);
         var home = await databases.HomeAsync(context, database, cancellationToken);
         var scope = DatabaseService.Scope(context);
-        var token = await projectTokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, cancellationToken);
-        return await documents.SchemaAsync(scope with { AccessToken = token }, home, database.Name, collection, cancellationToken);
+        return await documents.SchemaAsync(scope, home, database.Name, collection, cancellationToken);
     }
 
     public async Task<DatabaseSqlResult> SqlAsync(AccountContext context, string databaseId, string statement, CancellationToken cancellationToken)
@@ -187,7 +185,7 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         var scope = DatabaseService.Scope(context);
         var home = await databases.HomeAsync(context, database, cancellationToken);
         try { await backend.CreateIndexAsync(scope, home, database.Id, collection, paths, cancellationToken); }
-        catch (DatabaseProviderException error) when (error.StatusCode == System.Net.HttpStatusCode.Conflict)
+        catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.Conflict)
         {
             // Treat only the actual matching provider index as an idempotent
             // replay; other conflicts must still reach the caller.
