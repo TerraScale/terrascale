@@ -74,7 +74,8 @@ public sealed class HomeReportingJourneyTests(DashboardE2EFixture fixture)
         var observed = observation.RootElement;
         await Assert.That(observed.GetProperty("projectExchanges").GetInt32()).IsEqualTo(2);
         await Assert.That(observed.GetProperty("projectReportReads").GetInt32()).IsEqualTo(2);
-        await Assert.That(observed.GetProperty("contractFailures").GetInt32()).IsEqualTo(0);
+        await Assert.That(observed.GetProperty("contractFailures").GetInt32()).IsEqualTo(0)
+            .Because(observed.GetProperty("contractFailureMessages").GetRawText());
         var requests = observed.GetProperty("projectRequests").EnumerateArray().ToArray();
         await Assert.That(requests.Length).IsEqualTo(2);
         foreach (var request in requests)

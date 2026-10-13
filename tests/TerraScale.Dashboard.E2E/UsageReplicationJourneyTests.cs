@@ -67,7 +67,17 @@ public sealed class UsageReplicationJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(observedResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using var observed = JsonDocument.Parse(await observedResponse.Content.ReadAsStringAsync());
         var root = observed.RootElement;
-        await Assert.That(root.GetProperty("projectExchanges").GetInt32()).IsEqualTo(2);
+        // Each page independently exchanges its scoped usage, monthly usage and replication read.
+        await Assert.That(root.GetProperty("projectExchanges").GetInt32()).IsEqualTo(6);
+        foreach (var requested in root.GetProperty("projectScopeExchanges").EnumerateArray())
+        {
+            await Assert.That(requested.GetProperty("projectId").GetString()).IsEqualTo(projectId);
+            await Assert.That(requested.GetProperty("organizationId").GetString()).IsEqualTo(identity.RootElement.GetProperty("organizationId").GetString());
+            await Assert.That(requested.GetProperty("requested").EnumerateArray().Select(scope => scope.GetString()).ToArray())
+                .IsEquivalentTo(new string?[] { "databases:read" });
+            await Assert.That(requested.GetProperty("granted").EnumerateArray().Select(scope => scope.GetString()).ToArray())
+                .IsEquivalentTo(new string?[] { "databases:read" });
+        }
         await Assert.That(root.GetProperty("projectReportReads").GetInt32()).IsEqualTo(2);
         var exchange = root.GetProperty("projectRequests").EnumerateArray().First();
         await Assert.That(exchange.GetProperty("path").GetString()).IsEqualTo("/v1/projects/" + projectId + "/replication");

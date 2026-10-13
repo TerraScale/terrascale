@@ -90,7 +90,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         producer.MapMethods("/{**path}", ["GET", "POST", "PATCH", "PUT", "DELETE"], (Func<HttpContext, Task<IResult>>)provider.DispatchAsync);
         await producer.StartAsync();
         ProviderOrigin = Address(producer);
-        transport = new ProducerTransport(ProviderOrigin, provider.Billing);
+        transport = new ProducerTransport(ProviderOrigin, provider.Billing, provider.ApiKeys);
         await environment.InitializeAsync();
         first = environment.CreateHost(root, 0, "http://127.0.0.1", Configure);
         second = environment.CreateHost(root, 0, "http://127.0.0.1", Configure);
@@ -190,7 +190,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         }
     }
 
-    private sealed class ProducerTransport(Uri localOrigin, InternalBillingProducer billing) : DelegatingHandler(new HttpClientHandler { AllowAutoRedirect = false })
+    private sealed class ProducerTransport(Uri localOrigin, InternalBillingProducer billing, TestAuthApiKeys apiKeys) : DelegatingHandler(new HttpClientHandler { AllowAutoRedirect = false })
     {
         private HttpMessageInvoker? stripe;
         private TestStripeTransport? stripeHandler;
@@ -213,6 +213,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
             if (original.Scheme != "https" || !original.IsDefaultPort || original.UserInfo.Length != 0 ||
                 original.Host is not ("auth.terrascale.tech" or "api.terrascale.tech" or "gru.api.terrascale.tech"))
                 throw new HttpRequestException("Unexpected outbound origin in the test-only auth producer.");
+            if (original.Host == "auth.terrascale.tech" && original.AbsolutePath.StartsWith("/v1/terrascale/organizations/", StringComparison.Ordinal) &&
+                original.AbsolutePath.Contains("/api-keys", StringComparison.Ordinal)) return apiKeys.SendAsync(request, cancellationToken);
             // Preserve the trusted Host and all authorization headers. Only the
             // physical test transport changes; issuer/audience/signatures do not.
             request.Headers.Host = original.Authority;
@@ -241,6 +243,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private readonly ConcurrentDictionary<string, PendingEnrollment> pendingEnrollments = new(StringComparer.Ordinal);
         private long authEpoch;
         private InternalBillingProducer? billing;
+        private TestAuthApiKeys? apiKeys;
+        public TestAuthApiKeys ApiKeys => apiKeys ??= new(ResolveActiveBearer, workspace.ProjectRole);
         public InternalBillingProducer Billing => billing ??= new(state, workspace, clock.GetUtcNow, () => subject, organization => Ownership?.SeedOrganization(organization));
         public OwnershipSdkProtocol? Ownership { get; private set; }
         public Func<HttpContext, Task<IResult?>>? ReportingExtension { get; set; }
@@ -275,6 +279,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private int managementRequests;
         private int revocations;
         private int contractFailures;
+        private readonly ConcurrentQueue<string> contractFailureMessages = new();
         private int userinfoRequests;
         private int unsupportedIntrospectionRequests;
         private int forgedIdRoleTokens;
@@ -743,7 +748,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                     break;
                 case "release-account-reservations": accountReservations?.TrySetResult(); break;
                 case "fail-account-projection-once":
-                    state.WriteFailure = (collection, _) => collection == AccountService.AccountsCollection &&
+                    state.WriteFailure = (collection, id) => collection == AccountService.AccountsCollection &&
+                        !state.Items.ContainsKey(collection + "/" + id) &&
                         Interlocked.Increment(ref projectionWrites) == 1 ? new IOException("Injected test-only interrupted account projection.") : null;
                     break;
                 case "spoof-stored-admin":
@@ -828,6 +834,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 managementRequests,
                 revocations,
                 contractFailures,
+                contractFailureMessages = contractFailureMessages.ToArray(),
                 userinfoRequests,
                 userinfoPauses,
                 descendantIssuerGrants,
@@ -899,7 +906,12 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private static bool IsLoopback(string? value) => IPAddress.TryParse(value, out var address) &&
             IPAddress.IsLoopback(address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address);
         private static bool Confidential(HttpContext http, IFormCollection form) => Basic(http) || form["client_id"] == ClientId && form["client_secret"] == "test-dashboard-client-secret-0123456789abcdef";
-        private IResult ContractFailure(string message) { Interlocked.Increment(ref contractFailures); return Results.Json(new { error = "contract_failure", message }, statusCode: 400); }
+        private IResult ContractFailure(string message)
+        {
+            Interlocked.Increment(ref contractFailures);
+            contractFailureMessages.Enqueue(message);
+            return Results.Json(new { error = "contract_failure", message }, statusCode: 400);
+        }
         private static IResult OAuthError(string code, int status) => Results.Json(new { error = code }, statusCode: status);
         private static IResult HeadlessError(string code) => Results.Json(new { error = new { code, message = "The code is wrong or has expired. Request a new one if needed." } }, statusCode: 400);
         private static string B64(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');

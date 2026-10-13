@@ -80,14 +80,21 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
         var orgId = organizationIndex >= 0 && segments.Length > organizationIndex + 1 ? segments[organizationIndex + 1] : "";
         OrganizationRecord? org;
         ProjectRecord? project = null;
+        lock (workspace.Gate)
+        {
+            var live = id.Length > 0
+                ? workspace.Organizations.Values.FirstOrDefault(item => item.Projects.ContainsKey(id))
+                : workspace.Organizations.GetValueOrDefault(orgId);
+            org = live is null ? null : TestWorkspace.Clone(live);
+        }
         if (id.Length > 0)
         {
-            org = state.Items.Where(item => item.Key.StartsWith(AccountService.OrganizationsCollection + "/", StringComparison.Ordinal)).Select(item => item.Value.Document.Deserialize<OrganizationRecord>())
-                .FirstOrDefault(item => item?.Projects.ContainsKey(id) == true);
             project = org?.Projects.GetValueOrDefault(id);
             if (org is null || project?.OrganizationId != org.Id || orgId.Length > 0 && orgId != org.Id) return Json(new { error = "not_found" }, HttpStatusCode.NotFound);
+            // Auth owns identity and membership; dashboard storage owns the database references used by reporting fixtures.
+            var settings = state.Items.GetValueOrDefault(AccountService.OrganizationsCollection + "/" + org.Id)?.Document.Deserialize<OrganizationRecord>();
+            if (settings?.Projects.TryGetValue(id, out var storedProject) == true) project.Databases = storedProject.Databases;
         }
-        else org = state.Items.GetValueOrDefault(AccountService.OrganizationsCollection + "/" + orgId)?.Document.Deserialize<OrganizationRecord>();
         // TerraBase canonical usage (I2 GetUsageAsync) reads with an exchanged databases:read project token.
         var isCanonicalUsage = segments is ["v1", "projects", _, "usage"] or ["v1", "projects", _, "databases", _, "usage"];
         if (isCanonicalUsage && scopedActor?.Scopes.Contains("databases:read") != true) return Json(new { error = new { code = "forbidden_scope", message = "databases:read is required" } }, HttpStatusCode.Forbidden);

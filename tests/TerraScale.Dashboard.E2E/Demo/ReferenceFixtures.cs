@@ -327,6 +327,7 @@ internal static class ReferenceFixtures
         {
             if (workspace.Organizations.ContainsKey(organization.Id)) throw new InvalidDataException("A Go reference organization is already registered.");
             workspace.Organizations[organization.Id] = TestWorkspace.Clone(organization);
+            workspace.SeedInvitationMetadata(organization);
         }
         await state.PutAsync(AccountService.OrganizationsCollection, organization.Id, JsonSerializer.SerializeToElement(organization), TerraBasePrecondition.Absent, default);
     }

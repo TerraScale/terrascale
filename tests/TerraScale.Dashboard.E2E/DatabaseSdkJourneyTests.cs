@@ -109,7 +109,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardE2EFixture fixture)
         {
             var authorization = request.GetProperty("authorization").GetString()!;
             var grant = authorization.StartsWith("Bearer ", StringComparison.Ordinal) ? auth.ResolveProjectToken(authorization[7..]) : null;
-            var scope = request.GetProperty("method").GetString() == "GET" ? "documents:read" : "documents:write";
+            var scope = request.GetProperty("method").GetString() == "GET" || request.GetProperty("path").GetString()!.EndsWith("/query", StringComparison.Ordinal) ? "documents:read" : "documents:write";
             Check(grant is { } admitted && admitted.UserId == journey.User && admitted.OrganizationId == journey.Organization &&
                 admitted.ProjectId == journey.Project && admitted.Scopes.SequenceEqual([scope]),
                 "Each data request carries a current-session project token for exactly its tenant, project and " + scope);

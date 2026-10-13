@@ -350,6 +350,7 @@ sealed class TestWorkspace : ITsAuthPlatform
     public readonly object Gate = new();
     public readonly Dictionary<string, OrganizationRecord> Organizations = [];
     private readonly Dictionary<string, (string OrganizationId, InvitationRecord Invitation)> invitations = [];
+    private readonly Dictionary<string, IReadOnlyList<TerraScaleAuthPlatformInvitation>> capturedInvitations = [];
     private readonly Dictionary<string, TerraScaleAuthPlatformOwnershipTransfer> transfers = [];
     private readonly Dictionary<string, string> projectCreators = [];
     private readonly TerraScale.DotNet.TerraScaleIdGenerator ids = new();
@@ -463,7 +464,7 @@ sealed class TestWorkspace : ITsAuthPlatform
     public Task LeaveOrganizationAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
     { lock (Gate) { var org = Member(session.UserId, organizationId); LastOwner(org, session.UserId); org.Members.Remove(session.UserId); return Task.CompletedTask; } }
     public Task<IReadOnlyList<TerraScaleAuthPlatformMember>> ListMembersAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
-    { lock (Gate) return Task.FromResult<IReadOnlyList<TerraScaleAuthPlatformMember>>(Member(session.UserId, organizationId).Members.Values.Where(member => member.Status == "active").Select(member => new TerraScaleAuthPlatformMember(member.UserId, member.Email, member.Role, member.CreatedAt)).ToArray()); }
+    { lock (Gate) return Task.FromResult<IReadOnlyList<TerraScaleAuthPlatformMember>>(Member(session.UserId, organizationId).Members.Values.Where(member => member.Status == "active").Select(member => new TerraScaleAuthPlatformMember(member.UserId, member.Email, ScopedRole(member.UserId, organizationId), member.CreatedAt)).ToArray()); }
     public Task ChangeMemberRoleAsync(SessionRecord session, string organizationId, string userId, string role, CancellationToken cancellationToken)
     {
         lock (Gate)
@@ -507,7 +508,14 @@ sealed class TestWorkspace : ITsAuthPlatform
     public Task DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken)
     { lock (Gate) { var org = Manage(session.UserId, organizationId); if (!org.Projects.Remove(projectId)) throw new AccountAccessException("Project is unavailable.", 404, "not_found"); return Task.CompletedTask; } }
     public Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
-    { lock (Gate) { var org = Manage(session.UserId, organizationId); return Task.FromResult<IReadOnlyList<TerraScaleAuthPlatformInvitation>>(invitations.Values.Where(value => value.OrganizationId == org.Id).Select(value => Wire(value.Invitation, org.OwnerUserId)).ToArray()); } }
+    { lock (Gate) { var org = Manage(session.UserId, organizationId); return Task.FromResult<IReadOnlyList<TerraScaleAuthPlatformInvitation>>(invitations.Values.Where(value => value.OrganizationId == org.Id).Select(value => Wire(value.Invitation, org.OwnerUserId)).Concat(capturedInvitations.GetValueOrDefault(org.Id) ?? []).ToArray()); } }
+    public void SeedInvitationMetadata(OrganizationRecord organization)
+    {
+        // Historical inventory has no invitation grant or inferred expiry timestamp.
+        lock (Gate) capturedInvitations[organization.Id] = organization.Invitations.Values.Select(invitation =>
+            new TerraScaleAuthPlatformInvitation(invitation.Id, invitation.Email, invitation.Role, null, organization.OwnerUserId,
+                invitation.CreatedAt, invitation.ExpiresAt, invitation.Status)).ToArray();
+    }
     public Task<TerraScaleAuthPlatformCreatedInvitation> CreateInvitationAsync(SessionRecord session, string organizationId, string email, string role, CancellationToken cancellationToken)
     {
         lock (Gate)
