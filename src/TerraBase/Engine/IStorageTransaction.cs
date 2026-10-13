@@ -289,10 +289,10 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Makes every change of this transaction visible atomically and returns the database offset:
-    /// this transaction's when it wrote documents or created or dropped a collection, otherwise the latest committed one.
+    /// Makes every change of this transaction visible atomically and returns its offset and own client replication marker.
+    /// Nonmutating transactions have no marker; their offset is the latest committed one.
     /// </summary>
-    ValueTask<long> CommitAsync(CancellationToken cancellationToken);
+    ValueTask<CommitResult> CommitAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// The origin of the system database's journal, 16 bytes: its incarnation. Captured change groups are numbered 1, 2, …

@@ -360,7 +360,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
         using var lease = admission;
         var delta = 0L;
-        var (outcome, offset) = await store.WriteAsync(
+        var (outcome, commit) = await store.WriteAsync(
             async (transaction, token) =>
             {
                 var (result, change, growthOp) = await ApplyAllAsync(store, transaction, operations, indexErrors, admission.RequiresAccounting, token).ConfigureAwait(false);
@@ -409,7 +409,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             }
         }
 
-        return written with { Offset = offset };
+        return written with { Offset = commit.Offset };
     }
 
     // Every operation of one client write; the commit offset is filled in once its batch committed.

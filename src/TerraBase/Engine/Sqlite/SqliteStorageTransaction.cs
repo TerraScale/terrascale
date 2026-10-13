@@ -979,71 +979,102 @@ internal sealed partial class SqliteStorageTransaction(
         }
     }
 
-    public async ValueTask<long> CommitAsync(CancellationToken cancellationToken)
+    public async ValueTask<CommitResult> CommitAsync(CancellationToken cancellationToken)
     {
         long? sequence = null;
-        var offset = await RunAsync(() =>
+        var committedNow = false;
+        try
         {
-            if (_faulted || Aborted)
+            return await RunAsync(() =>
             {
-                throw new InvalidOperationException("an operation of this transaction failed, so it can only be rolled back");
-            }
-
-            try
-            {
-                FlushStates();
-                DropUniqueAffected();
-                var offset = _offset ?? GetOffset();
-                if (_changes is { Count: > 0 })
+                if (_faulted || Aborted)
                 {
-                    sequence = AppendChanges(_changes, cancellationToken);
+                    throw new InvalidOperationException("an operation of this transaction failed, so it can only be rolled back");
                 }
 
-                cancellationToken.ThrowIfCancellationRequested();
-                transaction.Commit();
-                _committed = true;
-                if (_collectionsChanged)
+                try
                 {
-                    store.ForgetCollections();
-                }
+                    FlushStates();
+                    DropUniqueAffected();
+                    var offset = _offset ?? GetOffset();
+                    if (_changes is { Count: > 0 })
+                    {
+                        sequence = AppendChanges(_changes, cancellationToken);
+                    }
 
-                if (_statisticsChanged)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    transaction.Commit();
+                    _committed = true;
+                    committedNow = true;
+                    if (_collectionsChanged)
+                    {
+                        store.ForgetCollections();
+                    }
+
+                    if (_statisticsChanged)
+                    {
+                        store.StatisticsChanged();
+                    }
+
+                    if (_adoptedIncarnation is { } adopted)
+                    {
+                        // Before the commit wakes waiters: readers see the adopted documents with their incarnation.
+                        store.AdoptIncarnation(adopted);
+                    }
+
+                    return new CommitResult(offset, IsClient && _captured > 0 && !_captureSuspended ? ReadCommitMarker() : null);
+                }
+                catch
                 {
-                    store.StatisticsChanged();
+                    _faulted = true;
+                    throw;
                 }
-
-                if (_adoptedIncarnation is { } adopted)
-                {
-                    // Before the commit wakes waiters: readers see the adopted documents with their incarnation.
-                    store.AdoptIncarnation(adopted);
-                }
-
-                return offset;
-            }
-            catch
-            {
-                _faulted = true;
-                throw;
-            }
-        }, cancellationToken).ConfigureAwait(false);
-
-        if (_offset is not null || _replicaChanged)
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        finally
         {
-            committed?.Invoke();
+            // A marker-read failure cannot hide a transaction that already committed from storage waiters.
+            if (committedNow)
+            {
+                if (_offset is not null || _replicaChanged)
+                {
+                    committed?.Invoke();
+                }
+
+                if (sequence is { } appended)
+                {
+                    changesCommitted!(appended);
+                }
+            }
+        }
+    }
+
+    // Worker-only, after COMMIT and before releasing the exclusive writer; never read a later connection's head.
+    private CommitMarker ReadCommitMarker()
+    {
+        if (store.Tenant is { } tenant)
+        {
+            store.Checkpoint?.Invoke("writer.marker", tenant);
         }
 
-        if (sequence is { } appended)
+        using var command = session.Connection.CreateCommand();
+        command.CommandText = "SELECT change_id, change_type FROM turso_cdc ORDER BY change_id DESC LIMIT 1;";
+        using var reader = command.ExecuteReader();
+        if (!reader.Read() || reader.GetInt64(0) <= 0 || reader.GetInt64(1) != 2)
         {
-            changesCommitted!(appended);
+            throw new InvalidDataException("a client mutation has no final CDC commit row");
         }
 
-        return offset;
+        return new CommitMarker(store.Incarnation, reader.GetInt64(0));
     }
 
     // Savepoints are lazy: SAVEPOINT runs with the write's first statement and RELEASE with the next write's, so a
     // batched write pays no extra thread hop for them.
     private bool _savepointPending;
     private bool _releasePending;
+
+    /// <summary>Whether the current request added client state rows since its savepoint, after flushing them.</summary>
+    internal bool SavepointHasChanges => _savepoint is { } saved && _captured > saved.Captured;
 
     /// <summary>Starts the savepoint one queued write of a group commit runs in. Runs no statement yet.</summary>
     internal void Savepoint()
