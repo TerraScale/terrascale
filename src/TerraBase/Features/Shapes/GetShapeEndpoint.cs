@@ -402,6 +402,7 @@ internal sealed class GetShapeEndpoint(
                 DocumentFilter filter => new Where(Canonical(json.RootElement), filter),
             };
         }
+        // JsonElement.GetString rejects lone surrogate escapes with InvalidOperationException.
         catch (Exception error) when (error is JsonException or InvalidOperationException)
         {
             return new Validation("where must be a JSON filter", Code);
