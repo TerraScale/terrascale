@@ -364,6 +364,17 @@ review yet.
 
 **#191 belongs to queue item 10** (R6-FIX durable-commit contract): `fix/r6-b4-own-commit-marker` → main, opened 09:54Z. It is the B4 own-commit-marker prerequisite and includes B2 #180 (`c06242bd`) and B1 #181 (`924f81df`) through merges. Its body says B4 still lacks the remote-ACK barrier and `outcome_unknown`. It merges in its contract order, once it has an approving review and a green run.
 
+**#191 is APPROVED at `1ea3d2b3`** (issuecomment-6143334904, scope: the local marker prerequisite only), **but it is
+blocked by what it carries.** It includes B1 #181 and B2 #180 through merges, and neither has an approval on the code it
+carries:
+- **#181 (B1):** CHANGES REQUESTED at `83291845` (6138931073) is still open, and there is no re-review at `924f81df`.
+- **#180 (B2):** APPROVE was at `4adf8424` (6138930715), but `c06242bd` adds five non-merge test commits
+  (`9fbddb7b`..`c06242bd`) that have not been re-reviewed.
+
+#191 merges only after #181 is approved at its current head and #180's new commits are re-reviewed (or COS confirms the
+delta). #171 (the design) has its APPROVE at `40464691` (6139562004); its head is now `9e747421`, and the delta is not
+yet checked. #184 has no review, and its `test` run is red.
+
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
 **Outside the queue (COS, 03:30Z):** **#167** (`feat/postgres-turso-import-core`, `62f251f6`, one-time PostgreSQL and
