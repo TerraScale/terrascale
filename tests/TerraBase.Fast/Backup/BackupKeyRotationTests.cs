@@ -13,6 +13,7 @@ using TerraBase.Configuration;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Engine.Cluster;
+using TerraBase.Features.Replication;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Backup;
@@ -523,6 +524,9 @@ public sealed class BackupKeyRotationTests
             s3.Route(services);
             if (members is not null)
             {
+                // This key-cache fixture uses local durability; its peer is present only to verify the copied catalog.
+                services.AddSingleton<IRemoteDurability, LocalDurability>();
+                services.AddSingleton<IMembership>(provider => new StaticMembership(provider.GetRequiredService<TerraBaseOptions>()));
                 services.AddSingleton<IMemberDirectory>(members);
             }
             ManualBackupHosting.Configure(services);
