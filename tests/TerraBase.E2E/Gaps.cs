@@ -9,72 +9,19 @@ namespace TerraBase.E2E;
 /// </summary>
 internal static class Gaps
 {
-    // R2a-1 (#48) deleted the old replication. R4a's peer streams carry change groups, but only the CDC tailer (R3) produces
-    // them from real writes; until it lands nothing crosses regions, locally or on Fly.
-    private const string Streams = "the CDC change group source (R3) for the peer streams (R4a)";
-    // R5 landed the counter and set ops; Fast proves they converge when three nodes' states join
-    // (CounterSetApiTests). Across regions they wait on the streams' source (R3).
-    private const string Counters = "counters and sets over peer streams (R4a) fed by the CDC source (R3)";
-
     // On main every listed scenario stops in the cluster's setup: the collection it creates in gru never reaches the other
     // regions without replication. That is reported as not supported (it never reached its own assertions), apart from a
     // scenario failing its own way.
     private const string AtSetup = "collection on sjc did not converge";
 
+    // Live run of this candidate (E2E-LIVE, not for main): it carries R3, R4a, R5, R6, R7 and R10a, so only the slices it
+    // may lack stay expected failures (R8 E10/E15, R9 E11, R11 E13); every other scenario must pass outright.
     private static readonly Dictionary<string, Gap> Waiting = new(StringComparer.Ordinal)
     {
-        // ReplicationE2ETests, LatticeE2ETests, CatalogE2ETests (design section 20).
-        ["E1"] = new(Streams, AtSetup),
-        ["E2"] = new(Streams, AtSetup),
-        ["E3"] = new(Streams, AtSetup),
-        ["E4"] = new(Streams, AtSetup),
-        ["E5"] = new(Streams, AtSetup),
-        ["E6"] = new(Streams, AtSetup),
-        ["E8"] = new(Counters, AtSetup),
-        ["E9"] = new(Counters, AtSetup),
         ["E10"] = new("the changes feed (R8) over peer streams (R4a)", AtSetup),
         ["E11"] = new("SQL writes (R9) over peer streams (R4a)", AtSetup),
-        ["E12"] = new("the catalog as a lattice database (R10a)", AtSetup),
         ["E13"] = new("home region and live move (R11)", AtSetup),
-        ["E14"] = new("garbage collection (R7) over peer streams (R4a)", AtSetup),
         ["E15"] = new("the changes feed (R8) over peer streams (R4a)", AtSetup),
-
-        // ThreeRegionE2ETests.
-        ["pair"] = new(Streams, AtSetup),
-        ["three-way-same-field"] = new(Streams, AtSetup),
-        ["three-way-different-fields"] = new(Streams, AtSetup),
-        ["three-way-delete-versus-edit"] = new(Streams, AtSetup),
-        ["three-way-bulk"] = new(Streams, AtSetup),
-        ["three-way-burst"] = new(Streams, AtSetup),
-        ["large-documents"] = new(Streams, AtSetup),
-        ["three-way-counters"] = new(Counters, AtSetup),
-        ["three-way-sets"] = new(Counters, AtSetup),
-
-        // ThreeRegionFaultE2ETests. Cluster.Partition needs R4a's streams to cut.
-        ["partition-heal"] = new(Streams, AtSetup),
-        ["region-down-rejoin"] = new(Streams, AtSetup),
-        ["restart-mid-replication"] = new(Streams, AtSetup),
-        ["ack-then-stop"] = new(Streams, AtSetup),
-        ["restarted-sender-backlog"] = new(Streams, AtSetup),
-
-        // CrashAndStallE2ETests. Node processes and lossy links also need test hooks on the peer path (COVERAGE.md).
-        ["crash-replicated"] = new(Streams, AtSetup),
-        ["storage-stall"] = new(Streams, AtSetup),
-        // Passed on SQLite until the Turso engine (#98) took the file's write lock for its single writer.
-        ["storage-stall-single"] = new("a storage stall hook for the Turso engine (#98 holds the file's write lock)", AtSetup),
-        ["lossy-link"] = new(Streams, AtSetup),
-
-        // RepairAndContractE2ETests.
-        ["anti-entropy-repair"] = new("anti-entropy (R6) over peer streams fed by the CDC source (R3)", AtSetup),
-        ["restore-older-state"] = new("refill and anti-entropy (R6) over peer streams fed by the CDC source (R3)", AtSetup),
-        ["unique-under-partition"] = new(Streams, AtSetup),
-        ["deleted-database-stays-deleted"] = new("the catalog as a lattice database (R10a) and garbage collection (R7)", AtSetup),
-        ["replication-metrics"] = new("replication metrics with the CDC source (R3): tail lag, and stream lags that move", AtSetup),
-        ["flow-control"] = new("peer streams fed by the CDC source (R3) and the catalog as a lattice database (R10a)", AtSetup),
-        ["ddl-replication"] = new(Streams, AtSetup),
-        ["backlog"] = new(Streams, AtSetup),
-        ["skew-causal"] = new(Streams, AtSetup),
-        ["skew-concurrent"] = new(Streams, AtSetup),
     };
 
     // BLOCKED on Fly, not an expected failure there: the Fly suite's TerraBase API key holds documents:read/write on the e2e
