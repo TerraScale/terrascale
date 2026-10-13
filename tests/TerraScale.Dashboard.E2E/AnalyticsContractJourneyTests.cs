@@ -4,8 +4,8 @@ using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class AnalyticsContractJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class AnalyticsContractJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task AnalyticsUsesSignedProjectTokenAndCurrentUnpagedWireContract()

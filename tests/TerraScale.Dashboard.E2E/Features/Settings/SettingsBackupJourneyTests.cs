@@ -6,8 +6,8 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.E2E.Features.Settings;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class SettingsBackupJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class SettingsBackupJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task LegacySettingsBackupFormsShareConfirmedSnapshotsFreshAuthorizationAndNewTargetRestore()

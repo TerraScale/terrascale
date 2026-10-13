@@ -7,10 +7,10 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>]
+[ClassDataSource<DashboardRootFixture>]
 // Needs this machine's tailnet name and dotnet watch, so it runs on a dev machine: make test-hot-reload.
 [Explicit]
-public sealed class HotReloadJourneyTests(DashboardE2EFixture fixture)
+public sealed class HotReloadJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task CSharpAndCssChangesReachTheOpenTailscaleBrowserAndRestore()

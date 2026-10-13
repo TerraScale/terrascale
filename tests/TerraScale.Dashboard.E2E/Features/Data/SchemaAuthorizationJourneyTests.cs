@@ -4,8 +4,8 @@ using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E.Features.Data;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class SchemaAuthorizationJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class SchemaAuthorizationJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task NativeSchemaReadUsesProjectAuthorityThroughOfficialDocumentsSdk()

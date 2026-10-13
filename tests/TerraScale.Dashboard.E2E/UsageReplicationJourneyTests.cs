@@ -4,8 +4,8 @@ using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class UsageReplicationJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class UsageReplicationJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task ProjectReplicationUsesSignedProjectTokenAndCurrentWireShape()

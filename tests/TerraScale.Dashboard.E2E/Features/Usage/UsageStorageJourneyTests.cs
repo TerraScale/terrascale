@@ -9,8 +9,8 @@ using TerraScale.Dashboard.Features.Usage;
 
 namespace TerraScale.Dashboard.E2E.Features.Usage;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class UsageStorageJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class UsageStorageJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task AbsentOperationMetersKeepReadsUnknownWhileNativeSdkStorageRemainsIndependentlyKnown()

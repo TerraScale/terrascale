@@ -6,8 +6,8 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class StateSdkJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task ConcurrentColdStartNativeSignupCasAndColdRestartUseTheProductionStateSdk()

@@ -5,8 +5,8 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.AuthenticationManagement;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class AuthenticationMcpJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class AuthenticationMcpJourneyTests(DashboardRootFixture fixture)
 {
     private static readonly Dictionary<string, object> UnprovisionedCalls = new()
     {

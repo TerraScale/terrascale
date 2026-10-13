@@ -33,7 +33,7 @@ public sealed class AccountsMembersSettingsBrowserAuditJourneyTests(AccountsAudi
     [Test]
     [Arguments(1366)]
     [Arguments(320)]
-    public async Task InvitationRoleOptionsExcludeTheAlwaysRejectedViewer(int width)
+    public async Task InvitationRoleOptionsIncludeTheSupportedViewer(int width)
     {
         using var playwright = await Playwright.CreateAsync();
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
@@ -43,8 +43,8 @@ public sealed class AccountsMembersSettingsBrowserAuditJourneyTests(AccountsAudi
         await role.ScrollIntoViewIfNeededAsync();
         await ShotAsync(page, "invitation-options-" + width);
         var options = await role.Locator("option").EvaluateAllAsync<string[]>("options => options.map(option => option.value)");
-        await Assert.That(options.Contains("viewer", StringComparer.Ordinal)).IsFalse()
-            .Because("The native form must not offer a role that the service always rejects.");
+        await Assert.That(options.Contains("viewer", StringComparer.Ordinal)).IsTrue()
+            .Because("The native form must offer the read-only role supported by the current ts-auth contract.");
         await Assert.That(options.Contains("admin", StringComparer.Ordinal)).IsTrue();
     }
 

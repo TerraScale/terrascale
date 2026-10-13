@@ -6,9 +6,9 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.Features.Notifications;
 
-[ClassDataSource<DashboardE2EFixture>]
+[ClassDataSource<DashboardRootFixture>]
 [Category("Slow")]
-public sealed class NotificationBrowserJourneyTests(DashboardE2EFixture fixture)
+public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     [Arguments(1440, 900)]

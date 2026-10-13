@@ -4,10 +4,10 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
-[ClassDataSource<DashboardE2EFixture>]
+[ClassDataSource<DashboardRootFixture>]
 [Explicit]
 [Category("Performance")]
-public sealed class PerformanceJourneyTests(DashboardE2EFixture fixture)
+public sealed class PerformanceJourneyTests(DashboardRootFixture fixture)
 {
     private const int Runs = 5;
 

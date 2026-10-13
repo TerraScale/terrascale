@@ -6,8 +6,8 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class AccountIdentityJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class AccountIdentityJourneyTests(DashboardRootFixture fixture)
 {
     private const string ImportedId = "01J1PQAQ7DH2KG61BZE9FR4YC9";
 

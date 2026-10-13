@@ -3,9 +3,9 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
-[ClassDataSource<DashboardE2EFixture>]
+[ClassDataSource<DashboardRootFixture>]
 [Category("Slow")]
-public sealed class MobileNavigationJourneyTests(DashboardE2EFixture fixture)
+public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task NotificationsOpenedFromTheMobileDrawerCloseOnlyTheTopmostDialog()

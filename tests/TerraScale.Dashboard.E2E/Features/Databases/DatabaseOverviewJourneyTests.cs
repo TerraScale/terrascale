@@ -5,8 +5,8 @@ using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class DatabaseOverviewJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class DatabaseOverviewJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     [Arguments("unavailable")]

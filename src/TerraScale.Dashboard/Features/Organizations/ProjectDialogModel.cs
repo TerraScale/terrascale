@@ -11,5 +11,5 @@ public sealed record ProjectDialogModel(OrganizationPage Page, ProjectRecord? Pr
     public string Title => Project is null ? "Create project" : "Edit " + Project.Name;
     public string Action => Project is null ? "/api/v1/dashboard/organization/projects" : "/api/v1/dashboard/organization/projects/" + Project.Id + "/rename";
     public bool Open => Project is null && Page.OpenCreateProject;
-    public IReadOnlyList<string> Selected => Project is null ? Page.Regions : Project.Regions;
+    public IReadOnlyList<string> Selected => Project is null ? Page.ProjectDraftRegions ?? Page.Regions : Project.Regions;
 }

@@ -4,8 +4,8 @@ using Microsoft.AspNetCore.Http;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class DatabaseRegistrationJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class DatabaseRegistrationJourneyTests(DashboardRootFixture fixture)
 {
     // Database creation reaches TerraBase only as the canonical project create, under a current-session token exchanged
     // for exactly databases:write. Organization/project ownership lives at ts-auth (I3); no legacy catalog read or write.

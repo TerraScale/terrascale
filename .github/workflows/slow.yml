@@ -51,6 +51,15 @@ jobs:
             test-results/tunit/slow.trx
             test-results/slow-failure.json
           if-no-files-found: warn
+      - name: Upload running-app screenshots and videos for the tested commit
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dashboard-flow-evidence-${{ github.sha }}
+          path: |
+            docs/reviews/2026-10-13/onboarding-projects/test-results/pr-head/browser/*.png
+            docs/reviews/2026-10-13/onboarding-projects/test-results/pr-head/browser/*-project-flow.webm
+          if-no-files-found: warn
 
   report:
     needs: slow

@@ -5,8 +5,7 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.BillingCheckout;
 
-[ClassDataSource<BillingCheckoutAuditFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<BillingCheckoutAuditFixture>]
 public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture fixture)
 {
     private const string Billing = "/organization?tab=billing";
@@ -76,6 +75,7 @@ public sealed class BillingCheckoutAuditJourneyTests(BillingCheckoutAuditFixture
     public async Task InterruptedCheckoutOffersRetryBackToBilling()
     {
         using var client = fixture.CreateClient();
+        client.DefaultRequestHeaders.Accept.ParseAdd("text/html");
         var csrf = await NewOrganizationAsync(client);
         using var armed = await HttpJourney.PostFormAsync(client, "/__test/billing/checkouts/scenario", new() { ["_csrf"] = csrf, ["scenario"] = "missing-index" });
         await Assert.That(armed.StatusCode).IsEqualTo(HttpStatusCode.NoContent);

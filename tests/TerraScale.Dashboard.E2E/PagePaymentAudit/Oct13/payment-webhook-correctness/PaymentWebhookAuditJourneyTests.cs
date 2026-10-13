@@ -5,7 +5,6 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness;
 
-[NotInParallel("dashboard-demo")]
 public sealed class PaymentWebhookAuditJourneyTests
 {
     [Test]
@@ -199,7 +198,7 @@ public sealed class PaymentWebhookAuditJourneyTests
         await using var scenario = await PaymentWebhookAuditScenario.StartAsync();
         using var owner = scenario.CreateClient();
         await CompleteCheckoutAsync(owner, "free");
-        await scenario.State.AgeFreeReservationAsync();
+        await Assert.That(scenario.State.Billing).IsNull().Because("Free onboarding must not create a Stripe reservation or consume a trial.");
         var csrf = await HttpJourney.CsrfAsync(owner, "/organization?tab=billing");
         using var upgrade = await CheckoutAsync(owner, csrf, "starter");
         await Assert.That(upgrade.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
@@ -233,6 +232,37 @@ public sealed class PaymentWebhookAuditJourneyTests
 
     internal static async Task CompleteCheckoutAsync(HttpClient owner, string plan)
     {
+        if (plan == "free")
+        {
+            const string email = "free-onboarding@example.test";
+            using var registered = await HttpJourney.PostFormAsync(owner, "/onboarding", new()
+            {
+                ["_csrf"] = await HttpJourney.CsrfAsync(owner, "/onboarding"),
+                ["displayName"] = "Free onboarding",
+                ["email"] = email,
+                ["password"] = "Free-local-password-123",
+                ["confirmPassword"] = "Free-local-password-123",
+                ["terms"] = "true"
+            });
+            await Assert.That(registered.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            var token = WebUtility.HtmlDecode(Regex.Match(await registered.Content.ReadAsStringAsync(), "name=\"_csrf\" value=\"([^\"]+)\"").Groups[1].Value);
+            using var verified = await HttpJourney.PostFormAsync(owner, "/login/code/verify", new()
+            { ["_csrf"] = token, ["email"] = email, ["code"] = "123456", ["signUp"] = "1", ["redirectTo"] = "/onboarding" });
+            await Assert.That(verified.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            foreach (var form in new Dictionary<string, string>[]
+            {
+                new() { ["step"] = "account-information", ["displayName"] = "Free onboarding" },
+                new() { ["step"] = "payment-method", ["bypass"] = "1" },
+                new() { ["step"] = "project", ["name"] = "Free project", ["region"] = "GRU" }
+            })
+            {
+                form["_csrf"] = await HttpJourney.CsrfAsync(owner, "/onboarding");
+                using var saved = await HttpJourney.PostFormAsync(owner, "/onboarding/step", form);
+                await Assert.That(saved.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+                await Assert.That(saved.Headers.Location!.OriginalString.Contains("error=", StringComparison.Ordinal)).IsFalse();
+            }
+            return;
+        }
         using var login = await HttpJourney.LoginAsync(owner);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         var csrf = await HttpJourney.CsrfAsync(owner, "/organization?tab=billing");

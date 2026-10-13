@@ -6,9 +6,9 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
 
-[ClassDataSource<DashboardE2EFixture>]
+[ClassDataSource<DashboardRootFixture>]
 [Category("Slow")]
-public sealed class InternalBillingAuthenticationJourneyTests(DashboardE2EFixture fixture)
+public sealed class InternalBillingAuthenticationJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     [Arguments("report-internal-billing", "Organization has no internal billing policy.")]

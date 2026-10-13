@@ -4,8 +4,8 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Onboarding;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class OnboardingMcpJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class OnboardingMcpJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task NativePatCompletesFreeOnboardingAcrossRunningReplicas()

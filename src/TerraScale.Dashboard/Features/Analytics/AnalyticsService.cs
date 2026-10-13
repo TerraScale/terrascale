@@ -28,8 +28,11 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
 
     public static (AnalyticsTotals Totals, IReadOnlyList<AnalyticsChart> Charts) Build(AnalyticsSelection selection, IReadOnlyList<AnalyticsPoint> points)
     {
-        var starts = points.Select(point => point.Start.ToUniversalTime()).Distinct().Order().ToArray();
-        if (starts.Length == 0) throw new JsonException("No analytics buckets.");
+        var reported = points.Select(point => point.Start.ToUniversalTime()).Distinct().Order().ToArray();
+        if (reported.Length == 0) throw new JsonException("No analytics buckets.");
+        var bucket = selection.Range switch { "1h" => 60, "24h" => 3600, "7d" => 21600, "30d" => 86400, _ => throw new JsonException("Unknown analytics range.") };
+        var starts = Enumerable.Range(0, checked((int)((reported[^1] - reported[0]).TotalSeconds / bucket) + 1))
+            .Select(index => reported[0].AddSeconds((long)index * bucket)).ToArray();
         var indices = starts.Select((start, index) => (start, index)).ToDictionary(value => value.start, value => value.index);
         var requests = new SortedDictionary<string, long[]>(StringComparer.Ordinal);
         var operations = new SortedDictionary<string, long[]>(StringComparer.Ordinal);
@@ -68,7 +71,7 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
             }
             if (index == starts.Length - 1 && point.P95Ms is { } latest) p95 = Math.Max(p95 ?? 0, latest);
         }
-        for (var index = 0; index < starts.Length; index++) storageMissing[index] = storageSamples[index] != pointCounts[index];
+        for (var index = 0; index < starts.Length; index++) storageMissing[index] = pointCounts[index] == 0 || storageSamples[index] != pointCounts[index];
         var charts = new List<AnalyticsChart>();
         Add("Requests by type", requests.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());
         Add("Operations by type", operations.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());

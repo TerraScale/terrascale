@@ -20,6 +20,7 @@ public sealed class AnalyticsBackendContractTests
         var project = selection.Context.Project!;
         foreach (var id in new[] { "01JA0000000000000000000005", "01JA0000000000000000000006" })
             project.Databases.Add(id, new() { Id = id, ProjectId = project.Id, Name = "app-" + id, Region = "GRU" });
+        foreach (var database in project.Databases.Values) database.Regions = ["GRU", "SJC"];
         var to = new DateTimeOffset(2026, 10, 13, 0, 0, 0, TimeSpan.Zero);
         var from = to.AddHours(-1);
         var items = project.Databases.Keys.SelectMany(id => new[] { "gru", "sjc" }.Select(region => new

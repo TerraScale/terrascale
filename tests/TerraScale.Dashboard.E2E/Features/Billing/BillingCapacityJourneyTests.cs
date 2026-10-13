@@ -8,8 +8,8 @@ using TerraScale.Dashboard.Features.Accounts;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class BillingCapacityJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class BillingCapacityJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task UnqualifiedActiveStripePriceRemovesPaidCapacityWhileKeepingTheExistingDatabase()

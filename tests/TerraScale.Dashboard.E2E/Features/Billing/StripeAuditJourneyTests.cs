@@ -4,8 +4,8 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
 
-[ClassDataSource<DashboardE2EFixture>]
-public sealed class StripeAuditJourneyTests(DashboardE2EFixture fixture)
+[ClassDataSource<DashboardRootFixture>]
+public sealed class StripeAuditJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
     public async Task ProductionExecutableRejectsAuditConfigurationSwitchesBeforeVaultRead()
