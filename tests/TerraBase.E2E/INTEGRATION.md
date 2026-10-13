@@ -222,6 +222,34 @@ Fast tests fail out of 1433:
 Not merged. The owner is asked to name the cause: this change, or pre-existing failures that main's runs could not show
 while Healthz failed first. Main stays red.
 
+## ORDER CHANGE (COS, ~01:30Z): R7 out of the critical path
+
+**Why:** #120 (R7 GC)'s independent review requested changes, with **data-loss must-fixes** (comment 6135823941). R7
+moves to a new owner, **R7-FIX** (bare branch `fix/r7-gc-safety`), and #120 merges **last**, after R7-FIX and a
+re-review. **R10a re-stacks without R7.**
+
+**New order, once main is green** (same gates: exact-head Fast green on current main, every review and comment read and
+any must-fix blocking, Slow unverifiable, nothing pushed to a PR whose base is not main):
+1. **#166.** Main's red; currently red on its exact head, owner asked for the cause.
+2. **#165.** R8's B1 fix.
+3. **#117.** Harness, register once.
+4. **#116 (R10a-1).** Retarget to main once #117 merges; R10a pushes its re-stacked head only after the retarget.
+5. **#121 (R10a-2, re-stacked on main).** Retarget to main once #116 merges. R10a sends the SHA and a range-diff, then
+   pushes. T1 reviews the storage-format merge (main is already at version 4).
+6. **The R10a-3 plus gate PR,** opened with base main after #121 merges (branch `feat/r10a-3-catalog-gate`).
+7. **#119.**
+8. **#152,** after R3's must-fixes and a re-review.
+9. **#162**, then **#163.**
+10. **R8's repair-feed PR,** after #165. It depends on the R6-FIX PR for #114.
+11. **The R6-FIX PRs** for #114 and #112.
+12. **The #106 fix-forward.**
+13. **#164**, then **#145.**
+14. **The AUTH-REGIONAL PR.**
+15. **#120, last,** after R7-FIX and its re-review.
+
+This replaces the earlier exact order (fa4ff0a8) and R10a's R7-based placement. The approval through `dd98ebba` was on
+R7, so the re-stacked heads need the range-diff and a confirming review.
+
 **Review gate (COS, 00:25Z; every PR, test-only included):** before a merge, every review and comment on the exact head
 is read.
 - Any CHANGES REQUESTED or must-fix from any reviewer blocks the merge until a re-review on a newer head approves.
@@ -492,7 +520,7 @@ the SHA listed. A newer head means a new manifest entry, never a silent swap.
 | 14 | R8 e2e scenarios | #119 | `90847616` (local; pushed head `56b9ffea`) | none (tests) | ready | Only `ChangesFeedE2ETests.cs`. Its two `[Scenario]` declarations come from the assertion side (item 19). |
 | 15 | R6: anti-entropy and refill | #114 | `594b052a` (pushed) | 3 | ready | |
 | 16 | Register once (harness for R10a) | #117 | `256d5442` (pushed) | none (tests) | ready | |
-| 17 | **R7: garbage collection**, copying refill | #120 | **`24e138c0`** (R3's local R7 tip; supersedes `76cb23ff`, which it contains) | 3 (R7 changes no format, #120) | ready; merges after its base PRs | Contains `e8b458e5` (stale writes), `7d83cfbf` (refill refused), `80c67345` (the PeerLink abort fix), `baa2e236` (register as the first region's user), `76cb23ff` (ack past CDC rows with nothing to ship) and the Fast restarted-machine wait. R10a's stack sits on it. |
+| 17 | **R7: garbage collection**, copying refill | #120 | **`24e138c0`** (R3's local R7 tip; supersedes `76cb23ff`, which it contains) | 3 (R7 changes no format, #120) | **OUT of the critical path**: CHANGES REQUESTED with data-loss must-fixes (comment 6135823941); R7-FIX owns `fix/r7-gc-safety`; merges last | Contains `e8b458e5` (stale writes), `7d83cfbf` (refill refused), `80c67345` (the PeerLink abort fix), `baa2e236` (register as the first region's user), `76cb23ff` (ack past CDC rows with nothing to ship) and the Fast restarted-machine wait. R10a's stack sits on it. |
 | 18 | **R10a: catalog as a lattice database** | #116, #121 | **`dd98ebba`** (approved; on R7 `24e138c0`; split into #116 = R10a-1 `305890b3`, #121 = R10a-2 `2334a941`, and a new main-base PR for `a0b86d7d..dd98ebba`): `305890b3` R10a-1, `2334a941` R10a-2 (format 4), `a0b86d7d` R10a-3, `959904dc` e2e, `f03c62e7` invariants, `db573c42` bounded delete, `84dff445` fail-closed restore gate, `a9c56e8f` QuietAsync routing, `60eae912` restore-gate blockers (no opening on an empty peer list; explicit genesis bootstrap; no unauthenticated override), `33306cdf` operator catalog-open, `9608a2ea` per-machine verification and restore anchor, `7d3f0eec` revocations anchored before they are acknowledged, and pulls counted only from trusted peers, `79ecf7c2` only commits that revoke access wait for the anchor, `f2c32f99` a missing anchor keeps a non-genesis catalog untrusted, `c3fda431` adoption runbook and `/catalog-gate` reporting pending and digest, `feec75e5` anchoring decided by the routed endpoint's metadata (R3's blocker), `7af6811a` every mutating write classified and non-DELETE revocations anchored, `817f7897` a backup destination anchored only when it replaces one | **4** (`4-44d5cdc5b81c` alone, per R10a) | **APPROVED through `dd98ebba`** (independent round 2, #108 comments 6134686131 and 6134782297) | R10a's results at `817f7897`: Fast 1400/1400; E2E 30 passed + 29 landed, 3 skipped, 1 failed. The failure is the single-region stall test; per R3 it needs R3's bootstrap one-liner plus the strict owner's `f8972480` (assertion side, item 19: the stall scenarios use the harness's in-process stall) in the combine; format `4-44d5cdc5b81c` (unchanged). The failure is the single-region storage stall, whose harness now needs a catalog bootstrap; that harness change is asked of R3. #116 and #121 are retargeted to main only after their base PRs merge (#120 → #117 → #114 → … → #106). R10a then brings both to the current head and runs the `.github` check before pushing. |
 | 19 | Assertion side and recorder | #105 + the candidate stack | #105 `4069da9f` (pushed) + local `94086cd6`/`4b85b32c`; the candidate-9 assertion commits on `dea6b364` + R3's `1b68b852` (writer outcomes) | none (tests) | ready | The final `Gaps.cs` follows the candidate stack: it keeps only gaps that still fail their own way. #105's main-only setup-blocked classification is kept only if a scenario still needs it. |
 | 19a | **Tester A: multi-writer convergence matrix** (`tests/TerraBase.E2E/MultiWriterMatrixTests.cs`, test only) | none | **`3ade7009`** (local, on `cfda0499`); the combine takes the file only | none (test only; no product or harness change) | ready; **needs #111 (`RegionProcesses`) on main first** | 1 test × 6 write orders over region processes (SIGKILL windows, all-regions restart): same and different field, delete vs edit both orders, counters, add-wins sets, delete → re-create, counts and **exact per-region digests**. **Ack-based barrier:** `/replication` Head advanced past the pre-sentinel snapshot, and Acknowledged ≥ Head per receiver. Tester A: 5 quiet repeats 30/30 pass, mutants M1 and M2 fail 6/6. Declared `[Scenario(Nodes.Processes, Faults.ProcessKill)]` by the strict owner. **Caveat to state with its result:** no route exposes the true CDC head, so "anti-entropy out of order and a stale Head at the same moment" is not formally excluded. Hook request to R3: expose the CDC head per database. It joins the test-only PR with Tester C's files only once #111 is on main; it uses `RegionProcesses`, which main does not have. |
