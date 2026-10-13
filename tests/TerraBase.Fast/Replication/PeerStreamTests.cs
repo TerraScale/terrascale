@@ -710,6 +710,120 @@ public sealed class PeerStreamTests
         await Assert.That(most).IsLessThanOrEqualTo(8).Because($"at most {most} ranges over 60 passes");
     }
 
+    // PROBE (review round 3, E): remembered quiet ranges that a local group separates never merge across it, and a range is
+    // only followed from inside it. Two raises over sjc's joined writes remember (low, q1] and (top, q2], with gru's local
+    // groups held1 and held2 between them. Reads from below the lower range (low) and from between them (mid, held1's
+    // commit) must return the local groups after them, also on a second pass, after the reads remembered their own ranges.
+    [Test]
+    public async Task Probe_r3_quiet_ranges_never_bridge_a_local_group()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (first, joined1, held1, held2, joined2) =
+            (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        var sjcNode = sjc.Node;
+        var low = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, low)).IsTrue();
+        await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined1, Json("""{"j":1}"""), CancellationToken.None));
+        await Assert.That(await gru.UntilAsync(joined1, """{"j":1}""")).IsTrue();
+        await gru.TrimAsync();
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", held1, Json("""{"h":1}"""), CancellationToken.None));
+        var mid = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", held2, Json("""{"h":2}"""), CancellationToken.None));
+        var top = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, top)).IsTrue();
+        await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined2, Json("""{"j":2}"""), CancellationToken.None));
+        await Assert.That(await gru.UntilAsync(joined2, """{"j":2}""")).IsTrue();
+        await gru.TrimAsync();
+        await Assert.That(await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None)).IsGreaterThan(top);
+
+        for (var pass = 1; pass <= 2; pass++)
+        {
+            var fromLow = (await gru.Groups.ReadAsync(cluster.Database, low, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None))
+                .SelectMany(group => group.Deltas).Select(delta => delta.Id).ToList();
+            await Assert.That(fromLow.Contains(held1) && fromLow.Contains(held2)).IsTrue()
+                .Because($"pass {pass}: a read from {low} (ranges {gru.CdcSource.QuietRanges(await gru.IncarnationAsync())}) returns both local groups, got [{string.Join(", ", fromLow)}]");
+            var fromMid = (await gru.Groups.ReadAsync(cluster.Database, mid, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None))
+                .SelectMany(group => group.Deltas).Select(delta => delta.Id).ToList();
+            await Assert.That(fromMid.Contains(held2)).IsTrue()
+                .Because($"pass {pass}: a read from {mid}, below the upper range, returns held2, got [{string.Join(", ", fromMid)}]");
+        }
+    }
+
+    // Reviewer-only probe F: fill the production cap with disjoint subranges of a real remote-only CDC transaction.
+    // Losing a needed lower range must request refill, preserve another file's ranges, and never hide a local group.
+    [Test]
+    public async Task Probe_r3_cap_eviction_refills_without_skipping_local_groups()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru");
+        var gru = cluster["gru"];
+        var peer = ReplicaId.Of(2, 7, 0);
+        var (first, joined, held) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        var engine = gru.Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+        var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+        // An unstarted source avoids unrelated stream reads merging the intentionally sparse subranges.
+        using var source = new TerraBase.Engine.Sqlite.TursoChangeGroupSource(engine,
+            gru.Api.Server.Services.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(),
+            gru.Api.Server.Services.GetRequiredService<Microsoft.Extensions.Logging.ILogger<TerraBase.Engine.Sqlite.TursoChangeGroupSource>>());
+        var low = await source.HeadAsync(cluster.Database, CancellationToken.None);
+        await source.AckAsync(cluster.Database, peer, low, CancellationToken.None);
+        var remote = Put(peer, Stamp(), joined, """{"j":1}""");
+        await gru.WriteAsync(async transaction => _ = await transaction.JoinAsync(remote.Collection, remote.Id, remote.State,
+            new EntryVersion(remote.Stamp, peer), CancellationToken.None));
+        await source.TrimAsync(store, CancellationToken.None);
+        var quiet = await source.AckedAsync(cluster.Database, peer, CancellationToken.None);
+        await Assert.That(quiet).IsGreaterThan(low);
+        await gru.WriteAsync(async transaction => _ = await transaction.PutAsync("items", held, Json("""{"h":1}"""), CancellationToken.None));
+        var heldEnd = await source.HeadAsync(cluster.Database, CancellationToken.None);
+
+        var stamp = Stamp();
+        await gru.WriteAsync(async transaction =>
+        {
+            for (var row = 0; row < 5000; row++)
+            {
+                var delta = Put(peer, stamp, EntityIds.New().ToString(), """{"remote":true}""");
+                _ = await transaction.JoinAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, peer), CancellationToken.None);
+            }
+        });
+        long newest;
+        await using (var transaction = (TerraBase.Engine.Sqlite.SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            var (groups, end, _) = await transaction.ReadChangeGroupsAsync(heldEnd, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, gru.Node, CancellationToken.None);
+            await Assert.That(groups.Count).IsEqualTo(0).Because("every seeded subrange is inside proven remote-only CDC rows");
+            newest = end;
+        }
+
+        await Assert.That(newest - heldEnd).IsGreaterThan(8194);
+        clock.Offset = TimeSpan.FromMinutes(2);
+        await source.TrimAsync(store, CancellationToken.None);
+        await Assert.That(await source.RetainsAsync(cluster.Database, low, CancellationToken.None)).IsTrue().Because("the lowest remembered range still spares a refill before eviction");
+        var other = EntityIds.New();
+        source.Remember(other, 0, 1);
+        for (var range = 0; range < 4097; range++)
+        {
+            var from = heldEnd + range * 2;
+            source.Remember(store.Incarnation, from, from + 1);
+        }
+
+        await Assert.That(source.QuietRanges(store.Incarnation)).IsEqualTo(4096).Because("the cap bounds one file without clearing all ranges");
+        await Assert.That(source.QuietRanges(other)).IsEqualTo(1).Because("another file is unaffected by the cap");
+        await Assert.That(await source.RetainsAsync(cluster.Database, low, CancellationToken.None)).IsFalse().Because("evicting a still-needed low range requests refill");
+        var remaining = await source.ReadAsync(cluster.Database, low, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+        await Assert.That(remaining.SelectMany(group => group.Deltas).Any(delta => delta.Id == held)).IsTrue().Because("cap eviction cannot skip the local group between the quiet ranges");
+        await Assert.That(await source.RetainsAsync(cluster.Database, low, CancellationToken.None)).IsFalse().Because("a read below the cut cannot recreate proof for evicted rows");
+    }
+
     // A copy (and so a restore, which copies) must not inherit the source's _tb_peers.acked, an id of the source's
     // turso_cdc: once the copy's own ids passed it, it would be taken as the peer's ack and the copy's groups at or below it
     // never streamed (review of #106, M2). A copy's peer has acknowledged nothing of the copy.
