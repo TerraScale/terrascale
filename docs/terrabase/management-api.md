@@ -273,7 +273,7 @@ Base path: `/v1/management`.
 | `GET` | `/organizations/{organization}/projects/{project}` | project |
 | `PATCH` | `/organizations/{organization}/projects/{project}` | `{name}` → renamed project |
 | `DELETE` | `/organizations/{organization}/projects/{project}` | `204`; `409` while it has databases |
-| `POST` | `…/projects/{project}/databases` | `{name, homeRegion?, replicaRegions?}` → `201` empty database; `421 wrong_region` when `homeRegion` is not the called region ([placement](#region-placement)) |
+| `POST` | `…/projects/{project}/databases` | `{name, homeRegion?, replicaRegions?}` → `201` empty database, placed in two regions or more on a cell; `400 placement_needs_two_regions`, `503 remote_region_unavailable`; `421 wrong_region` when `homeRegion` is not the called region ([placement](#region-placement)) |
 | `GET` | `…/projects/{project}/databases` | page of databases |
 | `GET` | `…/projects/{project}/databases/{database}` | database |
 | `PATCH` | `…/projects/{project}/databases/{database}` | `{replicaRegions}` → database with its new replica regions; home region only (`421 wrong_region` elsewhere) |
@@ -306,9 +306,18 @@ Region ids are Atlas region ids (`gru-1`, `sfo-1`), the values of `X-TerraBase-R
 - `homeRegion` is where the database is created and managed: create, change regions, delete and branch go to it.
   `replicaRegions` are the other regions that hold a full copy; every listed region serves reads and writes, and
   writes replicate between them.
-- On create, `homeRegion` defaults to the called region and `replicaRegions` to none. A replica region must be one this
-  deployment replicates with, listed once, and not the home (`400 invalid_request`). Each replica region must register
-  the organization and project under the same ids to take the database.
+- On create, `homeRegion` defaults to the called region. A replica region must be one this deployment replicates with,
+  listed once, and not the home (`400 invalid_request`). Each replica region must register the organization and project
+  under the same ids to take the database.
+- **Two regions or more** (decision 0013a, option A) apply on a machine that belongs to a cell, which is every machine on
+  Fly:
+  - A create without `replicaRegions` places replicas in every other region the membership lists. With none listed, it
+    answers `503 remote_region_unavailable` and creates nothing.
+  - A create with an empty `replicaRegions` answers `400 placement_needs_two_regions`.
+  - A `PATCH` may still remove every replica region, which is the step before a delete. That database then takes no
+    writes until a region is added back: under 0013a its writes are refused with `503 remote_region_unavailable`.
+  - A machine without a member directory (development off Fly, single-machine tests) is a cell of one. It still
+    defaults to no replica regions.
 - `PATCH` sets the complete new `replicaRegions`; `homeRegion` may be repeated but cannot change. An added region takes
   the database and fills its copy. A removed region stops serving it at once and keeps its copy unserved, so the writes it
   accepted keep reaching the others; added back, it resumes from that copy.
