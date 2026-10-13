@@ -385,6 +385,15 @@ failures repeat.
 
 **#186 merged OUTSIDE the train** (MarioGK, merge commit, 11:26Z), head `0e70a991` → main **`b9a68bb9`**. Its remaining code beyond `5252c120` (already in main via #175) is `6212e389`, `test: preserve transaction plan deadline coverage`. Push run 38390256538: deploy and preview skipped; Fast green (auth, terrabase and libs all succeeded).
 
+**Four PRs merged OUTSIDE the train** (MarioGK, merge commits, 11:40Z):
+- #190 (SQL Server offline adapter, head `748b6005`) → `e9389391`;
+- #189 (MySQL/MariaDB offline adapter, head `14218201`) → `65423a18`;
+- #188 (MongoDB Extended JSON adapter, head `402476b9`) → `be9ef3f0`;
+- #172 (query-value regression, head `6b780535`) → main **`4561bb7a`**.
+
+#172 was on the "outside the list, not before freeze" list; the user merged it themselves. Push runs 38391908036
+(`be9ef3f0`) and 38391935489 (`4561bb7a`) must be green before the next train merge.
+
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
 **Outside the queue (COS, 03:30Z):** **#167** (`feat/postgres-turso-import-core`, `62f251f6`, one-time PostgreSQL and
