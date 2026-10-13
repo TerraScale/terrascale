@@ -4,11 +4,10 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Data;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class DatabaseMcpJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
-    [NotInParallel("dashboard-demo")]
     public async Task LegacyDatabaseDataAndCredentialToolsWorkAcrossReplicas()
     {
         using var client = fixture.CreateClient();

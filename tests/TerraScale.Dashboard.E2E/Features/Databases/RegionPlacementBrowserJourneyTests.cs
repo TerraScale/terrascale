@@ -5,8 +5,7 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 [Category("Slow")]
 public sealed class RegionPlacementBrowserJourneyTests(DashboardE2EFixture fixture)
 {

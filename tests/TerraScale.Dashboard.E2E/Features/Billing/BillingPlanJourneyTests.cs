@@ -7,8 +7,7 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 [Category("Slow")]
 public sealed class BillingPlanJourneyTests(DashboardE2EFixture fixture)
 {

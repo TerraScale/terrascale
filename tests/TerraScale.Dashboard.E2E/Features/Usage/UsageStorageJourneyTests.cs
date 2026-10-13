@@ -9,8 +9,7 @@ using TerraScale.Dashboard.Features.Usage;
 
 namespace TerraScale.Dashboard.E2E.Features.Usage;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class UsageStorageJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]

@@ -3,8 +3,7 @@ using System.Text.Json;
 
 namespace TerraScale.Dashboard.E2E.Features.Databases;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class ReferenceDatabaseJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
