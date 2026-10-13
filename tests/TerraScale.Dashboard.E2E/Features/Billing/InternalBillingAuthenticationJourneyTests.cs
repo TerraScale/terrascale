@@ -161,7 +161,7 @@ public sealed class InternalBillingAuthenticationJourneyTests(DashboardE2EFixtur
         await ProtocolAsync(observed);
     }
 
-    private static async Task<string> SignInAsync(HttpClient browser, HttpClient producer, string role)
+    internal static async Task<string> SignInAsync(HttpClient browser, HttpClient producer, string role)
     {
         await ControlAsync(producer, new { command = "platform-role", value = role });
         using var login = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me");
@@ -172,11 +172,11 @@ public sealed class InternalBillingAuthenticationJourneyTests(DashboardE2EFixtur
         return identity.RootElement.GetProperty("organizationId").GetString()!;
     }
 
-    private static string[] CommandArguments(string command, string organization, string email = "user@example.com") => command == "report-internal-billing"
+    internal static string[] CommandArguments(string command, string organization, string email = "user@example.com") => command == "report-internal-billing"
         ? [command, "--org", organization, "--admin-email", email]
         : [command, "--org", organization, "--admin-email", email, "--base-plan", "business", "--spend-cap-cents", "840", "--write-cents-per-million", "100", "--storage-cents-per-gib-month", "20"];
 
-    private static async Task<CommandResult> RunApprovedAsync(AuthProviderScenario scenario, HttpClient browser, HttpClient producer, string[] args,
+    internal static async Task<CommandResult> RunApprovedAsync(AuthProviderScenario scenario, HttpClient browser, HttpClient producer, string[] args,
         Func<Task>? beforePoll = null, string decision = "approve")
     {
         using var output = new PromptWriter(); using var error = new StringWriter();
@@ -267,7 +267,7 @@ public sealed class InternalBillingAuthenticationJourneyTests(DashboardE2EFixtur
         await Assert.That(condition).IsTrue().Because(message);
     }
 
-    private sealed record CommandResult(int ExitCode, string Output, string Error, JsonElement Observed);
+    internal sealed record CommandResult(int ExitCode, string Output, string Error, JsonElement Observed);
 
     private sealed class PromptWriter : StringWriter
     {
