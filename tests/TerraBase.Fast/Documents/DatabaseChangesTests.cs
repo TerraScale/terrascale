@@ -1,7 +1,9 @@
 using System.Net;
 using System.Text.Json;
+using System.Threading.Channels;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Documents;
@@ -206,14 +208,44 @@ public sealed class DatabaseChangesTests
     [Test]
     public async Task An_idle_stream_sends_its_cursor_every_15_seconds()
     {
-        await using var api = await DocumentApi.StartAsync();
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var clock = new HeartbeatClock();
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
         using var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor=now");
         var head = await stream.NextAsync();
-        var started = TimeProvider.System.GetTimestamp();
-        var beat = await stream.NextAsync();
-        await Assert.That(beat.Event).IsEqualTo("cursor");
-        await Assert.That(beat.Id).IsEqualTo(head.Id);
-        await Assert.That(TimeProvider.System.GetElapsedTime(started)).IsGreaterThan(DatabaseChanges.Heartbeat - TimeSpan.FromSeconds(1));
+        await Assert.That(head.Event).IsEqualTo("cursor");
+        for (var interval = 0; interval < 2; interval++)
+        {
+            var next = stream.NextAsync();
+            // The server arms the interval after flushing its cursor; the client can read that cursor much later.
+            await Assert.That(await clock.NextIntervalAsync(token)).IsEqualTo(TimeSpan.FromSeconds(15));
+            clock.Advance(TimeSpan.FromSeconds(14));
+            await Assert.That(next.IsCompleted).IsFalse();
+            clock.Advance(TimeSpan.FromSeconds(1));
+            var beat = await next.WaitAsync(token);
+            await Assert.That(beat.Event).IsEqualTo("cursor");
+            await Assert.That(beat.Id).IsEqualTo(head.Id);
+            await Assert.That(beat.Data.GetProperty("cursor").GetString()).IsEqualTo(head.Id);
+        }
+    }
+
+    private sealed class HeartbeatClock() : FakeTimeProvider(DateTimeOffset.UtcNow)
+    {
+        private readonly Channel<TimeSpan> _intervals = Channel.CreateBounded<TimeSpan>(1);
+
+        public ValueTask<TimeSpan> NextIntervalAsync(CancellationToken token) => _intervals.Reader.ReadAsync(token);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = base.CreateTimer(callback, state, dueTime, period);
+            if (period == Timeout.InfiniteTimeSpan && dueTime == DatabaseChanges.Heartbeat && !_intervals.Writer.TryWrite(dueTime))
+            {
+                timer.Dispose();
+                throw new InvalidOperationException("the previous heartbeat interval was not observed");
+            }
+
+            return timer;
+        }
     }
 
     private static byte[] Origin(ulong origin, ulong stamp)
