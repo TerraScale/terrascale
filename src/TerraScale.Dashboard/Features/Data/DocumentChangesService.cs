@@ -26,7 +26,7 @@ public sealed class DocumentChangesService(DatabaseService databases, IProjectAc
         });
         var seen = new HashSet<(string Origin, string Version, string Collection, string Id)>();
         var order = new Queue<(string Origin, string Version, string Collection, string Id)>();
-        var checkpoint = lastEventId ?? cursor;
+        var checkpoint = lastEventId ?? (cursor == "now" ? null : cursor);
         await using var stream = client.Database(scope.ProjectId, database.Name)
             .StreamChangesAsync(cursor, lastEventId, [collection], cancellationToken).GetAsyncEnumerator(cancellationToken);
         while (true)
@@ -47,7 +47,7 @@ public sealed class DocumentChangesService(DatabaseService databases, IProjectAc
                 yield break;
             }
             var item = stream.Current;
-            checkpoint = item.Cursor;
+            checkpoint = item.Cursor ?? checkpoint;
             if (item.Change is not { } change)
             {
                 yield return new("cursor", checkpoint, Region: item.Region);

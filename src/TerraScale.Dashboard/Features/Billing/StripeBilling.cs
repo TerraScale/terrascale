@@ -270,6 +270,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
                 // Keep Stripe's canonical subscription binding for portal and
                 // replacement decisions, but revoke an unqualified plan even
                 // when this organization previously held paid entitlements.
+                if (org.Kind == "personal") org.PlanId = OrganizationRecord.FreePlanId;
                 org.BillingStatus = "billing_required";
                 binding.EffectivePlan = "";
                 binding.EffectiveInterval = "";

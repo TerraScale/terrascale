@@ -1,0 +1,8 @@
+@inherits RazorSlice<DocumentModel>
+@implements IUsesLayout<TerraScale.Dashboard.UI.Slices.Document, DocumentModel>
+<main class="ts-auth"><section class="ts-auth-card">
+    <div class="ts-auth-heading"><h1 class="ts-auth-title">Checkout temporarily unavailable</h1>
+    <p class="ts-auth-subtitle">Return to billing to resume the checkout or cancel it before choosing another plan.</p></div>
+    <a class="ts-btn ts-btn-primary" href="/organization?tab=billing">Try again</a>
+</section></main>
+@functions { public DocumentModel LayoutModel => Model; }

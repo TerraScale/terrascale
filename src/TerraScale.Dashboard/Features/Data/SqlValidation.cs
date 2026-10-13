@@ -36,7 +36,7 @@ public static partial class SqlValidation
     public static SqlAnalysis Analyze(string statement)
     {
         statement = statement.Trim();
-        var error = Error(statement);
+        var error = Diagnostics(statement).FirstOrDefault(item => item.Severity == "error")?.Message ?? "";
         if (error.Length > 0) return new(false, error);
         var visible = Visible(statement)!;
         if (AnyParameterPattern().Matches(visible).Any(match => !ParameterPattern().IsMatch(match.Value) || match.Value == "$0"))
