@@ -52,6 +52,9 @@ def main(destination):
             packages.append(source / "package" / name)
         first, second = [package.read_bytes() for package in packages]
         if first != second:
+            output.mkdir(parents=True, exist_ok=True)
+            for index, package in enumerate(packages):
+                shutil.copy(package, output / f"unqualified-build-{index}.zip")
             raise SystemExit("Two clean builds produced different package bytes; package is not qualified.")
         with zipfile.ZipFile(packages[0]) as package:
             assemblies = {framework: digest(package.read(f"lib/{framework}/TerraScale.DotNet.dll"))
