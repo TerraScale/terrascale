@@ -60,15 +60,19 @@ public sealed class DocumentBackend(IHttpClientFactory http, IProjectAccessToken
         var attemptId = ids.NewId();
         try
         {
-            return operation switch
+            var result = operation switch
             {
                 "create" or "replace" => await database.PutDocumentAsync(collection, id, document, precondition, cancellationToken),
                 "patch" => await database.PatchDocumentAsync(collection, id, document, precondition, cancellationToken),
                 "delete" => await database.DeleteDocumentAsync(collection, id, precondition, cancellationToken),
                 _ => throw new ArgumentException("Unknown document operation.", nameof(operation))
             };
+            if (result.Id != id || string.IsNullOrWhiteSpace(result.Version) || result.Offset < 0 || string.IsNullOrWhiteSpace(result.Durability))
+                throw new JsonException("The write acknowledgement is incomplete or belongs to another document.");
+            return result;
         }
-        catch (Exception error) when (error is TimeoutException or IOException or OperationCanceledException ||
+        catch (Exception error) when (error is TimeoutException or IOException or OperationCanceledException or JsonException ||
+            error is TerraBaseException { ErrorCode: "invalid_response" } reply && reply.StatusCode is { } status && (int)status is >= 200 and < 300 ||
             error is HttpRequestException request && (request.StatusCode is null || (int)request.StatusCode >= 500))
         {
             // The current producer rejects idempotency keys; replay cannot prove a commit.

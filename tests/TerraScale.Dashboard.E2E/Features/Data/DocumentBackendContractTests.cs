@@ -5,6 +5,7 @@ using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.DotNet;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.E2E.Features.Data;
 
@@ -61,6 +62,49 @@ public sealed class DocumentBackendContractTests
         await Assert.That(wire.Requests).IsEqualTo(0);
     }
 
+    [Test]
+    [Arguments("malformed")]
+    [Arguments("missing")]
+    [Arguments("foreign")]
+    [Arguments("valid")]
+    public async Task OnlyACompleteMatchingAcknowledgementConfirmsTheWrite(string receipt)
+    {
+        using var wire = new Wire { Receipt = receipt };
+        var backend = new DocumentBackend(wire, new Tokens());
+        using var body = JsonDocument.Parse("{\"title\":\"kept\"}");
+        DocumentWriteOutcomeUnknownException? unknown = null;
+        TerraBaseWriteResult? result = null;
+        try { result = await backend.WriteAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "replace", "a", body.RootElement, "", CancellationToken.None); }
+        catch (DocumentWriteOutcomeUnknownException error) { unknown = error; }
+        await Assert.That(wire.Requests).IsEqualTo(1);
+        if (receipt == "valid")
+        {
+            await Assert.That(unknown).IsNull();
+            await Assert.That(result!.Id).IsEqualTo("a");
+        }
+        else
+        {
+            await Assert.That(result).IsNull();
+            await Assert.That(unknown).IsNotNull();
+            await Assert.That(unknown!.DocumentId).IsEqualTo("a");
+            await Assert.That(TerraScaleIds.IsValid(unknown.OperationId)).IsTrue();
+        }
+    }
+
+    [Test]
+    [Arguments(403)]
+    [Arguments(412)]
+    public async Task KnownWriteRejectionKeepsItsStatusAndDoesNotReplay(int status)
+    {
+        using var wire = new Wire { Failure = status };
+        using var body = JsonDocument.Parse("{\"title\":\"kept\"}");
+        HttpRequestException? rejected = null;
+        try { await new DocumentBackend(wire, new Tokens()).WriteAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "replace", "a", body.RootElement, "", CancellationToken.None); }
+        catch (HttpRequestException error) { rejected = error; }
+        await Assert.That(rejected?.StatusCode).IsEqualTo((HttpStatusCode)status);
+        await Assert.That(wire.Requests).IsEqualTo(1);
+    }
+
     private static DatabaseScope Scope() => new("user", "original-user-token", "01JA0000000000000000000002", "org", "01JA0000000000000000000001", "project")
     { Session = new("user", "Synthetic", "synthetic@example.test", "original-user-token", null, DateTimeOffset.UtcNow.AddMinutes(5)) };
 
@@ -81,6 +125,7 @@ public sealed class DocumentBackendContractTests
     private sealed class Wire : HttpMessageHandler, IHttpClientFactory
     {
         public int Failure { get; init; } = -1;
+        public string Receipt { get; init; } = "";
         public int Requests { get; private set; }
         public List<string> Bearers { get; } = [];
         public string Path { get; private set; } = "";
@@ -100,6 +145,16 @@ public sealed class DocumentBackendContractTests
             IfNoneMatch = request.Headers.IfNoneMatch.FirstOrDefault()?.Tag;
             IdempotencyKey = request.Headers.TryGetValues("Idempotency-Key", out var values) ? values.Single() : null;
             Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+            if (Receipt.Length > 0)
+            {
+                var receipt = Receipt switch
+                {
+                    "malformed" => "{",
+                    "missing" => "{}",
+                    _ => JsonSerializer.Serialize(new { id = Receipt == "foreign" ? "other" : "a", version = "v2", offset = 2L, durability = "local_durable" })
+                };
+                return new(HttpStatusCode.OK) { Content = new StringContent(receipt, Encoding.UTF8, "application/json") };
+            }
             if (Failure == 0) throw new HttpRequestException("Connection reset after send.");
             if (Failure > 0) return new((HttpStatusCode)Failure) { Content = new StringContent("{\"error\":\"unavailable\"}", Encoding.UTF8, "application/json") };
             return new(HttpStatusCode.NotFound) { Content = new StringContent("{\"error\":\"not_found\"}", Encoding.UTF8, "application/json") };
