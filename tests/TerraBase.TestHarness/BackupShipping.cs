@@ -99,7 +99,10 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
 
     public Task<string> MetricsAsync(CancellationToken cancellationToken) => Api.Server.Client.GetStringAsync(ManagementApi.Uri("/metrics"), cancellationToken);
 
-    /// <summary>Segments start at 0 and ascend in start and time: no two share a start, so none overlaps another.</summary>
+    /// <summary>
+    /// Segments start at 0 and ascend in start, never back in time: no two share a start, so none overlaps another. Reads
+    /// in one pass (a shutdown flush) can share a time.
+    /// </summary>
     public static async Task AssertContiguousAsync(IReadOnlyList<SegmentKey> segments)
     {
         await Assert.That(segments.Count).IsGreaterThan(0);
@@ -107,7 +110,7 @@ internal sealed class BackupShippingHost(ManagementApi api, FakeS3 s3, FakeTimeP
         for (var index = 1; index < segments.Count; index++)
         {
             await Assert.That(segments[index].Start).IsGreaterThan(segments[index - 1].Start);
-            await Assert.That(segments[index].At).IsGreaterThan(segments[index - 1].At);
+            await Assert.That(segments[index].At).IsGreaterThanOrEqualTo(segments[index - 1].At);
         }
     }
 

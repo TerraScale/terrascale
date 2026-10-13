@@ -59,9 +59,10 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private static readonly TimeSpan DiscoveryInterval = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan SnapshotInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan ConfigurationTimeout = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan MaxBackoff = TimeSpan.FromMinutes(5);
 
-    // Log read but not stored, per file, while its uploads fail, before its generation is dropped for a fresh snapshot
-    // (bounds scratch disk; a read adds at most the tap's budget and one transaction past it).
+    // Log read but not stored, per file, past which reads wait while uploads fail, leaving the rest in turso_cdc (bounds
+    // scratch disk; a read adds at most the tap's budget and one transaction past it).
     private const long MaxPendingBytes = 256L * 1024 * 1024;
     private const int MaxJobs = 4;
     private const int MaxCustomerJobs = 2;
@@ -81,6 +82,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     // Only the scheduling gate owns admission and the counter; jobs alone own their file's shipping state.
     private readonly List<ShippingJob> _jobs = [with(capacity: MaxJobs)];
     private readonly CancellationTokenSource _jobCancellation = new();
+    // Beside shipping: daily snapshot uploads, each holding its scratch copy until stored, and restore drills, each rebuilding
+    // a file in scratch. Customer drills have their own slots, so a stalled customer bucket never holds a platform drill.
+    private readonly SemaphoreSlim _snapshotSlots = new(MaxJobs, MaxJobs);
+    private readonly SemaphoreSlim _drillSlot = new(1, 1);
+    private readonly SemaphoreSlim _customerDrillSlots = new(MaxCustomerJobs, MaxCustomerJobs);
     private long _scheduleCounter;
     private volatile bool _stopped;
     private readonly Lock _stopGate = new();
@@ -89,6 +95,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private readonly Counter<long> _failures;
     private readonly Counter<long> _holes;
     private readonly Counter<long> _abandoned;
+    private readonly Counter<long> _deferred;
     private readonly Counter<long> _generations;
     private readonly Counter<long> _drills;
     private readonly Counter<long> _bucketSnapshots;
@@ -111,7 +118,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         _failures = meter.CreateCounter<long>("terrabase.backup.failures", description: "Backup passes of a file that failed.");
         _holes = meter.CreateCounter<long>("terrabase.backup.holes", description: "Logs found checkpointed or rewritten by someone else, each ending a generation.");
         _abandoned = meter.CreateCounter<long>("terrabase.backup.abandoned",
-            description: "Generations ended by a failure with log read but not stored, by reason (backlog, read, destination).");
+            description: "Generations ended by a failure with log read but not stored, by reason (outage, read, destination).");
+        _deferred = meter.CreateCounter<long>("terrabase.backup.snapshots_deferred",
+            description: "Passes that put off a due daily snapshot, by reason (backlog: unread log remains; busy: snapshot uploads in flight).");
         _generations = meter.CreateCounter<long>("terrabase.backup.generations", description: "Generations started (each stores a snapshot).");
         _drills = meter.CreateCounter<long>("terrabase.backup.drills", description: "Restore drills, by result (passed, failed).");
         _bucketSnapshots = meter.CreateCounter<long>("terrabase.backup.bucket_snapshots", description: "Tigris snapshots of the backup bucket, by result (taken, deleted, failed).");
@@ -263,11 +272,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                     continue;
                 }
 
-                var job = new ShippingJob(next, CustomerWork(next), CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _jobCancellation.Token));
+                var job = new ShippingJob(next, CustomerWork(next), CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _jobCancellation.Token), cancellationToken);
                 next.Job = job;
                 _jobs.Add(job);
                 job.Completion = Task.Run(() => ShipAsync(job.File, job.Cancellation.Token), CancellationToken.None);
-                pending?.Add(job.Completion);
+                pending?.Add(JoinAsync(job));
             }
 
             return boundary;
@@ -275,6 +284,16 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         finally
         {
             _pass.Release();
+        }
+    }
+
+    // A manual pass also waits for the snapshot upload or drill its job started beside shipping.
+    private static async Task JoinAsync(ShippingJob job)
+    {
+        await job.Completion.ConfigureAwait(false);
+        if (job.Side is { } side)
+        {
+            await side.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
     }
 
@@ -461,7 +480,12 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                         file.RetryAt = DateTimeOffset.MinValue;
                     }
 
-                    await ShipAsync(file, cancellationToken).ConfigureAwait(false);
+                    // Ship the whole backlog, not one read of it, while the shutdown budget lasts.
+                    do
+                    {
+                        await ShipAsync(file, cancellationToken).ConfigureAwait(false);
+                    }
+                    while (file.Behind && file.LastError is null && file.Generation is not null && !cancellationToken.IsCancellationRequested);
                 }
                 catch (Exception error)
                 {
@@ -571,6 +595,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             {
                 if (file.Target.Revision != (file.Configuration?.Revision ?? BackupDestinationNames.Platform))
                 {
+                    // A snapshot upload or drill beside shipping uses the old target.
+                    file.Side?.Cancellation.Cancel();
+                    await file.StopSideAsync().ConfigureAwait(false);
                     var target = await _targets.ShippingAsync(file.Database, file.Configuration, cancellationToken).ConfigureAwait(false);
                     file.Target.Dispose();
                     file.Target = target;
@@ -578,6 +605,17 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                     (file.LastShipped, file.LastSnapshot, file.RetainedAt, file.DrilledAt, file.SizeBytes, file.SizedAt) = (null, default, default, default, null, default);
                 }
             }
+            if (file.Side is { Stored.Task.IsCompleted: true, Collected: false } side)
+            {
+                side.Collected = true;
+                if (side.Snapshot.Generation == file.Generation)
+                {
+                    // A daily snapshot stored beside shipping; a failed one fails this pass, and the generation goes on.
+                    await side.Stored.Task.ConfigureAwait(false);
+                    file.LastSnapshot = side.Snapshot.At;
+                }
+            }
+
             if (file.Generation is null)
             {
                 if (due)
@@ -587,6 +625,23 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 else
                 {
                     await DiscardAsync(file, cancellationToken).ConfigureAwait(false);
+                }
+
+                return;
+            }
+
+            if (due && file.Unstored is not null)
+            {
+                // Retry the failed segment first: while the bucket still fails, reading on only moves log into scratch.
+                await PutUnstoredAsync(file, cancellationToken).ConfigureAwait(false);
+            }
+            else if (!due && (file.Behind || file.Buffered >= MaxPendingBytes))
+            {
+                // Uploads fail: leave the backlog in turso_cdc, where the backup anchor holds it. Once failures reach the longest
+                // backoff the outage is sustained: drop the generation, so reads trim the change log again.
+                if (Backoff(file.Failures) >= MaxBackoff)
+                {
+                    Drop(file, "outage");
                 }
 
                 return;
@@ -628,12 +683,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             file.Behind = read.Remaining;
             if (!due)
             {
-                if (file.Buffered > MaxPendingBytes)
-                {
-                    // Uploads have failed too long: drop the log and start over with a snapshot once the bucket answers.
-                    Drop(file, "backlog");
-                }
-
                 return;
             }
 
@@ -647,10 +696,21 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 file.BehindSince = null;
             }
 
-            // A snapshot reads what is left while it holds writers: never with a backlog.
-            if (!file.Behind && now - file.LastSnapshot >= SnapshotInterval)
+            // A snapshot reads what is left while it holds writers: never with a backlog. Its upload holds a snapshot slot.
+            if (now - file.LastSnapshot >= SnapshotInterval && !_stopped)
             {
-                await SnapshotAsync(file, cancellationToken).ConfigureAwait(false);
+                if (file.Behind)
+                {
+                    _deferred.Add(1, new KeyValuePair<string, object?>("reason", "backlog"));
+                }
+                else if (file.Side is { Completion.IsCompleted: false } || !_snapshotSlots.Wait(0, cancellationToken))
+                {
+                    _deferred.Add(1, new KeyValuePair<string, object?>("reason", "busy"));
+                }
+                else
+                {
+                    await SnapshotAsync(file, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             if (file.Generation is not null && now - file.RetainedAt >= RetentionInterval)
@@ -743,10 +803,18 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         try
         {
             file.BehindSince ??= _time.GetUtcNow();
+            // The ended generation's upload or drill, cancelled when it ended.
+            await file.StopSideAsync().ConfigureAwait(false);
             file.Clear();
+            // Read a backlog before the snapshot holds writers, so the gate covers only what commits meanwhile.
+            await DiscardAsync(file, cancellationToken).ConfigureAwait(false);
             var captured = await file.Tap.SnapshotAsync(Stream.Null, snapshot, cancellationToken).ConfigureAwait(false);
             var at = captured.At;
             var key = BackupLayout.Snapshot(file.Prefix, at, generation, 0);
+            // The drill compares the bucket with this copy's checksum, so the copy need not outlive this pass.
+            var live = !_stopped && at - file.DrilledAt >= DrillInterval
+                ? await _engine.ChecksumAsync(snapshot, cancellationToken).ConfigureAwait(false)
+                : null;
             await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
             // What committed after the pin waits for the next read; until then lag counts from the pin.
             (file.Generation, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince, file.Behind) =
@@ -755,9 +823,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             _generations.Add(1);
             // The generation is stored: an earlier failure no longer stands (lag still shows what waits).
             (file.LastError, file.Failures) = (null, 0);
-            if (at - file.DrilledAt >= DrillInterval)
+            if (live is not null)
             {
-                await DrillAsync(file, new SnapshotKey(key, at, generation, 0), snapshot, cancellationToken).ConfigureAwait(false);
+                // Segments of this generation ship from the next pass on, while the drill runs beside them.
+                file.DrilledAt = at;
+                StartSide(file, new SnapshotKey(key, at, generation, 0), snapshot: null, live, drill: true);
             }
         }
         finally
@@ -766,12 +836,15 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
     }
 
-    // A later snapshot of the same generation: the frames before it are stored first, so the next segment starts at it.
+    // A later snapshot of the same generation: the log before it is stored first, so the next segment starts at it. Its upload
+    // and drill then run beside shipping, holding the snapshot slot the caller took and its scratch copy until it is stored.
     private async Task SnapshotAsync(ShippedFile file, CancellationToken cancellationToken)
     {
         var snapshot = ScratchFile(".db");
+        var handedOff = false;
         try
         {
+            await file.StopSideAsync().ConfigureAwait(false);
             WalSnapshot captured;
             try
             {
@@ -807,25 +880,94 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 file.PendingAt = at;
             }
 
-            // What commits after the pin waits until this snapshot's upload and drill end; lag counts from the pin.
-            file.BehindSince ??= at;
             if (file.Buffered > 0)
             {
                 await UploadPendingAsync(file, cancellationToken).ConfigureAwait(false);
             }
 
-            var key = BackupLayout.Snapshot(file.Prefix, at, file.Generation!.Value, file.Position);
-            await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
-            (file.LastSnapshot, file.LastShipped) = (at, at);
-            AcknowledgePlatform(file, at);
-            if (at - file.DrilledAt >= DrillInterval)
+            // Everything committed by the pin is in the bucket now (that segment, or nothing new), so `at` restores already.
+            if (file.LastShipped is not { } shipped || shipped < at)
             {
-                await DrillAsync(file, new SnapshotKey(key, at, file.Generation.Value, file.Position), snapshot, cancellationToken).ConfigureAwait(false);
+                file.LastShipped = at;
+                AcknowledgePlatform(file, at);
             }
+
+            var generation = file.Generation!.Value;
+            var key = new SnapshotKey(BackupLayout.Snapshot(file.Prefix, at, generation, file.Position), at, generation, file.Position);
+            var drill = at - file.DrilledAt >= DrillInterval;
+            if (drill)
+            {
+                file.DrilledAt = at;
+            }
+
+            StartSide(file, key, snapshot, live: null, drill);
+            handedOff = true;
         }
         finally
         {
-            DeleteSnapshot(snapshot);
+            if (!handedOff)
+            {
+                DeleteSnapshot(snapshot);
+                _snapshotSlots.Release();
+            }
+        }
+    }
+
+    // Starts a snapshot's upload (from `snapshot`, a scratch copy it then owns) and its drill beside shipping. A manual pass
+    // waits for it through the job; removal, a new destination and shutdown cancel and join it before its target goes.
+    private void StartSide(ShippedFile file, SnapshotKey key, string? snapshot, byte[]? live, bool drill)
+    {
+        // Cancelled with the pass that started it (a manual pass waits for it), and with the service.
+        var side = new SideWork(key, CancellationTokenSource.CreateLinkedTokenSource(file.Job?.Caller ?? CancellationToken.None, _jobCancellation.Token))
+        {
+            Stored = snapshot is null ? null : new(TaskCreationOptions.RunContinuationsAsynchronously),
+        };
+        file.Side = side;
+        side.Completion = Task.Run(() => SideAsync(file, side, snapshot, live, drill), CancellationToken.None);
+        if (file.Job is { } job)
+        {
+            job.Side = side.Completion;
+        }
+    }
+
+    private async Task SideAsync(ShippedFile file, SideWork side, string? snapshot, byte[]? live, bool drill)
+    {
+        var token = side.Cancellation.Token;
+        if (snapshot is not null)
+        {
+            try
+            {
+                live = drill ? await _engine.ChecksumAsync(snapshot, token).ConfigureAwait(false) : null;
+                await StoreAsync(file, side.Snapshot.Key, snapshot, "snapshot", token).ConfigureAwait(false);
+                side.Stored!.TrySetResult();
+            }
+            catch (Exception error)
+            {
+                // The file's next pass collects the failure.
+                side.Stored!.TrySetException(error);
+                return;
+            }
+            finally
+            {
+                DeleteSnapshot(snapshot);
+                _snapshotSlots.Release();
+            }
+        }
+
+        if (live is null)
+        {
+            return;
+        }
+
+        var slot = file.Target.Revision == BackupDestinationNames.Platform ? _drillSlot : _customerDrillSlots;
+        await slot.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            await DrillAsync(file, side.Snapshot, live, token).ConfigureAwait(false);
+        }
+        finally
+        {
+            slot.Release();
         }
     }
 
@@ -938,13 +1080,14 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     }
 
     // 1 s after the first failure, doubling up to five minutes, like Litestream's sync backoff.
-    private static TimeSpan Backoff(int failures) => TimeSpan.FromSeconds(Math.Min(300, Math.Pow(2, Math.Min(failures - 1, 9))));
+    private static TimeSpan Backoff(int failures) => TimeSpan.FromSeconds(Math.Min(MaxBackoff.TotalSeconds, Math.Pow(2, Math.Min(failures - 1, 9))));
 
     // Ends the generation; on its own only where the file moves on on purpose (a new shipper or destination, shutdown).
     private static void Abandon(ShippedFile file)
     {
         file.PlatformProgress = null;
         file.Generation = null;
+        file.Side?.Cancellation.Cancel();
         file.Clear();
     }
 
@@ -971,19 +1114,43 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     {
         _jobCancellation.Dispose();
         _pass.Dispose();
+        _snapshotSlots.Dispose();
+        _drillSlot.Dispose();
+        _customerDrillSlots.Dispose();
         base.Dispose();
     }
 
-    private sealed class ShippingJob(ShippedFile file, bool customer, CancellationTokenSource cancellation)
+    private sealed class ShippingJob(ShippedFile file, bool customer, CancellationTokenSource cancellation, CancellationToken caller)
     {
+        /// <summary>The token of the pass that started the job.</summary>
+        public CancellationToken Caller { get; } = caller;
+
         public ShippedFile File { get; } = file;
         public bool Customer { get; } = customer;
         public CancellationTokenSource Cancellation { get; } = cancellation;
         public Task Completion { get; set; } = Task.CompletedTask;
         public Task? Cancelling { get; set; }
+
+        /// <summary>The snapshot upload or drill this job started beside shipping, for a manual pass to wait for.</summary>
+        public Task? Side { get; set; }
     }
 
     private sealed record ShippingProgress(Ulid Generation, DateTimeOffset At);
+
+    /// <summary>A snapshot's upload, its drill, or both, running beside the file's shipping.</summary>
+    private sealed class SideWork(SnapshotKey snapshot, CancellationTokenSource cancellation)
+    {
+        public SnapshotKey Snapshot { get; } = snapshot;
+        public CancellationTokenSource Cancellation { get; } = cancellation;
+
+        /// <summary>Completes once a daily snapshot is stored, or with its failure; null when only a drill runs.</summary>
+        public TaskCompletionSource? Stored { get; init; }
+
+        /// <summary>Whether the file's pass has taken in <see cref="Stored"/>.</summary>
+        public bool Collected { get; set; }
+
+        public Task Completion { get; set; } = Task.CompletedTask;
+    }
 
     /// <summary>A sealed segment not yet acknowledged: its key, its sealed bytes (a scratch file) and its time.</summary>
     private sealed record Segment(string Key, FileStream Sealed, DateTimeOffset At);
@@ -1023,6 +1190,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         /// <summary>Whether the last read stopped at the tap's budget, leaving committed changes to read.</summary>
         public bool Behind { get; set; }
 
+        /// <summary>The last snapshot upload or drill started beside shipping; only the file's job replaces it.</summary>
+        public SideWork? Side { get; set; }
+
         public Ulid? Generation { get; set; }
         public long Position { get; set; }
         public long PendingStart { get; set; }
@@ -1055,7 +1225,19 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         public BackupDrill? LastDrill { get; set; }
 
+        /// <summary>The time of the snapshot the job last asked a drill for.</summary>
         public DateTimeOffset DrilledAt { get; set; } = DateTimeOffset.MinValue;
+
+        /// <summary>Waits for <see cref="Side"/> to end (cancel it first to end it early) and releases it.</summary>
+        public async Task StopSideAsync()
+        {
+            if (Side is { } side)
+            {
+                await side.Completion.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                side.Cancellation.Dispose();
+                Side = null;
+            }
+        }
 
         /// <summary>Drops every log byte read and not stored.</summary>
         public void Clear()
@@ -1067,6 +1249,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         public async ValueTask DisposeAsync()
         {
+            Side?.Cancellation.Cancel();
+            await StopSideAsync().ConfigureAwait(false);
             try
             {
                 await Tap.DisposeAsync().ConfigureAwait(false);

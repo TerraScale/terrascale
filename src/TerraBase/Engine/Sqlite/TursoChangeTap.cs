@@ -54,6 +54,9 @@ internal sealed class TursoChangeTap : IWalTap
     /// <summary>Runs after a snapshot is pinned and writers are released, before the file is copied; for integration tests.</summary>
     internal Func<CancellationToken, Task>? AfterSnapshotPinned { get; set; }
 
+    /// <summary>Runs after a read, before its change-log cleanup on the writer; for integration tests.</summary>
+    internal Func<CancellationToken, Task>? BeforeTrim { get; set; }
+
     private TursoChangeTap(SqliteDatabaseStore store, SqliteIoPool io, TimeProvider time, TursoConnection reader)
     {
         _store = store;
@@ -97,6 +100,11 @@ internal sealed class TursoChangeTap : IWalTap
             {
                 try
                 {
+                    if (BeforeTrim is { } trim)
+                    {
+                        await trim(cancellationToken).ConfigureAwait(false);
+                    }
+
                     await _store.WithWriterAsync(Truncate, "the continuous backup's cleanup", cancellationToken).ConfigureAwait(false);
                 }
                 catch
@@ -104,9 +112,11 @@ internal sealed class TursoChangeTap : IWalTap
                     // A call that throws has not moved the tap (IWalTap.ReadAsync): the next one reads the same changes
                     // again, or finds a hole if the delete ran.
                     (_anchor, _schema) = (anchor, schema);
-                    _store.BackupAnchor = anchor;
                     throw;
                 }
+
+                // Only now may CDC retention for peer streams move past the old anchor.
+                _store.BackupAnchor = _anchor;
             }
 
             return read;
@@ -208,8 +218,8 @@ internal sealed class TursoChangeTap : IWalTap
             (after, spent) = (next, stop);
         }
 
+        // The caller publishes the anchor to CDC retention (BackupAnchor) once its cleanup is done.
         (_anchor, _schema) = (after, schema);
-        _store.BackupAnchor = after;
         return new(bytes, true, after < end);
     }
 

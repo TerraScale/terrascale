@@ -201,6 +201,139 @@ public sealed class BackupShippingRecoveryTests
         await Assert.That(await host.ReadAsync("after-drill", "people", "during", cancellationToken)).IsEqualTo(during);
     }
 
+    [Test]
+    public async Task Segments_ship_once_a_generation_snapshot_is_stored_while_its_restore_drill_runs(CancellationToken cancellationToken)
+    {
+        await using var host = await BackupShippingHost.StartAsync();
+        var texts = AmbiguousDocuments.ToDictionary(name => name, _ => Faker.Lorem.Sentence(8), StringComparer.Ordinal);
+        await host.PutAsync("people", "seed", texts["seed"], cancellationToken);
+        var snapshots = $"{host.File}/snapshots/";
+        // The generation's snapshot upload, then its drill's download of that snapshot (the first GET), wait for the test.
+        var upload = new HeldCall(snapshots);
+        var drill = new HeldCall(snapshots);
+        host.S3.BeforePut = upload.BeforeAsync;
+        host.S3.BeforeGet = drill.BeforeAsync;
+        var pass = Task.CompletedTask;
+        try
+        {
+            host.Time.Advance(TimeSpan.FromSeconds(10));
+            pass = host.StartPassAsync(cancellationToken);
+            await upload.Entered.WaitAsync(TimeSpan.FromMinutes(1), cancellationToken);
+            await host.PutAsync("people", "b", texts["b"], cancellationToken);
+            upload.Release();
+            await drill.Entered.WaitAsync(TimeSpan.FromMinutes(1), cancellationToken);
+
+            // The snapshot is stored and its drill is held: the write committed during the upload ships, and so does the next.
+            await ShipUntilAsync(host, segments: 1, cancellationToken);
+            await host.PutAsync("people", "c", texts["c"], cancellationToken);
+            await ShipUntilAsync(host, segments: 2, cancellationToken);
+            var status = host.Status();
+            await Assert.That(status.LastDrill).IsNull();
+            await Assert.That(status.LagSeconds).IsEqualTo(0);
+            var segments = host.Segments(status.Generation!);
+            await Assert.That(segments.Count).IsEqualTo(2);
+            await BackupShippingHost.AssertContiguousAsync(segments);
+            string[][] restored = [["seed", "b"], ["seed", "b", "c"]];
+            for (var index = 0; index < segments.Count; index++)
+            {
+                var name = $"beside-drill-{index}";
+                await host.RestoreAsync(segments[index].At, name, cancellationToken);
+                foreach (var document in restored[1])
+                {
+                    await Assert.That(await host.ReadAsync(name, "people", document, cancellationToken)).IsEqualTo(restored[index].Contains(document) ? texts[document] : null);
+                }
+            }
+        }
+        finally
+        {
+            upload.Release();
+            drill.Release();
+            await pass;
+        }
+
+        await Assert.That(host.Status().LastDrill!.Passed).IsTrue();
+    }
+
+    [Test]
+    public async Task Segments_keep_shipping_while_a_daily_snapshot_uploads(CancellationToken cancellationToken)
+    {
+        await using var host = await BackupShippingHost.StartAsync();
+        var texts = AmbiguousDocuments.ToDictionary(name => name, _ => Faker.Lorem.Sentence(8), StringComparer.Ordinal);
+        await host.PutAsync("people", "seed", texts["seed"], cancellationToken);
+        await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        var generation = host.Status().Generation!;
+        var daily = new HeldCall($"{host.File}/snapshots/");
+        host.S3.BeforePut = daily.BeforeAsync;
+        var pass = Task.CompletedTask;
+        try
+        {
+            host.Time.Advance(TimeSpan.FromDays(1));
+            pass = host.StartPassAsync(cancellationToken);
+            await daily.Entered.WaitAsync(TimeSpan.FromMinutes(1), cancellationToken);
+
+            // The daily snapshot's upload is held: a write committed meanwhile ships as a segment and restores exactly.
+            await host.PutAsync("people", "b", texts["b"], cancellationToken);
+            await ShipUntilAsync(host, segments: 1, cancellationToken);
+            var status = host.Status();
+            await Assert.That(status.Generation).IsEqualTo(generation);
+            await Assert.That(status.LagSeconds).IsEqualTo(0);
+            var segments = host.Segments(generation);
+            await Assert.That(segments.Count).IsEqualTo(1);
+            await host.RestoreAsync(segments[0].At, "beside-daily", cancellationToken);
+            await Assert.That(await host.ReadAsync("beside-daily", "people", "seed", cancellationToken)).IsEqualTo(texts["seed"]);
+            await Assert.That(await host.ReadAsync("beside-daily", "people", "b", cancellationToken)).IsEqualTo(texts["b"]);
+        }
+        finally
+        {
+            daily.Release();
+            await pass;
+        }
+
+        await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+        var stored = host.Status();
+        await Assert.That(stored.Generation).IsEqualTo(generation);
+        await Assert.That(stored.LastError).IsNull();
+        await Assert.That(host.S3.Objects.Keys.Count(key => key.StartsWith($"{host.File}/snapshots/", StringComparison.Ordinal))).IsEqualTo(2);
+        await Assert.That(stored.LastDrill!.Passed).IsTrue();
+    }
+
+    // Runs passes until the file's generation has `segments` segments, for up to 20 s: the job that started a held upload or
+    // drill can still be finishing when the test sees the hold, and a pass skips a busy file.
+    private static async Task ShipUntilAsync(BackupShippingHost host, int segments, CancellationToken cancellationToken)
+    {
+        for (var pass = 0; pass < 400; pass++)
+        {
+            await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+            if (host.Segments(host.Status().Generation!).Count >= segments)
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+        }
+    }
+
+    // Holds the first call under a prefix until released.
+    private sealed class HeldCall(string prefix)
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _calls;
+
+        public Task Entered => _entered.Task;
+
+        public void Release() => _release.TrySetResult();
+
+        public async Task BeforeAsync(string key, CancellationToken cancellationToken)
+        {
+            if (key.StartsWith(prefix, StringComparison.Ordinal) && Interlocked.Increment(ref _calls) == 1)
+            {
+                _entered.TrySetResult();
+                await _release.Task.WaitAsync(cancellationToken);
+            }
+        }
+    }
+
     // The first PUT under Prefix chooses the key; every PUT of that key while Prefix is set is stored, then answered 500.
     private sealed class AmbiguousPuts
     {
