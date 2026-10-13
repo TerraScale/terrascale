@@ -42,10 +42,10 @@ for source in root.rglob("*.cs"):
     if not re.search(r"(?:^|[,\s:.])Test(?:Attribute)?\s*(?:\(|,|$)", attributes, re.MULTILINE):
         continue
     assert source.is_relative_to(suite), f"TUnit tests belong in the E2E suite: {source}"
-    assert source.name.endswith("JourneyTests.cs"), f"Create application journeys: {source}"
+    assert source.name.endswith(("JourneyTests.cs", "ContractTests.cs")), f"Create application journeys or HTTP contract fixtures: {source}"
     assert not re.search(r"GetRequiredService\s*<|GetService\s*<|BindingFlags\.|typeof\([^)]*\)\.GetMethod", text), \
         f"Exercise running application boundaries instead of invoking isolated services: {source}"
-    count += len(re.findall(r"\bclass\s+\w+JourneyTests\b", text))
+    count += len(re.findall(r"\bclass\s+\w+(?:Journey|Contract)Tests\b", text))
 assert count > 0, "The E2E suite must discover application journeys"
 for source in [*(root / "tests").rglob("*.py"), *(root / "scripts").glob("test_*.py")]:
     assert not re.search(r"(?:from|import)\s+(?:unittest|pytest)\b", source.read_text()), \
@@ -60,4 +60,4 @@ assert "test-unit:" not in makefile and "python3 -m unittest" not in makefile, \
     "Dashboard test targets must not run isolated unit suites"
 assert not re.search(r"\bgo\s+(?:test|build|run)\b|scripts/check-e2e-shards\.sh", makefile), \
     "TUnit must own performance and discovery targets as well as the main E2E suite"
-print(f"PASS: TUnit E2E boundary ({count} journey classes); demo sources excluded from production")
+print(f"PASS: TUnit application/HTTP contract boundary ({count} classes); demo sources excluded from production")

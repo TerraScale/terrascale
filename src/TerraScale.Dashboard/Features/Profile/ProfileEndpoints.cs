@@ -6,6 +6,8 @@ namespace TerraScale.Dashboard.Features.Profile;
 
 public sealed record ProfilePage(ShellModel Shell, string Tab = "profile", string Error = "", string Status = "", IReadOnlyList<ProfileToken>? Tokens = null, CreatedProfileToken? CreatedToken = null, IReadOnlyList<DashboardSessionInfo>? Sessions = null)
 {
+    public string? DraftName { get; init; }
+    public string? DraftPhone { get; init; }
     public string[] Permissions
     {
         get
@@ -80,7 +82,11 @@ public static class ProfileEndpoints
         }
         catch (AccountAccessException error)
         {
-            var slice = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: error.Message, Sessions: await sessions.ListAsync(http, context.Session)));
+            var slice = ProfileView.Create(new(ShellModel.For(http, context, "Profile"), Error: error.Message, Sessions: await sessions.ListAsync(http, context.Session))
+            {
+                DraftName = language ? null : form["name"].ToString(),
+                DraftPhone = language ? null : form["phoneNumber"].ToString()
+            });
             slice.StatusCode = error.StatusCode;
             return slice;
         }
