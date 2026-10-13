@@ -6,8 +6,10 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Cronos" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" />
     <PackageReference Include="RazorSlices" />
+    <PackageReference Include="Scalar.AspNetCore" />
     <PackageReference Include="Stripe.net" />
     <PackageReference Include="TerraScale.DotNet" />
     <!-- web/ is also the asset build's npm project; its manifests are build inputs, never shipped. -->

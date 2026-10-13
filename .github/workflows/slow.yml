@@ -1,0 +1,70 @@
+# Independent, non-blocking Slow results stay red on failure and receive an issue report.
+name: Slow
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  slow:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.21.0
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: src/TerraScale.Dashboard/web
+      - run: make build
+      - name: Install pinned Chromium and its system dependencies
+        run: |
+          driver=tests/TerraScale.Dashboard.E2E/bin/Release/net10.0/.playwright
+          "$driver/node/linux-x64/node" "$driver/package/cli.js" install --with-deps chromium
+      - run: make test-slow
+      - name: Write redacted failure report
+        if: failure()
+        run: python3 scripts/report-slow-failure.py --prepare
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: slow-results
+          path: |
+            test-results/tunit/slow.trx
+            test-results/slow-failure.json
+          if-no-files-found: warn
+
+  report:
+    needs: slow
+    if: always() && needs.slow.result == 'failure'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        continue-on-error: true # A setup failure can precede artifact creation; report it too.
+        with:
+          name: slow-results
+          path: test-results
+      - name: Create or update the matching failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/report-slow-failure.py

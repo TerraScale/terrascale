@@ -3,7 +3,6 @@ using System.Text.Json;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
-[NotInParallel("dashboard-demo")]
 public sealed class HostLifecycleJourneyTests
 {
     [Test]

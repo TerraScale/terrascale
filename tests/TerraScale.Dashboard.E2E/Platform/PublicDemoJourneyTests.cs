@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.Builder;
 namespace TerraScale.Dashboard.E2E.Platform;
 
 // The public synthetic demo on dash.terrascale.tech (deploy/demo): the demo host plus PublicDemo.
-[NotInParallel("dashboard-demo")]
 public sealed class PublicDemoJourneyTests
 {
     private const string Secret = "public-demo-secret-detail";

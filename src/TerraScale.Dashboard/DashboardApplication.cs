@@ -20,6 +20,7 @@ using TerraScale.Dashboard.Platform.Assets;
 using TerraScale.Dashboard.Platform.Development;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Mcp;
+using TerraScale.Dashboard.Platform.Contracts;
 using TerraScale.Dashboard.UI;
 using TerraScale.DotNet.TerraBase;
 
@@ -62,6 +63,7 @@ public static class DashboardApplication
         builder.Services.AddSingleton<AccessTokens>();
         builder.Services.AddSingleton<IProfileTokens>(services => services.GetRequiredService<AccessTokens>());
         builder.Services.AddDashboardMcp();
+        builder.Services.AddDashboardContracts();
         builder.Services.AddHttpClient("platform", client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler);
         configureTestHost?.Invoke(builder);
@@ -81,7 +83,9 @@ public static class DashboardApplication
                 path.StartsWith("/api/v1/dashboard/indexes", StringComparison.Ordinal) ||
                 path.StartsWith("/databases/", StringComparison.Ordinal) &&
                 (path.Contains("/documents", StringComparison.Ordinal) || path.EndsWith("/sql", StringComparison.Ordinal) || path.EndsWith("/schema", StringComparison.Ordinal));
-            var styles = editorStyles ? $"style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'; worker-src 'self'" : "style-src 'self'";
+            var reference = context.Request.Path.StartsWithSegments("/reference");
+            var styles = reference ? $"style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'" :
+                editorStyles ? $"style-src 'self' 'nonce-{nonce}'; style-src-attr 'unsafe-inline'; worker-src 'self'" : "style-src 'self'";
             // form-action covers the redirects that follow forms: sign-out to ts-auth, checkout and portal to Stripe.
             context.Response.Headers["Content-Security-Policy"] =
                 $"default-src 'none'; script-src 'self' 'nonce-{nonce}'; {styles}; " +
@@ -159,6 +163,7 @@ public static class DashboardApplication
         app.MapBillingPlanChanges();
         app.MapDashboardMcp();
         app.MapDevelopmentUpdates();
+        app.MapDashboardContracts();
         app.MapFallback((HttpContext context) =>
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
