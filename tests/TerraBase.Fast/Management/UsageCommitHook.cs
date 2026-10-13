@@ -313,8 +313,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
         private bool _intercepted;
 
-        public ValueTask<CollectionChangePage> ReadCollectionChangesAsync(string collection, long afterOffset, long afterSequence, int limit, long maxBytes, CancellationToken cancellationToken) => inner.ReadCollectionChangesAsync(collection, afterOffset, afterSequence, limit, maxBytes, cancellationToken);
-        public ValueTask<long> GetHistoryFloorAsync(CancellationToken cancellationToken) => inner.GetHistoryFloorAsync(cancellationToken);
         public ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken) => inner.GetOffsetAsync(cancellationToken);
 
         public Guid Scope => inner.Scope;
@@ -348,6 +346,11 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
         public ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken) =>
             inner.RecordAppliedAsync(origin, applied, cancellationToken);
+        public ValueTask<FeedPage> ReadFeedAsync(
+            IReadOnlyDictionary<ReplicaId, Hlc> cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
+            inner.ReadFeedAsync(cursor, collections, maxEvents, maxBytes, cancellationToken);
+        public ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken) => inner.GetFeedHeadAsync(cancellationToken);
+        public ValueTask<int> TrimFeedAsync(Hlc before, int limit, CancellationToken cancellationToken) => inner.TrimFeedAsync(before, limit, cancellationToken);
         public async ValueTask<DocumentPage> ListAsync(string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken)
         {
             hook.BeforeList?.Invoke(collection);

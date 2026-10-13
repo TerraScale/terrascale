@@ -499,6 +499,8 @@ contract:
   goes).
 - **Management commits** ([0008](decisions/0008-management-commits.md)) stay atomic (one stamp) and idempotent by id.
   `fence` and `assert` ops are evaluated locally, with no global serializability.
+- **Durability:** every `_system` commit syncs its write-ahead log ([0012](decisions/0012-system-database-synchronous-full.md)),
+  so an acknowledged key, revocation or registration survives a power loss of its machine.
 
 Deleted: `CatalogFeed`, `CatalogFollower`, `CatalogForwarder`, `CatalogPrimaryClient`, `ForwardedRequests`,
 `catalog.proto`, `ISystemReplication`, `SqliteStorageTransaction.System*`, `SqliteStorageEngine.System`,
@@ -548,7 +550,8 @@ in the primary region" shortcut. Decision 0009 is superseded.
 | Failure | Effect | Handling |
 | --- | --- | --- |
 | Process crash mid-batch | uncommitted operations lost, not acknowledged | committed ones are in CDC and ship after restart |
-| OS crash or power loss (`NORMAL`) | the last acknowledged local commits may be lost | ones already shipped come back through anti-entropy. The epoch rises, so no version is reused |
+| OS crash or power loss, tenant database (`NORMAL`, [0003](decisions/0003-sqlite-synchronous-normal.md)) | the commits acknowledged since the database's WAL last synced (at the latest its next checkpoint) may be lost: documents, collections, indexes and schemas written there | ones already shipped come back through anti-entropy; unshipped ones are lost. The epoch rises, so no version is reused |
+| OS crash or power loss, `_system` (`FULL`, [0012](decisions/0012-system-database-synchronous-full.md)) | none: every acknowledged catalog write, API key and revocation was synced before its answer | `SystemDatabasePowerLossTests` |
 | Volume lost | the machine's databases are gone | new member number, refill from peers. Unshipped writes (< ~100 ms) are lost: "ack after one node" |
 | Region offline (partition or `machine stop`) | both sides keep accepting writes | streams resume from `acked`. Anti-entropy covers gaps. More than 24 h: evicted, refill on return |
 | Duplicate, reordered or replayed groups | none | joins are idempotent and commutative |
@@ -685,6 +688,13 @@ dashboards and alerts already query those names.
    (`SnapshotAsync`, `ChangesAsync`, `CompileSnapshot`, `CompileChanges`), and `shape-reads.md` and
    `subscriptions.md`. It leaves the on-disk format unchanged. ts-auth stopped issuing `shapes:read` afterwards; TerraBase
    ignores scopes it does not know.
+2. R2c-2 deletes the per-collection polling feed: `GET …/collections/{c}/changes`, `IChangeFeedService`,
+   `CollectionChangePage` and `ReadCollectionChangesAsync`, and the storage that only served the feed and shapes:
+   `change_log` (with every write's history append and the drop's history rewrite), `shape_history`,
+   the collections' `generation` column (T1 had already removed `change_log_births`, `change_log_high`, their trigger
+   and `change_log_by_document`) and `change-feeds.md`. This is an on-disk format change. `collections` and `commit_offset`
+   stay: collection metadata and the commit offset of write responses still read them, so both stay reserved
+   collection names.
 
 Kept: `StampingStorageEngine`, which still drives the document read cache's invalidation (`IWriteStamps`), and the
 preconditions (`If-Match`, `If-None-Match: *`, transaction `assert`), which ts-auth's stores depend on through
@@ -795,7 +805,7 @@ reference behaviour, and `tests/TerraBase.Fast/Replication/PeerStreamTests.cs` p
 R2a was built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
 table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables).
 
-**T1 as built** (2026-10-12, storage format 3): the engine is Turso (`Turso.Data.Sqlite.Provider` 0.8.2). Each database
+**T1 as built** (2026-10-12, storage format 3): the engine is Turso (`Turso.Data.Sqlite.Provider` 0.8.2; since vendored with fixes, `src/vendor/Turso.Data.Sqlite`). Each database
 file has one writer connection (`SqliteDatabaseStore`, opened by the first writer under the writer gate, kept until the
 store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open. Continuous backup reads `turso_cdc`
 (`backup.md`); Turso's quirks are in `turso-spike.md` ("Found while swapping the engine"). Notes for R3:
@@ -807,6 +817,12 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
 - **Reading.** Read on a `TursoConnection` of your own, as `TursoChangeTap` does, never on the writer. Every visible row
   is committed. Read up to the last COMMIT row, so a page never ends inside a transaction. Bound every statement with a
   `LIMIT`: the provider steps a statement to its end when its reader closes.
+- **Decoding.** Two ways, both tested on 0.8.2. In SQL, `bin_record_json_object(table_columns_json_array(table_name),
+  after)` must sit behind `CASE WHEN change_type IN (0, 1) THEN … END`: a COMMIT row (`table_name` NULL) makes
+  `table_columns_json_array(NULL)` throw for the whole page, and it cannot format BLOB values (`_tb_state` and the
+  collection tables have none). Or read `after` raw and decode it in C# (`SqliteRecord.Decode`, used by the backup tap; it
+  handles every serial type, BLOBs included). For a rowid alias (`INTEGER PRIMARY KEY`) the record may hold NULL or the
+  value; take the rowid from `id`.
 - **Change-group bounds.** The R1/R2a 2 MiB per-group capture limit is gone: a group is a whole Turso transaction, as
   large as the batch that committed it (up to 256 writes of up to 1 MiB each, `MaxBatch`). Re-bound groups when reading:
   page by rows and bytes as the tap does (1024 rows, 4 MiB), and split a large transaction into several deltas batches
@@ -874,6 +890,47 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   replica that took documents in before their constraints kept serving the larger id. Schemas already replicate inside
   the `_collections` document.
 - Not in R3: `_tb_feed` (R8), Merkle folding (R6), the 1 GiB retention cut and per-database readiness (R6).
+
+**R8 as built** (2026-10-12, on R3; no storage format change: `_tb_feed` and `_tb_feed_floor` were in the R2a schema):
+
+- **Index in the write transaction, not a tailer pass.** Every `_tb_state` write (a local request's flush and a join that
+  changed a document) appends `_tb_feed(origin, stamp, collection, id, deleted)` in the same transaction, and the
+  origin's `_tb_feed_floor` row (floor 0) on its first event in the file. So the feed holds exactly the committed
+  states, never a state a crash lost, and backups and copies carry it (its rows are captured; the CDC tailer skips
+  them). Cost: one more captured row per document write (the floor row only on an origin's first event here).
+- **Not in the feed:** metadata documents (`_collections`, `_indexes`, `_unique`); the documents a dropped collection held
+  (the drop deletes their states without events); a uniqueness loser becoming visible when its winner goes (no state
+  write); a duplicate or dominated join (it changes nothing). `document` is read when the event is sent: null when the
+  document no longer exists on the serving machine (deleted since, dropped, or a hidden uniqueness loser).
+- **Reading.** Per origin listed in `_tb_feed_floor`, the rows above the cursor's stamp (index `_tb_feed_order`, at most
+  512, completed to the end of the last stamp), merged by (stamp, origin) up to the lowest last stamp of an origin that
+  has more, cut only between two stamps at 256 events or 4 MiB of documents. A cursor stamp below the origin's floor is
+  410 `cursor_expired`; an origin the cursor lacks starts at its floor. Events the `collections` filter leaves out
+  still advance the cursor, which the next event or heartbeat carries, so a cursor is valid only with the same filter.
+- **Cursor.** base64url of a format byte (1) and, per origin in ascending order, node and stamp as 8-byte big-endian
+  integers (16 bytes per origin, not LEB128: simpler, and a cursor of 5 origins is still 107 characters). Decoding
+  accepts canonical bytes only (400 `invalid_cursor`), at most 256 origins.
+- **Stream.** One page at a time, no queue per connection: after a page that left nothing waiting, the stream waits for
+  the database's next commit (`IDatabaseStore.WaitForCommitAsync`, joins included) or the 15 s heartbeat (`event:
+  cursor`). A client that takes no bytes for 10 s is dropped. Limits: 32 streams per database and 1024 per machine
+  (429 `changes_busy`); a stream ends after 30 minutes or at its access token's expiry, and the client reconnects with
+  `Last-Event-ID` (so a revoked API key streams at most 30 minutes). Once streaming, a stream gives back its slot in the
+  organization's concurrent requests (`QosRequestLease`; Hobby allows 4), and each page's documents are charged to the
+  tenant's memory until sent. Errors after the first byte are an `event: error` with the usual error body, then the end
+  of the stream. TerraBase's error body is `{"error": {"code", "message"}}` on every route, not RFC 9457 problem
+  details; the feed keeps it.
+- **Retention.** `FeedRetention` deletes events stamped more than 7 days ago every hour, 1024 at a time with capture
+  suspended (a restore keeps more history, never less), and raises each origin's floor to the highest stamp deleted.
+  Refill floors are R6's.
+- **Known limit: stamps more than 1 s ahead.** A request mints `max(clock, document's stamp + 1)`, and the clock moves at
+  most `MaxSkew` (1 s) ahead (section 3). A document carrying a stamp further ahead therefore gets a stamp larger than
+  this origin's next writes to other documents, so one origin's stamps no longer follow its commit order, and a cursor
+  past the large stamp skips the later, smaller ones. `terrabase.clock.skew_capped` counts the stamps that cause it.
+  Making the feed exact here needs the origin's stamps to stay monotonic (a design decision on the clock, not R8's).
+- Metrics: `terrabase.changes.streams` (open streams).
+- Tests: Fast `DatabaseChangesTests` (events, `cursor=now`, `Last-Event-ID`, filter, joined remote writes under their
+  origin, 410 at retention, limits, heartbeat, errors); e2e `ChangesFeedE2ETests` (gru and sjc write, a cursor from
+  sjc's feed resumes on fra after sjc stops or is SIGKILLed, in-process and as separate OS processes) and E10.
 
 R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
 table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables). The engine swap (1b, PR #21) lands separately: on Turso,

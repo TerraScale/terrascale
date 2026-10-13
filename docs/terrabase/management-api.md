@@ -58,6 +58,7 @@ exists. TerraBase authorizes every request against the organizations the acting 
   - be signed with ES256/384/512, RS256/384/512 or PS256/384/512 (`none` and HS* are refused), by
     the cached key its `kid` names;
   - have `iss` equal to `auth-issuer` exactly and an `aud` that includes one of `auth-audience`, compared exactly (a trailing `/` makes another audience);
+    on `ts-terrabase` the pair can only be `https://auth.terrascale.tech/terrascale` and `https://api.terrascale.tech`, the same in every region;
   - have an `exp`. `exp` and `nbf` are checked with 30 seconds of clock skew;
   - have a `sub` of 1 to 256 characters without control characters;
   - not be a ts-auth guest's: `is_anonymous` `true` is refused.
@@ -215,8 +216,9 @@ and before publication or cleanup, but path-based SQLite access does not provide
 a hostile process with filesystem write access. The ownership lock coordinates TerraBase
 processes, not arbitrary filesystem writers; deployment permissions provide that boundary.
 
-This covers TerraBase process crashes. SQLite still uses `synchronous = NORMAL` (decision 0003),
-so it does not add a power-loss or operating-system-crash durability guarantee. Older catalogs return
+This covers TerraBase process crashes. The catalog itself is in the system database, which syncs every commit
+(decision 0012); tenant databases keep `synchronous = NORMAL` (decision 0003), so this adds no power-loss or
+operating-system-crash guarantee for their files. Older catalogs return
 `503` and are never migrated or swept.
 Unsupported catalog versions are audited without interpreting tenant rows; their files are preserved,
 logged and counted as unknown while management requests keep returning `503`.
@@ -565,8 +567,8 @@ through the data API), in name order: `{"items":[{"name":"people","documents":3,
 documents (a deleted document's tombstone is not counted) and `bytes` is their JSON size. An empty collection is listed
 with `0` and `0`.
 
-Collection statistics, document counts and usage scans use the same engine read budget as SQL: 5 seconds of
-execution. Exhausting it lists collections with `400` `invalid_query`,
+Collection statistics, document counts and usage scans use the same engine read budget as SQL: 5 million work
+units (8 per row, plus 4 per JSON read) or 5 seconds of execution. Exhausting it lists collections with `400` `invalid_query`,
 `query too expensive`, and infers a schema with `400` `invalid_query`, `schema too expensive`; usage still answers a
 plain `400` `"query too expensive"`. Cancellation stops scans at their next row (a per-row function; Turso has no
 interrupt), and the function's stop condition is removed before session reuse.

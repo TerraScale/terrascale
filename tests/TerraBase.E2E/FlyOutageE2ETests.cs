@@ -13,6 +13,7 @@ namespace TerraBase.E2E;
 public sealed class FlyOutageE2ETests
 {
     [Test]
+    [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task Sjc_machine_stopped_then_started_catches_up_on_writes_made_during_the_outage()
     {
         Skip.Unless(Cluster.FlyRequested && Environment.GetEnvironmentVariable("TERRABASE_E2E_FLY_OUTAGE") == "1",

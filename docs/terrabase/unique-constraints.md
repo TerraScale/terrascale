@@ -35,13 +35,11 @@ There is no upgrade, migration, or backfill of old files or consumer claim recor
 - `none` preserves strings, `lowercase` uses .NET invariant lowercase, and `trim_lowercase` trims Unicode whitespace
   before invariant lowercase. The rule is deliberately explicit: it does not perform Unicode normalization or
   multi-character Unicode case folding. Normalization affects the key, not the stored document.
-- Encoded keys fit 16 KiB each and 64 KiB per document. Local writes and derived visibility/history mutations share
-  the existing transaction's write and history budgets. Scanning contenders does not consume those mutation budgets:
+- Encoded keys fit 16 KiB each and 64 KiB per document. Local writes and derived visibility mutations share
+  the existing transaction's write budget. Scanning contenders does not consume those mutation budgets:
   a local delete or repair can resolve a conflict with more than 1024 contenders. Reconciliation pages 128 ids at a
   time and reads one body at a time. Replicated groups retain their input limits and stage
   derived history in disk-backed SQLite temporary tables. Collection size does not reject a valid incoming group.
-  If derived history exceeds a bounded shape log chunk, the commit advances the history floor atomically;
-  older shape cursors receive `409 must_refetch` and consumers restart from a current snapshot.
 
 ## Local transactions
 
@@ -61,16 +59,14 @@ not promise globally serialized admission or that every acknowledged write stays
 
 Every document's register first joins as replication defines; its last-writer-wins write is the document's source state. The engine retains each resulting source state
 and indexes its unique keys. For each key, the document with the smallest UTF-8 document id wins. A document is
-visible to lists, queries, SQL, counts and shapes only when it wins every key it claims. This is a deterministic
+visible to lists, queries, SQL and counts only when it wins every key it claims. This is a deterministic
 projection of merged source states, independent of replication arrival order. Schema declarations replicate as
 reserved `_unique` registers that join like collections and indexes.
 
 Point GET of a retained loser answers `409 unique_violation` and carries the source state's ETag. It can be changed
 with PUT/PATCH or deleted, including with that ETag. Another document cannot acquire a locally contested value while
 any retained state still claims it. Once a winner deletes or changes its key, the next contender becomes visible.
-The engine records those visibility changes in shape history in the same transaction as the triggering write.
-The collection change feed uses that history: hiding emits a deletion and promotion emits an upsert with the
-retained JSON, at the triggering commit's offset. Identical repair emits no change-feed events.
+The engine applies those visibility changes in the same transaction as the triggering write.
 Baseline replication includes losing source states, so a new replica computes the same result and does not lose
 the information needed to release a key later.
 Merkle digests and repair ranges use the registers, which hold hidden contenders' source states too; a visibility

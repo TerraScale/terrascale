@@ -1,17 +1,17 @@
 # CI and releases
 
-`.github/workflows/ci.yml` runs on every pull request and push to main, on Blacksmith runners. Its one required check, `test`, passes when every area job that ran passed. The area jobs run in parallel, each building one stage of the root `Dockerfile`: whitespace format, the area's Release build with analyzers as errors (`libs.slnf`, `auth.slnf`, `terrabase.slnf`; together the whole solution), the area's checks and its Fast suite.
+`.github/workflows/ci.yml` runs on every pull request and push to main, on GitHub-hosted runners. Its one required check, `test`, passes when every area job that ran passed. The area jobs run in parallel, each building one stage of the root `Dockerfile`: whitespace format, the area's Release build with analyzers as errors (`libs.slnf`, `auth.slnf`, `terrabase.slnf`; together the whole solution), the area's checks and its Fast suite.
 
-| Job | Stage | Runner | Runs on a pull request when these change |
-|---|---|---|---|
-| `libs` | `test-libs` | 4 vCPU | libs, `src/TerraScale.CLI`, `benchmark/dotnet`, shared files |
-| `auth` | `test-auth` | 4 vCPU | auth (`src/TerraScale.Authentication*`, its tests, `docs/auth`, `scripts/auth`), libs, shared files |
-| `terrabase` | `test-terrabase` | 16 vCPU | TerraBase (`src/TerraBase*`, its tests, `scripts/terrabase`), libs, shared files |
+| Job | Stage | Runs on a pull request when these change |
+|---|---|---|
+| `libs` | `test-libs` | libs, `src/TerraScale.CLI`, `benchmark/dotnet`, shared files |
+| `auth` | `test-auth` | auth (`src/TerraScale.Authentication*`, its tests, `docs/auth`, `scripts/auth`), `src/TerraBase`, libs, shared files |
+| `terrabase` | `test-terrabase` | TerraBase (`src/TerraBase*`, its tests, `scripts/terrabase`), libs, shared files |
 
-Shared files are the root build files (`Dockerfile`, `Makefile`, `Directory.*`, `TerraScale.slnx`, `global.json`, `NuGet.config`, `.editorconfig`, `BannedSymbols.txt`) and `ci.yml`; the `changes` job holds the exact filters. A pull request that touches none of them (docs only) runs no area job. Pushes to main run every area. Each job keeps its own Blacksmith Docker layer cache (`terrascale-<job>`) and NuGet cache mount; a newer push to a pull request cancels its running check.
+Shared files are the root build files (`Dockerfile`, `Makefile`, `Directory.*`, `TerraScale.slnx`, `global.json`, `NuGet.config`, `.editorconfig`, `BannedSymbols.txt`) and `ci.yml`; the `changes` job holds the exact filters. A pull request that touches none of them (docs only) runs no area job. Pushes to main and `workflow_dispatch` run every area. Each Docker build keeps its own GitHub Actions layer cache (`cache-from`/`cache-to: type=gha`, scope = job name, `deploy-<image>` for deploys); the NuGet cache mount inside the Dockerfile is not persisted between runners. A newer push to a pull request cancels its running check; main runs are never cancelled. The `test` job always runs and fails when any area job failed or was cancelled, so it reports on every pull request even when every area was skipped.
 
 - Reproduce it locally with `make docker-test`, which builds the `test` stage: all three areas in parallel (needs `../ts-dotnet`; ts-auth's tests start the TerraBase built from the same tree). Before pushing, `make check` runs the same gates plus the benchmark checks.
-- The slow suites run on pushes to main in the non-blocking `slow` job (`--target test-slow`); `make test-slow` runs them locally.
+- Heavy suites (the slow suites, and the 1M-document strict tests and benchmarks once CI runs them) run in the non-blocking `slow` job (`--target test-slow`) only on pushes to main, on `workflow_dispatch`, and on pull requests labelled `full-ci`; `make test-slow` runs them locally. Only main opens `slow-failure` issues. Adding the label starts a new run (`pull_request` `labeled`); note that adding *any* label re-runs CI and cancels the running check for that pull request.
 - Deploys (push to main, job `deploy`, one at a time in push order): it builds both images at once. Before the rollout, `scripts/fly/fast-gate.sh` requires a passed `test` for the exact tree: the merged pull request's head when the squash merge kept its tree (rebase before merging: deploys start ~1 min after the merge), otherwise main's own `test` (~6 min). The Dockerfile's `terrabase` and `ts-auth` stages are the self-contained release executables on `runtime-deps:11.0-resolute-chiseled` (no shell), pushed to `registry.fly.io/<app>:<sha>`. `scripts/fly/deploy.sh` rolls each app (`ts-terrabase`, then `ts-auth`; config in `src/TerraBase/fly.toml` and `src/TerraScale.Authentication/fly.toml`) to gru, sjc and fra in that order, checking `/healthz` and `/backupz` on each region's new machine (`fly-force-instance-id`) and the commit it runs, and writes each region's time to the job summary. A failed check stops the rollout. For TerraBase a storage-format gate runs first (see below). Secrets: one Fly deploy token per app (`FLY_TOKEN_TS_TERRABASE`, `FLY_TOKEN_TS_AUTH`).
 - PR previews (job `preview`, also without waiting for `test`): `scripts/fly/preview.sh` runs both images as one multi-container machine in app `ts-pr-<n>` (org `terrascale-previews`, token `FLY_TOKEN_PREVIEWS`) and comments `https://ts-pr-<n>.fly.dev` on the PR. `previews.yml` deletes it when the PR closes and reaps previews older than 24 hours every hour.
 - Other packages are not published automatically. Build an artifact you need with its `make` target, for example `make auth-publish`.
@@ -30,7 +30,7 @@ first 12 hex digits of the schema digest. A directory records it in its lock fil
   delete the old volume), then the normal rollout and live checks run. A machine that does not answer rolls out normally;
   if it then fails, its logs are checked for the refusal (reset) and anything else stops the rollout. Resets only run
   while `ops/fly/greenfield-no-customer-data` exists; each one is listed in the deploy job summary with its snapshot ID.
-- Formats: 2 was SQLite (Microsoft.Data.Sqlite); 3 is Turso (T1). A format-3 build refuses a format-2 data directory at
+- Formats: 2 was SQLite (Microsoft.Data.Sqlite); 3 is Turso (T1); 4 drops the change feed and history tables (R2c-2). A format-3 build refuses a format-2 data directory at
   start with `data directory has storage format 2-…; this build writes 3-…`; there is no conversion.
 - Storage train: a pull request that changes what is on disk bumps `StorageFormat.Version` and carries the label
   `storage-format`. One that touches a storage file without changing what is on disk carries `storage-format-unchanged`.

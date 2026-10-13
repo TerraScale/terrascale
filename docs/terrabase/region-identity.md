@@ -13,7 +13,8 @@ database or journal identity.
 
 ## HTTP contract
 
-Every response on the client listener includes `X-TerraBase-Region: <region-id>`,
+Every response on the client listener includes `X-TerraBase-Region: <region-id>` and `X-TerraBase-Machine: <machine-id>`
+(`FLY_MACHINE_ID`, `local` off Fly),
 including authentication failures, missing routes, and pin rejection responses.
 Clients may send `X-TerraScale-Region-Pin: <region-id>` with the raw region ID.
 The pin is optional; when present, it must contain exactly one nonempty value
@@ -23,7 +24,26 @@ TerraBase does not proxy or forward the rejected request; behind Fly Proxy a
 mismatched pin naming a single well-formed region also answers
 `fly-replay: region=<pin>`, so Fly replays it there ([fly.md](fly.md#fly-replay)).
 
-The `/healthz` JSON body includes `status`, `version`, and `region`.
+### Regional hosts
+
+`<region>.api.terrascale.tech` (for example `gru.api.terrascale.tech`) forces a region; `api.terrascale.tech` goes to
+the nearest region, as before. The host is matched case-insensitively and its port is ignored. An explicit regional host
+**fails closed**: it is answered in its region or refused, never answered by another region.
+
+| The request | Answer |
+| --- | --- |
+| lands in the host's region | served (a replayed one too) |
+| lands elsewhere, and the region has a started machine (Fly's machine list) | `421`, `fly-replay: region=<region>;fallback=prefer_self`: Fly replays it there |
+| Fly replayed it and it still landed elsewhere (`Fly-Replay-Src`), or Fly's replay found no machine there and came back (`fly-replay-failed`), or the region has no started machine | `503 region_unavailable`, naming the region and listing the regional hosts; no replay, so no loop |
+| the label is not a region (`gru_1.api…`, `a.b.api…`) | `421 misdirected_request`, listing the regional hosts; the label is not echoed |
+| carries `X-TerraScale-Region-Pin` naming another region than the host | `421`, no replay: the two pins contradict each other |
+
+A region whose machines are all stopped cannot be told from one this app was never deployed to (Fly's internal DNS
+lists started machines only), so both answer `503 region_unavailable`. A request whose host is not a regional host keeps
+the header pin's rules above. A `200` over `sjc.api.terrascale.tech` proves DNS and TLS for that name only; that the
+answer came from sjc is shown by `X-TerraBase-Region: sjc`.
+
+The `/healthz` JSON body includes `status`, `version`, `region`, `storageFormat`, `revision`: the source commit the build was made from (`TERRABASE_REVISION` in CI images, null when a build recorded none), and `machine` (`FLY_MACHINE_ID`, `local` off Fly), so each answer names the exact machine and commit (`/readyz` and `/backupz` carry the same fields).
 Management API database JSON includes `region` on create, branch, get, and list
 responses. This value is the responding node's region at response time, including
 for existing database records; it is not persisted placement metadata and

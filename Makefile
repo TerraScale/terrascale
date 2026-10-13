@@ -19,6 +19,9 @@ TS_DOTNET_DIR ?= ../ts-dotnet
 TERRABASE_BINARY ?= $(CURDIR)/src/TerraBase/bin/$(CONFIGURATION)/net11.0/terrabase
 REDOCLY := npx --yes @redocly/cli@2.57.0
 
+# Upstream's source of the vendored Turso driver keeps upstream's formatting: reformatting it would break the pristine
+# import and the patch replay (src/vendor/Turso.Data.Sqlite/UPSTREAM.md).
+VENDORED_UPSTREAM := src/vendor/Turso.Data.Sqlite/src
 ANALYZER_CHECK_PROJECT := src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj
 
 LIBS_PROJECTS := src/TerraScale.Endpoints/TerraScale.Endpoints.csproj \
@@ -42,7 +45,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 	libs-build libs-test handoff-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
-	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local
+	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local benchmark-repl-fly
 
 # Global: the whole solution.
 restore:
@@ -53,11 +56,11 @@ build: restore
 	dotnet build $(SOLUTION) --configuration $(CONFIGURATION) --no-restore
 
 fmt:
-	dotnet format $(SOLUTION)
+	dotnet format $(SOLUTION) --exclude $(VENDORED_UPSTREAM)
 
 fmt-check: restore
 	# Style and analyzer diagnostics are enforced by build; check whitespace once here.
-	dotnet format whitespace $(SOLUTION) --verify-no-changes --no-restore
+	dotnet format whitespace $(SOLUTION) --verify-no-changes --no-restore --exclude $(VENDORED_UPSTREAM)
 
 # Analyzers and code style run in the build with warnings as errors.
 lint: fmt-check build
@@ -138,6 +141,13 @@ auth-publish:
 auth-dev:
 	scripts/auth/dev.sh
 
+# Local development: TerraBase and ts-auth under Aspire (aspire/apphost.mts) with its dashboard, on loopback only. Each run
+# starts from an empty TerraBase; see README.md.
+.PHONY: dev
+dev:
+	dotnet tool restore
+	TsDotnetRoot=$(abspath $(TS_DOTNET_DIR)) dotnet aspire run --apphost aspire
+
 # TerraBase: the server, its analyzer and its integration suites.
 terrabase-build: restore
 	dotnet build terrabase.slnf --configuration $(CONFIGURATION) --no-restore
@@ -157,6 +167,9 @@ terrabase-analyzer-check: restore
 # Builds only the Fast suite: TerraBase and its analyzer build as its references; the Slow suite has its own target.
 terrabase-test-fast: restore
 	dotnet build tests/TerraBase.Fast/TerraBase.Fast.csproj --configuration $(CONFIGURATION) --no-restore
+	dotnet build tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj --configuration $(CONFIGURATION) --no-restore
+	# The vendored Turso driver's regression tests (src/vendor/Turso.Data.Sqlite/UPSTREAM.md), then the Fast suite.
+	dotnet run --project tests/Turso.Data.Sqlite.Tests --configuration $(CONFIGURATION) --no-build
 	dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(TERRABASE_TEST_PARALLEL) $(TEST_ARGS)
 
 terrabase-test-slow: terrabase-build
@@ -168,14 +181,22 @@ terrabase-test-slow: terrabase-build
 # TERRABASE_E2E_FLY_PROJECT and TERRABASE_E2E_FLY_DATABASE set, the same scenarios run against Fly; the key is a TerraBase
 # API key of the e2e project (documents:read/write, no expiry: revoked explicitly), installed by a human: scripts/handoff/morning-credentials.sh install e2e.
 # Not part of check: CI's e2e job runs it after the deploys.
+# Each test's outcome goes to $(E2E_RESULTS); the summary after the run keeps actual passes, expected failures (with their
+# slice), unwired hooks, skips (with their reason) and failures apart, and names the commit and the working tree's patch.
+E2E_RESULTS ?= $(CURDIR)/tests/TerraBase.E2E/bin/e2e-results.jsonl
 terrabase-e2e: terrabase-build
-	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
+	rm -f "$(E2E_RESULTS)"
+	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build $(TEST_ARGS) || status=$$?; \
+	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-local}" || status=1; exit $$status
 
 # Stops machines of the Fly app (the fly-outage category): run alone, never with terrabase-e2e and never on every deploy.
 terrabase-e2e-fly-outage: terrabase-build
-	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_FLY_OUTAGE=1 dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --treenode-filter '/*/*/*/*[Category=fly-outage]' $(TEST_ARGS)
+	rm -f "$(E2E_RESULTS)"
+	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_FLY_OUTAGE=1 TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --treenode-filter '/*/*/*/*[Category=fly-outage]' $(TEST_ARGS) || status=$$?; \
+	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-fly-outage}" || status=1; exit $$status
 
 terrabase-check: terrabase-build terrabase-analyzer-check
+	scripts/terrabase/e2e-summary.sh check tests/TerraBase.E2E/COVERAGE.md tests/TerraBase.E2E/RUNS.md
 
 terrabase-run:
 	dotnet run --project src/TerraBase --configuration $(CONFIGURATION)
@@ -205,3 +226,9 @@ benchmark-repl-local:
 	$(MAKE) terrabase-build CONFIGURATION=Release
 	$(MAKE) -C benchmark repl-bench-build
 	benchmark/scripts/repl-local.sh
+
+# The same benchmark on Fly: one temporary load machine per region (gru, sjc, fra) in app ts-bench, destroyed on exit.
+# Needs the benchmark credential (benchmark/scripts/repl-fly-tenant.sh install, run by a user) and FLY_API_TOKEN for
+# machine metrics. Flags come from REPL_ARGS.
+benchmark-repl-fly:
+	benchmark/scripts/repl-fly.sh $(REPL_ARGS)

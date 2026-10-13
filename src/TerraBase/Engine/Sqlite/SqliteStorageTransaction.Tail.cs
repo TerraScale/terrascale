@@ -107,7 +107,8 @@ internal sealed partial class SqliteStorageTransaction
                     }
 
                     // A delete carries no after-image: a deleted document's state row says live = 0, so it needs none.
-                    if (type is 0 or 1 && reader.GetString(2) is var table && !ChangeLog.EngineTable(table))
+                    // The changes feed's own rows (R8) are bookkeeping of this machine, never shipped.
+                    if (type is 0 or 1 && reader.GetString(2) is var table && !ChangeLog.EngineTable(table) && table is not ("_tb_feed" or "_tb_feed_floor"))
                     {
                         transaction.Add(table, SqliteSession.Bytes(reader, 3), self);
                     }

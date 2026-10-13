@@ -3,6 +3,8 @@
     <RootNamespace>TerraBase</RootNamespace>
     <AssemblyName>terrabase</AssemblyName>
     <Version>0.1.0</Version>
+    <!-- /healthz reports the source commit as revision; CI passes TERRABASE_REVISION (the image has no .git). -->
+    <SourceRevisionId Condition="'$(TERRABASE_REVISION)' != ''">$(TERRABASE_REVISION)</SourceRevisionId>
     <!-- Release artifact: one self-contained, single-file executable running on the
          JIT (no native AOT, no trimming). Native libraries are bundled into the file.
          Self-contained is set only for publish (make publish): the test suites
@@ -34,7 +36,6 @@
     <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
     <PackageReference Include="AWSSDK.S3" />
     <PackageReference Include="Cronos" />
-    <PackageReference Include="Turso.Data.Sqlite.Provider" />
     <PackageReference Include="JsonSchema.Net" />
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
     <PackageReference Include="NativeCompressions" />
@@ -63,5 +64,9 @@
   <ItemGroup>
     <!-- Checked-in, versioned inter-node contract (wire-compatible with terrabase-rust/proto). -->
     <Protobuf Include="Features/Replication/Protos/**/*.proto" ProtoRoot="Features/Replication/Protos" GrpcServices="Both" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Vendored, with TerraScale's fixes (src/vendor/Turso.Data.Sqlite/UPSTREAM.md). -->
+    <ProjectReference Include="../vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
   </ItemGroup>
 </Project>

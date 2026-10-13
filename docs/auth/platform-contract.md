@@ -298,7 +298,7 @@ answer `invalid_grant`. Submitted values cannot repair or override it.
 | `iss` | issuer | issuer | issuer |
 | `sub` | user id | user id | key ULID |
 | `client_id` | the client | the exchanging client | key id |
-| `aud` | issuer and every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value | every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value | every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value |
+| `aud` | issuer, `https://api.terrascale.tech` and every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value | `https://api.terrascale.tech` and every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value | `https://api.terrascale.tech` and every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value |
 | `exp`, `iat`, `jti` | 1 hour | at most 15 minutes | 15 minutes |
 | `scope` | OpenID scopes (`openid email profile offline_access`) | section 3 scopes | section 3 scopes |
 | `email`, `email_verified` | yes | yes | no |
