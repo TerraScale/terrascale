@@ -13,6 +13,7 @@ public sealed class ReplicationMatrixTests
     private static readonly string[] All = [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
 
     [Test]
+    [Category("replication-matrix-live")]
     [Scenario(Nodes.InProcess)]
     [Arguments(Cluster.Gru, Cluster.Sjc)]
     [Arguments(Cluster.Sjc, Cluster.Gru)]

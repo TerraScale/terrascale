@@ -16,6 +16,7 @@ public sealed class ThreeRegionE2ETests
 
     [Test]
     [Category("replication-matrix")]
+    [Category("replication-matrix-live")]
     [Scenario(Nodes.InProcess)]
     [Arguments(Cluster.Gru, Cluster.Sjc)]
     [Arguments(Cluster.Sjc, Cluster.Gru)]
@@ -51,6 +52,7 @@ public sealed class ThreeRegionE2ETests
 
     [Test]
     [Category("replication-matrix")]
+    [Category("replication-matrix-live")]
     [Scenario(Nodes.InProcess)]
     public async Task Concurrent_writes_to_the_same_field_in_three_regions_converge_to_one_written_value()
     {
