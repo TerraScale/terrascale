@@ -4,8 +4,9 @@ using TerraBase.Primitives;
 namespace TerraBase.E2E.WalFaults;
 
 /// <summary>
-/// Barrier B1 of decision 0013: a client database's write commits with a synced write-ahead log on the machine that
-/// accepted it, so every write it answered is still there after a power loss of that machine drops every unsynced byte.
+/// Barrier B1: a client database's write commits with a synced write-ahead log on the machine that accepted it, before it
+/// is answered. So an answer waits for its commit's sync (a document write and a direct transaction alike), and every
+/// write the machine answered is still there after a power loss drops every unsynced byte of every log.
 /// </summary>
 public sealed class ClientWritePowerLossTests
 {
@@ -28,11 +29,31 @@ public sealed class ClientWritePowerLossTests
         var path = $"/v1/projects/{project}/databases/canary";
         await Cluster.CreateCollectionAsync(new(StringComparer.Ordinal) { [Cluster.Gru] = node.Client }, path, "items");
 
-        string[] ids = [EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString()];
-        foreach (var (index, id) in ids.Index())
+        string[] ids = [EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString()];
+        foreach (var (index, id) in ids.Take(3).Index())
         {
             await Docs.PutAsync(node.Client, Document(path, id), new JsonObject { ["n"] = index });
         }
+
+        // With every log sync held, a document write and a two-document transaction are each answered only after a sync.
+        var delay = TimeSpan.FromMilliseconds(500);
+        node.DelaySyncs(delay);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        await Docs.PutAsync(node.Client, Document(path, ids[3]), new JsonObject { ["n"] = 3 });
+        await Assert.That(clock.Elapsed).IsGreaterThanOrEqualTo(delay).Because("a document write is answered after its commit's sync");
+        clock.Restart();
+        using (var transaction = await node.Client.PostAsJsonAsync(new Uri($"{path}/transactions", UriKind.Relative), new JsonObject
+        {
+            ["ops"] = new JsonArray(
+                new JsonObject { ["op"] = "put", ["collection"] = "items", ["id"] = ids[4], ["document"] = new JsonObject { ["n"] = 4 } },
+                new JsonObject { ["op"] = "put", ["collection"] = "items", ["id"] = ids[0], ["document"] = new JsonObject { ["n"] = 0 } }),
+        }))
+        {
+            await Docs.EnsureSuccessAsync(transaction);
+        }
+
+        await Assert.That(clock.Elapsed).IsGreaterThanOrEqualTo(delay).Because("a transaction is answered after its commit's sync");
+        node.ClearFaults();
 
         await node.PowerLossAsync();
         await node.StartAgainAsync();
