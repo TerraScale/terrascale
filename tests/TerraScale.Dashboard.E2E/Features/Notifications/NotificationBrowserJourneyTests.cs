@@ -6,8 +6,7 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.Features.Notifications;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 [Category("Slow")]
 public sealed class NotificationBrowserJourneyTests(DashboardE2EFixture fixture)
 {

@@ -8,8 +8,7 @@ using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.Home;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 [Category("Slow")]
 public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
 {
@@ -214,8 +213,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
     }
 }
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 [Category("Slow")]
 public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
 {

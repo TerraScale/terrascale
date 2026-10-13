@@ -7,8 +7,7 @@ using TerraScale.Dashboard.Features.Accounts;
 
 namespace TerraScale.Dashboard.E2E;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 public sealed class BackupConfirmationJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
