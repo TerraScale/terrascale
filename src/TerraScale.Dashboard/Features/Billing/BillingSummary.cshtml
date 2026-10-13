@@ -40,7 +40,7 @@
     </section>
     }
 </section>
-@(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.BillingPlanActions, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
-@(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.BillingHistoryView, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.Plans.BillingPlanActions, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
+@(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.Invoices.BillingHistoryView, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
 </div>
 @functions { private static string Money(long cents) => "$" + (cents / 100m).ToString("F2", CultureInfo.InvariantCulture); }

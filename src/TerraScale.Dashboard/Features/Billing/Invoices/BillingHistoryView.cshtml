@@ -1,6 +1,8 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Billing.BillingPage>
 @using System.Globalization
 @using TerraScale.Dashboard.Features.Billing
+@using TerraScale.Dashboard.Features.Billing.Invoices
+@using TerraScale.Dashboard.Features.Billing.Plans
 @{
     var org = Model.Shell.Context.Organization!;
     var now = Model.History.Now;
@@ -46,7 +48,7 @@
             }
         </div>
     </section>
-    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.BillingPlanDialogs, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
+    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.Plans.BillingPlanDialogs, TerraScale.Dashboard.Features.Billing.BillingPage>(Model))
     <section class="ts-card ts-card-flush" id="recent-invoices" aria-labelledby="recent-invoices-title">
         <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="recent-invoices-title">Payment history</h2><p class="ts-card-description">Invoices recorded for this organization, newest first</p></div></header>
         <div class="ts-card-body">

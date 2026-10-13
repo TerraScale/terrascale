@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using Stripe;
+using TerraScale.Dashboard.Features.Billing.Invoices;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Shared.Validation;
 

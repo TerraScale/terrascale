@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace TerraScale.Dashboard.Features.Billing;
+namespace TerraScale.Dashboard.Features.Billing.Invoices;
 
 public sealed record BillingInvoice(string Id, string Number, string Status, long AmountCents, string Currency,
     DateTimeOffset CreatedAt, DateTimeOffset? PeriodStart, DateTimeOffset? PeriodEnd,

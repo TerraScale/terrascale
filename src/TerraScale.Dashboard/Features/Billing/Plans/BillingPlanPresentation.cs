@@ -1,7 +1,7 @@
 using System.Globalization;
 using Microsoft.Extensions.Primitives;
 
-namespace TerraScale.Dashboard.Features.Billing;
+namespace TerraScale.Dashboard.Features.Billing.Plans;
 
 public sealed record BillingLimitWarning(string Title, string Detail);
 public sealed record BillingPlanReview(BillingPlan? Plan, string Interval, string Price, string Effect, string Estimate,
@@ -19,7 +19,7 @@ public sealed record BillingPlanPresentation(BillingBinding? Binding, BillingPla
         BillingPlanState? state = null; var stateError = "";
         if (subscribed)
             try { state = await billing.PlanStateAsync(context, cancellationToken); }
-            catch (Exception error) when (error is Stripe.StripeException or HttpRequestException or IOException or AccountAccessException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (error is global::Stripe.StripeException or HttpRequestException or IOException or AccountAccessException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
             { stateError = "Could not load billing changes. Reload billing to retry."; }
         if (!page.CanManage || query["review"] != "1") return new(binding, state, null, stateError);
         var key = query["plan"].ToString().Trim().ToLowerInvariant(); var interval = query["interval"].ToString().Trim().ToLowerInvariant();
@@ -52,7 +52,7 @@ public sealed record BillingPlanPresentation(BillingBinding? Binding, BillingPla
                         estimate = quote.Immediate ? Money(quote.AmountDueCents) + " estimated by Stripe (including " + Money(quote.ProrationCents) + " in prorations)" : "No charge today";
                     }
                     catch (AccountAccessException access) { errorMessage = access.Message; }
-                    catch (Exception error) when (error is Stripe.StripeException or HttpRequestException or IOException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+                    catch (Exception error) when (error is global::Stripe.StripeException or HttpRequestException or IOException || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
                     { errorMessage = "Stripe could not calculate the estimated charge. Try again."; }
             }
         }

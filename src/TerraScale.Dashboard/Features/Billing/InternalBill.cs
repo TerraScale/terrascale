@@ -1,15 +1,7 @@
 using System.Text.Json.Serialization;
+using TerraScale.Dashboard.Features.Billing.Plans;
 
 namespace TerraScale.Dashboard.Features.Billing;
-
-public sealed record InternalBillingConfiguration(string OrganizationId, string BasePlanKey, long SpendCapCents,
-    long WriteCentsPerMillion, long StorageCentsPerGiBMonth);
-public sealed record InternalBillingReservation(InternalBillingPolicy Policy, long SpendCapCents, string PreviousConfigurationId = "");
-public sealed record InternalBillingSingleton(string OrganizationId, string PlanId);
-public sealed class InternalBillingReportException(InternalBill bill, Exception cause) : Exception("Internal billing report could not be completed.", cause)
-{
-    public InternalBill Bill { get; } = bill;
-}
 
 public sealed record InternalBill(bool Available, bool ReportOnly, DateTimeOffset PeriodStart, DateTimeOffset PeriodEnd,
     long Reads, long Writes, long LogicalBytes, long BaseCents, long WriteCents, long StorageCents, long TotalCents,
