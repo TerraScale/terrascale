@@ -1,8 +1,7 @@
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.AccountsMembersSettings;
 
 [Explicit]
-[ClassDataSource<AccountsAuditScenario>(Shared = SharedType.PerClass)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<AccountsAuditScenario>]
 public sealed class AccountsAuditPreviewJourneyTests(AccountsAuditScenario scenario)
 {
     [Test]

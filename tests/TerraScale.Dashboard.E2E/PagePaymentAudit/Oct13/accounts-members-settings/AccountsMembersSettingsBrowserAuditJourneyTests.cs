@@ -2,8 +2,7 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.AccountsMembersSettings;
 
-[ClassDataSource<AccountsAuditScenario>(Shared = SharedType.PerClass)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<AccountsAuditScenario>]
 [Category("Slow")]
 public sealed class AccountsMembersSettingsBrowserAuditJourneyTests(AccountsAuditScenario scenario)
 {

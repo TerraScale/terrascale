@@ -27,6 +27,7 @@ public sealed class AccountsAuditScenario : IAsyncInitializer, IAsyncDisposable
     public const string AdminId = "01J000000000000000000000003";
     public const string Password = "local-audit-password";
     private WebApplication? app;
+    private TestWorkspace? workspace;
     private AuditAccess? access;
     public Uri Origin { get; private set; } = null!;
     public string Root { get; } = FindRoot();
@@ -37,6 +38,7 @@ public sealed class AccountsAuditScenario : IAsyncInitializer, IAsyncDisposable
     {
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
+        workspace = environment.Workspace;
         var org = new OrganizationRecord
         {
             Id = OrganizationId,
@@ -90,14 +92,15 @@ public sealed class AccountsAuditScenario : IAsyncInitializer, IAsyncDisposable
                 ExpiresAt = new(2026, 1, 8, 0, 0, 0, TimeSpan.Zero)
             };
         }
-        lock (TestWorkspace.Gate) TestWorkspace.Organizations.Add(OrganizationId, TestWorkspace.Clone(org));
+        lock (workspace.Gate) workspace.Organizations.Add(OrganizationId, TestWorkspace.Clone(org));
+        workspace.SeedInvitationMetadata(org);
         IDashboardState state = null!;
         app = environment.CreateHost(Root, 0, "http://127.0.0.1", builder =>
         {
             state = (IDashboardState)builder.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance!;
             var auth = (TestAuth)builder.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
             foreach (var principal in principals) auth.RegisterFixturePrincipal(principal);
-            var original = (IOrganizationAccess)builder.Services.Last(item => item.ServiceType == typeof(IOrganizationAccess)).ImplementationInstance!;
+            IOrganizationAccess original = new TsOrganizationAccess(workspace);
             access = new(original);
             builder.Services.Replace(ServiceDescriptor.Singleton<IOrganizationAccess>(access));
             builder.Services.Replace(ServiceDescriptor.Singleton<ISettingsBackend>(Settings));
@@ -148,7 +151,7 @@ public sealed class AccountsAuditScenario : IAsyncInitializer, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (app is not null) { await app.StopAsync(); await app.DisposeAsync(); app = null; }
-        lock (TestWorkspace.Gate) TestWorkspace.Organizations.Remove(OrganizationId);
+        if (workspace is not null) { lock (workspace.Gate) workspace.Organizations.Remove(OrganizationId); }
     }
 
     private static string FindRoot()
@@ -164,7 +167,7 @@ public sealed class AccountsAuditScenario : IAsyncInitializer, IAsyncDisposable
         public Task<OrganizationAccessView> ReadAsync(AccountContext context, CancellationToken cancellationToken) => FailRead
             ? Task.FromException<OrganizationAccessView>(new IOException("Synthetic private provider detail"))
             : original.ReadAsync(context, cancellationToken);
-        public Task<TerraBaseCreatedInvitation> InviteAsync(AccountContext context, string email, string role, CancellationToken cancellationToken) => original.InviteAsync(context, email, role, cancellationToken);
+        public Task<CreatedInvitation> InviteAsync(AccountContext context, string email, string role, string? projectId, CancellationToken cancellationToken) => original.InviteAsync(context, email, role, projectId, cancellationToken);
         public Task RevokeInvitationAsync(AccountContext context, string id, CancellationToken cancellationToken) => original.RevokeInvitationAsync(context, id, cancellationToken);
         public Task ChangeRoleAsync(AccountContext context, string userId, string role, CancellationToken cancellationToken) => original.ChangeRoleAsync(context, userId, role, cancellationToken);
         public Task RemoveMemberAsync(AccountContext context, string userId, CancellationToken cancellationToken) => original.RemoveMemberAsync(context, userId, cancellationToken);

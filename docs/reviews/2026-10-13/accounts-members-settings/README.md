@@ -1,5 +1,17 @@
 # Accounts, members and settings audit — 2026-10-13
 
+## Publication against current main
+
+This is a **historical audit** of source `b719878083dffd9441e063bbfaccfa0dffa95abd`. Publication was subsequently authorized with an explicit request to create and force-merge the PR. The branch was rebased without conflicts onto `7d0420ef1979b128fe212a23eb6c4227a2588859`; production source, shared fixtures and configuration remain unchanged by this audit.
+
+Current main already addresses both historical findings: `3ac42a98a2b3449bdefc7c2dbbbd658f65e9eeda` offers every supported ts-auth role, including Viewer and Admin, and `5dc76dedcefd68085baa001524bef11c21d78a94` retains rejected profile drafts. **The two historical patch proposals below are superseded and must not be applied to current main.** Current Viewer support is valid under the canonical ts-auth contract; the old Viewer exclusion/rejection expectations now represent a contract difference, not a present product defect.
+
+Only this audit's test setup was adapted for compilation: the invitation interface's project ID and `CreatedInvitation` result, the existing per-environment workspace registry and canonical invitation metadata, the current production access adapter over the fake ts-auth provider, and independent fixtures for every case. All original test assertions remain intact; none were disabled, skipped or relaxed. Fresh build, lint and focused HTTP/browser results against the publication head are recorded in ignored `evidence/publication-checks.json` and the PR description. The historical counts below must not be read as publication-head results.
+
+The six committed sanitized PNGs and their original hashes still belong to actual capture head `7ab7352cc0d47374a2f7346d623552e7a069392a`. They show the historical defects before the fixes, not current-main behavior. No capture is relabeled as having been made at a later rebased head. Invitation-history confidentiality remains a separately described policy question; current main also revised the related MCP role contract, so the old MCP observation below is historical.
+
+## Historical findings
+
 Two verified P2 defects: organization forms offer a Viewer role that the service always rejects, and profile validation errors discard unsaved form values. Existing application, shared fixtures, configuration, locks and generated tracked files are unchanged. The source patches below are proposals only.
 
 Audited source/base: `b719878083dffd9441e063bbfaccfa0dffa95abd`. Branch: `audit/accounts-members-settings-20261013`. Original tested/capture head: `7ab7352cc0d47374a2f7346d623552e7a069392a`. Sanitized screenshot provenance is committed in [screenshot-provenance.json](screenshot-provenance.json); the final local head and subsequent focused checks are recorded in ignored `evidence/current-head-checks.json` and the final handoff. The later evidence-only commit is not claimed as the original capture head. Publication is withheld until the coordinator grants the serialized CI slot; no PR, push, merge or CI change has been performed.
@@ -48,7 +60,7 @@ The current contracts point in different directions: `TsOrganizationAccess.ReadA
 
 `CandidatePolicyOrdinaryMembersCannotReadInvitationHistory(members/invitations)` keeps strict management-only expected assertions under category `AuthorizationPolicyQuestion`. Both currently fail. They document a **candidate policy**, not proof that the established product policy has been violated. No visibility restriction patch is proposed until intended policy is confirmed; do not silently make these assertions accept the observed behavior.
 
-## Verification
+## Historical verification
 
 | Focused check | Result |
 | --- | --- |
