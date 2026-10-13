@@ -157,11 +157,13 @@ public sealed class ContinuousBackupTests
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var database = await api.CreateManagedDatabaseAsync("main");
+        // Checkpoint continuity owns the write workload; per-document quota accounting is covered separately.
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var first = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         using var second = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         var clients = new[] { first, second };
         await ManagementApi.CreateCollectionAsync(first, database, "people");
-        time.Advance(TimeSpan.FromSeconds(10));
+        time.AdjustTime(time.GetUtcNow() + TimeSpan.FromSeconds(10));
         await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var generation = Generation(backup, database);
 
@@ -182,8 +184,8 @@ public sealed class ContinuousBackupTests
             });
             await Task.WhenAll(writers);
 
-            // A minute refills the organization's request budget, which runs on this clock.
-            time.Advance(TimeSpan.FromMinutes(1));
+            // Advance the shipping timestamp without launching unrelated hosted maintenance.
+            time.AdjustTime(time.GetUtcNow() + TimeSpan.FromMinutes(1));
             await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             await Assert.That(Generation(backup, database)).IsEqualTo(generation);
         }
