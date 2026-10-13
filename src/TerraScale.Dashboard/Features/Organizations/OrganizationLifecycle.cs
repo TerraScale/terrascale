@@ -46,16 +46,13 @@ public sealed class OrganizationLifecycleService(IDashboardState state, AccountS
         if (project.IsDefault || context.Organization.Projects.Count <= 1) throw new AccountAccessException("The default or last project cannot be deleted.", 409);
         if (project.Databases.Count > 0) throw new AccountAccessException("Delete this project's databases before deleting the project.", 409);
         try { await platform.DeleteProjectAsync(context.Session, context.Organization.Id, projectId, cancellationToken); }
-        // A completed provider delete can outlive an interrupted canonical write.
-        // The exact owned project and current role were authorized above; the CAS
-        // projection below repeats those checks before reconciling its absence.
+        // A completed provider delete can outlive an interrupted dashboard write;
+        // the exact project and current role were authorized above.
         catch (AccountAccessException error) when (error.StatusCode == StatusCodes.Status404NotFound) { }
+        // ts-auth no longer lists the project, so this write drops its dashboard settings.
         await accounts.UpdateOrganizationAsync(context, org =>
         {
             if (!org.CanManage(context.UserId)) throw new AccountAccessException("Organization management is required.");
-            var current = org.Projects.GetValueOrDefault(projectId) ?? throw new AccountAccessException("Project is unavailable.", 404);
-            if (current.IsDefault || org.Projects.Count <= 1) throw new AccountAccessException("The default or last project cannot be deleted.", 409);
-            if (current.Name != confirmation.Trim() || current.Databases.Count > 0) throw new AccountAccessException("Project changed during deletion.", 409);
             org.Projects.Remove(projectId);
             org.AuditEvents.Add(new(AccountService.NewId(), context.Account.Email, "project.deleted", project.Name, "project", time.GetUtcNow()));
         }, cancellationToken);

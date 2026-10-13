@@ -16,8 +16,6 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
         await accounts.UpdateOrganizationAsync(context, org =>
         {
             Owner(org, context.UserId);
-            org.Name = name;
-            org.Slug = AccountService.Slug(name);
             org.AuditEvents.Add(Event(context, "organization.renamed", name, "organization"));
         }, cancellationToken);
     }
@@ -44,9 +42,10 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
         };
         await accounts.UpdateOrganizationAsync(context, org =>
         {
+            // ts-auth already lists the new project; its dashboard settings start here.
             Owner(org, context.UserId);
-            CanCreate(org, context.UserId, name);
-            if (org.Projects.ContainsKey(project.Id)) throw new AccountAccessException("Project identity already exists.", 409);
+            if (!org.CanProvision(context.UserId)) throw new AccountAccessException("Active billing is required to create projects.", 409);
+            Duplicate(org, name, project.Id);
             org.Projects[project.Id] = project;
             org.AuditEvents.Add(Event(context, "project.created", name, "project"));
         }, cancellationToken);
@@ -109,15 +108,10 @@ public sealed class OrganizationOperations(AccountService accounts, ITsAuthPlatf
         else if (operation == "remove") await access.RemoveMemberAsync(context, userId, cancellationToken);
         else await access.TransferAsync(context, operation, userId, cancellationToken);
         // Ownership confirmation changes the caller's role. Resolve it again
-        // before writing the authoritative provider membership projection.
+        // before recording the change; the write refreshes members from ts-auth.
         context = await AccountScope.RefreshAsync(accounts, context, cancellationToken);
-        var projection = await access.ReadAsync(context, cancellationToken);
         await accounts.UpdateOrganizationAsync(context, org =>
         {
-            org.Members = projection.Members.ToDictionary(member => member.UserId);
-            org.OwnerUserId = projection.Members.FirstOrDefault(member => member.Role == "owner")?.UserId ?? org.OwnerUserId;
-            org.PendingOwnerUserId = projection.PendingTransfer?.ToUserId ?? "";
-            org.PendingOwnerExpiresAt = projection.PendingTransfer?.ExpiresAt;
             org.AuditEvents.Add(Event(context, operation switch
             {
                 "role" => "member.role_changed",

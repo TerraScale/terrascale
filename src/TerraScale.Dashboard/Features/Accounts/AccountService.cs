@@ -137,10 +137,12 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
             if (org.ContainsMember(session.UserId)) organizations.Add(org);
         }
         var active = organizations.FirstOrDefault(item => item.Id == account.ActiveOrganizationId);
+        if (active is not null) await HydrateAccessAsync(active, session, cancellationToken);
         var project = active?.Projects.GetValueOrDefault(account.ActiveProjectId);
         if (active is null && organizations.Count > 0)
         {
             active = organizations.OrderBy(item => item.Kind != "personal").ThenBy(item => item.Name).First();
+            await HydrateAccessAsync(active, session, cancellationToken);
             project = DefaultProject(active);
             await UpdateAccountAsync(session, current =>
             {
@@ -195,6 +197,28 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         }
     }
 
+    // Members, the owner and a pending ownership transfer as ts-auth holds them now. Stored
+    // member entries contribute only display names; they never decide membership.
+    public async Task HydrateAccessAsync(OrganizationRecord org, SessionRecord session, CancellationToken cancellationToken)
+    {
+        var members = await platform.ListMembersAsync(session, org.Id, cancellationToken);
+        var saved = org.Members;
+        org.Members = members.ToDictionary(member => member.UserId, member => new MemberRecord
+        {
+            UserId = member.UserId,
+            Email = member.Email,
+            Role = member.Role,
+            CreatedAt = member.JoinedAt,
+            Name = saved.GetValueOrDefault(member.UserId)?.Name is { Length: > 0 } name ? name : member.UserId == session.UserId ? session.Name : member.Email,
+            JoinedOn = saved.GetValueOrDefault(member.UserId)?.JoinedOn
+        });
+        var owners = members.Where(member => member.Role == "owner").Select(member => member.UserId).Order(StringComparer.Ordinal).ToArray();
+        org.OwnerUserId = owners.Contains(session.UserId) ? session.UserId : owners.FirstOrDefault() ?? "";
+        var transfer = await platform.GetOwnershipTransferAsync(session, org.Id, cancellationToken);
+        org.PendingOwnerUserId = transfer?.ToUserId ?? "";
+        org.PendingOwnerExpiresAt = transfer?.ExpiresAt;
+    }
+
     // The caller's live ts-auth role decides; a demoted owner stops being this view's owner.
     private static void Member(OrganizationRecord org, SessionRecord session, string role)
     {
@@ -236,13 +260,16 @@ public sealed class AccountService(IDashboardState state, TimeProvider time, ITs
         var id = context.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
         for (var attempt = 0; attempt < 4; attempt++)
         {
-            // Re-read the caller's ts-auth role for every attempt; the stored members never authorize.
+            // Every attempt validates against ts-auth's current organization, projects and members; the stored
+            // document contributes only dashboard settings, and its identity copies are refreshed on write.
             var live = (await platform.ListOrganizationsAsync(context.Session, cancellationToken)).FirstOrDefault(org => org.Id == id);
-            if (live?.Role is not { Length: > 0 } role) throw new AccountAccessException("Organization membership is required.");
+            if (live?.Role is not { Length: > 0 }) throw new AccountAccessException("Organization membership is required.");
             var document = await state.GetAsync(OrganizationsCollection, id, cancellationToken) ?? throw new AccountAccessException("Organization is unavailable.", 404);
             var org = Read<OrganizationRecord>(document);
             if (document.Id != id || org.Id != id) throw new JsonException("Organization identity is invalid.");
-            Member(org, context.Session, role);
+            Hydrate(org, live, await platform.ListProjectsAsync(context.Session, id, cancellationToken), context.Session);
+            await HydrateAccessAsync(org, context.Session, cancellationToken);
+            Member(org, context.Session, live.Role);
             if (!org.ContainsMember(context.UserId)) throw new AccountAccessException("Organization membership is required.");
             update(org);
             if (org.Id != id) throw new AccountAccessException("Organization identity cannot change.");
