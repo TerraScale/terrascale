@@ -16,6 +16,7 @@ Use the [quickstart](/es/getting-started/) to establish one working application 
 - [Queries and pagination](/es/guides/queries): filters, projection, cursors and version preconditions.
 - [Errors and safe retries](/es/guides/errors): typed failures and uncertain write outcomes.
 - [Dashboard usage](/es/guides/dashboard): customer account and database workflow.
+- [Import an existing database](/es/guides/import) (pending): one-time import of a PostgreSQL or Turso export with dry-run preview and validation.
 
 The [zero-configuration contract](/es/guides/zero-configuration) explains the platform's intended operating behavior without disclosing deployment internals.
 
