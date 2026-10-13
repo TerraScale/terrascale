@@ -61,12 +61,18 @@ internal sealed class RegionProcesses : IAsyncDisposable
                 await cluster.LaunchAsync(node);
             }
 
-            // Each node keeps its own catalog until the catalog replicates (R10a): every node registers the database under
-            // the same id, placed in every region.
+            // Registered once in the first region; every other node registers the same ids too, which a replicated catalog
+            // (R10a) answers with 409 id_taken or name_taken. Then every node serves the database.
             var owner = EntityIds.New().ToString();
             foreach (var node in cluster._regions.Values)
             {
-                await cluster.RegisterAsync(node, owner, [.. regions.Where(other => other != node.Name)]);
+                await cluster.RegisterAsync(node, owner, [.. regions.Where(other => other != node.Name)], alreadyHeld: node.Name != regions[0]);
+            }
+
+            foreach (var node in cluster._regions.Values)
+            {
+                _ = await Converge.UntilAsync(() => Docs.StatusAsync(cluster[node.Name], new Uri($"{cluster.DatabasePath}/collections", UriKind.Relative)),
+                    status => status == HttpStatusCode.OK, $"the database on {node.Name}");
             }
 
             // Created in gru, served everywhere once its metadata document replicated.
@@ -179,7 +185,7 @@ internal sealed class RegionProcesses : IAsyncDisposable
         };
     }
 
-    private async Task RegisterAsync(Region node, string owner, string[] replicas)
+    private async Task RegisterAsync(Region node, string owner, string[] replicas, bool alreadyHeld)
     {
         var commit = JsonSerializer.Serialize(new
         {
@@ -200,7 +206,10 @@ internal sealed class RegionProcesses : IAsyncDisposable
         };
         request.Headers.Add("X-TerraBase-User-Id", owner);
         using var response = await this[node.Name].SendAsync(request);
-        await Docs.EnsureSuccessAsync(response);
+        if (!alreadyHeld || !await Cluster.TakenAsync(response))
+        {
+            await Docs.EnsureSuccessAsync(response);
+        }
     }
 
     private sealed class Region(string name, string machineId, string dataDirectory)
