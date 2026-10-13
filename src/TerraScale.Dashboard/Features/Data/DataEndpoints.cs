@@ -12,6 +12,7 @@ public static class DataEndpoints
 {
     public static IEndpointRouteBuilder MapDataFeatures(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapDocumentChanges();
         foreach (var section in new[] { "documents", "sql", "schema", "indexes", "history" })
         {
             var tab = section;
