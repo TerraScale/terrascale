@@ -73,7 +73,7 @@ transaction = transaction[transaction.IndexOf("event: change", StringComparison.
 using var changesHttp = new HttpClient(new IntegrationStub(HttpMethod.Get,
     $"https://api.terrascale.tech/v1/projects/{project}/databases/app/changes?collections=items", "scoped-user-token", transaction, "text/event-stream"));
 var changesDatabase = new TerraBaseDocumentsClient(changesHttp, new TerraBaseDocumentsClientOptions
-{ ApiKey = "scoped-user-token" }).Database(project, "app");
+{ BaseAddress = new Uri("https://api.terrascale.tech"), ApiKey = "scoped-user-token" }).Database(project, "app");
 var changes = new List<TerraBaseChangesEvent>();
 await foreach (var item in changesDatabase.StreamChangesAsync(collections: ["items"])) changes.Add(item);
 if (changes is not [{ Cursor: null, Change.Id: "a" }, { Cursor: not null, Change.Id: "b" }])
