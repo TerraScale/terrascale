@@ -79,8 +79,6 @@ internal sealed partial class SqliteStorageTransaction(
     // snapshot read before.
     public Guid Scope { get; } = store.Scope;
 
-    public bool Materializes => !store.IsSystem;
-
     public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
         RunAsync(() => ReadDocument(collection, id), cancellationToken);
 
@@ -128,13 +126,13 @@ internal sealed partial class SqliteStorageTransaction(
         var command = Command(SqliteStatements.Get, collection);
         command.Parameters.AddWithValue("$id", id);
         using var reader = command.ExecuteReader();
-        if (!reader.Read() || reader.IsDBNull(1))
+        if (!reader.Read())
         {
             return null;
         }
 
         ReserveJson(reader.GetInt64(2));
-        return new StoredDocument(id, reader.GetInt64(0), SqliteSession.Bytes(reader, 1), Scope);
+        return new StoredDocument(id, Version(collection, id, reader, 0), SystemValue(SqliteSession.Bytes(reader, 1)), Scope);
     }
 
     public async ValueTask<DocumentVersion?> GetVersionAsync(string collection, string id, CancellationToken cancellationToken)
@@ -145,7 +143,7 @@ internal sealed partial class SqliteStorageTransaction(
     // Worker-only.
     private DocumentVersion? ReadVersion(string collection, string id)
     {
-        if (!store.IsSystem && !HasTable(collection))
+        if (!HasTable(collection))
         {
             return null;
         }
@@ -158,13 +156,33 @@ internal sealed partial class SqliteStorageTransaction(
             return null;
         }
 
-        return new DocumentVersion(store.IsSystem ? reader.GetInt64(0) : Version(collection, id, reader, 0), reader.GetBoolean(1));
+        return new DocumentVersion(Version(collection, id, reader, 0), reader.GetBoolean(1));
     }
 
-    // Worker-only; runs inside a mutation, so a rejected document also makes the transaction roll back only.
-    private string Admit(ReadOnlyMemory<byte> json) =>
-        // The private system catalog also stores scalar indexes; tenant documents must be objects.
-        DocumentJson.Read(json, requireObject: store.Tenant is not null);
+    // Worker-only; runs inside a mutation, so a rejected document also makes the transaction roll back only. The private
+    // system catalog also stores scalars (name indexes, sequences): a document state holds objects only, so a system
+    // scalar is stored as the object {"\u0000": value} and read back as the value (SystemValue). A system object that
+    // holds that field itself is refused.
+    private string Admit(ReadOnlyMemory<byte> json)
+    {
+        var body = DocumentJson.Read(json, requireObject: store.Tenant is not null);
+        if (!store.IsSystem)
+        {
+            return body;
+        }
+
+        using var parsed = JsonDocument.Parse(body, DocumentState.JsonOptions);
+        return parsed.RootElement.ValueKind != JsonValueKind.Object ? $"{{{ScalarField}{body}}}"
+            : parsed.RootElement.TryGetProperty("\0", out _) ? throw new InvalidDataException("a system document field is named \\u0000")
+            : body;
+    }
+
+    private const string ScalarField = "\"\\u0000\":";
+    private static readonly byte[] ScalarPrefix = Encoding.UTF8.GetBytes("{" + ScalarField);
+
+    // A stored system document, as it was written: a scalar comes back without its wrapper (see Admit).
+    private static byte[] SystemValue(byte[] body) =>
+        body.AsSpan().StartsWith(ScalarPrefix) ? body[ScalarPrefix.Length..^1] : body;
 
     public async ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
     {
@@ -212,17 +230,6 @@ internal sealed partial class SqliteStorageTransaction(
         }
 
         Reserve(id, json.Length);
-        if (store.IsSystem)
-        {
-            return Write(offset =>
-            {
-                var put = BodyCommand(SqliteStatements.Put, collection, id);
-                put.Parameters.AddWithValue("$version", offset);
-                put.Parameters.AddWithValue("$body", body);
-                put.ExecuteNonQuery();
-            }, cancellationToken);
-        }
-
         if (!HasTable(collection))
         {
             // An implicit collection carries the same captured identity metadata as an explicit creation.
@@ -252,22 +259,9 @@ internal sealed partial class SqliteStorageTransaction(
         return version;
     }
 
-    public async ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken)
-    {
-        return await RunAsync(() =>
-        {
-            ThrowIfReadOnly();
-            if (!store.IsSystem)
-            {
-                // A register removed without a trace would come back with the next late delta: deletions are tombstones.
-                throw new NotSupportedException("a client database deletes documents with tombstones");
-            }
-
-            var command = Command(SqliteStatements.Delete, collection);
-            command.Parameters.AddWithValue("$id", id);
-            return command.ExecuteNonQuery() > 0;
-        }, cancellationToken, mutation: true).ConfigureAwait(false);
-    }
+    // A register removed without a trace would come back with the next late delta: every deletion is a tombstone.
+    public async ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) =>
+        await TombstoneAsync(collection, id, cancellationToken).ConfigureAwait(false) is not null;
 
     public async ValueTask<long?> TombstoneAsync(string collection, string id, CancellationToken cancellationToken)
     {
@@ -282,25 +276,14 @@ internal sealed partial class SqliteStorageTransaction(
 
             Reserve(id, 0);
             // ponytail: tombstones stay until tombstone GC on applied vectors (TS-647 step 7).
-            if (!store.IsSystem)
-            {
-                var affected = ReplaceUniqueKeys(collection, id, null, cancellationToken);
-                ClearUniqueConflict(collection, id);
-                cancellationToken.ThrowIfCancellationRequested();
-                Offset();
-                var (state, at) = Begin(collection, id);
-                var written = Store(collection, id, state.Delete(at), at, null);
-                ReconcileUnique(collection, affected, cancellationToken);
-                return written;
-            }
-
-            return Write(offset =>
-            {
-                var command = Command(SqliteStatements.Tombstone, collection);
-                command.Parameters.AddWithValue("$id", id);
-                command.Parameters.AddWithValue("$version", offset);
-                command.ExecuteNonQuery();
-            }, cancellationToken);
+            var affected = ReplaceUniqueKeys(collection, id, null, cancellationToken);
+            ClearUniqueConflict(collection, id);
+            cancellationToken.ThrowIfCancellationRequested();
+            Offset();
+            var (state, at) = Begin(collection, id);
+            var written = Store(collection, id, state.Delete(at), at, null);
+            ReconcileUnique(collection, affected, cancellationToken);
+            return written;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
@@ -348,7 +331,7 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() => WithQueryBudget(() =>
         {
             // A missing cursor is not "", so the first page also holds an empty id.
-            if (!store.IsSystem && !HasTable(collection))
+            if (!HasTable(collection))
             {
                 return new DocumentPage([], HasMore: false);
             }
@@ -383,7 +366,8 @@ internal sealed partial class SqliteStorageTransaction(
                 bytes += size;
                 ReserveJson(size);
                 var id = reader.GetString(0);
-                documents.Add(new StoredDocument(id, store.IsSystem ? reader.GetInt64(1) : Version(collection, id, reader, 1), SqliteSession.Bytes(reader, 2), Scope));
+                var body = SqliteSession.Bytes(reader, 2);
+                documents.Add(new StoredDocument(id, Version(collection, id, reader, 1), store.IsSystem ? SystemValue(body) : body, Scope));
             }
 
             return new DocumentPage(documents, HasMore: false);
@@ -835,13 +819,7 @@ internal sealed partial class SqliteStorageTransaction(
         {
             ArgumentException.ThrowIfNullOrEmpty(name);
             var through = prefix ? PrefixSuccessor(name) : name + '\0';
-            var command = session.Command((through is null, store.IsSystem) switch
-            {
-                (true, true) => SqliteStatements.HasCollectionStateFrom,
-                (false, true) => SqliteStatements.HasCollectionState,
-                (true, false) => SqliteStatements.ClientHasCollectionStateFrom,
-                (false, false) => SqliteStatements.ClientHasCollectionState,
-            }, transaction);
+            var command = session.Command(through is null ? SqliteStatements.HasCollectionStateFrom : SqliteStatements.HasCollectionState, transaction);
             command.Parameters.AddWithValue("$from", name);
             if (through is not null)
             {
@@ -915,6 +893,7 @@ internal sealed partial class SqliteStorageTransaction(
                 Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
                 cancellationToken.ThrowIfCancellationRequested();
                 Command(SqliteStatements.DropDocuments, name).ExecuteNonQuery();
+                Command(SqliteStatements.DropStates, name).ExecuteNonQuery();
             }
             else if (Command(SqliteStatements.GetCollection, name).ExecuteScalar() is not null)
             {

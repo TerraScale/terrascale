@@ -9,15 +9,14 @@ namespace TerraBase.Testing;
 public static class DocumentFiles
 {
     /// <summary>
-    /// Seeds a current-format database file at <paramref name="path"/> holding exactly these documents. A client database
-    /// holds them as one PUT each (<see cref="StoredStates"/>), in one commit at offset 1.
+    /// Seeds a current-format database file holding one PUT per document; a client database commits at offset 1.
     /// </summary>
     public static async Task WriteAsync(string path, params (string Collection, string Id, string Body)[] documents)
     {
         using var meter = new Meter("TerraBase.Testing.DocumentFiles");
         await using var io = new SqliteIoPool(1, 1, meter);
         var system = Path.GetFileName(path) == "_system.db";
-        // The name chooses the schema the file bootstraps: the system database keeps its own until TS-647 step 5.
+        // The name chooses the schema the file bootstraps: the system database keeps its documents in one table.
         await SqliteDatabaseStore.InitializeAsync(system ? "_system" : "fixture", path, io, string.Empty, CancellationToken.None);
         // Built, never interpolated: a path may contain ';' or quotes.
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
@@ -33,7 +32,10 @@ public static class DocumentFiles
         await offset.ExecuteNonQueryAsync();
     }
 
-    /// <summary>Replaces existing live document bodies in a closed database file without changing its schema.</summary>
+    /// <summary>
+    /// Replaces existing live document bodies of a closed system database file without changing its schema or their states,
+    /// whose stored form leaves plain values to the body: the engine reads the new values.
+    /// </summary>
     public static async Task UpdateAsync(string path, params (string Collection, string Id, string Body)[] documents)
     {
         ArgumentNullException.ThrowIfNull(documents);
@@ -46,10 +48,10 @@ public static class DocumentFiles
         {
             await using var update = connection.CreateCommand();
             update.Transaction = transaction;
-            update.CommandText = "UPDATE documents SET body = $body WHERE collection = $collection AND id = $id AND body IS NOT NULL;";
+            update.CommandText = "UPDATE documents SET body = $body WHERE collection = $collection AND id = $id;";
             update.Parameters.AddWithValue("$collection", collection);
             update.Parameters.AddWithValue("$id", id);
-            update.Parameters.AddWithValue("$body", body);
+            update.Parameters.AddWithValue("$body", StoredStates.SystemBody(body));
             if (await update.ExecuteNonQueryAsync() != 1)
             {
                 throw new InvalidDataException("the fixture document does not exist");
@@ -59,19 +61,22 @@ public static class DocumentFiles
         await transaction.CommitAsync();
     }
 
-    /// <summary>Every live document of the file at <paramref name="path"/>, as "collection|id|body" lines in key order; tombstones are left out.</summary>
+    /// <summary>
+    /// Every live document of the system database file at <paramref name="path"/>, as "collection|id|body" lines in key order,
+    /// bodies as the engine reads them; tombstones are left out.
+    /// </summary>
     public static async Task<List<string>> ReadAsync(string path)
     {
         await using var connection = new SqliteConnection(
             new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT collection, id, body FROM documents WHERE body IS NOT NULL ORDER BY collection, id;";
+        command.CommandText = "SELECT collection, id, body FROM documents ORDER BY collection, id;";
         await using var reader = await command.ExecuteReaderAsync();
         var documents = new List<string>();
         while (await reader.ReadAsync())
         {
-            documents.Add($"{reader.GetString(0)}|{reader.GetString(1)}|{reader.GetString(2)}");
+            documents.Add($"{reader.GetString(0)}|{reader.GetString(1)}|{StoredStates.SystemValue(reader.GetString(2))}");
         }
 
         return documents;
@@ -89,12 +94,7 @@ public static class DocumentFiles
             await metadata.ExecuteNonQueryAsync();
             if (system)
             {
-                await using var insert = connection.CreateCommand();
-                insert.CommandText = "INSERT INTO documents VALUES ($collection, $id, 1, $body) ON CONFLICT (collection, id) DO UPDATE SET body = excluded.body;";
-                insert.Parameters.AddWithValue("$collection", collection);
-                insert.Parameters.AddWithValue("$id", id);
-                insert.Parameters.AddWithValue("$body", body);
-                await insert.ExecuteNonQueryAsync();
+                await StoredStates.WriteAsync(connection, collection, id, body, system: true);
                 continue;
             }
 

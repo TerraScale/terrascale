@@ -27,7 +27,7 @@ public sealed record ChangeDelta(string Collection, string Id, Hlc Stamp, Docume
 /// </summary>
 public interface IChangeGroupSource
 {
-    /// <summary>Every client database that may hold groups to ship.</summary>
+    /// <summary>Every database that may hold groups to ship: <see cref="ChangeGroups.System"/> and each client database.</summary>
     IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken);
 
     /// <summary>
@@ -92,15 +92,26 @@ internal static class ChangeGroups
     /// <summary>Deltas per group, as many as one transaction writes.</summary>
     public const int MaxDeltas = IStorageTransaction.MaxChangeGroupChanges;
 
+    /// <summary>
+    /// The system database (the catalog), placed in every region (docs/terrabase/multi-region-replication.md section 15).
+    /// Its ids are no ULIDs, so no client database's identity ever equals it.
+    /// </summary>
+    public static TenantContext System { get; } = new("_system", PlanTier.Hobby, "_system", "_system");
+
+    /// <summary>Deltas one group of <paramref name="database"/> may hold.</summary>
+    public static int MaxDeltasOf(TenantContext database) => database == System ? IStorageTransaction.MaxSystemGroupChanges : MaxDeltas;
+
     /// <summary>Encoded groups per batch, before the LZ4 envelope; a single larger group still travels alone.</summary>
     public const int MaxBatchBytes = 2 * 1024 * 1024;
 
     public static V1.Database Wire(TenantContext database) =>
         new() { OrganizationId = database.OrganizationId, ProjectId = database.ProjectId, DatabaseId = database.DatabaseId };
 
-    /// <exception cref="InvalidDataException">The ids are not canonical ULIDs.</exception>
+    /// <exception cref="InvalidDataException">The ids are neither canonical ULIDs nor the system database's.</exception>
     public static TenantContext Tenant(V1.Database? database) =>
-        database is not null && EntityIds.IsValid(database.OrganizationId) && EntityIds.IsValid(database.ProjectId) && EntityIds.IsValid(database.DatabaseId)
+        database is null ? throw new InvalidDataException("a batch names its database")
+        : database.OrganizationId == System.OrganizationId && database.ProjectId == System.ProjectId && database.DatabaseId == System.DatabaseId ? System
+        : EntityIds.IsValid(database.OrganizationId) && EntityIds.IsValid(database.ProjectId) && EntityIds.IsValid(database.DatabaseId)
             ? new TenantContext(database.OrganizationId, PlanTier.Hobby, database.ProjectId, database.DatabaseId)
             : throw new InvalidDataException("a batch names a database by its organization, project and database ULIDs");
 
@@ -125,11 +136,12 @@ internal static class ChangeGroups
     }
 
     /// <summary>
-    /// The groups of a batch, checked: 1 to <see cref="MaxGroups"/> groups with growing change ids that end at
-    /// <paramref name="last"/>, each with 1 to <see cref="MaxDeltas"/> canonical deltas of valid collections and ids.
+    /// The groups of a batch of <paramref name="database"/>, checked: 1 to <see cref="MaxGroups"/> groups with growing change
+    /// ids that end at <paramref name="last"/>, each with 1 to <see cref="MaxDeltasOf"/> canonical deltas of valid
+    /// collections and ids.
     /// </summary>
     /// <exception cref="InvalidDataException">Anything else.</exception>
-    public static List<OriginGroup> Decode(ByteString envelope, ulong last)
+    public static List<OriginGroup> Decode(TenantContext database, ByteString envelope, ulong last)
     {
         V1.GroupList list;
         try
@@ -150,22 +162,33 @@ internal static class ChangeGroups
         ulong previous = 0;
         foreach (var group in list.Groups)
         {
-            if (group.ChangeId <= previous || group.ChangeId > long.MaxValue || group.Deltas.Count is 0 or > MaxDeltas)
+            if (group.ChangeId <= previous || group.ChangeId > long.MaxValue || group.Deltas.Count == 0 || group.Deltas.Count > MaxDeltasOf(database))
             {
-                throw new InvalidDataException("groups have growing change ids and 1 to 1024 deltas");
+                throw new InvalidDataException("groups have growing change ids and 1 to 1024 deltas (16,384 in the system database)");
             }
 
             previous = group.ChangeId;
-            groups.Add(new OriginGroup((long)group.ChangeId, [.. group.Deltas.Select(Delta)]));
+            groups.Add(new OriginGroup((long)group.ChangeId, [.. group.Deltas.Select(delta => Delta(delta, database))]));
         }
 
         return groups;
     }
 
-    private static ChangeDelta Delta(V1.Delta delta)
+    /// <summary>
+    /// Whether a peer may name a document of <paramref name="database"/> by <paramref name="collection"/> and
+    /// <paramref name="id"/>. A client collection is a table name and its ids are API ids; the system database's are whatever
+    /// the catalog writes (paths, names, hashes), so only their size is checked: a key a receiver refused would hold its
+    /// stream back for good.
+    /// </summary>
+    public static bool ValidKey(TenantContext database, string collection, string id) =>
+        database == System
+            ? collection.Length is > 0 and <= ushort.MaxValue && id.Length is > 0 and <= ushort.MaxValue
+            : (DatabaseName.TryParse(collection, out _) || collection is DocumentDelta.Collections or DocumentDelta.Indexes or DocumentDelta.Unique)
+                && id.Length is > 0 and <= 1024 && !id.Any(char.IsControl);
+
+    private static ChangeDelta Delta(V1.Delta delta, TenantContext database)
     {
-        if (!(DatabaseName.TryParse(delta.Collection, out _) || delta.Collection is DocumentDelta.Collections or DocumentDelta.Indexes or DocumentDelta.Unique)
-            || delta.Id.Length is 0 or > 1024 || delta.Id.Any(char.IsControl) || delta.Stamp == 0)
+        if (!ValidKey(database, delta.Collection, delta.Id) || delta.Stamp == 0)
         {
             throw new InvalidDataException("a delta names a valid collection, an id of 1 to 1024 characters and a stamp");
         }
