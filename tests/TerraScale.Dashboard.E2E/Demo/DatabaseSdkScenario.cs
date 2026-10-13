@@ -716,6 +716,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 [_, _, _, _, _, "changes"] => "documents:read",
                 [_, _, _, _] or [_, _, _, _, _] when method == "GET" => "databases:read",
                 [_, _, _, _, _, "sql" or "schema"] => "databases:read",
+                [_, _, _, _, _, "schema", _] when method == "GET" => "databases:read",
                 [_, _, _, _, _, "indexes"] when method == "GET" => "databases:read",
                 _ => "databases:write"
             };
@@ -811,6 +812,17 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                         items = collections.Where(item => item.Key.StartsWith(project + "/" + current.Name + "/", StringComparison.Ordinal)).Select(item =>
                             new { name = item.Key.Split('/')[2], documents = (long)item.Value.Count, bytes = item.Value.Values.Sum(value => (long)System.Text.Encoding.UTF8.GetByteCount(value.Document.GetRawText())) }).ToArray()
                     });
+                case (7, "GET", "schema"):
+                    lock (gate)
+                    {
+                        if (!collections.TryGetValue(project + "/" + current.Name + "/" + parts[6], out var inferredRows)) return Error(404, "not_found");
+                        // I2 inferred-schema.json: sampled document presence and type counts, separate from declared schema.
+                        var sampled = inferredRows.Values.Take(1000).ToArray();
+                        var inferredFields = sampled.SelectMany(row => row.Document.EnumerateObject()).GroupBy(field => field.Name)
+                            .Select(field => new { path = field.Key, present = field.Count(), types = field.GroupBy(value => value.Value.ValueKind.ToString().ToLowerInvariant())
+                                .ToDictionary(kind => kind.Key, kind => kind.Count()) }).ToArray();
+                        return Results.Json(new { collection = parts[6], documents = inferredRows.Count, sampledDocuments = sampled.Length, fields = inferredFields, uniqueConstraints = Array.Empty<object>() });
+                    }
                 case (6, "POST", "sql"):
                     var sql = (await JsonAsync(http)).GetProperty("sql").GetString()!;
                     var match = System.Text.RegularExpressions.Regex.Match(sql, @"^\s*SELECT\s+\*\s+FROM\s+([A-Za-z0-9_-]+)(?:\s+LIMIT\s+(\d+))?\s*;?\s*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
