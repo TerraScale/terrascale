@@ -106,18 +106,32 @@ public static class DatabaseEndpoints
         try { choices = await backend.RegionsAsync(http.RequestAborted); }
         catch (HttpRequestException) { regionsError = "Region discovery is unavailable. Try again shortly."; }
         var contents = new List<CollectionStats>();
+        var contentsAvailable = true;
         if (context.Project is not null)
         {
             foreach (var database in context.Project.Databases.Values)
             {
-                try { contents.AddRange(await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), database.Id, http.RequestAborted)); }
-                catch (HttpRequestException) { if (error.Length == 0) error = "Database counts are unavailable. The data plane did not answer."; }
+                try
+                {
+                    var reported = await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), database.Id, http.RequestAborted);
+                    DatabaseService.ValidateContents(reported);
+                    contents.AddRange(reported);
+                    // Collection names can repeat across databases; validate only the combined totals.
+                    _ = contents.Sum(item => item.Documents);
+                    _ = contents.Sum(item => item.Bytes);
+                }
+                catch (Exception failure) when (!http.RequestAborted.IsCancellationRequested &&
+                    (failure is HttpRequestException or IOException or System.Text.Json.JsonException or OverflowException || KnownFailure(failure)))
+                {
+                    contentsAvailable = false;
+                    if (error.Length == 0) error = "Database counts are unavailable. The data plane did not answer.";
+                }
             }
         }
         var search = http.Request.Query["q"].ToString().Trim();
         var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
         var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
-        var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regions, regionsError));
+        var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regions, regionsError) { ContentsAvailable = contentsAvailable });
         result.StatusCode = status;
         return result;
     }
