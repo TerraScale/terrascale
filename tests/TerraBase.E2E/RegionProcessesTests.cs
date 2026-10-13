@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using TerraBase.Primitives;
 
@@ -26,36 +28,46 @@ public sealed class RegionProcessesTests
         await regions.StartAgainAsync(Cluster.Sjc);
         _ = await Converge.UntilAsync(() => Docs.ReadAsync(regions[Cluster.Sjc], second), document => document?["step"]?.GetValue<int>() == 2, "gru's write on sjc after its restart");
     }
-    // Acknowledged before it could ship: with sjc and fra down, gru acknowledges writes (they exist only in gru's file and
-    // its turso_cdc), then is killed with SIGKILL. Once every region is back, each holds exactly the acknowledged writes:
-    // the change groups survived the kill on disk and shipped from gru's restarted process.
+
     [Test]
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
-    public async Task Writes_a_region_acknowledged_before_it_could_ship_them_reach_every_region_after_a_SIGKILL()
+    public async Task Writes_are_refused_while_all_placed_peers_are_down_and_resume_after_a_peer_rejoins()
     {
         Skip.When(Cluster.FlyRequested, "runs local node processes");
         await using var regions = await RegionProcesses.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
         await regions.KillAsync(Cluster.Sjc);
         await regions.KillAsync(Cluster.Fra);
-        var acknowledged = new List<(Uri Uri, int Step)>();
-        for (var step = 0; step < 200; step++)
-        {
-            var uri = regions.Document(EntityIds.New().ToString());
-            await Docs.PutAsync(regions[Cluster.Gru], uri, new JsonObject { ["step"] = step });
-            acknowledged.Add((uri, step));
-        }
+        _ = await Converge.UntilAsync(StatusAsync, status => status.GetProperty("peers").GetArrayLength() == 0,
+            "gru has no connected peers");
+        var uri = regions.Document(EntityIds.New().ToString());
+        using var refused = await regions[Cluster.Gru].PutAsJsonAsync(uri, new JsonObject { ["step"] = 1 });
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        var error = await refused.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(error.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("remote_region_unavailable");
+        await Assert.That(refused.Headers.RetryAfter).IsNotNull();
+        using var absent = await regions[Cluster.Gru].GetAsync(uri);
+        await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
 
-        await regions.KillAsync(Cluster.Gru);
         await regions.StartAgainAsync(Cluster.Sjc);
+        // Without external catalog anchors, a restarted test node must verify every recorded witness before serving tenants.
         await regions.StartAgainAsync(Cluster.Fra);
-        await regions.StartAgainAsync(Cluster.Gru);
-        foreach (var region in regions.Regions)
+        _ = await Converge.UntilAsync(() => regions[Cluster.Sjc].GetFromJsonAsync<JsonElement>(new Uri("/v1/catalog-gate", UriKind.Relative)),
+            gate => gate.GetProperty("open").GetBoolean(), "sjc's catalog verifies after its restart");
+        await regions.KillAsync(Cluster.Fra);
+        _ = await Converge.UntilAsync(StatusAsync, status => status.GetProperty("peers").EnumerateArray()
+            .Select(peer => peer.GetProperty("region").GetString()).SequenceEqual([Cluster.Sjc]), "only sjc is connected after catalog recovery");
+        using var remoteAbsent = await regions[Cluster.Sjc].GetAsync(uri);
+        await Assert.That(remoteAbsent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using var accepted = await regions[Cluster.Gru].PutAsJsonAsync(uri, new JsonObject { ["step"] = 2 });
+        await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await accepted.Content.ReadAsStringAsync());
+        await Assert.That((await accepted.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("durability").GetString()).IsEqualTo("remote_durable");
+        using var remote = await regions[Cluster.Sjc].GetAsync(uri);
+        await Assert.That(remote.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await remote.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("step").GetInt32()).IsEqualTo(2);
+
+        async Task<JsonElement> StatusAsync()
         {
-            foreach (var (uri, step) in acknowledged)
-            {
-                _ = await Converge.UntilAsync(() => Docs.ReadAsync(regions[region], uri), document => document?["step"]?.GetValue<int>() == step,
-                    $"gru's acknowledged write {step} on {region} after gru's SIGKILL");
-            }
+            return await regions[Cluster.Gru].GetFromJsonAsync<JsonElement>(new Uri("/replication", UriKind.Relative));
         }
     }
 }

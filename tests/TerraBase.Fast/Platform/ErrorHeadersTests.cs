@@ -83,6 +83,10 @@ public sealed class ErrorHeadersTests
             TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken) =>
             inner.WriteAsync(database, operations, indexErrors, cancellationToken);
 
+        public ValueTask<WriteOutcome> WriteConfirmedAsync(
+            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken) =>
+            inner.WriteConfirmedAsync(database, operations, indexErrors, cancellationToken);
+
         public ValueTask<ApplyOutcome> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken) =>
             inner.ApplyAsync(transaction, operation, cancellationToken);
 

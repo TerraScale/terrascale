@@ -83,7 +83,8 @@ public sealed class RepairAndContractE2ETests
         });
     }
 
-    // Two regions take the same unique email while partitioned. After the heal both hold the same answer: the document with
+    // Two origins take the same unique email while their direct stream is partitioned; fra confirms both writes. After
+    // the heal every region holds the same answer: the document with
     // the smaller id keeps the key; the other loses it, so its GET answers 409 unique_violation and it is not listed (the
     // schema endpoint's contract; design section 9, unique constraints).
     [Test]
@@ -93,11 +94,18 @@ public sealed class RepairAndContractE2ETests
         Skip.When(Cluster.FlyRequested, "Fly has no partition switch");
         await Gaps.RunAsync("unique-under-partition", async () =>
         {
-            await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc);
+            await using var cluster = await Cluster.StartAsync(All);
             using var declared = await cluster[Cluster.Gru].PutAsJsonAsync(
                 new Uri($"{cluster.DatabasePath}/schema/{cluster.Collection}", UriKind.Relative), new { fields = new[] { new { name = "email", unique = true } } });
             await Docs.EnsureSuccessAsync(declared);
             var (smaller, larger) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+            foreach (var region in new[] { Cluster.Gru, Cluster.Sjc })
+            {
+                _ = await Converge.UntilAsync(() => Docs.GetJsonAsync(cluster[region], new Uri("/health/replication", UriKind.Relative)),
+                    health => health?["peers"]?.AsArray().Any(peer => peer?["region"]?.GetValue<string>() == Cluster.Fra
+                        && peer["status"]?.GetValue<string>() == "ok") == true, $"{region} streams to fra before its direct partition");
+            }
+
             cluster.Partition(Cluster.Gru, Cluster.Sjc);
             await Docs.PutAsync(cluster[Cluster.Sjc], cluster.Document(smaller), new JsonObject { ["email"] = "same@example.test", ["from"] = "sjc" });
             await Docs.PutAsync(cluster[Cluster.Gru], cluster.Document(larger), new JsonObject { ["email"] = "same@example.test", ["from"] = "gru" });

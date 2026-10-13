@@ -28,9 +28,6 @@ public sealed class OriginStampOrderTests
 
     private static readonly TimeSpan FutureOffset = TimeSpan.FromHours(1);
 
-    // Placement requires a second region; this fixture has no live peer that could advance the clock.
-    private static readonly string[] SoloReplicaRegions = ["sjc"];
-
     [Test]
     public async Task A_local_rewrite_of_a_future_document_mints_above_it_and_restarts_keep_every_later_mint_above_it()
     {
@@ -71,6 +68,7 @@ public sealed class OriginStampOrderTests
         await pair.Sjc.StopAsync();
         await pair.Sjc.StartAsync();
         await Assert.That(pair.Sjc.Node).IsEqualTo(node).Because("a clean restart keeps the replica id");
+        await pair.Sjc.ConnectedAsync();
 
         // A new document, then a rewrite of an earlier other document, after the restart.
         var afterIds = new[] { EntityIds.New().ToString(), otherIds[0] };
@@ -111,7 +109,7 @@ public sealed class OriginStampOrderTests
         }
     }
 
-    // One machine, so no peer replicates future system or metadata stamps and masks the seed of the clock from history.
+    // One machine of a cell of one (no member directory), so no peer replicates future system or metadata stamps and masks the seed of the clock from history.
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -194,13 +192,13 @@ public sealed class OriginStampOrderTests
         var project = await api.CreateProjectAsync(organization, "history");
         using var response = await api.Client.PostAsJsonAsync(
             ManagementApi.Uri($"/v1/management/organizations/{organization}/projects/{project}/databases"),
-            new { name = "main", replicaRegions = SoloReplicaRegions });
+            new { name = "main" });
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         return new ManagedDatabaseRef(organization, project, body.GetProperty("id").GetString()!, "main");
     }
 
-    // One machine in region gru, in a data directory and under a node name that a restart reuses.
+    // One machine in region gru without a member directory (a cell of one), in a data directory and under a node name that a restart reuses.
     private static Task<ManagementApi> StartSoloAsync(string directory, string name, FakeS3 s3) =>
         ManagementApi.StartAsync(settings =>
         {
@@ -212,7 +210,6 @@ public sealed class OriginStampOrderTests
         {
             s3.Route(services);
             ManualBackupHosting.Configure(services);
-            services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
         });
 
     private static async Task PutAsync(ManagementApi api, ManagedDatabaseRef managed, string id, string json)
@@ -266,6 +263,8 @@ public sealed class OriginStampOrderTests
                 await pair.Gru.StartAsync();
                 pair.Sjc = new Machine(pair, "sjc", ["gru"], time: null);
                 await pair.Sjc.StartAsync();
+                await pair.Gru.ConnectedAsync();
+                await pair.Sjc.ConnectedAsync();
                 return pair;
             }
             catch
@@ -327,6 +326,11 @@ public sealed class OriginStampOrderTests
             await Api.DisposeAsync();
             _api = null;
         }
+
+        // A write is admitted only while a stream to another placed region is connected; wait for this machine's.
+        public Task ConnectedAsync() =>
+            TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(Api.Server.Services.GetRequiredService<IReplicationStatus>()
+                .Snapshot().Peers.Any(peer => replicas.Contains(peer.Region))), timeout: TimeSpan.FromSeconds(30));
 
         // A client of this machine's data API, for the test's organization.
         public Task<HttpClient> DataAsync() =>

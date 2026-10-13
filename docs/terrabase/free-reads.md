@@ -78,7 +78,7 @@ Electric references: <https://electric.ax/docs/api/http> and <https://electric.a
 
 | Item | State | Relevance here |
 | --- | --- | --- |
-| Decision 0013a: success only after two regional durable copies ([0013a](decisions/0013a-remote-durable-acknowledgement.md)) | **proposed** (revision 4). Its write wait is not wired: `DocumentRoute.Durability` is still `"local_durable"` ([DocumentRoute.cs#L58](../../src/TerraBase/Features/Documents/DocumentRoute.cs#L58)) | Gates the frontier move from local to remote (3.4, FR-25) |
+| Decision 0013a: success only after two regional durable copies ([0013a](decisions/0013a-remote-durable-acknowledgement.md)) | **proposed** (revision 4). The write wait is implemented on document and transaction routes (`DocumentService`: `AdmitAsync`, then `WaitAsync`); other mutating routes still answer `local_durable` | Gates the frontier move from local to remote (3.4, FR-25) |
 | #211 `fix/feed-prefix-persisted` | open | Persisted prefix proofs across restarts, and replay to the issuing machine. Planned gate for resume (3.7) |
 | C1 peer RPCs unauthenticated | open | Blocks T1 headers and any shared caching (FR-05) |
 | #210 production deployment ([ci.yml](../../.github/workflows/ci.yml)) | merged: the deploy job is enabled again | Production deployment still requires the existing CI and live gates |
@@ -605,7 +605,7 @@ qualification of wave A). FR-40..42 and FR-44 = S1..S3 and S4; FR-43 (ts-cli) ha
 | A commit over 8 MiB stalls a shape | Explicit limitation (3.4, step 1); splitting is a later decision |
 | Host loss before FR-25 erases a published write | Stated in the contract (3.10, rule 3); not claimed as durable |
 | Turso FULL not proven for tenant DBs; a publish could contain a write a power loss removes | FR-07 before the first public chunk; FR-30 after |
-| Remote-ack frontier not wired (0013a write wait missing) | A3 first; until then the gate uses the local committed head |
+| Remote-ack publication frontier not wired (0013a waits are implemented for document and transaction routes) | FR-25 must still move publication from the local committed head to a proven remote frontier |
 | Unacked overwrite leaks into a published object after FR-25 | `values_at` gate, and its unacked-overwrite test (FR-25) |
 | Resume trusts a stamp without a proof, or persisted proofs are lost on restart | Verify #207 proofs; gate on #211; until then every resume is `409` |
 | Repair-induced `410` on cross-region resume | Surfaced as `409 must_refetch` (3.7) |

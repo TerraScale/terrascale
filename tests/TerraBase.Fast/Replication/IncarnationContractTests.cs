@@ -119,6 +119,10 @@ public sealed class IncarnationContractTests
         await Assert.That(pin).IsNotEqualTo(other);
         var bucket = SqliteStorageTransaction.Bucket("items", id);
 
+        // Replication bookkeeping advances the CDC head too; hold the writer while comparing separate read snapshots.
+        var store = await gru.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(cluster.Database, CancellationToken.None)
+            ?? throw new InvalidOperationException("the fixture database is missing");
+        await using var quiet = await store.BeginTransactionAsync(write: true, CancellationToken.None);
         using var channel = PeerChannel.Create(gru.Api.Server.BaseAddress, PeerTls.Credential);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
         var discovered = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(cluster.Database, null) });

@@ -334,7 +334,8 @@ public sealed class GroupCommitTests
         }
 
         await Assert.That((await primer).Status).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That((await failing).Status).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(((await failing).Status, (await failing).Code))
+            .IsEqualTo((HttpStatusCode.ServiceUnavailable, "write_outcome_unknown"));
         // The rollback took `first` with it: it ran again, with `last`, in the next batch.
         await Assert.That((await first).Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That((await last).Status).IsEqualTo(HttpStatusCode.Created);

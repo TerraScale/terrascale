@@ -70,11 +70,21 @@ public sealed record RequestTimeout(string Message, string Code = "request_timeo
 /// <param name="Code">Stable machine-readable code.</param>
 public sealed record Gone(string Message, string Code = "gone");
 
+/// <summary>
+/// A write committed or may have committed, but its durable copy in another region was not confirmed in time (decision
+/// 0013a): it may be applied, even durably later, or lost. Not a failure, and not safe to retry blindly.
+/// </summary>
+/// <param name="Message">What was not confirmed.</param>
+/// <param name="Region">The region of the machine that accepted the write.</param>
+/// <param name="Machine">The machine that accepted the write.</param>
+/// <param name="Code">Stable machine-readable code.</param>
+public sealed record OutcomeUnknown(string Message, string Region, string Machine, string Code = "write_outcome_unknown");
+
 /// <summary>Success without a value, such as a deletion.</summary>
 public sealed record Done;
 
 /// <summary>Every expected failure; <see cref="ErrorResponse.From"/> maps each to its HTTP response.</summary>
-public readonly union Failure(NotFound, Conflict, Validation, PreconditionFailed, Unauthorized, Forbidden, QuotaExceeded, Unavailable, PayloadTooLarge, UnsupportedMediaType, RequestTimeout, Gone);
+public readonly union Failure(NotFound, Conflict, Validation, PreconditionFailed, Unauthorized, Forbidden, QuotaExceeded, Unavailable, PayloadTooLarge, UnsupportedMediaType, RequestTimeout, Gone, OutcomeUnknown);
 
 /// <summary>A value read from a request, or the input rule it breaks.</summary>
 /// <typeparam name="T">The value type.</typeparam>

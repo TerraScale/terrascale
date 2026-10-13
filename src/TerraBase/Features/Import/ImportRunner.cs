@@ -653,5 +653,6 @@ internal sealed class ImportRunner : BackgroundService
         UnsupportedMediaType error => error.Message,
         RequestTimeout error => error.Message,
         Gone error => error.Message,
+        OutcomeUnknown error => error.Message,
     };
 }

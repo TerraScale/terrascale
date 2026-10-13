@@ -6,6 +6,14 @@
     [0013b](0013b-operation-idempotency.md), revision 3 pending. This record claims none of them.
   - The split is the author's technical recommendation. It is not a recorded COS approval.
   - Owner: R6-FIX.
+  - **Implementation status (2026-10-13):** B1 (every write `synchronous = FULL`) is merged (#181), as are two-region
+    placement (#184), own commit markers (#191), incarnation-conditional ACK persistence and pinned source reads (#233),
+    and simulated tenant WAL power-loss tests (#242). A3 implements the document and transaction barrier: eligible-peer
+    admission, the own-marker waiter, and section 2's responses. Fast tests cover held/refused ACKs, the 10 s outcome,
+    transaction waits and cell-of-one behavior. Process tests passed immediate origin SIGKILL and isolated survivor restart
+    in both gru↔sjc directions, plus 200-write recovery at `7b89c3c2`.
+    Pending: refill certification in full, the receiver fault record, all mutating routes (section 6), SDK behavior, and
+    remaining disk-fault and live qualification. These process tests do not certify a power-loss durability guarantee.
 - **Contract (user-approved).** A production write answers success only after a durable copy exists on the accepting
   machine **and** on a machine of another region that holds the database (placement option A: two regions or more).
 - **Scope:**
@@ -28,8 +36,7 @@
     an ack later arrives.
   - If resetting the writer session fails after the marker was read, that is not a barrier. The session is discarded
     and never reused, and the attempt is decided by the wait like any other. #181 publishes the reset fix at
-    `e54808bf`, whose tree matches the author-validated `21f7ad69`. Revised-head review and required CI remain
-    pending; B4 has no implemented marker or wait yet.
+    `e54808bf`, whose tree matches the author-validated `21f7ad69`. The reset behavior and per-request commit markers are merged (#181, #191); the A3 barrier consumes them.
 - **A transaction that writes nothing** (only `assert` / `assert_count` operations) has no own change to ship and no
   marker. It is answered without a wait, with `durability: "unchanged"`. No mutation is added to it, and it does not
   wait for some unrelated head.
@@ -43,7 +50,8 @@
   - from a peer node of a region other than this machine's, which the database's placement includes;
   - for groups sent from the **same store incarnation** as the marker;
   - not refused;
-  - with `change_id ≥ marker`.
+  - with `change_id ≥ marker`, and the marker above the start of the peer's contiguous live-batch run. A stored resume
+    position or an uncertified refill head starts a new run; a later live ack does not certify that earlier prefix.
 
   The receiver acks only after every group it joined is durable: the ack follows a successful FULL commit made after
   the last join, and that commit's sync must cover every part of a batch split into several transactions (the
@@ -105,8 +113,10 @@
   - an ack from before a restore, copy or volume replacement (another incarnation);
   - an intermediate anti-entropy repair page;
   - a refill that finished without complete validated coverage and a successful receiver barrier.
-- **Acks are prefixes.** An ack of `N` covers every own group up to `N`, so a whole transaction is confirmed together,
-  never in part. A later attempt's confirmation also covers earlier attempts on that machine.
+- **Live confirmation is a range.** Consecutive live batches from one peer and source incarnation confirm the range
+  `(from, N]`, where `from` is the resume position at the start of that live run. A whole transaction is confirmed
+  together, never in part. A later attempt's confirmation also covers earlier attempts within that range. After an
+  uncertified refill, the new range starts above its head, so a later live ack cannot certify writes only the refill held.
 
 ## 2. The answer to a client
 
@@ -114,7 +124,7 @@
 | --- | --- | --- | --- |
 | **Confirmed** | B1 for the marker, then an eligible ack within **10 s** | `2xx` as today, with `durability: "remote_durable"` | The attempt's whole effect is durable in two regions. It survives the loss of either region while the other's volume survives |
 | **Refused before execution** | Validation fails, or no machine of another placed region has a connected stream for the database (precheck), or the waiter bounds are full | `4xx` as today, or `503 remote_region_unavailable` / `503 confirmation_busy`, all with `Retry-After` | **This attempt** executed nothing. It says nothing about any other attempt |
-| **Outcome unknown** | `COMMIT` returned an error or did not return; or B1 held but no eligible ack came within 10 s; or the link dropped and none other confirmed | `503 write_outcome_unknown` with `region` and `machine`, and no `remote_durable` | **Nothing.** The attempt may be applied (even durably, later) or lost. It is not failed, not absent, and not safe to retry blindly |
+| **Outcome unknown** | `COMMIT` returned an error or did not return; or an unclassified storage write failure provided no proof that the attempt executed nothing; or B1 held but no eligible ack came within 10 s; or the link dropped and none other confirmed | `503 write_outcome_unknown` with `region` and `machine`, and no `remote_durable` | **Nothing.** The attempt may be applied (even durably, later) or lost. It is not failed, not absent, and not safe to retry blindly |
 | **Disconnected** | The client lost the connection before the answer | No answer | The same as outcome unknown |
 
 - **The cancellation and partition rules:**
@@ -204,6 +214,10 @@
 - **No lock is held.** A waiting request holds no storage session and no lock. The commit has ended before the wait.
 - **Bounded waiters.** At most 4,096 per machine and 256 per database, both in code. Beyond that, a write is refused
   before execution with `503 confirmation_busy`.
+- **Bounded confirmation history.** While attempts are admitted, a database keeps at most 16 disjoint live-confirmed
+  ranges of one source incarnation for acks arriving before wait registration. Overlapping ranges merge; past the bound,
+  the range with the lowest end is dropped. An unregistered attempt that loses its only confirmation record answers
+  outcome unknown. Registered waits retain their confirmation directly, so eviction or another incarnation cannot erase it.
 - **The 10 s bound is a ceiling, not a latency promise.** Latency is measured before it is stated: the plan in
   [0013b](0013b-operation-idempotency.md) section 11, without the reservation round.
 
@@ -276,16 +290,16 @@
   - A Fly DNS failure with no fallback to a cell of one.
 - **Prerequisite, not reproduced here:** delivery 3's shipped-binary evidence (database file, checkpoint/reset,
   `EIO`/`ENOSPC`, connection reuse) is required before the guarantee is claimed.
-- **Placement:** delivery 4 (#pending), with fail-first and mutants.
+- **Placement:** two-region placement is merged (#184); its fail-first and mutation evidence belongs to that delivery.
 
 ## 9. Code boundary (delivery 5)
 
 | Area | Change | Owner |
 | --- | --- | --- |
 | `Engine` (`IDatabaseStore.WriteAsync` result, `SqliteStorageTransaction.CommitAsync`) | The commit returns its marker: the store incarnation, and `max(change_id)` of `turso_cdc` read on the writer right after a successful `COMMIT`. The writer is exclusive, so that id is this transaction's own last row. A `COMMIT` error, or a failure to read the marker, returns no marker, and the request answers outcome unknown. A marker already read survives a later session-reset failure: the session is discarded and the wait decides (#181 publishes this reset behavior at `e54808bf`, tree identical to author-validated `21f7ad69`; revised-head review and green required CI remain required). | R6-FIX (sync settings and commit, as assigned) |
-| `Features/Replication/RemoteDurability.cs` | `IRemoteDurability` gains `CanConfirm(database, placement)` (the precheck) and `WaitAsync(database, marker, cancellationToken)`, which answers confirmed or not within the 10 s bound. | R6-FIX |
-| `Features/Replication/PeerStreams.cs` | It keeps, per link and database, the highest eligible ack with the incarnation of the batch it covers. Its cursors reset when the source incarnation changes. A waiter registry is signalled on every eligible ack and on link loss, and a waiter checks the current position when it registers. `LocalDurability` (a cell of one) confirms at once. | R6-FIX |
-| `Features/Replication/ChangeGroups.cs` / `TursoChangeGroupSource` | **Dependency:** every source read used for a prefix must report the store incarnation it read: `ReadAsync`, `HeadAsync`, `AckedAsync`, `RetainsAsync`, `DigestAsync` and `ReadBucketsAsync`. The digest and bucket reads must also refuse an expected incarnation that no longer matches. `AckAsync` takes the acked incarnation and writes only when it matches the file's own, checked in the same writer transaction; `_tb_peers` stores the incarnation with `acked`, and a stored ack of another incarnation reads as 0. | **R3** (CDC source). To be agreed before coding |
+| `Features/Replication/RemoteDurability.cs` | `IRemoteDurability` gains `AdmitAsync(database, cancellationToken)` (eligible-peer precheck and bounded lease) and `WaitAsync(database, marker, cancellationToken)`, which answers confirmed or not within the 10 s bound. | R6-FIX |
+| `Features/Replication/PeerStreams.cs` | It records eligible live-confirmed ranges in `RemoteAckWaiter` while the database has admitted attempts, keyed by database ids independently of the organization plan. Its cursors reset when the source incarnation changes. A refill or stored resume never certifies an earlier prefix. Registered waits retain confirmation directly; registration checks the bounded kept ranges first. Link loss wakes waits. `LocalDurability` (a cell of one) confirms at once. | R6-FIX |
+| `Features/Replication/ChangeGroups.cs` / `TursoChangeGroupSource` | **Dependency:** every source read used for a prefix must report the store incarnation it read: `ReadAsync`, `HeadAsync`, `AckedAsync`, `RetainsAsync`, `DigestAsync` and `ReadBucketsAsync`. The digest and bucket reads must also refuse an expected incarnation that no longer matches. `AckAsync` takes the acked incarnation and writes only when it matches the file's own, checked in the same writer transaction; `_tb_peers` stores the incarnation with `acked`, and a stored ack of another incarnation reads as 0. | **A4** (CDC source), merged in #233. A3 consumes its fixed APIs. |
 | `Features/Replication` (`AntiEntropy`, `PeerStreamReceiver`, `StorageChangeGroupSink`, `Protos/.../replication.proto`) | Refill certification: abort on a source that no longer holds the database, on a refused or undecodable page, and on an incarnation change. A FULL barrier commit after the last join, also with nothing to repair. `Refill`, `DigestRequest`/`DigestReply` and `BucketRequest` carry the source incarnation (a versioned contract change). The receiver aborts if its own store is replaced. | R6-FIX |
 | `Features/Replication` (`PeerStreamReceiver`, `StorageChangeGroupSink`) | The receiver copy fault: per database incarnation on the node, recorded with FULL outside the suspect file before the writer is released, refused on every link, kept across restarts; the fail-closed recovery for a crash before the record (open gap); cleared only by a rebuilt new incarnation. | R6-FIX. Where the record is stored in the node's system database: agreed with the catalog owner (R10a). The rebuild: **R7** (copy-refill) |
 | `Features/Documents` (`DocumentService`, `DocumentRoute`, `TransactionEndpoint`) | Precheck before the write; await the wait after the commit; answer `remote_durable` or `503 write_outcome_unknown`; precheck refusals. | R6-FIX (client write path, as assigned) |

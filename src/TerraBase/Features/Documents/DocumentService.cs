@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
@@ -9,6 +10,7 @@ using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Replication;
 using TerraBase.Features.Stats;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -19,7 +21,7 @@ namespace TerraBase.Features.Documents;
 
 internal sealed partial class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage,
     IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters, IStorageQuota quota, IDatabaseStats stats,
-    ILogger<DocumentService> logger)
+    IRemoteDurability durability, TerraBaseOptions options, ILogger<DocumentService> logger)
     : IDocumentService, ISystemDocumentReader
 {
     // assert_count examines at most this many documents.
@@ -337,27 +339,83 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         }
     }
 
-    public ValueTask<WriteOutcome> WriteAsync(
+    public async ValueTask<WriteOutcome> WriteAsync(
         TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken) =>
-        CommitAsync(database, operations, indexErrors, cancellationToken);
+        (await CommitAsync(database, operations, indexErrors, cancellationToken).ConfigureAwait(false)).Outcome;
+
+    public async ValueTask<WriteOutcome> WriteConfirmedAsync(
+        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
+    {
+        if (!operations.Any(operation => operation is PutOperation or PatchOperation or DeleteOperation))
+        {
+            // Assertions only: this attempt ships nothing, so it waits for nothing, not even a group-commit sibling's marker.
+            return await WriteAsync(database, operations, indexErrors, cancellationToken).ConfigureAwait(false) switch
+            {
+                WriteResult written => written with { Durability = WriteResult.Unchanged },
+                DocumentRejected rejected => rejected,
+            };
+        }
+
+        // Admitted before it executes: a refusal here means this attempt executed nothing. A cell of one admits every write.
+        var admission = await durability.AdmitAsync(database, cancellationToken).ConfigureAwait(false);
+        if (admission is not RemoteLease lease)
+        {
+            return admission switch
+            {
+                Unavailable error => new DocumentRejected(error),
+                RemoteLease => throw new UnreachableException(),
+            };
+        }
+
+        using (lease)
+        {
+            try
+            {
+                var (outcome, marker) = await CommitAsync(database, operations, indexErrors, cancellationToken).ConfigureAwait(false);
+                if (outcome is not WriteResult written || !durability.Confirms)
+                {
+                    return outcome;
+                }
+
+                // A mutation without its own marker has nothing to confirm with: never answered as confirmed or unchanged.
+                if (marker is not { } own)
+                {
+                    return Unknown("the write's own commit position is unknown; its outcome is unknown");
+                }
+
+                // The writer is released: the wait holds no storage session or lock, and cancelling it leaves the commit replicating.
+                return await durability.WaitAsync(database, own, cancellationToken).ConfigureAwait(false)
+                    ? written with { Durability = WriteResult.RemoteDurable }
+                    : Unknown("no other region confirmed the write within 10 s; its outcome is unknown");
+            }
+            catch (Exception error) when (error is not StorageBusyException && !cancellationToken.IsCancellationRequested)
+            {
+                // The commit, reading its marker, or the wait failed: the write may have landed, so its outcome is unknown.
+                logger.ZLogError(error, $"A write to database {database.DatabaseId:@Database} failed at or after its commit; it is answered as outcome unknown");
+                return Unknown("the write may or may not have committed; its outcome is unknown");
+            }
+        }
+    }
+
+    private DocumentRejected Unknown(string message) => new(new OutcomeUnknown(message, options.Region, options.MachineId));
 
     // Group commit: the write shares a transaction with other writes queued at the same time, in its own savepoint.
-    private async ValueTask<WriteOutcome> CommitAsync(
+    private async ValueTask<(WriteOutcome Outcome, CommitMarker? Marker)> CommitAsync(
         TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
     {
         if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
-            return new DocumentRejected(DocumentRoute.UnknownDatabase);
+            return (new DocumentRejected(DocumentRoute.UnknownDatabase), null);
         }
 
         var entered = await quota.EnterAsync(database, store, cancellationToken).ConfigureAwait(false);
         if (entered is not StorageQuotaLease admission)
         {
-            return entered switch
+            return (entered switch
             {
                 Unavailable error => new DocumentRejected(error),
                 StorageQuotaLease => throw new UnreachableException(),
-            };
+            }, null);
         }
 
         using var lease = admission;
@@ -383,7 +441,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             .ConfigureAwait(false);
         if (outcome is not WriteResult written)
         {
-            return outcome;
+            return (outcome, null);
         }
 
         try
@@ -396,7 +454,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             logger.ZLogError(error, $"Accounting a committed write to database {database.DatabaseId:@Database} failed; the write is answered as committed");
         }
 
-        return written with { Offset = commit.Offset };
+        return (written with { Offset = commit.Offset }, commit.Marker);
     }
 
     // Quota, usage and statistics of a committed client write.

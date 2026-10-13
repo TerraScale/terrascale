@@ -248,7 +248,7 @@ public sealed class CommitMarkerTests
     }
 
     [Test]
-    [Arguments("writer.marker", HttpStatusCode.InternalServerError)]
+    [Arguments("writer.marker", HttpStatusCode.ServiceUnavailable)]
     [Arguments("writer.reset", HttpStatusCode.Created)]
     public async Task Client_success_requires_its_marker_while_a_failed_session_reset_preserves_the_committed_outcome(
         string failingStep, HttpStatusCode expected)
@@ -298,6 +298,11 @@ public sealed class CommitMarkerTests
         using (var response = await data.PutAsJsonAsync(Document(managed, id), new { n = 1 }, token))
         {
             await Assert.That(response.StatusCode).IsEqualTo(expected);
+            if (failingStep == "writer.marker")
+            {
+                var body = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(token);
+                await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("write_outcome_unknown");
+            }
         }
 
         await Assert.That(Volatile.Read(ref armed)).IsEqualTo(0).Because("the requested post-commit failure actually executed");

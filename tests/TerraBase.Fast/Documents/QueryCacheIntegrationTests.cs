@@ -368,6 +368,13 @@ public sealed class QueryCacheIntegrationTests
             return inner.WriteAsync(database, operations, indexErrors, cancellationToken);
         }
 
+        public ValueTask<WriteOutcome> WriteConfirmedAsync(
+            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
+        {
+            Writes++;
+            return inner.WriteConfirmedAsync(database, operations, indexErrors, cancellationToken);
+        }
+
         public ValueTask<ApplyOutcome> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken) =>
             inner.ApplyAsync(transaction, operation, cancellationToken);
 

@@ -487,10 +487,16 @@ public sealed class ExplainSqlBoundaryTests
             var hook = new UsageCommitHook();
             await using var api = await StartWanAsync(directory, hook);
             var database = await CreateDatabaseAsync(api);
-            using var writer = await api.CreateClientAsync(database.Organization, "documents:write");
-            using var written = await writer.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "private")),
-                new { email = new Faker().Internet.Email() }, token);
-            await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            // Seed the document through the storage engine: the API write waits on the remote replica, which this fixture does not run.
+            var tenant = new TenantContext(database.Organization, PlanTier.Enterprise, database.Project, database.Id);
+            var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, token)
+                ?? throw new InvalidOperationException("the fixture database is missing");
+            await using (var transaction = await store.BeginDurableTransactionAsync(token))
+            {
+                await transaction.PutAsync("people", "private", JsonSerializer.SerializeToUtf8Bytes(new { email = new Faker().Internet.Email() }), token);
+                await transaction.CommitAsync(token);
+            }
+
             using var created = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/indexes"),
                 new { collection = "people", fields = EmailFields }, token);
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
