@@ -1,6 +1,6 @@
 import { ChangesProtocolError, readChanges, reconcileDocuments } from './document-changes-stream.js';
 
-class DocumentChanges extends HTMLElement {
+export class DocumentChanges extends HTMLElement {
   connectedCallback() {
     if (this.connection) return;
     const panel = this.querySelector('#document-changes');
@@ -54,24 +54,29 @@ class DocumentChanges extends HTMLElement {
             show('Retained changes unavailable. Establishing a new checkpoint before rereading documents…');
             return false;
           }
-          if (id) cursor = id;
-          if (resync && cursor && update.state === 'cursor') {
-            // The new stream is established before reading the snapshot; never resume from the expired cursor.
+          const candidate = id ?? cursor;
+          if (update.state === 'change') {
+            const change = update.change;
+            if (!change || change.collection !== collection || !['upsert', 'delete'].includes(change.op) ||
+                ['origin', 'version', 'id'].some(field => typeof change[field] !== 'string' || !change[field]))
+              throw new ChangesProtocolError('Changes returned an invalid change or a different collection.');
+            const identity = JSON.stringify([change.origin, change.version, change.collection, change.id]);
+            if (!seen.has(identity)) {
+              append(`${change.op} · ${change.id} · ${change.version}`);
+              seen.add(identity);
+              if (seen.size > 1024) seen.delete(seen.values().next().value);
+            }
+          }
+          if (resync && candidate && (update.state === 'cursor' || update.state === 'change')) {
+            // Apply the event before accepting its checkpoint; establish the stream before rereading documents.
             const rows = await reconcileDocuments(databaseId, collection, signal);
             for (const row of rows.slice(0, 100)) append(`Current document ${row.id}: ${JSON.stringify(row.value)}`);
             resync = false;
-            show('Resynced; retained changes unavailable');
-          } else if (update.state !== 'reconnect') show(historyLost ? 'Resynced; retained changes unavailable' : 'Connected to document changes.');
-          if (update.state === 'change') {
-            const change = update.change;
-            if (!change || change.collection !== collection) throw new ChangesProtocolError('Changes returned a different collection.');
-            const identity = JSON.stringify([change.origin, change.version, change.collection, change.id]);
-            if (!seen.has(identity)) {
-              seen.add(identity);
-              if (seen.size > 1024) seen.delete(seen.values().next().value);
-              append(`${change.op} · ${change.id} · ${change.version}`);
-            }
           }
+          cursor = candidate;
+          if (update.state !== 'reconnect') show(resync
+            ? 'Retained changes unavailable. Establishing a new checkpoint before rereading documents…'
+            : historyLost ? 'Resynced; retained changes unavailable' : 'Connected to document changes.');
           return update.state !== 'reconnect';
         });
       } catch (error) {
