@@ -7,16 +7,55 @@
 #
 #   scripts/fly/preview.sh app <pr>                         create the app, its IPs and volume (before images are pushed)
 #   scripts/fly/preview.sh machine <pr> <terrabase-image> <auth-image>   create or update the machine
-#   scripts/fly/preview.sh destroy <pr>                     delete the app and everything in it
-#   scripts/fly/preview.sh reap                             destroy previews created more than 24 hours ago
+#   scripts/fly/preview.sh destroy <pr>                     delete the app and everything in it; succeeds if already gone
+#   scripts/fly/preview.sh expired                          print the JSON array of PRs whose preview must go: closed PRs,
+#                                                           and open PRs whose machine was created more than 24 hours ago
+# `expired` reads PR state with gh (GH_TOKEN, GITHUB_REPOSITORY). Every API failure is an error, never "absent".
 set -euo pipefail
 set +x
 
 org=terrascale-previews-515
 api() { curl -sS --fail-with-body -H "Authorization: $FLY_API_TOKEN" -H 'Content-Type: application/json' "$@"; }
 machines=https://api.machines.dev/v1
-# The preview's Tigris bucket (terrascale-<app>; bucket names are global) outlives the app unless destroyed first.
-destroy_app() { flyctl storage destroy "terrascale-$1" --yes || true; flyctl apps destroy "$1" --yes; }
+usage() {
+  echo "usage: $0 app <pr> | machine <pr> <terrabase-image> <auth-image> | destroy <pr> | expired" >&2
+  exit 2
+}
+# A PR number is the only input that names an app; anything else could reach an unrelated app.
+[[ ${1:-} == expired || ${2:-} =~ ^[1-9][0-9]{0,8}$ ]] || usage
+
+# Prints the PR number of every preview bucket (terrascale-ts-pr-<pr>) in the org. flyctl storage list has no JSON:
+# fail unless every line has its table shape (" NAME │ ORG", then " <name> │ <org>"), so a changed format is never "none".
+buckets() {
+  local table
+  table=$(flyctl storage list -o "$org") || return 1
+  awk -v org="$org" '
+    NR == 1 { if (NF != 3 || $1 != "NAME" || $2 != "│" || $3 != "ORG") exit 1; next }
+    NF == 0 { next }
+    NF != 3 || $2 != "│" || $3 != org { exit 1 }
+    $1 ~ /^terrascale-ts-pr-[1-9][0-9]*$/ && length($1) <= 26 { print substr($1, 18) }
+  ' <<<"$table"
+}
+
+# Prints the PR number when its preview must go; returns non-zero when an API call or a date fails. $2: an app exists.
+expired() {
+  local state created cutoff
+  state=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$1" --jq .state) || return 1
+  case $state in
+    closed) echo "$1" ;;
+    open)
+      # An open PR's leftover bucket without an app has no age; its next preview build fails visibly on create.
+      [[ $2 == true ]] || return 0
+      created=$(api "$machines/apps/ts-pr-$1/machines" | jq -r '[.[].created_at] | min // empty') || return 1
+      if [[ -n $created ]]; then
+        created=$(date -u -d "$created" +%s) || return 1
+        cutoff=$(date -u -d '24 hours ago' +%s) || return 1
+        if (( created < cutoff )); then echo "$1"; fi
+      fi
+      ;;
+    *) echo "unexpected state '$state' for PR $1" >&2; return 1 ;;
+  esac
+}
 
 case ${1:-} in
   app)
@@ -101,22 +140,40 @@ case ${1:-} in
     ;;
   destroy)
     app=ts-pr-$2
-    if flyctl status -a "$app" >/dev/null 2>&1; then
-      destroy_app "$app"
+    body=$(mktemp)
+    trap 'rm -f -- "$body"' EXIT
+    code=$(curl -sS -o "$body" -w '%{http_code}' -H "Authorization: $FLY_API_TOKEN" "$machines/apps/$app")
+    case $code in
+      404) echo "$app is already deleted; checking its bucket" ;;
+      200) jq -e --arg org "$org" '.organization.slug == $org' "$body" >/dev/null \
+        || { echo "refusing to delete $app: not in $org" >&2; exit 1; } ;;
+      *) echo "Fly API returned $code for $app" >&2; exit 1 ;;
+    esac
+    # The Tigris bucket (terrascale-<app>; bucket names are global) outlives the app, so it is looked up on its own.
+    bucket_prs=$(buckets)
+    if grep -qx "$2" <<<"$bucket_prs"; then
+      flyctl storage destroy "terrascale-$app" --yes
     fi
+    [[ $code == 404 ]] || flyctl apps destroy "$app" --yes
     ;;
-  reap)
-    cutoff=$(date -u -d '24 hours ago' +%s)
-    for app in $(flyctl apps list -o "$org" --json | jq -r '.[].Name | select(startswith("ts-pr-"))'); do
-      created=$(api "$machines/apps/$app/machines" | jq -r '[.[].created_at] | min // empty')
-      if [[ -n $created ]] && (( $(date -u -d "$created" +%s) < cutoff )); then
-        echo "Reaping $app (machine created $created)"
-        destroy_app "$app"
-      fi
+  expired)
+    apps=$(flyctl apps list -o "$org" --json | jq -r '.[].Name')
+    bucket_prs=$(buckets)
+    app_prs=
+    for app in $apps; do
+      if [[ $app =~ ^ts-pr-([1-9][0-9]{0,8})$ ]]; then app_prs+="${BASH_REMATCH[1]}"$'\n'; fi
     done
+    prs=() failed=0
+    while read -r pr; do
+      [[ -n $pr ]] || continue
+      has_app=false
+      if grep -qx "$pr" <<<"$app_prs"; then has_app=true; fi
+      out=$(expired "$pr" "$has_app") || { echo "cannot check PR $pr" >&2; failed=1; continue; }
+      [[ -z $out ]] || prs+=("$out")
+    done < <(sort -nu <<<"$app_prs$bucket_prs")
+    # Print what could be decided so those previews still go, but fail the run for the rest.
+    jq -cn '$ARGS.positional | map(tonumber)' --args "${prs[@]}"
+    exit "$failed"
     ;;
-  *)
-    echo "usage: $0 app <pr> | machine <pr> <terrabase-image> <auth-image> | destroy <pr> | reap" >&2
-    exit 2
-    ;;
+  *) usage ;;
 esac

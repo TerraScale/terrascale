@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check secret isolation and idempotent preview updates without creating Fly resources.
+# Check secret isolation, idempotent preview updates and safe cleanup without creating Fly resources.
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 state=$(mktemp -d)
@@ -9,8 +9,11 @@ mkdir -p "$state/bin"
 cat > "$state/bin/flyctl" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
+echo "$*" >> "$STATE/flyctl"
 case "$1 $2" in
   "status -a") ;;
+  "apps list") test ! -e "$STATE/fail-apps"; cat "$STATE/apps" ;;
+  "storage list") test ! -e "$STATE/fail-list"; cat "$STATE/buckets" ;;
   "ips list") echo '[{}]' ;;
   "volumes list") echo '[{"id":"vol-test"}]' ;;
   "secrets list") jq -Rn '[inputs | {name: .}]' < "$STATE/secrets" ;;
@@ -33,14 +36,23 @@ case "$1 $2" in
     done
     test ! -e "$STATE/fail-secret" ;;
   "ssh console") printf '%s\n' "$*" >> "$STATE/provision" ;;
-  "storage destroy"|"apps destroy") echo "$1 $2 $3" >> "$STATE/destroy" ;;
+  "storage destroy"|"apps destroy")
+    test ! -e "$STATE/fail-$1"
+    echo "$1 $2 $3" >> "$STATE/destroy"
+    sed -i "/^ $3 /d" "$STATE/buckets" ;;
   *) echo "unexpected flyctl command: $1 $2" >&2; exit 1 ;;
 esac
 FAKE
 cat > "$state/bin/curl" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ $* == *'/healthz'* || $* == *'/readyz'* ]]; then
+if [[ $* == *'%{http_code}'* ]]; then
+  while [[ $1 != -o ]]; do shift; done
+  printf '{"organization":{"slug":"%s"}}' "$(cat "$STATE/org")" > "$2"
+  cat "$STATE/code"
+elif [[ $* =~ /apps/(ts-pr-[0-9]+)/machines$ && -e $STATE/machines-${BASH_REMATCH[1]} ]]; then
+  cat "$STATE/machines-${BASH_REMATCH[1]}"
+elif [[ $* == *'/healthz'* || $* == *'/readyz'* ]]; then
   printf '%s\n' "${*: -1}" >> "$STATE/checks"
   [[ ! -e $STATE/fail-ready || $* != *'/readyz'* ]] || exit 22
 elif [[ $* == *' -X POST '* ]]; then
@@ -53,8 +65,13 @@ else
   if [[ -e $STATE/existing ]]; then echo '[{"id":"machine-test"}]'; else echo '[]'; fi
 fi
 FAKE
+cat > "$state/bin/gh" <<'FAKE'
+#!/usr/bin/env bash
+# gh api repos/<repo>/pulls/<n> --jq .state; a missing fixture is an API failure.
+cat "$STATE/pr-${2##*/}"
+FAKE
 chmod +x "$state/bin/"*
-export PATH="$state/bin:$PATH" FLY_API_TOKEN=fixture
+export PATH="$state/bin:$PATH" FLY_API_TOKEN=fixture GITHUB_REPOSITORY=fixture/repo
 printf '%s\n' TS_AUTH_MASTER_KEY TS_AUTH_AUDIT_SIGNING_KEY BUCKET_NAME TERRABASE_MASTER_KEY TERRABASE_PEER_SECRET > "$state/secrets"
 "$here/preview.sh" app 123
 test ! -e "$state/set"
@@ -110,6 +127,77 @@ if grep -qx 'https://ts-pr-123.fly.dev' "$state/failed"; then
   echo 'preview: printed a URL after a failed readiness check' >&2
   exit 1
 fi
+
+fails() { if "$@"; then echo "preview: '$*' succeeded but must fail" >&2; exit 1; fi; }
+destroyed() { test "$(cat "$state/destroy" 2>/dev/null)" = "$1"; rm -f "$state/destroy"; }
+echo terrascale-previews-515 > "$state/org"
+echo 200 > "$state/code"
+# flyctl storage list's table (tablewriter, as flyctl v0.4.115 renders it); only exact preview names count.
+bucket() { printf ' %s │ terrascale-previews-515\n' "$@" >> "$state/buckets"; }
+printf ' NAME │ ORG\n' > "$state/buckets"
+bucket terrascale-ts-pr-123 terrascale-ts-pr-0123 xterrascale-ts-pr-9 terrascale-ts-pr-9x ts-backups
+# A bucket failure keeps the app, so the next run finds and retries both.
+touch "$state/fail-storage"
+fails "$here/preview.sh" destroy 123
+destroyed ''
+rm "$state/fail-storage"
 "$here/preview.sh" destroy 123
-test "$(cat "$state/destroy")" = $'storage destroy terrascale-ts-pr-123\napps destroy ts-pr-123'
+destroyed $'storage destroy terrascale-ts-pr-123\napps destroy ts-pr-123'
+# Idempotent: a gone bucket is skipped, and a gone app with a leftover bucket still loses the bucket.
+"$here/preview.sh" destroy 123
+destroyed 'apps destroy ts-pr-123'
+echo 404 > "$state/code"
+"$here/preview.sh" destroy 123
+destroyed ''
+bucket terrascale-ts-pr-123
+"$here/preview.sh" destroy 123
+destroyed 'storage destroy terrascale-ts-pr-123'
+# A failed or reshaped bucket listing is an error, never "no bucket".
+cp "$state/buckets" "$state/buckets.ok"
+for table in '' 'NAME ORG' $' NAME │ ORG\n terrascale-ts-pr-7 │ terrascale' $' NAME │ ORG\n terrascale-ts-pr-7'; do
+  printf '%s\n' "$table" > "$state/buckets"
+  fails "$here/preview.sh" destroy 7
+done
+cp "$state/buckets.ok" "$state/buckets"
+touch "$state/fail-list"
+fails "$here/preview.sh" destroy 7
+rm "$state/fail-list"
+destroyed ''
+# An API error or an app outside the preview org never deletes anything.
+echo 500 > "$state/code"
+fails "$here/preview.sh" destroy 123
+echo 200 > "$state/code"
+echo terrascale > "$state/org"
+fails "$here/preview.sh" destroy 123
+destroyed ''
+echo terrascale-previews-515 > "$state/org"
+# Only a plain PR number names an app: production names, empty and malformed arguments never reach Fly.
+: > "$state/flyctl"
+for pr in '' 0 007 12a -1 '1 2' '../ts-terrabase' terrabase 1234567890; do
+  fails "$here/preview.sh" destroy "$pr" 2>/dev/null
+  fails "$here/preview.sh" app "$pr" 2>/dev/null
+done
+fails "$here/preview.sh" destroy 2>/dev/null
+test ! -s "$state/flyctl"
+
+# Sweep: closed PRs go regardless of age, machines or app (6 has only a leftover bucket); open PRs go after 24 hours.
+printf '%s\n' '[{"Name":"ts-pr-1"},{"Name":"ts-pr-2"},{"Name":"ts-pr-3"},{"Name":"ts-pr-4"},{"Name":"ts-pr-05"},{"Name":"ts-terrabase"}]' > "$state/apps"
+bucket terrascale-ts-pr-1 terrascale-ts-pr-6 terrascale-ts-pr-8
+echo closed > "$state/pr-1"; cp "$state/pr-1" "$state/pr-6"
+for pr in 2 3 4 8; do echo open > "$state/pr-$pr"; done
+echo "[{\"created_at\":\"$(date -u -d '1 hour ago' +%FT%TZ)\"}]" > "$state/machines-ts-pr-2"
+echo "[{\"created_at\":\"$(date -u -d '25 hours ago' +%FT%TZ)\"}]" > "$state/machines-ts-pr-3"
+test "$("$here/preview.sh" expired)" = '[1,3,6]'
+# A failed PR lookup or unreadable machine date is an error, not "keep"; decidable previews are still listed.
+rm "$state/pr-4"
+echo '[{"created_at":"not-a-date"}]' > "$state/machines-ts-pr-2"
+out=$("$here/preview.sh" expired 2>/dev/null) && exit 1
+test "$out" = '[1,3,6]'
+# A failed Fly app or bucket listing lists nothing.
+for failure in fail-apps fail-list; do
+  touch "$state/$failure"
+  out=$("$here/preview.sh" expired 2>/dev/null) && exit 1
+  test -z "$out"
+  rm "$state/$failure"
+done
 echo 'preview: all checks passed'
