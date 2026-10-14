@@ -116,9 +116,9 @@ func (cache *shapeKeyCache) timeNow() time.Time {
 
 func (cache *shapeKeyCache) get(ctx context.Context, id shapeKeyIdentity, fetch func() (*ShapeKey, error)) (*ShapeKey, error) {
 	for {
-		key, err, retry := cache.getOnce(ctx, id, fetch)
-		if ownErr := ctx.Err(); ownErr != nil {
-			return nil, ownErr
+		key, retry, err := cache.getOnce(ctx, id, fetch)
+		if err != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		// A live waiter retries with its own context when the fetch owner cancels.
 		if retry {
@@ -128,9 +128,9 @@ func (cache *shapeKeyCache) get(ctx context.Context, id shapeKeyIdentity, fetch 
 	}
 }
 
-func (cache *shapeKeyCache) getOnce(ctx context.Context, id shapeKeyIdentity, fetch func() (*ShapeKey, error)) (*ShapeKey, error, bool) {
+func (cache *shapeKeyCache) getOnce(ctx context.Context, id shapeKeyIdentity, fetch func() (*ShapeKey, error)) (*ShapeKey, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err, false
+		return nil, false, err
 	}
 	cache.mu.Lock()
 	now := cache.timeNow()
@@ -143,13 +143,13 @@ func (cache *shapeKeyCache) getOnce(ctx context.Context, id shapeKeyIdentity, fe
 		cache.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err(), false
+			return nil, false, ctx.Err()
 		case <-entry.ready:
 			if entry.err != nil {
-				return nil, entry.err, entry.ownerCancelled
+				return nil, entry.ownerCancelled, entry.err
 			}
 			key := entry.key
-			return &key, nil, false
+			return &key, false, nil
 		}
 	}
 	if cache.entries == nil {
@@ -193,10 +193,10 @@ func (cache *shapeKeyCache) getOnce(ctx context.Context, id shapeKeyIdentity, fe
 	}
 	close(entry.ready)
 	if err != nil {
-		return nil, err, false
+		return nil, false, err
 	}
 	copy := entry.key
-	return &copy, nil, false
+	return &copy, false, nil
 }
 
 // remove is called with mu held. Returned caller-owned keys remain their responsibility.
