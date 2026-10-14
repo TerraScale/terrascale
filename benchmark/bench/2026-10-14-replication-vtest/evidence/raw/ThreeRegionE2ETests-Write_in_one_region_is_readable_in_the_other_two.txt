@@ -1,0 +1,75 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.73.19.0 | 64-bit | NixOS 26.05 (Yarara) | linux-x64 | .NET 11.0.0-rc.1.26425.128 | Microsoft Testing Platform v2.5.1
+
+   Engine Mode: SourceGenerated
+
+Suite runtime configuration: pid=1449751 cpus=12 server_gc=True latency_mode=Interactive total_available_memory_bytes=9663676416 tiered_pgo=configured:False ServerGC=True ConcurrentGC=True HeapCount=12 MaxHeapCount=0 GCDynamicAdaptationMode=1 GCHeapHardLimit=9663676416 GCHeapHardLimitPercent=0 GCHeapHardLimitSOH=0 GCHeapHardLimitLOH=0 GCHeapHardLimitPOH=0 GCHeapHardLimitSOHPercent=0 GCHeapHardLimitLOHPercent=0 GCHeapHardLimitPOHPercent=0 GCConserveMem=0 NoAffinitize=False GCHeapAffinitizeMask=0 GCCpuGroup=False RetainVM=False
+Suite cgroup limits: depth=0 path=/sys/fs/cgroup/user.slice/user-1000.slice/session-1506.scope cpu_max=[max 100000] cpuset_cpus_effective=[-1] memory_max_bytes=max memory_high_bytes=max memory_swap_max_bytes=max
+Suite cgroup limits: depth=1 path=/sys/fs/cgroup/user.slice/user-1000.slice cpu_max=[max 100000] cpuset_cpus_effective=[-1] memory_max_bytes=12884901888 memory_high_bytes=10737418240 memory_swap_max_bytes=max
+Suite cgroup limits: depth=2 path=/sys/fs/cgroup/user.slice cpu_max=[max 100000] cpuset_cpus_effective=[0-11] memory_max_bytes=12884901888 memory_high_bytes=10737418240 memory_swap_max_bytes=max
+Suite cgroup limits: depth=3 path=/sys/fs/cgroup cpu_max=[-1] cpuset_cpus_effective=[0-11] memory_max_bytes=-1 memory_high_bytes=-1 memory_swap_max_bytes=-1
+replication matrix lag, fly-pinned:sjc/6835466b44e258@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd to fly-pinned:gru/891e70eb4d0378@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd: n=10 min=22.3 median=23.8 p95=26.3 max=26.3 ms
+replication matrix lag, fly-pinned:gru/891e70eb4d0378@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd to fly-pinned:sjc/6835466b44e258@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd: n=10 min=222.1 median=223.7 p95=229.0 max=229.0 ms
+passed Write_in_one_region_is_readable_in_the_other_two(sjc, gru) (12s 005ms)
+  Standard output
+    replication matrix lag, fly-pinned:sjc/6835466b44e258@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd to fly-pinned:gru/891e70eb4d0378@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd: n=10 min=22.3 median=23.8 p95=26.3 max=26.3 ms
+    
+replication matrix lag, fly-pinned:fra/48e4967a225338@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd to fly-pinned:gru/891e70eb4d0378@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd: n=10 min=25.1 median=26.1 p95=31.4 max=31.4 ms
+passed Write_in_one_region_is_readable_in_the_other_two(gru, sjc) (12s 497ms)
+  Standard output
+    replication matrix lag, fly-pinned:gru/891e70eb4d0378@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd to fly-pinned:sjc/6835466b44e258@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd: n=10 min=222.1 median=223.7 p95=229.0 max=229.0 ms
+    
+replication matrix lag, fly-pinned:gru/891e70eb4d0378@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd to fly-pinned:fra/48e4967a225338@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd: n=10 min=289.7 median=298.3 p95=303.4 max=303.4 ms
+passed Write_in_one_region_is_readable_in_the_other_two(fra, gru) (12s 655ms)
+  Standard output
+    replication matrix lag, fly-pinned:fra/48e4967a225338@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd to fly-pinned:gru/891e70eb4d0378@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd: n=10 min=25.1 median=26.1 p95=31.4 max=31.4 ms
+    
+passed Write_in_one_region_is_readable_in_the_other_two(gru, fra) (13s 202ms)
+  Standard output
+    replication matrix lag, fly-pinned:gru/891e70eb4d0378@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd to fly-pinned:fra/48e4967a225338@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd: n=10 min=289.7 median=298.3 p95=303.4 max=303.4 ms
+    
+replication matrix lag, fly-pinned:sjc/6835466b44e258@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd to fly-pinned:fra/48e4967a225338@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd: n=10 min=285.2 median=292.3 p95=300.5 max=300.5 ms
+passed Write_in_one_region_is_readable_in_the_other_two(sjc, fra) (14s 390ms)
+  Standard output
+    replication matrix lag, fly-pinned:sjc/6835466b44e258@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd to fly-pinned:fra/48e4967a225338@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd: n=10 min=285.2 median=292.3 p95=300.5 max=300.5 ms
+    
+replication matrix lag, fly-pinned:fra/48e4967a225338@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd to fly-pinned:sjc/6835466b44e258@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd: n=10 min=224.4 median=228.5 p95=231.8 max=231.8 ms
+passed Write_in_one_region_is_readable_in_the_other_two(fra, sjc) (15s 285ms)
+  Standard output
+    replication matrix lag, fly-pinned:fra/48e4967a225338@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd to fly-pinned:sjc/6835466b44e258@a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd: n=10 min=224.4 median=228.5 p95=231.8 max=231.8 ms
+    
+Suite runtime pid=1449751 cpus=12 server_gc=True: elapsed_s,cpu_s,gc_pause_s,gen2,threads,queued_work,monitor_contentions,gc_index,gc_gen,gc_promoted_bytes,gc_pause0_ms,gc_pause1_ms,host_cpu_some_us,cgroup_cpu_some_us,cgroup_throttled_us,load1,allocated_bytes,heap_bytes,fragmented_bytes,committed_bytes,memory_load_bytes,memory_load_threshold_bytes,working_set_bytes,cgroup_memory_current_bytes,cgroup_swap_current_bytes,cgroup_memory_low,cgroup_memory_high,cgroup_memory_max,cgroup_memory_oom,cgroup_memory_oom_kill,cgroup_memory_oom_group_kill,host_memory_some_us,host_memory_full_us,cgroup_memory_some_us,cgroup_memory_full_us,cgroup_pgmajfault
+Suite runtime: 0.005,0.408,0.000,0,10,0,5,0,0,0,0.000,0.000,2660094196,333288,0,7.64,2706416,0,0,0,0,11596411699,70709248,222351360,0,0,0,0,0,0,0,20956646,19140228,4,4,83
+Suite runtime: 1.007,0.491,0.000,0,10,0,25,0,0,0,0.000,0.000,2660101039,346017,0,7.64,3333008,0,0,0,0,11596411699,80982016,327282688,0,0,0,0,0,0,0,20956647,19140228,6,6,83
+Suite runtime: 2.007,0.588,0.004,0,10,0,25,1,0,1143624,4.135,0.000,2660105381,349905,0,7.64,4304144,2494496,10320,5447680,128849018,11596411699,85737472,329609216,0,0,0,0,0,0,0,20956647,19140228,6,6,83
+Suite runtime: 3.007,0.870,0.004,0,10,0,26,1,0,1143624,4.135,0.000,2660105747,350622,0,7.11,6009928,2494496,10320,5447680,128849018,11596411699,96563200,252514304,0,0,0,0,0,0,0,20956647,19140228,6,6,83
+Suite runtime: 4.007,1.101,0.009,0,10,0,30,3,0,1063744,2.721,0.000,2660106122,351184,0,7.11,22339664,5640608,29568,10747904,128849018,11596411699,111874048,248107008,0,0,0,0,0,0,0,20956647,19140228,6,6,83
+Suite runtime: 5.007,1.383,0.014,0,10,0,30,4,0,3694440,4.898,0.000,2660106586,351486,0,7.11,24993656,9390216,84840,18280448,128849018,11596411699,117661696,253186048,0,0,0,0,0,0,0,20956647,19140228,6,6,83
+Suite runtime: 6.006,1.474,0.014,0,10,0,30,4,0,3694440,4.898,0.000,2660107451,351868,0,7.11,25452728,9390216,84840,18280448,128849018,11596411699,117817344,253181952,0,0,0,0,0,0,0,20956647,19140228,6,6,83
+Suite runtime: 7.007,1.522,0.014,0,10,0,30,4,0,3694440,4.898,0.000,2660111972,352071,0,7.11,25903648,9390216,84840,18280448,128849018,11596411699,117862400,253407232,0,0,0,0,0,0,0,20956957,19140499,6,6,83
+Suite runtime: 8.007,1.571,0.014,0,10,0,30,4,0,3694440,4.898,0.000,2660113775,352629,0,6.54,26354552,9390216,84840,18280448,128849018,11596411699,117882880,253407232,0,0,0,0,0,0,0,20956957,19140499,6,6,83
+Suite runtime: 9.007,1.634,0.014,0,10,0,30,4,0,3694440,4.898,0.000,2660114650,353063,0,6.54,26821952,9390216,84840,18280448,128849018,11596411699,118054912,253657088,0,0,0,0,0,0,0,20956957,19140499,6,6,83
+Suite runtime: 10.007,1.668,0.014,0,10,0,30,4,0,3694440,4.898,0.000,2660116003,353870,0,6.54,27259592,9390216,84840,18280448,128849018,11596411699,118124544,253820928,0,0,0,0,0,0,0,20956957,19140499,6,6,83
+Suite runtime: 11.007,1.692,0.014,0,10,0,30,4,0,3694440,4.898,0.000,2660117093,354611,0,6.54,27685664,9390216,84840,18280448,128849018,11596411699,118124544,253820928,0,0,0,0,0,0,0,20956957,19140499,6,6,83
+Suite runtime: 12.007,1.735,0.014,0,10,0,30,4,0,3694440,4.898,0.000,2660118167,355338,0,6.54,28177664,9390216,84840,18280448,128849018,11596411699,118218752,254197760,0,0,0,0,0,0,0,20956957,19140499,6,6,83
+Suite runtime: 13.007,1.825,0.014,0,10,0,30,4,0,3694440,4.898,0.000,2660118678,355688,0,6.02,28496976,9390216,84840,18280448,128849018,11596411699,118943744,254980096,0,0,0,0,0,0,0,20956957,19140499,6,6,83
+Suite runtime: 14.007,1.847,0.014,0,10,0,30,4,0,3694440,4.898,0.000,2660119316,355957,0,6.02,28669136,9390216,84840,18280448,128849018,11596411699,118951936,254980096,0,0,0,0,0,0,0,20956957,19140499,6,6,83
+Suite runtime: 15.007,1.869,0.014,0,10,0,30,4,0,3694440,4.898,0.000,2660120588,356194,0,6.02,28805144,9390216,84840,18280448,128849018,11596411699,118980608,254976000,0,0,0,0,0,0,0,20956957,19140499,6,6,83
+Suite runtime: 15.321,1.882,0.014,0,10,0,30,4,0,3694440,4.898,0.000,2660120783,356243,0,6.02,28862152,9390216,84840,18280448,128849018,11596411699,119078912,255234048,0,0,0,0,0,0,0,20956957,19140499,6,6,83
+
+  In process file artifacts produced:
+    - /home/mariogk/remote-builds/feat-repl-v2-v5-harness/tests/TerraBase.E2E/bin/Release/net11.0/TestResults/TerraBase.E2E-linux-net11.0-report.html
+
+Test run summary: Passed! - /home/mariogk/remote-builds/feat-repl-v2-v5-harness/tests/TerraBase.E2E/bin/Release/net11.0/TerraBase.E2E.dll (net11.0|x64)
+  total: 6
+  failed: 0
+  succeeded: 6
+  skipped: 0
+  duration: 15s 563ms

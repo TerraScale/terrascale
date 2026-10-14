@@ -1,0 +1,28 @@
+# ts-vtest-tb (terrascale-previews-515): disposable 3-region V-wave cluster, production size, synthetic data only.
+app = "ts-vtest-tb"
+primary_region = "gru"
+kill_signal = "SIGTERM"
+kill_timeout = 30
+swap_size_mb = 4096
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "512mb"
+
+[[mounts]]
+  source = "terrabase_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "5s"
+    timeout = "2s"
+    grace_period = "10s"
