@@ -167,6 +167,12 @@ export const es: Messages = {
     link: 'Página de estado',
   },
 
+  pricingTeaser: {
+    eyebrow: 'Precios',
+    title: 'Empieza gratis. Límites estrictos, sin excedentes.',
+    cta: 'Comparar planes',
+  },
+
   pricing: {
     eyebrow: 'Precios',
     titleLead: 'Precios simples',
