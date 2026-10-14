@@ -305,7 +305,6 @@ export const ptBr: Messages = {
     titleAccent: 'algo juntos.',
     subtitle:
       'Tem dúvidas? Precisa de um plano personalizado? Quer integrar com a TerraScale? Adoraríamos ouvir você.',
-    formTitle: 'Envie uma mensagem',
     labels: {
       name: 'Nome',
       email: 'E-mail',
@@ -329,7 +328,7 @@ export const ptBr: Messages = {
     errorNoForm: 'Não foi possível enviar o formulário. Envie um e-mail diretamente para nós.',
     errorSend: 'Algo deu errado ao enviar sua mensagem. Tente novamente ou nos envie um e-mail diretamente.',
     note: 'O tráfego do cliente exige TLS 1.2 ou mais recente. Dados em repouso usam criptografia qualificada pelo serviço.',
-    channelsTitle: 'Outras formas de nos contatar',
+    channelsTitle: 'Fale conosco',
     channels: [
       { value: 'support@terrascale.tech' },
       { value: 'Entre na nossa comunidade' },
