@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using Google.Protobuf;
+using Grpc.Core;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication.V1;
@@ -57,7 +58,16 @@ internal sealed class AntiEntropy : BackgroundService
         using var timer = new PeriodicTimer(Round, _time);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
-            await RunRoundAsync(stoppingToken).ConfigureAwait(false);
+            try
+            {
+                await RunRoundAsync(stoppingToken).ConfigureAwait(false);
+            }
+            catch (RpcException error) when (stoppingToken.IsCancellationRequested && error.StatusCode == StatusCode.Cancelled)
+            {
+                // A peer call the shutdown cancels throws RpcException, not OperationCanceledException: stop as canceled.
+                stoppingToken.ThrowIfCancellationRequested();
+                throw;
+            }
         }
     }
 
