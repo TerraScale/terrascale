@@ -13,6 +13,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
@@ -383,6 +384,49 @@ public sealed class RemoteAckTests
         finally
         {
             using var response = await pending.WaitAsync(pair.Token);
+        }
+    }
+
+    // A copy keeps the source's peer rows under the old scope: its cursor is 0 and requires a refill. A write that commits
+    // before the first refill takes the copy's head must still be confirmed by a live ACK, not hidden under the refill.
+    [Test]
+    public async Task A_write_to_a_fresh_copy_before_its_first_refill_is_confirmed_by_a_live_ack()
+    {
+        await using var pair = await Pair.StartAsync();
+        // Held before the copy exists, so no sender pass can take the copy's head before the write commits.
+        var head = pair.HoldHead = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<HttpResponseMessage>? pending = null;
+        HttpResponseMessage? response = null;
+        try
+        {
+            var copy = await pair.CopyAsync("copy");
+            var cursor = await pair.Source.AckedAsync(copy, pair.PeerNode, pair.Token);
+            await Assert.That(cursor is { Acked: 0, RequiresRefill: true }).IsTrue().Because("the copied peer row names the source's incarnation");
+
+            var id = EntityIds.New().ToString();
+            pending = pair.Client.PutAsJsonAsync(pair.Document(id, "copy"), new { n = 1 }, pair.Token);
+            var marker = await pair.ReachedWait.Task.WaitAsync(pair.Token);
+            await Assert.That(marker.Incarnation).IsEqualTo(cursor!.Value.Incarnation);
+            await Assert.That(await pair.Source.RetainsAsync(copy, marker.Incarnation, 0, pair.Token)).IsEqualTo(true).Because("the copy's own change log is whole");
+            head.TrySetResult();
+
+            response = await pending.WaitAsync(pair.Token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because("a refill at the copy's head would cover the write and never certify it");
+            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString()).IsEqualTo("remote_durable");
+            var acked = await pair.Source.AckedAsync(copy, pair.PeerNode, pair.Token);
+            await Assert.That(acked is { RequiresRefill: false } && acked.Value.Incarnation == marker.Incarnation && acked.Value.Acked >= marker.ChangeId).IsTrue();
+            using var remote = await pair.PeerClient.GetAsync(pair.Document(id, "copy"), pair.Token);
+            await Assert.That(remote.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await remote.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
+        }
+        finally
+        {
+            head.TrySetResult();
+            response?.Dispose();
+            if (pending is not null && response is null)
+            {
+                using var completed = await pending.WaitAsync(pair.Token);
+            }
         }
     }
 
@@ -1286,7 +1330,24 @@ public sealed class RemoteAckTests
 
         public ReplicaId PeerNode => _peer!.Server.Services.GetRequiredService<LocalReplica>().Id;
 
-        public Uri Document(string id) => new($"{DatabasePath}/collections/items/documents/by-key?id={id}", UriKind.Relative);
+        public Uri Document(string id, string database = "db") => new($"{_tenant!.Path(database)}/collections/items/documents/by-key?id={id}", UriKind.Relative);
+
+        // Holds the sender's head capture of every database of the tenant but db (a copy) until it completes.
+        public TaskCompletionSource? HoldHead { get; set; }
+
+        // Copies db on the origin through the management service (as a restore copies its snapshot) and binds it on the peer.
+        public async Task<TenantContext> CopyAsync(string name)
+        {
+            var management = _origin!.Server.Services.GetRequiredService<IManagementService>();
+            if (await management.CopyDatabaseAsync(_tenant!.UserId, _tenant.OrganizationId, _tenant.ProjectId, Database.DatabaseId!, name, null, Token) is not ManagedDatabase)
+            {
+                throw new InvalidOperationException("could not copy the database");
+            }
+
+            await _tenant.CaptureDatabaseAsync(_origin.Server, name);
+            await _tenant.BindAsync(_peer!.Server);
+            return _tenant.Database(name);
+        }
 
         public Task<IDatabaseStore> OriginStoreAsync() => OpenStoreAsync(_origin!.Server, Database, Token);
 
@@ -1668,8 +1729,15 @@ public sealed class RemoteAckTests
         public async ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) =>
             refill.Refills(database, after) ? false : await inner.RetainsAsync(database, incarnation, after, cancellationToken);
 
-        public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) =>
-            inner.HeadAsync(database, incarnation, cancellationToken);
+        public async ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken)
+        {
+            if (pair.HoldHead is { } held && database.ProjectId == pair.Database.ProjectId && database.DatabaseId != pair.Database.DatabaseId)
+            {
+                await held.Task.WaitAsync(cancellationToken);
+            }
+
+            return await inner.HeadAsync(database, incarnation, cancellationToken);
+        }
     }
 
     // Passes everything through except the held origins, which it answers with a fixed set: a stale or unknown view.

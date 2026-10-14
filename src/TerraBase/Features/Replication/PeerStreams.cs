@@ -560,24 +560,27 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             if (retains is false || cursor.RequiresRefill)
             {
                 // Retention cut groups after the peer's ack (it was silent or far behind, or it is new): it refills from this
-                // copy, then the stream goes on from its newest change.
+                // copy, then the stream goes on from its newest change. A copy or restore whose own change log is whole refills
+                // the current state and goes on from its ack: its writes since then also ship in live batches, which
+                // can confirm them, instead of hiding under an uncertified refill head (decision 0013a, B2).
                 if (await _source.HeadAsync(database, incarnation, cancellationToken).ConfigureAwait(false) is not { } head)
                 {
                     Reset(link, cursor);
                     continue;
                 }
 
+                var resume = retains is true ? acked : head;
                 var horizon = await _states.HorizonAsync(database, cancellationToken).ConfigureAwait(false);
                 await stream.ReserveAsync().ConfigureAwait(false);
                 lock (link.Gate)
                 {
                     cursor.BehindSince ??= _time.GetTimestamp();
-                    (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (head, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true);
+                    (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (resume, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true);
                     cursor.ResponseReceived = false;
                 }
                 await stream.WriteAsync(new PushFrame
                 {
-                    Refill = new Refill { Database = ChangeGroups.Wire(database, incarnation), ChangeId = checked((ulong)head), Horizon = horizon.Value },
+                    Refill = new Refill { Database = ChangeGroups.Wire(database, incarnation), ChangeId = checked((ulong)resume), Horizon = horizon.Value },
                 }, cancellationToken).ConfigureAwait(false);
 
                 sent = true;

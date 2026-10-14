@@ -1311,7 +1311,8 @@ public sealed class PeerStreamTests
 
     // A copied peer row (review of A4, finding 3): the sender's cursor requires a refill even though the change log still
     // retains every group after the ack. The sender sends a refill pinned to its copy before any batch, keeps asking after
-    // a refused one, and goes back to batches only once the refill's head is acknowledged.
+    // a refused one, and goes back to batches only once the refill is acknowledged. The log is whole after the ack, so the
+    // refill names that ack, not the head, and the newer group then ships in a batch.
     [Test]
     public async Task A_cursor_that_requires_a_refill_refills_before_any_batch_until_the_refill_is_acknowledged()
     {
@@ -1343,7 +1344,7 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.ReadAsync(pending)).IsNull();
 
         // The refill fails and is refused: the cursor still requires one, so a second refill restores both documents and
-        // its head is acknowledged.
+        // the batch after its ack brings the newer group's change id.
         sjc.HeldRepairs = null;
         held.SetException(new IOException("a test fails the repair"));
         await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
