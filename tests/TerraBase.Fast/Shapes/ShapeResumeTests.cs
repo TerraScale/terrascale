@@ -13,10 +13,6 @@ using TerraBase.Features.Shapes;
 
 namespace TerraBase.Fast.Shapes;
 
-/// <summary>
-/// FR-23 resume across machines (shape-reads section 9) over the real HTTP route: scope, R8 proof, behind check, covered
-/// rows, the 307 target and the retention floor on one machine, then a client moving from gru to sjc of a replicated pair.
-/// </summary>
 public sealed partial class ShapeResumeTests
 {
     [Test]
@@ -35,7 +31,6 @@ public sealed partial class ShapeResumeTests
         var cursor = ChangeCursor.Decode(Base64Url.EncodeToString(Base64Url.DecodeFromChars(synced.Cursor).AsSpan(17)))!;
         await Assert.That(cursor.Issued.Value).IsEqualTo(FeedCursor.At(wall.GetUtcNow()).Value);
 
-        // Rules 3 and 4: every row is covered, so the target is the sealed head; both transports answer the same.
         foreach (var header in new[] { false, true })
         {
             var head = await ResumeAsync(api.Client, path, synced.Cursor, header);
@@ -44,7 +39,6 @@ public sealed partial class ShapeResumeTests
             await Assert.That(head.Location).IsEqualTo($"{path}?handle={synced.Handle}&offset={synced.Offset}");
         }
 
-        // Retained rows below a proof's floor must be replayed, even when their stamps are covered.
         var belowProof = Forge(synced.Cursor, cursor => cursor with
         {
             Prefixes = cursor.Prefixes.ToDictionary(pair => pair.Key, pair => new FeedPrefix(cursor.Stamps[pair.Key], pair.Value.Hash)),
