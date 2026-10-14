@@ -835,11 +835,12 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 var created = await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
                 // Once published, complete the opening even if cancellation arrives.
                 var openingToken = created ? CancellationToken.None : cancellationToken;
-                system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time, RecordCommittedWrite, _logger,
-                    storageReads: _storageReads)
+                system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
+                    RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
                 {
                     QueryBudget = QueryBudget,
                     Member = Member,
+                    Checkpoint = _checkpoint,
                     Ledger = Ledger,
                 };
                 try

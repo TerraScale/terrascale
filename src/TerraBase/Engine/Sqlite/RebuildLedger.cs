@@ -43,6 +43,12 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
     /// <summary>Checkpoint after a copy fault's FULL record committed, before the recovery wake.</summary>
     internal const string Recorded = "replication.fault.recorded";
 
+    // Host-owned integration checkpoints; production's checkpoint is a no-op.
+    internal const string Publishing = "replication.rebuild.publishing";
+    internal const string Published = "replication.rebuild.published";
+    internal const string BarrierDisposed = "replication.rebuild.barrier_disposed";
+    internal const string BarrierReadDisposed = "replication.rebuild.barrier_read_disposed";
+
     // Rows and intents per page and transaction: recovery and enumeration hold no more at once.
     private const int Page = 128;
 
@@ -650,33 +656,15 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
             return false;
         }
 
-        // The receiver's writer is held, and the file checked to be exactly that incarnation, until the proof is durable:
-        // nothing replaces or faults it in between. The transaction writes nothing and rolls back.
-        await using var held = await store.BeginRebuildTransactionAsync(cancellationToken).ConfigureAwait(false);
-        if (!UnderRebuild(store, newIncarnation) || !await InPlaceAsync(held, newIncarnation, cancellationToken).ConfigureAwait(false))
+        var key = Key.Of(database);
+        if (await ReadRowAsync(system, key, cancellationToken).ConfigureAwait(false) is not { Phase: RebuildPhase.Swapped } row
+            || row.New != newIncarnation || row.Member != engine.ReplicaId.Member)
         {
             return false;
         }
 
-        var key = Key.Of(database);
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (await ReadRowAsync(system, key, cancellationToken).ConfigureAwait(false) is not { Phase: RebuildPhase.Swapped } row
-                || row.New != newIncarnation || row.Member != engine.ReplicaId.Member)
-            {
-                return false;
-            }
-
-            var proven = row with { Refill = new Refill(sourceMachine, sourceIncarnation, head) };
-            await WriteAsync(system, [proven], [], cancellationToken).ConfigureAwait(false);
-            Committed(key, proven);
-            return true;
-        }
-        finally
-        {
-            _gate.Release();
-        }
+        var proven = row with { Refill = new Refill(sourceMachine, sourceIncarnation, head) };
+        return await PublishRebuildAsync(system, key, store, row, proven, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<bool> CompleteRebuildAsync(TenantContext database, Ulid oldIncarnation, Ulid newIncarnation, CancellationToken cancellationToken)
@@ -691,59 +679,196 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
 
         if (row.Phase == RebuildPhase.Certified)
         {
-            // Again only while the rebuilt file still holds its barrier: a system database restored apart from it proves nothing.
-            return await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is SqliteDatabaseStore held
-                && await BarrierHeldAsync(held, row, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (row.Phase != RebuildPhase.Salvaged || row.Refill is not { } refill
-            || await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store
-            || !UnderRebuild(store, newIncarnation))
-        {
-            return false;
-        }
-
-        // The barrier: a real FULL write on the rebuilt file, never an empty COMMIT. Outside the gate, which never waits on a
-        // client database's writer.
-        await using var transaction = await store.BeginRebuildTransactionAsync(cancellationToken).ConfigureAwait(false);
-        if (!UnderRebuild(store, newIncarnation) || !await InPlaceAsync(transaction, newIncarnation, cancellationToken).ConfigureAwait(false))
-        {
-            return false;
-        }
-
-        _ = await transaction.LedgerAsync(command =>
-        {
-            using var upsert = command("""
-                INSERT INTO _tb_refill (origin, incarnation, head) VALUES ($origin, $incarnation, $head)
-                ON CONFLICT (origin) DO UPDATE SET incarnation = excluded.incarnation, head = excluded.head;
-                """);
-            upsert.Parameters.AddWithValue("$origin", refill.Machine);
-            upsert.Parameters.AddWithValue("$incarnation", refill.Incarnation.ToString());
-            upsert.Parameters.AddWithValue("$head", refill.Head);
-            return upsert.ExecuteNonQuery();
-        }, cancellationToken).ConfigureAwait(false);
-        _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            // Unchanged since the barrier, or nothing certifies: a fault meanwhile sent the record back to pending.
-            if (await ReadRowAsync(system, key, cancellationToken).ConfigureAwait(false) != row)
+            if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore held
+                || !CurrentCopy(key, held, newIncarnation))
             {
                 return false;
             }
 
-            var certified = row with { Phase = RebuildPhase.Certified };
-            await WriteAsync(system, [certified], [], cancellationToken).ConfigureAwait(false);
-            // After the disk: certifying loosens the refusal of the new incarnation.
-            Committed(key, certified);
-            return true;
+            // Take the writer outside the gate; even an idempotent success must outlive the barrier read's disposal.
+            return await held.WithWritersHeldAsync(async () =>
+            {
+                bool matches;
+                await using (var read = (SqliteStorageTransaction)await held.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false))
+                {
+                    await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        matches = await ReadRowAsync(system, key, cancellationToken).ConfigureAwait(false) == row
+                            && await BarrierMatchesAsync(read, row, cancellationToken).ConfigureAwait(false)
+                            && CurrentCopy(key, held, newIncarnation);
+                    }
+                    finally
+                    {
+                        _gate.Release();
+                    }
+                }
+
+                engine.Checkpoint(BarrierReadDisposed, database);
+                if (!matches)
+                {
+                    return false;
+                }
+
+                await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (await ReadRowAsync(system, key, cancellationToken).ConfigureAwait(false) != row
+                        || !CurrentCopy(key, held, newIncarnation))
+                    {
+                        return false;
+                    }
+
+                    // Also resumes a valid durable certificate whose first caller stopped before cache publication.
+                    Committed(key, row);
+                    return CurrentCopy(key, held, newIncarnation);
+                }
+                finally
+                {
+                    _gate.Release();
+                }
+            }, cancellationToken, "an idempotent rebuild completion").ConfigureAwait(false);
         }
-        finally
+
+        if (row.Phase != RebuildPhase.Salvaged || row.Refill is not { } refill
+            || await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store
+            || !UnderRebuild(store, newIncarnation) || !CurrentCopy(key, store, newIncarnation))
         {
-            _gate.Release();
+            return false;
+        }
+
+        // A real FULL tenant write, fully disposed before certification. Disposal may itself record a fault and take the gate.
+        await using (var transaction = await store.BeginRebuildTransactionAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (!UnderRebuild(store, newIncarnation) || !CurrentCopy(key, store, newIncarnation)
+                || !await InPlaceAsync(transaction, newIncarnation, cancellationToken).ConfigureAwait(false))
+            {
+                return false;
+            }
+
+            _ = await transaction.LedgerAsync(command =>
+            {
+                using var upsert = command("""
+                    INSERT INTO _tb_refill (origin, incarnation, head) VALUES ($origin, $incarnation, $head)
+                    ON CONFLICT (origin) DO UPDATE SET incarnation = excluded.incarnation, head = excluded.head;
+                    """);
+                upsert.Parameters.AddWithValue("$origin", refill.Machine);
+                upsert.Parameters.AddWithValue("$incarnation", refill.Incarnation.ToString());
+                upsert.Parameters.AddWithValue("$head", refill.Head);
+                return upsert.ExecuteNonQuery();
+            }, cancellationToken).ConfigureAwait(false);
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        engine.Checkpoint(BarrierDisposed, database);
+        var certified = row with { Phase = RebuildPhase.Certified };
+        return await PublishRebuildAsync(system, key, store, row, certified, cancellationToken).ConfigureAwait(false);
+    }
+
+    // The receiver writer precedes the gate. Its read is opened before, and disposed after, the gate, so a damaged read
+    // can record its fault. The cache remains refusing until that disposal and a final unchanged-row/marker check.
+    private async Task<bool> PublishRebuildAsync(
+        SqliteDatabaseStore system, Key key, SqliteDatabaseStore store, Row expected, Row published, CancellationToken cancellationToken)
+    {
+        if (expected.New is not { } rebuilt || !UnderRebuild(store, rebuilt) || !CurrentCopy(key, store, rebuilt))
+        {
+            return false;
+        }
+
+        return await store.WithWritersHeldAsync(async () =>
+        {
+            await using (var read = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false))
+            {
+                await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                var written = false;
+                try
+                {
+                    var current = await ReadRowAsync(system, key, cancellationToken).ConfigureAwait(false);
+                    engine.Checkpoint(Publishing, key.Tenant);
+                    if (current != expected || !await InPlaceAsync(read, rebuilt, cancellationToken).ConfigureAwait(false)
+                        || !UnderRebuild(store, rebuilt) || !CurrentCopy(key, store, rebuilt))
+                    {
+                        return false;
+                    }
+
+                    await WriteAsync(system, [published], [], cancellationToken).ConfigureAwait(false);
+                    written = true;
+                    engine.Checkpoint(Published, key.Tenant);
+                    if (!await InPlaceAsync(read, rebuilt, cancellationToken).ConfigureAwait(false)
+                        || !UnderRebuild(store, rebuilt) || !CurrentCopy(key, store, rebuilt))
+                    {
+                        written = false;
+                        await WithdrawPublicationAsync(system, key, store, expected).ConfigureAwait(false);
+                        return false;
+                    }
+                }
+                catch
+                {
+                    if (written)
+                    {
+                        await WithdrawPublicationAsync(system, key, store, expected).ConfigureAwait(false);
+                    }
+
+                    throw;
+                }
+                finally
+                {
+                    _gate.Release();
+                }
+            }
+
+            // A durable publication must be checked even when its caller cancelled while the read disposed.
+            await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                if (await ReadRowAsync(system, key, CancellationToken.None).ConfigureAwait(false) != published)
+                {
+                    return false;
+                }
+
+                if (!UnderRebuild(store, rebuilt) || !CurrentCopy(key, store, rebuilt))
+                {
+                    await WithdrawPublicationAsync(system, key, store, expected).ConfigureAwait(false);
+                    return false;
+                }
+
+                // Only now may a certificate loosen the cached refusal; the read and its fault recording are finished.
+                Committed(key, published);
+                return CurrentCopy(key, store, rebuilt);
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }, cancellationToken, "a rebuild proof publication").ConfigureAwait(false);
+    }
+
+    // Called only while the gate still owns this publication. A fault leads the disk, so restore its pending refusal
+    // rather than leave the newly written proof/certificate available to a later load. SYSTEM failure already blocks all writes.
+    private async Task WithdrawPublicationAsync(SqliteDatabaseStore system, Key key, SqliteDatabaseStore store, Row expected)
+    {
+        if (FailedClosed is not null)
+        {
+            return;
+        }
+
+        try
+        {
+            var refused = store.CopyFault is { } fault && expected.New is { } rebuilt
+                ? Faulted(key, expected, rebuilt, Bounded(fault)) ?? expected : expected;
+            await WriteAsync(system, [refused], [], CancellationToken.None).ConfigureAwait(false);
+            Committed(key, refused);
+        }
+        catch (Exception error)
+        {
+            FailClosed($"a rebuild publication could not be withdrawn: {error.GetType().Name}");
+            throw;
         }
     }
+
+    private bool CurrentCopy(Key key, SqliteDatabaseStore store, Ulid incarnation) =>
+        FailedClosed is null && store.CopyFault is null && !store.Closed && store.Settled && store.Incarnation == incarnation
+        && ReferenceEquals(engine.OpenStore(key), store) && engine.FileExists(key.Tenant);
 
     /// <summary>
     /// Whether the side copy of <paramref name="database"/> may be deleted: its record is certified, by this member, for
@@ -778,24 +903,32 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
     }
 
     // In one read of the rebuilt file: it is the row's new incarnation and its certificate row is the row's refill proof.
-    private static async ValueTask<bool> BarrierHeldAsync(SqliteDatabaseStore store, Row row, CancellationToken cancellationToken)
+    private async ValueTask<bool> BarrierHeldAsync(SqliteDatabaseStore store, Row row, CancellationToken cancellationToken)
     {
-        if (store.CopyFault is not null || row is not { New: { } rebuilt, Refill: { } refill })
+        if (FailedClosed is not null || store.CopyFault is not null || row.New is not { } rebuilt || store.Incarnation != rebuilt)
         {
             return false;
         }
 
-        await using var read = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        bool matches;
+        await using (var read = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false))
+        {
+            matches = await BarrierMatchesAsync(read, row, cancellationToken).ConfigureAwait(false);
+        }
+
+        return matches && FailedClosed is null && store.CopyFault is null && store.Incarnation == rebuilt;
+    }
+
+    private static async ValueTask<bool> BarrierMatchesAsync(SqliteStorageTransaction read, Row row, CancellationToken cancellationToken)
+    {
+        if (row is not { New: { } rebuilt, Refill: { } refill }
+            || await read.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != rebuilt)
+        {
+            return false;
+        }
+
         return await read.LedgerAsync(command =>
         {
-            using (var incarnation = command(SqliteStatements.Incarnation))
-            {
-                if (incarnation.ExecuteScalar() as string != rebuilt.ToString())
-                {
-                    return false;
-                }
-            }
-
             using var certificate = command("SELECT incarnation, head FROM _tb_refill WHERE origin = $origin;");
             certificate.Parameters.AddWithValue("$origin", refill.Machine);
             using var reader = certificate.ExecuteReader();
@@ -822,11 +955,7 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
 
     // Inside the transaction, under its writer: the file is exactly that incarnation.
     private static async ValueTask<bool> InPlaceAsync(SqliteStorageTransaction transaction, Ulid incarnation, CancellationToken cancellationToken) =>
-        await transaction.LedgerAsync(command =>
-        {
-            using var select = command(SqliteStatements.Incarnation);
-            return select.ExecuteScalar() as string;
-        }, cancellationToken).ConfigureAwait(false) == incarnation.ToString();
+        await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) == incarnation;
 
     private async ValueTask<SqliteDatabaseStore> SystemAsync(CancellationToken cancellationToken) =>
         (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);

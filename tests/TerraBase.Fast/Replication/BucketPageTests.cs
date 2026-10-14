@@ -40,11 +40,12 @@ public sealed class BucketPageTests
             .ThenBy(state => state.Id, StringComparer.Ordinal).ToArray();
         var states = api.Server.Services.GetRequiredService<IReplicaStates>();
         var incarnation = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, token))!.Incarnation;
+        int[] requested = sparse ? [.. selected.Reverse(), .. selected] : [.. selected.Reverse()];
         List<RepairState> actual = [];
         BucketCursor? cursor = null;
         do
         {
-            var (page, next) = await states.ReadBucketsAsync(database, incarnation, [.. selected.Reverse(), .. selected], cursor, 2, maxBytes, token)
+            var (page, next) = await states.ReadBucketsAsync(database, incarnation, requested, cursor, 2, maxBytes, token)
                 ?? throw new InvalidOperationException("the database incarnation is not held");
             await Assert.That(page.Count).IsBetween(1, maxBytes == 1 ? 1 : 2);
             actual.AddRange(page);
@@ -66,9 +67,20 @@ public sealed class BucketPageTests
             ?? throw new InvalidOperationException("the database incarnation is not held");
         await Assert.That(empty).IsEmpty();
         await Assert.That(end).IsNull();
-        var (pastEnd, pastCursor) = await states.ReadBucketsAsync(database, incarnation, selected, new BucketCursor(4096, "", ""), 2, maxBytes, token)
+        var lastExpected = expected[^1];
+        var afterLast = new BucketCursor(SqliteStorageTransaction.Bucket(lastExpected.Collection, lastExpected.Id), lastExpected.Collection, lastExpected.Id);
+        var (pastEnd, pastCursor) = await states.ReadBucketsAsync(database, incarnation, selected, afterLast, 2, maxBytes, token)
             ?? throw new InvalidOperationException("the database incarnation is not held");
         await Assert.That(pastEnd).IsEmpty();
         await Assert.That(pastCursor).IsNull();
+        _ = await Assert.ThrowsAsync<ArgumentException>(async () =>
+        {
+            _ = await states.ReadBucketsAsync(database, incarnation, [.. Enumerable.Range(0, 8192).Select(bucket => bucket % 4096)],
+                null, 2, maxBytes, token);
+        });
+        _ = await Assert.ThrowsAsync<ArgumentException>(async () =>
+        {
+            _ = await states.ReadBucketsAsync(database, incarnation, selected, new BucketCursor(4096, "", ""), 2, maxBytes, token);
+        });
     }
 }

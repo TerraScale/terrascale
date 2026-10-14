@@ -163,8 +163,8 @@ public sealed class IncarnationContractTests
         await Assert.That(digest).IsNotNull();
         await Assert.That((digest!.Incarnation, digest.Head)).IsEqualTo((pin, head));
         await Assert.That(await states.DigestAsync(cluster.Database, other, CancellationToken.None)).IsNull();
-        await Assert.That(await states.ReadBucketsAsync(cluster.Database, other, [bucket], null, 4096, int.MaxValue, CancellationToken.None)).IsNull();
-        var page = await states.ReadBucketsAsync(cluster.Database, pin, [bucket], null, 4096, int.MaxValue, CancellationToken.None);
+        await Assert.That(await states.ReadBucketsAsync(cluster.Database, other, [bucket], null, ChangeGroups.MaxDeltas, int.MaxValue, CancellationToken.None)).IsNull();
+        var page = await states.ReadBucketsAsync(cluster.Database, pin, [bucket], null, ChangeGroups.MaxDeltas, int.MaxValue, CancellationToken.None);
         await Assert.That(page is { } found && found.States.Any(state => state.Collection == "items" && state.Id == id)).IsTrue();
     }
 
@@ -266,9 +266,9 @@ public sealed class IncarnationContractTests
         await Assert.That(await states.ForgetAsync(database, old, [key], new Hlc(ulong.MaxValue), CancellationToken.None)).IsNull()
             .Because("a refill's forget pinned to the old copy deletes nothing of this one");
         await Assert.That(await states.DigestAsync(database, old, CancellationToken.None)).IsNull();
-        await Assert.That(await states.ReadBucketsAsync(database, old, [bucket], null, 4096, int.MaxValue, CancellationToken.None)).IsNull();
+        await Assert.That(await states.ReadBucketsAsync(database, old, [bucket], null, ChangeGroups.MaxDeltas, int.MaxValue, CancellationToken.None)).IsNull();
         await Assert.That(await LogAsync(store)).IsEqualTo(before).Because("refused acks and stable reports write no peer row and cut no change log row");
-        var page = await states.ReadBucketsAsync(database, incarnation, [bucket], null, 4096, int.MaxValue, CancellationToken.None);
+        var page = await states.ReadBucketsAsync(database, incarnation, [bucket], null, ChangeGroups.MaxDeltas, int.MaxValue, CancellationToken.None);
         await Assert.That(page is { } kept && kept.States.Any(state => (state.Collection, state.Id) == key)).IsTrue().Because("the refused forget kept the document");
         await Assert.That((await states.DigestAsync(database, incarnation, CancellationToken.None))?.Incarnation).IsEqualTo(incarnation);
         await Assert.That(await groups.AckedAsync(database, peer, CancellationToken.None)).IsEqualTo(refill);

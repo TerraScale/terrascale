@@ -37,8 +37,17 @@ internal static class SqliteStatements
         """;
 
     // A system document's state and the materialized JSON the stored form leaves its values to.
+    // Scalar-only: validate stored types and reserve payload bytes before typed getters allocate them.
+    public const string SystemGetStateBytes = """
+        SELECT octet_length(s.state), coalesce(octet_length(d.body), 0),
+            typeof(s.h1) = 'integer' AND typeof(s.h2) = 'integer'
+        FROM _tb_state s
+        LEFT JOIN documents d ON d.collection = s.collection AND d.id = s.id
+        WHERE s.collection = $collection AND s.id = $id;
+        """;
+
     public const string SystemGetState = """
-        SELECT s.state, d.body FROM _tb_state s LEFT JOIN documents d ON d.collection = s.collection AND d.id = s.id
+        SELECT s.state, d.body, s.h1, s.h2 FROM _tb_state s LEFT JOIN documents d ON d.collection = s.collection AND d.id = s.id
         WHERE s.collection = $collection AND s.id = $id;
         """;
 
@@ -77,8 +86,17 @@ internal static class SqliteStatements
     // Client databases (docs/terrabase/multi-region-replication.md section 5): a document's state, and the materialized
     // JSON it is stored beside (a hidden uniqueness loser's is kept aside), which the stored form leaves its values to.
     // {0} is the collection's table (SqliteStorageTransaction.Table).
+    public const string GetStateBytes = """
+        SELECT octet_length(s.state), coalesce(octet_length(c.body), octet_length(d.doc), 0),
+            typeof(s.h1) = 'integer' AND typeof(s.h2) = 'integer'
+        FROM _tb_state s
+        LEFT JOIN {0} d ON d.id = s.id
+        LEFT JOIN _tb_unique_conflicts c ON c.collection = s.collection AND c.id = s.id
+        WHERE s.collection = $collection AND s.id = $id;
+        """;
+
     public const string GetState = """
-        SELECT s.state, coalesce(c.body, d.doc) FROM _tb_state s
+        SELECT s.state, coalesce(c.body, d.doc), s.h1, s.h2 FROM _tb_state s
         LEFT JOIN {0} d ON d.id = s.id
         LEFT JOIN _tb_unique_conflicts c ON c.collection = s.collection AND c.id = s.id
         WHERE s.collection = $collection AND s.id = $id;
@@ -201,6 +219,7 @@ internal static class SqliteStatements
     /// <summary>Statements only client databases run, by name, for query-plan checks; <c>{0}</c> stands for a collection's table.</summary>
     public static IReadOnlyDictionary<string, string> ClientOnly { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        [nameof(GetStateBytes)] = GetStateBytes,
         [nameof(GetState)] = GetState,
         [nameof(ClientDocumentBytes)] = ClientDocumentBytes,
         [nameof(ClientListFirst)] = ClientListFirst,
@@ -233,6 +252,7 @@ internal static class SqliteStatements
         [nameof(DeleteCollectionDocuments)] = DeleteCollectionDocuments,
         [nameof(DeleteCollectionNames)] = DeleteCollectionNames,
         [nameof(DeleteCollectionStates)] = DeleteCollectionStates,
+        [nameof(SystemGetStateBytes)] = SystemGetStateBytes,
         [nameof(SystemGetState)] = SystemGetState,
         [nameof(SystemUpdateRow)] = SystemUpdateRow,
         [nameof(SystemInsertRow)] = SystemInsertRow,

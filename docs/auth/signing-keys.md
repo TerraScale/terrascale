@@ -26,7 +26,7 @@ key together for recovery. Changing the master key without restoring matching en
 
 TerraBase's [replica rebuild recovery](../terrabase/replica-rebuild.md) distinguishes clean shutdown from abrupt
 process termination. Clean restart preserves the same stored signing key. An unclean restart refuses an uncertain
-auth copy and retains its original database/WAL; ts-auth stays unready until certified recovery succeeds. A6 PR1
-provides the ledger and refusal but cannot certify recovery, so automatic crash recovery is deferred to PR2.
+auth copy and retains its original database/WAL; ts-auth stays unready until certified recovery succeeds. Recovery
+requires an intact placed peer and verified retained state; without a certifiable source the copy remains refused.
 
 See [platform-bootstrap.md](platform-bootstrap.md) for identity IDs and region verification.

@@ -1,8 +1,8 @@
 # Replica copy faults and rebuilds
 
-A6 PR1 provides the production fault ledger and recovery trigger. Certified
-source-pinned refill and successful completion follow in PR2 after A4/A5.
-Production certification currently refuses every refill and completion attempt.
+Production recovery uses the fault ledger, coalesced trigger, and certified
+source-pinned refill. A fresh receiver must complete keyed bucket coverage
+from one intact source before the ledger can publish trust.
 A copy awaiting certified refill remains unavailable for ordinary writes and
 replication sourcing, with its recovery record and retained side copy intact.
 Document writes that reach a refused copy answer `503 write_outcome_unknown`
@@ -35,8 +35,8 @@ or replaced in process by this recovery path.
 
 A clean shutdown retains ordinary restart recovery. An abrupt process kill
 can leave the auth storage copy uncertain, so ts-auth remains unready until
-that copy completes certified recovery. PR1 cannot certify even when a peer
-exists. Fast covers clean restart with the same stored key and crash refusal
+that copy completes certified recovery. Recovery needs an intact placed peer;
+without one, the copy remains refused. Fast covers clean restart with the same stored key and crash refusal
 without an intact peer, checking the original key-bearing main/WAL files stay
 unchanged at the retained recovery path.
 
@@ -67,10 +67,24 @@ backup tap readers keep that same refusal through reader replacement and late
 disposal, preserving the retained main file and WAL.
 
 The rebuild drains the old copy, preserves its file and log at an
-engine-controlled side path, and publishes a fresh incarnation. It then refuses
-certified refill in PR1. The old copy is not salvaged or deleted by that attempt,
-and the replacement remains refused. Restart resumes the persisted record
-without interpreting an ordinary anti-entropy refill as certification.
+engine-controlled side path, and publishes a fresh incarnation. It refills from
+one placed source, pins that source incarnation on every page and final digest,
+and verifies keyed coverage of all buckets. Duplicate or reordered page keys,
+a refused source, a changed source incarnation, or incomplete stream completion
+refuse the attempt. At most eight digest refresh rounds run per source; only
+changed buckets are reread, with one admitted page at a time. Receiver memory
+refusal ends the pass before another source is tried.
+
+Every repair checks the receiver's persisted incarnation inside the same writer
+transaction that applies its states. Invalid persisted identity or keyed stored
+state marks the exact local copy damaged; another valid incarnation is a
+conditional mismatch. Verified retained states join after refill. A FULL tenant
+certificate barrier and its verification read must both finish disposal before
+SYSTEM certification makes ordinary writes eligible. Completion removes side
+copies only while that persisted barrier and local copy remain valid. Refusal
+keeps the record and retained files, and restart resumes the persisted phase.
+Ordinary anti-entropy refill supplies no certificate and advances no source ACK
+for this recovery path.
 
 The ledger also preserves an uncertain replacement as one additional side
 copy. A further uncertain replacement beyond this bound refuses recovery and
@@ -78,8 +92,10 @@ keeps every existing file. A restored local SYSTEM certificate without its
 matching tenant barrier restores refusal before ordinary writes resume.
 
 Fast integration coverage targets durable faults, coalescing, restart recovery,
-production refusal, and commits that encounter a known fault. The corruption
-scenario that rebuilds a region and converges belongs to PR2. PR1 does not
-qualify arbitrary disk corruption or the broader power-loss durability matrix.
+conditional repair, source pins, stored identity and keyed-state validation,
+completion publication, memory refusal, and commits that encounter known faults.
+The owned local two-region corruption/rebuild/convergence scenario runs in Slow.
+These scenarios do not qualify arbitrary disk corruption or the broader
+power-loss durability matrix.
 The existing causal-cut refusal stays in place when a rebuilt sender has no
 peer rows; its liveness follow-up is [issue #219](https://github.com/TerraScale/terrascale/issues/219).

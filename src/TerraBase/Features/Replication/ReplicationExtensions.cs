@@ -14,7 +14,7 @@ public static class ReplicationExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.Services.AddSingleton<IChangeGroupSink, StorageChangeGroupSink>();
-        builder.Services.AddSingleton<IRebuildCertification, RefusedRebuildCertification>();
+        builder.Services.AddSingleton<IRebuildCertification, RebuildCertification>();
         builder.Services.AddSingleton<IReplicaRebuild, ReplicaRebuild>();
         builder.Services.AddSingleton<PeerStreamReceiver>();
         builder.Services.AddSingleton<CatalogGate>();
