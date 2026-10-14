@@ -1,8 +1,8 @@
 # PR preview cleanup
 
 `.github/workflows/previews.yml` deletes PR previews (`ts-pr-<n>` apps and their `terrascale-ts-pr-<n>` Tigris buckets in
-org `terrascale-previews-515`) with `scripts/fly/preview.sh`. Preview and cleanup jobs run on GitHub-hosted
-`ubuntu-latest` runners.
+org `terrascale-previews-515`) with `scripts/fly/preview.sh`. Preview and cleanup jobs select
+`${{ vars.CI_RUNNER || 'ubuntu-latest' }}`; the removed runner variable selects GitHub-hosted runners.
 
 - **What goes.** On PR close, that PR's preview. Hourly (and on `workflow_dispatch`), `preview.sh expired` lists every
   preview app and every preview bucket, then reads each PR's state from GitHub: closed PRs go whatever their age and
