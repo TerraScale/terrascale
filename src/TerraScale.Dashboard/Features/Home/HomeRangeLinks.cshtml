@@ -1,0 +1,5 @@
+@inherits RazorSlice<string>
+<nav class="ts-home-ranges" aria-label="Chart range">@foreach (var range in Ranges) { <a href="/?range=@range" aria-current="@(range == Model ? "page" : null)">@(range == "24h" ? "1d" : range)</a> }</nav>
+@functions {
+    private static readonly string[] Ranges = ["1h", "24h", "7d", "30d"];
+}
