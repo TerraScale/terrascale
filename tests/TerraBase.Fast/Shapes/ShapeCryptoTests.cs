@@ -579,6 +579,80 @@ public sealed class ShapeCryptoTests
         return [.. bytes.AsSpan(0, HeaderBytes), .. pieces.SelectMany(piece => piece)];
     }
 
+    [Test]
+    public async Task A_revoked_holders_epoch_key_opens_objects_sealed_until_the_epoch_ends_and_none_sealed_after()
+    {
+        await using var host = await CryptoHost.StartAsync();
+        var database = await host.Api.TenantOfAsync();
+        using var owner = host.Api.Management.As(host.Api.Tenant.User);
+        var keys = $"/v1/management/organizations/{host.Api.Tenant.OrganizationId}/projects/{host.Api.Tenant.ProjectId}/api-keys";
+        using var created = await owner.PostAsJsonAsync(new Uri(keys, UriKind.Relative), new { name = _faker.Hacker.Noun(), scopes = ReadScopes });
+        created.StatusCode.ShouldBe(HttpStatusCode.Created);
+        var issued = await created.Content.ReadFromJsonAsync<JsonElement>();
+        using var reader = host.Api.Management.DataClient(issued.GetProperty("secret").GetString());
+
+        // Worst case: the holder fetches K_e in the first second of the epoch and is revoked right after.
+        host.Time.Advance(TimeSpan.FromSeconds(1));
+        using var fetched = await host.GetKeyAsync(reader, host.Handle, host.Epoch, host.KeyId);
+        fetched.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var held = Base64Url.DecodeFromChars((await fetched.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("key").GetString()!);
+        using var revoked = await owner.DeleteAsync(new Uri($"{keys}/{issued.GetProperty("key").GetProperty("id").GetString()}", UriKind.Relative));
+        revoked.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+        var revokedAt = host.Time.GetUtcNow();
+        using var refused = await host.GetKeyAsync(reader, host.Handle, host.Epoch, host.KeyId);
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+
+        // The last second of the epoch still seals under the held key; the next second does not.
+        host.Time.Advance(TimeSpan.FromSeconds(598));
+        var lastPlain = _faker.Random.Bytes(_faker.Random.Int(1, 4096));
+        using var last = await host.Crypto.EncryptAsync(database, host.Handle, "7", lastPlain, CancellationToken.None);
+        var window = host.Time.GetUtcNow() - revokedAt;
+        host.Time.Advance(TimeSpan.FromSeconds(1));
+        var nextPlain = _faker.Random.Bytes(_faker.Random.Int(1, 4096));
+        using var next = await host.Crypto.EncryptAsync(database, host.Handle, "8", nextPlain, CancellationToken.None);
+
+        await Assert.That(last.Epoch).IsEqualTo(host.Epoch);
+        await Assert.That(Client.Open(last.Bytes.ToArray(), host.Handle, "7", host.Epoch, host.KeyId, held)?.AsSpan().SequenceEqual(lastPlain)).IsTrue();
+        await Assert.That(next.Epoch).IsEqualTo(host.Epoch + 1);
+        await Assert.That(Client.Open(next.Bytes.ToArray(), host.Handle, "8", host.Epoch + 1, host.KeyId, held)).IsNull();
+        // Measured: newly sealed data stays readable to a revoked API key holder for < one epoch (600 s) after revocation.
+        await Assert.That(window).IsEqualTo(TimeSpan.FromSeconds(598));
+        await Assert.That(window).IsLessThan(TimeSpan.FromSeconds(600));
+    }
+
+    [Test]
+    public async Task A_sealed_object_reveals_only_its_epoch_key_id_salt_and_exact_plaintext_length_and_the_key_id_links_a_projects_shapes()
+    {
+        await using var host = await CryptoHost.StartAsync();
+        var database = await host.Api.TenantOfAsync();
+        var otherHandle = Handle();
+        var objects = new List<(string Handle, int Length, byte[] Bytes)>();
+        foreach (var (handle, length) in new[] { (host.Handle, 0), (host.Handle, _faker.Random.Int(1, 4096)), (otherHandle, _faker.Random.Int(1, 4096)), (otherHandle, FrameBytes) })
+        {
+            using var sealedObject = await host.Crypto.EncryptAsync(database, handle, "2", _faker.Random.Bytes(length), CancellationToken.None);
+            objects.Add((handle, length, sealedObject.Bytes.ToArray()));
+        }
+
+        foreach (var (handle, length, bytes) in objects)
+        {
+            // Size is the exact plaintext length plus 70 header bytes and 20 bytes per frame: no padding.
+            await Assert.That(bytes.Length).IsEqualTo(HeaderBytes + (length / FrameBytes + 1) * (4 + TagBytes) + length);
+            await Assert.That((long)BinaryPrimitives.ReadUInt64BigEndian(bytes.AsSpan(4))).IsEqualTo(host.Epoch);
+            await Assert.That(Encoding.ASCII.GetString(bytes, 12, 26)).IsEqualTo(host.KeyId);
+            // Nothing names the tenant, collection or handle in clear.
+            foreach (var name in new[] { host.Api.Tenant.OrganizationId, host.Api.Tenant.ProjectId, database.DatabaseId!, DocumentApi.Collection, handle })
+            {
+                await Assert.That(bytes.AsSpan().IndexOf(Encoding.ASCII.GetBytes(name).AsSpan())).IsEqualTo(-1);
+            }
+        }
+
+        // Beyond section 14's "sizes and object counts": the cleartext key id is the same for every shape of the project,
+        // and as a ULID it carries the project key's creation time to the millisecond.
+        await Assert.That(objects.Select(item => Encoding.ASCII.GetString(item.Bytes, 12, 26)).Distinct().Count()).IsEqualTo(1);
+        await Assert.That(Ulid.Parse(host.KeyId).Time).IsEqualTo(Start.AddMinutes(-1));
+        await Assert.That(objects.Select(item => Convert.ToHexString(item.Bytes, 38, 32)).Distinct().Count()).IsEqualTo(objects.Count);
+    }
+
     private static async Task AssertInvalidAsync(HttpResponseMessage response)
     {
         var request = response.RequestMessage?.RequestUri?.PathAndQuery;
