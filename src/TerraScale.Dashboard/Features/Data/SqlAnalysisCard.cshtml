@@ -8,7 +8,7 @@
 <li>@Icons.Render("CircleCheck",16)<span>Read-only statement accepted. @analysis.ParameterSlots parameter slot(s).</span></li>
 @if(analysis.HasLimit){<li>@Icons.Render("CircleCheck",16)<span>Bounded with LIMIT.</span></li>}else{<li class="ts-data-check-warn">@Icons.Render("CircleAlert",16)<span>Add LIMIT to bound results.</span></li>}
 @if(Model.SqlChecked){<li>@Icons.Render("CircleCheck",16)<span>Server check passed.</span></li>}
-@if(!string.IsNullOrEmpty(analysis.Collection)){<li>@Icons.Render("Table",16)<span>Statement collection: @analysis.Collection</span></li>}
+@if(!string.IsNullOrEmpty(analysis.Collection)){<li class="ts-data-check-info">@Icons.Render("Table",16)<span>Statement collection: @analysis.Collection</span></li>}
 </ul>
 <div class="ts-stack-sm"><p class="ts-meta">EXPLAIN statement preview</p><pre class="ts-code">@analysis.Explain</pre></div>
 <div class="ts-card-section"><h3 class="ts-strong">Advisory index suggestions</h3>

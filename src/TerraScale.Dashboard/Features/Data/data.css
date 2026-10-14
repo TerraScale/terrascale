@@ -22,8 +22,6 @@
   display: grid;
   gap: var(--ts-s3);
   min-width: 0;
-  padding-right: var(--ts-s6);
-  border-right: 1px solid var(--ts-line);
 }
 
 .ts-data-nav-head {
@@ -34,11 +32,9 @@
 }
 
 .ts-data-nav-title {
-  color: var(--ts-ink-3);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  font-weight: 500;
 }
 
 /* Long lists scroll inside the column instead of stretching the page. */
@@ -57,23 +53,30 @@
   gap: var(--ts-s2);
   min-width: 0;
   padding: 6px var(--ts-s2);
-  border-radius: var(--ts-radius);
+  border-radius: 8px;
   color: var(--ts-ink-2);
-  font-family: var(--ts-font-mono);
   font-size: var(--ts-fs-sm);
   transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
 }
 
+/* Document counts sit at the row end in mono. */
+.ts-data-nav-link > .ts-meta {
+  margin-left: auto;
+  color: var(--ts-ink-3);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-xs);
+}
+
 .ts-data-nav-link:hover {
-  background: var(--ts-surface-2);
+  background: color-mix(in srgb, var(--ts-ink) 4%, transparent);
   color: var(--ts-ink);
   text-decoration: none;
 }
 
+/* Neutral active row: a faint white tint, not a brand fill. */
 .ts-data-nav-link[aria-current="page"] {
-  background: var(--ts-accent-soft);
+  background: color-mix(in srgb, var(--ts-ink) 8%, transparent);
   color: var(--ts-ink);
-  font-weight: 600;
 }
 
 /* Narrow pages choose the collection from a select. */
@@ -141,12 +144,12 @@
   top: 50%;
   left: var(--ts-s3);
   display: flex;
-  color: var(--tone);
+  color: var(--ts-ink-3);
   pointer-events: none;
   transform: translateY(-50%);
 }
 
-.ts-data-scope > .ts-data-search {
+.ts-data-scope > .ts-input-group {
   flex: 1 1 200px;
   max-width: 320px;
 }
@@ -179,7 +182,7 @@
   }
 
   .ts-data-collection,
-  .ts-data-scope > .ts-data-search {
+  .ts-data-scope > .ts-input-group {
     flex: 1 1 100%;
     max-width: none;
   }
@@ -204,7 +207,7 @@
 }
 
 .ts-data-doc-id:hover {
-  color: var(--tone);
+  color: var(--ts-link);
   text-decoration: none;
 }
 
@@ -251,7 +254,7 @@ th[aria-sort] > .ts-data-sort {
 }
 
 /* SQL console: editor and results beside the saved queries. */
-.ts-data-sql {
+.ts-data-sql-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
   align-items: start;
@@ -259,7 +262,7 @@ th[aria-sort] > .ts-data-sort {
 }
 
 /* The narrow saved-queries column keeps its action beside the heading. */
-.ts-data-sql > .ts-card .ts-card-heading {
+.ts-data-sql-side .ts-card-heading {
   flex-basis: 0;
 }
 
@@ -289,7 +292,7 @@ th[aria-sort] > .ts-data-sort {
 }
 
 .ts-data-query:hover > .ts-strong {
-  color: var(--tone);
+  color: var(--ts-link);
 }
 
 .ts-data-query > code {
@@ -303,15 +306,12 @@ th[aria-sort] > .ts-data-sort {
 }
 
 @media (max-width: 79.99rem) {
-  .ts-data-sql {
+  .ts-data-sql-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--ts-s6);
   }
 
-  .ts-data-sql > .ts-card {
-    padding-top: var(--ts-s6);
-    border-top: 1px solid var(--ts-line);
-  }
+
 }
 
 /* Query results: one row per document and one column per field. The table
@@ -335,16 +335,13 @@ th[aria-sort] > .ts-data-sort {
   border-bottom: 0;
   background: var(--ts-canvas);
   box-shadow: inset 0 -1px 0 var(--ts-line-strong);
-  font-family: var(--ts-font-mono);
-  letter-spacing: 0;
-  text-transform: none;
 }
 
 .ts-data-result td {
   max-width: 32ch;
   overflow: hidden;
   font-family: var(--ts-font-mono);
-  font-size: var(--ts-fs-xs);
+  font-size: var(--ts-fs-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -411,29 +408,32 @@ th[aria-sort] > .ts-data-sort {
   max-width: 560px;
 }
 
-/* Index fields. */
+/* Index fields: one neutral row per index, field name in mono, delete at the end. */
 .ts-data-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ts-s2);
+  display: grid;
   list-style: none;
 }
 
 .ts-data-chips > li {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  padding: var(--ts-s1) var(--ts-s3);
-  border: 1px solid color-mix(in oklab, var(--tone) 30%, transparent);
-  border-radius: var(--ts-radius-pill);
-  background: color-mix(in oklab, var(--tone) 10%, transparent);
+  gap: var(--ts-s3);
+  padding: var(--ts-s3) 0;
+  border-bottom: 1px solid var(--ts-line);
   color: var(--ts-ink);
   font-family: var(--ts-font-mono);
   font-size: var(--ts-fs-sm);
 }
 
 .ts-data-chips > li > svg {
-  color: var(--tone);
+  flex: none;
+  color: var(--ts-ink-3);
+}
+
+.ts-data-chips > li > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* Native progress styled to match .ts-progress. */
@@ -484,7 +484,7 @@ th[aria-sort] > .ts-data-sort {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: var(--tone);
+  background: var(--ts-ink-3);
   box-shadow: 0 0 0 3px var(--ts-surface);
 }
 
@@ -493,4 +493,33 @@ th[aria-sort] > .ts-data-sort {
   width: auto;
   max-width: 18rem;
   margin-right: auto;
+}
+
+.ts-data-sql-side {
+  min-width: 0;
+}
+
+.ts-data-sql-grid #sql-editor .ts-form-actions > [commandfor="save-query"] {
+  margin-left: auto;
+}
+
+.ts-data-nav .ts-input-group > svg,
+.ts-data-scope .ts-input-group > svg {
+  position: absolute;
+  top: 50%;
+  left: var(--ts-s3);
+  color: var(--ts-ink-3);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.ts-data-nav .ts-input-group > .ts-input,
+.ts-data-scope .ts-input-group > .ts-input {
+  width: 100%;
+  padding-left: calc(var(--ts-s3) + 22px);
+  padding-right: var(--ts-s3);
+}
+
+.ts-data-checks > .ts-data-check-info > svg {
+  color: var(--ts-ink-3);
 }
