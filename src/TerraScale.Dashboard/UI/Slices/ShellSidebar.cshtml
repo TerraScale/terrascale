@@ -54,7 +54,7 @@
         </details>
     </div>
 </aside>
-<dialog id="ts-search-dialog" class="ts-dialog ts-search-dialog" closedby="any" aria-label="Search pages" data-signals="{pageSearch: ''}" data-on:close="$pageSearch = ''; const target = el.returnFocusElement; (target?.checkVisibility() ? target : document.getElementById('ts-nav-toggle')).focus()"><div class="ts-dialog-content"><div class="ts-input-group">@ShellIcons.Svg("search", 14)<input class="ts-input" id="ts-search-input" type="search" placeholder="Search pages" aria-label="Search pages" autofocus data-bind="pageSearch" /></div><div class="ts-search-results">@foreach (var item in Navigation.SelectMany(group => group.Items))
+<dialog id="ts-search-dialog" class="ts-dialog ts-search-dialog" closedby="any" aria-label="Search pages" data-signals="{pageSearch: ''}" data-on:close="(() => { $pageSearch = ''; const target = el.returnFocusElement; setTimeout(() => (target?.checkVisibility() ? target : document.getElementById('ts-nav-toggle')).focus()); })()"><div class="ts-dialog-content"><div class="ts-input-group">@ShellIcons.Svg("search", 14)<input class="ts-input" id="ts-search-input" type="search" placeholder="Search pages" aria-label="Search pages" autofocus data-bind="pageSearch" /></div><div class="ts-search-results">@foreach (var item in Navigation.SelectMany(group => group.Items))
 {
     <a class="ts-menu-item" href="@item.Url" data-show="$pageSearch === '' || '@item.Label.ToLowerInvariant()'.includes($pageSearch.toLowerCase())">@ShellIcons.Svg(item.Icon)<span class="ts-menu-label">@item.Label</span></a>
 }<p class="ts-empty" role="status" data-show="$pageSearch !== '' &amp;&amp; ![@PageLabels].some(label => label.includes($pageSearch.toLowerCase()))">No pages match</p></div></div></dialog>
