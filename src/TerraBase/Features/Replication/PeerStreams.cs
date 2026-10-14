@@ -791,7 +791,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         try
         {
             // A reconnect may meet a known fault before it can read a cursor: discover only its scope, never an ACK.
-            var observed = cursor.Incarnation ?? await _storage.IncarnationAsync(database, cancellationToken).ConfigureAwait(false);
+            var observed = database == ChangeGroups.System ? null
+                : cursor.Incarnation ?? await _storage.IncarnationAsync(database, cancellationToken).ConfigureAwait(false);
             knownTenantRefusal = database != ChangeGroups.System && observed is { } incarnation
                 && await _storage.IncarnationAsync(database, cancellationToken).ConfigureAwait(false) == incarnation
                 && await _faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false)

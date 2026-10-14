@@ -242,6 +242,48 @@ public sealed class PeerStreamFaultIsolationTests
     }
 
     [Test]
+    public async Task A_cold_SYSTEM_cursor_refusal_keeps_tenant_replication_and_ACKs_progressing()
+    {
+        await using var receiver = await Node.StartAsync();
+        await using var sender = await Node.StartAsync(receiver, services =>
+        {
+            services.AddSingleton(provider => new HeldSource(provider.GetRequiredService<FaultAwareReplicaSource>(), refuseSystemCursor: true));
+            services.AddSingleton<IChangeGroupSource>(provider => provider.GetRequiredService<HeldSource>());
+        }, receiver.Api.Server.BaseAddress);
+        var source = sender.Api.Server.Services.GetRequiredService<HeldSource>();
+        using var deadline = Timeout();
+        await source.SystemCursorRefused.Task.WaitAsync(deadline.Token);
+        CommitMarker marker;
+        await using (var transaction = await (await sender.StoreAsync(sender.Database, deadline.Token)).BeginDurableTransactionAsync(deadline.Token))
+        {
+            _ = await transaction.PutAsync("items", "after-cold-system-refusal", "{\"n\":1}"u8.ToArray(), deadline.Token);
+            marker = (await transaction.CommitAsync(deadline.Token)).Marker
+                ?? throw new InvalidOperationException("the tenant write did not produce a commit marker");
+        }
+        await Assert.That(marker.ChangeId).IsGreaterThan(0);
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            sender.Status(sender.Database)?.Acknowledged >= marker.ChangeId
+            && await receiver.HasAsync(receiver.Database, "after-cold-system-refusal", token), Deadline);
+
+        var peer = receiver.Api.Server.Services.GetRequiredService<LocalReplica>().Id;
+        var production = sender.Api.Server.Services.GetRequiredService<FaultAwareReplicaSource>();
+        var persisted = await production.AckedAsync(sender.Database, peer, deadline.Token)
+            ?? throw new InvalidOperationException("the healthy tenant ACK cursor was refused");
+        await Assert.That(persisted.Incarnation).IsEqualTo(marker.Incarnation);
+        await Assert.That(persisted.Acked).IsGreaterThanOrEqualTo(marker.ChangeId);
+        var systemStatus = sender.Status(ChangeGroups.System)
+            ?? throw new InvalidOperationException("the cold SYSTEM cursor was not observed");
+        await Assert.That((systemStatus.Incarnation, systemStatus.Acknowledged)).IsEqualTo((Ulid.Empty, 0L));
+        var engine = sender.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var system = (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(deadline.Token);
+        await using var read = (SqliteStorageTransaction)await system.BeginTransactionAsync(write: false, deadline.Token);
+        await Assert.That((await read.GetAckedAsync(peer, system.Incarnation, deadline.Token))?.Acked ?? 0).IsEqualTo(0L)
+            .Because("a refused SYSTEM cursor cannot publish an acknowledged source prefix");
+        await Assert.That(await sender.Api.Server.Services.GetRequiredService<IReplicaCopyFaults>()
+            .RefusedAsync(ChangeGroups.System, Ulid.Empty, deadline.Token)).IsFalse();
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(false, true)]
@@ -635,7 +677,7 @@ public sealed class PeerStreamFaultIsolationTests
     }
 
     // Only the await boundary is held; production FaultAwareReplicaSource makes the refusal using the real ledger.
-    private sealed class HeldSource(FaultAwareReplicaSource inner) : IChangeGroupSource, IReplicaStates
+    private sealed class HeldSource(FaultAwareReplicaSource inner, bool refuseSystemCursor = false) : IChangeGroupSource, IReplicaStates
     {
         private BookkeepingGate? _held;
         private ShippingGate? _shipping;
@@ -644,6 +686,7 @@ public sealed class PeerStreamFaultIsolationTests
         private int _readsAfterNativeError;
         public int Initializations => Volatile.Read(ref _initializations);
         public int ReadsAfterNativeError => Volatile.Read(ref _readsAfterNativeError);
+        public TaskCompletionSource SystemCursorRefused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<(string Boundary, SqliteException Error)> NativeReadError { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public void Hold(BookkeepingGate gate) => Volatile.Write(ref _held, gate);
         public void Hold(ShippingGate gate) => Volatile.Write(ref _shipping, gate);
@@ -733,10 +776,15 @@ public sealed class PeerStreamFaultIsolationTests
 
         public ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken)
         {
-            // SYSTEM initializes once per connection; tenant cursor resets are not reconnects.
+            // Count SYSTEM cursor reads; a nullable refusal may cause another read on the same connection.
             if (database == ChangeGroups.System)
             {
                 _ = Interlocked.Increment(ref _initializations);
+                if (refuseSystemCursor)
+                {
+                    _ = SystemCursorRefused.TrySetResult();
+                    return ValueTask.FromResult<SourceCursor?>(null);
+                }
             }
             return inner.AckedAsync(database, peer, cancellationToken);
         }
