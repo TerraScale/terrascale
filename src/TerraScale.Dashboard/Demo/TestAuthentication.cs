@@ -1,0 +1,91 @@
+using TerraScale.Dashboard.Features.AuthenticationManagement;
+
+namespace TerraScale.Dashboard.Demo;
+
+// Read-only synthetic ts-auth tenant for the public demo (DEMO=true), copied from the approved v3 prototype.
+// Registered only by PublicDemo.Configure; nothing here reaches ts-auth.
+sealed class TestAuthentication : IAuthenticationDemoData
+{
+    private static AuthenticationRow Row(params string[] cells) => new(cells);
+    private static AuthenticationRow Status(string status, string tone, params string[] cells) => new(cells, status, tone);
+    private static AuthenticationTable Table(string[] columns, params AuthenticationRow[] rows) => new(columns, rows);
+
+    public AuthenticationSnapshot Snapshot { get; } = new(
+        "https://auth.terrascale.tech/core-platform", "01JA9C2W7RZK4P1M8N3Q5T6V0X", "Google, GitHub, 3 enterprise connections",
+        new HashSet<string> { "email_verification", "email_passcode", "password", "passkeys", "totp", "recovery_codes" },
+        new Dictionary<string, AuthenticationTable>
+        {
+            ["users"] = Table(["Name", "Email", "Username", "Sign-in", "Created", "Status"],
+                Status("Verified", "success", "Ada Lovelace", "ada@northwind.app", "ada", "passkey, totp", "2026-10-13"),
+                Status("Verified", "success", "Grace Hopper", "grace@acme.com", "grace", "password, sso", "2026-10-12"),
+                Status("Verified", "success", "Alan Turing", "alan@globex.io", "—", "email code", "2026-10-10"),
+                Status("Verified", "success", "Katherine Johnson", "kj@initech.dev", "kjohnson", "password", "2026-10-02"),
+                Status("Unverified", "warning", "Linus Pauling", "linus@umbrella.health", "—", "magic link", "2026-09-28")),
+            ["organizations"] = Table(["Name", "Slug", "Members", "Created", "SSO"],
+                Status("SAML", "success", "Acme Inc.", "acme", "1,204", "2026-08-14"),
+                Status("OIDC", "success", "Globex", "globex", "388", "2026-08-30"),
+                Status("None", "neutral", "Initech", "initech", "92", "2026-09-11"),
+                Status("SAML", "success", "Umbrella Health", "umbrella-health", "2,410", "2026-09-19")),
+            ["memberships"] = Table(["User", "Organization", "Role", "Since"],
+                Row("Grace Hopper", "Acme Inc.", "admin", "2026-08-14"),
+                Row("Ada Lovelace", "Acme Inc.", "member", "2026-09-02"),
+                Row("Alan Turing", "Globex", "billing-viewer", "2026-09-21"),
+                Row("Katherine Johnson", "Initech", "admin", "2026-10-02")),
+            ["invitations"] = Table(["Email", "Organization", "Role", "Expires", "Status"],
+                Status("Pending", "neutral", "m.curie@acme.com", "Acme Inc.", "member", "2026-10-20"),
+                Status("Pending", "neutral", "ops@globex.io", "Globex", "admin", "2026-10-18"),
+                Status("Expires in 1 day", "warning", "n.tesla@initech.dev", "Initech", "member", "2026-10-15")),
+            ["domains"] = Table(["Domain", "Organization", "Status"],
+                Status("Verified", "success", "acme.com", "Acme Inc."),
+                Status("Verified", "success", "globex.io", "Globex"),
+                Status("Pending DNS", "warning", "umbrella.health", "Umbrella Health")),
+            ["connections"] = Table(["Name", "Type", "Organization", "Status"],
+                Status("Active", "success", "Google", "social", "Instance-wide"),
+                Status("Active", "success", "GitHub", "social", "Instance-wide"),
+                Status("Active", "success", "Acme Okta", "SAML", "Acme Inc."),
+                Status("Active", "success", "Globex Entra ID", "OIDC", "Globex"),
+                Status("Certificate expires in 9 days", "warning", "Umbrella ADFS", "SAML", "Umbrella Health")),
+            ["directories"] = Table(["Scope", "SCIM base URL", "Users", "Last sync"],
+                Status("4 min ago", "success", "Acme Inc.", "…/scim/v2/01JA4R…", "1,198"),
+                Status("12 min ago", "success", "Umbrella Health", "…/scim/v2/01JA6M…", "2,402")),
+            ["clients"] = Table(["Application", "Client ID", "Client authentication", "Redirect URIs"],
+                Row("Northwind web", "01JA9C2W7RZK4P1M8N3Q5T6V0X", "none", "https://northwind.app/callback"),
+                Row("Northwind API", "01JA9C5H1BQ7S2D6F8G0J3K4LM", "client_secret_basic", "https://api.northwind.app/auth/callback"),
+                Row("Northwind CLI", "01JA9D0P8T4V6W2X1Y3Z5A7B9C", "none", "http://127.0.0.1/callback")),
+            ["templates"] = Table(["Name", "Claims", "Lifetime"],
+                Row("supabase", "sub, email, role", "300 s"),
+                Row("hasura", "sub, https://hasura.io/jwt/claims", "900 s")),
+            ["keys"] = Table(["Name", "Prefix", "Scopes", "Last used"],
+                Row("Backend", "sk_01JA8…", "users, organizations, sessions", "2 min ago"),
+                Row("Provisioning job", "sk_01JA2…", "directories, domains", "3 days ago"),
+                Row("Ops (full access)", "sk_01J9X…", "*", "Never")),
+            ["webhooks"] = Table(["Endpoint", "Events", "Deliveries (24h)", "Status"],
+                Status("Healthy", "success", "https://api.northwind.app/webhooks/auth", "user.*, membership.*", "4,812"),
+                Status("3 in dead-letter queue", "danger", "https://hooks.zapier.com/…/8812", "user.signed_up", "96")),
+            ["sessions"] = Table(["User", "Signed in with", "Device", "Location", "Last active"],
+                Row("Ada Lovelace", "Passkey", "Safari · macOS", "gru", "1 min ago"),
+                Row("Grace Hopper", "Acme Okta", "Chrome · Windows", "sjc", "6 min ago"),
+                Row("Alan Turing", "Email code", "Firefox · Linux", "fra", "22 min ago"),
+                Row("Katherine Johnson", "Password + TOTP", "Northwind CLI", "fra", "2 h ago")),
+            ["audit"] = Table(["Change", "Actor", "Target", "When"],
+                Row("user.created", "Directory sync (Acme Okta)", "Ada Lovelace", "2 min ago"),
+                Row("connection.updated", "grace@terrascale.tech", "Umbrella ADFS", "41 min ago"),
+                Row("settings.updated", "grace@terrascale.tech", "magic_link: off", "3 h ago"),
+                Row("oauth-client.created", "mario@terrascale.tech", "Northwind CLI", "Yesterday"),
+                Row("webhook.updated", "mario@terrascale.tech", "api.northwind.app", "Yesterday"),
+                Row("api-key.created", "mario@terrascale.tech", "Backend", "2026-10-11")),
+            ["emails"] = Table(["Email", "Subject", "Locale", "Wording"],
+                Status("Custom", "success", "Verify your email", "Confirm your email for {{ app_name }}", "en"),
+                Status("Custom", "success", "Sign-in code", "Your {{ app_name }} sign-in code", "en"),
+                Status("Default", "neutral", "Magic link", "Sign in to {{ app_name }}", "en"),
+                Status("Default", "neutral", "Password reset", "Reset your {{ app_name }} password", "en"),
+                Status("Default", "neutral", "MFA code", "Your {{ app_name }} verification code", "en"),
+                Status("Default", "neutral", "New device", "New sign-in to {{ app_name }}", "en"),
+                Status("Default", "neutral", "Invitation", "You are invited to {{ organization.name }}", "en"),
+                Status("Default", "neutral", "Lockout", "Your {{ app_name }} account is locked", "en")),
+        },
+        new AuthenticationBranding("Northwind", ThemeColor: "#2158e8"),
+        new AuthenticationEmailBranding(BrandName: "Northwind", SenderName: "Northwind accounts", ReplyTo: "support@northwind.app",
+            LogoUrl: "https://assets.northwind.app/logo.png", PrimaryColor: "#2158e8", WebsiteUrl: "https://northwind.app",
+            FooterText: "Northwind Ltd · 22 Rua Augusta, São Paulo"));
+}

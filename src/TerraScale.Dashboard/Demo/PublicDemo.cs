@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using TerraScale.Dashboard.Features.AuthenticationManagement;
 using TerraScale.Dashboard.Features.Billing;
 
 namespace TerraScale.Dashboard.Demo;
@@ -34,6 +35,7 @@ public static partial class PublicDemo
     {
         builder.Environment.EnvironmentName = Environments.Production;
         builder.Services.AddSingleton<IStartupFilter, Guard>();
+        builder.Services.AddSingleton<IAuthenticationDemoData, TestAuthentication>();
     }
 
     private sealed class Guard : IStartupFilter
