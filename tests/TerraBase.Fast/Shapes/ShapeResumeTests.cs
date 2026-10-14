@@ -9,7 +9,9 @@ using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Shapes;
 
@@ -75,6 +77,25 @@ public sealed partial class ShapeResumeTests
     }
 
     [Test]
+    public async Task A_resume_in_a_cell_is_capped_at_the_remote_durable_frontier_not_the_local_head()
+    {
+        var durability = new SwitchedDurability();
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<IRemoteDurability>(durability));
+        var path = $"{api.Collections}/{DocumentApi.Collection}/shape";
+        _ = await api.PutAsync(DocumentApi.NewId(), new { index = 0 });
+        var synced = await SyncAsync(api.Client, path, null, []);
+        await Assert.That(long.Parse(synced.Offset, CultureInfo.InvariantCulture)).IsGreaterThan(0);
+
+        // Rule 4: once the machine confirms, nothing it holds is remote durable (no peer ever proved a commit), so the
+        // frontier stays 0 and the target is 0, not the local head the cursor covers.
+        durability.Confirms = true;
+        var capped = await ResumeAsync(api.Client, path, synced.Cursor);
+        await Assert.That(capped.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect).Because(capped.Message ?? "no refusal message");
+        await Assert.That(capped.CacheControl).IsEqualTo("no-store");
+        await Assert.That(capped.Location).IsEqualTo($"{path}?handle={synced.Handle}&offset=0");
+    }
+
+    [Test]
     public async Task A_resume_target_below_the_retention_floor_is_409()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -90,6 +111,21 @@ public sealed partial class ShapeResumeTests
         await Assert.That(await retention.GetFloorAsync(store, synced.Handle, token)).IsGreaterThan(long.Parse(synced.Offset, CultureInfo.InvariantCulture));
 
         await AssertRefetchAsync(await ResumeAsync(api.Client, path, synced.Cursor), synced.Handle);
+    }
+
+    // A cell of one whose Confirms the test turns on after syncing.
+    private sealed class SwitchedDurability : IRemoteDurability
+    {
+        private readonly LocalDurability _local = new();
+
+        public bool Confirms { get; set; }
+
+        public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => _local.OtherRegionsAsync(cancellationToken);
+
+        public ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) => _local.AdmitAsync(database, cancellationToken);
+
+        public ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken) =>
+            _local.WaitAsync(database, marker, cancellationToken);
     }
 
     private sealed record Synced(string Handle, string Offset, string Cursor);

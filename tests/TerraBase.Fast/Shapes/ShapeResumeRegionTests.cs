@@ -4,8 +4,10 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Cluster;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Replication;
+using TerraBase.Features.Shapes;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -27,10 +29,12 @@ public sealed partial class ShapeResumeTests
         await ReplicatedAsync(sjc.Data, cell, first, """{"at":"gru"}""");
         await PutAsync(sjc.Data, cell, second, """{"at":"sjc"}""");
         await ReplicatedAsync(gru.Data, cell, second, """{"at":"sjc"}""");
+        await gru.DurableAsync();
 
         // sjc is down while gru writes C (fra confirms it) and the client syncs on gru, so the cursor covers C.
         await sjc.StopAsync();
         await PutAsync(gru.Data, cell, covered, """{"covered":"gru"}""");
+        await gru.DurableAsync();
         Dictionary<string, string> state = [];
         var synced = await SyncAsync(gru.Data, path, null, state);
         await Assert.That(state.Keys).Contains(covered);
@@ -44,6 +48,7 @@ public sealed partial class ShapeResumeTests
         await ReplicatedAsync(sjc.Data, cell, covered, """{"covered":"gru"}""");
         await ReplicatedAsync(gru.Data, cell, uncovered, """{"uncovered":"sjc"}""");
 
+        await sjc.DurableAsync();
         var resumed = await ResumeAsync(sjc.Data, path, synced.Cursor);
         await Assert.That(resumed.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect).Because(resumed.Message ?? "no refusal message");
         await Assert.That(resumed.CacheControl).IsEqualTo("no-store");
@@ -185,6 +190,17 @@ public sealed partial class ShapeResumeTests
             {
                 var peers = _api!.Server.Services.GetRequiredService<IReplicationStatus>().Snapshot().Peers.Select(peer => peer.Region).ToHashSet(StringComparer.Ordinal);
                 return Task.FromResult(all ? replicas.All(peers.Contains) : replicas.Any(peers.Contains));
+            }, timeout: TimeSpan.FromSeconds(30));
+
+        // A bootstrap seals and a resume targets only at or below the remote durable frontier (FR-25), which passes a joined
+        // commit only while a link to its origin's region is connected: until the retention pass has walked the whole head.
+        public Task DurableAsync() =>
+            TerraBaseTestServer.EventuallyAsync(async token =>
+            {
+                var store = (await _api!.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(cell.Database, token))!;
+                await using var transaction = await store.BeginTransactionAsync(write: false, token);
+                var shapes = (IShapeStorageTransaction)transaction;
+                return await shapes.ReadShapeFrontierAsync(remote: true, token) == await shapes.ReadShapeFrontierAsync(remote: false, token);
             }, timeout: TimeSpan.FromSeconds(30));
 
         public async ValueTask DisposeAsync()
