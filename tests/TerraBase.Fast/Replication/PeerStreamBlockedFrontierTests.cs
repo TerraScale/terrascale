@@ -16,7 +16,7 @@ public sealed class PeerStreamBlockedFrontierTests
     public async Task Blocked_frontiers_answer_without_certifying_progress_or_clearing_a_failed_or_pending_refill(bool refillInFlight)
     {
         // Start the source first so the receiver's cached membership already lists it.
-        await using var cluster = await ReplicaCluster.StartAsync(refillInFlight ? ["sjc", "gru"] : ["gru"]);
+        await using var cluster = await ReplicaCluster.StartAsync(["sjc", "gru"]);
         var receiver = cluster["gru"];
         var other = await receiver.CreateOtherDatabaseAsync();
         var origin = ReplicaId.Of(1, 7, 0);
