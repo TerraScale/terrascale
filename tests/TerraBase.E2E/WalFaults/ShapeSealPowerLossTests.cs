@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Bogus;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Primitives;
 
 namespace TerraBase.E2E.WalFaults;
@@ -181,9 +182,10 @@ public sealed class ShapeSealPowerLossTests
             return $"{shape}?handle={Uri.EscapeDataString(read.Handle)}&offset={Uri.EscapeDataString(read.Next)}";
         }
 
+        using var client = await regions.DataClientAsync(Origin, ApiKeyScopes.DocumentsRead);
         while (true)
         {
-            using var response = await regions[Origin].GetAsync(target);
+            using var response = await client.GetAsync(target);
             var body = await response.Content.ReadAsStringAsync();
             if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable && DateTime.UtcNow < deadline)
             {

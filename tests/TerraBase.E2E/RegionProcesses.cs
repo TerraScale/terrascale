@@ -136,6 +136,18 @@ internal sealed class RegionProcesses : IAsyncDisposable
         File.Move(hold + ".partial", hold, overwrite: true);
     }
 
+    /// <summary>A client of the region's public listener with a fresh API key of the database's organization holding <paramref name="scopes"/>.</summary>
+    public async Task<HttpClient> DataClientAsync(string region, params string[] scopes)
+    {
+        using var response = await this[region].PostAsJsonAsync(new Uri("/admin/api-keys", UriKind.Relative),
+            new { name = "e2e", scopes, organizationId = _organization });
+        await Docs.EnsureSuccessAsync(response);
+        var secret = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("secret").GetString();
+        var client = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }) { BaseAddress = _regions[region].ClientAddress };
+        client.DefaultRequestHeaders.Authorization = new("Bearer", secret);
+        return client;
+    }
+
     /// <summary>The region applies the database's batches again.</summary>
     public void ReleaseReplication(string region) => File.Delete(HoldFile(_regions[region]));
 
@@ -262,7 +274,9 @@ internal sealed class RegionProcesses : IAsyncDisposable
             await Task.Delay(100);
         }
 
-        var address = new Uri(JsonNode.Parse(await File.ReadAllTextAsync(info))!["internal"]!.GetValue<string>());
+        var listeners = JsonNode.Parse(await File.ReadAllTextAsync(info))!;
+        var address = new Uri(listeners["internal"]!.GetValue<string>());
+        node.ClientAddress = new Uri(listeners["client"]!.GetValue<string>());
         node.Client = new HttpClient(PeerTls.Credential.Wrap(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }))
         {
             BaseAddress = address,
@@ -312,6 +326,8 @@ internal sealed class RegionProcesses : IAsyncDisposable
         public Process? Process { get; set; }
 
         public HttpClient? Client { get; set; }
+
+        public Uri? ClientAddress { get; set; }
 
         public string Output
         {
@@ -387,7 +403,11 @@ public sealed class RegionProcessHost
         // Written aside and moved, so a reader never sees half an entry (names starting with '.' are not machines).
         await File.WriteAllTextAsync(Path.Combine(members, "." + machine), $"{region}\n{api.Server.PeerAddress}", cancellationToken);
         File.Move(Path.Combine(members, "." + machine), Path.Combine(members, machine), overwrite: true);
-        await File.WriteAllTextAsync(info + ".partial", new JsonObject { ["internal"] = api.Server.BaseAddress.ToString() }.ToJsonString(), cancellationToken);
+        await File.WriteAllTextAsync(info + ".partial", new JsonObject
+        {
+            ["internal"] = api.Server.BaseAddress.ToString(),
+            ["client"] = api.Server.ClientAddress?.ToString(),
+        }.ToJsonString(), cancellationToken);
         File.Move(info + ".partial", info!, overwrite: true);
         await Task.Delay(Timeout.Infinite, cancellationToken);
     }
