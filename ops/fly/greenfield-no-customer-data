@@ -1,0 +1,2 @@
+# Greenfield dogfood only: authorize one reset to the existing storage format 8 and automatic startup reseeding.
+# Delete this marker before go-public; customer data must never enter this reset path.
