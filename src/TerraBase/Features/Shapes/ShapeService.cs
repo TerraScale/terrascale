@@ -207,11 +207,12 @@ internal sealed class ShapeService(
                 return new MustRefetch(below.Message);
             }
 
+            // Read before the page attempt: a proof that arrives after a refusal must not turn it into must_refetch.
+            var frontier = await sealer.FrontierAsync(store, cancellationToken).ConfigureAwait(false);
             if (await snapshots.ReadPageAsync(store, lineage.Handle, snapshot, afterId, cancellationToken).ConfigureAwait(false) is not { } page)
             {
-                // A refused page can be committed but not remote durable. Published pages need no extra head reads.
-                if (snapshot > await sealer.FrontierAsync(store, cancellationToken).ConfigureAwait(false)
-                    && snapshot <= await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false))
+                // A refused page can be committed but not remote durable. Published pages need no raw head read.
+                if (snapshot > frontier && snapshot <= await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false))
                 {
                     return new Unavailable("the snapshot is not remote durable yet; retry later");
                 }
