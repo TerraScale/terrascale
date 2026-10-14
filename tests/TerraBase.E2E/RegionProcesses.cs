@@ -40,7 +40,10 @@ internal sealed class RegionProcesses : IAsyncDisposable
     // Every region's process loads the write-ahead log fault shim (StartWithWalFaultsAsync).
     private readonly bool _walFaults;
 
-    private RegionProcesses(bool walFaults) => _walFaults = walFaults;
+    private RegionProcesses(bool walFaults)
+    {
+        _walFaults = walFaults;
+    }
 
     /// <summary>The database's path on every region, <c>/v1/projects/{project}/databases/canary</c>.</summary>
     public string DatabasePath => $"/v1/projects/{_project}/databases/canary";

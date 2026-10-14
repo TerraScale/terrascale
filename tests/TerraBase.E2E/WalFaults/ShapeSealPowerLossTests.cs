@@ -176,7 +176,11 @@ public sealed class ShapeSealPowerLossTests
         HashSet<string> missing = [with(StringComparer.Ordinal), .. wanted];
         var deadline = DateTime.UtcNow + Converge.Deadline;
         var target = new Uri(offset == "-1" ? $"{shape}?offset=-1" : Continue(), UriKind.Relative);
-        string Continue() => $"{shape}?handle={Uri.EscapeDataString(read.Handle)}&offset={Uri.EscapeDataString(read.Next)}";
+        string Continue()
+        {
+            return $"{shape}?handle={Uri.EscapeDataString(read.Handle)}&offset={Uri.EscapeDataString(read.Next)}";
+        }
+
         while (true)
         {
             using var response = await regions[Origin].GetAsync(target);
