@@ -88,6 +88,20 @@ internal sealed partial class SqliteStorageTransaction
     // commit row (change_type 2), and a reader never sees part of one.
     private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) ReadChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken)
     {
+        try
+        {
+            return DecodeChangeGroups(after, maxGroups, maxBytes, self, cancellationToken);
+        }
+        catch (InvalidDataException)
+        {
+            // Tail gauges and retention catch decoder errors: fault this local copy before either can swallow one.
+            NoteCopyFault("stored replication data could not be decoded");
+            throw;
+        }
+    }
+
+    private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) DecodeChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken)
+    {
         List<OriginGroup> groups = [];
         var quiet = after;
         // The writer creates turso_cdc when it first opens: a file this machine never wrote has captured nothing.
@@ -274,7 +288,7 @@ internal sealed partial class SqliteStorageTransaction
 
             // Peers at one id share one read. Only an ack whose following rows are all still here can rise: past a cut, the
             // deleted rows may have held groups the peer lacks, and it must refill instead. A damaged row past an ack leaves
-            // that ack where it is (the read refuses, section 7).
+            // that ack where it is and faults the copy, so this transaction cannot commit (section 7).
             List<(long From, long To)> raised = [];
             var oldest = Command("SELECT min(change_id) FROM turso_cdc;").ExecuteScalar() is long kept ? kept : newest + 1;
             foreach (var at in peers.Where(peer => peer.Current).Select(peer => peer.Acked).Where(acked => acked < newest && oldest <= acked + 1).Distinct().ToList())

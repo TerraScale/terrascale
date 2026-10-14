@@ -978,8 +978,22 @@ public class SqliteCommand : DbCommand
         if (sql is not null)
             message = PreserveNoSuchTableCase(message, sql);
 
-        return new SqliteException(Properties.Resources.SqliteNativeError(1, message), 1);
+        var code = GetNativeSqliteErrorCode(ex);
+        return new SqliteException(Properties.Resources.SqliteNativeError(code, message), code);
     }
+
+    // TerraScale: damage keeps its SQLite code (SQLITE_IOERR 10, SQLITE_CORRUPT 11, SQLITE_NOTADB 26); every other local
+    // status stays SQLITE_ERROR, as upstream reports it.
+    internal static int GetNativeSqliteErrorCode(TursoException ex)
+        => ex is TursoNativeException native
+            ? native.StatusCode switch
+            {
+                132 => 26,
+                133 => 11,
+                134 => 10,
+                _ => 1,
+            }
+            : 1;
 
     private static (int ErrorCode, int ExtendedErrorCode) GetRemoteSqliteErrorCodes(
         string? remoteErrorCode)

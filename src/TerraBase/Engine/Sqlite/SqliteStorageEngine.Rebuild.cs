@@ -25,14 +25,19 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
 
     public bool SideExists(string sidePath) => File.Exists(sidePath);
 
+    /// <summary>Whether the database's file is in place, without opening it.</summary>
+    internal bool FileExists(TenantContext database) => File.Exists(Locate(database).Path);
+
     public async ValueTask<Ulid?> IncarnationAsync(TenantContext database, CancellationToken cancellationToken) =>
         await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is SqliteDatabaseStore store ? store.Incarnation : null;
 
     public async ValueTask<Ulid?> SwapAsync(TenantContext database, Ulid faultedIncarnation, string sidePath, CancellationToken cancellationToken)
     {
         // Opened first, so the check below reads the file's own identity.
-        if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore)
+        if (await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore
+            || await Ledger.GetAsync(database, cancellationToken).ConfigureAwait(false) is { Phase: RebuildPhase.Pending, NewIncarnation: not null })
         {
+            // A refused rebuild (a second uncertain copy kept) moves nothing.
             return null;
         }
 
@@ -48,28 +53,9 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
                 return null;
             }
 
-            // Retired before the drain, under the creation lock: nothing opens the old path again until the swap ends.
-            _ = _stores.TryRemove(key, out _);
-            using (var drain = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            if (!await DrainAsync(key, store, cancellationToken).ConfigureAwait(false))
             {
-                drain.CancelAfter(DrainTimeout);
-                try
-                {
-                    // Holding the writer: no write transaction of this process is open on the copy. Disposing it closes its
-                    // sessions, and its writer connection closes as the writer is released, so a cached store reference can
-                    // no longer write the old file.
-                    _ = await store.WithWritersHeldAsync(() =>
-                    {
-                        store.Dispose();
-                        return Task.FromResult(true);
-                    }, drain.Token, "a rebuild draining a faulted copy").ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Not drained in time: the copy stays open, in place, untouched.
-                    _stores[key] = store;
-                    return null;
-                }
+                return null;
             }
 
             try
@@ -99,21 +85,59 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
 
     public async ValueTask<Ulid?> PublishFreshAsync(TenantContext database, string sidePath, CancellationToken cancellationToken)
     {
+        // Opened first, outside the creation lock, which the ledger's reads of the system database may take.
+        var inPlace = await OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) as SqliteDatabaseStore;
+        var record = await Ledger.GetAsync(database, cancellationToken).ConfigureAwait(false);
+        if (record is { Phase: RebuildPhase.Pending, NewIncarnation: not null })
+        {
+            // A second uncertain copy is in place beside one already kept: it stays, and so does everything else.
+            return null;
+        }
+
+        var additional = record is { Phase: RebuildPhase.Pending } ? record.AdditionalIncarnation : null;
         var (key, path) = Locate(database);
         await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            // Under the creation lock, which a deletion holds while its files go: a deleted database (its side copy gone with
+            // it) or one a lifecycle operation owns is never published again.
+            if (_pendingIntents.Contains(key) || !File.Exists(sidePath))
+            {
+                return null;
+            }
+            if (additional is { } retained && inPlace is not null && (inPlace.Incarnation == retained || !File.Exists(SidePath(database, retained))))
+            {
+                // A copy under rebuild faulted: uncertified, it may still hold verified states its side copy lacks, so it is
+                // kept beside it, unwritten, for the salvage. Once it is aside, a file in place is the fresh one published
+                // after it, which nothing wrote (a pending record refuses every write); before, any other file refuses.
+                if (inPlace.Incarnation != retained || !_stores.TryGetValue(key, out var store) || store != inPlace
+                    || !await DrainAsync(key, store, cancellationToken).ConfigureAwait(false))
+                {
+                    return null;
+                }
+
+                var retainedPath = SidePath(database, retained);
+                await Io.RunAsync(() =>
+                {
+                    RejectDatabaseLinks(retainedPath);
+                    MoveAside(path, retainedPath);
+                    return true;
+                }, CancellationToken.None).ConfigureAwait(false);
+            }
+
             if (!File.Exists(path))
             {
-                // A swap stopped between the main file and its log: the log follows its file first, or the fresh file would
-                // open beside another file's log.
+                // A move aside stopped between the main file and its log: the log follows its file first, or the fresh file
+                // would open beside another file's log. The retained copy moves only after the swap finished, so a log left
+                // behind while it is aside is its own.
+                var target = additional is { } moved && File.Exists(SidePath(database, moved)) ? SidePath(database, moved) : sidePath;
                 _ = await Io.RunAsync(() =>
                 {
                     foreach (var sidecar in Sidecars.Where(sidecar => File.Exists(path + sidecar)))
                     {
                         RejectLink(path + sidecar);
-                        File.Move(path + sidecar, sidePath + sidecar, overwrite: false);
+                        File.Move(path + sidecar, target + sidecar, overwrite: false);
                     }
 
                     return true;
@@ -215,23 +239,52 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            // Under the creation lock nothing replaces or removes the rebuilt file between this check and the deletion.
+            // Under the creation lock nothing replaces or removes the rebuilt file between these checks and the deletion: it
+            // is the certified incarnation, and it holds the barrier the ledger's record names.
             if (!_stores.TryGetValue(key, out var store) || store.Incarnation != rebuiltIncarnation)
             {
                 return false;
             }
 
-            _ = await Io.RunAsync(() =>
-            {
-                DeleteFiles(sidePath + ".salvage");
-                DeleteFiles(sidePath);
-                return true;
-            }, CancellationToken.None).ConfigureAwait(false);
-            return true;
+            return await store.WithWritersHeldAsync(() => Ledger.FinalizeCertifiedAsync(database, store, rebuiltIncarnation,
+                () => Io.RunAsync(() =>
+                {
+                    DeleteFiles(sidePath + ".salvage");
+                    DeleteFiles(sidePath);
+                    return true;
+                }, CancellationToken.None), cancellationToken), cancellationToken, "a rebuild deleting its certified side copy").ConfigureAwait(false);
         }
         finally
         {
             ExitCreation();
+        }
+    }
+
+    // Retires `store` and closes it once no write transaction of this process is open on it, under the creation lock;
+    // false, the store open and in place, when it does not drain in time.
+    private async Task<bool> DrainAsync((string Organization, string Project, string Database) key, SqliteDatabaseStore store, CancellationToken cancellationToken)
+    {
+        // Retired before the drain, under the creation lock: nothing opens the path again until the caller ends.
+        _ = _stores.TryRemove(key, out _);
+        using var drain = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        drain.CancelAfter(DrainTimeout);
+        try
+        {
+            // Holding the writer: no write transaction of this process is open on the copy. Disposing it closes its
+            // sessions, and its writer connection closes as the writer is released, so a cached store reference can no
+            // longer write the file.
+            _ = await store.WithWritersHeldAsync(() =>
+            {
+                store.Dispose();
+                return Task.FromResult(true);
+            }, drain.Token, "a rebuild draining a faulted copy").ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            // Not drained in time: the copy stays open, in place, untouched.
+            _stores[key] = store;
+            return false;
         }
     }
 
@@ -271,7 +324,11 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
         using (var page = connection.CreateCommand())
         {
             page.CommandText = """
-                SELECT collection, id, octet_length(state) FROM _tb_state WHERE collection > $collection OR (collection = $collection AND id > $id)
+                SELECT collection, id, octet_length(state),
+                    typeof(collection) = 'text' AND typeof(id) = 'text'
+                    AND octet_length(collection) BETWEEN 1 AND 4096 AND octet_length(id) BETWEEN 1 AND 4096
+                    AND length(collection) <= 128 AND length(id) <= 1024
+                FROM _tb_state WHERE collection > $collection OR (collection = $collection AND id > $id)
                 ORDER BY collection, id LIMIT $limit;
                 """;
             page.Parameters.AddWithValue("$collection", afterCollection);
@@ -280,6 +337,11 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
             using var reader = page.ExecuteReader();
             while (reader.Read())
             {
+                if (reader.GetInt64(3) == 0)
+                {
+                    throw new InvalidDataException("a side-copy key exceeds its bounded representation");
+                }
+
                 keys.Add((reader.GetString(0), reader.GetString(1), reader.GetInt64(2)));
             }
         }
@@ -310,8 +372,10 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
         foreach (var row in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var keyBytes = Encoding.UTF8.GetByteCount(row.Collection) + Encoding.UTF8.GetByteCount(row.Id);
+            var documentBytes = DocumentBytes(connection, row.Collection, row.Id);
             using var command = connection.CreateCommand();
-            command.CommandText = "SELECT state, h1, h2 FROM _tb_state WHERE collection = $collection AND id = $id;";
+            command.CommandText = "SELECT state, h1, h2, octet_length(state) FROM _tb_state WHERE collection = $collection AND id = $id;";
             command.Parameters.AddWithValue("$collection", row.Collection);
             command.Parameters.AddWithValue("$id", row.Id);
             string stored;
@@ -321,6 +385,11 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
                 if (!reader.Read())
                 {
                     throw new InvalidDataException("a measured state of the side copy is gone");
+                }
+
+                if (checked(keyBytes + documentBytes + reader.GetInt64(3)) != row.Bytes)
+                {
+                    throw new InvalidDataException("a side-copy state no longer matches its measured size");
                 }
 
                 (stored, h1, h2) = (reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2));

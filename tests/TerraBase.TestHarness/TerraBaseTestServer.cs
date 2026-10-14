@@ -17,6 +17,7 @@ using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Platform;
 using TerraBase.Features.Replication;
@@ -105,14 +106,17 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// Prepares an empty directory as a data directory of this build, as a server's first start does, so a test can
-    /// seed it with files (such as the system database) before starting a server on it.
+    /// Records this build's storage layout and replica identity without starting a host or creating SYSTEM, so a test
+    /// can seed files before real-server startup performs recovery.
     /// </summary>
     public static async Task InitializeDataDirectoryAsync(string dataDirectory)
     {
-        await using (await StartAsync(settings => settings["data-directory"] = dataDirectory))
-        {
-        }
+        InitializeProcessTimers();
+        var options = new TerraBaseOptions { DataDirectory = dataDirectory, MemoryBudget = 64 * 1024 * 1024, StorageThreads = 1, StorageQueue = 16 };
+        var services = new ServiceCollection();
+        services.AddTerraBaseEngine(options);
+        await using var provider = services.BuildServiceProvider();
+        _ = provider.GetRequiredService<IStorageEngine>();
     }
 
     /// <summary>

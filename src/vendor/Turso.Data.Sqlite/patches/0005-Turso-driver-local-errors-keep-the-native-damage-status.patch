@@ -1,0 +1,107 @@
+From 85c23cc117999085b639f5c16634ad9c943a24fd Mon Sep 17 00:00:00 2001
+From: mariogk <mariogk@terrascale.tech>
+Date: Tue, 13 Oct 2026 19:05:18 -0300
+Subject: [PATCH] fix(storage): preserve native Turso damage status codes
+
+---
+ src/Turso.Data.Sqlite/SqliteCommand.cs    | 16 +++++++++++++++-
+ src/Turso.Data.Sqlite/SqliteConnection.cs |  3 ++-
+ src/Turso.Raw/Public/TursoBindings.cs     |  8 ++++----
+ src/Turso.Raw/Public/TursoException.cs    | 12 ++++++++++++
+ 4 files changed, 33 insertions(+), 6 deletions(-)
+
+diff --git a/src/Turso.Data.Sqlite/SqliteCommand.cs b/src/Turso.Data.Sqlite/SqliteCommand.cs
+index 0a30867e..f8afb1e4 100644
+--- a/src/Turso.Data.Sqlite/SqliteCommand.cs
++++ b/src/Turso.Data.Sqlite/SqliteCommand.cs
+@@ -978,9 +978,23 @@ public class SqliteCommand : DbCommand
+         if (sql is not null)
+             message = PreserveNoSuchTableCase(message, sql);
+ 
+-        return new SqliteException(Properties.Resources.SqliteNativeError(1, message), 1);
++        var code = GetNativeSqliteErrorCode(ex);
++        return new SqliteException(Properties.Resources.SqliteNativeError(code, message), code);
+     }
+ 
++    // TerraScale: damage keeps its SQLite code (SQLITE_IOERR 10, SQLITE_CORRUPT 11, SQLITE_NOTADB 26); every other local
++    // status stays SQLITE_ERROR, as upstream reports it.
++    internal static int GetNativeSqliteErrorCode(TursoException ex)
++        => ex is TursoNativeException native
++            ? native.StatusCode switch
++            {
++                132 => 26,
++                133 => 11,
++                134 => 10,
++                _ => 1,
++            }
++            : 1;
++
+     private static (int ErrorCode, int ExtendedErrorCode) GetRemoteSqliteErrorCodes(
+         string? remoteErrorCode)
+     {
+diff --git a/src/Turso.Data.Sqlite/SqliteConnection.cs b/src/Turso.Data.Sqlite/SqliteConnection.cs
+index ed0f438c..4a473962 100644
+--- a/src/Turso.Data.Sqlite/SqliteConnection.cs
++++ b/src/Turso.Data.Sqlite/SqliteConnection.cs
+@@ -1259,6 +1259,7 @@ public partial class SqliteConnection : DbConnection
+     private static SqliteException ToSqliteException(TursoException exception)
+     {
+         var message = exception.Message;
+-        return new SqliteException(Properties.Resources.SqliteNativeError(SQLITE_ERROR, message), SQLITE_ERROR);
++        var code = SqliteCommand.GetNativeSqliteErrorCode(exception);
++        return new SqliteException(Properties.Resources.SqliteNativeError(code, message), code);
+     }
+ }
+diff --git a/src/Turso.Raw/Public/TursoBindings.cs b/src/Turso.Raw/Public/TursoBindings.cs
+index eb642cd0..ad6c6584 100644
+--- a/src/Turso.Raw/Public/TursoBindings.cs
++++ b/src/Turso.Raw/Public/TursoBindings.cs
+@@ -481,18 +481,18 @@ public static class TursoBindings
+     private static void ThrowIfError(TursoStatusCode status, IntPtr errorPtr, string? messagePrefix = null)
+     {
+         if (errorPtr != IntPtr.Zero)
+-            ThrowException(errorPtr, messagePrefix);
++            ThrowException(status, errorPtr, messagePrefix);
+ 
+         if (status is TursoStatusCode.Ok or TursoStatusCode.Done or TursoStatusCode.Row)
+             return;
+ 
+-        throw new TursoException($"Turso native call failed with status {status}.");
++        throw new TursoNativeException((uint)status, $"Turso native call failed with status {status}.");
+     }
+ 
+-    private static void ThrowException(IntPtr errorPtr, string? messagePrefix = null)
++    private static void ThrowException(TursoStatusCode status, IntPtr errorPtr, string? messagePrefix = null)
+     {
+         var errorMessage = Marshal.PtrToStringUTF8(errorPtr);
+-        var exception = new TursoException($"{messagePrefix}{errorMessage ?? "Internal error"}");
++        var exception = new TursoNativeException((uint)status, $"{messagePrefix}{errorMessage ?? "Internal error"}");
+         TursoInterop.FreeString(errorPtr);
+         throw exception;
+     }
+diff --git a/src/Turso.Raw/Public/TursoException.cs b/src/Turso.Raw/Public/TursoException.cs
+index 909d1427..43e0ee88 100644
+--- a/src/Turso.Raw/Public/TursoException.cs
++++ b/src/Turso.Raw/Public/TursoException.cs
+@@ -13,6 +13,18 @@ public class TursoException : Exception
+     }
+ }
+ 
++// TerraScale: a failed local native call keeps its status code, so callers can tell corruption and I/O errors apart.
++public sealed class TursoNativeException : TursoException
++{
++    public TursoNativeException(uint statusCode, string message)
++        : base(message)
++    {
++        StatusCode = statusCode;
++    }
++
++    public uint StatusCode { get; }
++}
++
+ public sealed class TursoSyncNativeException : TursoException
+ {
+     public TursoSyncNativeException(uint statusCode, string message)
+-- 
+2.54.0
+

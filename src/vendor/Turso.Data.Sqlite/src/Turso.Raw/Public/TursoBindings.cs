@@ -79,7 +79,7 @@ public static class TursoBindings
         var status = TursoInterop.ConnectionPrepareSingle(db, sql, out var statementPtr, out var errorPtr);
         ThrowIfError(status, errorPtr, "Unable to prepare statement: ");
 
-        return TursoStatementHandle.FromPtr(statementPtr);
+        return db.OwnStatement(statementPtr);
     }
 
     public static void ResetStatement(TursoStatementHandle statement)
@@ -488,18 +488,18 @@ public static class TursoBindings
     private static void ThrowIfError(TursoStatusCode status, IntPtr errorPtr, string? messagePrefix = null)
     {
         if (errorPtr != IntPtr.Zero)
-            ThrowException(errorPtr, messagePrefix);
+            ThrowException(status, errorPtr, messagePrefix);
 
         if (status is TursoStatusCode.Ok or TursoStatusCode.Done or TursoStatusCode.Row)
             return;
 
-        throw new TursoException($"Turso native call failed with status {status}.");
+        throw new TursoNativeException((uint)status, $"Turso native call failed with status {status}.");
     }
 
-    private static void ThrowException(IntPtr errorPtr, string? messagePrefix = null)
+    private static void ThrowException(TursoStatusCode status, IntPtr errorPtr, string? messagePrefix = null)
     {
         var errorMessage = Marshal.PtrToStringUTF8(errorPtr);
-        var exception = new TursoException($"{messagePrefix}{errorMessage ?? "Internal error"}");
+        var exception = new TursoNativeException((uint)status, $"{messagePrefix}{errorMessage ?? "Internal error"}");
         TursoInterop.FreeString(errorPtr);
         throw exception;
     }

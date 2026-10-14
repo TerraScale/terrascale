@@ -80,7 +80,7 @@ internal sealed class TursoChangeTap : IWalTap
     /// <summary>Opens a tap on <paramref name="store"/> that starts at the newest change; the caller holds an admission.</summary>
     public static async Task<TursoChangeTap> OpenAsync(SqliteDatabaseStore store, SqliteIoPool io, TimeProvider time, CancellationToken cancellationToken)
     {
-        var reader = new TursoConnection($"Data Source={store.FilePath}");
+        var reader = new TursoConnection($"Data Source={store.FilePath}") { CloseRefusal = () => store.CloseRefusal };
         try
         {
             await io.RunAsync(() => SqliteSession.OpenExisting(reader, store.FilePath), cancellationToken).ConfigureAwait(false);
@@ -214,7 +214,7 @@ internal sealed class TursoChangeTap : IWalTap
     private async Task ReplaceReaderAsync()
     {
         var stale = _reader;
-        _reader = new TursoConnection($"Data Source={_store.FilePath}");
+        _reader = new TursoConnection($"Data Source={_store.FilePath}") { CloseRefusal = () => _store.CloseRefusal };
         await _io.RunAsync(() =>
         {
             stale.Dispose();

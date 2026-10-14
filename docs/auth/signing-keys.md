@@ -24,4 +24,9 @@ An empty ring receives a new key on restart. This is the explicit greenfield sta
 keys. Tokens signed by missing keys cannot be verified, so users must sign in again. Preserve the database and master
 key together for recovery. Changing the master key without restoring matching encrypted records prevents readiness.
 
+TerraBase's [replica rebuild recovery](../terrabase/replica-rebuild.md) distinguishes clean shutdown from abrupt
+process termination. Clean restart preserves the same stored signing key. An unclean restart refuses an uncertain
+auth copy and retains its original database/WAL; ts-auth stays unready until certified recovery succeeds. A6 PR1
+provides the ledger and refusal but cannot certify recovery, so automatic crash recovery is deferred to PR2.
+
 See [platform-bootstrap.md](platform-bootstrap.md) for identity IDs and region verification.

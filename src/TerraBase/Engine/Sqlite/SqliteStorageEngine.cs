@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using System.IO.Enumeration;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine.Lattices;
@@ -49,6 +50,10 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private readonly SemaphoreSlim _creation = new(1, 1);
     private readonly Dictionary<(string Organization, string Project, string Database), Task<SqliteDatabaseStore>> _initializing = [];
 
+    // Fresh file identities bridge publication to the open store, without taking _creation from fault disposal.
+    private const int MaxPendingPublications = 1000;
+    private readonly ConcurrentDictionary<(string Organization, string Project, string Database), Ulid> _publishing = new();
+
     // Initializations registered while their caller still holds its creation admission; ExitCreation starts them once it
     // released that admission. Started earlier, an initialization's own admission could overlap the caller's, and
     // storage-queue=1 would refuse it (TS-624). Guarded by _creation.
@@ -92,6 +97,20 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
     /// <summary>The published system store, without opening it or checking its files, for integration diagnostics.</summary>
     internal SqliteDatabaseStore? SystemStore => Volatile.Read(ref _system);
+
+    /// <summary>This node's copy faults and rebuild records, recovered as the system database opens.</summary>
+    internal RebuildLedger Ledger { get; }
+
+    /// <summary>The host's fault injection point (a no-op in production).</summary>
+    internal void Checkpoint(string step, TenantContext database) => _checkpoint(step, database);
+
+    /// <summary>The published store of a database, if open.</summary>
+    internal SqliteDatabaseStore? OpenStore(RebuildLedger.Key key) =>
+        _stores.TryGetValue((key.Organization, key.Project, key.Database), out var store) ? store : null;
+
+    // Read the bridge first: publication installs the store before removing its fresh file identity.
+    internal Ulid? KnownIncarnation(RebuildLedger.Key key) =>
+        _publishing.TryGetValue((key.Organization, key.Project, key.Database), out var incarnation) ? incarnation : OpenStore(key)?.Incarnation;
     private readonly string _pragmas;
 
     private readonly Lock _disposalGate = new();
@@ -252,7 +271,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         TimeSpan remaining;
         lock (_readinessGate)
         {
-            if (Volatile.Read(ref _disposed))
+            if (Volatile.Read(ref _disposed) || Ledger.FailedClosed is not null)
             {
                 return false;
             }
@@ -376,6 +395,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             Member = new LocalReplica(ReplicaId, new MemberClock(HostTime, meter));
             meter.CreateObservableGauge("terrabase.replica.member", () => (long)ReplicaId.Member, description: "This member's number in its replica id.");
             meter.CreateObservableGauge("terrabase.replica.epoch", () => (long)ReplicaId.Epoch, description: "Unclean starts of this member since its number was taken.");
+            Ledger = new RebuildLedger(this, logger, schemaMemory);
 
             // Last construction step: the pool owns rollback of any partially started workers.
             Io = new(threads, queue, meter, createWorker);
@@ -406,6 +426,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             {
                 return false;
             }
+
+            await store.PrepareCopyAsync(cancellationToken).ConfigureAwait(false);
         }
 
         Task<SqliteDatabaseStore> initialization;
@@ -441,6 +463,12 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 return false;
             }
 
+            if (store is not null)
+            {
+                // Before any intent: a refused source copies nothing.
+                ThrowIfCopyRefused(store);
+            }
+
             ReserveIntent(key);
             if (!await Io.WithAdmissionAsync(() => recordIntent(cancellationToken)).ConfigureAwait(false))
             {
@@ -452,7 +480,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 _ = Locate(source!);
                 await CopyDatabaseLockedAsync(store, key, path, cancellationToken).ConfigureAwait(false);
             }
-            else if (!await CreateFileAsync(key.Database, path, cancellationToken).ConfigureAwait(false))
+            else if (!await CreateFileAsync(key.Database, path, cancellationToken, key).ConfigureAwait(false))
             {
                 throw new IOException("a database create target already contains files");
             }
@@ -480,7 +508,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             ThrowIfIntentPending(key);
-            created = await CreateFileAsync(key.Database, path, cancellationToken).ConfigureAwait(false);
+            created = await CreateFileAsync(key.Database, path, cancellationToken, key).ConfigureAwait(false);
             if (created)
             {
                 _checkpoint("create.published", database);
@@ -515,6 +543,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             return false;
         }
 
+        await store.PrepareCopyAsync(cancellationToken).ConfigureAwait(false);
         Task<SqliteDatabaseStore> initialization;
         await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -612,6 +641,12 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null)
     {
         var (key, path) = Locate(database);
+        if (SystemDatabaseExists)
+        {
+            // Opened outside the creation lock, which its opening takes: the deletion forgets the rebuild record under it.
+            _ = await OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         while (true)
         {
             Task initialization;
@@ -646,6 +681,10 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                             store.Dispose();
                         }
 
+                        return true;
+                    }, CancellationToken.None).ConfigureAwait(false);
+                    await Io.RunAsync(() =>
+                    {
                         RejectLink(path);
                         DeleteFileIfPresent(path);
                         _checkpoint("delete.main_file", database);
@@ -663,10 +702,36 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                                     DeleteFileIfPresent(file);
                                 }
                             }
+
+                            // An explicit deletion is the customer's: the rebuild's side copies, salvage working copies and their
+                            // logs go with the database.
+                            foreach (var file in Directory.EnumerateFiles(directory, $".{key.Database}.*.rebuild*"))
+                            {
+                                if (Path.GetFileName(file).Split('.') is ["", var id, var side, var suffix, ..]
+                                    && string.Equals(id, key.Database, StringComparison.Ordinal) && Ulid.TryParse(side, out _)
+                                    && suffix.StartsWith("rebuild", StringComparison.Ordinal))
+                                {
+                                    RejectLink(file);
+                                    DeleteFileIfPresent(file);
+                                }
+                            }
                         }
 
-                        DeleteIfEmpty(directory);
+                        return true;
+                    }, CancellationToken.None).ConfigureAwait(false);
+                    _ = _publishing.TryRemove(key, out _);
+                    // Once no file is left: a crash before this keeps a record with nothing to rebuild until the durable deletion
+                    // runs again, and a rebuild or fault after it finds the database deleted.
+                    _ = await Io.WithAdmissionAsync(async () =>
+                    {
+                        await Ledger.ForgetAsync(database, CancellationToken.None).ConfigureAwait(false);
+                        return true;
+                    }).ConfigureAwait(false);
+                    await Io.RunAsync(() =>
+                    {
+                        DeleteIfEmpty(Path.GetDirectoryName(path)!);
                         DeleteIfEmpty(Path.Combine(_dataDirectory, key.Organization));
+                        return true;
                     }, CancellationToken.None).ConfigureAwait(false);
                     return existed;
                 }
@@ -775,11 +840,18 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 {
                     QueryBudget = QueryBudget,
                     Member = Member,
+                    Ledger = Ledger,
                 };
                 try
                 {
                     await system.BootstrapAsync(openingToken).ConfigureAwait(false);
                     await system.SeedClockAsync(openingToken).ConfigureAwait(false);
+                    // Before anything else uses the system database or any client database writes.
+                    _ = await Io.WithAdmissionAsync(async () =>
+                    {
+                        await Ledger.RecoverAsync(system, openingToken).ConfigureAwait(false);
+                        return true;
+                    }).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -993,8 +1065,9 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             errors.Add(error);
         }
 
-        // Every store closed without error: the next start may keep this replica id. Any other ending raises its epoch.
-        if (errors.Count == 0)
+        // Every store closed without error: the next start may keep this replica id. Any other ending raises its epoch, and a
+        // node that failed closed ends uncleanly, so the next start faults every copy it held a durable writer of.
+        if (errors.Count == 0 && Ledger.FailedClosed is null)
         {
             try
             {
@@ -1005,6 +1078,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 errors.Add(error);
             }
         }
+
+        Ledger.Dispose();
 
         // Even workers that were closing sessions are now gone: only here can another process take over.
         try
@@ -1216,7 +1291,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         }
     }
 
-    // The caller holds _creation and has resolved the source under it.
+    // The caller prepared the source before _creation, holds _creation and has resolved the source under it.
     private async ValueTask<bool> CopyDatabaseLockedAsync(
         SqliteDatabaseStore source, (string Organization, string Project, string Database) key, string path, CancellationToken cancellationToken)
     {
@@ -1226,13 +1301,54 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             throw new InvalidOperationException($"database '{key.Database}' already exists");
         }
 
+        ThrowIfCopyRefused(source);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await PublishAsync(key.Database, path, temporary => source.CopyToAsync(temporary, cancellationToken)).ConfigureAwait(false);
+        ExceptionDispatchInfo? copyError = null;
+        try
+        {
+            await PublishFreshFileAsync(key.Database, path, async temporary =>
+            {
+                Ulid incarnation;
+                try
+                {
+                    incarnation = await source.CopyToAsync(temporary, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception error)
+                {
+                    copyError = ExceptionDispatchInfo.Capture(error);
+                    throw;
+                }
+
+                // Under the source's writer: a commit the copy read recorded any fault before releasing it.
+                _ = await source.WithWritersHeldAsync(() =>
+                {
+                    ThrowIfCopyRefused(source);
+                    return Task.FromResult(true);
+                }, cancellationToken, "a copy checking its source").ConfigureAwait(false);
+                return incarnation;
+            }, key).ConfigureAwait(false);
+        }
+        catch (Exception) when (copyError is not null)
+        {
+            // Private-target cleanup cannot replace the raw copy's original error, including a detected source fault.
+            copyError.Throw();
+            throw;
+        }
         return true;
     }
 
+    // A faulted copy, or one under rebuild, is never laundered into a new database with a fresh incarnation and no record.
+    private void ThrowIfCopyRefused(SqliteDatabaseStore source)
+    {
+        if (Ledger.Refusal(source) is { } refusal)
+        {
+            throw new ReplicaCopyFaultedException(refusal);
+        }
+    }
+
     // Creates and initializes the file unless it exists; true when this call created it. The caller holds _creation.
-    private async Task<bool> CreateFileAsync(string name, string path, CancellationToken cancellationToken)
+    private async Task<bool> CreateFileAsync(
+        string name, string path, CancellationToken cancellationToken, (string Organization, string Project, string Database)? key = null)
     {
         RejectDatabaseLinks(path);
         if (File.Exists(path))
@@ -1240,17 +1356,48 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             return false;
         }
 
+        if (Sidecars.Any(sidecar => File.Exists(path + sidecar) || Directory.Exists(path + sidecar)))
+        {
+            // Another file's log (a move aside that stopped part way): a fresh file must never open beside it.
+            throw new IOException("a database create target already contains files");
+        }
+
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await PublishAsync(name, path, temporary => SqliteDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, cancellationToken))
-            .ConfigureAwait(false);
+        if (key is { } publishing)
+        {
+            await PublishFreshFileAsync(name, path,
+                temporary => SqliteDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, cancellationToken), publishing).ConfigureAwait(false);
+        }
+        else
+        {
+            await PublishAsync(name, path, temporary => SqliteDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, cancellationToken))
+                .ConfigureAwait(false);
+        }
         return true;
     }
 
+    // The caller holds _creation and its admission. Capture the private file's identity before it becomes visible.
+    private Task PublishFreshFileAsync(
+        string name, string path, Func<string, Task<Ulid>> initialize, (string Organization, string Project, string Database) key) =>
+        PublishAsync(name, path, async temporary =>
+        {
+            var incarnation = await initialize(temporary).ConfigureAwait(false);
+            // Fixed-size keys and identities are bounded even while initialization waits for admission or cleanup.
+            if (_publishing.Count >= MaxPendingPublications)
+            {
+                throw new StorageBusyException();
+            }
+
+            _publishing[key] = incarnation;
+        }, key);
+
     // Initializes a private temporary file next to its destination and then moves it into place, so a database is
     // visible only once fully initialized and a failed or cancelled creation leaves nothing behind.
-    private async Task PublishAsync(string name, string path, Func<string, Task> initialize)
+    private async Task PublishAsync(
+        string name, string path, Func<string, Task> initialize, (string Organization, string Project, string Database)? key = null)
     {
         var temporary = Path.Combine(Path.GetDirectoryName(path)!, $".{name}.{EntityIds.New()}.creating");
+        var published = false;
         try
         {
             RejectDatabaseLinks(temporary);
@@ -1258,9 +1405,15 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             RejectDatabaseLinks(temporary);
             RejectDatabaseLinks(path);
             File.Move(temporary, path, overwrite: false);
+            published = true;
         }
         finally
         {
+            if (!published && key is { } publication)
+            {
+                _ = _publishing.TryRemove(publication, out _);
+            }
+
             DeleteFiles(temporary);
         }
     }
@@ -1422,6 +1575,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             Member = Member,
             Checkpoint = _checkpoint,
             RequiresRemoteProof = RequiresRemoteProof,
+            Ledger = Ledger,
         };
         var published = false;
         var admitted = false;
@@ -1435,6 +1589,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             await store.BootstrapAsync(lifetime.Token).ConfigureAwait(false);
             await store.SeedClockAsync(lifetime.Token).ConfigureAwait(false);
             _afterBootstrap?.Invoke(store);
+            // Its copy fault or rebuild record, before it is published: it refuses writes from the start.
+            await Ledger.LoadAsync(store, lifetime.Token).ConfigureAwait(false);
             await _creation.WaitAsync(lifetime.Token).ConfigureAwait(false);
             try
             {
@@ -1443,10 +1599,21 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 _stores[key] = store;
                 published = true;
                 _initializing.Remove(key);
+                _ = _publishing.TryRemove(key, out _);
             }
             finally
             {
                 _creation.Release();
+            }
+
+            try
+            {
+                await Ledger.SettleAsync(store, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                // Published unsettled: it refuses ordinary writes, and each write settles it again first.
+                _logger.ZLogWarning($"A database's rebuild record could not be read again after it opened; its writes retry it: {error.GetType().Name:@Error}");
             }
 
             return store;
@@ -1471,6 +1638,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                         try
                         {
                             _initializing.Remove(key);
+                            // The fresh file still exists after a failed open: retain its bounded identity until retry or deletion.
                         }
                         finally
                         {

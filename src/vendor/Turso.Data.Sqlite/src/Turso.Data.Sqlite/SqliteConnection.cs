@@ -16,6 +16,9 @@ public partial class SqliteConnection : DbConnection
     private static readonly object SharedMemoryLock = new();
     private static readonly Dictionary<string, int> SharedMemoryReferences = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>The local owning copy's refusal; observes runtime storage state, not connection-string configuration.</summary>
+    public Func<string?>? CloseRefusal { get; set; }
+
     private TursoDatabaseHandle? _database;
     private TursoConnection? _managedConnection;
     private bool _ownsManagedConnection;
@@ -173,6 +176,7 @@ public partial class SqliteConnection : DbConnection
             _database = CanPool(_connectionOptions, filename, sharedMemoryPath)
                 ? SqliteDatabasePool.Connect(filename)
                 : TursoBindings.OpenDatabase(filename);
+            _database.CloseRefusal = CloseRefusal;
             _dataSource = filename;
             _readOnly = readOnly;
             _sharedMemoryPath = sharedMemoryPath;
@@ -186,11 +190,15 @@ public partial class SqliteConnection : DbConnection
         }
         catch (TursoException ex)
         {
+            if (ex is TursoNativeException { StatusCode: 132 or 133 or 134 })
+                _database?.Deinitialize();
             CleanupFailedOpen(sharedMemoryPath);
             throw ToSqliteException(ex);
         }
-        catch (SqliteException)
+        catch (SqliteException ex)
         {
+            if (ex.SqliteErrorCode is 10 or 11 or 26)
+                _database?.Deinitialize();
             CleanupFailedOpen(sharedMemoryPath);
             throw;
         }
@@ -1259,6 +1267,7 @@ public partial class SqliteConnection : DbConnection
     private static SqliteException ToSqliteException(TursoException exception)
     {
         var message = exception.Message;
-        return new SqliteException(Properties.Resources.SqliteNativeError(SQLITE_ERROR, message), SQLITE_ERROR);
+        var code = SqliteCommand.GetNativeSqliteErrorCode(exception);
+        return new SqliteException(Properties.Resources.SqliteNativeError(code, message), code);
     }
 }
