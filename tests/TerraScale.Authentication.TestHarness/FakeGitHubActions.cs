@@ -1,3 +1,8 @@
+// TerraBase.Slow links this file beside ts-auth referenced under an alias (its Program would clash with TerraBase's).
+#if TSAUTH_ALIAS
+extern alias tsauth;
+#endif
+
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -6,7 +11,11 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
+#if TSAUTH_ALIAS
+using tsauth::TerraScale.Authentication.Features.Platform;
+#else
 using TerraScale.Authentication.Features.Platform;
+#endif
 
 namespace TerraScale.Authentication.Tests;
 

@@ -226,7 +226,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
 
         var scopes = requested.IsEmpty ? GitHubActionsGrant.Scopes : [.. requested];
         logger.ZLogWarning($"Audit: GitHub Actions project token for organization {organization}, project {project}: run {runId} attempt {Claim(token, "run_attempt")}, sha {Claim(token, "sha")}, jti {tokenId}, scopes {string.Join(' ', scopes)}");
-        return SignIn(Identity($"github-actions:{GitHubActionsGrant.RepositoryId}:{runId}", organization, project, scopes, Lifetime));
+        // TerraBase takes only a ULID sub, as every client-credentials sub (the client id); the run stays in the audit line above.
+        return SignIn(Identity(GitHubActionsGrant.ClientId, organization, project, scopes, Lifetime));
     }
 
     // GitHub documents job_workflow_ref only for jobs of a reusable workflow, where it names the called workflow: absent is a
