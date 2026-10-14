@@ -1,6 +1,8 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Stripe;
 using TUnit.Core;
 
@@ -116,6 +118,38 @@ public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
             .Because("Duplicate and out-of-order stale snapshots cannot downgrade current provider state.");
         await Assert.That(organization.GetProperty("billingStatus").GetString()).IsEqualTo("active")
             .Because("A validated paid-plan trial keeps the organization's existing active billing entitlement.");
+    }
+
+    [Test]
+    public async Task KnownLengthOversizedWebhookIsDrainedAfterEarlyRejection()
+    {
+        // Raw HTTP pins the order HttpClient races: 413 arrives, then the sender finishes its upload.
+        using var tcp = new TcpClient();
+        await tcp.ConnectAsync(fixture.Origin.Host, fixture.Origin.Port);
+        var stream = tcp.GetStream();
+        const int length = (1 << 20) + 1;
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(
+            $"POST {WebhookPaths[0]} HTTP/1.1\r\nHost: {fixture.Origin.Authority}\r\nContent-Type: application/json\r\nStripe-Signature: t=1,v1=forged\r\nContent-Length: {length}\r\n\r\n"));
+        await Assert.That(await ReadResponseHeadAsync(stream)).StartsWith("HTTP/1.1 413")
+            .Because("A known oversized length is rejected before any body byte is read.");
+        await stream.WriteAsync(new byte[length]);
+        await stream.WriteAsync(Encoding.ASCII.GetBytes($"GET /readyz HTTP/1.1\r\nHost: {fixture.Origin.Authority}\r\n\r\n"));
+        await Assert.That(await ReadResponseHeadAsync(stream)).StartsWith("HTTP/1.1 200")
+            .Because("The rejected upload is drained within the bounded allowance instead of resetting the sender.");
+    }
+
+    private static async Task<string> ReadResponseHeadAsync(NetworkStream stream)
+    {
+        var head = new StringBuilder();
+        var one = new byte[1];
+        while (!head.ToString().EndsWith("\r\n\r\n", StringComparison.Ordinal))
+        {
+            if (await stream.ReadAsync(one) == 0) throw new IOException("Connection closed after " + head.Length + " response bytes.");
+            head.Append((char)one[0]);
+        }
+        var contentLength = Regex.Match(head.ToString(), "Content-Length: (\\d+)", RegexOptions.IgnoreCase);
+        if (contentLength.Success) await stream.ReadExactlyAsync(new byte[int.Parse(contentLength.Groups[1].Value)]);
+        return head.ToString();
     }
 
     private static async Task<HttpResponseMessage> SendWebhookAsync(HttpClient client, string path, string body, string? signature, bool chunked = false)
