@@ -48,8 +48,8 @@
               <span class="code__bullet-check">
                 <Icon name="check" className="code__bullet-icon" />
               </span>
-              {#if bullet.endsWith('gru, sjc')}
-                <span>{bullet.slice(0, -8)}</span><RegionFlag code="gru" /><RegionFlag code="sjc" />
+              {#if bullet.endsWith('gru, sjc, fra')}
+                <span>{bullet.slice(0, -13)}</span><RegionFlag code="gru" /><RegionFlag code="sjc" /><RegionFlag code="fra" />
               {:else}
                 <span>{bullet}</span>
               {/if}

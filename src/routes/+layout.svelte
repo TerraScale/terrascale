@@ -11,7 +11,7 @@
     '/': {
       title: 'TerraScale Public Alpha | Regional Document Database',
       description:
-        'TerraScale Public Alpha provides a typed document database with asynchronous replication across São Paulo and the San Francisco Bay Area.',
+        'TerraScale Public Alpha provides a typed document database with asynchronous replication across São Paulo, the San Francisco Bay Area, and Frankfurt.',
     },
     '/about': {
       title: 'About TerraScale',

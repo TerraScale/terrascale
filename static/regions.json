@@ -21,6 +21,16 @@
       "apiHost": "api.terrascale.tech",
       "lat": 37.34,
       "lng": -121.89
+    },
+    {
+      "id": "fra",
+      "name": "Frankfurt",
+      "country": "DE",
+      "provider": "fly",
+      "providerRegion": "fra",
+      "apiHost": "api.terrascale.tech",
+      "lat": 50.11,
+      "lng": 8.68
     }
   ]
 }
