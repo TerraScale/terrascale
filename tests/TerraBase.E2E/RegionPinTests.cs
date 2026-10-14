@@ -125,8 +125,11 @@ public sealed class RegionPinTests
         var replays = new List<LocalFlyProxy.Replay>();
         using var gru = NodeClient(Cluster.Gru, seen, marker, fallback);
         using var sjc = NodeClient(Cluster.Sjc, seen, marker, fallback);
-        HttpClient Node(string region) => region == Cluster.Sjc ? sjc
-            : issuerUp ? gru : throw new HttpRequestException("gru is down", null, HttpStatusCode.ServiceUnavailable);
+        HttpClient Node(string region)
+        {
+            return region == Cluster.Sjc ? sjc
+                : issuerUp ? gru : throw new HttpRequestException("gru is down", null, HttpStatusCode.ServiceUnavailable);
+        }
         using var client = new HttpClient(new LocalFlyProxy(Cluster.Sjc, Node, machine => machine == "m-gru" ? Cluster.Gru : null, replays.Add))
         {
             BaseAddress = new Uri("http://fly.test"),
