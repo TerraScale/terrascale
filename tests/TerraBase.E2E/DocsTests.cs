@@ -37,6 +37,10 @@ public sealed class DocsTests
     [Scenario(Nodes.Harness)]
     [Arguments("{\"error\":{\"code\":\"write_outcome_unknown\",\"message\":\"m\",\"region\":\"gru\",\"machine\":\"m-gru\"}}")]
     [Arguments("{\"error\":{\"code\":\"write_outcome_unknown\",\"message\":\"remote_region_unavailable\"}}")]
+    [Arguments("{\"error\":\"remote_region_unavailable\"}")]
+    [Arguments("[\"remote_region_unavailable\"]")]
+    [Arguments("{\"error\":{\"code\":[\"remote_region_unavailable\"]}}")]
+    [Arguments("{\"code\":\"remote_region_unavailable\"}")]
     [Arguments("remote_region_unavailable")]
     [Arguments("")]
     public async Task Any_other_503_is_sent_exactly_once(string body)

@@ -797,9 +797,13 @@ public sealed class Cluster : IAsyncDisposable
         public Uri MetricsAddress(string region) =>
             (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.MetricsAddress;
 
-        public Task<JsonElement> ReplicationAsync(string region, CancellationToken token) =>
-            (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.Client
-                .GetFromJsonAsync<JsonElement>(new Uri("/replication", UriKind.Relative), token);
+        public async Task<JsonElement> ReplicationAsync(string region, CancellationToken token)
+        {
+            var client = (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.Client;
+            using var response = await client.GetAsync(new Uri("/replication", UriKind.Relative), token);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<JsonElement>(token);
+        }
 
         public string ProjectPath => $"/v1/projects/{_project}";
 
