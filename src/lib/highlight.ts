@@ -1,4 +1,4 @@
-export type Lang = 'typescript' | 'csharp'
+export type Lang = 'typescript' | 'csharp' | 'json' | 'shell'
 
 export type Token = { text: string; className?: string }
 
@@ -7,10 +7,19 @@ const KEYWORDS: Record<Lang, RegExp> = {
     /\b(import|from|const|let|var|async|await|function|return|if|else|new|class|extends|export|default|interface|type|as|in|of)\b/g,
   csharp:
     /\b(using|namespace|class|struct|interface|enum|public|private|protected|internal|static|readonly|const|var|new|return|if|else|for|foreach|in|while|switch|case|default|break|continue|async|await|null|true|false|this|base|void)\b/g,
+  json: /\b(true|false|null)\b/g,
+  shell: /^(claude|curl)\b/gm,
 }
 
 const STRINGS = /(["'`])(?:(?=(\\?))\2.)*?\1/g
-const COMMENTS = /(\/\/[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)/g
+const CODE_COMMENTS = /(\/\/[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)/g
+// JSON has no comments, and URLs in it and in shell lines contain `//`.
+const COMMENTS: Record<Lang, RegExp> = {
+  typescript: CODE_COMMENTS,
+  csharp: CODE_COMMENTS,
+  json: /(?!)/g,
+  shell: /^#[^\n]*/gm,
+}
 const NUMBERS = /\b(\d+(?:\.\d+)?)\b/g
 const FNS = /\b([a-zA-Z_][\w]*)(?=\()/g
 
@@ -38,7 +47,7 @@ export function tokenize(code: string, lang: Lang): Token[] {
     }
   }
 
-  mark(COMMENTS, 'tok-comment')
+  mark(COMMENTS[lang], 'tok-comment')
   mark(STRINGS, 'tok-string')
   mark(KEYWORDS[lang] || KEYWORDS.typescript, 'tok-keyword')
   mark(FNS, 'tok-fn')
@@ -174,9 +183,32 @@ static class DocumentsExample
         return await response.Content.ReadAsStringAsync(token);
     }
 }`,
+  // Server config from ts-dashboard docs/mcp.md; tokens come from Profile → Access tokens.
+  json: `{
+  "mcpServers": {
+    "terrascale": {
+      "type": "http",
+      "url": "https://mcp.terrascale.tech/",
+      "headers": { "Authorization": "Bearer tspat_..." }
+    }
+  }
+}`,
+  shell: `# Add the TerraScale MCP server to Claude Code
+claude mcp add --transport http terrascale https://mcp.terrascale.tech/ \\
+  --header "Authorization: Bearer $TERRASCALE_PAT"
+
+# Then ask in plain language
+claude -p "Which of my TerraScale databases replicate to fra?"
+
+# Or let the agent call the HTTP API from its shell
+curl https://api.terrascale.tech/v1/projects/$PROJECT/databases/app/sql \\
+  -H "Authorization: Bearer $TERRABASE_API_KEY" \\
+  --json '{"sql": "SELECT email, seats FROM customers WHERE seats >= 10 LIMIT 25"}'`,
 }
 
-export const LANG_META: Array<{ id: Lang; label: string; ext: string; icon: string }> = [
-  { id: 'csharp', label: 'C#', ext: 'cs', icon: '/language-icons/csharp.svg' },
-  { id: 'typescript', label: 'TypeScript', ext: 'ts', icon: '/language-icons/typescript.svg' },
+export const LANG_META: Array<{ id: Lang; label: string; file: string; icon?: string }> = [
+  { id: 'csharp', label: 'C#', file: '~/app/queries.cs', icon: '/language-icons/csharp.svg' },
+  { id: 'typescript', label: 'TypeScript', file: '~/app/queries.ts', icon: '/language-icons/typescript.svg' },
+  { id: 'json', label: 'MCP', file: '~/app/.mcp.json' },
+  { id: 'shell', label: 'CLI', file: '~/app $' },
 ]

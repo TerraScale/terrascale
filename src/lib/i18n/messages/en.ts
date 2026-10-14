@@ -84,27 +84,32 @@ export const en = {
     titleLead: 'Public Alpha,',
     titleAccent: 'with explicit boundaries',
     subtitle:
-      'The launch contract covers document data, three selectable regions, typed clients, and customer-visible health without an uptime commitment.',
+      'The launch contract covers document data, three serving regions, typed clients, and customer-visible health without an uptime commitment.',
     items: [
       {
-        title: 'Typed Data API',
-        text: 'Create databases, repositories, schemas, and documents, then query with TQL through one public API.',
-        bullets: ['Repositories', 'TQL', 'SDK clients'],
+        title: 'Data',
+        text: 'Databases hold collections of JSON documents, each with an optional schema. Query with JSON filters or read-only SQL: SELECT, WHERE, ORDER BY, and up to 1,000 rows per statement.',
+        bullets: ['Collections', 'JSON filters', 'Read-only SQL'],
       },
       {
-        title: 'Regional Routing',
-        text: 'The global endpoint chooses the nearest healthy selected region. Strict regional endpoints never serve from an unselected region.',
-        bullets: ['Global endpoint', 'Strict regional endpoints', 'Selected regions'],
-      },
-      {
-        title: 'Launch Regions',
-        text: 'Choose São Paulo, the San Francisco Bay Area, or Frankfurt during Public Alpha.',
+        title: 'Regions',
+        text: 'São Paulo, the San Francisco Bay Area, and Frankfurt serve today. Each database lives in a home region and replicates in full to the other regions you select.',
         bullets: ['gru', 'sjc', 'fra'],
       },
       {
-        title: 'Measured Signals',
-        text: 'Replication health, convergence, conflicts, API latency, and geographic latency estimates remain separate values. Customer content stays in selected regions. Customer traffic requires TLS 1.2 or newer, data at rest uses qualified encryption, and every request still requires authorization.',
-        bullets: ['Observation time', 'Evidence labels', 'No bounded-lag promise'],
+        title: 'Routing',
+        text: 'The global endpoint answers from the nearest healthy region that holds your database. Strict regional endpoints never serve from a region you did not select.',
+        bullets: ['Global endpoint', 'Strict regional endpoints'],
+      },
+      {
+        title: 'Health',
+        text: 'Replication is asynchronous. Lag, convergence, conflicts, and API latency are published as separate measured values with their observation time. There is no bounded-lag promise, uptime percentage, or SLA.',
+        bullets: ['Asynchronous replication', 'Observation time', 'No SLA'],
+      },
+      {
+        title: 'Security',
+        text: 'Customer traffic requires TLS 1.2 or newer, data at rest uses qualified encryption, and every request requires authorization. Customer content stays in the regions you select.',
+        bullets: ['TLS 1.2+', 'Encryption at rest', 'Per-request authorization'],
       },
     ],
   },
@@ -113,17 +118,23 @@ export const en = {
     eyebrow: 'Developer SDK',
     headlineLead: 'Query your data',
     headlineAccent: 'in the language you love',
-    text: 'First-class C# and TypeScript SDKs target the same public HTTP routes used by the dashboard, with generated OpenAPI models underneath.',
-    bullets: [
-      'Generated OpenAPI contract catalog',
-      'Typed C# and TypeScript clients',
-      'Dashboard uses the public SDK boundary',
-      'Launch-region inputs for gru, sjc, fra',
-    ],
+    text: 'Typed C# and TypeScript SDKs call the same public HTTP API the dashboard uses, with models generated from its OpenAPI contract.',
+    bullets: ['Typed C# and TypeScript clients', 'Generated OpenAPI models', 'JSON filters or read-only SQL'],
+    agent: {
+      title: 'Or ask your favorite AI agent to do it for you',
+      text: 'We support CLI and MCP. Connect Claude Code, Cursor, or any MCP client to the TerraScale MCP server with a personal access token. The agent acts with your roles, and every call is checked again. Agents can also call the HTTP API from a shell.',
+      promptsLabel: 'Try asking',
+      prompts: [
+        'List my databases and the regions each one serves.',
+        'Find customers with 10 or more seats in the app database.',
+        'How much of this month’s operation-unit allowance have we used?',
+      ],
+      toolsLabel: 'Some MCP tools',
+    },
     copy: 'Copy',
     copied: 'Copied',
     copyAria: 'Copy code',
-    tablistLabel: 'Language examples',
+    tablistLabel: 'Code examples',
   },
 
   cta: {
