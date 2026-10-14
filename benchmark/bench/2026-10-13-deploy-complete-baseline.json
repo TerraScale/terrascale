@@ -1,0 +1,276 @@
+{
+  "run_url": "https://github.com/TerraScale/terrascale/actions/runs/38470728889",
+  "revision": "ad2b9ee841379f7308a416bcb3f0838c60353714",
+  "merged_at": "2026-10-13T21:27:18Z",
+  "all_six_live_at": "2026-10-13T21:42:06Z",
+  "merge_to_all_regions_seconds": 888,
+  "run_conclusion": "failure",
+  "jobs": [
+    {
+      "id": 115548796992,
+      "name": "changes",
+      "started_at": "2026-10-13T21:29:48Z",
+      "completed_at": "2026-10-13T21:29:56Z",
+      "wall_seconds": 8.0,
+      "conclusion": "success"
+    },
+    {
+      "id": 115548797510,
+      "name": "deploy",
+      "started_at": "2026-10-13T21:31:14Z",
+      "completed_at": "2026-10-13T21:42:20Z",
+      "wall_seconds": 666.0,
+      "conclusion": "success"
+    },
+    {
+      "id": 115548799512,
+      "name": "preview",
+      "started_at": "2026-10-13T21:27:22Z",
+      "completed_at": "2026-10-13T21:27:21Z",
+      "wall_seconds": null,
+      "conclusion": "skipped"
+    },
+    {
+      "id": 115549934645,
+      "name": "terrabase",
+      "started_at": "2026-10-13T21:32:21Z",
+      "completed_at": "2026-10-13T21:39:33Z",
+      "wall_seconds": 432.0,
+      "conclusion": "failure"
+    },
+    {
+      "id": 115549934790,
+      "name": "libs",
+      "started_at": "2026-10-13T21:32:24Z",
+      "completed_at": "2026-10-13T21:35:03Z",
+      "wall_seconds": 159.0,
+      "conclusion": "success"
+    },
+    {
+      "id": 115549934813,
+      "name": "auth",
+      "started_at": "2026-10-13T21:36:57Z",
+      "completed_at": "2026-10-13T21:44:06Z",
+      "wall_seconds": 429.0,
+      "conclusion": "success"
+    },
+    {
+      "id": 115555177104,
+      "name": "e2e",
+      "started_at": "2026-10-13T21:46:55Z",
+      "completed_at": "2026-10-13T21:52:46Z",
+      "wall_seconds": 351.0,
+      "conclusion": "success"
+    },
+    {
+      "id": 115555913232,
+      "name": "test",
+      "started_at": "2026-10-13T21:47:24Z",
+      "completed_at": "2026-10-13T21:47:32Z",
+      "wall_seconds": 8.0,
+      "conclusion": "failure"
+    },
+    {
+      "id": 115557326007,
+      "name": "slow",
+      "started_at": "2026-10-13T21:47:33Z",
+      "completed_at": "2026-10-13T21:47:32Z",
+      "wall_seconds": null,
+      "conclusion": "skipped"
+    }
+  ],
+  "regional_rollout": [
+    {
+      "app": "ts-terrabase",
+      "region": "gru",
+      "machine_id": "1857503f017528",
+      "revision": "ad2b9ee841379f7308a416bcb3f0838c60353714",
+      "started_at": "2026-10-13T21:36:20Z",
+      "live_at": "2026-10-13T21:37:13Z",
+      "wall_seconds": 53
+    },
+    {
+      "app": "ts-terrabase",
+      "region": "sjc",
+      "machine_id": "847310c2ee95d8",
+      "revision": "ad2b9ee841379f7308a416bcb3f0838c60353714",
+      "started_at": "2026-10-13T21:37:13Z",
+      "live_at": "2026-10-13T21:37:55Z",
+      "wall_seconds": 42
+    },
+    {
+      "app": "ts-terrabase",
+      "region": "fra",
+      "machine_id": "286557e5b45498",
+      "revision": "ad2b9ee841379f7308a416bcb3f0838c60353714",
+      "started_at": "2026-10-13T21:37:55Z",
+      "live_at": "2026-10-13T21:38:38Z",
+      "wall_seconds": 43
+    },
+    {
+      "app": "ts-auth",
+      "region": "gru",
+      "machine_id": "8747930a042038",
+      "revision": "ad2b9ee841379f7308a416bcb3f0838c60353714",
+      "started_at": "2026-10-13T21:40:37Z",
+      "live_at": "2026-10-13T21:41:10Z",
+      "wall_seconds": 33
+    },
+    {
+      "app": "ts-auth",
+      "region": "sjc",
+      "machine_id": "850e45b4142318",
+      "revision": "ad2b9ee841379f7308a416bcb3f0838c60353714",
+      "started_at": "2026-10-13T21:41:10Z",
+      "live_at": "2026-10-13T21:41:40Z",
+      "wall_seconds": 30
+    },
+    {
+      "app": "ts-auth",
+      "region": "fra",
+      "machine_id": "d8921e1b3e5758",
+      "revision": "ad2b9ee841379f7308a416bcb3f0838c60353714",
+      "started_at": "2026-10-13T21:41:40Z",
+      "live_at": "2026-10-13T21:42:06Z",
+      "wall_seconds": 26
+    }
+  ],
+  "later_pinned_probes": [
+    {
+      "app": "ts-terrabase",
+      "region": "gru",
+      "machine_id": "1857503f017528",
+      "probes": [
+        {
+          "path": "/healthz",
+          "utc": "2026-10-13T21:55:50Z",
+          "httpStatus": 200
+        },
+        {
+          "path": "/readyz",
+          "utc": "2026-10-13T21:55:50Z",
+          "httpStatus": 200
+        },
+        {
+          "path": "/backupz",
+          "utc": "2026-10-13T21:55:50Z",
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "app": "ts-terrabase",
+      "region": "sjc",
+      "machine_id": "847310c2ee95d8",
+      "probes": [
+        {
+          "path": "/healthz",
+          "utc": "2026-10-13T21:55:51Z",
+          "httpStatus": 200
+        },
+        {
+          "path": "/readyz",
+          "utc": "2026-10-13T21:55:51Z",
+          "httpStatus": 200
+        },
+        {
+          "path": "/backupz",
+          "utc": "2026-10-13T21:55:51Z",
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "app": "ts-terrabase",
+      "region": "fra",
+      "machine_id": "286557e5b45498",
+      "probes": [
+        {
+          "path": "/healthz",
+          "utc": "2026-10-13T21:55:52Z",
+          "httpStatus": 200
+        },
+        {
+          "path": "/readyz",
+          "utc": "2026-10-13T21:55:52Z",
+          "httpStatus": 200
+        },
+        {
+          "path": "/backupz",
+          "utc": "2026-10-13T21:55:53Z",
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "app": "ts-auth",
+      "region": "gru",
+      "machine_id": "8747930a042038",
+      "probes": [
+        {
+          "path": "/healthz",
+          "utc": "2026-10-13T21:55:56Z",
+          "httpStatus": 200
+        },
+        {
+          "path": "/readyz",
+          "utc": "2026-10-13T21:55:56Z",
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "app": "ts-auth",
+      "region": "sjc",
+      "machine_id": "850e45b4142318",
+      "probes": [
+        {
+          "path": "/healthz",
+          "utc": "2026-10-13T21:55:57Z",
+          "httpStatus": 200
+        },
+        {
+          "path": "/readyz",
+          "utc": "2026-10-13T21:55:57Z",
+          "httpStatus": 200
+        }
+      ]
+    },
+    {
+      "app": "ts-auth",
+      "region": "fra",
+      "machine_id": "d8921e1b3e5758",
+      "probes": [
+        {
+          "path": "/healthz",
+          "utc": "2026-10-13T21:55:57Z",
+          "httpStatus": 200
+        },
+        {
+          "path": "/readyz",
+          "utc": "2026-10-13T21:55:58Z",
+          "httpStatus": 200
+        }
+      ]
+    }
+  ],
+  "suite_results": {
+    "terrabase_fast": {
+      "total": 1593,
+      "passed": 1592,
+      "failed": 1
+    },
+    "slow": "skipped",
+    "live_replication_matrix": {
+      "total": 13,
+      "passed": 13,
+      "failed": 0
+    },
+    "full_e2e": {
+      "total": 159,
+      "passed": 105,
+      "failed": 5,
+      "skipped": 49
+    }
+  }
+}

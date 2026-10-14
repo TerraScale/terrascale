@@ -1,0 +1,183 @@
+{
+  "pr": "https://github.com/TerraScale/terrascale/pull/275",
+  "mergeSha": "67364c42695940bfc7611973772e60392fe45f99",
+  "mergeTime": "2026-10-14T05:24:43Z",
+  "jobs": [
+    {
+      "name": "changes",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-10-14T04:54:27Z",
+      "completedAt": "2026-10-14T04:54:35Z",
+      "url": "https://github.com/TerraScale/terrascale/actions/runs/38513716906/job/115687715389",
+      "seconds": 8.0
+    },
+    {
+      "name": "deploy",
+      "status": "completed",
+      "conclusion": "skipped",
+      "startedAt": "2026-10-14T04:53:14Z",
+      "completedAt": "2026-10-14T04:53:14Z",
+      "url": "https://github.com/TerraScale/terrascale/actions/runs/38513716906/job/115687716802",
+      "seconds": 0.0
+    },
+    {
+      "name": "e2e",
+      "status": "completed",
+      "conclusion": "skipped",
+      "startedAt": "2026-10-14T04:53:14Z",
+      "completedAt": "2026-10-14T04:53:14Z",
+      "url": "https://github.com/TerraScale/terrascale/actions/runs/38513716906/job/115687716851",
+      "seconds": 0.0
+    },
+    {
+      "name": "libs",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-10-14T04:56:59Z",
+      "completedAt": "2026-10-14T04:59:28Z",
+      "url": "https://github.com/TerraScale/terrascale/actions/runs/38513716906/job/115688069417",
+      "seconds": 149.0
+    },
+    {
+      "name": "terrabase",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-10-14T04:58:03Z",
+      "completedAt": "2026-10-14T05:07:36Z",
+      "url": "https://github.com/TerraScale/terrascale/actions/runs/38513716906/job/115688069501",
+      "seconds": 573.0
+    },
+    {
+      "name": "auth",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-10-14T04:58:41Z",
+      "completedAt": "2026-10-14T05:07:11Z",
+      "url": "https://github.com/TerraScale/terrascale/actions/runs/38513716906/job/115688069568",
+      "seconds": 510.0
+    },
+    {
+      "name": "slow",
+      "status": "completed",
+      "conclusion": "skipped",
+      "startedAt": "2026-10-14T04:54:36Z",
+      "completedAt": "2026-10-14T04:54:35Z",
+      "url": "https://github.com/TerraScale/terrascale/actions/runs/38513716906/job/115688071323",
+      "seconds": -1.0
+    },
+    {
+      "name": "test",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-10-14T05:08:36Z",
+      "completedAt": "2026-10-14T05:08:54Z",
+      "url": "https://github.com/TerraScale/terrascale/actions/runs/38513716906/job/115691590776",
+      "seconds": 18.0
+    },
+    {
+      "name": "preview",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-10-14T05:16:01Z",
+      "completedAt": "2026-10-14T05:22:58Z",
+      "url": "https://github.com/TerraScale/terrascale/actions/runs/38513716906/job/115691945987",
+      "seconds": 417.0
+    }
+  ],
+  "nextMainPush": {
+    "sha": "b3e5ed4615d378bb8e85a1fb0c4f6e9e7dbc8b4c",
+    "run": "https://github.com/TerraScale/terrascale/actions/runs/38516648367",
+    "createdAt": "2026-10-14T05:26:29Z"
+  },
+  "superseded": {
+    "run": "https://github.com/TerraScale/terrascale/actions/runs/38516490807",
+    "cancelledAt": "2026-10-14T05:26:30Z",
+    "secondsAfterNewPush": 1
+  },
+  "preview": {
+    "app": "ts-pr-275",
+    "ready": [
+      {
+        "origin": "https://ts-pr-275.fly.dev",
+        "start": "2026-10-14T05:24:41.461393+00:00",
+        "end": "2026-10-14T05:24:41.535303+00:00",
+        "httpStatus": 200,
+        "body": {
+          "status": "ready",
+          "version": "0.1.0-alpha+41477205c55bcf1527c8843e0d02986c08ae7783"
+        }
+      },
+      {
+        "origin": "https://ts-pr-275.fly.dev:8443",
+        "start": "2026-10-14T05:24:41.535366+00:00",
+        "end": "2026-10-14T05:24:41.622413+00:00",
+        "httpStatus": 200,
+        "body": {
+          "status": "ready",
+          "version": "0.1.0",
+          "region": "gru",
+          "storageFormat": "8-696a6112a2a6",
+          "revision": "41477205c55bcf1527c8843e0d02986c08ae7783",
+          "machine": "84ed495b26ed28"
+        }
+      }
+    ],
+    "machine": [
+      {
+        "id": "84ed495b26ed28",
+        "state": "started",
+        "region": "gru",
+        "guest": {
+          "cpu_kind": "shared",
+          "cpus": 1,
+          "memory_mb": 1024
+        },
+        "containers": [
+          {
+            "name": "terrabase",
+            "image": "registry.fly.io/ts-pr-275:terrabase-41477205c55bcf1527c8843e0d02986c08ae7783",
+            "secretNames": [
+              "AWS_ENDPOINT_URL_S3",
+              "AWS_REGION",
+              "BUCKET_NAME",
+              "AWS_ACCESS_KEY_ID",
+              "AWS_SECRET_ACCESS_KEY",
+              "TERRABASE_MASTER_KEY",
+              "TERRABASE_PEER_SECRET"
+            ]
+          },
+          {
+            "name": "ts-auth",
+            "image": "registry.fly.io/ts-pr-275:ts-auth-41477205c55bcf1527c8843e0d02986c08ae7783",
+            "secretNames": [
+              "TS_AUTH_MASTER_KEY",
+              "TS_AUTH_AUDIT_SIGNING_KEY",
+              "TERRABASE_PEER_SECRET"
+            ]
+          }
+        ],
+        "mounts": [
+          {
+            "encrypted": true,
+            "path": "/data",
+            "size_gb": 1,
+            "volume": "vol_42k97p7y3mglkp94",
+            "name": "data"
+          }
+        ]
+      }
+    ],
+    "cleanupRun": "https://github.com/TerraScale/terrascale/actions/runs/38516493385",
+    "bucketDestroyedAt": "2026-10-14T05:25:59.8202068Z",
+    "appDestroyedAt": "2026-10-14T05:26:02.7696641Z",
+    "absence": {
+      "preview275Present": false
+    }
+  },
+  "limits": [
+    "This proves native workflow supersession and ready-then-close preview cleanup; it does not qualify the new main production rollout or its live E2E.",
+    "Slow and production E2E are skipped on this PR; skipped checks are not passing suites.",
+    "No completed after measurement of merge to all six regional product deployments is available yet."
+  ]
+}
