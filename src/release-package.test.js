@@ -52,7 +52,11 @@ const client = createTerraBaseClient({ project: "01ARZ3NDEKTSV4RRFFQ69G5FA1", ba
 if (!(client instanceof TerraBaseV1Client) || createTerraBaseClient !== createTerraBaseV1Client) throw new Error("Multiple client implementations.");
 const db = client.database("main");
 const collection = db.collection("users");
-for (const name of ["get", "put", "create", "patch", "delete", "query", "list", "getSchema", "putSchema", "deleteSchema"] as const) if (typeof collection[name] !== "function") throw new Error(name);
+for (const name of ["get", "put", "create", "patch", "delete", "query", "list", "getSchema", "putSchema", "deleteSchema", "subscribeShape", "decryptShapeObject"] as const) if (typeof collection[name] !== "function") throw new Error(name);
+const subscribe: (request?: { where?: import("@terrascale/sdk").V1Filter }, options?: import("@terrascale/sdk").V1ShapeSubscribeOptions) => import("@terrascale/sdk").V1ShapeSubscription = collection.subscribeShape.bind(collection);
+const decrypt: (bytes: Uint8Array, position: import("@terrascale/sdk").V1SealedShapePosition) => Promise<import("@terrascale/sdk").V1ShapePage> = collection.decryptShapeObject.bind(collection);
+const shapeState: (subscription: import("@terrascale/sdk").V1ShapeSubscription) => Map<string, import("@terrascale/sdk").V1ShapeDocument> = subscription => subscription.state;
+if (!subscribe || !decrypt || !shapeState) throw new Error("Missing typed shape APIs.");
 for (const name of ["sql", "checkSql", "explainSql", "changes"] as const) if (typeof db[name] !== "function") throw new Error(name);
 for (const name of ["create", "list", "get", "update", "delete", "branch"] as const) if (typeof client.databases[name] !== "function") throw new Error(name);
 const sql: (statement: string, options?: import("@terrascale/sdk").V1RequestOptions) => Promise<import("@terrascale/sdk").V1SqlResult> = db.sql.bind(db);

@@ -8,6 +8,8 @@ import { isJsonPointer, requireFilter, requirePath } from "./filter.js";
 import { requireDocumentId, requireName, requireVersion } from "./ids.js";
 import { assertJsonObject, assertJsonValue, ExactDecimal, stringifyExactJson } from "./json.js";
 import { readShape } from "./shapes.js";
+import { V1ShapeSubscription } from "./shape-subscription.js";
+import { decryptSealedShapePage } from "./shape-reader.js";
 import { runSql, checkSql } from "./sql.js";
 import { streamChanges } from "./changes.js";
 import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema } from "./catalog.js";
@@ -445,6 +447,28 @@ export class V1Collection {
    */
   shape(request = {}, options = {}) {
     return readShape(this.#transport, this.#params, request, options.signal);
+  }
+
+  /**
+   * Subscribe to the free-read v1 protocol. Stop with close() or the request signal.
+   * @param {{where?: V1Filter | undefined}} [request]
+   * @param {import("./shape-subscription.js").V1ShapeSubscribeOptions} [options]
+   * @returns {V1ShapeSubscription}
+   */
+  subscribeShape(request = {}, options = {}) {
+    return new V1ShapeSubscription(this.#transport, this.#params, request, options);
+  }
+
+  /**
+   * Verify a complete TBS1 object using its authenticated epoch key. Applies no state.
+   * Object delivery through manifests is pending the producer's FR-22 contract.
+   * @param {Uint8Array} bytes
+   * @param {import("./shape-reader.js").V1SealedShapePosition} position
+   * @param {V1RequestOptions} [options]
+   * @returns {Promise<V1ShapePage>}
+   */
+  decryptShapeObject(bytes, position, options = {}) {
+    return decryptSealedShapePage(this.#transport, this.#params, bytes, position, options.signal);
   }
 
 }

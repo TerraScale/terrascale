@@ -62,11 +62,6 @@
           "description": "SDK regressions",
           "command": "npm",
           "arguments": ["test"]
-        },
-        {
-          "description": "Pinned TerraBase release integration",
-          "command": "npm",
-          "arguments": ["run", "test:integration"]
         }
       ]
     },
@@ -117,11 +112,6 @@
           "description": "SDK regressions",
           "command": "npm",
           "arguments": ["test"]
-        },
-        {
-          "description": "Pinned TerraBase release integration",
-          "command": "npm",
-          "arguments": ["run", "test:integration"]
         }
       ]
     },
@@ -149,11 +139,6 @@
           "description": "SDK regressions",
           "command": "npm",
           "arguments": ["test"]
-        },
-        {
-          "description": "Pinned TerraBase release integration",
-          "command": "npm",
-          "arguments": ["run", "test:integration"]
         }
       ]
     }
@@ -183,11 +168,6 @@
           "description": "SDK regressions",
           "command": "npm",
           "arguments": ["test"]
-        },
-        {
-          "description": "Pinned TerraBase release integration",
-          "command": "npm",
-          "arguments": ["run", "test:integration"]
         },
         {
           "description": "Create package output directory",

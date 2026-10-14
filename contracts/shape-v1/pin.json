@@ -1,0 +1,18 @@
+{
+  "repository": "TerraScale/terrascale",
+  "revision": "993927ce7ecf8f9b889d24d4d1d21ec96eaf9416",
+  "status": "proposed protocol; runtime endpoints and generated OpenAPI not qualified",
+  "inputs": {
+    "shape-reads.md": {
+      "sourcePath": "docs/terrabase/shape-reads.md",
+      "sha256": "83fce58fe68e17e86ed270664f6bd148b7c101a3f5e78975005f68417f1097e7"
+    },
+    "free-reads.md": {
+      "sourcePath": "docs/terrabase/free-reads.md",
+      "sha256": "36a9e079d427635ddc5b375928a814c229b79ea5d97286dd59b08c842acf78df"
+    }
+  },
+  "deferredVectors": {
+    "presigned-manifest": "Owner explicitly deferred manifest/302 delivery to the FR-22 follow-up."
+  }
+}

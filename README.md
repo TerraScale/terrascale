@@ -174,6 +174,77 @@ The exported collection `shape()` remains compatible with the historical
 do not use it as current producer evidence. SSE changes are a separate database
 feed, not authorized bounded-query snapshots or the planned reactive WebSocket API.
 
+## Free shape subscriptions (protocol v1)
+
+`collection.subscribeShape({ where? }, { onUpdate?, signal? })` follows a collection's
+sealed snapshot, log chunks, and live long-polls. Its `state` is a map from document
+id to `{ version, document }`; `upToDate` becomes true only after a fresh response
+reports `up_to_date`. Each callback sees the complete applied response or a
+freshness change; freshness is cleared while a changed-lineage resume is pending.
+
+```js
+const shape = todos.subscribeShape({ where: v1Filter.eq("/done", false) }, {
+  onUpdate(subscription) {
+    console.log(subscription.state, subscription.upToDate);
+  },
+});
+try {
+  await shape.done; // Runs until close(), cancellation, or a terminal error.
+} finally {
+  shape.close();
+}
+```
+
+`close()` cancels a pending read. Server errors reject `done` using the existing
+TerraBase error types; malformed responses and network failures also stop it.
+Observe `done` to detect terminal errors. A throwing `onUpdate` stops the
+subscription and rejects `done` with the callback's error; already applied state
+remains available. Calling `close()` or aborting takes precedence over a later
+callback exception and resolves `done`. Document
+upserts replace the prior value and deletes of unknown ids are harmless. Repeated
+events are applied: a sealed value can be newer than its event, including after
+failover. There are no durable local writes or offline mutation queue.
+
+The client preserves state for one proven cursor-resume attempt when a different
+machine rejects its handle. It never resumes an incomplete snapshot. A failed
+resume or another `409 must_refetch` clears state and starts a fresh snapshot.
+Opaque resume tokens travel verbatim in the query, or `TB-Shape-Resume` when the
+request target would exceed the protocol limit. Only documented transient
+`shape_busy`, `unavailable`, and `shape_too_large` errors retry with backoff and
+`Retry-After` until success or cancellation; authorization, validation, and
+network errors stop the subscription. The backoff delay is capped at 30 seconds
+unless `Retry-After` requires longer. The maximum signed-64-bit live bucket is
+accepted as a response, as §4 allows, but cannot be sent as the next input;
+`done` rejects with a `TypeError` if that protocol limit is reached.
+
+Origin JSON with a leading UTF-8 BOM is rejected by the v1 transport, including
+historical routes; shape v1 §6 requires bytes without a BOM.
+Subscriptions use unconditional reads; they do not send `If-None-Match` or use
+the optional `304` cached-body path.
+
+`collection.decryptShapeObject(bytes, { handle, offset, epoch, keyId }, { signal? })`
+fetches the matching epoch key with `cache: "no-store"`, derives the per-object key
+with WebCrypto HKDF, and verifies every AES-256-GCM TBS1 frame before returning a
+page. Keys are cached only in process memory by `(handle, epoch, keyId)`, scoped
+to the credential, database and collection. A key fetch bypasses HTTP caches;
+keys are never persisted. Past epochs are evicted on access as time or the
+latest served epoch advances; historical objects fetch their keys again without
+retaining them. Any `409 must_refetch` on the shape or key route clears that
+collection's key cache. A failed tag, binding, frame, or response validation
+applies nothing. Key ids follow §12's 26 ASCII bytes without assuming a ULID.
+Native browser Fetch hides manual redirect metadata, so subscription bootstrap
+currently requires server fetch. TBS1 decryption uses WebCrypto in either runtime.
+
+This implements the [proposed protocol](contracts/shape-v1/shape-reads.md) at
+`993927ce7ecf8f9b889d24d4d1d21ec96eaf9416`, using `documents:read`. HTTP fakes and the
+upstream [conformance vectors](test/fixtures/shape-vectors.json) verify client
+behavior; they do not qualify a producer deployment. Current generated OpenAPI,
+live endpoint availability, and automatic region discovery remain unqualified.
+No TerraBase binary is downloaded or run by these tests. The existing historical
+`shape()` method keeps its contract. Manifest/object delivery and 302 redirects
+are deferred to FR-22; vector `presigned-manifest` is explicitly skipped until its
+delivery contract is ready upstream.
+
 Failures throw `TerraBaseV1Error` with status, code, optional transaction `op`,
 parsed `body`, raw `responseText`, response `headers`, and a received
 `X-Request-ID` as `requestId`. The actual producer uses `application/json`
