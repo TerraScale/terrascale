@@ -133,16 +133,15 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    padding: 8px 12px;
-    border-radius: 5px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 8px;
     border: 1px solid var(--ts-divider);
     background: transparent;
     color: var(--ts-text-muted);
     font-family: var(--ts-font-accent);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 14px;
+    font-weight: 500;
     cursor: pointer;
     transition:
       color 150ms ease,
@@ -152,14 +151,12 @@
 
   .lang__trigger:hover {
     color: var(--ts-text);
-    border-color: rgba(var(--ts-primary-rgb), 0.4);
-    background: rgba(var(--ts-primary-rgb), 0.08);
+    background: rgba(255, 255, 255, 0.08);
   }
 
   :global(.lang__globe) {
     width: 15px;
     height: 15px;
-    color: var(--ts-primary-light);
   }
 
   .lang__code {
@@ -190,7 +187,6 @@
     background: rgba(var(--ts-bg-base-raw), 0.96);
     backdrop-filter: blur(18px);
     -webkit-backdrop-filter: blur(18px);
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
   }
 
   .lang__option {
@@ -216,52 +212,49 @@
 
   .lang__option:hover,
   .lang__option:focus-visible {
-    background: rgba(var(--ts-primary-rgb), 0.12);
+    background: rgba(255, 255, 255, 0.08);
     color: var(--ts-text);
     outline: none;
   }
 
   .lang__option.is-active {
-    color: var(--ts-primary-light);
+    color: var(--ts-text);
   }
 
   :global(.lang__option-check) {
     width: 14px;
     height: 14px;
-    color: var(--ts-primary-light);
   }
 
   .lang--inline {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+    display: inline-flex;
+    padding: 2px;
+    gap: 2px;
+    border: 1px solid var(--ts-divider);
+    border-radius: 8px;
   }
 
   .lang__inline-btn {
-    padding: 8px 12px;
-    border-radius: 5px;
-    border: 1px solid var(--ts-divider);
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 0;
     background: transparent;
     color: var(--ts-text-muted);
     font-family: var(--ts-font-accent);
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
     transition:
       color 150ms ease,
-      border-color 150ms ease,
       background 150ms ease;
   }
 
   .lang__inline-btn:hover {
     color: var(--ts-text);
-    border-color: rgba(var(--ts-primary-rgb), 0.4);
-    background: rgba(var(--ts-primary-rgb), 0.08);
   }
 
   .lang__inline-btn.is-active {
-    color: var(--ts-primary-light);
-    border-color: rgba(var(--ts-primary-rgb), 0.45);
-    background: rgba(var(--ts-primary-rgb), 0.14);
+    color: var(--ts-text);
+    background: rgba(255, 255, 255, 0.08);
   }
 </style>

@@ -29,14 +29,8 @@
     <div class="ts-footer__grid">
       <div class="ts-footer__brand">
         <RouteLink href="/" class="ts-footer__logo" aria-label="TerraScale home">
-          <img
-            src="/logo-white.svg"
-            alt="TerraScale"
-            width="1429"
-            height="345"
-            decoding="async"
-            loading="lazy"
-          />
+          <img src="/icon-blue.svg" alt="" width="28" height="28" decoding="async" loading="lazy" />
+          <span class="ts-footer__word">TerraScale</span>
         </RouteLink>
         <p class="ts-footer__tagline">
           {$dict.footer.tagline}
@@ -48,7 +42,6 @@
               target="_blank"
               aria-label={name}
               class="ts-footer__social"
-              style={`color: ${social.color}; background: ${social.bg}; border-color: ${social.border};`}
             >
               <Icon name={social.icon} className="ts-footer__social-icon" />
             </ExternalLink>
@@ -95,31 +88,42 @@
   .ts-footer {
     background: var(--ts-bg-surface);
     border-top: 1px solid var(--ts-divider);
-    padding: 36px 0 20px;
+    padding: 64px 0 24px;
   }
 
   .ts-footer__inner {
-    max-width: 1240px;
-    margin: 0 auto;
-    padding: 0 40px;
+    padding: 0 clamp(16px, 2.5vw, 40px);
   }
 
   .ts-footer__grid {
     display: grid;
-    grid-template-columns: 1.6fr repeat(3, 1fr);
+    grid-template-columns: 2fr repeat(3, 1fr);
     gap: 32px;
-    margin-bottom: 28px;
+    margin-bottom: 48px;
   }
 
   :global(.ts-footer__logo) {
     display: inline-flex;
+    align-items: center;
+    gap: 10px;
     margin-bottom: 12px;
+    color: var(--ts-text);
+    text-decoration: none;
   }
 
   :global(.ts-footer__logo img) {
-    height: 26px;
+    height: 28px;
     width: auto;
     display: block;
+  }
+
+  .ts-footer__word {
+    font-family: var(--ts-font-accent);
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
   }
 
   .ts-footer__tagline {
@@ -138,21 +142,21 @@
   :global(.ts-footer__social) {
     width: 32px;
     height: 32px;
-    border-radius: 7px;
-    border: 1px solid transparent;
+    border-radius: 8px;
+    border: 1px solid var(--ts-divider);
+    color: var(--ts-text-muted);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     text-decoration: none;
     transition:
-      transform 180ms ease,
-      box-shadow 180ms ease,
-      background 180ms ease;
+      color 150ms ease,
+      background 150ms ease;
   }
 
   :global(.ts-footer__social:hover) {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 18px rgba(var(--ts-primary-rgb), 0.25);
+    color: var(--ts-text);
+    background: rgba(255, 255, 255, 0.08);
   }
 
   :global(.ts-footer__social-icon) {
@@ -182,7 +186,7 @@
   }
 
   :global(.ts-footer__link) {
-    font-size: 12.5px;
+    font-size: 13px;
     color: var(--ts-text-muted);
     text-decoration: none;
     display: inline-flex;
@@ -205,7 +209,7 @@
 
   :global(.ts-footer__link:hover .ts-footer__chevron) {
     transform: translateX(2px);
-    color: var(--ts-primary-light);
+    color: var(--ts-text);
   }
 
   .ts-footer__meta {
@@ -219,14 +223,11 @@
   }
 
   .ts-footer__copy {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--ts-text-muted);
   }
 
   @media (max-width: 960px) {
-    .ts-footer__inner {
-      padding: 0 20px;
-    }
     .ts-footer__grid {
       grid-template-columns: 1fr 1fr;
     }
