@@ -48,7 +48,8 @@ public sealed partial class ShapeResumeTests
         await Assert.That(resumed.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
         await Assert.That(resumed.CacheControl).IsEqualTo("no-store");
         await Assert.That(resumed.Handle).IsNotEqualTo(synced.Handle);
-        var offset = resumed.Location![(resumed.Location.LastIndexOf("offset=", StringComparison.Ordinal) + "offset=".Length)..];
+        var location = resumed.Location!;
+        var offset = location[(location.LastIndexOf("offset=", StringComparison.Ordinal) + "offset=".Length)..];
         await Assert.That(long.Parse(offset, CultureInfo.InvariantCulture)).IsGreaterThan(0).Because("the baseline precedes the target");
 
         // The target is the boundary before U: the baseline is not sent again, and C repeats after U (at least once).
@@ -166,6 +167,8 @@ public sealed partial class ShapeResumeTests
                 await RegisterAsync(_api);
             }
 
+            var gate = _api.Server.Services.GetRequiredService<ICatalogGate>();
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(gate.IsOpen), timeout: TimeSpan.FromSeconds(30));
             _data = await _api.CreateClientAsync(cell.Database.OrganizationId, "documents:read", "documents:write");
         }
 
