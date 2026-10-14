@@ -136,10 +136,8 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
             throw new ShapeSealOffsetException();
         }
 
-        // The ops buffer (PageBytes, never grown: a singleton reserves its own growth) and framing are admitted before any row
-        // is materialized; rows and the encoded page reserve their own bytes. Sized to need, so Hobby's 1/16 share of a 512 MB
-        // machine's budget (~7 MiB) still holds a full page and its result.
-        var workspace = memory.TryReserve(MemoryLane.Bulk, ShapeSnapshots.PageBytes + 64L * 1024, store.Tenant) ?? throw new StorageBusyException();
+        // Ops buffer and framing are admitted before any row is materialized; rows and the encoded page reserve their own bytes.
+        var workspace = memory.TryReserve(MemoryLane.Bulk, ShapeSnapshots.WorkspaceBytes, store.Tenant) ?? throw new StorageBusyException();
         IMemoryReservation? singletonMemory = null;
         try
         {
