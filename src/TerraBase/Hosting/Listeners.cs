@@ -17,7 +17,7 @@ public enum TerraBaseListener
 {
     /// <summary>
     /// Fly's private network only (<c>fly-local-6pn</c>), HTTP/2 without TLS: inter-node gRPC, administration and the
-    /// platform operator's API. Every request verifies the shared peer credential from Fly secrets and records the outcome.
+    /// platform operator's API. Every request requires the shared peer credential from Fly secrets.
     /// </summary>
     Internal,
 
@@ -43,7 +43,7 @@ public sealed record ListenerMetadata(params IReadOnlyList<TerraBaseListener> Li
     public static ListenerMetadata Client { get; } = new(TerraBaseListener.Client, TerraBaseListener.Internal);
 
     /// <summary>
-    /// Metadata for health probes, recording peer credential verification internally and served without it for Fly's checks on the
+    /// Metadata for health probes, requiring the peer credential internally and served without it for Fly's checks on the
     /// public listener. They never answer with tenant data.
     /// </summary>
     public static ListenerMetadata Probe { get; } = new(TerraBaseListener.Internal, TerraBaseListener.Client);
@@ -272,6 +272,11 @@ public static class Listeners
             {
                 var matched = context.RequestServices.GetRequiredService<PeerCredential>().Matches(context);
                 peerRequests.Add(1, new KeyValuePair<string, object?>("credential", matched ? "matched" : "unmatched"));
+                if (!matched)
+                {
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    return;
+                }
             }
 
             if (arrivedOn == TerraBaseListener.Client)

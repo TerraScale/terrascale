@@ -8,8 +8,8 @@ using TerraBase.Testing;
 namespace TerraBase.Fast.Replication;
 
 /// <summary>
-/// The internal listener records the outcome of every peer credential check and still answers each request. Refusal comes
-/// later, once every member sends the credential. The Fly startup checks still refuse a missing or malformed secret.
+/// The internal listener records every peer credential check before admitting a matching request or refusing an unmatched one.
+/// Fly startup also refuses a missing or malformed secret.
 /// </summary>
 public sealed class PeerCredentialObservationTests
 {
@@ -19,7 +19,7 @@ public sealed class PeerCredentialObservationTests
     private static CancellationToken Token => TestContext.Current!.Execution.CancellationToken;
 
     [Test]
-    public async Task Internal_requests_are_recorded_by_credential_outcome_and_still_answered()
+    public async Task Internal_requests_are_recorded_by_credential_outcome_before_admission()
     {
         using var tls = new ClientTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
@@ -41,7 +41,7 @@ public sealed class PeerCredentialObservationTests
 
         await Assert.That(await CountsAsync(scraper)).IsEqualTo((matched, unmatched));
 
-        // Unmatched credentials still receive 200 during observation.
+        // Unmatched credentials are counted before refusal.
         var wrong = PeerTls.NewSecret();
         string[][] invalid =
         [
@@ -52,7 +52,7 @@ public sealed class PeerCredentialObservationTests
         ];
         foreach (var credentials in invalid)
         {
-            await Assert.That(await ProbeAsync(raw, credentials)).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(await ProbeAsync(raw, credentials)).IsEqualTo(HttpStatusCode.Unauthorized);
         }
 
         var (invalidMatched, invalidUnmatched) = await CountsAsync(scraper);

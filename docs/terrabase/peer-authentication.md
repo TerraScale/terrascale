@@ -10,19 +10,20 @@ the secret before endpoint execution. Verification outcomes are recorded in
 Labels contain only those two outcomes, never credentials or request identities.
 Public and metrics listeners do not record peer verification outcomes.
 
-This first rollout phase records unmatched requests without refusing them. C1
-remains open until the second PR enforces refusal. There is no flag or switch:
-refusal is a separate code change, merged only after T2 deployment works and this
-release runs in gru, sjc and fra. Before PR2, the unmatched counter must stay flat
-on every TerraBase machine in those regions for 24 hours after PR1 is live on all
-machines. Senders reach all regions before refusal starts.
+Unmatched internal requests are refused with HTTP 401 before endpoint execution;
+gRPC clients observe `Unauthenticated`. This enforcement release follows the
+sender-and-observation release. It merges only after T2 deployment works, PR1 is
+live in gru, sjc and fra, and every TerraBase machine has recorded zero new
+missing or invalid credentials for one continuous hour. Matched traffic and
+continuous scrapes must be present throughout that hour; restarts or scrape gaps
+restart the window. There is no flag or switch.
 
 The secret is 32 cryptographically random bytes encoded as 64 hexadecimal
 characters, read only from the environment. Equal-length valid headers are
 compared with fixed-time comparison. Missing or malformed secrets refuse startup
 on Fly before storage opens. Off Fly, an absent secret records internal requests
-as unmatched. TerraBase still needs the secret to call its peers off Fly; without
-it, outbound peer calls fail. There is no generated production default.
+as unmatched and refuses them. TerraBase still needs the secret to call its peers
+off Fly; without it, outbound peer calls fail. There is no generated production default.
 
 ## Provisioning and rotation
 
@@ -34,9 +35,8 @@ file outside Git, pass that file through stdin to
 Never print the value or include it in arguments, logs, source or PR descriptions.
 Staging does not deploy or change machines.
 
-After enforcement, missing, wrong, malformed or repeated credentials will return
-HTTP 401 before endpoint execution; gRPC clients will observe `Unauthenticated`.
-Rotation will accept one credential, so mismatched peers will refuse one another.
+Missing, wrong, malformed or repeated credentials return HTTP 401.
+Rotation accepts one credential, so mismatched peers refuse one another.
 Rotate before go-live or during a reviewed maintenance window, staging both apps
 and completing their normal quality-gated rollout. Public APIs retain their API
 key and token authorization, public health remains available for Fly probes, and
@@ -44,7 +44,7 @@ the separate metrics listener serves metrics only.
 
 Transport remains HTTP/2 without TLS within Fly's encrypted private network.
 The shared credential does not provide mutual TLS or bind identity to a machine.
-Once refusal is enforced, anyone holding it has peer and operator privileges.
+Anyone holding it has peer and operator privileges.
 
 `scripts/e2e/install-ci-credential.sh` reads the environment secret and supplies
 curl with a mode-0600 temporary header file, deleted on exit. Fly does not expose
