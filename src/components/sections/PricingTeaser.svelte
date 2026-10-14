@@ -31,7 +31,7 @@
 
   <div class="pricing-teaser__grid">
     {#each plans as plan (plan.slug)}
-      <RouteLink href="/pricing" class={`pricing-teaser__plan${plan.popular ? ' is-popular' : ''}`}>
+      <RouteLink href={`/pricing#${plan.slug}`} class={`pricing-teaser__plan${plan.popular ? ' is-popular' : ''}`}>
         <h3 class="pricing-teaser__name">
           {plan.name}
           {#if plan.popular}
