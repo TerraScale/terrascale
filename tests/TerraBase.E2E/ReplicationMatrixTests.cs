@@ -54,8 +54,8 @@ public sealed class ReplicationMatrixTests
     /// Stops <paramref name="offline"/>, writes, deletes and conflicts through both survivors, starts it again on its data and
     /// waits until it serves both backlogs, the tombstones and the settled conflict. The cluster's collection holds only
     /// this outage's documents, so the digest names all of them. If anything fails while <paramref name="offline"/> may be
-    /// down (the stop included), it is started again on a clock of its own, so a canceled <paramref name="token"/> never
-    /// leaves it stopped; the original failure is rethrown, or reported with the recovery's.
+    /// down (the stop included), recovery attempts to start it on a clock independent of <paramref name="token"/>;
+    /// the original failure is rethrown, or reported with the recovery's.
     /// </summary>
     internal static async Task RejoinAsync(Cluster cluster, string offline, CancellationToken token = default)
     {
@@ -69,8 +69,8 @@ public sealed class ReplicationMatrixTests
         var conflictId = EntityIds.New().ToString();
         var conflict = cluster.Document(conflictId);
         await Converge.SeedAllAsync(cluster, conflict, new JsonObject { ["value"] = "seed" }, token);
-        // Set before the stop: a stop that fails or is canceled may still have taken the region down.
-        var mayBeDown = true;
+        // A stop that fails or is canceled may still have taken the region down; a start may return before it serves.
+        var started = false;
         try
         {
             await cluster.StopAsync(offline, token);
@@ -104,7 +104,7 @@ public sealed class ReplicationMatrixTests
 
             // No writes after restart: catch-up must replay the durable backlog without a client kick.
             await cluster.StartAgainAsync(offline, token);
-            mayBeDown = false;
+            started = true;
             var rejoined = Stopwatch.GetTimestamp();
             await Task.WhenAll(survivors.Select(async from =>
             {
@@ -128,11 +128,11 @@ public sealed class ReplicationMatrixTests
                 .Append((conflictId, Docs.Canonical(settled.Value))).Concat(probes));
             _ = await Converge.ListedAsync(cluster, digest, $"every acknowledged document after {offline} rejoined", token);
         }
-        catch (Exception error) when (mayBeDown)
+        catch (Exception error)
         {
             try
             {
-                await RecoverAsync(cluster, offline);
+                await RecoverAsync(cluster, offline, started);
             }
             catch (Exception recovery)
             {
@@ -146,18 +146,21 @@ public sealed class ReplicationMatrixTests
     // Starts offline again and waits until it serves: the cluster's cleanup checks every machine's identity and deletes the
     // collection through gru. Bounded by its own clock, never the test's token. A start that fails (the region was never
     // stopped, or already started) is forgiven only when the region then serves.
-    private static async Task RecoverAsync(Cluster cluster, string offline)
+    private static async Task RecoverAsync(Cluster cluster, string offline, bool started)
     {
         // Fly's start waits up to two minutes for the machine to reach stopped, then the region has a convergence deadline.
         using var recovery = new CancellationTokenSource(TimeSpan.FromMinutes(5));
         Exception? start = null;
-        try
+        if (!started)
         {
-            await cluster.StartAgainAsync(offline, recovery.Token);
-        }
-        catch (Exception error)
-        {
-            start = error;
+            try
+            {
+                await cluster.StartAgainAsync(offline, recovery.Token);
+            }
+            catch (Exception error)
+            {
+                start = error;
+            }
         }
 
         try
