@@ -1,17 +1,17 @@
 # Fly fra / Tigris restore drill — 2026-10-14
 
-COS authorized this early drill on production `ad2b9ee841379f7308a416bcb3f0838c60353714`, before the format reset. No newer image or remote-ACK durability qualification is claimed.
+COS authorized this early drill on production `ad2b9ee841379f7308a416bcb3f0838c60353714`, before the format reset. No final-image proof is claimed: the later format-reset image remains outside this drill. No remote-ACK durability qualification is claimed.
 
 | Result | Evidence |
 |---|---|
 | Known data | 12 documents written through fra; initial SHA-256 `5e95b5c8d26e5390ee8c43eed37ee2446d28b02ef6cd72d0942fef14f8958880` matched gru/sjc |
-| Tigris | Private Fly-managed `ts-terrabase-backups-20261013-v2`; timestamped snapshot and CDC object listings |
+| Tigris | `ts-terrabase-backups-20261013-v2`; timestamped snapshot and CDC object listings |
 | Loss simulated | fra stopped; `/data/data` wiped and its absence checked; original machine `286557e5b45498` subsequently deleted |
 | Tenant recovery | Three authenticated/decompressed Tigris snapshots installed on wiped volume `vol_r7ymzxl21qqd52yr`; SQLite integrity checks passed; physical copy incarnations renewed using the existing engine SQL |
-| Catalog | Old machine identity correctly refused the empty replacement catalog because its existing anchor proved an older copy; fresh replacement `78111541ae9d38` pulled a fresh trusted catalog from gru/sjc and opened automatically |
+| Catalog | Old machine identity correctly refused the fresh replacement catalog because its existing anchor proved an older copy; fresh replacement `78111541ae9d38` pulled a fresh trusted catalog from gru/sjc and opened automatically |
 | State equality | All 4096 buckets matched across all three regions for each restored database; the catalog digest also matched |
 | Replication | All six directed regional write paths passed after recovery; 15 final documents had identical logical digest `e2fda34c44c39e5e8125cb7ecd90c4cc882d253fd6b358df97c8d0bc7da84d28` |
-| Fly snapshot | Daily automatic snapshots enabled in all three regions, retention 5 days; fra snapshot `vs_6mJLpO2PP98cXpownzyM` restored into a cloned volume, mounted on a DNS-excluded helper; integrity and original 12-document digest passed |
+| Fly snapshot | Daily automatic snapshots enabled in all three regions, retention 5 days; on-demand fra snapshot `vs_6mJLpO2PP98cXpownzyM` restored into a cloned volume, mounted on a DNS-excluded helper; integrity and original 12-document digest passed |
 | Cleanup | Snapshot helper machine and cloned volume deleted; rollback snapshot retained; only the three production machines remain started |
 
 | Timing | Seconds | Measurement boundary |
@@ -46,7 +46,7 @@ python3 replication-proof.py
 uv run --with boto3 python tigris-shipping-proof.py
 ```
 
-The Python commands were executed from the private drill evidence directory. They read credentials obtained from the Fly application's process through Fly SSH, never user login. Temporary credential and plaintext database files were removed afterwards. The digest producer calls real `terrabase.v1.Replication/Digest` on each region through its own Fly proxy and hashes the decoded 4096 × 16-byte bucket vector. Redacted records are retained alongside this report.
+The Python commands were executed from `/home/mariogk/.local/state/cos-backup-restore/live-20261014/`. Their scripts and operational logs remain private and are not included in this repository; the nine linked JSON records are published here. They read credentials obtained from the Fly application's process through Fly SSH, never user login. The temporary credentials were the application’s Tigris S3 access credentials. Temporary credential and plaintext database files were removed afterwards; post-drill credential rotation is not established by the retained evidence. The digest producer calls real `terrabase.v1.Replication/Digest` on each region through its own Fly proxy and hashes the decoded 4096 × 16-byte bucket vector. Redacted records are retained alongside this report.
 
 ```text
 FRA_WIPE_CONFIRMED
@@ -79,4 +79,4 @@ Fly snapshot restore PASS 12 documents, integrity ok, original digest equal
 | `v1/_system` | `v1/_system/wal/01M4WN6CKD67DMW2VA93HPEDWF/0000000000059117-1791963123136` | 2026-10-14T07:32:03+00:00 | 7094 |
 | `v1/_system` | `v1/_system/wal/01M4WN6CKD67DMW2VA93HPEDWF/0000000000104889-1791963124527` | 2026-10-14T07:32:04+00:00 | 8147 |
 
-These distinct CDC objects prove recurring continuous shipping during the observed window. They do not prove a full 24-hour daily Tigris snapshot schedule; fresh snapshot generations here were triggered by restart. Fly daily snapshot configuration and one real snapshot restore were checked separately.
+These distinct CDC objects prove recurring continuous shipping during the observed window. They do not prove a full 24-hour daily Tigris snapshot schedule; fresh snapshot generations here were triggered by restart. Fly daily snapshot configuration and one real on-demand snapshot restore were checked separately; this drill did not exercise the daily Fly schedule.
