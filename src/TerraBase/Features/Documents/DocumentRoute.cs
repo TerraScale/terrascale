@@ -43,6 +43,9 @@ internal static class DocumentRoute
     /// <summary>Point operations carry the raw document key in one query parameter.</summary>
     public const string Document = Collection + "/by-key";
 
+    /// <summary>The durability barrier and retry semantics shared by single-document mutations.</summary>
+    public const string WriteDurabilityDescription = "Mutations in a cell wait up to 10 seconds for another placed region's durable acknowledgement and answer remote_durable; a cell of one answers local_durable. Before execution, 503 remote_region_unavailable or confirmation_busy carries Retry-After. An ambiguous commit or missing acknowledgement answers 503 write_outcome_unknown with region and machine, without Retry-After; never replay it automatically.";
+
     private static readonly UTF8Encoding KeyEncoding = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     /// <summary>Largest request body of any other route.</summary>
@@ -50,12 +53,6 @@ internal static class DocumentRoute
 
     /// <summary>Bounds the JSON one page materializes; a page always holds at least one document.</summary>
     public const long MaxPageBytes = 8 * 1024 * 1024;
-
-    /// <summary>
-    /// The contract's durability label for a write committed to the local SQLite file. It names the commit
-    /// path only; durability is not qualified yet (docs/decisions/0004-document-api-v1.md).
-    /// </summary>
-    public const string Durability = "local_durable";
 
     public const string JsonMediaType = "application/json";
 
@@ -263,7 +260,7 @@ internal static class DocumentRoute
     public static async ValueTask<IResult> WriteAsync(
         HttpContext context, IDocumentService documents, DocumentKey key, DocumentOperation operation, Func<WriteBody, bool, IResult> answer,
         CancellationToken cancellationToken) =>
-        await documents.WriteAsync(key.Database, [operation], indexErrors: false, cancellationToken).ConfigureAwait(false) switch
+        await documents.WriteConfirmedAsync(key.Database, [operation], indexErrors: false, cancellationToken).ConfigureAwait(false) switch
         {
             DocumentRejected rejected => ErrorResponse.From(rejected.Error),
             WriteResult written => Written(context, key, written, answer),
@@ -274,7 +271,7 @@ internal static class DocumentRoute
         var result = written.Results[0];
         var version = result.ETag!;
         ETags.Set(context, version);
-        return answer(new WriteBody(key.Id, version, Decimal(written.Offset), Durability, Json(result.Document)), result.Created);
+        return answer(new WriteBody(key.Id, version, Decimal(written.Offset), written.Durability, Json(result.Document)), result.Created);
     }
 
     /// <summary>A stored document as a response value, or null when the operation returns none.</summary>

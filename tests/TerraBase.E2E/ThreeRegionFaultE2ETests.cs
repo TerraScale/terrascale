@@ -18,7 +18,7 @@ public sealed class ThreeRegionFaultE2ETests
 
     [Test]
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
-    public async Task Partitioned_region_keeps_accepting_writes_and_converges_after_the_partition_heals()
+    public async Task Regions_with_another_placed_peer_accept_writes_and_converge_after_a_direct_partition_heals()
     {
         Skip.When(Cluster.FlyRequested, "Fly has no way to cut 6PN between two machines; the partition runs on the local nodes only");
         await Gaps.RunAsync("partition-heal", async () =>
@@ -30,7 +30,7 @@ public sealed class ThreeRegionFaultE2ETests
             var shared = cluster.Document(sharedId);
             await Converge.SeedAllAsync(cluster, shared, new JsonObject { ["value"] = "seed" });
             cluster.Partition(Cluster.Fra, Cluster.Gru);
-            cluster.Partition(Cluster.Fra, Cluster.Sjc);
+            // Both origins retain sjc as their remote durability peer; their direct stream is partitioned.
             var documents = new List<(string Id, JsonObject Body)>();
             var writes = new List<Task>();
             foreach (var region in new[] { Cluster.Fra, Cluster.Gru })
@@ -125,8 +125,7 @@ public sealed class ThreeRegionFaultE2ETests
         });
     }
 
-    // Acknowledged writes survive their writer going down at once. Locally the node stops cleanly (disposal) and on Fly
-    // the machine is stopped: neither is a crash, so ack-then-crash durability stays a missing scenario (COVERAGE.md).
+    // This covers orderly node stops. RemoteAckE2ETests separately proves immediate origin SIGKILL and survivor disk restart.
     [Test]
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task Writes_acknowledged_just_before_their_region_stops_reach_every_region_after_it_returns()
@@ -234,10 +233,8 @@ public sealed class ThreeRegionFaultE2ETests
         });
     }
 
-    // Same-field writes with sjc's clock 2 s ahead, made while every region is cut off from the others, so none saw
-    // another's write: the regions agree after the heal, and the documented outcome is that the writer ahead wins the
-    // last-writer-wins choice (design section 3, skew bound). Without the partition a region could see sjc's write
-    // first and stamp after it, which is a causal overwrite, not a concurrent one.
+    // The competing writers are partitioned directly; fra durably confirms both. Additive markers detect any repair
+    // that imports the competing write before healing, so a causal overwrite cannot masquerade as a concurrent winner.
     [Test]
     [Scenario(Nodes.InProcess, Faults.ClockSkew | Faults.SimulatedPartition)]
     public async Task Concurrent_writes_with_a_clock_2_s_ahead_converge_and_the_writer_ahead_wins()
@@ -248,14 +245,32 @@ public sealed class ThreeRegionFaultE2ETests
             await using var cluster = await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [Cluster.Sjc] = TimeSpan.FromSeconds(2) });
             var uri = cluster.Document(EntityIds.New().ToString());
             await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["value"] = "seed" });
+            foreach (var region in new[] { Cluster.Gru, Cluster.Sjc })
+            {
+                _ = await Converge.UntilAsync(() => Docs.GetJsonAsync(cluster[region], new Uri("/health/replication", UriKind.Relative)),
+                    health => health?["peers"]?.AsArray().Any(peer => peer?["region"]?.GetValue<string>() == Cluster.Fra
+                        && peer["status"]?.GetValue<string>() == "ok") == true, $"{region} streams to fra before its direct partition");
+            }
+
             cluster.Partition(Cluster.Gru, Cluster.Sjc);
-            cluster.Partition(Cluster.Gru, Cluster.Fra);
-            cluster.Partition(Cluster.Sjc, Cluster.Fra);
-            await Task.WhenAll(All.Select(region => Docs.PutAsync(cluster[region], uri, new JsonObject { ["value"] = region })));
+            string[] writers = [Cluster.Gru, Cluster.Sjc];
+            await Task.WhenAll(writers.Select(region => Docs.PatchAsync(cluster[region], uri,
+                new JsonObject { ["value"] = region, [$"{region}-write"] = true })));
+            foreach (var region in writers)
+            {
+                var other = region == Cluster.Gru ? Cluster.Sjc : Cluster.Gru;
+                var local = await Docs.ReadAsync(cluster[region], uri);
+                Expected.Check(local?["value"]?.GetValue<string>() == region
+                    && local[$"{region}-write"]?.GetValue<bool>() == true && local[$"{other}-write"] is null,
+                    $"{region} holds only its own competing write before heal");
+            }
+
             cluster.Heal();
             var settled = await Converge.SettledAsync(cluster, uri, "concurrent writes under skew");
             Console.WriteLine($"conflict outcome, concurrent writes with sjc +2 s: {settled.Value!["value"]} won");
             Expected.Check(settled.Value["value"]!.GetValue<string>() == Cluster.Sjc, $"sjc, 2 s ahead, wins; {settled}");
+            Expected.Check(writers.All(region => settled.Value[$"{region}-write"]?.GetValue<bool>() == true),
+                $"both competing writes survive the heal; {settled}");
         });
     }
 

@@ -71,7 +71,21 @@ public sealed record OperationResult(string? Id, long? Version, bool Created, lo
 /// <param name="Offset">Database commit offset.</param>
 /// <param name="Results">One result per operation.</param>
 /// <param name="Scope">ETag scope of the database that committed this write.</param>
-public sealed record WriteResult(long Offset, IReadOnlyList<OperationResult> Results, Guid Scope);
+/// <param name="Durability">
+/// What the answer guarantees (decision 0013a): <c>remote_durable</c> once another placed region confirmed it,
+/// <c>local_durable</c> on a cell of one or for a write without that confirmation, <c>unchanged</c> for assertions only.
+/// </param>
+public sealed record WriteResult(long Offset, IReadOnlyList<OperationResult> Results, Guid Scope, string Durability = WriteResult.LocalDurable)
+{
+    /// <summary>The write committed durably on the accepting machine.</summary>
+    public const string LocalDurable = "local_durable";
+
+    /// <summary>Another placed region acknowledged a durable copy of this write.</summary>
+    public const string RemoteDurable = "remote_durable";
+
+    /// <summary>The transaction asserted state without changing it.</summary>
+    public const string Unchanged = "unchanged";
+}
 
 /// <summary>A refused document request: the failure, and the failing operation's index when the caller asked for it.</summary>
 /// <param name="Error">The failure, with its Documents API v1 code.</param>
@@ -144,6 +158,14 @@ public interface IDocumentService
     /// any write, then writes in order. With <paramref name="indexErrors"/>, a refusal names its operation.
     /// </summary>
     ValueTask<WriteOutcome> WriteAsync(
+        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// <see cref="WriteAsync"/> for a client write attempt (decision 0013a): on a cell, a write with a put, patch or delete
+    /// is admitted before it executes and answered only once another placed region confirmed its commit, or as outcome
+    /// unknown. Assertions only answer <c>unchanged</c> without a wait.
+    /// </summary>
+    ValueTask<WriteOutcome> WriteConfirmedAsync(
         TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken);
 
     /// <summary>

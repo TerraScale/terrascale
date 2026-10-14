@@ -225,17 +225,32 @@ UTF-8 or percent escapes return `400 invalid_request`. See [the key contract](id
 | DELETE | `C/documents/by-key?id={id}` | `deleteDocument` | `documents:write` |
 
 A successful write (`createDocument`, `putDocument`, `patchDocument`, `deleteDocument`, `runTransaction`) answers
-`"durability": "local_durable"`. The label means only that the write committed to the database file of the member that
-answered. It does not mean the write is synced to disk or backed up:
+`"durability"` according to the accepting machine's topology:
 
-- The commit uses `synchronous = NORMAL` ([0003](decisions/0003-sqlite-synchronous-normal.md)). A write survives a crash
-  of the TerraBase process, but an OS crash or power loss of that machine can lose the last acknowledged writes.
-- Continuous backup ships committed writes to the bucket asynchronously, about once per second, so the newest
-  acknowledged writes are in no backup yet. Some failures drop backup history; see [continuous backup](backup.md).
+- `"local_durable"`: the write committed, with `synchronous = FULL`, to the database file of the member that answered.
+  A cell of one (a machine without a member directory, such as development off Fly) answers this way. A machine in a
+  cell never falls back to this answer when another placed region is unavailable.
+- `"remote_durable"`: the write committed locally, and a machine of another placed region confirmed a durable copy
+  within 10 s. The attempt's whole effect is then in two regions. This is the target contract for document and
+  transaction routes under [0013a](decisions/0013a-remote-durable-acknowledgement.md). It is implemented on these routes; wider durability qualification remains pending.
+  Other mutating routes still answer `local_durable` (0013a section 6).
+
+Neither label confirms a backup. Continuous backup ships committed writes to the bucket
+asynchronously, about once per second, so the newest acknowledged writes may be in no backup yet. Some failures drop
+backup history; see [continuous backup](backup.md).
+
+Durability status: every write uses `synchronous = FULL` (#181). Simulated tenant WAL power-loss tests are merged
+(#242; [evidence and limits](../../benchmark/bench/2026-10-13-tenant-power-loss.md)). A3's process tests cover a `201`
+followed by immediate origin SIGKILL and isolated survivor restart in both gru↔sjc directions. Still pending: unsynced
+main-database pages after checkpoints, directory persistence, sector corruption, `EIO`/`ENOSPC`, connection reuse,
+receiver fault recovery and live qualification. Do not treat either label as a certified power-loss durability guarantee.
+
+An assertion-only transaction writes nothing, so it has no commit to confirm. It answers without a wait and without a
+remote-durability claim, with `"durability": "unchanged"` (0013a section 1).
 
 A document write ends in one of three outcomes:
 
-1. **Committed:** a `2xx` answer with `local_durable`, as above. After the database's SQLite commit returned, the
+1. **Committed:** a `2xx` answer with `local_durable` or `remote_durable`, as above. After the database's SQLite commit returned, the
    storage engine still moves its commit count, wakes what waits for commits and releases the transaction. Each of
    these runs even when work before it failed. A failure there is logged and the write is still answered this way,
    except in two cases that answer outcome 3 instead: a group commit that also created or dropped a collection or
@@ -244,13 +259,13 @@ A document write ends in one of three outcomes:
    accounting of a committed write is covered too: its failure is logged and the write is still answered this way.
    Any other failure later in the request is not, and its `5xx` is outcome 3.
 2. **Not committed:** a `4xx` answer. The write was refused (validation, precondition, quota, uniqueness) and rolled
-   back.
-3. **Unknown:** a `5xx` answer, a lost connection or a proxy error. The write may or may not have committed. The
-   client either reads to verify, or retries the identical request only when that request is conditional: a create
-   with `If-None-Match: *` (`if_none_match: "*"` in a transaction), or a put or delete with `If-Match` on the exact
-   version it replaces. Nothing else is safe to retry: an unconditional put or delete, a patch (an increment or an
-   append applies twice), a sequence without version preconditions, or `createDocument`, which generates a new id on
-   every call.
+   back. A `503` with `Retry-After` and code `remote_region_unavailable` or `confirmation_busy` is also not executed:
+   it was refused before the write ran (0013a section 2).
+3. **Unknown:** a `5xx` answer, a lost connection or a proxy error. The write may or may not have committed. A `503`
+   `write_outcome_unknown` is this outcome: it carries `region` and `machine`, and no `Retry-After`. Clients and SDKs
+   never replay it automatically. A read does not resolve the attempt: its changes may still arrive after the read.
+   Any resend is a new attempt and needs application-specific proof that repeating it is safe. Increments, appends,
+   transactions and server-generated IDs can apply twice. `Idempotency-Key` remains refused under 0013a.
 
 ### Queries
 

@@ -609,6 +609,12 @@ public sealed class ShapeSealTests
         await using var pair = await Pair.StartAsync();
         var (gru, sjc) = (pair.Gru, pair.Sjc);
         await pair.SeedCollectionAsync();
+        foreach (var machine in new[] { gru, sjc })
+        {
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(machine.Api.Server.Services.GetRequiredService<IReplicationStatus>()
+                .Snapshot().Peers.Any(peer => peer.Region == (machine == gru ? "sjc" : "gru"))), timeout: TimeSpan.FromSeconds(30));
+        }
+
         var (warm, a, b, x) = (DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId());
         await gru.PutAsync(warm, """{"n":0}""");
         await TerraBaseTestServer.EventuallyAsync(async token => await sjc.ReadAsync(warm, token) is not null);

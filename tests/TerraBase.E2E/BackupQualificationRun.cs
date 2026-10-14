@@ -221,9 +221,9 @@ internal static class BackupQualificationRun
     {
         await Docs.EnsureSuccessAsync(committed);
         var transaction = await committed.Content.ReadFromJsonAsync<JsonElement>(token);
-        if (transaction.GetProperty("durability").GetString() != "local_durable")
+        if (transaction.GetProperty("durability").GetString() != "remote_durable")
         {
-            throw new InvalidOperationException("transaction was not acknowledged as local_durable");
+            throw new InvalidOperationException("transaction was not acknowledged as remote_durable");
         }
 
         foreach (var document in transaction.GetProperty("results").EnumerateArray())

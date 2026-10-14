@@ -6,6 +6,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
+using TerraBase.Errors;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -29,9 +30,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private const int MaxDetail = 128;
     private const int MaxPendingResponses = 32;
 
+    private static readonly Unavailable NoRemote =
+        new("no machine of another region that holds the database is connected; this write executed nothing, retry later", "remote_region_unavailable");
+
     private readonly IMembership _membership;
     private readonly PeerCredential _credential;
     private readonly IChangeGroupSource _source;
+    private readonly RemoteAckWaiter _acks;
     private readonly IReplicaStates _states;
     private readonly ITenantDirectory _tenants;
     private readonly LocalReplica _self;
@@ -45,11 +50,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private readonly Lazy<ICatalogGate> _catalogGate;
 
     public PeerStreams(
-        IMembership membership, IChangeGroupSource source, IReplicaStates states, ITenantDirectory tenants, LocalReplica self, TerraBaseOptions options,
+        IMembership membership, IChangeGroupSource source, RemoteAckWaiter acks, IReplicaStates states, ITenantDirectory tenants, LocalReplica self, TerraBaseOptions options,
         TimeProvider time, IMeterFactory meters, ILogger<PeerStreams> logger, Lazy<ICatalogGate> catalogGate, PeerCredential credential)
     {
         _credential = credential;
-        (_membership, _source, _states, _tenants, _self, _options, _time, _logger) = (membership, source, states, tenants, self, options, time, logger);
+        (_membership, _source, _acks, _states, _tenants, _self, _options, _time, _logger) =
+            (membership, source, acks, states, tenants, self, options, time, logger);
         _catalogGate = catalogGate;
         var meter = meters.Create(Telemetry.MeterName);
         meter.CreateObservableGauge("terrabase.replication.send_lag", () => Lags(cursor => cursor.BehindSince), "s",
@@ -67,6 +73,30 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         var view = await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false);
         return view.Elsewhere.IsDefault ? [] : [.. view.Elsewhere.Select(member => member.Region).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
     }
+
+    public async ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) =>
+        Eligible(await PlacementAsync(database, cancellationToken).ConfigureAwait(false))
+            ? _acks.TryAdmit(database)
+            : NoRemote;
+
+    public async ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken)
+    {
+        var placement = await PlacementAsync(database, cancellationToken).ConfigureAwait(false);
+        return await _acks.WaitAsync(database, marker, () => Eligible(placement), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<DatabasePlacement?> PlacementAsync(TenantContext database, CancellationToken cancellationToken) =>
+        await _tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord record ? record.Placement : null;
+
+    // Whether a connected link reaches a machine of another region the placement includes: one that can confirm a write.
+    private bool Eligible(DatabasePlacement? placement) =>
+        placement is not null && Links().Any(link =>
+        {
+            lock (link.Gate)
+            {
+                return link.Connected && link.Peer.Region != _options.Region && placement.Includes(link.Peer.Region);
+            }
+        });
 
     public ReplicationStatus Snapshot()
     {
@@ -173,6 +203,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 {
                     link.Connected = false;
                 }
+
+                _acks.Lost();
             }
 
             await Task.Delay(backoff, _time, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
@@ -217,7 +249,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             link.Connected = true;
             foreach (var cursor in link.Cursors.Values)
             {
-                (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.RequiresRefill) = (null, null, null, 0, false);
+                (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.RequiresRefill, cursor.Refilling, cursor.Live) =
+                    (null, null, null, 0, false, false, null);
             }
         }
 
@@ -553,6 +586,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         var database = ChangeGroups.Tenant(ack?.Database);
         Cursor? cursor;
         Ulid incarnation;
+        bool live;
+        long from;
         lock (link.Gate)
         {
             cursor = link.Cursors.GetValueOrDefault(database);
@@ -563,6 +598,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
 
             incarnation = pinned;
+            // Capture the original batch kind before clearing it: stored positions and uncertified refills never confirm.
+            live = !cursor.Refilling && link.Peer.Region != _options.Region && link.Placements.GetValueOrDefault(database).Placed;
+            from = cursor.Live is { } run && run.Incarnation == incarnation ? run.From : cursor.Acked ?? inFlight;
             (cursor.InFlight, cursor.InFlightGroups, cursor.Refilling) = (null, 0, false);
             if (ack.Refused)
             {
@@ -571,20 +609,29 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 return;
             }
 
-            cursor.Acked = inFlight;
+            (cursor.Acked, cursor.Live) = (inFlight, null);
         }
 
         // Recorded only while the copy in place is still the one the batch came from; otherwise the cursor starts over.
         if (!await _source.AckAsync(database, incarnation, peer, (long)ack.ChangeId, new Hlc(ack.Stable), cancellationToken).ConfigureAwait(false))
         {
             Reset(link, cursor);
+            return;
         }
-        else
+
+        lock (link.Gate)
         {
-            lock (link.Gate)
+            cursor.RequiresRefill = false;
+            if (live)
             {
-                cursor.RequiresRefill = false;
+                cursor.Live = (incarnation, from);
             }
+        }
+
+        // The conditional writer accepted the pinned ACK. Recheck placement before releasing any client wait.
+        if (live && (await PlacementAsync(database, cancellationToken).ConfigureAwait(false))?.Includes(link.Peer.Region) == true)
+        {
+            _acks.Acked(database, incarnation, from, (long)ack.ChangeId);
         }
     }
 
@@ -593,7 +640,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     {
         lock (link.Gate)
         {
-            (cursor.Incarnation, cursor.Acked, cursor.Head, cursor.RequiresRefill) = (null, null, 0, false);
+            (cursor.Incarnation, cursor.Acked, cursor.Head, cursor.RequiresRefill, cursor.Live) = (null, null, 0, false, null);
         }
     }
 
@@ -705,6 +752,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
         // Whether the batch in flight is a refill.
         public bool Refilling { get; set; }
+
+        // One contiguous run of live batches; a reconnect, refill or other unconfirming ACK ends it.
+        public (Ulid Incarnation, long From)? Live { get; set; }
 
         // When the last frontier went (a TimeProvider timestamp; 0 before the first).
         public long FrontierAt { get; set; }
