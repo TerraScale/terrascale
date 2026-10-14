@@ -1,4 +1,6 @@
 using System.Diagnostics.Metrics;
+using System.Runtime.ExceptionServices;
+using System.Threading.Channels;
 using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -25,6 +27,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private static readonly TimeSpan RefillTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan FrontierEvery = TimeSpan.FromSeconds(5);
     private const int MaxDetail = 128;
+    private const int MaxPendingResponses = 32;
 
     private readonly IMembership _membership;
     private readonly PeerCredential _credential;
@@ -177,7 +180,23 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         }
     }
 
+    // The peer answers every frame (a heartbeat with an empty frame), so silence for the progress timeout means a half-open
+    // connection or a peer that stopped reading, where this side's writes stall: either ends the stream, which reconnects.
     private async Task StreamAsync(Link link, Action welcomed, CancellationToken cancellationToken)
+    {
+        using var silent = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout, _time);
+        using var stream = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, silent.Token);
+        try
+        {
+            await ConnectedAsync(link, welcomed, silent, stream.Token).ConfigureAwait(false);
+        }
+        catch (Exception error) when (silent.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("the peer did not answer in time", error);
+        }
+    }
+
+    private async Task ConnectedAsync(Link link, Action welcomed, CancellationTokenSource silent, CancellationToken cancellationToken)
     {
         using var channel = PeerChannel.Create(new Uri(link.Peer.PeerAddress), _credential);
         using var call = new V1.Replication.ReplicationClient(channel).Push(cancellationToken: cancellationToken);
@@ -185,14 +204,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         {
             Hello = new Hello { Node = _self.Id.Value, Hlc = _self.Clock.Tick().Value, Region = _options.Region, Machine = _membership.Self.Name },
         }, cancellationToken).ConfigureAwait(false);
-        using (var welcome = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        if (!await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false) || call.ResponseStream.Current.Welcome is not { Node: not 0 })
         {
-            welcome.CancelAfter(ReplicationProtocol.ProgressTimeout);
-            if (!await call.ResponseStream.MoveNext(welcome.Token).ConfigureAwait(false) || call.ResponseStream.Current.Welcome is not { Node: not 0 })
-            {
-                throw new IOException("the peer did not welcome the stream");
-            }
+            throw new IOException("the peer did not welcome the stream");
         }
+
+        silent.CancelAfter(ReplicationProtocol.ProgressTimeout);
 
         var peer = new ReplicaId(call.ResponseStream.Current.Welcome.Node);
         lock (link.Gate)
@@ -205,66 +222,204 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         }
 
         welcomed();
-        var reading = call.ResponseStream.MoveNext(cancellationToken);
+        using var activity = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var responses = Channel.CreateBounded<AckFrame>(2 * MaxPendingResponses);
+        var reading = responses.Reader.ReadAsync(activity.Token).AsTask();
+        var pending = 0;
+        ExceptionDispatchInfo? failure = null;
+        using var writer = new LinkWriter(call.RequestStream, _time, ReserveAsync);
+        var receiving = ReceiveAsync();
+        var heartbeats = HeartbeatAsync();
+        var progress = ProgressAsync();
         Task? changed = null;
-        var quiet = _time.GetTimestamp();
-        while (true)
+        try
         {
-            // Asked for before the pass reads, so a commit during the pass wakes the next one.
-            changed = changed is null || changed.IsCompleted ? _source.ChangedAsync(cancellationToken) : changed;
-            if (await ShipAsync(link, call.RequestStream, peer, cancellationToken).ConfigureAwait(false))
+            while (true)
             {
-                quiet = _time.GetTimestamp();
+                activity.Token.ThrowIfCancellationRequested();
+                // Asked for before the pass reads, so a commit during the pass wakes the next one.
+                changed = changed is null || changed.IsCompleted ? _source.ChangedAsync(activity.Token) : changed;
+                _ = await ShipAsync(link, writer, peer, DrainAsync, activity.Token).ConfigureAwait(false);
+
+                using (var pass = CancellationTokenSource.CreateLinkedTokenSource(activity.Token))
+                {
+                    _ = await Task.WhenAny(reading, changed, Task.Delay(Idle, _time, pass.Token)).ConfigureAwait(false);
+                    await pass.CancelAsync().ConfigureAwait(false);
+                }
+
+                await DrainAsync().ConfigureAwait(false);
+
+                CheckProgress();
             }
-            else if (_time.GetElapsedTime(quiet) >= Idle)
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested && Volatile.Read(ref failure) is not null)
+        {
+            Volatile.Read(ref failure)!.Throw();
+            throw;
+        }
+        finally
+        {
+            await activity.CancelAsync().ConfigureAwait(false);
+            await receiving.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await heartbeats.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await progress.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await ((Task)reading).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+
+        // Process each database's responses before shipping the next one: a large placement cannot fill the queue while
+        // the pass waits on another database's writer. InFlight was published before this consumer sees a batch's ack.
+        async ValueTask DrainAsync()
+        {
+            while (reading.IsCompleted)
             {
-                await call.RequestStream.WriteAsync(new PushFrame { Heartbeat = new Heartbeat { Hlc = _self.Clock.Tick().Value } }, cancellationToken).ConfigureAwait(false);
-                quiet = _time.GetTimestamp();
+                var response = await reading.ConfigureAwait(false);
+                if (pending == 0)
+                {
+                    throw new InvalidDataException("the peer sent a response with no frame outstanding");
+                }
+
+                if (response.Stable is { } report)
+                {
+                    // A report for a frontier of a replaced copy says nothing of the copy in place.
+                    _ = await _source.RecordStableAsync(
+                        ChangeGroups.Tenant(report.Database), ChangeGroups.RequiredIncarnation(report.Database), peer, new Hlc(report.Stable), activity.Token).ConfigureAwait(false);
+                }
+                else
+                {
+                    await AckedAsync(link, response.Ack, peer, activity.Token).ConfigureAwait(false);
+                }
+
+                pending--;
+                reading = responses.Reader.ReadAsync(activity.Token).AsTask();
+            }
+        }
+
+        // At most 32 response-producing frames await durable processing, leaving room to read their replies and heartbeats
+        // even while local storage is busy. The budget is released by the single consumer, not by mere receipt.
+        async ValueTask ReserveAsync()
+        {
+            while (pending >= MaxPendingResponses)
+            {
+                _ = await reading.ConfigureAwait(false);
+                await DrainAsync().ConfigureAwait(false);
             }
 
+            pending++;
+        }
+
+        void CheckProgress()
+        {
             lock (link.Gate)
             {
-                // A refill joins whole buckets on the peer: it may take longer than a batch.
-                if (link.Cursors.Values.Any(cursor => cursor.InFlight is not null && _time.GetElapsedTime(cursor.SentAt) > (cursor.Refilling ? RefillTimeout : ReplicationProtocol.ProgressTimeout)))
+                if (link.Cursors.Values.Any(cursor => cursor.InFlight is not null && !cursor.ResponseReceived
+                    && _time.GetElapsedTime(cursor.SentAt) >= (cursor.Refilling ? RefillTimeout : ReplicationProtocol.ProgressTimeout)))
                 {
                     throw new TimeoutException("the peer did not acknowledge a batch in time");
                 }
             }
+        }
 
-            using (var pass = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        // Observe liveness while local storage is busy; heartbeat replies need no durable processing or queue space.
+        async Task ReceiveAsync()
+        {
+            try
             {
-                _ = await Task.WhenAny(reading, changed, Task.Delay(Idle, _time, pass.Token)).ConfigureAwait(false);
-                await pass.CancelAsync().ConfigureAwait(false);
+                while (await call.ResponseStream.MoveNext(activity.Token).ConfigureAwait(false))
+                {
+                    silent.CancelAfter(ReplicationProtocol.ProgressTimeout);
+                    var frame = call.ResponseStream.Current;
+                    if (frame.KindCase != AckFrame.KindOneofCase.None)
+                    {
+                        if (frame.Ack is { } ack)
+                        {
+                            var database = ChangeGroups.Tenant(ack.Database);
+                            lock (link.Gate)
+                            {
+                                var cursor = link.Cursors.GetValueOrDefault(database);
+                                if (cursor?.InFlight is { } inFlight && cursor.Incarnation is { } pinned
+                                    && ChangeGroups.RequiredIncarnation(ack.Database) == pinned && (ack.Refused || ack.ChangeId == (ulong)inFlight))
+                                {
+                                    // Receipt satisfies the peer's deadline. It never advances the durable cursor.
+                                    cursor.ResponseReceived = true;
+                                }
+                            }
+                        }
+
+                        await responses.Writer.WriteAsync(frame, activity.Token).ConfigureAwait(false);
+                    }
+                }
+
+                await FailAsync(new IOException("the peer ended the stream")).ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                await FailAsync(error).ConfigureAwait(false);
+            }
+        }
+
+        async Task HeartbeatAsync()
+        {
+            try
+            {
+                using var timer = new PeriodicTimer(Idle, _time);
+                while (await timer.WaitForNextTickAsync(activity.Token).ConfigureAwait(false))
+                {
+                    if (writer.Quiet >= Idle)
+                    {
+                        await writer.WriteAsync(new PushFrame { Heartbeat = new Heartbeat { Hlc = _self.Clock.Tick().Value } }, activity.Token).ConfigureAwait(false);
+                    }
+                }
+            }
+            catch (Exception error)
+            {
+                await FailAsync(error).ConfigureAwait(false);
+            }
+        }
+
+        // A stalled transport write can also hold the heartbeat writer's semaphore. Deadline checks never await it.
+        async Task ProgressAsync()
+        {
+            try
+            {
+                using var timer = new PeriodicTimer(Idle, _time);
+                while (await timer.WaitForNextTickAsync(activity.Token).ConfigureAwait(false))
+                {
+                    CheckProgress();
+                }
+            }
+            catch (Exception error)
+            {
+                await FailAsync(error).ConfigureAwait(false);
+            }
+        }
+
+        // Preserve the first background failure before cancellation unblocks storage or transport with a different error.
+        async Task FailAsync(Exception error)
+        {
+            if (!activity.IsCancellationRequested)
+            {
+                _ = Interlocked.CompareExchange(ref failure, ExceptionDispatchInfo.Capture(error), null);
             }
 
-            if (reading.IsCompleted)
-            {
-                if (!await reading.ConfigureAwait(false))
-                {
-                    throw new IOException("the peer ended the stream");
-                }
-
-                if (call.ResponseStream.Current.Stable is { } report)
-                {
-                    // A report for a frontier of a replaced copy is refused there: it says nothing of the copy in place.
-                    _ = await _source.RecordStableAsync(
-                        ChangeGroups.Tenant(report.Database), ChangeGroups.RequiredIncarnation(report.Database), peer, new Hlc(report.Stable), cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    await AckedAsync(link, call.ResponseStream.Current.Ack, peer, cancellationToken).ConfigureAwait(false);
-                }
-                reading = call.ResponseStream.MoveNext(cancellationToken);
-            }
+            responses.Writer.TryComplete(error);
+            await activity.CancelAsync().ConfigureAwait(false);
         }
     }
 
     // Sends the next batch of every database placed in the peer's region with none in flight; whether any was sent.
-    private async ValueTask<bool> ShipAsync(Link link, IClientStreamWriter<PushFrame> stream, ReplicaId peer, CancellationToken cancellationToken)
+    private async ValueTask<bool> ShipAsync(Link link, LinkWriter stream, ReplicaId peer, Func<ValueTask> drain, CancellationToken cancellationToken)
     {
         var sent = false;
-        await foreach (var database in _source.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
+        await using var databases = _source.ListDatabasesAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
+        while (true)
         {
+            await drain().ConfigureAwait(false);
+            if (!await databases.MoveNextAsync().ConfigureAwait(false))
+            {
+                break;
+            }
+
+            var database = databases.Current;
             if (database == ChangeGroups.System && !_catalogGate.Value.Trusted
                 || !await PlacedAsync(link, database, cancellationToken).ConfigureAwait(false))
             {
@@ -339,15 +494,17 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 }
 
                 var horizon = await _states.HorizonAsync(database, cancellationToken).ConfigureAwait(false);
-                await stream.WriteAsync(new PushFrame
-                {
-                    Refill = new Refill { Database = ChangeGroups.Wire(database, incarnation), ChangeId = checked((ulong)head), Horizon = horizon.Value },
-                }, cancellationToken).ConfigureAwait(false);
+                await stream.ReserveAsync().ConfigureAwait(false);
                 lock (link.Gate)
                 {
                     cursor.BehindSince ??= _time.GetTimestamp();
                     (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (head, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true);
+                    cursor.ResponseReceived = false;
                 }
+                await stream.WriteAsync(new PushFrame
+                {
+                    Refill = new Refill { Database = ChangeGroups.Wire(database, incarnation), ChangeId = checked((ulong)head), Horizon = horizon.Value },
+                }, cancellationToken).ConfigureAwait(false);
 
                 sent = true;
                 continue;
@@ -357,6 +514,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             {
                 if (_time.GetElapsedTime(cursor.FrontierAt) >= FrontierEvery || cursor.FrontierAt == 0)
                 {
+                    await stream.ReserveAsync().ConfigureAwait(false);
                     await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database, incarnation), Hlc = frontier.Value } }, cancellationToken)
                         .ConfigureAwait(false);
                     cursor.FrontierAt = _time.GetTimestamp();
@@ -372,15 +530,17 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
 
             var last = groups[^1].ChangeId;
+            await stream.ReserveAsync().ConfigureAwait(false);
+            lock (link.Gate)
+            {
+                cursor.BehindSince ??= _time.GetTimestamp();
+                (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (last, groups.Count, _time.GetTimestamp(), Math.Max(cursor.Head, last), false);
+                cursor.ResponseReceived = false;
+            }
             await stream.WriteAsync(new PushFrame
             {
                 Batch = new Batch { Database = ChangeGroups.Wire(database, incarnation), LastChangeId = checked((ulong)last), Groups = ChangeGroups.Encode(groups) },
             }, cancellationToken).ConfigureAwait(false);
-            lock (link.Gate)
-            {
-                cursor.BehindSince ??= _time.GetTimestamp();
-                (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head) = (last, groups.Count, _time.GetTimestamp(), Math.Max(cursor.Head, last));
-            }
 
             sent = true;
         }
@@ -487,6 +647,33 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }),
             new KeyValuePair<string, object?>("peer_region", region.Key)));
 
+    // gRPC permits one pending write. Heartbeats can run beside storage reads, but never beside a batch write.
+    private sealed class LinkWriter(IClientStreamWriter<PushFrame> stream, TimeProvider time, Func<ValueTask> reserve) : IDisposable
+    {
+        private readonly SemaphoreSlim _writing = new(1, 1);
+        private long _lastWrite = time.GetTimestamp();
+
+        public TimeSpan Quiet => time.GetElapsedTime(Interlocked.Read(ref _lastWrite));
+
+        public ValueTask ReserveAsync() => reserve();
+
+        public async Task WriteAsync(PushFrame frame, CancellationToken cancellationToken)
+        {
+            await _writing.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                Interlocked.Exchange(ref _lastWrite, time.GetTimestamp());
+                await stream.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _writing.Release();
+            }
+        }
+
+        public void Dispose() => _writing.Dispose();
+    }
+
     private sealed class Link(ClusterMember peer)
     {
         public ClusterMember Peer { get; } = peer;
@@ -512,6 +699,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         public long? Acked { get; set; }
 
         public long? InFlight { get; set; }
+
+        // The peer answered, but the single consumer may still be waiting on local durable ACK processing.
+        public bool ResponseReceived { get; set; }
 
         // Whether the batch in flight is a refill.
         public bool Refilling { get; set; }

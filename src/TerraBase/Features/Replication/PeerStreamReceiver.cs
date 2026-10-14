@@ -75,6 +75,10 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         ArgumentNullException.ThrowIfNull(responseStream);
         ArgumentNullException.ThrowIfNull(context);
         // Shutdown ends the stream, also one still waiting for its hello; the sender resumes from its last ack elsewhere or later.
+        // So does a sender silent for the progress timeout (it heartbeats every second): a half-open connection, or one that
+        // stopped reading, where this side's writes stall. Aborting the request also ends a write that waits for the sender.
+        using var silent = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout, _time);
+        using var abort = silent.Token.Register(static http => ((HttpContext)http!).Abort(), context.GetHttpContext());
         using var stream = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, _lifetime.ApplicationStopping);
         Hello hello;
         try
@@ -87,8 +91,9 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             }
 
             hello = first;
+            silent.CancelAfter(ReplicationProtocol.ProgressTimeout);
         }
-        catch (OperationCanceledException) when (stream.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested)
+        catch (Exception) when (silent.IsCancellationRequested || (stream.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested))
         {
             return;
         }
@@ -180,9 +185,12 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 }
 
                 var frame = requestStream.Current;
+                silent.CancelAfter(ReplicationProtocol.ProgressTimeout);
                 reading = requestStream.MoveNext(stream.Token);
                 if (frame.KindCase == PushFrame.KindOneofCase.Heartbeat)
                 {
+                    // An empty frame answers it, so the sender's deadline for answers also holds on an idle link.
+                    await responseStream.WriteAsync(new AckFrame(), stream.Token).ConfigureAwait(false);
                     continue;
                 }
 
@@ -192,6 +200,11 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     _ = Incarnation(frontier.Database);
                     if (cut.Contains(at) || refills.Keys.Any(running => running.Database == at))
                     {
+                        // Release the sender's response budget without certifying progress across an unfinished refill.
+                        await responseStream.WriteAsync(new AckFrame
+                        {
+                            Stable = new StableReport { Database = frontier.Database, Stable = 0 },
+                        }, stream.Token).ConfigureAwait(false);
                         continue;
                     }
 
@@ -293,6 +306,10 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         catch (OperationCanceledException) when (stream.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested)
         {
             // A newer stream of the same origin took over, or this machine stops.
+        }
+        catch (Exception error) when (silent.IsCancellationRequested)
+        {
+            _logger.ZLogWarning(error, $"The replication stream from machine {origin.Value:@Origin} in {region:@Region} was silent past the progress timeout; it is ended");
         }
         finally
         {
