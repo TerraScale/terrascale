@@ -136,6 +136,7 @@ try
     app.UseTerraBaseBadRequests();
     app.UseTerraBaseLegacyRoutes();
     app.UseRouting();
+    TerraBase.Features.Shapes.ShapesExtensions.UseTerraBaseShapeNoStore(app);
     app.UseTerraBaseListeners();
     // Refuse new work on existing connections while preserving the probes' shutdown responses.
     app.Use((context, next) =>

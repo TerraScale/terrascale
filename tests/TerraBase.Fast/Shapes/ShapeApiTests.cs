@@ -40,7 +40,7 @@ public sealed class ShapeApiTests
         await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
         await Assert.That(reply.Location!.OriginalString).IsEqualTo($"{Shape(api, "")}?handle={Handle}&offset=snap.{Snapshot}.0");
         await Assert.That(reply.Handle).IsEqualTo(Handle);
-        await Assert.That(reply.CacheControl).IsEqualTo("private, max-age=0, must-revalidate");
+        await Assert.That(reply.CacheControl).IsEqualTo("private, no-store");
         await Assert.That(reply.Vary).Contains("Authorization");
     }
 
@@ -84,7 +84,7 @@ public sealed class ShapeApiTests
         await Assert.That(page.UpToDate).IsEqualTo("false");
         var digest = Convert.ToHexString(SHA256.HashData(FixtureBody)[..8]).ToLowerInvariant();
         await Assert.That(page.ETag).IsEqualTo($"\"{ShapeId}:{Handle}:snap.{Snapshot}.0:{Snapshot}:{digest}\"");
-        await Assert.That(page.CacheControl).IsEqualTo("private, max-age=0, must-revalidate");
+        await Assert.That(page.CacheControl).IsEqualTo("private, no-store");
     }
 
     [Test]
@@ -98,7 +98,7 @@ public sealed class ShapeApiTests
         await Assert.That(reply.Code).IsEqualTo("must_refetch");
         await Assert.That(reply.Json.GetProperty("error").GetProperty("handle").GetString()).IsEqualTo(Handle);
         await Assert.That(reply.Handle).IsEqualTo(Handle);
-        await Assert.That(reply.CacheControl).IsEqualTo("no-store");
+        await Assert.That(reply.CacheControl).IsEqualTo("private, no-store");
     }
 
     [Test]
@@ -274,7 +274,7 @@ public sealed class ShapeApiTests
 
         await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.RequestUriTooLong);
         await Assert.That(reply.Code).IsEqualTo("uri_too_long");
-        await Assert.That(reply.CacheControl).IsEqualTo("no-store");
+        await Assert.That(reply.CacheControl).IsEqualTo("private, no-store");
     }
 
     [Test]
@@ -309,7 +309,7 @@ public sealed class ShapeApiTests
             var reply = await GetShapeAsync(api.Client, Shape(api, query));
             await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.Conflict);
             await Assert.That(reply.Code).IsEqualTo("must_refetch");
-            await Assert.That(reply.CacheControl).IsEqualTo("no-store");
+            await Assert.That(reply.CacheControl).IsEqualTo("private, no-store");
             await Assert.That(reply.Handle).IsEqualTo(bootstrap.Handle);
         }
     }
@@ -340,7 +340,7 @@ public sealed class ShapeApiTests
             var invalid = await GetShapeAsync(api.Client, target, ("If-None-Match", malformed));
             await Assert.That(invalid.Status).IsEqualTo(HttpStatusCode.BadRequest);
             await Assert.That(invalid.Code).IsEqualTo("invalid_request");
-            await Assert.That(invalid.CacheControl).IsEqualTo("no-store");
+            await Assert.That(invalid.CacheControl).IsEqualTo("private, no-store");
         }
 
         using var writeOnly = await api.ClientWithScopesAsync("documents:write");
@@ -360,7 +360,7 @@ public sealed class ShapeApiTests
             await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.Conflict);
             await Assert.That(reply.Code).IsEqualTo("must_refetch");
             await Assert.That(reply.Handle).IsEqualTo(Handle);
-            await Assert.That(reply.CacheControl).IsEqualTo("no-store");
+            await Assert.That(reply.CacheControl).IsEqualTo("private, no-store");
         }
     }
 
@@ -375,7 +375,7 @@ public sealed class ShapeApiTests
                 ? await GetShapeAsync(api.Client, Shape(api, "?offset=-1"), ("TB-Shape-Resume", ResumeToken()))
                 : await GetShapeAsync(api.Client, Shape(api, $"?offset=-1&cursor={ResumeToken()}"));
             await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
-            await Assert.That(reply.CacheControl).IsEqualTo("no-store");
+            await Assert.That(reply.CacheControl).IsEqualTo("private, no-store");
             await Assert.That(reply.Handle).IsEqualTo(Handle);
             await Assert.That(reply.Location!.OriginalString).IsEqualTo(Shape(api, $"?handle={Handle}&offset=0"));
             await Assert.That(resume.Scope.Span.SequenceEqual(Enumerable.Range(1, 16).Select(value => (byte)value).ToArray())).IsTrue();
@@ -395,7 +395,7 @@ public sealed class ShapeApiTests
         var reply = await GetShapeAsync(api.Client, Shape(api, "?offset=-1"), ("TB-Shape-Resume", token));
 
         await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
-        await Assert.That(reply.CacheControl).IsEqualTo("no-store");
+        await Assert.That(reply.CacheControl).IsEqualTo("private, no-store");
         await Assert.That(resume.Cursor!.Machine).IsEqualTo(machine);
         await Assert.That(resume.Cursor.Stamps.Count).IsEqualTo(ChangeCursor.MaxOrigins);
     }
@@ -420,6 +420,42 @@ public sealed class ShapeApiTests
             await Assert.That(cached.Headers.GetValues("TB-Shape-Cursor").Single()).IsEqualTo(expected);
             await Assert.That(cached.Headers.GetValues("TB-Shape-Up-To-Date").Single()).IsEqualTo("true");
             await Assert.That(cached.Headers.GetValues("TB-Shape-Handle").Single()).IsEqualTo(Handle);
+        }
+    }
+
+    [Test]
+    public async Task Every_origin_answer_including_401_and_403_is_private_no_store_and_never_shared_cacheable()
+    {
+        await using var api = await StartWithFixturesAsync(services =>
+        {
+            services.AddSingleton<IShapeLiveTail>(new FixtureLiveTail());
+            services.AddSingleton<IShapeResume>(new FixtureResume());
+        });
+        using var anonymous = api.Management.DataClient();
+        using var writeOnly = await api.ClientWithScopesAsync("documents:write");
+        var page = Shape(api, $"?handle={Handle}&offset=snap.{Snapshot}.0");
+        var etag = (await GetShapeAsync(api.Client, page)).ETag!;
+        var answers = new (HttpStatusCode Status, ShapeReply Reply)[]
+        {
+            (HttpStatusCode.TemporaryRedirect, await GetShapeAsync(api.Client, Shape(api, "?offset=-1"))),
+            (HttpStatusCode.TemporaryRedirect, await GetShapeAsync(api.Client, Shape(api, "?offset=-1"), ("TB-Shape-Resume", ResumeToken()))),
+            (HttpStatusCode.OK, await GetShapeAsync(api.Client, page)),
+            (HttpStatusCode.NotModified, await GetShapeAsync(api.Client, page, ("If-None-Match", etag))),
+            (HttpStatusCode.OK, await GetShapeAsync(api.Client, Shape(api, $"?handle={Handle}&offset=0"))),
+            (HttpStatusCode.OK, await GetShapeAsync(api.Client, Shape(api, $"?handle={Handle}&offset=0&live=true"))),
+            (HttpStatusCode.Conflict, await GetShapeAsync(api.Client, Shape(api, "?handle=h1-0000000000000000&offset=0"))),
+            (HttpStatusCode.BadRequest, await GetShapeAsync(api.Client, Shape(api, "?offset=bad"))),
+            (HttpStatusCode.NotFound, await GetShapeAsync(api.Client, $"{api.Collections}/missing/shape?offset=-1")),
+            (HttpStatusCode.Forbidden, await GetShapeAsync(writeOnly, page, ("If-None-Match", etag))),
+            (HttpStatusCode.Unauthorized, await GetShapeAsync(anonymous, page, ("If-None-Match", etag))),
+            (HttpStatusCode.Unauthorized, await GetShapeAsync(anonymous, Shape(api, "/keys?handle=" + Handle))),
+            (HttpStatusCode.Forbidden, await GetShapeAsync(writeOnly, Shape(api, "/keys?handle=" + Handle))),
+        };
+
+        foreach (var (status, reply) in answers)
+        {
+            await Assert.That(reply.Status).IsEqualTo(status);
+            await Assert.That(reply.CacheControl).IsEqualTo("private, no-store").Because(status.ToString());
         }
     }
 

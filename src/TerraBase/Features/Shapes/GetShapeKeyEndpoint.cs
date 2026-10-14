@@ -49,7 +49,7 @@ internal sealed class GetShapeKeyEndpoint(
             Query("epoch", "Canonical unsigned decimal epoch, floor(unix_seconds / 600)."),
             Query("key_id", "Canonical uppercase ULID of the project data key named by the TBS1 header."));
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
-        Metadata(new ListenerMetadata(TerraBaseListener.Client));
+        Metadata(new ListenerMetadata(TerraBaseListener.Client), OriginNoStore.Instance);
     }
 
     private static OpenApiParameter Query(string name, string description) => new()

@@ -101,7 +101,8 @@ public sealed class ShapeEndToEndTests
                 .Because(vector.GetProperty("id").GetString()!);
             await Assert.That(JsonNode.DeepEquals(JsonNode.Parse(answer.Json.GetRawText()),
                 JsonNode.Parse(expected.GetProperty("body").GetRawText()))).IsTrue();
-            await Assert.That(answer.CacheControl).IsEqualTo(expected.GetProperty("headers").GetProperty("Cache-Control").GetString());
+            // FR-24 supersedes the legacy vectors' origin cache policy; bodies and statuses stay exact.
+            await Assert.That(answer.CacheControl).IsEqualTo("private, no-store");
         }
     }
 
@@ -185,7 +186,7 @@ public sealed class ShapeEndToEndTests
         var client = new ShapeClient(api, query: null);
         var bootstrap = await client.Get($"{api.Collections}/{DocumentApi.Collection}/shape?offset=-1");
         await Assert.That(bootstrap.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
-        await Assert.That(bootstrap.CacheControl).IsEqualTo("private, max-age=0, must-revalidate");
+        await Assert.That(bootstrap.CacheControl).IsEqualTo("private, no-store");
         var page = await client.Get(bootstrap.Location!.OriginalString);
         await Assert.That(page.Status).IsEqualTo(HttpStatusCode.OK);
         await AssertWireBodyAsync(page);
@@ -219,7 +220,7 @@ public sealed class ShapeEndToEndTests
         await Assert.That(cached.ETag).IsEqualTo(original.ETag);
         await Assert.That(cached.Handle).IsEqualTo(original.Handle);
         await Assert.That(cached.NextOffset).IsEqualTo(original.NextOffset);
-        await Assert.That(cached.CacheControl).IsEqualTo("private, max-age=0, must-revalidate");
+        await Assert.That(cached.CacheControl).IsEqualTo("private, no-store");
         await Assert.That(cached.Vary).Contains("Authorization");
     }
 
@@ -235,7 +236,7 @@ public sealed class ShapeEndToEndTests
         await Assert.That(cursor[0]).IsEqualTo((byte)1);
         await Assert.That(ChangeCursor.Decode(System.Buffers.Text.Base64Url.EncodeToString(cursor.AsSpan(17)))).IsNotNull();
         await Assert.That(reply.ContentType).IsEqualTo("application/json");
-        await Assert.That(reply.CacheControl).IsEqualTo("private, max-age=0, must-revalidate");
+        await Assert.That(reply.CacheControl).IsEqualTo("private, no-store");
         await Assert.That(reply.Vary).Contains("Authorization");
     }
 
@@ -294,7 +295,7 @@ public sealed class ShapeEndToEndTests
 
         await Assert.That(stale.Status).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(stale.Code).IsEqualTo("must_refetch");
-        await Assert.That(stale.CacheControl).IsEqualTo("no-store");
+        await Assert.That(stale.CacheControl).IsEqualTo("private, no-store");
         await Assert.That(stale.Handle).IsNotEqualTo(oldHandle);
         await Assert.That(stale.Json.GetProperty("error").GetProperty("handle").GetString()).IsEqualTo(stale.Handle);
     }
@@ -316,7 +317,7 @@ public sealed class ShapeEndToEndTests
         var stale = await parked;
         await Assert.That(stale.Status is HttpStatusCode.Conflict or HttpStatusCode.NotFound).IsTrue();
         await Assert.That(stale.Code).IsEqualTo(stale.Status == HttpStatusCode.Conflict ? "must_refetch" : "unknown_collection");
-        await Assert.That(stale.CacheControl).IsEqualTo("no-store");
+        await Assert.That(stale.CacheControl).IsEqualTo("private, no-store");
         var bootstrap = await client.Get($"{api.Collections}/{DocumentApi.Collection}/shape?offset=-1");
         await Assert.That(bootstrap.Handle).IsNotEqualTo(synced.Handle);
     }
@@ -343,7 +344,7 @@ public sealed class ShapeEndToEndTests
         var stale = await client.Get(client.Uri(oldOffset, live: false));
         await Assert.That(stale.Status).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(stale.Code).IsEqualTo("must_refetch");
-        await Assert.That(stale.CacheControl).IsEqualTo("no-store");
+        await Assert.That(stale.CacheControl).IsEqualTo("private, no-store");
 
         var stalePage = await client.Get(initial.Location!.OriginalString);
         await Assert.That(stalePage.Status).IsEqualTo(HttpStatusCode.Conflict);
