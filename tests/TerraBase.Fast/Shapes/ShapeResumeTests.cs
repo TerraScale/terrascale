@@ -34,7 +34,7 @@ public sealed partial class ShapeResumeTests
         foreach (var header in new[] { false, true })
         {
             var head = await ResumeAsync(api.Client, path, synced.Cursor, header);
-            await Assert.That(head.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
+            await Assert.That(head.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect).Because(head.Message ?? "no refusal message");
             await Assert.That(head.CacheControl).IsEqualTo("no-store");
             await Assert.That(head.Location).IsEqualTo($"{path}?handle={synced.Handle}&offset={synced.Offset}");
         }
@@ -94,7 +94,7 @@ public sealed partial class ShapeResumeTests
 
     private sealed record Synced(string Handle, string Offset, string Cursor);
 
-    private sealed record Reply(HttpStatusCode Status, string? Location, string? CacheControl, string? Handle, string? Code);
+    private sealed record Reply(HttpStatusCode Status, string? Location, string? CacheControl, string? Handle, string? Code, string? Message);
 
     private static async Task<Synced> SyncAsync(HttpClient http, string path, string? cursor, Dictionary<string, string> state)
     {
@@ -152,7 +152,8 @@ public sealed partial class ShapeResumeTests
         var text = await response.Content.ReadAsStringAsync(token);
         return new Reply(response.StatusCode, response.Headers.Location?.OriginalString, response.Headers.CacheControl?.ToString(),
             response.Headers.TryGetValues("TB-Shape-Handle", out var handle) ? handle.Single() : null,
-            text.StartsWith('{') ? JsonElement.Parse(text).GetProperty("error").GetProperty("code").GetString() : null);
+            text.StartsWith('{') ? JsonElement.Parse(text).GetProperty("error").GetProperty("code").GetString() : null,
+            text.StartsWith('{') ? JsonElement.Parse(text).GetProperty("error").GetProperty("message").GetString() : null);
     }
 
     private static async Task<Dictionary<string, string>> FreshAsync(HttpClient http, string path)

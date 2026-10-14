@@ -45,7 +45,7 @@ public sealed partial class ShapeResumeTests
         await ReplicatedAsync(gru.Data, cell, uncovered, """{"uncovered":"sjc"}""");
 
         var resumed = await ResumeAsync(sjc.Data, path, synced.Cursor);
-        await Assert.That(resumed.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
+        await Assert.That(resumed.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect).Because(resumed.Message ?? "no refusal message");
         await Assert.That(resumed.CacheControl).IsEqualTo("no-store");
         await Assert.That(resumed.Handle).IsNotEqualTo(synced.Handle);
         var location = resumed.Location!;
