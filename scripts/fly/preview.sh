@@ -141,13 +141,10 @@ case ${1:-} in
       created=$(api -X POST "$machines/apps/$app/machines" -d "$(jq -n --argjson config "$config" '{region: "gru", config: $config}')")
       jq '{id, state}' <<<"$created"
       id=$(jq -er .id <<<"$created")
-      curl -fsS --retry 20 --retry-delay 2 --retry-all-errors --max-time 5 \
-        -o /dev/null "https://$app.fly.dev:8443/healthz"
-      # A new disposable preview needs its first issuer key; updates preserve state and fail if keys were lost.
-      flyctl ssh console -a "$app" --machine "$id" --container ts-auth -C '/app/ts-auth provision-signing-key'
     else
       api -X POST "$machines/apps/$app/machines/$id" -d "$(jq -n --argjson config "$config" '{config: $config}')" | jq '{id, state}'
     fi
+    # ts-auth bootstraps its issuer during startup; its readiness includes storage and usable signing keys.
     for origin in "https://$app.fly.dev:8443" "https://$app.fly.dev"; do
       curl -fsS --retry 20 --retry-delay 2 --retry-all-errors --max-time 5 -o /dev/null "$origin/readyz"
     done

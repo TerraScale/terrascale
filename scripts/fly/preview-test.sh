@@ -35,7 +35,7 @@ case "$1 $2" in
       fi
     done
     test ! -e "$STATE/fail-secret" ;;
-  "ssh console") printf '%s\n' "$*" >> "$STATE/provision" ;;
+  "ssh console") echo 'preview: startup owns signing-key provisioning; no duplicate SSH command' >&2; exit 1 ;;
   "storage destroy"|"apps destroy")
     test ! -e "$STATE/fail-$1"
     echo "$1 $2 $3" >> "$STATE/destroy"
@@ -115,9 +115,7 @@ for mode in create update; do
     and all(.config.services[]; .autostop == "stop" and .autostart and .min_machines_running == 0)
   ' "$state/request" >/dev/null
 done
-test "$(wc -l < "$state/provision")" = 1
-grep -q -- '--machine machine-test --container ts-auth -C /app/ts-auth provision-signing-key' "$state/provision"
-test "$(cat "$state/checks")" = $'https://ts-pr-123.fly.dev:8443/healthz\nhttps://ts-pr-123.fly.dev:8443/readyz\nhttps://ts-pr-123.fly.dev/readyz\nhttps://ts-pr-123.fly.dev:8443/readyz\nhttps://ts-pr-123.fly.dev/readyz'
+test "$(cat "$state/checks")" = $'https://ts-pr-123.fly.dev:8443/readyz\nhttps://ts-pr-123.fly.dev/readyz\nhttps://ts-pr-123.fly.dev:8443/readyz\nhttps://ts-pr-123.fly.dev/readyz'
 touch "$state/fail-ready"
 if "$here/preview.sh" machine 123 registry.fly.io/test:terrabase registry.fly.io/test:auth > "$state/failed"; then
   echo 'preview: published a URL for an unready preview' >&2
