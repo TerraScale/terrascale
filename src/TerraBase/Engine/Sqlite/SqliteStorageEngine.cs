@@ -81,6 +81,9 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// <summary>This member's replica id and clock, which every client database write and replicated join uses.</summary>
     internal LocalReplica Member { get; } = null!;
 
+    // Derived from the member directory, as the write path's IRemoteDurability.Confirms is (cell of one: false).
+    internal bool RequiresRemoteProof { get; init; }
+
     /// <summary>Runs every SQLite call of this engine.</summary>
     internal SqliteIoPool Io { get; }
 
@@ -1418,6 +1421,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             QueryBudget = QueryBudget,
             Member = Member,
             Checkpoint = _checkpoint,
+            RequiresRemoteProof = RequiresRemoteProof,
         };
         var published = false;
         var admitted = false;

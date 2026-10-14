@@ -10,6 +10,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Memory;
 using TerraBase.Fast.Documents;
+using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -397,7 +398,7 @@ public sealed class ShapeMetricsTests
 
         var shapeStorage = new SqliteShapeStorage(api.Server.Services.GetRequiredService<SqliteStorageEngine>());
         var sealer = new ShapeSealer(api.Server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance,
-            shapeStorage);
+            shapeStorage, new LocalDurability());
         var before = ShapeStorageReads(await ScrapeAsync(api.Server));
         var head = await sealer.SealUpToHeadAsync(store, shape, 0, token);
         var sealedReads = ShapeStorageReads(await ScrapeAsync(api.Server));
@@ -416,7 +417,7 @@ public sealed class ShapeMetricsTests
         using var chunk = await sealer.ReadChunkAsync(store, shape.Handle, 0, token);
         await Assert.That(chunk).IsNotNull();
         var bodyReads = ShapeStorageReads(await ScrapeAsync(api.Server));
-        await Assert.That(bodyReads - missedReads).IsEqualTo(2d).Because("a stored chunk executes size and body SELECTs");
+        await Assert.That(bodyReads - missedReads).IsEqualTo(3d).Because("a stored chunk executes size, body and frontier SELECTs");
 
         await using (var transaction = await shapeStorage.BeginTransactionAsync(store, write: false, token))
         {

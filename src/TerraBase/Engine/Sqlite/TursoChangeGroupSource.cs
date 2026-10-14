@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
@@ -26,6 +27,9 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     private readonly ILogger<TursoChangeGroupSource> _logger;
     private readonly SqliteStorageEngine _engine;
 
+    // Resolved per pass: the peer streams behind it read this source, so it cannot be a constructor dependency.
+    private readonly Func<IRemoteDurability?>? _durability;
+
     // Per database file, the CDC rows its last acknowledgement left; and when its oldest local commit that some peer has
     // not acknowledged committed (Unix seconds), with when that was last looked at (host-clock ticks).
     private readonly ConcurrentDictionary<Ulid, long> _backlog = new();
@@ -36,9 +40,10 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     private readonly ConcurrentDictionary<Ulid, TenantContext> _tracked = new();
     private static readonly TimeSpan TailRefresh = TimeSpan.FromSeconds(5);
 
-    public TursoChangeGroupSource(SqliteStorageEngine engine, IMeterFactory meters, ILogger<TursoChangeGroupSource> logger)
+    public TursoChangeGroupSource(SqliteStorageEngine engine, IMeterFactory meters, ILogger<TursoChangeGroupSource> logger, Func<IRemoteDurability?>? durability = null)
     {
         _engine = engine;
+        _durability = durability;
         _logger = logger;
         meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.replication.cdc_backlog", Backlog, null,
             "CDC rows kept because some peer has not acknowledged them, as of each database's last acknowledgement.");
@@ -151,6 +156,29 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     public ValueTask<bool> AckAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken) =>
         RecordAsync(database, incarnation, peer, changeId, stable, cancellationToken);
+
+    public async ValueTask<bool> ProveAsync(TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken)
+    {
+        if (await BeginAsync(database, incarnation, write: true, cancellationToken).ConfigureAwait(false) is not (var store, var transaction))
+        {
+            return false;
+        }
+
+        bool moved;
+        await using (transaction.ConfigureAwait(false))
+        {
+            moved = await transaction.AdvanceShapeFrontierAsync(_engine.ReplicaId, (from, through), held, cancellationToken).ConfigureAwait(false);
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        if (moved)
+        {
+            // Wakes shape sealing and live reads waiting for the frontier.
+            store.MoveCommitCount();
+        }
+
+        return true;
+    }
 
     public async ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken)
     {
@@ -401,12 +429,25 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     internal async Task TrimAsync(SqliteDatabaseStore store, CancellationToken cancellationToken)
     {
         long? floor;
+        // Read before the writer is taken: joined commits of a held origin pass the frontier before the cut, so a replica that
+        // only joins remote writes is not held for 24 h waiting for an ack it never gets.
+        var held = store.RequiresRemoteProof && store.Tenant is { } tenant && _durability?.Invoke() is { } durability
+            ? await durability.HeldOriginsAsync(tenant, cancellationToken).ConfigureAwait(false)
+            : FrozenSet<ReplicaId>.Empty;
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             // The file this transaction holds, which a reopen may have made another than the store's cached one.
             var incarnation = await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false);
-            (var left, floor, var raised, var oldest) = await transaction.TrimAsync(store.BackupAnchor, _engine.HostTime.GetUtcNow(), _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
+            // Before the cut: commits that need no new proof pass the shape frontier while capture still holds them, joined
+            // ones of an origin held now included.
+            var moved = store.RequiresRemoteProof && await transaction.AdvanceShapeFrontierAsync(_engine.ReplicaId, null, held, cancellationToken).ConfigureAwait(false);
+            var now = _engine.HostTime.GetUtcNow();
+            // The cut keeps what the frontier has not walked yet, for a bounded time (a pass's budget, or a proof to come).
+            var below = await transaction.ShapeFrontierHoldAsync(now.ToUnixTimeSeconds(), cancellationToken).ConfigureAwait(false) is { } hold
+                ? Math.Min(store.BackupAnchor ?? long.MaxValue, hold)
+                : store.BackupAnchor;
+            (var left, floor, var raised, var oldest) = await transaction.TrimAsync(below, now, _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
             // Before the commit wakes a stream: its RetainsAsync then already sees the ranges the raises proved quiet (which
             // hold whether or not the commit lands; the rows are unchanged until a later cut).
             foreach (var (from, to) in raised)
@@ -419,6 +460,11 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             _backlog[incarnation] = left;
             Prune(incarnation, oldest);
+            if (moved)
+            {
+                // Wakes shape sealing and live reads waiting for the frontier.
+                store.MoveCommitCount();
+            }
         }
 
         await TailAsync(store, floor, cancellationToken).ConfigureAwait(false);

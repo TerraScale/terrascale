@@ -5,6 +5,7 @@ using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 using ZLogger;
 
@@ -17,7 +18,7 @@ namespace TerraBase.Features.Shapes;
 internal sealed class ShapeService(
     IStorageEngine engine, LocalReplica replica, IDocumentService documents, IShapeSealer sealer, IShapeSnapshotSealer snapshots,
     IShapeStorage storage, IShapeRetention retention, IShapeFilterRegistry filters, ShapeRegistry registry, ShapeLiveGate gate,
-    IShapeFlights<ShapeRead> flights, IMemoryBudget memory, IHostApplicationLifetime lifetime, ILogger<ShapeService> logger) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail, IShapeResume
+    IShapeFlights<ShapeRead> flights, IMemoryBudget memory, IRemoteDurability durability, IHostApplicationLifetime lifetime, ILogger<ShapeService> logger) : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail, IShapeResume
 {
     private int _maintaining;
     private static readonly QuotaExceeded Busy = new("shape reads are at capacity; retry later", "shape_busy");
@@ -206,8 +207,16 @@ internal sealed class ShapeService(
                 return new MustRefetch(below.Message);
             }
 
+            // Read before the page attempt: a proof that arrives after a refusal must not turn it into must_refetch.
+            var frontier = await sealer.FrontierAsync(store, cancellationToken).ConfigureAwait(false);
             if (await snapshots.ReadPageAsync(store, lineage.Handle, snapshot, afterId, cancellationToken).ConfigureAwait(false) is not { } page)
             {
+                // A refused page can be committed but not remote durable. Published pages need no raw head read.
+                if (snapshot > frontier && snapshot <= await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false))
+                {
+                    return new Unavailable("the snapshot is not remote durable yet; retry later");
+                }
+
                 return new MustRefetch("the snapshot page is not sealed for this handle");
             }
 
@@ -265,7 +274,8 @@ internal sealed class ShapeService(
     /// <inheritdoc />
     /// <remarks>
     /// Probe and read run in the flight's starter only. The probe runs after the flight captured the commit count, and it parks
-    /// the gate only when the offset is the head. Only a parked flight answers fresh: a request behind the head gets the closed chunk.
+    /// the gate only when the offset is the durable frontier F (section 10), the head of what may be served. Only a parked
+    /// flight answers fresh: a request behind F gets the closed chunk.
     /// The read revalidates the lineage after the wake, so a re-created collection refetches.
     /// </remarks>
     public async ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, long? cursor, CancellationToken cancellationToken)
@@ -292,7 +302,7 @@ internal sealed class ShapeService(
             {
                 try
                 {
-                    parked = await ReadHeadAsync(current, token).ConfigureAwait(false) == offset;
+                    parked = await sealer.FrontierAsync(current, token).ConfigureAwait(false) == offset;
                 }
                 catch (Exception error) when (error is ShapeSealOffsetException or ObjectDisposedException)
                 {
@@ -335,10 +345,18 @@ internal sealed class ShapeService(
             }
 
             var definition = Definition(scope, lineage);
+            // Read before the head: F only rises and never passes the head, so offset <= F here stays below the head read next.
+            var frontier = await sealer.FrontierAsync(store, cancellationToken).ConfigureAwait(false);
             var head = await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false);
             if (offset > head)
             {
                 return new MustRefetch("the offset is above the sealed head");
+            }
+
+            if (offset > frontier)
+            {
+                // Committed here, but not yet held by another region: never served, and never a reason to refetch (section 10).
+                return new Unavailable("the offset is not remote durable yet; retry later", "unavailable");
             }
 
             if (await retention.CheckOffsetAsync(store, lineage.Handle, offset, cancellationToken).ConfigureAwait(false) is { } below)
@@ -346,7 +364,7 @@ internal sealed class ShapeService(
                 return new MustRefetch(below.Message);
             }
 
-            var read = fresh || offset == head
+            var read = fresh || offset == frontier
                 ? await FreshAsync(store, definition, offset, cancellationToken).ConfigureAwait(false)
                 : await ClosedAsync(store, definition, offset, cancellationToken).ConfigureAwait(false);
             // The floor is raised before its deletes, so a read that raced a trim is refused after its bytes are in hand.
@@ -376,6 +394,10 @@ internal sealed class ShapeService(
         catch (ShapeTooLargeException)
         {
             return new Unavailable("a materialized commit exceeds 8 MiB", "shape_too_large");
+        }
+        catch (ShapeUndurableException)
+        {
+            return new Unavailable("the shape head is not remote durable yet; retry later");
         }
         catch (ObjectDisposedException)
         {
@@ -445,7 +467,7 @@ internal sealed class ShapeService(
     private async ValueTask<ShapeBody?> ReadFreshAsync(IDatabaseStore store, ShapeSealDefinition definition, long offset, CancellationToken cancellationToken)
     {
         await using var transaction = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false);
-        return await Fresh(transaction).ReadShapeFreshAsync(definition, offset, memory, cancellationToken).ConfigureAwait(false);
+        return await Fresh(transaction).ReadShapeFreshAsync(definition, offset, durability.Confirms, memory, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<long> ReadHeadAsync(IDatabaseStore store, CancellationToken cancellationToken)

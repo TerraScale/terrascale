@@ -15,7 +15,9 @@ using TerraBase.Fast.Documents;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Shapes;
 
@@ -47,6 +49,34 @@ public sealed class ShapeSnapshotTests
         await Assert.That(await fixture.Snapshots.NewestAsync(fixture.Store, shape.Handle, CancellationToken.None)).IsNull();
     }
 
+    [Test]
+    public async Task A_local_snapshot_without_remote_proof_is_never_reused_or_read_in_a_cell()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await using var fixture = await Fixture.OpenAsync(api);
+        _ = await api.PutAsync(DocumentApi.NewId(), new { n = 1 });
+        var shape = await ShapeAsync(fixture.Store);
+        var local = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
+        await Assert.That(local.Offset).IsGreaterThan(0L);
+        var remote = new ShapeSnapshots(fixture.Memory, fixture.Time, fixture.Transactions, new RequiredDurability());
+        await Assert.That(await remote.NewestAsync(fixture.Store, shape.Handle, CancellationToken.None)).IsNull();
+        using var page = await remote.ReadPageAsync(fixture.Store, shape.Handle, local.Offset, null, CancellationToken.None);
+        await Assert.That(page).IsNull();
+        await Assert.That(async () => await remote.SealIfDueAsync(fixture.Store, shape, CancellationToken.None)).Throws<StorageBusyException>()
+            .Because("the not-due path must not promote an existing local-only snapshot");
+        await Assert.That(async () => await remote.SealIfDueAsync(fixture.Store, await ShapeAsync(fixture.Store), CancellationToken.None)).Throws<StorageBusyException>()
+            .Because("a fresh snapshot must wait for proof covering its values_at head");
+    }
+
+    // Models opening locally sealed bytes in a cell: the integration storage must require remote evidence.
+    private sealed class RequiredDurability : IRemoteDurability
+    {
+        public bool Confirms => true;
+        public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
     // The gate for snapshot isolation on Turso: a read transaction keeps its feed head and row values while HTTP writes commit.
     [Test]
     public async Task A_read_transaction_keeps_its_feed_head_and_page_bytes_while_http_writes_commit()
@@ -63,7 +93,7 @@ public sealed class ShapeSnapshotTests
         await using (var reader = await transactions.BeginAsync(fixture.Store, write: false, CancellationToken.None))
         {
             var storage = (IShapeSnapshotStorage)reader;
-            var (offset, cursor) = await storage.ShapeSnapshotHeadAsync(shape.ResumeScope, Start, CancellationToken.None);
+            var (offset, cursor) = await storage.ShapeSnapshotHeadAsync(remote: false, shape.ResumeScope, Start, CancellationToken.None);
             head = offset;
             byte[] before;
             using (var page = await storage.BuildShapeSnapshotPageAsync(shape, offset, null, cursor, fixture.Memory, fixture.Time, CancellationToken.None))
@@ -75,7 +105,7 @@ public sealed class ShapeSnapshotTests
             _ = await WriteAsync(api, model, (ids[0], Doc(100)), (ids[2], null), (DocumentApi.NewId(), Doc(101)));
             await Assert.That(await CounterAsync(fixture.Raw)).IsGreaterThan(offset).Because("the HTTP writes committed while the reader stayed open");
 
-            var (again, cursorAgain) = await storage.ShapeSnapshotHeadAsync(shape.ResumeScope, Start, CancellationToken.None);
+            var (again, cursorAgain) = await storage.ShapeSnapshotHeadAsync(remote: false, shape.ResumeScope, Start, CancellationToken.None);
             await Assert.That(again).IsEqualTo(offset);
             await Assert.That(cursorAgain).IsEqualTo(cursor);
             using (var page = await storage.BuildShapeSnapshotPageAsync(shape, offset, null, cursor, fixture.Memory, fixture.Time, CancellationToken.None))
@@ -88,7 +118,7 @@ public sealed class ShapeSnapshotTests
         }
 
         await using var fresh = await transactions.BeginAsync(fixture.Store, write: false, CancellationToken.None);
-        var (current, _) = await ((IShapeSnapshotStorage)fresh).ShapeSnapshotHeadAsync(shape.ResumeScope, Start, CancellationToken.None);
+        var (current, _) = await ((IShapeSnapshotStorage)fresh).ShapeSnapshotHeadAsync(remote: false, shape.ResumeScope, Start, CancellationToken.None);
         await Assert.That(current).IsEqualTo(await CounterAsync(fixture.Raw));
         await Assert.That(current).IsGreaterThan(head);
     }
@@ -192,7 +222,7 @@ public sealed class ShapeSnapshotTests
         var shape = await ShapeAsync(fixture.Store);
         var first = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         var firstModel = Model(model);
-        var sealer = new ShapeSealer(fixture.Memory, NullLogger<ShapeSealer>.Instance, new SqliteShapeStorage(api.Server.Services.GetRequiredService<SqliteStorageEngine>()));
+        var sealer = new ShapeSealer(fixture.Memory, NullLogger<ShapeSealer>.Instance, new SqliteShapeStorage(api.Server.Services.GetRequiredService<SqliteStorageEngine>()), new LocalDurability());
         var chunkShape = await ChunkShapeAsync(fixture.Store, shape);
         // Chunk values are materialized at sealing time, so each checkpoint is sealed before the next writes commit.
         await Assert.That(await sealer.SealUpToHeadAsync(fixture.Store, chunkShape, 0, CancellationToken.None)).IsEqualTo(first.Offset);
@@ -387,7 +417,7 @@ public sealed class ShapeSnapshotTests
         int framing;
         await using (var reader = await fixture.Transactions.BeginAsync(fixture.Store, write: false, CancellationToken.None))
         {
-            var (offset, cursor) = await ((IShapeSnapshotStorage)reader).ShapeSnapshotHeadAsync(shape.ResumeScope, Start, CancellationToken.None);
+            var (offset, cursor) = await ((IShapeSnapshotStorage)reader).ShapeSnapshotHeadAsync(remote: false, shape.ResumeScope, Start, CancellationToken.None);
             var document = await reader.GetAsync(DocumentApi.Collection, ids[0], CancellationToken.None);
             var operation = ShapeSnapshots.Upsert(DocumentApi.Collection, document!);
             var operations = new byte[operation.Length + 2];
@@ -534,7 +564,7 @@ public sealed class ShapeSnapshotTests
             Raw = raw;
             Store = store;
             Transactions = transactions;
-            Snapshots = new ShapeSnapshots(memory, Time, transactions);
+            Snapshots = new ShapeSnapshots(memory, Time, transactions, new LocalDurability());
         }
 
         public FakeTimeProvider Time { get; } = new(Start);

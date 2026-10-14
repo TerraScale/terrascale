@@ -3,6 +3,7 @@ using Microsoft.OpenApi;
 using TerraBase.Engine;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Shapes;
 
@@ -74,9 +75,11 @@ public static class ShapesExtensions
             .AddSingleton<ShapeLiveGate>()
             .AddSingleton<IShapeMetrics, ShapeMetrics>()
             .AddSingleton<IShapeSealer>(provider => new ShapeSealer(provider.GetRequiredService<IMemoryBudget>(),
-                provider.GetRequiredService<ILogger<ShapeSealer>>(), provider.GetRequiredService<IShapeStorage>(), provider.GetRequiredService<IShapeMetrics>()))
+                provider.GetRequiredService<ILogger<ShapeSealer>>(), provider.GetRequiredService<IShapeStorage>(), provider.GetRequiredService<IRemoteDurability>(),
+                provider.GetRequiredService<IShapeMetrics>(), provider.GetRequiredService<TimeProvider>()))
             .AddSingleton<IShapeSnapshotSealer>(provider => new ShapeSnapshots(provider.GetRequiredService<IMemoryBudget>(),
-                provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IShapeSnapshotTransactions>(), provider.GetRequiredService<IShapeMetrics>()))
+                provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IShapeSnapshotTransactions>(),
+                provider.GetRequiredService<IRemoteDurability>(), provider.GetRequiredService<IShapeMetrics>()))
             .AddSingleton<IShapeRetention>(provider => new ShapeRetention(provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IShapeStorage>()))
             .AddSingleton<IShapeFilterRegistry>(provider => new ShapeFilterRegistry(provider.GetRequiredService<IMemoryBudget>()))
             .AddSingleton<IShapeFlights<ShapeRead>>(provider => new ShapeFlights<ShapeRead>(provider.GetRequiredService<IStorageEngine>(),

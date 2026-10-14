@@ -847,6 +847,18 @@ public sealed class PeerStreamTests
         }
 
         await Assert.That(newest - heldEnd).IsGreaterThan(8194);
+        // The ack above is no live one and no live link welcomed the peer, so nothing proves the first group or the joins: the
+        // shape frontier holds every row from the first group on (FR-25). The probe is about the cut that follows the hold, so
+        // the rows up to the first group pass the hold's 24 h bound; the age cut they allow stops below the ack's own cut.
+        // Turso does not capture writes to turso_cdc.
+        _ = await store.WithWriterAsync(session =>
+        {
+            using var age = session.Connection.CreateCommand();
+            age.CommandText = "UPDATE turso_cdc SET change_time = $aged WHERE change_id <= $low;";
+            age.Parameters.AddWithValue("$aged", clock.GetUtcNow().ToUnixTimeSeconds() - 90000);
+            age.Parameters.AddWithValue("$low", low);
+            return age.ExecuteNonQuery();
+        }, "a test ending the shape frontier's hold", CancellationToken.None);
         clock.Offset = TimeSpan.FromMinutes(2);
         await source.TrimAsync(store, CancellationToken.None);
         await Assert.That(await source.RetainsAsync(cluster.Database, incarnation, low, CancellationToken.None)).IsTrue().Because("the lowest remembered range still spares a refill before eviction");

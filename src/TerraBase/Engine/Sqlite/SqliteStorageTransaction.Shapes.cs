@@ -27,7 +27,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
     private const int ShapeCaptureMemoryPerToken = 12 * 3;
 
     public async ValueTask<(long Offset, long Head, long PublishedBytes)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through,
-        IMemoryBudget memory, CancellationToken cancellationToken)
+        bool remote, IMemoryBudget memory, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
         if (shape.ResumeScope.Length != 16 || shape.ShapeId.Length != 32 || shape.Handle.Length != 19
@@ -37,12 +37,14 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         }
 
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
-        return await RunAsync(() => SealShapeChunk(shape, offset, through, memory, cancellationToken), cancellationToken,
+        return await RunAsync(() => SealShapeChunk(shape, offset, through, remote, memory, cancellationToken), cancellationToken,
             mutation: true).ConfigureAwait(false);
     }
 
+    // With `remote`, seals only while the remote durable frontier is the head this transaction materializes at, so the
+    // chunk's covered offset and values_at are both durable when it is stored (shape-reads.md section 10).
     private (long Offset, long Head, long PublishedBytes) SealShapeChunk(ShapeSealDefinition shape, long offset, long? through,
-        IMemoryBudget memory, CancellationToken cancellationToken)
+        bool remote, IMemoryBudget memory, CancellationToken cancellationToken)
     {
         CountRead("shape");
         if (Command("SELECT entity_id FROM collections WHERE name = $collection;", shape.Collection).ExecuteScalar()
@@ -62,6 +64,12 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         }
         if (offset == head)
         {
+            return (offset, head, 0);
+        }
+
+        if (remote && offset < head && ShapeFrontierOrHead(remote: true) < head)
+        {
+            // Nothing sealed: the head holds a write no other region is known to hold yet.
             return (offset, head, 0);
         }
 

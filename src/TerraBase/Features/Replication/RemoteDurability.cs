@@ -1,4 +1,6 @@
+using System.Collections.Frozen;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
 using TerraBase.Tenancy;
 
@@ -31,6 +33,16 @@ public interface IRemoteDurability
     /// <paramref name="marker"/> within 10 s. False once the bound passes or no eligible link remains: outcome unknown.
     /// </summary>
     ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The exact replica ids trusted as origins held in another placed region of <paramref name="database"/> (FR-25): each
+    /// the node a connected link's machine welcomed it with, whose region the membership names and the current placement
+    /// includes. A commit whose origin is one of them was committed first by that machine; this does not check that machine's
+    /// copy was not since replaced. Empty in a cell of one, when none is known, and past the bound; never inferred from
+    /// replica id bits.
+    /// </summary>
+    ValueTask<IReadOnlySet<ReplicaId>> HeldOriginsAsync(TenantContext database, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<IReadOnlySet<ReplicaId>>(FrozenSet<ReplicaId>.Empty);
 }
 
 /// <summary>An admitted write attempt, or why it was refused before execution.</summary>

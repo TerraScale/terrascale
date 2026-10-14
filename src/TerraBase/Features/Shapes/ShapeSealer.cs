@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Replication;
 using ZLogger;
 
 namespace TerraBase.Features.Shapes;
@@ -35,15 +37,26 @@ public sealed class ShapeTooLargeException() : IOException("shape_too_large: a m
 /// <summary>The requested range is unavailable or is not a retained commit boundary.</summary>
 public sealed class ShapeSealOffsetException() : IOException("must_refetch: the shape offset is not a retained commit boundary");
 
+/// <summary>The remote durable frontier did not cover the head to materialize at within <see cref="ShapeSealer.ProofTimeout"/>.</summary>
+public sealed class ShapeUndurableException() : IOException("unavailable: the materialized head is not remote durable yet");
+
 /// <summary>The engine boundary for shape sealing; implementations execute on their transaction's lane.</summary>
 internal interface IShapeStorageTransaction
 {
     /// <summary>
     /// Seals one whole-commit prefix, returning its end, this transaction's committed head and the bytes of the chunk this call
-    /// inserted (0 when the chunk already existed or nothing was sealed).
+    /// inserted (0 when the chunk already existed or nothing was sealed). With <paramref name="remote"/> nothing is sealed while
+    /// the remote durable frontier is below the head (values_at): the end is then <paramref name="offset"/>.
     /// </summary>
-    ValueTask<(long Offset, long Head, long PublishedBytes)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through,
+    ValueTask<(long Offset, long Head, long PublishedBytes)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through, bool remote,
         IMemoryBudget memory, CancellationToken cancellationToken);
+    /// <summary>The remote durable frontier with <paramref name="remote"/> (0 when none), else the committed feed head.</summary>
+    ValueTask<long> ReadShapeFrontierAsync(bool remote, CancellationToken cancellationToken);
+    /// <summary>
+    /// Advances the remote durable frontier over captured commits already proven, joined ones whose origins are all in
+    /// <paramref name="held"/> (<see cref="IRemoteDurability.HeldOriginsAsync"/>); in a write transaction. True when it moved.
+    /// </summary>
+    ValueTask<bool> AdvanceShapeFrontierAsync(IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken);
     /// <summary>Reads only persisted bytes, retaining the result's memory reservation.</summary>
     ValueTask<ShapeSealedChunk?> ReadShapeChunkAsync(string handle, long offset, IMemoryBudget memory,
         CancellationToken cancellationToken);
@@ -59,20 +72,37 @@ public interface IShapeStorage
 /// <summary>Shared entry points for live flights, endpoint reads and one background worker per database.</summary>
 public interface IShapeSealer
 {
-    /// <summary>Seals every chunk through the committed head observed on entry; returns the sealed boundary.</summary>
+    /// <summary>
+    /// Seals every chunk through the committed head observed on entry; returns the sealed boundary. In a cell a chunk seals
+    /// only once the head it materializes at is remote durable (FR-25): until then this waits for commits and frontier moves,
+    /// for at most 20 s.
+    /// </summary>
+    /// <exception cref="ShapeUndurableException">The frontier stayed below the head past the wait.</exception>
     ValueTask<long> SealUpToHeadAsync(IDatabaseStore store, ShapeSealDefinition shape, long offset,
         CancellationToken cancellationToken);
-    /// <summary>Reads a closed chunk; an unsealed range returns null.</summary>
+    /// <summary>Reads a closed chunk; an unsealed range, or a chunk above the durable frontier, returns null.</summary>
     ValueTask<ShapeSealedChunk?> ReadChunkAsync(IDatabaseStore store, string handle, long offset,
         CancellationToken cancellationToken);
+    /// <summary>
+    /// The durable frontier F (shape-reads.md section 10): the committed feed head in a cell of one, else the highest feed seq
+    /// at and below which every commit is held by another region. Serve nothing above it.
+    /// </summary>
+    ValueTask<long> FrontierAsync(IDatabaseStore store, CancellationToken cancellationToken);
     /// <summary>Runs one database's worker. Its owner supplies current shapes and cancels it on database deletion or shutdown.</summary>
     Task RunDatabaseAsync(IDatabaseStore store, Func<IReadOnlyList<ShapeSealRequest>> shapes,
         CancellationToken cancellationToken);
 }
 
-internal sealed class ShapeSealer(IMemoryBudget memory, ILogger<ShapeSealer> logger, IShapeStorage storage, IShapeMetrics? metrics = null) : IShapeSealer
+internal sealed class ShapeSealer(
+    IMemoryBudget memory, ILogger<ShapeSealer> logger, IShapeStorage storage, IRemoteDurability durability, IShapeMetrics? metrics = null,
+    TimeProvider? time = null)
+    : IShapeSealer
 {
+    /// <summary>Longest frontier wait of one seal: the live wait's bound, so a stalled proof releases its caller.</summary>
+    internal static readonly TimeSpan ProofTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan RefusalBackoff = TimeSpan.FromSeconds(30);
+    // A frontier stalled on a joined commit also moves when a link of its origin connects, which no commit signals.
+    private static readonly TimeSpan FrontierPoll = TimeSpan.FromSeconds(1);
     private const int MaxWorkerRequests = 65_536;
     private const long MaxWorkerFrontierBytes = 16 * 1024 * 1024;
 
@@ -81,14 +111,29 @@ internal sealed class ShapeSealer(IMemoryBudget memory, ILogger<ShapeSealer> log
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
         long? through = null;
+        // Started on entry, so the bound covers the whole call; never passed to storage, so it only ends a wait.
+        using var proof = new CancellationTokenSource(ProofTimeout, time ?? TimeProvider.System);
         do
         {
+            // Read before the attempt: a frontier move after it wakes the wait below.
+            var sequence = store.CommitSequence;
+            long sealedOffset;
+            // Read before the writer is taken: joined commits of these origins are held elsewhere.
+            var held = await HeldOriginsAsync(store, cancellationToken).ConfigureAwait(false);
             // A standalone write transaction keeps capture suspension out of other requests' group commits.
             var started = Stopwatch.GetTimestamp();
             var transaction = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
-                var (sealedOffset, head, published) = await ((IShapeStorageTransaction)transaction).SealShapeChunkAsync(shape, offset, through, memory, cancellationToken).ConfigureAwait(false);
+                var shapes = (IShapeStorageTransaction)transaction;
+                if (held is not null)
+                {
+                    // A receive-only replica has no own ack to prove with: its seal requests move the frontier.
+                    _ = await shapes.AdvanceShapeFrontierAsync(held, cancellationToken).ConfigureAwait(false);
+                }
+
+                (sealedOffset, var head, var published) = await shapes.SealShapeChunkAsync(shape, offset, through,
+                    durability.Confirms, memory, cancellationToken).ConfigureAwait(false);
                 _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
                 // Recorded after the commit: a publication is a chunk that is durable, and a reused chunk publishes nothing.
                 if (published > 0)
@@ -97,8 +142,28 @@ internal sealed class ShapeSealer(IMemoryBudget memory, ILogger<ShapeSealer> log
                 }
 
                 through ??= head;
-                offset = sealedOffset;
             }
+
+            if (sealedOffset == offset && offset < through.Value)
+            {
+                // The head is not remote durable yet: wait outside the writer, never weakening the gate. The attempt after
+                // the bound passes is the last one.
+                if (proof.IsCancellationRequested)
+                {
+                    throw new ShapeUndurableException();
+                }
+
+                using (var poll = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, proof.Token))
+                {
+                    _ = await Task.WhenAny(store.WaitForCommitAsync(sequence, poll.Token), Task.Delay(FrontierPoll, poll.Token)).ConfigureAwait(false);
+                    await poll.CancelAsync().ConfigureAwait(false);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                continue;
+            }
+
+            offset = sealedOffset;
         }
         while (offset < through.Value);
         return offset;
@@ -110,7 +175,32 @@ internal sealed class ShapeSealer(IMemoryBudget memory, ILogger<ShapeSealer> log
         var transaction = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            return await ((IShapeStorageTransaction)transaction).ReadShapeChunkAsync(handle, offset, memory, cancellationToken).ConfigureAwait(false);
+            var shapes = (IShapeStorageTransaction)transaction;
+            var chunk = await shapes.ReadShapeChunkAsync(handle, offset, memory, cancellationToken).ConfigureAwait(false);
+            // Read in the same transaction: valid proof only advances; missing or damaged proof refuses the chunk.
+            if (chunk is not null && await shapes.ReadShapeFrontierAsync(durability.Confirms, cancellationToken).ConfigureAwait(false)
+                < Math.Max(chunk.EndOffset, chunk.ValuesAt))
+            {
+                chunk.Dispose();
+                return null;
+            }
+
+            return chunk;
+        }
+    }
+
+    // The origins to advance the frontier with, in a cell; null in a cell of one, which needs no proof.
+    private async ValueTask<IReadOnlySet<ReplicaId>?> HeldOriginsAsync(IDatabaseStore store, CancellationToken cancellationToken) =>
+        !durability.Confirms ? null
+            : store.Tenant is { } tenant ? await durability.HeldOriginsAsync(tenant, cancellationToken).ConfigureAwait(false)
+            : null;
+
+    public async ValueTask<long> FrontierAsync(IDatabaseStore store, CancellationToken cancellationToken)
+    {
+        var transaction = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            return await ((IShapeStorageTransaction)transaction).ReadShapeFrontierAsync(durability.Confirms, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -145,9 +235,9 @@ internal sealed class ShapeSealer(IMemoryBudget memory, ILogger<ShapeSealer> log
                         {
                             refused = true;
                             logger.ZLogWarning(error, $"Shape sealing refused a shape; retrying after backoff");
-                            if (error is InvalidDataException)
+                            if (error is InvalidDataException or ShapeUndurableException)
                             {
-                                // Damaged capture holds this database, rather than repeating its decode for every shape.
+                                // Damaged capture or a stalled frontier holds this database, rather than repeating for every shape.
                                 break;
                             }
                         }

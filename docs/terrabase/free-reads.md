@@ -7,7 +7,7 @@
   [`shape-vectors.json`](shape-vectors.json) holds the conformance vectors (`shape-reads.md` section 16). Where this plan
   and those files differ, those files win.
 - **Goal:** N clients that read or follow the same data cost TerraBase about **one storage read per change per cache
-  location**, not N. Reads stay authorized, region-local and committed-only until FR-25.
+  location**, not N. Reads stay authorized, region-local and durable-only: in a cell, remote-acked (FR-25).
 - **Source plan:** `.cos/FREE_REPLICATION_READ.md`, with section 4 decisions in `.cos/replication-improvement-plan.md`.
 
 Permalinks pinned to `f7d5c3c` or `7842731a` are historical. Their line numbers are not current. Repo-relative links
@@ -31,9 +31,9 @@ point at `main`'s layout.
    - T0: the origin, with request collapsing and `ETag`/`304`. Authorized per request, private, plaintext.
    - T1: TBS1 ciphertext mirrored to Tigris, reached through an authenticated presigned manifest.
    - T2: a CDN. **Not selected.**
-6. **Committed-only until FR-25.** A chunk is sealed from committed rows, and every write transaction is FULL (#181).
-   Until the remote-ack frontier exists (FR-25), a host loss can erase writes that were already published in a chunk.
-   The contract says so (3.10). This plan does not claim host-loss durability.
+6. **Remote-ack publication in a cell.** A cell publishes only what another region holds durably (FR-25). A cell of one has
+   no second region, so a host loss can erase writes already published in a chunk. The contract says so (3.10). This plan
+   does not claim host-loss durability.
 7. **Fix this first:** peer authentication (C1, FR-05). C3 is done (#165), and per-origin stamp order is done (#222).
 8. **Work shape:** 30 open items in 7 waves (section 6). Items whose tests take at most 10 minutes go to Claude Haiku
    5.5. The rest go to Claude Opus 5.5 (section 5).
@@ -120,7 +120,7 @@ lookup", which was never built
 | ID | Defect on `main` | Why it matters once reads are cached and global | Fix item |
 | --- | --- | --- | --- |
 | C1 | Peer RPCs are unauthenticated; the network is the trust boundary ([Listeners.cs#L16-L18](https://github.com/TerraScale/terrascale/blob/f7d5c3c45a45c58495068f1874e4a0c7e5465608/src/TerraBase/Hosting/Listeners.cs#L16-L18)) | A forged write would be sealed and cached | FR-05 (blocks FR-24 shared headers) |
-| C2 | Acknowledged after the local commit (FULL since #181), with no remote wait | A published chunk can contain a write that a host loss later erases | FR-25; remote ack is item A3 |
+| C2 | Document and transaction writes wait for a remote ack (#268); other mutating routes and a cell of one answer after the local commit | A cell of one can publish a write that a host loss later erases | FR-25 holds publication to the remote-ack frontier; #268 is the write wait |
 | C4 | A replicated collection drop deletes newer writes on the receiver ([Join.cs#L107-L125](https://github.com/TerraScale/terrascale/blob/f7d5c3c45a45c58495068f1874e4a0c7e5465608/src/TerraBase/Engine/Sqlite/SqliteStorageTransaction.Join.cs#L107-L125)) | Shape clients see deletes that anti-entropy later undoes. The handle rotates on drop, so clients refetch. The cost is churn, not wrong data | Not in this plan (lane A7) |
 
 ---
@@ -211,13 +211,22 @@ A background sealer per database runs on the write lane.
 
    - `covered_offset` is the decimal `next_offset` for a chunk or fresh body, and the snapshot's `S` for every page of
      that snapshot.
-   - Before FR-25, `F` is the local committed head (FULL). A committed value may appear.
-   - After FR-25, `F` is the highest commit-boundary feed `seq` for which every commit at or below it is remote-acked
-     under the current incarnation. That is
-     the A4 contract, mapped from `CommitMarker` ([CommitResult.cs#L6](../../src/TerraBase/Engine/CommitResult.cs#L6)).
-     A sealed object whose `values_at` is ahead of `F` waits, unserved, until the newer values are remote-acked. Since
-     the object is fixed once sealed, publication can proceed when the acknowledgements arrive. A partition can leave
-     it pending; the sealer never weakens the gate to make progress.
+   - A cell of one, without a member directory, uses the local committed head (FULL), matching the write path.
+   - In a cell, `F` is the highest commit-boundary feed `seq` for which every commit at or below it is remote-acked
+     under the current incarnation (the A4 contract, mapped from `CommitMarker`
+     ([CommitResult.cs#L6](../../src/TerraBase/Engine/CommitResult.cs#L6))). A joined commit counts through an origin
+     that a live link of another placed region welcomed under its exact replica id, never through region bits. The walk
+     and its stops are in [shape-reads.md section 10](shape-reads.md#10-durability-and-publication).
+   - `F` is persisted in the existing derived `_tb_shape_chunk` table: sentinel handle `~frontier`, offset 0,
+     `sealed_at` 0, `end_offset` = `F`. Its body is `2 <incarnation> <scanned> <from>:<to> ...`, where `scanned` is the
+     last change-log id walked, followed by up to 16 eligible own ack ranges of this incarnation (their exact disjoint
+     union, the lowest dropped past 16). Each committed proof persists its range even when `F` did not move, so a walk
+     paused by an unheld origin, its page budget or memory proves those own commits later. A row of another incarnation
+     or body format counts as absent. The proof survives restart with no schema or `StorageFormat` change.
+   - In a cell, nothing is persisted at a head that `F` does not yet cover: the sealer waits for `F ≥` the head the
+     chunk materializes at. So no new chunk carries `values_at` ahead of `F`. A persisted chunk is checked on every
+     read against `F ≥ max(end_offset, values_at)`. Valid proof only advances within an incarnation. Missing or
+     damaged proof fails closed at `F = 0`, including reads of previously sealed objects. A partition can leave the sealer waiting; it never weakens the gate to make progress.
 4. **Persistence.** Sealed bodies are written once to `_tb_shape_chunk`, with capture suspended
    ([SuspendCaptureAsync, SqliteStorageTransaction.cs#L1264](https://github.com/TerraScale/terrascale/blob/f7d5c3c45a45c58495068f1874e4a0c7e5465608/src/TerraBase/Engine/Sqlite/SqliteStorageTransaction.cs#L1264)).
    They are derived data: not shipped, not backed up, dropped on handle rotation. They are never recomputed. A
@@ -344,9 +353,15 @@ Exact bytes are in [`shape-reads.md` §12](shape-reads.md#12-tbs1-sealed-bytes).
 2. **Freshness.** `up_to_date: true` appears only on tail or live responses whose `next_offset` is the sealed head and
    whose gate has cleared. Immutable pages never say `true`.
 3. **Durability.**
-   - Today: only what the machine has committed (FULL). **A host loss can erase writes that a chunk has already
-     published.** This plan does not claim host-loss durability.
-   - After FR-25: only what another region also holds durably.
+   - In a cell: only what another placed region also holds durably, under the current database incarnation.
+     A locally committed write awaiting acknowledgement appears in no shape response, including live tails.
+   - A cell of one has no second region and seals at its local durable commit, matching its write responses.
+     Losing its sole host or volume can erase a published write.
+   - Fail closed. `F` holds, and never skips, on any commit it cannot prove in this incarnation: an own range whose live
+     ack committed no proof (crash, failed `ProveAsync`, or failed placement recheck) or whose persisted range the
+     16-range bound dropped, a repair-only commit, an origin
+     no live link of another region welcomed (another machine of this region, an old epoch), a missing or trimmed change
+     log, a corrupt row, or a feed seq that does not continue `F`. Sustained lag starves seals and snapshot publication. No new handle or epoch clears a stall (shape-reads section 10 lists every case).
 4. **Atomicity and isolation.** A commit's operations in one collection arrive in the same object. Nothing is promised
    across collections or across regions. **No read-your-writes promise in v1** (3.2).
 5. **Engine semantics, inherited.** Last-writer-wins skew, hidden unique losers (`delete` operations), schema checks at
@@ -420,12 +435,14 @@ Metrics on `TerraScale.TerraBase`, without tenant labels:
 - No test establishes Turso's FULL behaviour for **tenant** databases: that a commit's sync covers earlier frames,
   torn-frame recovery, or the effect of checkpoints. FR-07 is still open. Until it runs, FULL is unproven for tenants.
 
-### Host-loss exposure, independent of fsync
+### Remote acknowledgement, independent of local fsync
 
-- A write answers success after its local commit. There is **no remote ack wait and no backup wait**. The route
-  reports `Durability = "local_durable"`. Decision 0013a is still *proposed* (revision 4).
-- Losing the host or volume before the write ships to a peer or to Tigris loses an acknowledged write. This holds
-  whatever local fsync does.
+- Document and transaction writes in a cell wait for their own eligible remote acknowledgement under decision 0013a
+  (#268). A local commit without that acknowledgement has an unknown outcome; it is not a successful remote-durable
+  write. Other mutating routes remain subject to the coverage limits in decision 0013a section 6.
+- Shape publication uses the same eligible acknowledgement evidence. A local-only row, or a newer unacknowledged
+  value materialized for an older row, cannot be published. Live tails include the acknowledgement latency.
+- A cell of one still answers and seals after its local commit. Losing its sole host or volume can erase such a write.
 - Replicated applies commit with FULL
   ([StorageChangeGroupSink.cs#L37](https://github.com/TerraScale/terrascale/blob/f7d5c3c45a45c58495068f1874e4a0c7e5465608/src/TerraBase/Features/Replication/StorageChangeGroupSink.cs#L37)).
 
@@ -434,9 +451,9 @@ Metrics on `TerraScale.TerraBase`, without tenant labels:
 A published chunk is permanent and global. If it contains a write that later disappears, client replicas diverge from
 TerraBase replicas, and no repair reaches them. So:
 
-- seal committed rows now, with no extra barrier (3.4, step 5);
-- gate publication on the durable frontier (3.4, step 3); the frontier moves to the remote-ack frontier with FR-25;
-- until FR-25, state the host-loss exposure in the contract (3.10, rule 3). Do not claim host-loss durability;
+- seal only after the frontier covers the materialization head; no extra local fsync barrier is needed (3.4, step 5);
+- gate publication on the remote durable frontier in a cell (3.4, step 3), including `values_at`;
+- retain the local-only durability limit for a cell of one (3.10, rule 3);
 - never publish the unsealed tail.
 
 ---
@@ -603,9 +620,9 @@ qualification of wave A). FR-40..42 and FR-44 = S1..S3 and S4; FR-43 (ts-cli) ha
 | Storage grows with the number of regions (each machine seals its own chunks) | Tier B dedupes across regions |
 | Values newer than a chunk's `next_offset` | Publication gate (3.4, step 3) and `values_at` |
 | A commit over 8 MiB stalls a shape | Explicit limitation (3.4, step 1); splitting is a later decision |
-| Host loss before FR-25 erases a published write | Stated in the contract (3.10, rule 3); not claimed as durable |
+| A cell of one loses a published write with its sole host or volume | Stated in the contract (3.10, rule 3); only local durability |
 | Turso FULL not proven for tenant DBs; a publish could contain a write a power loss removes | FR-07 before the first public chunk; FR-30 after |
-| Remote-ack publication frontier not wired (0013a waits are implemented for document and transaction routes) | FR-25 must still move publication from the local committed head to a proven remote frontier |
+| Remote acknowledgement has a gap, or belongs to another incarnation | FR-25 holds publication at the proven contiguous frontier |
 | Unacked overwrite leaks into a published object after FR-25 | `values_at` gate, and its unacked-overwrite test (FR-25) |
 | Resume trusts a stamp without a proof, or persisted proofs are lost on restart | Verify #207 proofs; gate on #211; until then every resume is `409` |
 | Repair-induced `410` on cross-region resume | Surfaced as `409 must_refetch` (3.7) |

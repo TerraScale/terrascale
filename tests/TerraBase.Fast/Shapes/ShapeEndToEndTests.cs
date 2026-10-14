@@ -544,7 +544,8 @@ public sealed class ShapeEndToEndTests
             provider.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(), provider.GetRequiredService<IShapeMetrics>()), gate));
         services.AddSingleton<IShapeSnapshotSealer>(provider => new HeldPages(new ShapeSnapshots(
             provider.GetRequiredService<TerraBase.Features.Memory.IMemoryBudget>(), provider.GetRequiredService<TimeProvider>(),
-            provider.GetRequiredService<IShapeSnapshotTransactions>(), provider.GetRequiredService<IShapeMetrics>()), gate));
+            provider.GetRequiredService<IShapeSnapshotTransactions>(), provider.GetRequiredService<TerraBase.Features.Replication.IRemoteDurability>(),
+            provider.GetRequiredService<IShapeMetrics>()), gate));
     }
 
     // Live requests park at the sealed head until a commit; the server's waiting gauge says when every reader is parked.

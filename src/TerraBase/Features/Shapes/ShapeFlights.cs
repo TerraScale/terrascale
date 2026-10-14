@@ -11,7 +11,8 @@ internal interface IShapeFlightSealer
 {
     /// <summary>
     /// Seals every shape of <paramref name="store"/>'s database up to the head committed when the call starts.
-    /// <see cref="Unavailable"/> (<c>shape_too_large</c>) when the sealed head cannot advance.
+    /// <see cref="Unavailable"/> (<c>shape_too_large</c>, or <c>unavailable</c> while the head is not remote durable) when the
+    /// sealed head cannot advance.
     /// </summary>
     ValueTask<ShapeFlightSealResult> SealAsync(IDatabaseStore store, CancellationToken cancellationToken);
 }

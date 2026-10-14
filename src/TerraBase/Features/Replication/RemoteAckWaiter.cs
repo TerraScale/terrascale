@@ -152,8 +152,9 @@ internal sealed class RemoteAckWaiter(TimeProvider time)
         }
     }
 
-    // Adds (from, to] to the disjoint ranges, merging every range it overlaps or touches. The caller holds _gate.
-    private static void Keep(List<(long From, long To)> ranges, long from, long to)
+    // Adds (from, to] to the disjoint ranges, merging every range it overlaps or touches; past MaxRanges the lowest goes.
+    // Also the shape frontier's persisted ranges (FR-25). The caller holds _gate for a database's ranges.
+    internal static void Keep(List<(long From, long To)> ranges, long from, long to)
     {
         for (var i = ranges.Count - 1; i >= 0; i--)
         {

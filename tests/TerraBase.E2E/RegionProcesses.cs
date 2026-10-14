@@ -8,8 +8,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Engine.Lattices;
+using TerraBase.Features.Replication;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
+using TerraScale.Endpoints;
 
 namespace TerraBase.E2E;
 
@@ -39,6 +43,12 @@ internal sealed class RegionProcesses : IAsyncDisposable
     public string DatabasePath => $"/v1/projects/{_project}/databases/canary";
 
     public IReadOnlyList<string> Regions => [.. _regions.Keys];
+
+    /// <summary>The database's identity, as every region's engine opens it.</summary>
+    public TenantContext Tenant => new(_organization, PlanTier.Hobby, _project, _database);
+
+    /// <summary>The harness's collection.</summary>
+    public static string CollectionName => Collection;
 
     /// <summary>The region's internal listener as the platform operator; a new client after each start.</summary>
     public HttpClient this[string region] => _regions[region].Client ?? throw new InvalidOperationException($"{region} is down");
@@ -102,6 +112,19 @@ internal sealed class RegionProcesses : IAsyncDisposable
         node.Client = null;
     }
 
+    /// <summary>
+    /// The region refuses every batch and repair of the database from now on, before applying it, and records no origin's
+    /// frontier for it: its peers' writes stay unacknowledged while their streams stay connected and every other database,
+    /// the catalog included, replicates. Lasts for the process lifetimes of this harness.
+    /// </summary>
+    public void HoldReplication(string region)
+    {
+        var hold = HoldFile(_regions[region]);
+        // Written aside and moved, so a reader never sees half an id.
+        File.WriteAllText(hold + ".partial", _database);
+        File.Move(hold + ".partial", hold, overwrite: true);
+    }
+
     /// <summary>Starts the region's process again on the same data directory and machine id.</summary>
     public Task StartAgainAsync(string region) =>
         _regions[region].Process is { HasExited: false } ? throw new InvalidOperationException($"{region} is still running") : LaunchAsync(_regions[region]);
@@ -125,6 +148,8 @@ internal sealed class RegionProcesses : IAsyncDisposable
     }
 
     private string MemberFile(Region node) => Path.Combine(_root, "members", node.MachineId);
+
+    private string HoldFile(Region node) => Path.Combine(_root, $"{node.Name}.hold");
 
     private async Task LaunchAsync(Region node)
     {
@@ -153,6 +178,7 @@ internal sealed class RegionProcesses : IAsyncDisposable
         start.Environment[RegionProcessHost.MachineVariable] = node.MachineId;
         start.Environment[RegionProcessHost.DataVariable] = node.DataDirectory;
         start.Environment[RegionProcessHost.MembersVariable] = Path.Combine(_root, "members");
+        start.Environment[RegionProcessHost.HoldVariable] = HoldFile(node);
         var process = Process.Start(start) ?? throw new InvalidOperationException($"the {node.Name} process did not start");
         process.OutputDataReceived += (_, line) => node.Append(line.Data);
         process.ErrorDataReceived += (_, line) => node.Append(line.Data);
@@ -271,6 +297,7 @@ public sealed class RegionProcessHost
     internal const string MachineVariable = "TERRABASE_E2E_REGION_MACHINE";
     internal const string DataVariable = "TERRABASE_E2E_REGION_DATA";
     internal const string MembersVariable = "TERRABASE_E2E_REGION_MEMBERS";
+    internal const string HoldVariable = "TERRABASE_E2E_REGION_HOLD";
 
     [Test]
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
@@ -290,6 +317,10 @@ public sealed class RegionProcessHost
         {
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
             services.AddSingleton<IMemberDirectory>(new DirectoryOfMembers(members));
+            services.AddSingleton<StorageChangeGroupSink>();
+            services.AddSingleton<IChangeGroupSink>(provider => new HeldSink(provider.GetRequiredService<StorageChangeGroupSink>(),
+                Environment.GetEnvironmentVariable(HoldVariable)!));
+            services.AddTerraScaleEndpoints([EndpointRegistration.Create<ShapeSealProbeEndpoint>()]);
         });
 
         // Listed, then announced: the harness drives the node only once its peers can find it.
@@ -299,6 +330,31 @@ public sealed class RegionProcessHost
         await File.WriteAllTextAsync(info + ".partial", new JsonObject { ["internal"] = api.Server.BaseAddress.ToString() }.ToJsonString(), cancellationToken);
         File.Move(info + ".partial", info!, overwrite: true);
         await Task.Delay(Timeout.Infinite, cancellationToken);
+    }
+
+    // Refuses the held database's batches and repairs before they apply, as a failed apply is refused: the stream stays.
+    private sealed class HeldSink(IChangeGroupSink inner, string hold) : IChangeGroupSink
+    {
+        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken) =>
+            Held(database) ? throw new IOException("the harness holds this database's replication") : inner.ApplyAsync(database, origin, groups, cancellationToken);
+
+        public ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
+            Held(database) ? throw new IOException("the harness holds this database's replication") : inner.RepairAsync(database, states, cancellationToken);
+
+        public ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken) =>
+            Held(database) ? ValueTask.CompletedTask : inner.RecordFrontierAsync(database, origin, frontier, cancellationToken);
+
+        private bool Held(TenantContext database)
+        {
+            try
+            {
+                return File.ReadAllText(hold) == database.DatabaseId;
+            }
+            catch (FileNotFoundException)
+            {
+                return false;
+            }
+        }
     }
 
     // The machine list: one file per started machine, named by its id, holding its region and internal listener.

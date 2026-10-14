@@ -171,6 +171,10 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
         }
     }
 
+    // Fakes hold no store, so every proof is taken as established; proof behavior is exercised against real sources.
+    public ValueTask<bool> ProveAsync(TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(true);
+
     public Task ChangedAsync(CancellationToken cancellationToken)
     {
         lock (_gate)

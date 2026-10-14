@@ -428,9 +428,12 @@ internal sealed class TursoChangeTap : IWalTap
         }
         else
         {
+            var now = _time.GetUtcNow().ToUnixTimeSeconds();
+            // Nor the rows the shape frontier has not walked yet, for a bounded time (FR-25).
+            var hold = _store.RequiresRemoteProof ? SqliteStorageTransaction.ShapeFrontierHold(writer.Connection, null, now) : null;
             command.CommandText = SqliteStorageTransaction.Retention;
-            command.Parameters.AddWithValue("$below", _anchor);
-            command.Parameters.AddWithValue("$now", _time.GetUtcNow().ToUnixTimeSeconds());
+            command.Parameters.AddWithValue("$below", Math.Min(_anchor, hold ?? long.MaxValue));
+            command.Parameters.AddWithValue("$now", now);
             command.Parameters.AddWithValue("$gone", _store.Member is { } member ? member.GoneBefore(_time.GetUtcNow().ToUnixTimeMilliseconds()) : long.MinValue);
         }
 
@@ -901,7 +904,8 @@ internal static class ChangeLog
 /// <summary>Decodes a row in SQLite's record format (<c>https://sqlite.org/fileformat.html#record_format</c>).</summary>
 internal static class SqliteRecord
 {
-    public static object?[] Decode(ReadOnlySpan<byte> record)
+    // At most `columns` values: the rest are not decoded.
+    public static object?[] Decode(ReadOnlySpan<byte> record, int columns = int.MaxValue)
     {
         var headerSize = Varint(record, out var used);
         if (headerSize < used || headerSize > record.Length)
@@ -912,7 +916,7 @@ internal static class SqliteRecord
         var header = record[used..(int)headerSize];
         var body = record[(int)headerSize..];
         var values = new List<object?>();
-        while (!header.IsEmpty)
+        while (!header.IsEmpty && values.Count < columns)
         {
             var type = Varint(header, out var read);
             header = header[read..];

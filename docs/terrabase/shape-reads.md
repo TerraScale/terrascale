@@ -136,9 +136,11 @@ URLs.
 - A new snapshot is sealed when 4096 chunks have been sealed since the last one or an hour has passed (constants).
   Older snapshots stay servable until retention removes them.
 - `-1` redirects to the newest snapshot that is published (`F ≥ S`). If the handle has none, the request seals one at
-  the current feed head. When `F` does not reach that `S` within the request deadline, it answers `503 unavailable`
-  with `no-store`.
-- A `snap.<S>.<P>` that names no sealed page of this handle answers `409 must_refetch`.
+  the current feed head. A reseal that is due while the head is above `F` answers with the newest published snapshot at
+  or above the retention floor instead, when there is one. With no published snapshot and the head above `F`, it answers
+  `429 shape_busy` with `no-store`; the client retains its state and retries with backoff.
+- A `snap.<S>.<P>` that names no sealed page of this handle answers `409 must_refetch`. One whose `S` is above `F` but
+  at or below the feed head answers `503 unavailable` with `no-store`; the client keeps its state and retries.
 
 ### 3.3 Chunks
 
@@ -155,8 +157,9 @@ URLs.
 - **Oversized commit.** If one commit's materialized change exceeds 8 MiB, the read answers `503 shape_too_large`
   with `no-store`. Nothing is sealed and no offset advances. The client keeps its state and offset and retries with
   backoff. Section 15 covers the escape path.
-- A decimal `O` that is not a commit boundary, is below the retention floor, or is above the sealed head answers
-  `409 must_refetch`.
+- A decimal `O` that is not a commit boundary, is below the retention floor, or is above the committed feed head
+  answers `409 must_refetch`. One above `F` but at or below the feed head is committed here and not yet held by another
+  region: it answers `503 unavailable` with `no-store`, and the client keeps its state and retries.
 
 Chunk sealing runs with change capture suspended and refuses damaged rows as #152 does (FR-12). Sealed bytes are
 derived data: not shipped, not backed up, dropped with their handle, and kept for 7 days (FR-16).
@@ -317,21 +320,105 @@ lands after #211. There is no runtime switch. Until then, every resume answers `
 ## 10. Durability and publication
 
 - **Durable frontier `F`.**
-  - Before FR-25, `F` is the committed feed head. Every write transaction syncs its WAL at commit (#181), so a seal
-    needs no extra barrier (D4).
-  - After FR-25, `F` is the largest `seq` such that **every** commit with `commit_seq ≤ F` has its change group
+  - A cell of one, without a member directory, uses the committed feed head, matching its write path. Every write
+    transaction syncs its WAL at commit (#181), so a seal needs no extra barrier (D4).
+  - In a cell, `F` is the largest `seq` such that **every** commit with `commit_seq ≤ F` has its change group
     remotely acknowledged under the current incarnation. It is a contiguous prefix, not the highest isolated
     acknowledged row.
   - Acknowledgement comes from A3 (remote ack wait) and A4 (incarnation-scoped acks). The mapping from
-    `CommitMarker(Incarnation, ChangeId)` to `seq` belongs to FR-25.
+    `CommitMarker(Incarnation, ChangeId)` to `seq` is incarnation-scoped; a stored resume cursor or a later isolated
+    acknowledgement never proves a missing earlier commit.
 - **Gate.** A sealed object or fresh body is served only when `F ≥ max(covered_offset, values_at)`. Its values may be
   newer than its range, so it waits until those newer values are durable too. The gate is evaluated on every serve.
-  An object sealed before `F` caught up stays unpublished until then. During a partition the gate may never clear;
-  `-1` keeps answering the newest published snapshot, and reads above `F` wait or answer `503 unavailable`.
+  In a cell, the sealer never persists a chunk head that `F` does not cover (see Chunk seal). During a partition the
+  gate may never clear; `-1` keeps answering the newest published snapshot. A live read at `F` waits up to 20 s for a
+  commit; when the woken seal's head is still not covered 20 s later, it answers `503 unavailable`. Reads above `F`,
+  including snapshot pages, answer `503 unavailable` at once.
 - **No new mechanism.** There is no copy-on-overwrite, no pre-image table, and no reconstruction of past values.
-- **Limits today.** Writes report `local_durable` (`DocumentRoute.Durability`). Until FR-25, a published object can
-  contain a write that a later host or volume loss erases. That write then stays in cached copies and client state.
-  Whether Turso 0.8.2 FULL survives power loss for tenant databases is unproven until B3.
+- **Walk.** `F` advances over captured change-log rows in commit order, from the last walked change id, reading only this
+  incarnation's capture. Each state row's origin decides it:
+  - **Own** (this machine's replica id, any epoch): held only by an eligible live acknowledgement range `(From, To]` of
+    this incarnation, over change-log ids.
+  - **Joined, held origin:** the exact replica id that a live link of another placed region welcomed the stream with
+    (`Welcome.Node`). The link's region must be the one the membership names for that machine, and the current placement
+    must include it. A node that two links name with different regions is trusted for neither. Past the origin bound, and
+    in a cell of one, none is trusted. Remote eligibility never comes from replica-id region bits.
+  - **Anything else** stops the walk.
+
+  A held origin is trusted as holding the commit it committed first. Whether that machine's copy was replaced since is
+  not checked. A commit whose state rows are all origin 0 or deletes (repairs, collection clears and drops) is not held.
+  Each feed seq must also continue `F + 1`.
+- **Persisted proof.** `F` lives in the existing derived `_tb_shape_chunk` table: sentinel handle `~frontier`, offset 0,
+  `sealed_at` 0, `end_offset` = `F`. Its body is `2 <incarnation> <scanned> <from>:<to> ...`: the last change id walked,
+  then the eligible own acknowledgement ranges `(From, To]` of this incarnation that end after it. Every proof
+  transaction that commits persists its range there, even when the walk did not move (an origin not held yet, a pass's
+  page budget, memory admission). A later pass, from any seal or snapshot request or a later ack, proves own commits
+  with them, so a range covering an own commit behind an unheld joined commit still proves it once that origin is held.
+  Ranges are kept as their exact disjoint union with the remote ack waiter's rule (`RemoteAckWaiter.Keep`): overlapping
+  or touching ranges merge, nothing widens across a gap, a refill or a stored ack, and past 16 ranges the lowest is
+  dropped. A dropped range is not recovered: its own commits wait for a new live ack that covers them, which a later ack
+  of the same run does, and otherwise hold `F` for good in this incarnation. A canonical `h1-` handle never starts with
+  `~`, and a row of another incarnation or of another body format counts as absent, so a copy, restore or rebuild never
+  reuses it. The proof and its ranges survive restart. No schema or `StorageFormat` change.
+- **Chunk seal.** In a cell, no chunk is persisted at a head `F` does not cover, so no new chunk is sealed with
+  `values_at` ahead of `F`. Persisted chunks are checked against `F` on every read and stay servable once covered,
+  because valid proof only advances within an incarnation. Missing or damaged proof fails closed at `F = 0`, including
+  reads of previously sealed objects; availability after proof loss is not guaranteed.
+- **Wake.** A seal that waits for `F` wakes on the next commit or after 1 second, whichever comes first, then retries,
+  for at most 20 s; a read whose seal is still waiting then answers `503 unavailable`, and the background sealer backs
+  off before its next pass. A stall on a joined commit also moves when a link to its origin connects, which signals no
+  commit, so the 1 second poll
+  is what sees it.
+- **Retention.** Three paths apply the hold: the replication tailer's trim, the continuous-backup tap's truncate, and the
+  peer-ack path. Each keeps every row after the walked point while the first unwalked row is younger than 24 hours, once
+  any peer has been heard from (`_tb_peers.seen > 0`), else 60 seconds. The hold also ends if the unwalked
+  backlog exceeds 65,536 rows or 1 GiB of after-images, and when the first unwalked feed seq is not `F + 1` (a copy's or
+  a restore's feed), which the walk can never pass. Each measurement streams only image sizes (`octet_length`), at
+  most 65,537 rows, and stops at the first row past either bound; the feed seq check then reads only the first 128 bytes
+  of one feed row's image (its record header and seq). A live ack is proved before it is recorded, so the cut it makes
+  already sees the frontier its proof moved. The tailer's trim resolves the remote durability service when the pass
+  runs (the peer streams depend on the tailer, so it is not a constructor dependency) and walks with the origins held at
+  that moment, so a replica that only joins another region's writes releases them without an ack of its own. These bounds
+  constrain this hold; other retention anchors can still retain more capture. Expiration or eviction can make an
+  unproven prefix permanently unavailable; it never certifies it.
+- **Fail closed.** For this incarnation, the walk stops and holds `F` where it is. Exact cases:
+  - **Own commit, no proof.** An own commit advances only from a live acknowledgement range `(From, To]` whose
+    `ProveAsync` commits. `ProveAsync` runs before `AckAsync` records the ack, and checks the incarnation under the writer
+    itself. A range goes unproven when: the process crashes after the ack is received and before the proof transaction
+    commits (the ack is not recorded either, so the batch is sent and acknowledged again); `ProveAsync` throws (logged; the
+    ack is still recorded, and the next ack of the run covers the same range); or the placement check before recording
+    fails (no proof is sent). A proof whose ack recording is then refused (the copy in place changed) names the
+    incarnation it checked, so it never proves another file. Refill and non-live acks never prove. A range whose proof
+    transaction committed survives a crash or restart in the sentinel, whether or not `F` moved, unless the 16-range
+    bound dropped it.
+  - **Origin-0 repair or delete-only commit.** Not held, so the walk stops there. Retention runs the walk before it trims,
+    with the origins held when the pass starts, but it cannot pass an unheld commit. If retention then trims rows past the
+    stop, the gap is unprovable and the stop is
+    permanent for this incarnation.
+  - **Unknown origin.** A state row whose origin is not a held origin stops the walk: another machine of this region, an
+    old epoch of a held machine, or an id that no live link of another region welcomed. It proves nothing about a second
+    region. Held origins are read again by every ack's proof, every seal or snapshot request and every retention pass (5 s),
+    so a stall moves once a link to that origin connects; meanwhile the hold keeps the rows within its bounds.
+  - **Missing capture.** No `turso_cdc` table: no advance. Rows after the walked point trimmed (`oldest > scanned + 1`):
+    permanent stop for this incarnation.
+  - **Corrupt capture.** A damaged change-log row, or a captured state or feed row whose columns do not decode, holds `F`
+    at that row and retries it on each pass. Seals wait for the frontier and snapshots remain unpublished.
+  - **Feed seq gap.** A seq that does not continue `F + 1`, as with a copied or restored feed whose capture does not
+    continue from `F`. Permanent for this incarnation, so retention holds nothing for it.
+- **Starvation.** A head ahead of `F` is never persisted. In a cell, a seal waits for `F` to cover the head it
+  materializes at, and a snapshot publishes only when `F ≥ S`. While any case above holds `F`, seals and snapshot
+  publication wait. `-1` keeps answering the newest published snapshot, and a snapshot request with no published
+  snapshot answers `429 shape_busy` for the client to retry. Under sustained writes the head can stay ahead of `F`, so seals and
+  snapshots can starve for as long as the lag lasts. This plan does not measure how long that takes.
+- **Recovery limits.** No guarantee says a restored, copied or rebuilt database regains its frontier. That database starts
+  at `F = 0` and rises only as its own capture proves commits. A missing or trimmed capture can hold `F` there
+  indefinitely. `F` is per database incarnation, not per handle or epoch. A new handle, epoch or collection re-create
+  does not reset `F` or clear a stall, and no recovery path is documented or tested for a database-wide missing proof.
+- **Live latency.** Seal-on-wake waits for the durable frontier, including the head at which values are materialized.
+  A locally committed write awaiting a remote acknowledgement appears in no shape response. Live tails therefore
+  include remote acknowledgement latency.
+- **Limits.** A cell of one reports `local_durable` and has no remote copy: losing its sole host or volume can erase a
+  published write. Whether Turso 0.8.2 FULL survives power loss for tenant databases remains subject to B3 evidence.
 
 ## 11. Headers, ETag and transport tiers
 
@@ -477,7 +564,7 @@ objects; FR-22 supplies that proof. Before T1 objects exist the default refuses 
 
 ## 15. Limitations
 
-- **Host loss before FR-25:** section 10.
+- **Local-only durability in a cell of one:** section 10.
 - **Oversized commits.** One transaction holds at most 1024 changes and 2 MiB of change content, but values at seal
   time can grow each document to 1 MiB. A commit whose materialized change exceeds 8 MiB stays `503 shape_too_large`.
   It clears when its documents shrink, or when a newer snapshot past that commit is published and the client restarts

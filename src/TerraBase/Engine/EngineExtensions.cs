@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
+using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
@@ -42,13 +43,17 @@ public static class EngineExtensions
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), queryBudget: configured.QueryBudget,
                 backupTime: provider.GetService<TimeProvider>(),
-                schemaMemory: provider.GetRequiredService<IMemoryBudget>());
+                schemaMemory: provider.GetRequiredService<IMemoryBudget>())
+            {
+                RequiresRemoteProof = provider.GetService<IMemberDirectory>() is not null,
+            };
         });
         services.AddSingleton<IWalBackup>(provider => provider.GetRequiredService<SqliteStorageEngine>());
         services.AddSingleton(provider => provider.GetRequiredService<SqliteStorageEngine>().Member);
         // The peer streams' source: the CDC tailer of every database file.
         services.AddSingleton(provider => new TursoChangeGroupSource(
-            provider.GetRequiredService<SqliteStorageEngine>(), provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<TursoChangeGroupSource>>()));
+            provider.GetRequiredService<SqliteStorageEngine>(), provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<TursoChangeGroupSource>>(),
+            provider.GetService<IRemoteDurability>));
         services.AddSingleton<IChangeGroupSource>(provider => provider.GetRequiredService<TursoChangeGroupSource>());
         services.AddSingleton<IReplicaStates>(provider => provider.GetRequiredService<TursoChangeGroupSource>());
         services.AddHostedService(provider => provider.GetRequiredService<TursoChangeGroupSource>());

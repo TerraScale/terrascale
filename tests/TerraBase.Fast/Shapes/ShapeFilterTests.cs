@@ -9,6 +9,7 @@ using TerraBase.Engine.Sqlite;
 using TerraBase.Errors;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
 using TerraBase.Tenancy;
 
@@ -354,7 +355,7 @@ public sealed class ShapeFilterTests
         }
 
         var sealer = new ShapeSealer(api.Server.Services.GetRequiredService<IMemoryBudget>(),
-            NullLogger<ShapeSealer>.Instance, new SqliteShapeStorage(engine));
+            NullLogger<ShapeSealer>.Instance, new SqliteShapeStorage(engine), new LocalDurability());
         var end = await sealer.SealUpToHeadAsync(store, shape, start, CancellationToken.None);
         using var chunk = await sealer.ReadChunkAsync(store, shape.Handle, start, CancellationToken.None)
             ?? throw new InvalidOperationException("the filtered chunk is missing");
