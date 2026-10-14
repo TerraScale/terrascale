@@ -723,6 +723,10 @@ internal sealed partial class SqliteDatabaseStore(
         }
 
         // InitializeAsync switches the copy to WAL and refuses an unsupported schema version.
+        if (Tenant is { } targetSource)
+        {
+            Checkpoint?.Invoke("copy.target.initializing", targetSource);
+        }
         return await InitializeAsync(name, path, io, pragmas, cancellationToken).ConfigureAwait(false);
     }
 

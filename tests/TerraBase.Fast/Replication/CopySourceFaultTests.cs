@@ -132,6 +132,61 @@ public sealed class CopySourceFaultTests
     }
 
     [Test]
+    public async Task A_private_target_corruption_error_does_not_fault_the_healthy_source()
+    {
+        using var directory = new TempDirectory();
+        Fixture source;
+        await using (var setup = await StartAsync(directory.Root))
+        {
+            source = await CreateAsync(setup);
+        }
+        Action<string, TenantContext>? checkpoint = null;
+        await using var api = await StartAsync(directory.Root, services =>
+            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) => checkpoint?.Invoke(step, database)));
+        var services = api.Server.Services;
+        var engine = services.GetRequiredService<IStorageEngine>();
+        var concrete = services.GetRequiredService<SqliteStorageEngine>();
+        var system = (SqliteDatabaseStore)await concrete.OpenSystemDatabaseAsync(CancellationToken.None);
+        var target = Target(source);
+        var native = new TursoNativeException(133U, "the private target failed initialization with corruption");
+        var openedWithIntent = false;
+        var targetInitializing = false;
+        checkpoint = (step, database) =>
+        {
+            if (database != source.Database)
+            {
+                return;
+            }
+            if (step == SourceOpening)
+            {
+                openedWithIntent = HasIntent(system.FilePath, source, concrete.ReplicaId);
+            }
+            else if (step == "copy.target.initializing")
+            {
+                targetInitializing = true;
+                throw native;
+            }
+        };
+        var error = await Assert.ThrowsAsync<TursoNativeException>(async () =>
+            await engine.CopyDatabaseAsync(source.Database, target, CancellationToken.None));
+        checkpoint = null;
+        await Assert.That(targetInitializing).IsTrue();
+        await Assert.That(openedWithIntent).IsTrue();
+        await Assert.That(ReferenceEquals(error, native)).IsTrue();
+        await Assert.That(error!.StatusCode).IsEqualTo(133U);
+        await AssertNoTargetAsync(engine, source, target);
+        var store = await OpenAsync(api, source.Database);
+        await Assert.That(store.CopyFault).IsNull();
+        await Assert.That(await services.GetRequiredService<IRebuildLedger>().GetAsync(source.Database, CancellationToken.None)).IsNull();
+        await Assert.That(await services.GetRequiredService<IReplicaCopyFaults>()
+            .RefusedAsync(source.Database, source.Incarnation, CancellationToken.None)).IsFalse();
+        await WriteAsync(api, source.Database, "after-target-corruption");
+        await Assert.That(await HasDocumentAsync(api, source.Database, "after-target-corruption")).IsTrue();
+        await Assert.That(await services.GetRequiredService<IChangeGroupSource>()
+            .AckAsync(source.Database, source.Incarnation, Peer, 1, default, CancellationToken.None)).IsTrue();
+    }
+
+    [Test]
     public async Task A_copy_only_source_crash_before_the_fault_record_is_durable_is_refused_at_startup()
     {
         if (Environment.GetEnvironmentVariable(CrashRoot) is { } childRoot)
