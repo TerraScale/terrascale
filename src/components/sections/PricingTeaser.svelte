@@ -31,8 +31,13 @@
 
   <div class="pricing-teaser__grid">
     {#each plans as plan (plan.slug)}
-      <RouteLink href={`/pricing#${plan.slug}`} class={`pricing-teaser__plan${plan.popular ? ' is-popular' : ''}`}>
+      <RouteLink
+        href={`/pricing#${plan.slug}`}
+        class={`pricing-teaser__plan${plan.popular ? ' is-popular' : ''}`}
+        style={`--plan-accent: ${plan.accent}; --plan-accent-rgb: ${plan.accentRgb}`}
+      >
         <h3 class="pricing-teaser__name">
+          <span class="pricing-teaser__icon"><Icon name={plan.icon} className="pricing-teaser__icon-glyph" /></span>
           {plan.name}
           {#if plan.popular}
             <span class="pricing-teaser__badge">{$dict.pricing.badge}</span>
@@ -52,6 +57,9 @@
   .pricing-teaser {
     padding: var(--ts-space-20) clamp(16px, 2.5vw, 40px);
     border-top: 1px solid var(--ts-divider);
+    background:
+      radial-gradient(50% 60% at 50% 80%, rgba(var(--ts-primary-rgb), 0.12), transparent 70%),
+      radial-gradient(35% 50% at 10% 90%, rgba(var(--ts-secondary-rgb), 0.07), transparent 70%);
   }
 
   .pricing-teaser__head {
@@ -102,17 +110,36 @@
     padding: var(--ts-space-6);
     border: 1px solid var(--ts-divider);
     border-radius: var(--ts-radius-lg);
-    background: var(--ts-bg-surface);
+    background:
+      radial-gradient(120% 70% at 0% 0%, rgba(var(--plan-accent-rgb), 0.14), transparent 60%),
+      var(--ts-bg-surface);
+    box-shadow: inset 0 2px 0 rgba(var(--plan-accent-rgb), 0.85);
     color: var(--ts-text);
     text-decoration: none;
     transition:
-      background-color var(--ts-transition-fast),
-      border-color var(--ts-transition-fast);
+      transform var(--ts-transition-normal),
+      border-color var(--ts-transition-normal);
   }
 
   :global(.pricing-teaser__plan:hover) {
-    background: #222222;
-    border-color: var(--ts-glass-border);
+    transform: translateY(-3px);
+    border-color: rgba(var(--plan-accent-rgb), 0.45);
+  }
+
+  .pricing-teaser__icon {
+    display: inline-grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--ts-radius-md);
+    background: rgba(var(--plan-accent-rgb), 0.18);
+    /* Lifted toward white so the glyph keeps >=3:1 on the surface. */
+    color: color-mix(in oklab, var(--plan-accent) 65%, white);
+  }
+
+  :global(.pricing-teaser__icon-glyph) {
+    width: 15px;
+    height: 15px;
   }
 
   :global(.pricing-teaser__plan:focus-visible) {
@@ -121,7 +148,14 @@
   }
 
   :global(.pricing-teaser__plan.is-popular) {
-    border-color: color-mix(in oklab, var(--ts-primary) 70%, transparent);
+    border-color: transparent;
+    background:
+      radial-gradient(120% 70% at 50% 0%, rgba(var(--ts-primary-rgb), 0.28), transparent 65%) padding-box,
+      linear-gradient(var(--ts-bg-surface), var(--ts-bg-surface)) padding-box,
+      linear-gradient(140deg, var(--ts-primary-light), var(--ts-secondary) 45%, var(--ts-tertiary)) border-box;
+    box-shadow:
+      0 0 0 1px rgba(var(--ts-primary-rgb), 0.25),
+      0 18px 50px -12px rgba(var(--ts-primary-rgb), 0.55);
   }
 
   .pricing-teaser__name {
@@ -130,7 +164,7 @@
     gap: var(--ts-space-3);
     margin: 0;
     font-size: 18px;
-    font-weight: 500;
+    font-weight: 600;
   }
 
   .pricing-teaser__badge {
@@ -139,8 +173,8 @@
     height: 20px;
     padding: 0 8px;
     border-radius: var(--ts-radius-sm);
-    background: rgba(var(--ts-primary-light-rgb), 0.14);
-    color: var(--ts-primary-light);
+    background: linear-gradient(90deg, var(--ts-primary), color-mix(in oklab, var(--ts-primary) 55%, var(--ts-secondary)));
+    color: #fff;
     font-size: 11px;
     font-weight: 500;
   }
@@ -153,9 +187,16 @@
   }
 
   .pricing-teaser__price strong {
-    font: 500 40px / 1 var(--ts-font-mono);
+    font: 600 44px / 1 var(--ts-font-mono);
     letter-spacing: -0.04em;
     font-variant-numeric: tabular-nums;
+  }
+
+  :global(.pricing-teaser__plan.is-popular) .pricing-teaser__price strong {
+    background: linear-gradient(120deg, #fff 20%, var(--ts-primary-light));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
 
   .pricing-teaser__price span,
@@ -167,6 +208,16 @@
   .pricing-teaser__limits {
     margin: 0;
     line-height: 1.7;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :global(.pricing-teaser__plan) {
+      transition: none;
+    }
+
+    :global(.pricing-teaser__plan:hover) {
+      transform: none;
+    }
   }
 
   @media (max-width: 900px) {
