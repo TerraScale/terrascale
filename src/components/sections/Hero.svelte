@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
-  import RouteLink from '@/components/RouteLink.svelte'
+  import RegionFlag from '@/components/RegionFlag.svelte'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import {
     REGIONS,
@@ -10,7 +10,7 @@
   import { launchPhase, registrationUrl } from '@/lib/site'
   import { dict } from '@/lib/i18n'
 
-  const highlightIcons = ['globe', 'activity', 'clock'] as const
+  const highlightIcons = ['globe', 'activity', 'code2'] as const
   $: highlights = $dict.hero.highlights.map((label, i) => ({
     icon: highlightIcons[i] ?? 'globe',
     label,
@@ -19,11 +19,12 @@
   const vbW = WORLD_MAP_VIEWBOX.width
   const vbH = WORLD_MAP_VIEWBOX.height
 
-  const ringPairs: Array<[Region, Region]> = REGIONS.map((r, i) => [
-    r,
-    REGIONS[(i + 1) % REGIONS.length],
-  ])
-
+  // Flag artwork for the hero's region pins. sjc is the San Francisco Bay Area.
+  const regionLabel: Record<string, string> = {
+    gru: 'São Paulo',
+    sjc: 'San Francisco Bay Area',
+  }
+  // One arc only, gru to sjc, as in the r4 spec.
   const arcPath = (a: Region, b: Region) => {
     const mx = (a.x + b.x) / 2
     const len = Math.hypot(b.x - a.x, b.y - a.y)
@@ -32,24 +33,15 @@
     return `M ${a.x} ${a.y} Q ${mx} ${cy} ${b.x} ${b.y}`
   }
 
-  const connections = ringPairs.map(([from, to], i) => ({
-    id: `${from.id}-${to.id}`,
-    d: arcPath(from, to),
-    delay: (i * 0.45).toFixed(2),
-  }))
-
+  const gru = REGIONS.find((r) => r.id === 'gru')
+  const sjc = REGIONS.find((r) => r.id === 'sjc')
+  const arcD = gru && sjc ? arcPath(gru, sjc) : ''
 </script>
 
 <section class="hero">
   <div class="hero__globe" aria-hidden="true">
     <div class="hero__globe-frame">
-      <img
-        src="/world-map.svg"
-        alt=""
-        class="hero__globe-map"
-        decoding="async"
-        loading="eager"
-      />
+      <div class="hero__globe-map"></div>
 
       <svg
         class="hero__globe-lines"
@@ -57,41 +49,43 @@
         preserveAspectRatio="none"
         aria-hidden="true"
       >
-        {#each connections as c (c.id)}
-          <path d={c.d} class="hero__line" style="--delay: {c.delay}s;" />
-        {/each}
+        <path pathLength="1" d={arcD} class="hero__line" />
       </svg>
 
-      {#each REGIONS as r, i (r.id)}
+      {#each REGIONS as r (r.id)}
         <span
           class="hero__pin"
-          style="left: {(r.x / vbW) * 100}%; top: {(r.y / vbH) * 100}%; --delay: {(i * 0.3).toFixed(2)}s;"
-          title={r.city}
+          class:hero__pin--left={r.id === 'sjc'}
+          style="left: {(r.x / vbW) * 100}%; top: {(r.y / vbH) * 100}%;"
+          title={regionLabel[r.id] ?? r.city}
         >
           <span class="hero__pin-ring"></span>
           <span class="hero__pin-core"></span>
+          <span class="hero__pin-label">
+            {#if r.id === 'gru' || r.id === 'sjc'}<RegionFlag code={r.id} />{/if}
+          </span>
         </span>
       {/each}
     </div>
   </div>
 
   <div class="hero__inner">
-    <div class="hero__brand">
-      <span class="hero__brand-glow" aria-hidden="true"></span>
+    <span class="hero__brand">
       <img
-        src="/logo-principal.svg"
-        alt={$dict.hero.brandAlt}
+        src="/icon-blue.svg"
+        alt=""
         class="hero__brand-mark"
-        width="1429"
-        height="345"
+        width="835"
+        height="942"
         decoding="async"
         fetchpriority="high"
       />
-    </div>
+      <span class="hero__brand-word">TerraScale</span>
+    </span>
 
     <h1 class="hero__headline">
       {$dict.hero.headlineLead}<br />
-      <span class="ts-text-gradient">{$dict.hero.headlineAccent}</span>
+      <span class="hero__accent">{$dict.hero.headlineAccent}</span>
     </h1>
 
     <p class="hero__subtitle">
@@ -99,7 +93,7 @@
     </p>
 
     <div class="hero__ctas">
-      <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine">
+      <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary">
         {launchPhase === 'public-alpha' ? $dict.hero.ctaPrimary : $dict.hero.ctaPrelaunch}
         <Icon name="arrowRight" className="hero__cta-icon" />
       </ExternalLink>
@@ -108,6 +102,7 @@
         target="_blank"
         class="ts-btn ts-btn-glass"
       >
+        <Icon name="bookOpen" className="hero__cta-icon" />
         {$dict.hero.ctaSecondary}
       </ExternalLink>
     </div>
@@ -126,40 +121,27 @@
 <style>
   .hero {
     position: relative;
-    min-height: clamp(580px, calc(78vh - 72px), 760px);
+    isolation: isolate;
+    overflow: hidden;
+    margin-top: -60px;
+    padding: 140px 0 96px;
     display: flex;
     align-items: center;
-    overflow: hidden;
   }
 
   .hero__globe {
     position: absolute;
-    inset: 0;
+    inset: 60px 0 0;
+    z-index: -1;
+    display: grid;
+    place-items: center;
     pointer-events: none;
-    z-index: 0;
-    mask-image: radial-gradient(
-      ellipse 95% 92% at 50% 50%,
-      #000 0%,
-      #000 70%,
-      rgba(0, 0, 0, 0.35) 88%,
-      transparent 100%
-    );
-    -webkit-mask-image: radial-gradient(
-      ellipse 95% 92% at 50% 50%,
-      #000 0%,
-      #000 70%,
-      rgba(0, 0, 0, 0.35) 88%,
-      transparent 100%
-    );
   }
 
   .hero__globe-frame {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: min(1600px, 100%);
+    position: relative;
+    width: max(100%, 1100px);
     aspect-ratio: 119 / 60;
-    transform: translate(-50%, -50%);
   }
 
   .hero__globe-map,
@@ -168,13 +150,12 @@
     inset: 0;
     width: 100%;
     height: 100%;
-    user-select: none;
-    -webkit-user-drag: none;
   }
 
   .hero__globe-map {
-    opacity: 0.22;
-    filter: saturate(0.85);
+    background: rgb(255 255 255 / 0.16);
+    -webkit-mask: url(/world-map.svg) center / 100% 100% no-repeat;
+    mask: url(/world-map.svg) center / 100% 100% no-repeat;
   }
 
   .hero__globe-lines {
@@ -183,130 +164,141 @@
 
   .hero__line {
     fill: none;
-    stroke: rgba(var(--ts-primary-rgb), 0.5);
-    stroke-width: 0.18;
+    stroke: var(--ts-primary);
+    stroke-width: 0.22;
     stroke-linecap: round;
-    stroke-dasharray: 2 3;
-    animation: ts-line-flow 6s linear infinite;
-    animation-delay: var(--delay, 0s);
-    opacity: 0.85;
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: ts-line-draw 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.3s forwards;
   }
 
-  @keyframes ts-line-flow {
-    from { stroke-dashoffset: 0; }
-    to   { stroke-dashoffset: -20; }
+  @keyframes ts-line-draw {
+    to { stroke-dashoffset: 0; }
   }
 
   .hero__pin {
     position: absolute;
-    width: 0;
-    height: 0;
+    width: 10px;
+    height: 10px;
+    translate: -50% -50%;
+    border-radius: 50%;
+    background: var(--ts-primary);
+    box-shadow: 0 0 0 3px var(--ts-bg-base);
     pointer-events: none;
   }
 
-  .hero__pin-core {
+  .hero__pin-core,
+  .hero__pin-ring {
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 7px;
-    height: 7px;
     border-radius: 50%;
-    background: var(--ts-primary-light);
-    box-shadow:
-      0 0 0 2px rgba(5, 5, 8, 0.9),
-      0 0 14px rgba(var(--ts-primary-rgb), 0.9),
-      0 0 26px rgba(var(--ts-primary-rgb), 0.55);
-    transform: translate(-50%, -50%);
+  }
+
+  .hero__pin-core {
+    inset: 0;
   }
 
   .hero__pin-ring {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    border: 1.5px solid rgba(var(--ts-primary-rgb), 0.8);
-    transform: translate(-50%, -50%);
-    animation: ts-pin-pulse 2.6s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
-    animation-delay: var(--delay, 0s);
+    inset: -6px;
+    border: 1px solid var(--ts-primary);
+    opacity: 0;
+    animation: ts-pin-ping 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
   }
 
-  @keyframes ts-pin-pulse {
-    0%   { transform: translate(-50%, -50%) scale(1);   opacity: 0.9; }
-    80%  { transform: translate(-50%, -50%) scale(3.8); opacity: 0;   }
-    100% { transform: translate(-50%, -50%) scale(3.8); opacity: 0;   }
+  @keyframes ts-pin-ping {
+    0% { opacity: 0.9; scale: 0.6; }
+    70%, 100% { opacity: 0; scale: 1.8; }
+  }
+
+  .hero__pin-label {
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    translate: 0 -50%;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 6px;
+    border: 1px solid var(--ts-glass-border);
+    border-radius: 4px;
+    background: var(--ts-bg-card);
+    line-height: 1;
+  }
+
+  .hero__pin--left .hero__pin-label {
+    left: auto;
+    right: 16px;
   }
 
   .hero__inner {
     position: relative;
     z-index: 1;
     width: 100%;
-    max-width: 1240px;
-    margin: 0 auto;
-    padding: 40px 40px;
+    padding: 0 clamp(16px, 2.5vw, 40px);
+    display: grid;
+    justify-items: center;
+    gap: 24px;
     text-align: center;
   }
 
   .hero__brand {
-    position: relative;
-    display: inline-flex;
-    justify-content: center;
-    margin: 0 auto 22px;
-    isolation: isolate;
-  }
-
-  .hero__brand-glow {
-    position: absolute;
-    inset: -60% -30%;
-    z-index: -1;
-    background: radial-gradient(
-      ellipse at center,
-      rgba(var(--ts-primary-rgb), 0.22) 0%,
-      rgba(var(--ts-primary-rgb), 0.06) 42%,
-      transparent 72%
-    );
-    filter: blur(28px);
-    animation: ts-breathe 6s ease-in-out infinite;
+    display: flex;
+    align-items: center;
+    gap: 12px;
   }
 
   .hero__brand-mark {
-    position: relative;
-    height: clamp(48px, 6vw, 78px);
-    width: auto;
+    width: 44px;
+    height: 44px;
     display: block;
-    filter: drop-shadow(0 8px 22px rgba(var(--ts-primary-rgb), 0.28));
+  }
+
+  .hero__brand-word {
+    font-size: 32px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.015em;
+    color: var(--ts-text);
   }
 
   .hero__headline {
-    font-size: clamp(2.4rem, 4.2vw + 1rem, 5rem);
-    font-weight: 700;
-    line-height: 1.02;
-    margin: 0 0 10px;
+    font-size: clamp(44px, 6.4vw, 96px);
+    font-weight: 600;
+    line-height: 1;
+    margin: 8px 0 0;
     color: var(--ts-text);
     letter-spacing: -0.035em;
   }
 
+  .hero__accent {
+    color: var(--ts-primary);
+  }
+
   .hero__subtitle {
     font-family: var(--ts-font-accent);
-    font-size: clamp(1rem, 0.7vw + 0.75rem, 1.15rem);
+    font-size: 16px;
     color: var(--ts-text-muted);
-    line-height: 1.55;
-    max-width: 580px;
-    margin: 0 auto 32px;
+    line-height: 1.7;
+    max-width: 60ch;
+    margin: 0;
     font-weight: 400;
   }
 
   .hero__ctas {
     display: flex;
-    gap: 12px;
+    gap: 8px;
     justify-content: center;
     flex-wrap: wrap;
+    margin-top: 8px;
+  }
+
+  .hero :global(.hero__ctas .ts-btn) {
+    height: 40px;
+    padding: 0 20px;
   }
 
   .hero :global(.ts-btn-glass) {
     background: var(--ts-bg-card);
-    border-color: rgba(148, 163, 184, 0.34);
+    border-color: rgb(255 255 255 / 0.17);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
@@ -323,41 +315,28 @@
 
   .hero__highlights {
     list-style: none;
-    margin: 48px auto 0;
+    margin: 16px 0 0;
     padding: 0;
-    display: grid;
-    grid-template-columns: repeat(3, max-content);
+    display: flex;
+    flex-wrap: wrap;
     justify-content: center;
-    column-gap: 14px;
-    row-gap: 12px;
+    gap: 8px;
   }
 
   .hero__highlight {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    padding: 9px 16px;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
     border-radius: 100px;
-    background: var(--ts-glass-bg);
+    background: var(--ts-bg-card);
     border: 1px solid var(--ts-glass-border);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
     font-family: var(--ts-font-accent);
     font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    color: var(--ts-text);
-    transition:
-      border-color 200ms ease,
-      transform 200ms ease,
-      background 200ms ease;
-  }
-
-  .hero__highlight:hover {
-    transform: translateY(-2px);
-    border-color: rgba(var(--ts-primary-rgb), 0.38);
-    background: rgba(var(--ts-primary-rgb), 0.06);
+    font-weight: 400;
+    color: var(--ts-text-muted);
   }
 
   :global(.hero__highlight-icon) {
@@ -367,37 +346,41 @@
     display: inline-block;
   }
 
-  @media (max-width: 720px) {
+  @media (max-width: 640px) {
     .hero {
-      min-height: clamp(520px, 92vh, 680px);
+      padding: 108px 0 64px;
     }
-    .hero__inner {
-      padding: 36px 20px;
+    .hero__globe { inset: 60px 0 auto; }
+    .hero__globe-frame { width: 900px; }
+    .hero__pin-label { display: none; }
+    .hero__brand-mark {
+      width: 32px;
+      height: 32px;
     }
-    .hero__globe-frame {
+    .hero__brand-word {
+      font-size: 24px;
+    }
+    .hero__subtitle {
+      font-size: 14px;
+    }
+    .hero__ctas {
       width: 100%;
+      flex-wrap: nowrap;
     }
-    .hero__highlights {
-      grid-template-columns: max-content;
-      row-gap: 10px;
-      margin-top: 40px;
-    }
-    .hero__highlight {
-      padding: 8px 14px;
-      font-size: 12px;
-    }
-    .hero__pin-core,
-    .hero__pin-ring {
-      width: 5px;
-      height: 5px;
+    .hero :global(.hero__ctas .ts-btn) {
+      flex: 1;
+      width: 100%;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .hero__line,
-    .hero__pin-ring,
-    .hero__brand-glow {
+    .hero__line {
+      animation: none;
+      stroke-dashoffset: 0;
+    }
+    .hero__pin-ring {
       animation: none !important;
+      display: none;
     }
   }
 </style>

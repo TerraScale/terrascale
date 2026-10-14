@@ -4,7 +4,7 @@ export const es: Messages = {
   meta: {
     title: 'TerraScale Public Alpha | Base de Documentos Regional',
     description:
-      'TerraScale Public Alpha ofrece una base de documentos tipada con replicación asíncrona en São Paulo y San Jose.',
+      'TerraScale Public Alpha ofrece una base de documentos tipada con replicación asíncrona en São Paulo y San Francisco Bay Area.',
   },
 
   chrome: {
@@ -75,7 +75,7 @@ export const es: Messages = {
     headlineLead: 'TerraScale',
     headlineAccent: 'Public Alpha',
     subtitle:
-      'Una base de documentos tipada con replicación asíncrona en São Paulo y San Jose. El endpoint global dirige a la región seleccionada saludable más cercana. Public Alpha no tiene porcentaje de disponibilidad ni SLA.',
+      'Una base de documentos tipada con replicación asíncrona en São Paulo y San Francisco Bay Area. El endpoint global dirige a la región seleccionada saludable más cercana. Public Alpha no tiene porcentaje de disponibilidad ni SLA.',
     ctaPrimary: 'Registrarse en Public Alpha',
     ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'Ver documentación',
@@ -102,7 +102,7 @@ export const es: Messages = {
       },
       {
         title: 'Regiones de lanzamiento',
-        text: 'Elige São Paulo o San Jose durante Public Alpha.',
+        text: 'Elige São Paulo o San Francisco Bay Area durante Public Alpha.',
         bullets: ['gru', 'sjc'],
       },
       {
@@ -293,7 +293,7 @@ export const es: Messages = {
     titleLead: 'Infraestructura de base de datos',
     titleAccent: 'distribuida globalmente.',
     subtitle:
-      'TerraScale Public Alpha ofrece una base de documentos en São Paulo y San Jose con replicación asíncrona.',
+      'TerraScale Public Alpha ofrece una base de documentos en São Paulo y San Francisco Bay Area con replicación asíncrona.',
     ctaPricing: 'Ver precios',
     ctaContact: 'Habla con nosotros',
     missionEyebrow: 'Misión',
