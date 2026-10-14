@@ -10,17 +10,17 @@ on:
     - cron: "17 * * * *"
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
 jobs:
+  # Share the PR's creation group so close cancels builds before deletion; different PR closes remain independent.
   cleanup:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
+    concurrency:
+      group: ${{ github.event_name == 'pull_request' && format('preview-{0}', github.event.pull_request.number) || 'preview-reap' }}
+      cancel-in-progress: true
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_PREVIEWS }}
     steps:
