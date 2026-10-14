@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
@@ -164,7 +165,7 @@ public sealed class ShapeSnapshotTests
     [Test]
     public async Task A_snapshot_at_S_equals_the_replayed_write_history_and_feed_through_S()
     {
-        // FR-12 materialized chunks are not on this branch; S is checked against the HTTP write history and the feed instead.
+        // Each S is checked three ways: the HTTP write history, the raw feed, and FR-12 chunks sealed at S and replayed from 0.
         await using var api = await DocumentApi.StartAsync();
         await StorageFixture.CreateCollectionAsync(api.Tenant, DocumentApi.Database, "other");
         await using var fixture = await Fixture.OpenAsync(api);
@@ -176,6 +177,13 @@ public sealed class ShapeSnapshotTests
         var shape = Shape();
         var first = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         var firstModel = Model(model);
+        var sealer = new ShapeSealer(fixture.Memory, NullLogger<ShapeSealer>.Instance, new SqliteShapeStorage(api.Server.Services.GetRequiredService<SqliteStorageEngine>()));
+        var chunkShape = await ChunkShapeAsync(fixture.Store, shape);
+        // Chunk values are materialized at sealing time, so each checkpoint is sealed before the next writes commit.
+        await Assert.That(await sealer.SealUpToHeadAsync(fixture.Store, chunkShape, 0, CancellationToken.None)).IsEqualTo(first.Offset);
+        SortedDictionary<string, (string Version, string Document)> replayed = [with(StringComparer.Ordinal)];
+        await ReplayChunksAsync(sealer, fixture.Store, shape.Handle, 0, first.Offset, replayed);
+        await AssertReplayMatchesAsync(fixture.Snapshots, fixture.Store, shape, first.Offset, replayed);
 
         var created = DocumentApi.NewId();
         _ = await WriteAsync(api, model, (ids[3], Doc(13)), (ids[4], null), (created, Doc(14)), (ids[2], Doc(12)), (ids[0], Doc(20)));
@@ -185,6 +193,14 @@ public sealed class ShapeSnapshotTests
         await Assert.That(second.Offset).IsGreaterThan(first.Offset);
         await Assert.That(second.Offset).IsEqualTo(await CounterAsync(fixture.Raw));
         await Assert.That(await fixture.Snapshots.NewestAsync(fixture.Store, shape.Handle, CancellationToken.None)).IsEqualTo(second);
+        await Assert.That(await sealer.SealUpToHeadAsync(fixture.Store, chunkShape, first.Offset, CancellationToken.None)).IsEqualTo(second.Offset);
+        await ReplayChunksAsync(sealer, fixture.Store, shape.Handle, first.Offset, second.Offset, replayed);
+        await AssertReplayMatchesAsync(fixture.Snapshots, fixture.Store, shape, second.Offset, replayed);
+
+        // Later commits cannot change the already sealed prefix or its snapshot.
+        SortedDictionary<string, (string Version, string Document)> again = [with(StringComparer.Ordinal)];
+        await ReplayChunksAsync(sealer, fixture.Store, shape.Handle, 0, first.Offset, again);
+        await AssertReplayMatchesAsync(fixture.Snapshots, fixture.Store, shape, first.Offset, again);
 
         foreach (var (snapshot, expected) in new[] { (first, firstModel), (second, model) })
         {
@@ -540,6 +556,66 @@ public sealed class ShapeSnapshotTests
     private static ShapeSnapshotDefinition Shape(Func<StoredDocument, bool>? predicate = null) => new(
         "h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)),
         DocumentApi.Collection, RandomNumberGenerator.GetBytes(16), predicate);
+
+    /// <summary>The FR-12 chunk shape with the snapshot's identity, bound to the collection's current generation.</summary>
+    private static async Task<ShapeSealDefinition> ChunkShapeAsync(IDatabaseStore store, ShapeSnapshotDefinition shape)
+    {
+        await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        var collection = await transaction.GetCollectionAsync(shape.Collection, CancellationToken.None)
+            ?? throw new InvalidOperationException("the collection is missing");
+        return new ShapeSealDefinition(shape.ShapeId, shape.Handle, shape.Collection, collection.Id, shape.ResumeScope);
+    }
+
+    /// <summary>Applies the contiguous closed chunks of (from, through] in order: upsert stores id, version and document, delete removes.</summary>
+    private static async Task ReplayChunksAsync(
+        ShapeSealer sealer, IDatabaseStore store, string handle, long from, long through, SortedDictionary<string, (string Version, string Document)> state)
+    {
+        while (from < through)
+        {
+            using var chunk = await sealer.ReadChunkAsync(store, handle, from, CancellationToken.None)
+                ?? throw new InvalidOperationException($"no chunk is sealed at {from}");
+            await Assert.That(chunk.Offset).IsEqualTo(from);
+            await Assert.That(chunk.EndOffset).IsGreaterThan(from).And.IsLessThanOrEqualTo(through);
+            await Assert.That(chunk.ValuesAt).IsEqualTo(through).Because("the chunks were sealed at the checkpoint, before later writes");
+            using var json = JsonDocument.Parse(chunk.Body);
+            foreach (var change in json.RootElement.GetProperty("changes").EnumerateArray())
+            {
+                var at = long.Parse(change.GetProperty("offset").GetString()!, CultureInfo.InvariantCulture);
+                await Assert.That(at).IsGreaterThan(chunk.Offset).And.IsLessThanOrEqualTo(chunk.EndOffset);
+                foreach (var op in change.GetProperty("ops").EnumerateArray())
+                {
+                    if (op.GetProperty("op").GetString() == "upsert")
+                    {
+                        state[Id(op)] = (op.GetProperty("version").GetString()!, op.GetProperty("document").GetRawText());
+                    }
+                    else
+                    {
+                        await Assert.That(op.GetProperty("op").GetString()).IsEqualTo("delete");
+                        _ = state.Remove(Id(op));
+                    }
+                }
+            }
+
+            from = chunk.EndOffset;
+        }
+
+        await Assert.That(from).IsEqualTo(through).Because("the chunk chain reaches S exactly");
+    }
+
+    /// <summary>The snapshot at S holds exactly the replayed ids, each with the replayed version and document bytes.</summary>
+    private static async Task AssertReplayMatchesAsync(
+        ShapeSnapshots snapshots, IDatabaseStore store, ShapeSnapshotDefinition shape, long offset, SortedDictionary<string, (string Version, string Document)> replayed)
+    {
+        var (pages, _) = await PagesAsync(snapshots, store, shape.Handle, offset);
+        var ops = await OpsAsync(pages, shape, offset);
+        await Assert.That(string.Join(',', ops.Select(Id))).IsEqualTo(string.Join(',', replayed.Keys)).Because($"snapshot {offset} has the replayed live ids");
+        foreach (var op in ops)
+        {
+            var (version, document) = replayed[Id(op)];
+            await Assert.That(op.GetProperty("version").GetString()).IsEqualTo(version);
+            await Assert.That(op.GetProperty("document").GetRawText()).IsEqualTo(document).Because("both carry the stored bytes");
+        }
+    }
 
     private static string[] Ids(int count) => [.. Enumerable.Range(0, count).Select(_ => DocumentApi.NewId()).Order(StringComparer.Ordinal)];
 
