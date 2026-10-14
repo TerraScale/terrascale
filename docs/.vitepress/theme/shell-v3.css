@@ -31,6 +31,9 @@
 .Layout .VPNavBarMenuLink.active { color: var(--ts-ink); }
 .Layout .VPNavBarMenuLink { color: var(--ts-ink-2); }
 .Layout .VPNavBarTitle .title { color: var(--ts-ink); }
+.Layout .VPNavBarTitle .logo { display: none; }
+.docs-brand-mark { width: 25px; height: 28px; flex-shrink: 0; }
+.docs-brand-word { color: var(--ts-ink); font: 600 17px / 1 var(--ts-font-sans); letter-spacing: -.02em; }
 
 @media (min-width: 768px) {
   .Layout .VPNavBarSearch .DocSearch-Button {
@@ -126,6 +129,7 @@
 .Layout .VPDocAsideOutline .nested .outline-link { padding-left: 24px; }
 .Layout .VPDocAsideOutline .outline-link:hover { color: var(--ts-ink); }
 .Layout .VPDocAsideOutline .outline-link.active { color: var(--ts-ink); border-left-color: var(--ts-ink); }
+.Layout .VPDocAsideOutline .content > ul:not(:has(.outline-link.active)) > li:first-child > .outline-link { color: var(--ts-ink); border-left-color: var(--ts-ink); }
 
 /* ---------- Search modal: prototype dialog, frosted, 56px input row ---------- */
 @media (min-width: 768px) {
@@ -190,6 +194,7 @@ body .VPLocalSearchBox .excerpt-gradient-top { display: none; }
   .Layout .VPNavBar > .wrapper { padding: 0 8px 0 56px; }
   .Layout .VPNavBarTitle .logo { content: url('/favicon.svg'); width: 24px; height: 24px; margin-right: 0; }
   .Layout .VPNavBarTitle .title > span { display: none; }
+  .Layout .docs-brand-word { display: none; }
   .Layout .VPNavBarAppearance { display: flex; align-items: center; }
   .Layout .VPLocalNav { height: 0; padding: 0; border: 0; z-index: calc(var(--vp-z-index-nav) + 1); }
   .Layout .VPLocalNav .VPLocalNavOutlineDropdown { display: none; }
