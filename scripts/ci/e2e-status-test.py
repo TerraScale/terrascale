@@ -26,8 +26,12 @@ for name in names:
             root = Path(directory)
             tools = root / "tools"
             tools.mkdir()
+            credential = root / "scripts/e2e/ci-oidc-credential.sh"
+            credential.parent.mkdir(parents=True)
+            credential.write_text('test -f build-ran || return 98\ntouch credential-minted\n')
             for tool, script in {
-                "make": '#!/bin/sh\necho "synthetic E2E output"\nexit "$E2E_TEST_EXIT"\n',
+                "make": '#!/bin/sh\nif [ "$1" = terrabase-build ]; then touch build-ran; exit 0; fi\n'
+                    'test -f credential-minted || exit 99\necho "synthetic E2E output"\nexit "$E2E_TEST_EXIT"\n',
                 "jq": '#!/bin/sh\ntouch jq-ran\nexit 0\n',
             }.items():
                 path = tools / tool
