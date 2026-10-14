@@ -4,16 +4,20 @@
   gap: 2px;
 }
 
-/* Region placement: three map-backed selects side by side. */
+/* Region placement: one map for allowed regions, primary and backup selects side by side. */
 .ts-org-placement {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: var(--ts-s4);
 }
 
 .ts-org-placement > legend {
   margin-bottom: var(--ts-s3);
+}
+
+.ts-org-placement > .ts-field:first-of-type {
+  grid-column: 1 / -1;
 }
 
 .ts-org-placement-hint {

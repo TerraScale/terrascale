@@ -71,19 +71,13 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
         await Assert.That(await allowedMap.Locator("button[data-region='GRU']").GetAttributeAsync("aria-pressed")).IsEqualTo("false");
         await Assert.That(await allowedMap.Locator("button[data-region='SFO']").GetAttributeAsync("aria-pressed")).IsEqualTo("true");
 
-        var primaryMap = dialog.Locator("[data-select-id='project-region']");
         var primarySelect = dialog.Locator("#project-region");
-        await primaryMap.GetByRole(AriaRole.Button, new() { Name = "San Francisco (SFO)", Exact = true }).ClickAsync();
-        await page.WaitForFunctionAsync("() => document.querySelector('#project-region').value === 'SFO'");
+        await primarySelect.SelectOptionAsync("SFO");
         await Assert.That(await primarySelect.InputValueAsync()).IsEqualTo("SFO");
-        await Assert.That(await primaryMap.Locator("button[data-region='SFO']").GetAttributeAsync("aria-pressed")).IsEqualTo("true");
 
-        var backupMap = dialog.Locator("[data-select-id='project-backup']");
         var backupSelect = dialog.Locator("#project-backup");
-        await backupMap.GetByRole(AriaRole.Button, new() { Name = "San Francisco (SFO)", Exact = true }).ClickAsync();
-        await page.WaitForFunctionAsync("() => document.querySelector('#project-backup').value === 'SFO'");
+        await backupSelect.SelectOptionAsync("SFO");
         await Assert.That(await backupSelect.InputValueAsync()).IsEqualTo("SFO");
-        await Assert.That(await backupMap.Locator("button[data-region='SFO']").GetAttributeAsync("aria-pressed")).IsEqualTo("true");
 
         var submit = dialog.GetByRole(AriaRole.Button, new() { Name = "Create project", Exact = true });
         var created = await page.RunAndWaitForResponseAsync(
@@ -106,13 +100,9 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
         await Assert.That((await SelectedAsync(edit.Locator($"#project-regions-{projectId}"))).SequenceEqual(new[] { "SFO" })).IsTrue();
         await Assert.That(await edit.Locator($"#project-region-{projectId}").InputValueAsync()).IsEqualTo("SFO");
         await Assert.That(await edit.Locator($"#project-backup-{projectId}").InputValueAsync()).IsEqualTo("SFO");
-        foreach (var field in new[] { "project-regions", "project-region", "project-backup" })
-        {
-            var map = edit.Locator($"[data-select-id='{field}-{projectId}']");
-            await Assert.That(await map.Locator("button[data-region='SFO']").GetAttributeAsync("aria-pressed")).IsEqualTo("true");
-            if (field == "project-regions")
-                await Assert.That(await map.Locator("button[data-region='GRU']").GetAttributeAsync("aria-pressed")).IsEqualTo("false");
-        }
+        var editAllowedMap = edit.Locator($"[data-select-id='project-regions-{projectId}']");
+        await Assert.That(await editAllowedMap.Locator("button[data-region='SFO']").GetAttributeAsync("aria-pressed")).IsEqualTo("true");
+        await Assert.That(await editAllowedMap.Locator("button[data-region='GRU']").GetAttributeAsync("aria-pressed")).IsEqualTo("false");
 
         using var httpContextResponse = await replica.GetAsync("/api/v1/dashboard/context");
         await Assert.That(httpContextResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -194,8 +184,6 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
         var backupSelect = dialog.Locator("#project-backup");
         var primaryRegion = await SelectNextRegionWithKeyboardAsync(page, primarySelect);
         var backupRegion = await SelectNextRegionWithKeyboardAsync(page, backupSelect);
-        await AssertMapSelectionAsync(dialog.Locator("[data-select-id='project-region']"), primaryRegion);
-        await AssertMapSelectionAsync(dialog.Locator("[data-select-id='project-backup']"), backupRegion);
 
         var submit = dialog.GetByRole(AriaRole.Button, new() { Name = "Create project", Exact = true });
         var created = await page.RunAndWaitForResponseAsync(
@@ -260,13 +248,5 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
         await Assert.That(await select.InputValueAsync()).IsEqualTo(target);
         await page.Keyboard.PressAsync("Tab");
         return target;
-    }
-
-    private static async Task AssertMapSelectionAsync(ILocator map, string selected)
-    {
-        await Assert.That(await map.Locator($"button[data-region='{selected}']").GetAttributeAsync("aria-pressed")).IsEqualTo("true");
-        var unselected = map.Locator($"button[data-region]:not([data-region='{selected}'])");
-        for (var index = 0; index < await unselected.CountAsync(); index++)
-            await Assert.That(await unselected.Nth(index).GetAttributeAsync("aria-pressed")).IsEqualTo("false");
     }
 }
