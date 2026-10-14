@@ -348,14 +348,20 @@
     color: var(--ts-primary);
   }
 
+  /* The map and arcs run behind this copy: brighter text plus a soft scrim
+     halo keeps it above WCAG AA over the dots. */
   .hero__subtitle {
     font-family: var(--ts-font-accent);
-    font-size: 16px;
-    color: var(--ts-text-muted);
-    line-height: 1.7;
+    font-size: 18px;
+    color: color-mix(in srgb, var(--ts-text) 88%, transparent);
+    line-height: 1.65;
     max-width: 60ch;
     margin: 0;
-    font-weight: 400;
+    font-weight: 450;
+    text-shadow:
+      0 0 2px var(--ts-bg-base),
+      0 0 8px var(--ts-bg-base),
+      0 0 18px var(--ts-bg-base);
   }
 
   .hero__ctas {
@@ -439,7 +445,7 @@
       font-size: 24px;
     }
     .hero__subtitle {
-      font-size: 14px;
+      font-size: 15px;
     }
     .hero__ctas {
       width: 100%;
