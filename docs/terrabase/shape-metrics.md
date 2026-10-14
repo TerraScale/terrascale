@@ -22,7 +22,8 @@ both process and organization limits; null charges system work only. Reservation
 ## Origin storage reads
 
 `terrabase.storage.reads` counts backend document/feed SELECT executions, rather than returned rows or HTTP requests.
-Its only application label is `path`, whose bounded values are `point`, `query`, `feed` and `shape`. Each instrument update adds one immediately before an attempted SELECT; misses and empty results
+Its only application label is `path`, whose bounded values are `point`, `query`, `feed` and `shape`. Each instrument
+update adds one immediately before an attempted SELECT; misses and empty results
 count, while reads answered from a document or sealed-body cache do not execute those storage sites.
 
 Feed enumeration, continuation, head/floor, retention and prefix-verification SELECTs count individually, as does each
@@ -37,7 +38,7 @@ also count individually under `path="query"`, so a query can perform more than o
 
 Shape sealing's feed enumeration, size projections, document materialization and resume-prefix reads count under
 `path="shape"`, as do persisted chunk size/body reads and shape retention's floor/candidate SELECTs. Reusing a stored
-seal counts its head and boundary lookups; an absent chunk counts its attempted size SELECT. Collection-lineage
+seal counts its head and stored-chunk lookups; an absent chunk counts its attempted size SELECT. Collection-lineage
 admission and CDC validation remain excluded, following the metadata/capture exclusions above.
 
 This is origin storage work even when SQLite serves it from its page cache; it does not measure physical disk I/O.
