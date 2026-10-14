@@ -76,9 +76,7 @@ export const ptBr: Messages = {
     headlineAccent: 'Public Alpha',
     subtitle:
       'Um banco de documentos tipado com replicação assíncrona em São Paulo, San Francisco Bay Area e Frankfurt. O endpoint global encaminha para a região selecionada saudável mais próxima. O Public Alpha não tem percentual de disponibilidade nem SLA.',
-    ctaPrimary: 'Cadastre-se no Public Alpha',
     ctaPrelaunch: 'Public Alpha',
-    ctaSecondary: 'Ver documentação',
     highlightsAria: 'Principais recursos',
     highlights: ['Roteamento por região selecionada', 'Replicação assíncrona', 'SDKs tipados', 'Pronto para agentes de IA'],
   },

@@ -76,9 +76,7 @@ export const es: Messages = {
     headlineAccent: 'Public Alpha',
     subtitle:
       'Una base de documentos tipada con replicación asíncrona en São Paulo, San Francisco Bay Area y Frankfurt. El endpoint global dirige a la región seleccionada saludable más cercana. Public Alpha no tiene porcentaje de disponibilidad ni SLA.',
-    ctaPrimary: 'Registrarse en Public Alpha',
     ctaPrelaunch: 'Public Alpha',
-    ctaSecondary: 'Ver documentación',
     highlightsAria: 'Capacidades principales',
     highlights: ['Enrutamiento por región seleccionada', 'Replicación asíncrona', 'SDK tipados', 'Listo para agentes de IA'],
   },

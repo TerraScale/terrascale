@@ -74,9 +74,7 @@ export const en = {
     headlineAccent: 'Public Alpha',
     subtitle:
       'A typed document database with asynchronous replication across São Paulo, the San Francisco Bay Area, and Frankfurt. The global endpoint routes to the nearest healthy region selected by your project. Public Alpha has no uptime percentage or SLA.',
-    ctaPrimary: 'Register for Public Alpha',
     ctaPrelaunch: 'Public Alpha',
-    ctaSecondary: 'View Docs',
     highlightsAria: 'Key capabilities',
     highlights: ['Selected-region routing', 'Asynchronous replication', 'Typed SDKs', 'AI agents ready'],
   },

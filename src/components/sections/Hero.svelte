@@ -1,13 +1,11 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
   import RegionFlag from '@/components/RegionFlag.svelte'
-  import ExternalLink from '@/components/ExternalLink.svelte'
   import {
     REGIONS,
     WORLD_MAP_VIEWBOX,
     type Region,
   } from '@/lib/world-map.generated'
-  import { launchPhase, registrationUrl } from '@/lib/site'
   import { dict } from '@/lib/i18n'
 
   const highlightIcons = ['globe', 'activity', 'code2', 'bot'] as const
@@ -115,21 +113,6 @@
     <p class="hero__subtitle">
       {$dict.hero.subtitle}
     </p>
-
-    <div class="hero__ctas">
-      <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary">
-        {launchPhase === 'public-alpha' ? $dict.hero.ctaPrimary : $dict.hero.ctaPrelaunch}
-        <Icon name="arrowRight" className="hero__cta-icon" />
-      </ExternalLink>
-      <ExternalLink
-        href="https://docs.terrascale.tech"
-        target="_blank"
-        class="ts-btn ts-btn-glass"
-      >
-        <Icon name="bookOpen" className="hero__cta-icon" />
-        {$dict.hero.ctaSecondary}
-      </ExternalLink>
-    </div>
 
     <ul class="hero__highlights" aria-label={$dict.hero.highlightsAria}>
       {#each highlights as h (h.label)}
@@ -364,36 +347,6 @@
       0 0 18px var(--ts-bg-base);
   }
 
-  .hero__ctas {
-    display: flex;
-    gap: 8px;
-    justify-content: center;
-    flex-wrap: wrap;
-    margin-top: 8px;
-  }
-
-  .hero :global(.hero__ctas .ts-btn) {
-    height: 40px;
-    padding: 0 20px;
-  }
-
-  .hero :global(.ts-btn-glass) {
-    background: var(--ts-bg-card);
-    border-color: rgb(255 255 255 / 0.17);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-
-  .hero :global(.ts-btn-glass:hover) {
-    background: var(--ts-divider);
-    border-color: rgba(var(--ts-primary-rgb), 0.5);
-  }
-
-  :global(.hero__cta-icon) {
-    width: 14px;
-    height: 14px;
-  }
-
   .hero__highlights {
     list-style: none;
     margin: 16px 0 0;
@@ -446,14 +399,6 @@
     }
     .hero__subtitle {
       font-size: 15px;
-    }
-    .hero__ctas {
-      width: 100%;
-      flex-wrap: nowrap;
-    }
-    .hero :global(.hero__ctas .ts-btn) {
-      flex: 1;
-      width: 100%;
     }
   }
 
