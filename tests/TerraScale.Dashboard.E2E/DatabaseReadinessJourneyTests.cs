@@ -84,7 +84,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         var page = await PageAsync(client, "/databases/" + actualId + "?created=1");
         await Assert.That(page).Contains(name + " is ready</p>");
         await Assert.That(page).Contains("Its home region is ready. Replica progress is shown in Replication.");
-        await Assert.That(page).Contains("Not measured");
+        await Assert.That(await PageAsync(client, "/databases/" + actualId + "/replication")).Contains("Not measured");
         using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
         { ["_csrf"] = csrf, ["databaseId"] = actualId, ["name"] = "users" }))
             await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
@@ -279,7 +279,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         await Assert.That(page.Contains(name + " is ready</p>", StringComparison.Ordinal)).IsFalse();
         var list = await PageAsync(client, "/databases");
         var total = System.Text.RegularExpressions.Regex.Match(list,
-            "<div class=\"ts-stat\" data-tone=\"amber\">.*?<dd class=\"ts-stat-value\">([0-9]+)</dd>",
+            "<div class=\"ts-stat\" data-tone=\"warning\">.*?<dd class=\"ts-stat-value\">([0-9]+)</dd>",
             System.Text.RegularExpressions.RegexOptions.Singleline);
         await Assert.That(total.Success).IsTrue();
         await Assert.That(total.Groups[1].Value).IsEqualTo(status == "failed" ? "0" : "1")

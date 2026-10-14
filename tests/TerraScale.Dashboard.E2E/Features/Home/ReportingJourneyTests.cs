@@ -55,8 +55,9 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(await chart.Locator(".ts-chart-column").Last.GetAttributeAsync("tabindex")).IsEqualTo("0");
             foreach (var range in new[] { "1h", "24h", "7d", "30d" })
             {
-                await ownerPage.Locator("#analytics-range").SelectOptionAsync(range);
-                await ApplyAnalyticsAsync();
+                var navigation = BrowserFlow.NavigationAsync(ownerPage);
+                await ownerPage.Locator("main .ts-grid-2 .ts-card").First.GetByRole(AriaRole.Link, new() { Name = range, Exact = true }).ClickAsync();
+                await navigation;
                 await Assert.That(QueryHelpers.ParseQuery(new Uri(ownerPage.Url).Query)["range"].ToString()).IsEqualTo(range);
             }
             await ownerPage.Locator("#analytics-database").SelectOptionAsync(archive);
@@ -82,6 +83,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
                 await flow.GotoAsync(ownerPage, "/analytics?database=" + orders);
                 await ownerPage.GetByRole(AriaRole.Alert).Filter(new() { HasText = "Analytics unavailable" }).WaitForAsync();
                 await Assert.That(await ownerPage.Locator("#analytics-summary .ts-stat").CountAsync()).IsEqualTo(0).Because(value + " does not fabricate a zero total");
+                await Assert.That(await ownerPage.Locator("select#analytics-range").IsVisibleAsync()).IsTrue().Because("unavailable charts must still allow a wider range");
             }
             await ScenarioAsync("received-only");
             await flow.GotoAsync(ownerPage, "/analytics?database=" + orders);
@@ -90,6 +92,10 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             await ScenarioAsync("not-metered");
             await flow.GotoAsync(ownerPage, "/analytics");
             await ownerPage.GetByText("No analytics measurements for these filters.", new() { Exact = true }).WaitForAsync();
+            await ownerPage.Locator("#analytics-range").SelectOptionAsync("7d");
+            await ApplyAnalyticsAsync();
+            await Assert.That(QueryHelpers.ParseQuery(new Uri(ownerPage.Url).Query)["range"].ToString()).IsEqualTo("7d");
+            await Assert.That(await ownerPage.Locator("[name=range]").CountAsync()).IsEqualTo(1);
             await ScenarioAsync("valid");
             await flow.GotoAsync(ownerPage, "/usage?project=" + projectId + "&database=" + orders + "&range=24h");
             await Assert.That(await Stat("#usage-summary", "Reads").InnerTextAsync()).IsEqualTo("12");

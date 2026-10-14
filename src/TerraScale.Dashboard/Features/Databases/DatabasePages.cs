@@ -16,7 +16,7 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     public IReadOnlyList<string> Selected => Selection ?? (Context.Project is null || Context.Project.Region.Length == 0 ? [] : [Context.Project.Region]);
     public bool CanProvision => Context.Organization?.CanProvision(Context.UserId) ?? false;
     public string Description => Search.Length == 0 ? $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} in this project" : $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} matching \"{Search}\"";
-    public static string Tone(string status) => status switch { "ready" => "emerald", "failed" => "rose", "provisioning" or "accepted" or "pending" => "amber", _ => "slate" };
+    public static string Tone(string status) => status switch { "ready" => "success", "failed" => "danger", "provisioning" or "accepted" or "pending" => "warning", _ => "neutral" };
     // Shown while the only listed region is the one that answered: TerraBase publishes no region catalog yet.
     public const string SingleRegionNotice = "TerraBase does not list its other regions yet, so adding replica regions is unavailable here.";
     public static string RegionDisplay(string code) => code switch { "" => "Not configured", _ => TerraScale.Dashboard.UI.Regions.Name(code) is { Length: > 0 } name ? $"{code.ToLowerInvariant()} · {name}" : code.ToLowerInvariant() };
@@ -33,10 +33,10 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
         : string.Join(", ", DatabaseService.Regions(Database).Select(DatabasesPage.RegionDisplay));
     public (string Tone, string Title, string Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
     {
-        "emerald" => ("success", Database.Name + " is ready", DatabaseService.Regions(Database).Count == 1
+        "success" => ("success", Database.Name + " is ready", DatabaseService.Regions(Database).Count == 1
             ? "It serves " + Placement + ". Add a collection in Documents, or connect with an API key."
             : "Its home region is ready. Replica progress is shown in Replication. Add a collection in Documents, or connect with an API key."),
-        "rose" => ("danger", Database.Name + " could not be created", "The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing."),
+        "danger" => ("danger", Database.Name + " could not be created", "The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing."),
         _ => ("info", Database.Name + " is being created", "The data plane is still placing it in " + Placement + ". Its status changes to ready when it can take requests.")
     };
     public IReadOnlyList<string> PlacementLabels

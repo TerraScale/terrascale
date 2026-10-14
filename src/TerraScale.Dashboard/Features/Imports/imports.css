@@ -104,8 +104,5 @@
   border-radius: var(--ts-radius);
 }
 .ts-import-formats > .ts-check:has(input:checked) { border-color: var(--ts-accent); }
-.ts-imports .ts-badge-tone[data-tone="emerald"] { --tone: var(--ts-success); }
-.ts-imports .ts-badge-tone[data-tone="rose"] { --tone: var(--ts-danger); }
-.ts-imports .ts-badge-tone[data-tone="amber"] { --tone: var(--ts-warning); }
 .ts-imports [data-import-issues="blocking"] { color: var(--ts-danger); }
 .ts-imports [data-import-issues="warning"] { color: var(--ts-warning); }

@@ -80,8 +80,8 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
                 regions[regionCode] = (checked(row.Requests + pointRequests), index == starts.Length - 1 ? MaxLatency(row.LatestP95Ms, point.P95Ms) : row.LatestP95Ms);
             }
         }
-        var regionRows = regions.Select(item => new AnalyticsRegionRow(item.Key, RegionFlag(item.Key), item.Value.Requests, item.Value.LatestP95Ms))
-            .OrderBy(row => RegionRank(row.Code)).ThenBy(row => row.Code, StringComparer.Ordinal).ToArray();
+        var regionRows = regions.Select(item => new AnalyticsRegionRow(item.Key, Regions.Country(item.Key), item.Value.Requests, item.Value.LatestP95Ms))
+            .OrderBy(row => Regions.Rank(row.Code)).ThenBy(row => row.Code, StringComparer.Ordinal).ToArray();
         for (var index = 0; index < starts.Length; index++) storageMissing[index] = pointCounts[index] == 0 || storageSamples[index] != pointCounts[index];
         var charts = new List<AnalyticsChart>();
         Add("Requests by type", requests.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());
@@ -105,6 +105,4 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
     }
     private static long Nonnegative(long value) => value >= 0 ? value : throw new JsonException("Negative analytics measurement.");
     private static double? MaxLatency(double? left, double? right) => left is null ? right : right is null ? left : Math.Max(left.Value, right.Value);
-    private static int RegionRank(string code) => code switch { "gru" => 0, "fra" => 1, "sjc" => 2, _ => 3 };
-    private static string RegionFlag(string code) => code switch { "gru" => "br", "fra" => "de", "sjc" => "us", _ => "" };
 }

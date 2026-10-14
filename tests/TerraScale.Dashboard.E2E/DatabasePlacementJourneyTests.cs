@@ -67,12 +67,11 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
             databaseId = (await BodyAsync(created)).GetProperty("id").GetString()!;
         }
         var path = "/databases/" + databaseId;
-        var initial = await PageAsync(client);
+        var initial = await PageAsync(client, "/replication");
         await Assert.That(initial).Contains("sfo · San Francisco</td><td class=\"ts-num\">Not measured");
         await Assert.That(initial).Contains("No provider latency measurements are available.");
-        var initialReplication = await PageAsync(client, "/replication");
-        await Assert.That(initialReplication).Contains("Per database and region · 24h · TerraBase replication_bytes meter");
-        await Assert.That(initialReplication).Contains("/analytics?database=" + databaseId + "&project=" + projectId + "&range=24h");
+        await Assert.That(initial).Contains("Per database and region · 24h · TerraBase replication_bytes meter");
+        await Assert.That(initial).Contains("/analytics?database=" + databaseId + "&project=" + projectId + "&range=24h");
         await Assert.That(initial.Contains("0 ms", StringComparison.Ordinal)).IsFalse();
         var home = Regex.Match(initial, "<input[^>]+type=\"checkbox\"[^>]+value=\"SFO\"[^>]*>").Value;
         await Assert.That(home).Contains("required");
@@ -90,14 +89,14 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
         }
         // Later GRU answers instead. The SFO home is outside the catalog now and must stay selected and addressable.
         await Control(new { command = "api-region", value = "gru" });
-        var moved = Regex.Match(await PageAsync(client), "<input[^>]+type=\"checkbox\"[^>]+value=\"SFO\"[^>]*>").Value;
+        var moved = Regex.Match(await PageAsync(client, "/replication"), "<input[^>]+type=\"checkbox\"[^>]+value=\"SFO\"[^>]*>").Value;
         await Assert.That(moved).Contains("required");
         await Assert.That(moved).Contains("checked");
         using (var changed = await ChangeRegionsAsync(["gru", "sfo"]))
         {
             await Assert.That(changed.StatusCode).IsEqualTo(HttpStatusCode.SeeOther)
                 .Because(await FailureEvidenceAsync(changed));
-            await Assert.That(changed.Headers.Location?.OriginalString).IsEqualTo(path + "#placement");
+            await Assert.That(changed.Headers.Location?.OriginalString).IsEqualTo(path + "/replication#placement");
         }
         await Assert.That(await RegionsAsync()).IsEqualTo("SFO,GRU");
         using (var credentials = await replica.GetAsync("/api-keys"))
@@ -117,9 +116,9 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
         await Assert.That(measured).Contains("<dd class=\"ts-stat-value\">20</dd>");
         await Assert.That(measured).Contains("111 B");
         await Assert.That(measured).Contains("100 B");
-        await Assert.That(measured).Contains("<td>SFO</td>");
-        await Assert.That(measured).Contains("<td>GRU</td>");
-        await Assert.That(measured).Contains("SFO → GRU");
+        await Assert.That(measured).Contains("<span class=\"ts-mono\">sfo</span></span></td>");
+        await Assert.That(measured).Contains("<span class=\"ts-mono\">gru</span></span></td>");
+        await Assert.That(measured).Contains("<span class=\"ts-mono\">sfo</span></span><span aria-hidden=\"true\">→</span>");
         await Assert.That(measured).Contains(">True</td>");
         await Assert.That(measured).Contains("diverged");
         await Assert.That(measured).Contains("Not reported");

@@ -36,11 +36,11 @@ public sealed partial class ImportService(DatabaseService databases, IHttpClient
     public static bool Live(TerraBaseImportJob job) => job.State is TerraBaseImportState.Analyzing or TerraBaseImportState.Queued or TerraBaseImportState.Running or TerraBaseImportState.Validating;
     public static string Tone(TerraBaseImportState state) => state switch
     {
-        TerraBaseImportState.Completed => "emerald",
-        TerraBaseImportState.Failed or TerraBaseImportState.Rejected => "rose",
-        TerraBaseImportState.Cancelled => "slate",
-        TerraBaseImportState.Ready or TerraBaseImportState.AwaitingSource => "blue",
-        _ => "amber"
+        TerraBaseImportState.Completed => "success",
+        TerraBaseImportState.Failed or TerraBaseImportState.Rejected => "danger",
+        TerraBaseImportState.Cancelled => "neutral",
+        TerraBaseImportState.Ready or TerraBaseImportState.AwaitingSource => "warning",
+        _ => "info"
     };
 
     // Contract v1 has no listImports: each project database is asked for its import.

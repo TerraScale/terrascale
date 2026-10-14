@@ -249,8 +249,14 @@
 .ts-badge-warning { --badge: var(--ts-warning); }
 .ts-badge-danger { --badge: var(--ts-danger); }
 .ts-badge-tone { --badge: var(--tone); }
+/* Status tones from data-tone hosts; the same full-strength hues as the classes above. */
+[data-tone="success"] { --tone: var(--ts-success); }
+[data-tone="warning"] { --tone: var(--ts-warning); }
+[data-tone="danger"] { --tone: var(--ts-danger); }
+[data-tone="info"] { --tone: var(--ts-info); }
+[data-tone="neutral"] { --tone: var(--ts-ink-2); }
 /* Category hues, not status: text is lifted toward ink for AA. */
-.ts-badge-tone, .ts-badge-violet, .ts-badge-blue { color: color-mix(in oklab, var(--badge) 60%, var(--ts-ink)); }
+.ts-badge-violet, .ts-badge-blue { color: color-mix(in oklab, var(--badge) 60%, var(--ts-ink)); }
 .ts-badge-violet { --badge: var(--ts-chart-4); }
 .ts-badge-blue { --badge: var(--ts-chart-1); }
 
