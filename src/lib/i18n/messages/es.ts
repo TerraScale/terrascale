@@ -80,7 +80,7 @@ export const es: Messages = {
     ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'Ver documentación',
     highlightsAria: 'Capacidades principales',
-    highlights: ['Enrutamiento por región seleccionada', 'Replicación asíncrona', 'SDK tipados'],
+    highlights: ['Enrutamiento por región seleccionada', 'Replicación asíncrona', 'SDK tipados', 'Listo para agentes de IA'],
   },
 
   features: {

@@ -10,7 +10,7 @@
   import { launchPhase, registrationUrl } from '@/lib/site'
   import { dict } from '@/lib/i18n'
 
-  const highlightIcons = ['globe', 'activity', 'code2'] as const
+  const highlightIcons = ['globe', 'activity', 'code2', 'bot'] as const
   $: highlights = $dict.hero.highlights.map((label, i) => ({
     icon: highlightIcons[i] ?? 'globe',
     label,

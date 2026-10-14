@@ -6,6 +6,7 @@ export const ICONS = {
   award: '/icons/lucide/award.svg',
   barChart3: '/icons/lucide/bar-chart-3.svg',
   bookOpen: '/icons/lucide/book-open.svg',
+  bot: '/icons/lucide/bot.svg',
   brandDiscord: '/icons/simple-icons/discord.svg',
   brandGithub: '/icons/simple-icons/github.svg',
   brandLinkedin: '/icons/simple-icons/linkedin.svg',

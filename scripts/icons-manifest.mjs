@@ -10,6 +10,7 @@ export const iconManifest = {
   brandGithub: { collection: 'simple-icons', icon: 'github' },
   brandLinkedin: { collection: 'simple-icons', icon: 'linkedin' },
   brandX: { collection: 'simple-icons', icon: 'x' },
+  bot: { collection: 'lucide', icon: 'bot' },
   calendar: { collection: 'lucide', icon: 'calendar' },
   check: { collection: 'lucide', icon: 'check' },
   checkCircle: { collection: 'lucide', icon: 'check-circle' },

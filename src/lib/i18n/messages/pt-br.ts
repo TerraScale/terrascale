@@ -80,7 +80,7 @@ export const ptBr: Messages = {
     ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'Ver documentação',
     highlightsAria: 'Principais recursos',
-    highlights: ['Roteamento por região selecionada', 'Replicação assíncrona', 'SDKs tipados'],
+    highlights: ['Roteamento por região selecionada', 'Replicação assíncrona', 'SDKs tipados', 'Pronto para agentes de IA'],
   },
 
   features: {

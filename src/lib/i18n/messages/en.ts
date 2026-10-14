@@ -78,7 +78,7 @@ export const en = {
     ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'View Docs',
     highlightsAria: 'Key capabilities',
-    highlights: ['Selected-region routing', 'Asynchronous replication', 'Typed SDKs'],
+    highlights: ['Selected-region routing', 'Asynchronous replication', 'Typed SDKs', 'AI agents ready'],
   },
 
   features: {
