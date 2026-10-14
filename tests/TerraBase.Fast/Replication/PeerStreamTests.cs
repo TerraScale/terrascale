@@ -590,7 +590,16 @@ public sealed class PeerStreamTests
     [Test]
     public async Task A_read_from_below_a_raise_still_returns_the_local_group_after_it()
     {
-        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        // Only this test drives gru's retention, including before its baseline ACK is captured.
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock: null, (region, services) =>
+        {
+            if (region == "gru")
+            {
+                var retention = services.Single(service => service.ServiceType == typeof(IHostedService)
+                    && service.ImplementationFactory?.Method.ReturnType == typeof(TerraBase.Engine.Sqlite.TursoChangeGroupSource));
+                services.Remove(retention);
+            }
+        }, "gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         var (first, joined, held) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
         await gru.WriteAsync(async transaction =>
@@ -601,13 +610,10 @@ public sealed class PeerStreamTests
         var sjcNode = sjc.Node;
         var streamAck = await gru.HeadAsync(cluster.Database);
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, streamAck)).IsTrue();
-        gru.CdcSource.Untrack();
         await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined, Json("""{"n":3}"""), CancellationToken.None));
         await Assert.That(await gru.UntilAsync(joined, """{"n":3}""")).IsTrue();
         await sjc.StopAsync();
         await Assert.That(await gru.AckedAsync(cluster.Database, sjcNode)).IsEqualTo(streamAck);
-        // AckedAsync tracked the database again.
-        gru.CdcSource.Untrack();
         await gru.WriteAsync(async transaction => await transaction.PutAsync("items", held, Json("""{"n":2}"""), CancellationToken.None));
 
         await gru.TrimAsync();
@@ -2033,7 +2039,10 @@ public sealed class PeerStreamTests
 
         public static Task<Cluster> StartAsync(bool cdc, params string[] regions) => StartAsync(cdc, clock: null, regions);
 
-        public static async Task<Cluster> StartAsync(bool cdc, ShiftedTime? clock, params string[] regions)
+        public static Task<Cluster> StartAsync(bool cdc, ShiftedTime? clock, params string[] regions) =>
+            StartAsync(cdc, clock, configure: null, regions);
+
+        public static async Task<Cluster> StartAsync(bool cdc, ShiftedTime? clock, Action<string, IServiceCollection>? configure, params string[] regions)
         {
             var cluster = new Cluster { Cdc = cdc, Clock = clock };
             // A cell places every database in two regions or more (decision 0013): one region adds a region no machine serves.
@@ -2044,7 +2053,7 @@ public sealed class PeerStreamTests
                 {
                     var machine = new Machine(cluster, region, [.. placement.Where(other => other != region)]);
                     cluster._machines[region] = machine;
-                    await machine.StartAsync();
+                    await machine.StartAsync(configure is null ? null : services => configure(region, services));
                 }
 
                 return cluster;
@@ -2123,7 +2132,7 @@ public sealed class PeerStreamTests
 
         private IStorageEngine Engine => Api.Server.Services.GetRequiredService<IStorageEngine>();
 
-        public async Task StartAsync()
+        public async Task StartAsync(Action<IServiceCollection>? configure = null)
         {
             var first = !File.Exists(Path.Combine(_directory, "_system.db"));
             _api = await ManagementApi.StartAsync(settings =>
@@ -2146,6 +2155,7 @@ public sealed class PeerStreamTests
                         return Source;
                     });
                 }
+                configure?.Invoke(services);
             }, time: cluster.Clock, userId: cluster.User);
             if (first)
             {
