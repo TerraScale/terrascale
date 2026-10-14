@@ -9,5 +9,8 @@
     <PackageReference Include="Microsoft.Playwright" />
     <PackageReference Include="Deque.AxeCore.Playwright" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Using Include="TerraScale.Dashboard.Demo" />
+    <!-- TUnit.Core also has a TestState. -->
+    <Using Include="TerraScale.Dashboard.Demo.TestState" Alias="TestState" />
   </ItemGroup>
 </Project>

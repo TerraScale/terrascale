@@ -174,7 +174,7 @@ public sealed class ReviewInvitationBoundaryJourneyTests
                 IDashboardState? state = null;
                 for (var index = 0; index < replicas; index++)
                 {
-                    var host = scenario.environment.CreateHost(Root, 0, index == 0 ? "http://127.0.0.1" : scenario.hosts[0].Urls.Single(), builder =>
+                    var host = scenario.environment.CreateTestHost(Root, 0, index == 0 ? "http://127.0.0.1" : scenario.hosts[0].Urls.Single(), builder =>
                     {
                         var inner = (ITsAuthPlatform)builder.Services.Last(service => service.ServiceType == typeof(ITsAuthPlatform)).ImplementationInstance!;
                         state ??= (IDashboardState)builder.Services.Last(service => service.ServiceType == typeof(IDashboardState)).ImplementationInstance!;

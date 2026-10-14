@@ -4,11 +4,30 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using TerraScale.Dashboard.Features.Billing;
 
-// The public synthetic demo (deploy/demo) wraps the test-only demo host: production error pages and
-// no admin, MCP, password-reset, scenario or delete/revoke/leave routes.
+namespace TerraScale.Dashboard.Demo;
+
+// The public synthetic demo (DEMO=true) wraps the in-memory demo host: production error pages and
+// no admin, MCP, password-reset, scenario or delete/revoke/leave routes. No TerraBase, ts-auth or Stripe.
 public static partial class PublicDemo
 {
+    // DEMO=true is the user's explicit exception to docs/zero-configuration.md: markets and demos run this
+    // build without providers; unsetting it serves the real application.
+    public static bool Enabled => Environment.GetEnvironmentVariable("DEMO") == "true";
+
+    // Serves the published application directory on the image's HTTP port (8080 in the ASP.NET image).
+    public static async Task<int> RunAsync()
+    {
+        var port = int.Parse(Environment.GetEnvironmentVariable("ASPNETCORE_HTTP_PORTS") ?? "8080", System.Globalization.CultureInfo.InvariantCulture);
+        var environment = new DemoEnvironment();
+        await environment.InitializeAsync();
+        await using var app = environment.CreateHost(AppContext.BaseDirectory, port, StripeBilling.Origin, Configure);
+        Console.WriteLine($"DEMO (synthetic data) on port {port}; user@example.com / test-password; code 123456");
+        await app.RunAsync();
+        return 0;
+    }
+
     // CreateHost passes --environment Development; Production keeps stack traces off public error responses.
     // The guard runs first in the pipeline, ahead of authentication, so it answers every caller the same way.
     public static void Configure(WebApplicationBuilder builder)

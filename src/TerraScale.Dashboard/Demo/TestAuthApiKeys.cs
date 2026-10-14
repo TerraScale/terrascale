@@ -6,6 +6,8 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using TerraScale.DotNet;
 
+namespace TerraScale.Dashboard.Demo;
+
 // Test-only ts-auth project API keys, wire per I1 contracts/auth list/create/get/revoke_project_api_key. Only the global
 // https://auth.terrascale.tech origin with the caller's original admitted sign-in bearer reaches it: exchanged project
 // tokens, other hosts and regional fanout are refused. One instance per environment; nothing is static.

@@ -25,8 +25,8 @@ public sealed class ImportScenario : IAsyncDisposable
             var environment = new DemoEnvironment();
             await environment.InitializeAsync();
             scenario.Workspace = environment.Workspace;
-            scenario.first = environment.CreateHost(root, 0, "http://127.0.0.1");
-            scenario.second = environment.CreateHost(root, 0, "http://127.0.0.1");
+            scenario.first = environment.CreateTestHost(root, 0, "http://127.0.0.1");
+            scenario.second = environment.CreateTestHost(root, 0, "http://127.0.0.1");
             await scenario.first.StartAsync();
             await scenario.second.StartAsync();
             scenario.Origin = Address(scenario.first);

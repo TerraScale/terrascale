@@ -17,7 +17,7 @@ public sealed class BillingCapacityJourneyTests(DashboardRootFixture fixture)
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
         SubscriptionWire wire = null!;
-        await using var app = environment.CreateHost(fixture.Root, 0, "http://127.0.0.1", builder =>
+        await using var app = environment.CreateTestHost(fixture.Root, 0, "http://127.0.0.1", builder =>
         {
             var original = (IHttpClientFactory)builder.Services.Last(item => item.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
             wire = new(original);

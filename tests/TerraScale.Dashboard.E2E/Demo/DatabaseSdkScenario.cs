@@ -88,8 +88,8 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             application.Services.Replace(ServiceDescriptor.Singleton<IOrganizationAccess, TsOrganizationAccess>());
             configureScenario?.Invoke(application);
         }
-        first = environment.CreateHost(root, 0, "http://127.0.0.1", Configure);
-        second = environment.CreateHost(root, 0, "http://127.0.0.1", Configure);
+        first = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
+        second = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
         await first.StartAsync();
         await second.StartAsync();
         Origin = Address(first);

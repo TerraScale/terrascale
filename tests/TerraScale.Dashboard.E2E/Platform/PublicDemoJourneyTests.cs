@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Builder;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
-// The public synthetic demo on dash.terrascale.tech (deploy/demo): the demo host plus PublicDemo.
+// The public synthetic demo on dash.terrascale.tech (DEMO=true): the demo host plus PublicDemo.
 public sealed class PublicDemoJourneyTests
 {
     private const string Secret = "public-demo-secret-detail";
@@ -84,7 +84,7 @@ public sealed class PublicDemoJourneyTests
         var port = ((IPEndPoint)probe.LocalEndpoint).Port;
         probe.Stop();
         var origin = new Uri($"http://127.0.0.1:{port}/");
-        var app = environment.CreateHost(root, port, origin.ToString().TrimEnd('/'), PublicDemo.Configure);
+        var app = environment.CreateTestHost(root, port, origin.ToString().TrimEnd('/'), PublicDemo.Configure);
         app.MapGet("/__demo-error-probe", string () => throw new InvalidOperationException(Secret));
         await app.StartAsync();
         return new(app, origin);

@@ -1,5 +1,5 @@
-# Required formatting, build, security, contract/Fast and actual-application packaging.
-# Slow runs independently in slow.yml. This workflow pushes no image and deploys nothing.
+# Required formatting, build, security, contract/Fast and actual-application packaging. Main pushes the
+# tested image and deploys it to ts-dashboard with fly.toml. Slow runs independently in slow.yml.
 name: CI
 
 on:
@@ -53,6 +53,12 @@ jobs:
     needs: check
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # Main deploys run one at a time; a newer pending main commit replaces an older pending one.
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'ts-dashboard-deploy' || github.run_id }}
+      cancel-in-progress: false
+    env:
+      IMAGE: registry.fly.io/ts-dashboard:${{ github.sha }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -62,7 +68,44 @@ jobs:
         with:
           context: .
           build-args: SOURCE_REVISION=${{ github.sha }}
+          tags: ${{ env.IMAGE }}
+          load: true
           push: false
           # Pull requests read main's layer cache; only main writes it (PR-scoped caches are invisible to other PRs).
           cache-from: type=gha,scope=dashboard-image
           cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=dashboard-image' || '' }}
+      # DEMO=true is ready without secrets; the deployed app's mode is its Fly secret (README).
+      - name: Smoke-test the image's readiness and revision
+        run: |
+          docker run -d --name app -e DEMO=true -p 127.0.0.1:8080:8080 "$IMAGE"
+          for _ in $(seq 60); do curl -fs http://127.0.0.1:8080/health/ready -o ready.json && break; sleep 2; done
+          jq -e --arg sha "$GITHUB_SHA" '.status == "ok" and (.version | endswith("+" + $sha))' ready.json \
+            || { docker logs app 2>&1 | tail -n 50; exit 1; }
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master (node24)
+        if: github.event_name == 'push'
+        with:
+          version: 0.4.117
+      - name: Deploy the tested image to one gru machine and prove it serves
+        if: github.event_name == 'push'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Never roll back: a newer main commit deploys itself.
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" != "$GITHUB_SHA" ]; then
+            echo "main moved past $GITHUB_SHA; not deploying it."; exit 0
+          fi
+          flyctl auth docker
+          docker push "$IMAGE"
+          flyctl deploy --config fly.toml --image "$IMAGE" --ha=false --regions gru
+          flyctl machines list --app ts-dashboard --json > machines.json
+          jq -e --arg sha "$GITHUB_SHA" 'length == 1 and all(.[]; .region == "gru" and .state == "started" and .image_ref.tag == $sha
+            and .config.guest.cpu_kind == "shared" and .config.guest.cpus == 1 and .config.guest.memory_mb == 512)' machines.json \
+            || { echo "Expected exactly one started gru shared-cpu-1x 512MB machine on $GITHUB_SHA:"; jq -c '[.[] | {region, state, tag: .image_ref.tag, guest: .config.guest}]' machines.json; exit 1; }
+          ready='.status == "ok" and (.version | endswith("+" + $sha))'
+          for _ in $(seq 30); do
+            curl -fs https://dash.terrascale.tech/health/ready -o ready.json && jq -e --arg sha "$GITHUB_SHA" "$ready" ready.json > /dev/null && break
+            sleep 5
+          done
+          jq -e --arg sha "$GITHUB_SHA" "$ready" ready.json > /dev/null
+          echo "LIVE https://dash.terrascale.tech revision=$GITHUB_SHA machines=1 gru shared-cpu-1x 512MB"

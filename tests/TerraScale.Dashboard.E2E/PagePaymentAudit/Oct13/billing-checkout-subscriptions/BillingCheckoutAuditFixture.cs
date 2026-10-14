@@ -29,7 +29,7 @@ public sealed class BillingCheckoutAuditFixture : IAsyncInitializer, IAsyncDispo
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
         var invoices = new AuditInvoiceTransport();
-        app = environment.CreateHost(Root, port, origin, builder =>
+        app = environment.CreateTestHost(Root, port, origin, builder =>
         {
             var existing = (IHttpClientFactory)builder.Services.Single(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
             invoices.Underlying = existing.CreateClient("platform");

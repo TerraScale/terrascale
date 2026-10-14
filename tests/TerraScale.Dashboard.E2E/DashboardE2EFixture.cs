@@ -19,12 +19,12 @@ public sealed class DashboardE2EFixture : IAsyncInitializer, IAsyncDisposable
     {
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
-        first = environment.CreateHost(Root, 0, "http://127.0.0.1");
+        first = environment.CreateTestHost(Root, 0, "http://127.0.0.1");
         try
         {
             await first.StartAsync();
             Origin = Address(first);
-            second = environment.CreateHost(Root, 0, Origin.ToString().TrimEnd('/'));
+            second = environment.CreateTestHost(Root, 0, Origin.ToString().TrimEnd('/'));
             await second.StartAsync();
             ReplicaOrigin = Address(second);
             using var client = CreateClient();

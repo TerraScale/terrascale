@@ -92,8 +92,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         ProviderOrigin = Address(producer);
         transport = new ProducerTransport(ProviderOrigin, provider.Billing, provider.ApiKeys);
         await environment.InitializeAsync();
-        first = environment.CreateHost(root, 0, "http://127.0.0.1", Configure);
-        second = environment.CreateHost(root, 0, "http://127.0.0.1", Configure);
+        first = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
+        second = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
         await first.StartAsync();
         await second.StartAsync();
         Origin = Address(first);
@@ -130,15 +130,15 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         InternalBillingCommands.RunAsync(args, _ =>
         {
             provider.Billing.BeforeCliBuild();
-            return environment.CreateHost(root, 0, Origin.ToString().TrimEnd('/'), Configure);
+            return environment.CreateTestHost(root, 0, Origin.ToString().TrimEnd('/'), Configure);
         }, output, error, cancellationToken);
 
     public async Task RestartAsync()
     {
         await second!.StopAsync(); await second.DisposeAsync();
         await first!.StopAsync(); await first.DisposeAsync();
-        first = environment.CreateHost(root, 0, "http://127.0.0.1", Configure);
-        second = environment.CreateHost(root, 0, "http://127.0.0.1", Configure);
+        first = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
+        second = environment.CreateTestHost(root, 0, "http://127.0.0.1", Configure);
         await first.StartAsync(); await second.StartAsync();
         Origin = Address(first); ReplicaOrigin = Address(second);
     }

@@ -95,7 +95,7 @@ public sealed class AccountsAuditScenario : IAsyncInitializer, IAsyncDisposable
         lock (workspace.Gate) workspace.Organizations.Add(OrganizationId, TestWorkspace.Clone(org));
         workspace.SeedInvitationMetadata(org);
         IDashboardState state = null!;
-        app = environment.CreateHost(Root, 0, "http://127.0.0.1", builder =>
+        app = environment.CreateTestHost(Root, 0, "http://127.0.0.1", builder =>
         {
             state = (IDashboardState)builder.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance!;
             var auth = (TestAuth)builder.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;

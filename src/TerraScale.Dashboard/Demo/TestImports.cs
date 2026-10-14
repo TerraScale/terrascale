@@ -10,6 +10,8 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using TerraScale.Dashboard.Features.Databases;
 
+namespace TerraScale.Dashboard.Demo;
+
 // Test-only TerraBase import producer for contract v1 revision 3 (terrascale PR 167,
 // 54c0c4d9) on the region's client listener. Wire shapes are written here from the
 // contract, independently of the dashboard's records. It parses no SQL or SQLite:

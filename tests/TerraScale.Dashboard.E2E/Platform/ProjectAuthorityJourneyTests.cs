@@ -15,7 +15,7 @@ public sealed class ProjectAuthorityJourneyTests
     {
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
-        await using var app = environment.CreateHost(new DashboardE2EFixture().Root, 0, "http://127.0.0.1");
+        await using var app = environment.CreateTestHost(new DashboardE2EFixture().Root, 0, "http://127.0.0.1");
         app.MapGet("/__test/auth-snapshot", async (HttpContext http, DashboardSessions sessions, ITsAuthPlatform platform, TestWorkspace workspace) =>
         {
             var session = await sessions.ReadAsync(http);
@@ -61,7 +61,7 @@ public sealed class ProjectAuthorityJourneyTests
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
         TestAuth auth = null!;
-        await using var app = environment.CreateHost(new DashboardE2EFixture().Root, 0, "http://127.0.0.1", builder =>
+        await using var app = environment.CreateTestHost(new DashboardE2EFixture().Root, 0, "http://127.0.0.1", builder =>
             auth = (TestAuth)builder.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!);
         app.MapGet("/__test/scopes", async (HttpContext http, DashboardSessions sessions, IProjectAccessTokens tokens) =>
         {
