@@ -42,6 +42,15 @@ public sealed partial class ShapeResumeTests
             await Assert.That(head.Location).IsEqualTo($"{path}?handle={synced.Handle}&offset={synced.Offset}");
         }
 
+        // Retained rows below a proof's floor must be replayed, even when their stamps are covered.
+        var belowProof = Forge(synced.Cursor, cursor => cursor with
+        {
+            Prefixes = cursor.Prefixes.ToDictionary(pair => pair.Key, pair => new FeedPrefix(cursor.Stamps[pair.Key], pair.Value.Hash)),
+        });
+        var replay = await ResumeAsync(api.Client, path, belowProof);
+        await Assert.That(replay.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
+        await Assert.That(replay.Location).IsEqualTo($"{path}?handle={synced.Handle}&offset=0");
+
         // A write after the cursor is uncovered: the target is the boundary before it, and the client converges from there.
         var written = DocumentApi.NewId();
         _ = await api.PutAsync(written, new { index = 3 });

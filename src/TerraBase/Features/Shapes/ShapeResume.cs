@@ -10,9 +10,9 @@ internal interface IShapeResumeStorage
 {
     /// <summary>
     /// The commit boundary before the first row of <paramref name="collection"/> at or below <paramref name="head"/> whose
-    /// origin stamp exceeds <paramref name="covered"/>, or <paramref name="head"/> with none; null when that boundary is unproven.
+    /// origin stamp is outside the proven prefix of <paramref name="covered"/> and <paramref name="prefixes"/>, or <paramref name="head"/> with none; null when that boundary is unproven.
     /// </summary>
-    ValueTask<long?> ReadShapeResumeTargetAsync(string collection, IReadOnlyDictionary<ReplicaId, Hlc> covered, long head,
+    ValueTask<long?> ReadShapeResumeTargetAsync(string collection, IReadOnlyDictionary<ReplicaId, Hlc> covered, IReadOnlyDictionary<ReplicaId, FeedPrefix> prefixes, long head,
         CancellationToken cancellationToken);
 }
 
@@ -74,11 +74,16 @@ internal sealed class ShapeResume(IStorageEngine engine, IShapeStorage storage, 
 
                 // Rules 3 and 4.
                 head = await ((IShapeFreshStorage)transaction).ReadShapeHeadAsync(cancellationToken).ConfigureAwait(false);
-                target = await ((IShapeResumeStorage)transaction).ReadShapeResumeTargetAsync(scope.Collection.Name, cursor.Stamps, head,
+                target = await ((IShapeResumeStorage)transaction).ReadShapeResumeTargetAsync(scope.Collection.Name, cursor.Stamps, cursor.Prefixes, head,
                     cancellationToken).ConfigureAwait(false);
             }
 
-            if (target is not { } offset || await retention.CheckOffsetAsync(store, lineage.Handle, offset, cancellationToken).ConfigureAwait(false) is not null)
+            if (target is not { } offset)
+            {
+                return new MustRefetch("the resume target is not a proven commit boundary");
+            }
+
+            if (await retention.CheckOffsetAsync(store, lineage.Handle, offset, cancellationToken).ConfigureAwait(false) is not null)
             {
                 return new MustRefetch("the resume target is below this machine's retention floor");
             }

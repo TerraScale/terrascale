@@ -7,7 +7,7 @@ namespace TerraBase.Engine.Sqlite;
 // that the cursor does not cover, at most the sealed head.
 internal sealed partial class SqliteStorageTransaction : IShapeResumeStorage
 {
-    public ValueTask<long?> ReadShapeResumeTargetAsync(string collection, IReadOnlyDictionary<ReplicaId, Hlc> covered, long head,
+    public ValueTask<long?> ReadShapeResumeTargetAsync(string collection, IReadOnlyDictionary<ReplicaId, Hlc> covered, IReadOnlyDictionary<ReplicaId, FeedPrefix> prefixes, long head,
         CancellationToken cancellationToken) => RunAsync<long?>(() =>
     {
         long? first = null;
@@ -15,11 +15,13 @@ internal sealed partial class SqliteStorageTransaction : IShapeResumeStorage
         {
             cancellationToken.ThrowIfCancellationRequested();
             var command = Command("""
-                SELECT min(seq) FROM _tb_feed WHERE origin = $origin AND stamp > $stamp AND collection = $collection AND seq <= $head;
+                SELECT min(seq) FROM _tb_feed WHERE origin = $origin AND (stamp > $stamp OR stamp <= $floor) AND collection = $collection AND seq <= $head;
                 """);
             command.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
             // An origin the cursor does not name covers none of its rows.
             command.Parameters.AddWithValue("$stamp", covered.TryGetValue(origin, out var stamp) ? Version(stamp) : -1L);
+            // A prefix proves no row at or below its floor; retain those rows for replay.
+            command.Parameters.AddWithValue("$floor", prefixes.TryGetValue(origin, out var prefix) ? Version(prefix.Floor) : -1L);
             command.Parameters.AddWithValue("$collection", collection);
             command.Parameters.AddWithValue("$head", head);
             CountRead("shape");
