@@ -114,6 +114,9 @@ public sealed class UserAuthTests
         using var elsewhere = await client.PostAsJsonAsync(new Uri($"/v1/projects/{EntityIds.New()}/databases", UriKind.Relative), new { name = "ci-e2e" }, token);
         await Assert.That(elsewhere.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await StatusAsync(client, "/v1/management/organizations", token)).IsEqualTo(HttpStatusCode.NotFound);
+        var organization = new JsonWebToken(accessToken).GetClaim("org_id").Value;
+        await Assert.That(await StatusAsync(client, $"/v1/management/organizations/{organization}/projects/{project}/databases", token))
+            .IsEqualTo(HttpStatusCode.NotFound);
     }
 
     private static async Task<HttpStatusCode> StatusAsync(HttpClient client, string path, CancellationToken cancellationToken = default)
