@@ -33,3 +33,7 @@ builder). An earlier depot build of the full source OOM-killed crossgen2 (exit 1
 2026-10-14T17:17:39Z created machine 48e4967a225338 in fra + volume vol_4oj2nqmwdwwog72r
 2026-10-14T17:18:06Z bootstrapped synthetic tenant org 01M4XPQPQ31V2MXW39W44J1FGW project 01M4XPQPT87J82RB1Q4ZCE0FCH database e2e
 2026-10-14T17:32:37Z machine 891e70eb4d0378 (gru) SIGKILLed by the V5 R3 test; restarted by its on-failure policy, readyz 200 at 17:45Z
+2026-10-14T19:45Z..20:02Z V2 S3 on image vtest-3c459a5fa160 (owner's deploy): sjc 6835466b44e258 updated to entrypoint `sleep infinity`, sqlite3 installed in its ephemeral rootfs, one `_tb_state` row deleted, then updated back to entrypoint `/app/terrabase` (now explicit in its config; the image's own entrypoint, same binary). No volume or snapshot created.
+2026-10-14T19:46Z..19:47Z V2 S4: clocks stepped with `date -s` (sjc +2000 ms, fra -2000 ms) and stepped back by the test (residual about 1-2 ms per machine)
+2026-10-14T20:06Z..20:24Z V4 row 11: databases v4-revoke-20261014200603/201628/202140/202227/202259 created and deleted (replicas removed first); keys v4-revoke-* minted and revoked (0 keys left in the vtest project)
+2026-10-14T20:25Z deleted the six forged-peer probe organizations (forged-{none,wrong}-{gru,sjc,fra}), HTTP 204 each
