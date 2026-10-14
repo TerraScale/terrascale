@@ -39,7 +39,7 @@ public sealed class DataBrowserJourneyTests(DashboardRootFixture fixture)
         const string database = "/databases/0Z793APJ2ECFW2F7P6J9F2RKVY";
         await NavigateAsync(database + "/documents");
         await Assert.That(await page.TitleAsync()).IsEqualTo("core-primary · Documents · TerraScale");
-        await Assert.That(Regex.Replace(await page.Locator(".ts-data-nav-link .ts-tab-count").InnerTextAsync(), @"\s+", " ").Trim()).IsEqualTo("3 documents");
+        await Assert.That(Regex.Replace(await page.Locator(".ts-data-nav-link .ts-meta.ts-mono").InnerTextAsync(), @"\s+", " ").Trim()).IsEqualTo("3 documents");
         await Assert.That(await page.Locator("#collection-select option:checked").InnerTextAsync()).IsEqualTo("orders (3)");
         await Assert.That(await page.Locator("form[aria-label='Search documents'] button").CountAsync()).IsEqualTo(0);
         await Assert.That(await page.Locator("#documents tbody tr").CountAsync()).IsEqualTo(3);
@@ -77,7 +77,7 @@ public sealed class DataBrowserJourneyTests(DashboardRootFixture fixture)
         await page.Locator("#documents thead").GetByRole(AriaRole.Link, new() { Name = "total", Exact = true }).ClickAsync();
         await page.WaitForURLAsync("**/documents/orders?sort=total");
         await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
-        await Assert.That(await page.Locator("#documents th[aria-sort='ascending'] .ts-data-sort span").InnerTextAsync()).IsEqualTo("total");
+        await Assert.That(await page.Locator("#documents th[aria-sort='ascending'] .ts-data-sort span").TextContentAsync()).IsEqualTo("total");
         await Assert.That((await page.Locator("#documents .ts-data-doc-id").AllTextContentsAsync()).SequenceEqual(new[] { ascendingIds[2], ascendingIds[0], ascendingIds[1] })).IsTrue();
 
         await NavigateAsync(database + "/sql");
