@@ -165,6 +165,12 @@ export const en = {
     link: 'Status page',
   },
 
+  pricingTeaser: {
+    eyebrow: 'Pricing',
+    title: 'Start free. Hard limits, no overages.',
+    cta: 'Compare plans',
+  },
+
   pricing: {
     eyebrow: 'Pricing',
     titleLead: 'Simple pricing',

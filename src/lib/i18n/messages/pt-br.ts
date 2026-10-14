@@ -167,6 +167,12 @@ export const ptBr: Messages = {
     link: 'Página de status',
   },
 
+  pricingTeaser: {
+    eyebrow: 'Preços',
+    title: 'Comece grátis. Limites rígidos, sem excedentes.',
+    cta: 'Comparar planos',
+  },
+
   pricing: {
     eyebrow: 'Preços',
     titleLead: 'Preços simples',
