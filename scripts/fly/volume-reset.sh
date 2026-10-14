@@ -2,9 +2,10 @@
 # Moves a region's TerraBase machine onto a fresh, empty volume when the new build cannot use its data directory (storage
 # format changed; greenfield has no migrations). The user's standing approval (2026-10-12) holds only while
 # ops/fly/greenfield-no-customer-data names this exact target storage format; later formats need fresh approval.
-# Without matching approval this refuses and the deploy fails. deploy.sh runs it:
-# - planned, with --image: its gate found the region's on-disk format differs from the new image's (StorageFormat.Id);
-# - after a failure, without --image: only when the machine logged the storage-format refusal.
+# Without matching approval this refuses. Automatic deployment never calls it.
+# One coordinated reset executor first isolates old peers and stages every old TerraBase machine on the approved image
+# so old-volume autostarts cannot serve. --image supplies the planned target; without it, the existing image must have
+# logged a storage-format refusal.
 # Order: stop the machine, snapshot the old volume and wait until Fly reports the snapshot created (Fly's default
 # retention), switch the stopped machine to the new image (planned), clone it (Fly gives the clone a new empty volume of
 # the same size), check the clone runs with passing checks, destroy the old machine, then delete the old volume. The IDs
