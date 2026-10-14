@@ -312,6 +312,10 @@ button.ts-idp-provider:focus-visible {
   background: var(--ts-line);
 }
 
+.ts-idp-stats .ts-stat {
+  padding-top: var(--ts-s5);
+}
+
 .ts-idp-stat-dot {
   width: 8px;
   height: 8px;
