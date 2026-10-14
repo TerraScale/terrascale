@@ -74,9 +74,8 @@
 }
 
 .ts-onboarding-step-current .ts-onboarding-step-icon {
-  border-color: transparent;
-  background: var(--ts-accent-fill);
-  color: var(--ts-on-accent);
+  border-color: var(--ts-accent);
+  color: var(--ts-ink);
 }
 
 .ts-onboarding-step-complete {
@@ -85,7 +84,7 @@
 
 .ts-onboarding-step-complete .ts-onboarding-step-icon {
   border-color: transparent;
-  background: color-mix(in oklab, var(--ts-success) 20%, transparent);
+  background: var(--ts-surface-3);
   color: var(--ts-success);
 }
 
@@ -188,7 +187,7 @@
 }
 
 .ts-onboarding-plan:hover {
-  border-color: color-mix(in oklab, var(--tone) 50%, transparent);
+  border-color: var(--ts-control-line-hover);
 }
 
 .ts-onboarding-plan-radio {
@@ -208,8 +207,8 @@
 }
 
 .ts-onboarding-plan-name {
-  color: var(--tone);
-  font-weight: 700;
+  color: var(--ts-ink);
+  font-weight: 500;
 }
 
 .ts-onboarding-plan-check {
@@ -225,11 +224,12 @@
 
 .ts-onboarding-plan:has(:checked) .ts-onboarding-plan-check {
   border-color: transparent;
-  background: var(--tone);
-  color: var(--ts-canvas);
+  background: var(--ts-accent-fill);
+  color: var(--ts-on-accent);
 }
 
 .ts-onboarding-plan-price {
+  font-family: var(--ts-font-mono);
   display: flex;
   align-items: baseline;
   gap: var(--ts-s1);
@@ -270,3 +270,10 @@
     gap: var(--ts-s1);
   }
 }
+
+/* The auth column supplies outer spacing; keep the onboarding form flat. */
+.ts-login-column > .ts-onboarding { width: min(400px, 100%); padding: 0; }
+.ts-login-column > .ts-onboarding-wide { width: min(520px, 100%); }
+.ts-login-column .ts-onboarding-header .ts-brand-logo { height: 28px; }
+.ts-login-column .ts-onboarding-progress { margin-inline: 0; }
+.ts-login-column .ts-onboarding-card { padding: 0; border: 0; background: transparent; }

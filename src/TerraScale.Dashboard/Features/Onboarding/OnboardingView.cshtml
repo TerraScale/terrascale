@@ -1,7 +1,13 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Onboarding.OnboardingPage>
 @implements IUsesLayout<TerraScale.Dashboard.UI.Slices.Document, DocumentModel>
 @inject AssetUrls Assets
-<main class="@(Model.Step == "payment-method" ? "ts-onboarding ts-onboarding-wide" : "ts-onboarding")">
+<main class="ts-login">
+    <section class="ts-login-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.RegionMap>())
+        <ul class="ts-login-regions"><li><span class="ts-dot"></span>San Francisco</li><li><span class="ts-dot"></span>São Paulo</li></ul>
+    </section>
+    <div class="ts-login-column">
+    <div class="@(Model.Step == "payment-method" ? "ts-onboarding ts-onboarding-wide" : "ts-onboarding")">
     <header class="ts-onboarding-header"><img class="ts-brand-logo" src="@Assets.Url("brand/logo-terrascale-blue.svg")" alt="TerraScale" decoding="async" /><h1 class="ts-sr-only">Activate your TerraScale account</h1></header>
     <div class="ts-onboarding-progress">
         <div class="ts-row-between ts-meta"><span class="ts-eyebrow">Step @Model.CurrentStep of 3</span><span>@Model.Progress%</span></div>
@@ -63,12 +69,12 @@
                 <input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="step" value="payment-method" /><input type="hidden" name="return" value="/onboarding" />
                 <div class="ts-row-between ts-onboarding-payment-head">
                     <div class="ts-onboarding-heading"><h2 class="ts-section-title" id="payment-method-title">Choose your plan</h2><p class="ts-meta">Payment setup is optional for your Personal workspace. Stripe collects your card and confirms the subscription.</p></div>
-                    <fieldset class="ts-segmented" aria-label="Billing interval"><legend class="ts-sr-only">Billing interval</legend><label><input type="radio" name="interval" value="monthly" checked required /><span>Monthly</span></label><label><input type="radio" name="interval" value="annual" /><span>Annual</span><span class="ts-badge ts-badge-success">2 months free</span></label></fieldset>
+                    <fieldset class="ts-segmented" aria-label="Billing interval"><legend class="ts-sr-only">Billing interval</legend><label><input type="radio" name="interval" value="monthly" checked required /><span>Monthly</span></label><label><input type="radio" name="interval" value="annual" /><span>Annual</span><span class="ts-badge ts-badge-blue">2 months free</span></label></fieldset>
                 </div>
                 <fieldset class="ts-onboarding-plans"><legend class="ts-sr-only">Select a plan</legend>
-                    @foreach (var (plan, index) in (Model.Plans ?? []).Select((plan, index) => (plan, index)))
+                    @foreach (var plan in Model.Plans ?? [])
                     {
-                        <label class="ts-onboarding-plan" data-tone="@Tone(index)"><input class="ts-onboarding-plan-radio" type="radio" name="plan" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" required /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@plan.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price" data-interval="monthly">@plan.MonthlyPrice<span class="ts-meta"> / month</span></span><span class="ts-onboarding-plan-price" data-interval="annual">@plan.AnnualPrice<span class="ts-meta"> / year</span></span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.ReadsAllowance · @plan.WritesAllowance</span><span class="ts-badge ts-badge-tone">@plan.TrialDays-day trial</span></label>
+                        <label class="ts-onboarding-plan"><input class="ts-onboarding-plan-radio" type="radio" name="plan" value="@plan.Key" checked="@(plan.Key == Model.Plan ? "checked" : null)" required /><span class="ts-row-between"><span class="ts-onboarding-plan-name">@plan.Name</span><span class="ts-onboarding-plan-check" aria-hidden="true">✓</span></span><span class="ts-onboarding-plan-price" data-interval="monthly">@plan.MonthlyPrice<span class="ts-meta"> / month</span></span><span class="ts-onboarding-plan-price" data-interval="annual">@plan.AnnualPrice<span class="ts-meta"> / year</span></span><span class="ts-meta">@plan.DatabaseAllowance · @plan.StorageAllowance · @plan.MemberAllowance</span><span class="ts-meta">@plan.ReadsAllowance · @plan.WritesAllowance</span><span class="ts-badge ts-badge-blue">@plan.TrialDays-day trial</span></label>
                     }
                 </fieldset>
                 <p class="ts-meta">Continue to Stripe Checkout or stay on Free without payment.</p>
@@ -89,10 +95,11 @@
             </form>
         }
     </div>
+    </div>
+    </div>
 </main>
 @functions {
     public DocumentModel LayoutModel => Model.Document;
     private string? Invalid(string field) => Model.FieldError(field).Length == 0 ? null : "true";
     private string? ErrorId(string field) => Model.FieldError(field).Length == 0 ? null : field + "-error";
-    private static string Tone(int index) => new[] { "blue", "violet", "fuchsia", "emerald" }[index % 4];
 }
