@@ -58,7 +58,7 @@ public static class EngineExtensions
         // The peer streams' source: the CDC tailer of every database file.
         services.AddSingleton(provider => new TursoChangeGroupSource(
             provider.GetRequiredService<SqliteStorageEngine>(), provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<TursoChangeGroupSource>>(),
-            provider.GetService<IRemoteDurability>()));
+            provider.GetService<IRemoteDurability>));
         services.AddSingleton<FaultAwareReplicaSource>();
         services.AddSingleton<IChangeGroupSource>(provider => provider.GetRequiredService<FaultAwareReplicaSource>());
         services.AddSingleton<IReplicaStates>(provider => provider.GetRequiredService<FaultAwareReplicaSource>());
