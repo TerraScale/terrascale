@@ -198,6 +198,8 @@ public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
         await Assert.That(await sidebar.GetAttributeAsync("aria-modal")).IsEqualTo("true");
         await page.SetViewportSizeAsync(1440, 900);
         await WaitForDrawerAsync(false);
+        await Assert.That(await toggle.IsVisibleAsync()).IsFalse()
+            .Because("The floating menu button stays hidden on desktop and cannot occupy a shell grid column.");
         await Assert.That(await sidebar.IsVisibleAsync()).IsTrue();
         await Assert.That(await sidebar.GetAttributeAsync("role")).IsNull();
         await Assert.That(await sidebar.GetAttributeAsync("aria-modal")).IsNull();

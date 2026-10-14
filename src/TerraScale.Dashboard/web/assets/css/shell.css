@@ -72,7 +72,7 @@
   margin-left: auto;
 }
 
-.ts-fab-nav {
+.ts-shell > .ts-fab-nav {
   display: none;
 }
 
@@ -642,7 +642,7 @@ details[open] > .ts-account-trigger {
 
   /* Floating nav button, top-left over the page; the page reserves its space
      (see layout.css). Hidden while the drawer is open. */
-  .ts-fab-nav {
+  .ts-shell > .ts-fab-nav {
     position: fixed;
     top: var(--ts-s3);
     left: var(--ts-s3);
