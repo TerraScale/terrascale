@@ -351,6 +351,8 @@ public sealed class ShapeCryptoTests
             $"{host.Api.Collections}/missing/shape/keys?handle={host.Handle}&epoch={Decimal(host.Crypto.CurrentEpoch)}&key_id={host.KeyId}", UriKind.Relative)));
 
         pair.Heal();
+        // Past a membership heartbeat, a reads b's real route again.
+        host.Time.Advance(TimeSpan.FromSeconds(6));
         await pair.ProveAsync();
         await AssertReleasedAsync(host, await pair.GetKeyAsync());
     }
