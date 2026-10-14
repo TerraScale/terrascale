@@ -96,6 +96,35 @@ public sealed partial class ShapeResumeTests
     }
 
     [Test]
+    public async Task A_cross_machine_resume_proves_a_chunk_cursor_issued_above_a_feed_retention_baseline()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var path = $"{api.Collections}/{DocumentApi.Collection}/shape";
+        _ = await api.PutAsync(DocumentApi.NewId(), new { index = 0 });
+        _ = await api.PutAsync(DocumentApi.NewId(), new { index = 1 });
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
+        // Retention deletes only the oldest event: its chain hash becomes the origin's persisted baseline.
+        await using (var transaction = await store.BeginTransactionAsync(write: true, token))
+        {
+            await Assert.That(await transaction.TrimFeedAsync(new Hlc(ulong.MaxValue >> 1), 1, token)).IsEqualTo(1);
+            _ = await transaction.CommitAsync(token);
+        }
+
+        Dictionary<string, string> state = [];
+        var synced = await SyncAsync(api.Client, path, null, state);
+        _ = await api.PutAsync(DocumentApi.NewId(), new { index = 2 });
+        var chunk = await FollowAsync(api.Client, path, $"{path}?handle={synced.Handle}&offset={synced.Offset}", state);
+        var other = Forge(chunk.Cursor, cursor => cursor with { Issuer = new ReplicaId(cursor.Issuer.Value ^ 1) });
+        var cursor = ChangeCursor.Decode(Base64Url.EncodeToString(Base64Url.DecodeFromChars(other).AsSpan(17)))!;
+        await Assert.That(cursor.Prefixes.Values.Any(prefix => prefix.Floor.Value > 0)).IsTrue();
+
+        var resumed = await ResumeAsync(api.Client, path, other);
+        await Assert.That(resumed.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect).Because(resumed.Message ?? "no refusal message");
+        await Assert.That(resumed.Location).IsEqualTo($"{path}?handle={chunk.Handle}&offset={chunk.Offset}");
+    }
+
+    [Test]
     public async Task A_resume_target_below_the_retention_floor_is_409()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -113,7 +142,7 @@ public sealed partial class ShapeResumeTests
         await AssertRefetchAsync(await ResumeAsync(api.Client, path, synced.Cursor), synced.Handle);
     }
 
-    // A cell of one whose Confirms the test turns on after syncing.
+    // A cell of one; the test turns on Confirms after syncing.
     private sealed class SwitchedDurability : IRemoteDurability
     {
         private readonly LocalDurability _local = new();
