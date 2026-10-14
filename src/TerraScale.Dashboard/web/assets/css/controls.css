@@ -24,7 +24,7 @@
 }
 
 .ts-btn:focus-visible {
-  outline: 2px solid var(--ts-accent);
+  outline: 2px solid var(--ts-focus);
   outline-offset: 2px;
 }
 
@@ -95,15 +95,15 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
 
 .ts-btn-danger,
 .ts-btn-destructive {
-  border-color: color-mix(in oklab, var(--ts-danger) 35%, transparent);
-  background: color-mix(in oklab, var(--ts-danger) 14%, transparent);
-  color: var(--ts-danger);
+  border-color: var(--ts-danger-solid);
+  background: var(--ts-danger-solid);
+  color: var(--ts-on-danger);
 }
 
 .ts-btn-danger:hover,
 .ts-btn-destructive:hover {
-  background: var(--ts-danger);
-  color: #1a0707;
+  background: color-mix(in oklab, var(--ts-danger-solid) 88%, black);
+  color: var(--ts-on-danger);
 }
 
 .ts-btn-sm {
@@ -218,8 +218,8 @@ textarea.ts-input {
 .ts-input:focus,
 .ts-input:focus-visible,
 .ts-select:focus-visible {
-  border-color: var(--ts-accent);
-  outline: 1px solid var(--ts-accent);
+  border-color: var(--ts-focus);
+  outline: 1px solid var(--ts-focus);
   outline-offset: 0;
 }
 
@@ -324,7 +324,7 @@ input[type="radio"] {
   width: 16px;
   height: 16px;
   margin: 0;
-  accent-color: var(--ts-accent);
+  accent-color: var(--ts-accent-fill);
 }
 
 /* Shared switch for settings and database actions. */
@@ -357,8 +357,8 @@ input.ts-switch {
 
 .ts-switch[aria-checked="true"],
 .ts-switch:checked {
-  border-color: var(--ts-accent);
-  background: var(--ts-accent);
+  border-color: var(--ts-accent-fill);
+  background: var(--ts-accent-fill);
 }
 
 .ts-switch[aria-checked="true"]::after,
@@ -464,8 +464,8 @@ legend {
 }
 
 .ts-filter-inline:focus-within {
-  border-color: var(--ts-accent);
-  outline: 1px solid var(--ts-accent);
+  border-color: var(--ts-focus);
+  outline: 1px solid var(--ts-focus);
   outline-offset: 0;
 }
 

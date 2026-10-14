@@ -3,52 +3,62 @@
 :root {
   color-scheme: dark;
 
-  /* Canvas and surfaces, darkest to lightest. */
-  --ts-canvas: #0a0c12;
-  --ts-sidebar: #0a0c12;
-  --ts-surface: #11141c;
-  --ts-surface-2: #161a24;
-  --ts-surface-3: #1e2330;
-  --ts-line: rgb(148 163 184 / 0.12);
-  --ts-line-strong: rgb(148 163 184 / 0.22);
-  /* Form control borders: at least 3:1 against the canvas, --ts-surface and
-     --ts-surface-2, so inputs stay identifiable (WCAG 1.4.11). */
-  --ts-control-line: #5e677b;
-  --ts-control-line-hover: #7a8397;
+  /* Graphite canvas and opaque surfaces, darkest to lightest. */
+  --ts-canvas: #151515;
+  --ts-sidebar: rgb(21 21 21 / 0.92);
+  --ts-surface: #1b1b1b;
+  --ts-surface-2: #222222;
+  --ts-surface-3: #2c2c2c;
+  --ts-line: rgb(255 255 255 / 0.08);
+  --ts-line-strong: rgb(255 255 255 / 0.14);
+  /* Form control borders: at least 3:1 against the canvas and all three surfaces
+     (WCAG 1.4.11), so inputs stay identifiable. */
+  --ts-control-line: #767676;
+  --ts-control-line-hover: #8a8a8a;
 
   /* Text. Every ink keeps at least 4.5:1 on the canvas and all surfaces. */
-  --ts-ink: #eef1f7;
-  --ts-ink-2: #a7afbf;
-  --ts-ink-3: #858ea3;
+  --ts-ink: #f2f2f2;
+  --ts-ink-2: #a8a8a8;
+  --ts-ink-3: #9a9a9a;
 
-  /* Primary accent and status colors. */
-  --ts-accent: #3b82f6;
-  --ts-accent-soft: rgb(59 130 246 / 0.14);
-  /* Filled surfaces behind --ts-on-accent text: 5.2:1, and 6.7:1 on hover. */
-  --ts-accent-fill: #2563eb;
-  --ts-accent-fill-hover: #1d4ed8;
+  /* Logo blue fills; text and focus use --ts-link and --ts-focus instead. */
+  --ts-accent: #2158e8;
+  --ts-accent-soft: rgb(33 88 232 / 0.18);
+  /* White text on the fill: 5.8:1 at rest, 7.1:1 on hover. */
+  --ts-accent-fill: #2158e8;
+  --ts-accent-fill-hover: #1a4bd0;
   --ts-on-accent: #ffffff;
-  --ts-link: #6ea8ff;
-  --ts-success: #34d399;
-  --ts-warning: #fbbf24;
-  --ts-severe: #fb923c;
-  --ts-danger: #f87171;
-  --ts-info: #60a5fa;
+  --ts-link: #6b93ff;
+  --ts-focus: #6b93ff;
+  --ts-eyebrow: var(--ts-link);
+  --ts-hover: rgb(255 255 255 / 0.05);
+  /* Status colors at full strength. */
+  --ts-success: #6bca92;
+  --ts-warning: #ffa726;
+  --ts-severe: #ff7a33;
+  --ts-danger: #ff5c5c;
+  /* Solid danger fill behind --ts-on-danger text: 4.9:1. */
+  --ts-danger-solid: #d92626;
+  --ts-on-danger: #ffffff;
+  --ts-info: #84b4f8;
 
-  /* Chart series (kept for the SVG chart renderer). */
-  /* Charts: a blue family, validated against the canvas. */
-  --ts-chart-1: #3b82f6;
-  --ts-chart-2: #22d3ee;
-  --ts-cat-1: #3b82f6;
-  --ts-cat-2: #22d3ee;
-  --ts-cat-3: #a5b4fc;
+  /* Prototype categorical palette. Red, amber and green stay status-only. */
+  --ts-chart-1: #4797e4;
+  --ts-chart-2: #925086;
+  --ts-chart-3: #00a1dd;
+  --ts-chart-4: #7f5794;
+  --ts-chart-5: #00a7bf;
+  --ts-chart-6: #565bc3;
+  --ts-cat-1: #4797e4;
+  --ts-cat-2: #925086;
+  --ts-cat-3: #00a1dd;
 
   /* Page accent. Navigation icons override it with their [data-tone]. */
-  --tone: var(--ts-accent);
+  --tone: var(--ts-link);
 
-  /* Type. Oxanium carries the brand; body copy stays at a readable 14px. */
-  --ts-font-sans: "Oxanium", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --ts-font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  /* Type. Geist carries the interface; Geist Mono carries code and figures. */
+  --ts-font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --ts-font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   --ts-fs-xs: 12px;
   --ts-fs-sm: 13px;
   --ts-fs-md: 14px;
@@ -81,8 +91,9 @@
   /* Overlays separate by a hairline; the faint drop only lifts them off content. */
   --ts-shadow-overlay: 0 0 0 1px var(--ts-line-strong), 0 12px 24px -16px rgb(0 0 0 / 0.6);
   --ts-scrim: rgb(5 6 10 / 0.6);
-  /* Translucent overlay fill, blurred over the content behind it. */
-  --ts-glass: rgb(17 20 28 / 0.72);
+  /* Frost is for overlays and chrome only, never cards. */
+  --ts-glass: rgb(21 21 21 / 0.9);
+  --ts-glass-strong: rgb(32 32 32 / 0.94);
 
   /* Motion. */
   --ts-fast: 120ms;
@@ -104,18 +115,19 @@
 }
 
 /* Section tones: every navigation destination owns one, and the page it
-   opens inherits it for headers and highlights. */
+   opens inherits it for headers and highlights. Tones are text-safe on every
+   surface and map onto blue, cyan, violet and magenta only. */
 [data-tone="violet"] { --tone: #a78bfa; }
-[data-tone="blue"] { --tone: #60a5fa; }
-[data-tone="cyan"] { --tone: #22d3ee; }
-[data-tone="teal"] { --tone: #2dd4bf; }
-[data-tone="lime"] { --tone: #a3e635; }
-[data-tone="amber"] { --tone: #fbbf24; }
-[data-tone="pink"] { --tone: #f472b6; }
-[data-tone="emerald"] { --tone: #34d399; }
-[data-tone="orange"] { --tone: #fb923c; }
-[data-tone="sky"] { --tone: #38bdf8; }
-[data-tone="fuchsia"] { --tone: #e879f9; }
-[data-tone="rose"] { --tone: #fb7185; }
-[data-tone="indigo"] { --tone: #818cf8; }
-[data-tone="slate"] { --tone: #94a3b8; }
+[data-tone="blue"] { --tone: #6b93ff; }
+[data-tone="cyan"] { --tone: #00a7bf; }
+[data-tone="teal"] { --tone: #00a7bf; }
+[data-tone="lime"] { --tone: #00a7bf; }
+[data-tone="amber"] { --tone: #e293c0; }
+[data-tone="pink"] { --tone: #e293c0; }
+[data-tone="emerald"] { --tone: #00a7bf; }
+[data-tone="orange"] { --tone: #e293c0; }
+[data-tone="sky"] { --tone: #6b93ff; }
+[data-tone="fuchsia"] { --tone: #e293c0; }
+[data-tone="rose"] { --tone: #e293c0; }
+[data-tone="indigo"] { --tone: #a78bfa; }
+[data-tone="slate"] { --tone: var(--ts-ink-2); }

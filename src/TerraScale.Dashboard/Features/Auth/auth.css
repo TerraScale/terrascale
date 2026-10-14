@@ -41,7 +41,7 @@
 .ts-login-regions .ts-dot {
   width: 6px;
   height: 6px;
-  color: var(--ts-accent);
+  color: var(--ts-link);
 }
 
 .ts-login-column {
@@ -140,7 +140,7 @@
 }
 
 .ts-email-code:focus-within .ts-email-code-active {
-  outline: 2px solid var(--ts-accent);
+  outline: 2px solid var(--ts-focus);
   outline-offset: 2px;
   background: var(--ts-accent-soft);
 }

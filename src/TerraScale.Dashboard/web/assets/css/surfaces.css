@@ -6,7 +6,7 @@
 .ts-card {
   display: flex;
   flex-direction: column;
-  gap: var(--ts-s4);
+  gap: var(--ts-s6);
   min-width: 0;
 }
 
@@ -37,12 +37,12 @@
 }
 
 .ts-card-title {
-  font-size: var(--ts-fs-lg);
+  font-size: var(--ts-fs-xl);
   font-weight: 600;
 }
 
 .ts-card-description {
-  color: var(--ts-ink-3);
+  color: var(--ts-ink-2);
   font-size: var(--ts-fs-sm);
 }
 
@@ -103,10 +103,20 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
   row-gap: var(--ts-s2);
+  position: relative;
   margin-left: calc(-1 * var(--ts-s5));
   overflow: hidden;
-  /* The bottom hairline starts where the content does, not at the shift. */
-  background: linear-gradient(var(--ts-line), var(--ts-line)) no-repeat right bottom / calc(100% - var(--ts-s5)) 1px;
+}
+
+/* The bottom hairline starts where the content does, not at the shift. */
+.ts-stats::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: var(--ts-s5);
+  height: 1px;
+  background: var(--ts-line);
 }
 
 .ts-stat {
@@ -238,9 +248,11 @@
 .ts-badge-success { --badge: var(--ts-success); }
 .ts-badge-warning { --badge: var(--ts-warning); }
 .ts-badge-danger { --badge: var(--ts-danger); }
-.ts-badge-violet { --badge: #c4b5fd; }
 .ts-badge-tone { --badge: var(--tone); }
-.ts-badge-blue { --badge: #7ea6ff; }
+/* Category hues, not status: text is lifted toward ink for AA. */
+.ts-badge-violet, .ts-badge-blue { color: color-mix(in oklab, var(--badge) 60%, var(--ts-ink)); }
+.ts-badge-violet { --badge: var(--ts-chart-4); }
+.ts-badge-blue { --badge: var(--ts-chart-1); }
 
 /* A leading status dot. */
 .ts-dot {
@@ -305,7 +317,7 @@
   inset: auto 0 -1px;
   height: 2px;
   border-radius: 2px;
-  background: var(--tone);
+  background: var(--ts-accent);
 }
 
 .ts-tab-count {

@@ -211,7 +211,7 @@ button.ts-idp-provider:hover {
 }
 
 button.ts-idp-provider:focus-visible {
-  outline: 2px solid var(--ts-accent);
+  outline: 2px solid var(--ts-focus);
   outline-offset: 2px;
 }
 

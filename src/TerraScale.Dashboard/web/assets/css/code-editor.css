@@ -31,8 +31,8 @@
 }
 
 .ts-code-editor[data-ready]:focus-within {
-  border-color: var(--ts-accent);
-  outline: 1px solid var(--ts-accent);
+  border-color: var(--ts-focus);
+  outline: 1px solid var(--ts-focus);
   outline-offset: 0;
 }
 
