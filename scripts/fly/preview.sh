@@ -146,7 +146,16 @@ case ${1:-} in
     fi
     # ts-auth bootstraps its issuer during startup; its readiness includes storage and usable signing keys.
     for origin in "https://$app.fly.dev:8443" "https://$app.fly.dev"; do
-      curl -fsS --retry 20 --retry-delay 2 --retry-all-errors --max-time 5 -o /dev/null "$origin/readyz"
+      curl -fsS --retry 20 --retry-delay 2 --retry-all-errors --max-time 5 -o /dev/null "$origin/readyz" || {
+        status=$?
+        echo "preview readiness failed at $origin/readyz" >&2
+        # Public CI never receives message contents: the summary prints only allowlisted diagnostic fields.
+        if ! timeout 20s flyctl logs -a "$app" --machine "$id" --no-tail --json 2>/dev/null \
+          | python3 "$(dirname "${BASH_SOURCE[0]}")/preview-log-summary.py"; then
+          echo 'preview startup diagnostics unavailable' >&2
+        fi
+        exit "$status"
+      }
     done
     echo "https://$app.fly.dev"
     ;;

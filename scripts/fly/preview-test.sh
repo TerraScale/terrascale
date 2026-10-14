@@ -36,6 +36,7 @@ case "$1 $2" in
     done
     test ! -e "$STATE/fail-secret" ;;
   "ssh console") echo 'preview: startup owns signing-key provisioning; no duplicate SSH command' >&2; exit 1 ;;
+  "logs -a") test ! -e "$STATE/fail-logs"; cat "$STATE/logs" ;;
   "storage destroy"|"apps destroy")
     test ! -e "$STATE/fail-$1"
     echo "$1 $2 $3" >> "$STATE/destroy"
@@ -117,10 +118,43 @@ for mode in create update; do
 done
 test "$(cat "$state/checks")" = $'https://ts-pr-123.fly.dev:8443/readyz\nhttps://ts-pr-123.fly.dev/readyz\nhttps://ts-pr-123.fly.dev:8443/readyz\nhttps://ts-pr-123.fly.dev/readyz'
 touch "$state/fail-ready"
-if "$here/preview.sh" machine 123 registry.fly.io/test:terrabase registry.fly.io/test:auth > "$state/failed"; then
-  echo 'preview: published a URL for an unready preview' >&2
-  exit 1
-fi
+python3 - "$state/logs" <<'PY'
+import json
+import sys
+component = "TerraScale.Authentication.Features.SigningKeys.SigningKeyRotation"
+records = [
+    {"msg": "Storage and signing key bootstrap failed; retrying", "component": component,
+     "error": "System.Net.Http.HttpRequestException: HTTP 401 Bearer secret-canary", "stack": "status=503 AWS_SECRET_ACCESS_KEY=secret-canary"},
+    {"msg": "Readiness check failed: {Cause}", "component": "TerraScale.Authentication.Features.Observability.ReadinessProbe", "Cause": "timed out"},
+    {"msg": "Readiness check failed: {Cause}", "component": "TerraScale.Authentication.Features.Observability.ReadinessProbe", "Cause": "no signing keys: startup bootstrap pending (docs/auth/signing-keys.md)"},
+    {"msg": "Readiness check failed: {Cause}", "component": "TerraScale.Authentication.Features.Observability.ReadinessProbe", "Cause": "secret-canary"},
+    {"msg": "secret-canary", "component": component},
+    {"msg": "Readiness check failed: {Cause}", "component": "secret-canary", "Cause": "secret-canary"},
+    {"msg": {}, "component": component},
+    {"msg": "Readiness check failed: {Cause}", "component": [], "Cause": "timed out"},
+]
+with open(sys.argv[1], "w") as output:
+    for record in records:
+        output.write(json.dumps({"message": json.dumps(record)}) + "\n")
+    output.write("secret-canary\nnull\n[]\n")
+PY
+readiness_status=0
+"$here/preview.sh" machine 123 registry.fly.io/test:terrabase registry.fly.io/test:auth > "$state/failed" || readiness_status=$?
+test "$readiness_status" = 22
+test "$(grep -c '^{"event":' "$state/failed")" = 4
+grep -q 'System.Net.Http.HttpRequestException' "$state/failed"
+grep -q '"401"' "$state/failed"
+grep -q '"503"' "$state/failed"
+grep -q '"cause": "timed out"' "$state/failed"
+grep -q 'no signing keys: startup bootstrap pending (docs/auth/signing-keys.md)' "$state/failed"
+if grep -q 'secret-canary' "$state/failed"; then echo 'preview: startup diagnostics exposed a secret' >&2; exit 1; fi
+grep -qx 'logs -a ts-pr-123 --machine machine-test --no-tail --json' "$state/flyctl"
+touch "$state/fail-logs"
+readiness_status=0
+"$here/preview.sh" machine 123 registry.fly.io/test:terrabase registry.fly.io/test:auth > "$state/no-logs" 2> "$state/log-error" || readiness_status=$?
+test "$readiness_status" = 22
+grep -q 'preview startup diagnostics unavailable' "$state/log-error"
+rm "$state/fail-logs"
 if grep -qx 'https://ts-pr-123.fly.dev' "$state/failed"; then
   echo 'preview: printed a URL after a failed readiness check' >&2
   exit 1
