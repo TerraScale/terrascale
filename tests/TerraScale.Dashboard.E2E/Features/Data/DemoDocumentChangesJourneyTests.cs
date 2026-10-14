@@ -91,7 +91,7 @@ public sealed class DemoDocumentChangesJourneyTests(DashboardRootFixture fixture
         foreach (var (bearer, status) in new[]
         {
             ((string?)null, HttpStatusCode.Unauthorized),
-            (session.AccessToken, HttpStatusCode.Forbidden),
+            (session.AccessToken, HttpStatusCode.Unauthorized),
             (await environment.Auth.GetAsync(session, organizationId, projectId, ["databases:read"], deadline.Token), HttpStatusCode.Forbidden)
         })
         {

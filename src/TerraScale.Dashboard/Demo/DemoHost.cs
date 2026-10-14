@@ -713,6 +713,8 @@ sealed partial class TestDocuments : IDocumentBackend
         {
             foreach (var key in collections.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray()) collections.Remove(key);
             logs.Remove(scope.ProjectId + "/" + database);
+            changed.TrySetResult();
+            changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
     }
     public Task<IReadOnlyList<TerraBaseCollection>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, CancellationToken cancellationToken)

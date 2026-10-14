@@ -71,9 +71,10 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
     {
         cancellationToken.ThrowIfCancellationRequested();
         var uri = request.RequestUri!;
+        var changesPath = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries) is ["v1", "projects", _, "databases", _, "changes"];
         if (uri.Host == "api.stripe.com") return await vendor.SendAsync(request, cancellationToken);
         if (uri.Host == "auth.terrascale.tech") return await apiKeys.SendAsync(request, cancellationToken);
-        if (uri.Host is not ("api.terrascale.tech" or "gru.api.terrascale.tech" or "sfo.api.terrascale.tech") || request.Headers.Authorization is not { Scheme: "Bearer", Parameter: { } token }) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
+        if (!(uri.Host is "api.terrascale.tech" or "gru.api.terrascale.tech" || uri.Host == "sfo.api.terrascale.tech" && changesPath) || request.Headers.Authorization is not { Scheme: "Bearer", Parameter: { } token }) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
         var sessionActor = resolveToken(token);
         var scopedActor = resolveProjectToken(token);
         if (sessionActor is null && scopedActor is null) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
@@ -104,6 +105,7 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
         if (isCanonicalUsage && scopedActor?.Scopes.Contains("databases:read") != true) return Json(new { error = new { code = "forbidden_scope", message = "databases:read is required" } }, HttpStatusCode.Forbidden);
         // TerraBase document changes stream with an exchanged documents:read project token for the path's project.
         var isDocumentChanges = segments is ["v1", "projects", _, "databases", _, "changes"];
+        if (isDocumentChanges && sessionActor is not null) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
         if (isDocumentChanges && scopedActor?.Scopes.Contains("documents:read") != true) return Json(new { error = new { code = "forbidden_scope", message = "documents:read is required" } }, HttpStatusCode.Forbidden);
         var isScopedReporting = segments.Last() is "analytics" or "replication" || isCanonicalUsage || isDocumentChanges;
         var actorUserId = sessionActor?.UserId ?? scopedActor!.Value.UserId;

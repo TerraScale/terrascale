@@ -47,10 +47,12 @@ sealed partial class TestDocuments
         var filter = query.TryGetValue("collections", out var names) ? names.ToString().Split(',').ToHashSet(StringComparer.Ordinal) : null;
         var key = projectId + "/" + database;
         long start;
+        ChangeLog source;
         lock (collections)
         {
-            var log = logs.GetValueOrDefault(key);
-            var (head, floor) = (log?.Sequence ?? 0, log?.Floor ?? 0);
+            if (!logs.TryGetValue(key, out var log)) logs[key] = log = new();
+            source = log;
+            var (head, floor) = (log.Sequence, log.Floor);
             if (resume is null) start = floor;
             else if (resume == "now") start = head;
             else if (DecodeCursor(resume, key) is { } decoded) start = decoded;
@@ -58,7 +60,7 @@ sealed partial class TestDocuments
             if (start < floor || start > head) return ChangesError(HttpStatusCode.Gone, "cursor_expired", "Retained changes no longer cover the cursor.");
         }
         var pipe = new Pipe();
-        _ = ProduceChangesAsync(pipe.Writer, key, start, filter);
+        _ = ProduceChangesAsync(pipe.Writer, key, source, start, filter);
         var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(pipe.Reader.AsStream()) };
         response.Content.Headers.ContentType = new("text/event-stream");
         response.Headers.CacheControl = new() { NoStore = true };
@@ -66,7 +68,7 @@ sealed partial class TestDocuments
         return response;
     }
 
-    private async Task ProduceChangesAsync(PipeWriter writer, string key, long position, HashSet<string>? filter)
+    private async Task ProduceChangesAsync(PipeWriter writer, string key, ChangeLog source, long position, HashSet<string>? filter)
     {
         using var lifetime = new CancellationTokenSource(StreamLifetime);
         Exception? failure = null;
@@ -81,7 +83,7 @@ sealed partial class TestDocuments
                 {
                     var log = logs.GetValueOrDefault(key);
                     // Dropped, recreated or trimmed past this reader: end cleanly so its reconnect receives 410 cursor_expired.
-                    if (log is null ? position > 0 : position < log.Floor || position > log.Sequence) break;
+                    if (log != source || position < source.Floor || position > source.Sequence) break;
                     var delivered = position;
                     foreach (var item in log?.Items.Where(item => item.Sequence > position).ToArray() ?? [])
                     {
