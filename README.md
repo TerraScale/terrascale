@@ -158,9 +158,11 @@ Repeated events are applied because their materialized value can be newer.
 Snapshot page cursors become usable only after the entire snapshot.
 
 `users.ShapeKey(ctx, handle, epoch, keyID)` fetches an authenticated no-store
-epoch key. The returned key's `Decrypt(offset, ciphertext)` verifies and opens
-TBS1 AES-256-GCM bytes for that authorized binding. Fetch a new key when epoch
-or key id changes. The origin subscription consumes plaintext JSON; manifests,
+epoch key, reused in process memory by `(handle, epoch, keyID)` within the client's
+collection scope. Past epochs and shape/key 409 responses evict cached keys;
+keys are never persisted. The returned key's `Decrypt(offset, ciphertext)`
+verifies and opens TBS1 AES-256-GCM bytes for that authorized binding.
+The origin subscription consumes plaintext JSON; manifests,
 302 and automatic object-storage fetching are deferred until FR-22.
 
 ### Transactions

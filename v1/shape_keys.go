@@ -9,10 +9,12 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // ShapeKey is the epoch key K_e for one shape handle, epoch and key ID. It lives
-// in memory only. Each epoch needs its own ShapeKey; nothing is cached across epochs.
+// in memory only. Each epoch needs its own ShapeKey.
 type ShapeKey struct {
 	Handle string
 	Epoch  uint64
@@ -25,9 +27,10 @@ type ShapeKey struct {
 func (ShapeKey) String() string               { return "terrabase shape key (key redacted)" }
 func (k ShapeKey) Format(f fmt.State, _ rune) { fmt.Fprint(f, k.String()) }
 
-// ShapeKey fetches the epoch key for handle at epoch, named by keyID. The request
-// and the response are both no-store, and the response must echo the requested
-// handle, epoch and key ID before the key is trusted.
+// ShapeKey returns an epoch key cached in process memory by handle, epoch and
+// key ID within this client's collection scope. Concurrent requests share a
+// fetch. Past epochs and shape/key 409 responses evict cached keys. Network
+// requests and responses are no-store; keys are never persisted.
 func (col *Collection) ShapeKey(ctx context.Context, handle string, epoch uint64, keyID string) (*ShapeKey, error) {
 	if !isShapeHandle(handle) {
 		return nil, fmt.Errorf("terrabase: shape handle %q must be h1- and 16 lowercase hex digits", handle)
@@ -35,10 +38,18 @@ func (col *Collection) ShapeKey(ctx context.Context, handle string, epoch uint64
 	if err := checkID(keyID); err != nil {
 		return nil, fmt.Errorf("terrabase: shape key ID: %w", err)
 	}
-	p, err := col.path("shape", "keys")
+	p, err := col.path("shape")
 	if err != nil {
 		return nil, err
 	}
+	id := shapeKeyIdentity{scope: strings.Join(p, "/"), handle: handle, epoch: epoch, keyID: keyID}
+	return col.db.c.shapeKeys.get(ctx, id, func() (*ShapeKey, error) {
+		return col.fetchShapeKey(ctx, append(p, "keys"), id)
+	})
+}
+
+func (col *Collection) fetchShapeKey(ctx context.Context, p []string, id shapeKeyIdentity) (*ShapeKey, error) {
+	handle, epoch, keyID := id.handle, id.epoch, id.keyID
 	epochText := strconv.FormatUint(epoch, 10)
 	req := request{
 		method:     http.MethodGet,
@@ -48,6 +59,9 @@ func (col *Collection) ShapeKey(ctx context.Context, handle string, epoch uint64
 		replaySafe: true,
 	}
 	resp, err := col.db.c.do(ctx, req)
+	if resp != nil && resp.status == http.StatusConflict {
+		col.db.c.shapeKeys.evict(id.scope)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +86,119 @@ func (col *Collection) ShapeKey(ctx context.Context, handle string, epoch uint64
 		return nil, errors.New("terrabase: shape key must be unpadded base64url for 32 bytes")
 	}
 	return &ShapeKey{Handle: handle, Epoch: epoch, KeyID: keyID, key: func() []byte { return key }}, nil
+}
+
+type shapeKeyIdentity struct {
+	scope, handle, keyID string
+	epoch                uint64
+}
+
+type shapeKeyEntry struct {
+	ready chan struct{}
+	key   ShapeKey
+	err   error
+	timer *time.Timer
+}
+
+type shapeKeyCache struct {
+	mu      sync.Mutex
+	entries map[shapeKeyIdentity]*shapeKeyEntry
+	now     func() time.Time
+}
+
+func (cache *shapeKeyCache) timeNow() time.Time {
+	if cache.now != nil {
+		return cache.now()
+	}
+	return time.Now()
+}
+
+func (cache *shapeKeyCache) get(ctx context.Context, id shapeKeyIdentity, fetch func() (*ShapeKey, error)) (*ShapeKey, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	cache.mu.Lock()
+	now := cache.timeNow()
+	for key, entry := range cache.entries {
+		if entry.key.key != nil && key.epoch < uint64(now.Unix()/600) {
+			cache.remove(key, entry)
+		}
+	}
+	if entry := cache.entries[id]; entry != nil {
+		cache.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-entry.ready:
+			if entry.err != nil {
+				return nil, entry.err
+			}
+			key := entry.key
+			return &key, nil
+		}
+	}
+	if cache.entries == nil {
+		cache.entries = make(map[shapeKeyIdentity]*shapeKeyEntry)
+	}
+	entry := &shapeKeyEntry{ready: make(chan struct{})}
+	cache.entries[id] = entry
+	cache.mu.Unlock()
+
+	key, err := fetch()
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	// A 409 invalidates pending loads too; their late responses cannot restore keys.
+	if cache.entries[id] != entry && err == nil {
+		err = ErrMustRefetch
+	}
+	entry.err = err
+	if err == nil {
+		entry.key = *key
+		now = cache.timeNow()
+		for oldID, old := range cache.entries {
+			if oldID.scope == id.scope && oldID.handle == id.handle && oldID.epoch < id.epoch {
+				cache.remove(oldID, old)
+			}
+		}
+		if id.epoch == uint64(now.Unix()/600) {
+			delay := time.Duration(600-now.Unix()%600)*time.Second - time.Duration(now.Nanosecond())
+			entry.timer = time.AfterFunc(delay, func() {
+				cache.mu.Lock()
+				defer cache.mu.Unlock()
+				if cache.entries[id] == entry {
+					delete(cache.entries, id)
+				}
+			})
+		} else {
+			delete(cache.entries, id)
+		}
+	} else if cache.entries[id] == entry {
+		delete(cache.entries, id)
+	}
+	close(entry.ready)
+	if err != nil {
+		return nil, err
+	}
+	copy := entry.key
+	return &copy, nil
+}
+
+// remove is called with mu held. Returned caller-owned keys remain their responsibility.
+func (cache *shapeKeyCache) remove(id shapeKeyIdentity, entry *shapeKeyEntry) {
+	if entry.timer != nil {
+		entry.timer.Stop()
+	}
+	delete(cache.entries, id)
+}
+
+func (cache *shapeKeyCache) evict(scope string) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	for id, entry := range cache.entries {
+		if id.scope == scope {
+			cache.remove(id, entry)
+		}
+	}
 }
 
 // Decrypt opens one TBS1 object fetched at offset. Snapshot and boundary offsets

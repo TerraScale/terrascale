@@ -99,6 +99,7 @@ type Client struct {
 	hc          *http.Client
 	maxRetries  int
 	maxResponse int64
+	shapeKeys   shapeKeyCache
 }
 
 // TokenSource supplies access tokens; TerraBase validates their claims.

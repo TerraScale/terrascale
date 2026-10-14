@@ -131,7 +131,9 @@ func TestShapeKeyVectorResponses(t *testing.T) {
 
 			q := v.Request.Query
 			epoch := mustEpoch(t, q["epoch"])
-			key, err := shapeKeyCollection(t, server.URL).ShapeKey(t.Context(), q["handle"], epoch, q["key_id"])
+			col := shapeKeyCollection(t, server.URL)
+			shapeKeyClock(col, int64(epoch)*600+1)
+			key, err := col.ShapeKey(t.Context(), q["handle"], epoch, q["key_id"])
 			if calls.Load() != 1 {
 				t.Fatalf("requests = %d, want 1 (no retry, no prefetch)", calls.Load())
 			}
@@ -139,6 +141,12 @@ func TestShapeKeyVectorResponses(t *testing.T) {
 			case "epoch-key":
 				if err != nil {
 					t.Fatal(err)
+				}
+				if _, err := col.ShapeKey(t.Context(), q["handle"], epoch, q["key_id"]); err != nil {
+					t.Fatal(err)
+				}
+				if calls.Load() != 1 {
+					t.Fatal("epoch-key vector requires reuse from process memory")
 				}
 				var body struct {
 					Key string `json:"key"`

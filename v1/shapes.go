@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // ShapeOptions selects a collection's optional query-v1 filter.
@@ -180,6 +181,9 @@ func (c *Client) shapeGET(ctx context.Context, path []string, query url.Values, 
 			return nil, target, err
 		}
 		resp, err := c.send(ctx, request{method: http.MethodGet, header: header, token: token}, target)
+		if resp != nil && resp.status == http.StatusConflict {
+			c.shapeKeys.evict(strings.Join(path, "/"))
+		}
 		if err != nil {
 			if resp != nil && (resp.status < 200 || resp.status >= 300) {
 				apiErr := parseAPIError(resp.status, resp.header, resp.body)
