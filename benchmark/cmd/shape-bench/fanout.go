@@ -169,7 +169,8 @@ func (m *measure) deliver(seen map[string]bool, data []byte, at time.Time) error
 // a follower refused other than by its feed or shape cap or that fails, a stream that ends early, a failed or late
 // write, a server stream count that disagrees with the admitted followers, or a window without writes. A capacity
 // limit is a valid row instead, with its counts and Stopped reason: no follower admitted, admission or readiness
-// timed out, or no delivery in the window. Its unmeasured figures stay zero and are shown as n/a in the notes.
+// timed out, or no delivery in the window. Its unmeasured figures stay zero and are shown as n/a in the notes; a row
+// with no delivery also has zero latency, which is n/a, not a measured value.
 func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, probe, error) {
 	n := st.Concurrency
 	p := probe{n: n, target: st.Scenario}
@@ -224,6 +225,8 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 		select {
 		case o := <-outcomes:
 			status[o]++
+		case <-ctx.Done():
+			return fail(cmp.Or(m.firstErr(), ctx.Err()))
 		case <-deadline:
 			if err := cmp.Or(m.firstErr(), ctx.Err()); err != nil {
 				return fail(err)
@@ -305,13 +308,13 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 	switch {
 	case w == 0:
 		return fail(fmt.Errorf("no write in the window"))
+	case res.CPUCores.N == 0:
+		return fail(fmt.Errorf("no CPU sample of process %d", b.pid))
 	case m.ok == 0:
 		// The window was measured and every expected delivery is missed: a valid row at the capacity limit.
 		stopped = fmt.Sprintf("no delivery of %d expected", expected)
 	case m.ok > expected:
 		return fail(fmt.Errorf("%d deliveries, more than the %d expected", m.ok, expected))
-	case res.CPUCores.N == 0:
-		return fail(fmt.Errorf("no CPU sample of process %d", b.pid))
 	}
 	status["writes"] = w
 	status["server_at_ready"] = atReady
@@ -327,6 +330,18 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 	}
 	status["retries"] = m.retries.Load()
 	d := float64(st.StepS)
+	// No delivery means no latency to measure: the fields stay zero, and the notes mark the row's latency n/a.
+	var lat apibench.Latency
+	if m.ok > 0 {
+		lat = apibench.Latency{
+			P50:  float64(m.hist.ValueAtQuantile(50)),
+			P90:  float64(m.hist.ValueAtQuantile(90)),
+			P99:  float64(m.hist.ValueAtQuantile(99)),
+			P999: float64(m.hist.ValueAtQuantile(99.9)),
+			Max:  float64(m.hist.Max()),
+			Mean: m.hist.Mean(),
+		}
+	}
 	return apibench.Result{
 		Type:         "result",
 		Scenario:     st.Scenario,
@@ -343,18 +358,11 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 		ErrorRate:    float64(expected-m.ok) / float64(expected),
 		RPS:          float64(m.ok) / d,
 		Status:       status,
-		Latency: apibench.Latency{
-			P50:  float64(m.hist.ValueAtQuantile(50)),
-			P90:  float64(m.hist.ValueAtQuantile(90)),
-			P99:  float64(m.hist.ValueAtQuantile(99)),
-			P999: float64(m.hist.ValueAtQuantile(99.9)),
-			Max:  float64(m.hist.Max()),
-			Mean: m.hist.Mean(),
-		},
-		BytesIn: bytes1 - bytes0,
-		CPUS:    res.CPUCores.Avg * d,
-		RSSMB:   res.MemMB.Max,
-		Stopped: stopped,
+		Latency:      lat,
+		BytesIn:      bytes1 - bytes0,
+		CPUS:         res.CPUCores.Avg * d,
+		RSSMB:        res.MemMB.Max,
+		Stopped:      stopped,
 	}, p, nil
 }
 

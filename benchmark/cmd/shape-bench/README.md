@@ -83,7 +83,8 @@ the targets file at the end stops the host.
 - A step that reaches a capacity limit is a row, not an error, so every requested N is in the report. Its `stopped`
   column names the limit: no follower admitted (all refused by a cap), the 2 minute admission deadline (with
   `unresolved` followers counted), a readiness timeout after admission (60 s), or no delivery of the expected count in
-  the window (measured, so its figures are reported). A row that stopped before its window has `n/a` for writes,
+  the window (measured, so its figures are reported, except latency: no delivery was measured, so latency is `n/a`
+  on that row). A row that stopped before its window has `n/a` for writes,
   deliveries, storage reads and accounting reads, and its raw metric lines are not printed. Its counts (`admitted`,
   rejections, `qos_busy_followers`, `retries`) are kept. The shared apibench table prints zeros for latency and
   requests/s on those rows because its format has no empty value; the notes table here is the measured view.
