@@ -37,11 +37,12 @@
   display: grid;
   flex: none;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--ts-radius);
-  background: color-mix(in oklab, var(--tone) 16%, transparent);
-  color: var(--tone);
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+  color: var(--ts-ink-2);
 }
 
 .ts-db-icon-lg {
@@ -51,7 +52,45 @@
 }
 
 .ts-db-name:hover .ts-strong {
-  color: var(--tone);
+  color: var(--ts-link);
+}
+
+.ts-databases .ts-db-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s3) var(--ts-s4);
+}
+
+.ts-databases .ts-db-header h1 {
+  font-size: var(--ts-fs-3xl);
+  font-weight: 600;
+}
+
+.ts-databases .ts-db-header > .ts-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+  margin-left: auto;
+}
+
+.ts-db-region {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s1);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-sm);
+  white-space: nowrap;
+}
+
+.ts-db-region-flag {
+  flex: none;
+  width: 16px;
+  height: 12px;
+  border: 1px solid var(--ts-line-strong);
+  border-radius: 2px;
+  object-fit: cover;
 }
 
 /* Detail header: breadcrumb above the database identity. */
@@ -212,6 +251,7 @@
   padding: var(--ts-s1) var(--ts-s2);
   border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius-pill);
+  background: var(--ts-surface-2);
   color: var(--ts-ink-2);
   font-size: var(--ts-fs-sm);
   white-space: nowrap;
@@ -443,10 +483,8 @@ dialog.ts-db-create-dialog .ts-dialog-title {
   width: min(16rem, 100%);
   height: 4px;
   border-radius: var(--ts-radius-pill);
-  background:
-    linear-gradient(90deg, transparent, var(--ts-accent), transparent) 0 0 / 40% 100% no-repeat,
-    var(--ts-surface-3);
-  animation: ts-progress-shine var(--ts-loop) linear infinite;
+  background: var(--ts-accent-fill);
+  animation: ts-progress-pulse var(--ts-loop) ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -456,7 +494,6 @@ dialog.ts-db-create-dialog .ts-dialog-title {
   }
 
   .ts-db-progress-bar {
-    background: var(--ts-accent);
     animation: none;
   }
 }
