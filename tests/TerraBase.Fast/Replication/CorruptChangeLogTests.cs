@@ -139,11 +139,14 @@ public sealed class CorruptChangeLogTests
                 await Assert.That(interrupted.ResponseStream.Current.Welcome).IsNotNull();
             }
             await gru.UntilAcknowledgedAsync(first, acknowledged => acknowledged == 0);
+            var beforeHealthy = await gru.HeadAsync(other);
             await gru.WriteAsync(other, async transaction => _ = await transaction.PutAsync(Items, "reconnected", Json("""{"n":3}"""), CancellationToken.None));
+            var healthyGroup = (await gru.ReadGroupsAsync(other, beforeHealthy))
+                .Single(group => group.Deltas.Any(delta => delta.Id == "reconnected"));
             await Assert.That(await sjc.UntilAsync(other, "reconnected", """{"n":3}""")).IsTrue()
                 .Because("the refused first cursor cannot prevent a later healthy database from shipping on a new connection");
-            var healthyHead = await gru.HeadAsync(other);
-            await gru.UntilAcknowledgedAsync(other, acknowledged => acknowledged >= healthyHead);
+            // Frontiers and ACK bookkeeping advance the file head without a shippable group to acknowledge.
+            await gru.UntilAcknowledgedAsync(other, acknowledged => acknowledged >= healthyGroup.ChangeId);
             await gru.UntilAcknowledgedAsync(first, acknowledged => acknowledged == 0);
             await Assert.That(await sjc.ReadAsync(first, "damaged")).IsNull();
         }
