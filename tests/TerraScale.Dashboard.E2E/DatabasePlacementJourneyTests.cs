@@ -103,7 +103,11 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
             await Assert.That(credentials.StatusCode).IsEqualTo(HttpStatusCode.OK)
                 .Because(await FailureEvidenceAsync(credentials));
         Volatile.Write(ref report, "measured");
-        var measured = await PageAsync(replica, "?range=1h");
+        var overview = await PageAsync(replica, "?range=1h");
+        await Assert.That(overview.Contains("Per database and region", StringComparison.Ordinal)).IsFalse()
+            .Because("replication measurements render only on the replication tab");
+        var measured = await PageAsync(replica, "/replication?range=1h");
+        await Assert.That(Regex.IsMatch(measured, "aria-current=\"page\"[^>]*><span>Replication</span>")).IsTrue();
         await Assert.That(measured).Contains("Per database and region · 1h · TerraBase replication_bytes meter");
         await Assert.That(measured).Contains("aria-label=\"Replication totals\"");
         await Assert.That(measured).Contains("<dd class=\"ts-stat-value\">20</dd>");
@@ -118,7 +122,7 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
         await Assert.That(measured.Contains("No replication bandwidth samples for this period.", StringComparison.Ordinal)).IsFalse();
         await Assert.That(measured.Contains("0 ms", StringComparison.Ordinal)).IsFalse();
         Volatile.Write(ref report, "foreign");
-        var unknown = await PageAsync(replica);
+        var unknown = await PageAsync(replica, "/replication");
         await Assert.That(unknown).Contains("Replication unavailable");
         await Assert.That(unknown.Contains("aria-label=\"Replication totals\"", StringComparison.Ordinal)).IsFalse();
         await Assert.That(unknown.Contains("111 B", StringComparison.Ordinal)).IsFalse();
