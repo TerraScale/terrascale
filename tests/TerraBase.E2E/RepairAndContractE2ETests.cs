@@ -293,7 +293,7 @@ public sealed class RepairAndContractE2ETests
         Docs.Digest(documents.Select(document => (document.Id, Docs.Canonical(document.Body))));
 
     // Deletes the document from every table that keys rows by an id column, whatever the layout of the build.
-    private static async Task DeleteRowsAsync(string file, string id)
+    internal static async Task DeleteRowsAsync(string file, string id)
     {
         await using var connection = new SqliteConnection($"Data Source={file};Pooling=False");
         await connection.OpenAsync();

@@ -1,0 +1,145 @@
+{
+ "product_commit": "a439e1d17ddcc43df9e714eeb3c6afc6dc9187bd",
+ "image": "registry.fly.io/ts-vtest-tb:vtest-a439e1d17ddc",
+ "image_digest": "sha256:b2267cc04eb069432bcdaf204eaee536320d70b109ddeb61d4bbd51c22edc804",
+ "app": "ts-vtest-tb",
+ "org": "terrascale-previews-515",
+ "machines": {
+  "gru": "891e70eb4d0378",
+  "sjc": "6835466b44e258",
+  "fra": "48e4967a225338"
+ },
+ "size": "shared-cpu-2x 512MB",
+ "driver_host": "beta",
+ "rows": [
+  {
+   "row": "S1",
+   "scenario": "shape views converge after a partition heals (fra-gru cut, both write)",
+   "where": "local",
+   "result": "PASS",
+   "regions": "gru,sjc,fra",
+   "docs": 71,
+   "view_equals_listing_ms": 132,
+   "digest_prefix": "5EFF6C944A3C",
+   "refetches": 0,
+   "harness": "bba212ff",
+   "run": "2026-10-14T17:14:40Z",
+   "log": "beta:/tmp/v2v5-local-5/ShapeConvergenceE2ETests.log",
+   "sha256": "e754dca370f4e2b68ded04a6a05f77096085cb9aaf035f9abac400ffe6b8bbdf"
+  },
+  {
+   "row": "S1",
+   "scenario": "shape views converge after a partition heals",
+   "where": "fly",
+   "result": "FAIL",
+   "code": "429 shape_busy",
+   "detail": "seed: views 0 docs, listed 30 in each region; 0 responses applied in 60 s",
+   "harness": "c4341eeb",
+   "run": "2026-10-14T17:33:04Z",
+   "log": "benchmark/bench/2026-10-14-replication-vtest/evidence/raw/ShapeConvergenceE2ETests-Shape_clients_in_every_region_converge_after_a_partition_heals.txt",
+   "sha256": "3331f059eccc2c6878749b9d33661ba3c2c7275324b0e4a1164ff6c5c5fb2bf2"
+  },
+  {
+   "row": "S2",
+   "scenario": "shape views follow a collection drop (0 docs) and re-create (30 docs)",
+   "where": "local",
+   "result": "PASS",
+   "regions": "gru,sjc,fra",
+   "docs": 30,
+   "view_equals_listing_ms": 66,
+   "digest_prefix": "A81C8E0C1008",
+   "refetches": 0,
+   "harness": "bba212ff",
+   "run": "2026-10-14T17:14:40Z",
+   "log": "beta:/tmp/v2v5-local-5/ShapeConvergenceE2ETests.log",
+   "sha256": "e754dca370f4e2b68ded04a6a05f77096085cb9aaf035f9abac400ffe6b8bbdf"
+  },
+  {
+   "row": "S2",
+   "scenario": "shape views follow a collection drop and re-create",
+   "where": "fly",
+   "result": "FAIL",
+   "code": "429 shape_busy",
+   "detail": "before the drop: views 0 docs, listed 30 in each region; 0 responses applied in 60 s",
+   "harness": "9848dd70",
+   "run": "2026-10-14T17:21:00Z",
+   "log": "benchmark/bench/2026-10-14-replication-vtest/evidence/raw/ShapeConvergenceE2ETests-Shape_clients_follow_a_collection_drop_and_re_create.txt",
+   "sha256": "04f8dc67043b0346cc1dde128bcdc14f182904be6efc7326dff3a153b53ba4e7"
+  },
+  {
+   "row": "S3",
+   "scenario": "shape views converge after anti-entropy repairs a document deleted from sjc's file",
+   "where": "local",
+   "result": "PASS",
+   "regions": "gru,sjc,fra",
+   "docs": 30,
+   "view_equals_listing_ms": 120101,
+   "digest_prefix": "CDD46C998B7B",
+   "refetches": 0,
+   "harness": "bba212ff",
+   "run": "2026-10-14T17:14:40Z",
+   "log": "beta:/tmp/v2v5-local-5/ShapeConvergenceE2ETests.log",
+   "sha256": "e754dca370f4e2b68ded04a6a05f77096085cb9aaf035f9abac400ffe6b8bbdf"
+  },
+  {
+   "row": "S3",
+   "scenario": "anti-entropy repair",
+   "where": "fly",
+   "result": "BLOCKED",
+   "blocked_on": "harness: no file tampering on Fly machines"
+  },
+  {
+   "row": "S4a",
+   "scenario": "shape views converge under clock skew sjc +2000 ms",
+   "where": "local",
+   "result": "PASS",
+   "regions": "gru,sjc,fra",
+   "docs": 31,
+   "view_equals_listing_ms": 50,
+   "digest_prefix": "EDB1C653778A",
+   "refetches": 0,
+   "harness": "bba212ff",
+   "run": "2026-10-14T17:14:40Z",
+   "log": "beta:/tmp/v2v5-local-5/ShapeConvergenceE2ETests.log",
+   "sha256": "e754dca370f4e2b68ded04a6a05f77096085cb9aaf035f9abac400ffe6b8bbdf"
+  },
+  {
+   "row": "S4b",
+   "scenario": "shape views converge under clock skew fra -2000 ms",
+   "where": "local",
+   "result": "PASS",
+   "regions": "gru,sjc,fra",
+   "docs": 31,
+   "view_equals_listing_ms": 51,
+   "digest_prefix": "FD106F05FB10",
+   "refetches": 0,
+   "harness": "bba212ff",
+   "run": "2026-10-14T17:14:40Z",
+   "log": "beta:/tmp/v2v5-local-5/ShapeConvergenceE2ETests.log",
+   "sha256": "e754dca370f4e2b68ded04a6a05f77096085cb9aaf035f9abac400ffe6b8bbdf"
+  },
+  {
+   "row": "S4",
+   "scenario": "clock skew",
+   "where": "fly",
+   "result": "BLOCKED",
+   "blocked_on": "harness: no clock control on Fly machines (Cluster.StartAsync refuses skews on Fly)"
+  },
+  {
+   "row": "S5",
+   "scenario": "region-failover resume (FR-23)",
+   "result": "BLOCKED",
+   "blocked_on": "#298 / #300 open; every resume answers 409 until then"
+  },
+  {
+   "row": "P1",
+   "scenario": "probe: shape bootstrap on a 1-document collection after 90 s idle",
+   "where": "fly",
+   "result": "FAIL",
+   "detail": "429 shape_busy on gru, sjc and fra; gru memory pressure: used 358,322,176 B vs budget 120,231,936 B (mem_util=1)",
+   "run": "2026-10-14T17:29:04Z",
+   "log": "benchmark/bench/2026-10-14-replication-vtest/evidence/v2-shape-probe-a439e1d1.txt",
+   "metrics": "benchmark/bench/2026-10-14-replication-vtest/evidence/v2-gru-memory-metrics-a439e1d1.txt"
+  }
+ ]
+}
