@@ -18,13 +18,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: .node-version
+          # ~/.npm also serves the two nested `npm ci` runs in `npm test`, so all three lockfiles key the cache.
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            examples/terrabase-js/package-lock.json
+            create-terrascale-app/package-lock.json
       - run: npm ci
       - run: npm run build
       - run: npm test
