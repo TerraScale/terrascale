@@ -1056,10 +1056,14 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   schema version changes (`PRAGMA user_version` remains 1), nor changes to replication, authentication or lattice
   conflict semantics. Persisted prefix columns change the internal storage format; greenfield storage must be recreated
   at the reviewed storage cutover, with no migration. The internal format-9 rollout uses
-  `ops/fly/greenfield-no-customer-data` to authorize the existing gru → sjc → fra volume-reset path while only dogfood
-  data exists. **Delete that marker before go-public.** After reset, verify all three regions serve format 9 and that
-  the empty platform-auth/platform-dashboard databases, organization, projects, owner and signing keys are seeded
-  again by startup. The rollout must wait for the first deploy to be proven live.
+  `ops/fly/greenfield-no-customer-data` to approve exactly `9-f707baac47dc` while only dogfood data exists. CI refuses
+  format drift before mutation and never resets volumes. After the entire format-changing main push run completes,
+  the reset owner stops auth and all old TerraBase machines, stages every old TerraBase machine on the approved image,
+  then runs the guarded manual reset with `--image` through gru → sjc → fra. Main merges and push-run retries stay held;
+  before each region, verify no main push CI run is queued or running. After all regions are reset and healthy, retry
+  the failed normal deployment to restart auth. Verify the exact format, open catalog gates, both platform databases
+  (`ts-auth` and `ts-dashboard`), owner, organization, projects, dashboard client and fresh signing keys in every region.
+  **Delete the marker after the complete reset and normal rollout pass, before serving customer data.**
   An issued cursor with no origin is not
   "no cursor": it is expired by the retention rules above.
 - **Issuer routing.** A resume on another machine answers 421 `cursor_elsewhere`, with
