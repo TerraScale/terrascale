@@ -34,8 +34,8 @@ public static class ProfileEndpoints
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountEndpoints.LoginRedirect(http);
             var tab = http.Request.Query["tab"].ToString();
-            if (tab is not ("security" or "sessions" or "access-tokens")) tab = "profile";
-            var list = tab == "access-tokens" ? await tokens.ListAsync(context, http.RequestAborted) : null;
+            if (tab is not ("security" or "sessions" or "access-tokens" or "danger")) tab = "profile";
+            var list = tab is "access-tokens" or "danger" ? await tokens.ListAsync(context, http.RequestAborted) : null;
             var active = await sessions.ListAsync(http, context.Session);
             return ProfileView.Create(new(ShellModel.For(http, context, "Profile"), tab, Error: PasswordError(http.Request.Query["error"].ToString()),
                 Status: http.Request.Query["status"] == "code-sent" ? "We emailed a code to your address. Enter it with your new password." : "", Tokens: list, Sessions: active));

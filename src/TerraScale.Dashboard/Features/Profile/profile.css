@@ -1,4 +1,25 @@
-/* Profile page: capability badges and the one-time code input. */
+/* Profile page: identity header, wrapping tabs and capability badges. */
+
+.ts-profile-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ts-s3);
+  overflow-wrap: anywhere;
+}
+
+.ts-profile-head > div {
+  min-width: 0;
+}
+
+.ts-profile-name {
+  margin: 0;
+}
+
+.ts-profile-tabs {
+  flex-wrap: wrap;
+  overflow-x: visible;
+}
 
 .ts-profile-claims {
   gap: var(--ts-s2);
@@ -6,10 +27,4 @@
 
 .ts-profile-posture {
   align-items: center;
-}
-
-.ts-profile-code {
-  max-width: 12rem;
-  font-family: var(--ts-font-mono);
-  letter-spacing: 0.2em;
 }

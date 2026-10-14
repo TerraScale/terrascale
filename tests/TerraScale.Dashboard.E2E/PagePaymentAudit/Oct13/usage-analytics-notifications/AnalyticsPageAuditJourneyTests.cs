@@ -77,6 +77,8 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
         await Assert.That(html).Contains("9007199254740993");
         await Assert.That(html).Contains("Not measured");
         await Assert.That(html).Contains("Not reported");
+        await Assert.That(html).Contains("<span class=\"ts-mono\">gru</span></span></th><td class=\"ts-num\">9007199254740993</td><td class=\"ts-num\">Not reported</td>")
+            .Because("One gru bucket sums its request counter exactly and has no latest p95 to report.");
         await Assert.That(html).Contains(producer.From.UtcDateTime.ToString("MMM d HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture));
         await Assert.That(html.Contains("Could not load analytics measurements.", StringComparison.Ordinal)).IsFalse();
         await Assert.That(producer.Reads).IsEqualTo(2);

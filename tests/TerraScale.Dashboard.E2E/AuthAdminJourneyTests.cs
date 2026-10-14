@@ -410,7 +410,9 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
             await GotoAsync(page, "/profile?tab=access-tokens");
             var row = page.Locator("#profile-access-tokens tbody tr").Filter(new() { HasText = "TerraScale CLI" });
             await Assert.That(await row.CountAsync()).IsEqualTo(1).Because("only successful single-use flow created a token");
-            await row.GetByRole(AriaRole.Button, new() { Name = "Revoke", Exact = true }).ClickAsync();
+            await GotoAsync(page, "/profile?tab=danger");
+            var dangerRow = page.Locator("#profile-danger tbody tr").Filter(new() { HasText = "TerraScale CLI" });
+            await dangerRow.GetByRole(AriaRole.Button, new() { Name = "Revoke", Exact = true }).ClickAsync();
             await SubmitAsync(page, "dialog[open] form", "Revoke token");
             await Assert.That((await McpAsync()).Status).IsEqualTo(401).Because("native profile revocation invalidates CLI token");
             checks.Add("CLI anonymous/reauth/password-toggle approval, slow poll, single use, denial, logout binding, MCP and revocation");
@@ -532,8 +534,7 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
         Check(Regex.IsMatch(secret, "^tspat_[A-Za-z0-9_-]{43}$", RegexOptions.CultureInvariant), "PAT plaintext is displayed after creation");
         var tokenRow = Regex.Matches(createdHtml, "<tr\\b[^>]*>.*?</tr>", RegexOptions.CultureInvariant | RegexOptions.Singleline)
             .Single(row => row.Value.Contains(tokenName, StringComparison.Ordinal)).Value;
-        var revokePath = Regex.Match(tokenRow, "action=\"(/api/v1/dashboard/profile/access-tokens/[^\"/]+/revoke)\"", RegexOptions.CultureInvariant).Groups[1].Value;
-        Check(revokePath.Length > 0, "The new token has a native revoke form");
+        Check(!tokenRow.Contains("/revoke\"", StringComparison.Ordinal), "Token creation lists the new token without a revoke action");
 
         using (var listing = await Mcp(replica, "tools/list", new { }, secret))
         {
@@ -587,8 +588,15 @@ public sealed class AuthAdminJourneyTests(DashboardE2EFixture fixture)
         using var freshTokenPage = await client.GetAsync("/profile?tab=access-tokens");
         var freshHtml = await freshTokenPage.Content.ReadAsStringAsync();
         Check(!freshHtml.Contains(secret, StringComparison.Ordinal), "Reload never redisplays token plaintext");
-        using (var revoked = await client.PostAsync(revokePath, new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = Hidden(freshHtml, "_csrf") })))
-            Check(revoked.StatusCode == HttpStatusCode.SeeOther, "Native token revocation succeeds");
+        Check(!freshHtml.Contains("/revoke\"", StringComparison.Ordinal), "The access-tokens tab never exposes a revoke action");
+        using var dangerPage = await client.GetAsync("/profile?tab=danger");
+        var dangerHtml = await dangerPage.Content.ReadAsStringAsync();
+        var dangerRow = Regex.Matches(dangerHtml, "<tr\\b[^>]*>.*?</tr>", RegexOptions.CultureInvariant | RegexOptions.Singleline)
+            .Single(row => row.Value.Contains(tokenName, StringComparison.Ordinal)).Value;
+        var revokePath = Regex.Match(dangerRow, "action=\"(/api/v1/dashboard/profile/access-tokens/[^\"/]+/revoke)\"", RegexOptions.CultureInvariant).Groups[1].Value;
+        Check(revokePath.Length > 0, "The danger tab holds the native revoke form");
+        using (var revoked = await client.PostAsync(revokePath, new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = Hidden(dangerHtml, "_csrf") })))
+            Check(revoked.StatusCode == HttpStatusCode.SeeOther && revoked.Headers.Location?.OriginalString == "/profile?tab=danger", "Native token revocation returns to the danger tab");
         using (var revoked = await Mcp(replica, "tools/list", new { }, secret))
             Check(revoked.StatusCode == HttpStatusCode.Unauthorized, "A revoked PAT cannot reach MCP on another replica");
         using (var cleanupLogout = await HttpJourney.PostFormAsync(client, "/api/v1/auth/logout", new() { ["_csrf"] = Hidden(freshHtml, "_csrf") }))
