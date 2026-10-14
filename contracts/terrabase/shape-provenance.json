@@ -1,0 +1,23 @@
+{
+  "repository": "TerraScale/terrascale",
+  "commit": "993927ce7ecf8f9b889d24d4d1d21ec96eaf9416",
+  "protocol": "TB-SHAPE-V1",
+  "sources": [
+    {
+      "path": "docs/terrabase/shape-reads.md",
+      "url": "https://github.com/TerraScale/terrascale/blob/993927ce7ecf8f9b889d24d4d1d21ec96eaf9416/docs/terrabase/shape-reads.md",
+      "sha256": "ff414d70af8eb17a61cf2c4b504c50967810549cbf02141d1e59aedfe184d27c"
+    },
+    {
+      "path": "docs/terrabase/free-reads.md",
+      "url": "https://github.com/TerraScale/terrascale/blob/993927ce7ecf8f9b889d24d4d1d21ec96eaf9416/docs/terrabase/free-reads.md",
+      "sha256": "36a9e079d427635ddc5b375928a814c229b79ea5d97286dd59b08c842acf78df"
+    },
+    {
+      "path": "docs/terrabase/shape-vectors.json",
+      "url": "https://github.com/TerraScale/terrascale/blob/993927ce7ecf8f9b889d24d4d1d21ec96eaf9416/docs/terrabase/shape-vectors.json",
+      "sha256": "3f0bac7db023f6cec767ff4288df789a449a383d319dfd48aa60405fe7b4c210"
+    }
+  ],
+  "qualification": "Origin reads and epoch keys tested only with HTTP fakes and official vectors. FR-20 server wiring is pending; FR-22 manifest/302 transport is excluded by the owning task. No live-service qualification or TerraBase execution."
+}

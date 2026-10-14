@@ -1,0 +1,21 @@
+{
+  "description": "Shape protocol v1 origin operations. Pinned separately from the legacy deployed-server route manifest; FR-20 server wiring and live qualification are pending.",
+  "producerCommit": "993927ce7ecf8f9b889d24d4d1d21ec96eaf9416",
+  "source": "docs/terrabase/shape-reads.md",
+  "operations": [
+    {
+      "client": "shapes",
+      "operation": "subscribeShape",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/shape",
+      "scope": "documents:read"
+    },
+    {
+      "client": "shapes",
+      "operation": "getShapeEpochKey",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/shape/keys",
+      "scope": "documents:read"
+    }
+  ]
+}

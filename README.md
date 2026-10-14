@@ -77,8 +77,10 @@ HTTPS client listener. `TerraBaseDocumentsClient` covers the Documents API v1:
 databases, collections, documents, queries and transactions.
 `TerraBaseManagementClient` covers the Management API: organizations, the
 current organization, plans, projects, databases, branches, members,
-invitations, ownership transfer, audit retention and audit events. Shapes and
-the bulk data endpoints are not covered yet.
+invitations, ownership transfer, audit retention and audit events.
+`TerraBaseShapeClient` follows a collection's shape protocol v1 into local state;
+see [shape reads and qualification](docs/terrabase-shapes.md). Bulk data endpoints
+are not covered yet.
 
 ```csharp
 using System.Text.Json;
@@ -221,10 +223,12 @@ the answering region (`X-TerraBase-Region`) when TerraBase named it.
 
 No TerraBase runs in this repository (user rule, 2026-10-11: no repository other
 than the monorepo depends on TerraBase). The clients are tested over HTTP fakes.
-`contracts/terrabase/routes.json` records every TerraBase route the clients call;
+`contracts/terrabase/routes.json` records the existing TerraBase routes the clients call;
 `TerraBaseContractTests` checks the clients send exactly those, and the monorepo's
 ts-auth Fast suite checks that the TerraBase built from the same commit serves each
-one, so the SDK and TerraBase cannot drift apart silently. ts-auth's suites exercise
+one, so the SDK and TerraBase cannot drift apart silently. Shape protocol routes
+are separately pinned in `contracts/terrabase/shape-routes.json` while FR-20
+server wiring is pending. ts-auth's suites exercise
 these clients end to end against that same TerraBase.
 
 ```bash
