@@ -5,8 +5,16 @@ source-pinned refill and successful completion follow in PR2 after A4/A5.
 Production certification currently refuses every refill and completion attempt.
 A copy awaiting certified refill remains unavailable for ordinary writes and
 replication sourcing, with its recovery record and retained side copy intact.
-HTTP writes to a known refused copy answer `503 copy_faulted` without exposing
-the internal fault reason.
+Document writes that reach a refused copy answer `503 write_outcome_unknown`
+through the conservative write-error path. A refusal before BEGIN executes
+nothing, but a durability-timeout response can follow a committed write;
+clients must treat outcome-unknown responses as uncertain. Other endpoints
+that propagate the copy refusal directly map it to `503 copy_faulted` without
+exposing the internal fault reason.
+
+Reads are not gated while a replacement awaits certification. They can see
+the fresh, incomplete copy and return 404 for data still awaiting refill;
+write, acknowledgement and replication-source refusal do not imply read refusal.
 
 TerraBase keeps each node's copy-fault and rebuild records in `_tb_rebuild` in
 the SYSTEM database. These records use FULL commits with replication capture
