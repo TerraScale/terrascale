@@ -8,8 +8,8 @@ name: CI
 # - preview (pull requests): TerraBase + ts-auth on one machine at https://ts-pr-<n>.fly.dev (scripts/fly/preview.sh);
 #   previews.yml deletes it when the PR closes or after 24 hours.
 # - deploy (main): the Dockerfile's chiseled images to Fly, TerraBase then ts-auth, each gru -> sjc -> fra with a live
-#   check after each region (scripts/fly/deploy.sh), only for the newest main; ts-auth's image builds after
-#   TerraBase's rollout. Before the rollout, scripts/fly/fast-gate.sh requires a passed `test` for this exact tree: the
+#   check after each region (scripts/fly/deploy.sh), only for the newest main; both app images build in parallel.
+#   Before the rollout, scripts/fly/fast-gate.sh requires a passed `test` for this exact tree: the
 #   merged pull request's head when the merge kept its tree (rebased before merging), else main's own `test`.
 # After it:
 # - slow (main, workflow_dispatch, or a pull request labelled `full-ci`): the slow suites; never blocks. A failure
@@ -23,8 +23,6 @@ on:
     types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
-  merge_group:
-    types: [checks_requested]
   workflow_dispatch:
 
 # A newer push cancels obsolete tests and rollouts; manual test runs cannot cancel the push's deployment.
@@ -42,7 +40,7 @@ env:
 jobs:
   # Runs on every event: a skipped job would skip everything downstream of "test" (deploy, slow).
   changes:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -53,7 +51,7 @@ jobs:
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        uses: dorny/paths-filter@v3
         with:
           filters: |
             shared: &shared
@@ -104,16 +102,16 @@ jobs:
   libs:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.libs == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 30
     steps:
       - &checkout
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@v5
         with:
           path: terrascale
           persist-credentials: false
       - &checkout-ts-dotnet
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@v5
         with:
           repository: TerraScale/ts-dotnet
           ref: ${{ env.TS_DOTNET_REV }}
@@ -121,22 +119,22 @@ jobs:
           path: ts-dotnet
           persist-credentials: false
       - name: Check out the path-filter matcher for regression fixtures
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        uses: actions/checkout@v5
         with:
           repository: dorny/paths-filter
-          ref: 0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+          ref: v3
           path: path-filter-action
           persist-credentials: false
       - name: Verify CI path filters
         run: python3 terrascale/scripts/ci/path-filter-test.py terrascale/.github/workflows/ci.yml path-filter-action/dist/index.js
       - &setup-builder
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@v3
         with:
           # On alpha, build on the shared persistent BuildKit daemon (layer + cache-mount reuse).
           driver: ${{ vars.CI_RUNNER && 'remote' || 'docker-container' }}
           endpoint: ${{ vars.CI_RUNNER && 'unix:///run/buildkit/buildkitd.sock' || '' }}
       - &build-area
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -157,7 +155,7 @@ jobs:
   auth:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.auth == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 30
     steps:
       - *checkout
@@ -168,7 +166,7 @@ jobs:
   terrabase:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.terrabase == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 30
     steps:
       - *checkout
@@ -179,7 +177,7 @@ jobs:
   test:
     needs: [changes, libs, auth, terrabase]
     if: ${{ !cancelled() }}
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 5
     permissions:
       contents: read
@@ -193,6 +191,7 @@ jobs:
           python3 terrascale/scripts/ci/slow-report-test.py
           python3 terrascale/scripts/ci/e2e-status-test.py
           python3 terrascale/scripts/ci/latest-main-test.py
+          python3 terrascale/scripts/ci/deploy-status-test.py
           bash terrascale/scripts/fly/deploy-test.sh
           bash terrascale/scripts/fly/preview-test.sh
           bash terrascale/scripts/fly/volume-reset-test.sh
@@ -218,7 +217,7 @@ jobs:
         include:
           - area: auth
           - area: terrabase
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 60
     permissions:
       contents: read
@@ -235,7 +234,7 @@ jobs:
           [[ -n $TIGRIS_CI_CREDENTIALS ]] || { echo 'TIGRIS_CI_CREDENTIALS is required' >&2; exit 1; }
           umask 077
           printf '%s\n' "$TIGRIS_CI_CREDENTIALS" > "$RUNNER_TEMP/tigris-ci.env"
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+      - uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -301,10 +300,62 @@ jobs:
           done
           exit "$code"
 
+  # Build each app once with its own scoped token; every region reuses that SHA-tagged image.
+  images:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: ts-terrabase
+            target: terrabase
+            revision: TERRABASE_REVISION
+            token: FLY_TOKEN_TS_TERRABASE
+          - app: ts-auth
+            target: ts-auth
+            revision: TS_AUTH_REVISION
+            token: FLY_TOKEN_TS_AUTH
+    runs-on: alpha
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - name: Skip a superseded main before building
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: terrascale/scripts/fly/current-main.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+      - *checkout-ts-dotnet
+      - uses: docker/setup-buildx-action@v3
+        if: steps.current.outputs.current == 'true'
+        with:
+          # On alpha, build on the shared persistent BuildKit daemon (layer + cache-mount reuse).
+          driver: ${{ vars.CI_RUNNER && 'remote' || 'docker-container' }}
+          endpoint: ${{ vars.CI_RUNNER && 'unix:///run/buildkit/buildkitd.sock' || '' }}
+      - uses: docker/login-action@v3
+        if: steps.current.outputs.current == 'true'
+        with:
+          registry: registry.fly.io
+          username: x
+          password: ${{ secrets[matrix.token] }}
+      - uses: docker/build-push-action@v6
+        if: steps.current.outputs.current == 'true'
+        with:
+          context: terrascale
+          file: terrascale/Dockerfile
+          build-contexts: ts-dotnet=ts-dotnet
+          target: ${{ matrix.target }}
+          tags: registry.fly.io/${{ matrix.app }}:${{ github.sha }}
+          cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope=deploy-{0}', matrix.target) || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && format('type=gha,mode=max,scope=deploy-{0}', matrix.target) || '' }}
+          build-args: ${{ matrix.revision }}=${{ github.sha }}
+          push: true
+
   preview:
     needs: test
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 20
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
@@ -318,16 +369,16 @@ jobs:
       - *checkout
       - *checkout-ts-dotnet
       - &setup-flyctl
-        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
+        uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Create the preview app
         run: terrascale/scripts/fly/preview.sh app ${{ github.event.pull_request.number }}
       - *setup-builder
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@v3
         with:
           registry: registry.fly.io
           username: x
           password: ${{ secrets.FLY_TOKEN_PREVIEWS }}
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+      - uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -337,7 +388,7 @@ jobs:
           cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=preview-terrabase' || '' }}
           build-args: TERRABASE_REVISION=${{ github.sha }}
           push: true
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+      - uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -359,11 +410,11 @@ jobs:
           gh pr comment ${{ github.event.pull_request.number }} -R "$GITHUB_REPOSITORY" --edit-last --create-if-none
           --body "Preview: https://$APP.fly.dev (TerraBase + ts-auth at ${{ github.sha }}; stops when idle, deleted on close or after 24 h)"
 
-  # No `needs`: an already-green PR tree can deploy immediately. Superseded main runs cancel, including rollout.
   # The shared deploy group prevents overlapping rollouts; ts-auth rolls out after TerraBase.
   deploy:
+    needs: images
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 30
     concurrency:
       group: deploy
@@ -381,32 +432,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: terrascale/scripts/fly/current-main.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
-      - *checkout-ts-dotnet
       - *setup-flyctl
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-        if: steps.current.outputs.current == 'true'
-        with:
-          # On alpha, build on the shared persistent BuildKit daemon (layer + cache-mount reuse).
-          driver: ${{ vars.CI_RUNNER && 'remote' || 'docker-container' }}
-          endpoint: ${{ vars.CI_RUNNER && 'unix:///run/buildkit/buildkitd.sock' || '' }}
-      # One deploy token per app; each can push only to its own app's repository.
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      # TerraBase's storage-format inspection pulls the published image with its scoped token.
+      - uses: docker/login-action@v3
         if: steps.current.outputs.current == 'true'
         with:
           registry: registry.fly.io
           username: x
           password: ${{ secrets.FLY_TOKEN_TS_TERRABASE }}
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        if: steps.current.outputs.current == 'true'
-        with:
-          context: terrascale
-          file: terrascale/Dockerfile
-          target: terrabase
-          tags: registry.fly.io/ts-terrabase:${{ github.sha }}
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=deploy-terrabase' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=deploy-terrabase' || '' }}
-          build-args: TERRABASE_REVISION=${{ github.sha }}
-          push: true
       # Fast must cover the exact tree being deployed (AGENTS.md): instant for a rebased, squash-merged pull request.
       - name: Wait for Fast on this tree
         id: qualified
@@ -422,25 +455,6 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_TS_TERRABASE }}
         run: scripts/fly/deploy.sh ts-terrabase src/TerraBase/fly.toml registry.fly.io/ts-terrabase:${{ github.sha }}
-      # Built after TerraBase's rollout so gru gets TerraBase as early as possible.
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        if: steps.qualified.outputs.current == 'true'
-        with:
-          registry: registry.fly.io
-          username: x
-          password: ${{ secrets.FLY_TOKEN_TS_AUTH }}
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        if: steps.qualified.outputs.current == 'true'
-        with:
-          context: terrascale
-          file: terrascale/Dockerfile
-          build-contexts: ts-dotnet=ts-dotnet
-          target: ts-auth
-          tags: registry.fly.io/ts-auth:${{ github.sha }}
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=deploy-ts-auth' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=deploy-ts-auth' || '' }}
-          build-args: TS_AUTH_REVISION=${{ github.sha }}
-          push: true
       - name: Deploy ts-auth (gru, sjc, fra)
         id: deploy-auth
         if: steps.qualified.outputs.current == 'true'
@@ -449,10 +463,25 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_TS_AUTH }}
         run: scripts/fly/deploy.sh ts-auth src/TerraScale.Authentication/fly.toml registry.fly.io/ts-auth:${{ github.sha }}
 
+  deploy-status:
+    needs: [test, deploy, e2e]
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: alpha
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - name: Require deployment and live E2E for current green main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 terrascale/scripts/ci/deploy-status.py
+
   e2e:
     needs: deploy
     if: needs.deploy.outputs.deployed == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: alpha
     timeout-minutes: 30
     # id-token: the GitHub OIDC token each Fly step exchanges at ts-auth for a 15-minute token of the bound e2e project
     # (scripts/e2e/ci-oidc-credential.sh, docs/auth/github-actions-oidc.md); no e2e credential is stored in GitHub.
@@ -464,7 +493,7 @@ jobs:
     steps:
       - *checkout
       - *checkout-ts-dotnet
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+      - uses: actions/setup-dotnet@v5
         with:
           global-json-file: terrascale/global.json
           cache: true
@@ -495,7 +524,7 @@ jobs:
           make -o terrabase-build terrabase-e2e E2E_LABEL=fly TEST_ARGS='-- --treenode-filter "/*/*/*/*[Category!=local-only]" --minimum-expected-tests 138 --output detailed --no-ansi' 2>&1 | tee replication-e2e.log
       - name: Preserve replication proof and per-direction lag
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: replication-e2e-${{ github.sha }}
           path: |
