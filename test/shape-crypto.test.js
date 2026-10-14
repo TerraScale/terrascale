@@ -346,7 +346,8 @@ describe("TBS1 request and object guards", () => {
 
   test("rejects a key id that is not the 26 characters in the header", async () => {
     await expect(decryptShapeObject(bytes(), { ...request(), keyId: "01ARZ3NDEKTSV4RRFFQ69G5FC1" })).rejects.toThrow("key id mismatch");
-    await expect(decryptShapeObject(bytes(), { ...request(), keyId: "short" })).rejects.toThrow("26 characters");
+    await expect(decryptShapeObject(bytes(), { ...request(), keyId: "short" })).rejects.toThrow("26-character ULID");
+    await expect(decryptShapeObject(bytes(), { ...request(), keyId: "é".repeat(26) })).rejects.toThrow("26-character ULID");
   });
 
   test("a valid object decrypts with the expected request", async () => {

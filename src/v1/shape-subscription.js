@@ -11,13 +11,13 @@ import { readShapePage } from "./shape-reader.js";
 /**
  * @typedef {object} V1ShapeSubscribeOptions
  * @property {AbortSignal | undefined} [signal] Closes the subscription when aborted; cancellation settles `done`.
- * @property {((subscription: V1ShapeSubscription) => void) | undefined} [onUpdate] Runs after validated responses and freshness changes; throwing stops the subscription and rejects `done`.
+ * @property {((subscription: V1ShapeSubscription) => void) | undefined} [onUpdate] Runs after validated responses and freshness changes; throwing rejects `done` unless already closed or aborted.
  */
 /** @typedef {{ readonly version: string; readonly document: JsonObject }} V1ShapeDocument */
 const retryBaseMilliseconds = 250;
 const retryCapMilliseconds = 30_000;
-// Bounds consecutive transient failures; a successful response resets the count.
-const maximumConsecutiveRetries = 8;
+// The eighth attempt reaches the delay ceiling; retries continue until success or cancellation.
+const maximumBackoffAttempt = 8;
 /** @param {import("./errors.js").TerraBaseV1Error} error @returns {boolean} */
 function isRetryable(error) {
   return (error.status === 429 && error.code === "shape_busy") ||
@@ -128,8 +128,8 @@ export class V1ShapeSubscription {
           page = await readShapePage(this.#transport, this.#params, request, signal);
         } catch (error) {
           if (!(error instanceof TerraBaseV1Error)) throw error;
-          if (isRetryable(error) && retries < maximumConsecutiveRetries) {
-            retries += 1;
+          if (isRetryable(error)) {
+            retries = Math.min(retries + 1, maximumBackoffAttempt);
             await sleep(retryDelay(retries, error.retryAfter), signal);
             continue;
           }

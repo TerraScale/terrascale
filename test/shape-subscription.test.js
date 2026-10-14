@@ -1,5 +1,4 @@
 import { describe, expect, test, vi } from "vitest";
-import { TerraBaseV1Error } from "../src/v1/errors.js";
 import { parseExactJson } from "../src/v1/json.js";
 import { V1ShapeSubscription } from "../src/v1/shape-subscription.js";
 import { V1Transport } from "../src/v1/transport.js";
@@ -259,17 +258,19 @@ describe("V1ShapeSubscription", () => {
     }
   });
 
-  test("503 unavailable retries with backoff, then gives up after eight retries", async () => {
+  test("503 unavailable continues with capped backoff beyond eight retries", async () => {
     vi.useFakeTimers();
     try {
       const unavailable = () => json(503, { error: { code: "unavailable", message: "later" } });
-      const { fetch, requests } = fakeFetch(Array.from({ length: 9 }, () => unavailable));
-      const subscription = subscribe(fetch);
-      const outcome = subscription.done.then(() => "resolved", error => error);
+      const { fetch, requests } = fakeFetch([
+        ...Array.from({ length: 9 }, () => unavailable),
+        vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
+      ]);
+      const subscription = subscribe(fetch, {}, { onUpdate: stopAfter(2) });
       await vi.runAllTimersAsync();
-      expect(await outcome).toBeInstanceOf(TerraBaseV1Error);
-      expect(await outcome).toMatchObject({ status: 503, code: "unavailable" });
-      expect(requests).toHaveLength(9);
+      await expect(subscription.done).resolves.toBeUndefined();
+      expect(subscription.state).toEqual(snapshotDocuments);
+      expect(requests).toHaveLength(12);
     } finally {
       vi.useRealTimers();
     }
@@ -320,6 +321,15 @@ describe("V1ShapeSubscription", () => {
     expect(requests).toHaveLength(2);
   });
 
+  test("closing or aborting in a callback takes precedence over a later callback exception", async () => {
+    const { fetch } = fakeFetch([() => redirect(handle, "snap.2.0"), () => snapshot()]);
+    const subscription = subscribe(fetch, {}, { onUpdate: (/** @type {V1ShapeSubscription} */ current) => {
+      current.close();
+      throw new Error("after close");
+    } });
+    await expect(subscription.done).resolves.toBeUndefined();
+  });
+
   test("a terminal failure is internally handled while remaining observable through done", async () => {
     const { fetch } = fakeFetch([() => json(401, { error: { code: "unauthorized", message: "no" } })]);
     const subscription = subscribe(fetch, {}, { onUpdate: () => {} });
@@ -342,6 +352,14 @@ describe("V1ShapeSubscription", () => {
     const { fetch, requests } = fakeFetch([() => json(401, { error: { code: "unauthorized", message: "no" } })]);
     const subscription = subscribe(fetch);
     await expect(subscription.done).rejects.toMatchObject({ status: 401, code: "unauthorized" });
+    expect(requests).toHaveLength(1);
+  });
+
+  test("undocumented network failures stop the subscription without retry", async () => {
+    const failure = new TypeError("connection failed");
+    const { fetch, requests } = fakeFetch([() => { throw failure; }]);
+    const subscription = subscribe(fetch);
+    await expect(subscription.done).rejects.toBe(failure);
     expect(requests).toHaveLength(1);
   });
 

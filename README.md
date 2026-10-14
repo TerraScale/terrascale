@@ -199,7 +199,8 @@ try {
 TerraBase error types; malformed responses and network failures also stop it.
 Observe `done` to detect terminal errors. A throwing `onUpdate` stops the
 subscription and rejects `done` with the callback's error; already applied state
-remains available. Document
+remains available. Calling `close()` or aborting takes precedence over a later
+callback exception and resolves `done`. Document
 upserts replace the prior value and deletes of unknown ids are harmless. Repeated
 events are applied: a sealed value can be newer than its event, including after
 failover. There are no durable local writes or offline mutation queue.
@@ -210,7 +211,14 @@ resume or another `409 must_refetch` clears state and starts a fresh snapshot.
 Opaque resume tokens travel verbatim in the query, or `TB-Shape-Resume` when the
 request target would exceed the protocol limit. Only documented transient
 `shape_busy`, `unavailable`, and `shape_too_large` errors retry with backoff and
-`Retry-After`; authorization and validation errors stop the subscription.
+`Retry-After` until success or cancellation; authorization, validation, and
+network errors stop the subscription. The backoff delay is capped at 30 seconds
+unless `Retry-After` requires longer. The maximum signed-64-bit live bucket is
+accepted as a response, as §4 allows, but cannot be sent as the next input;
+`done` rejects with a `TypeError` if that protocol limit is reached.
+
+Origin JSON with a leading UTF-8 BOM is rejected by the v1 transport, including
+historical routes; shape v1 §6 requires bytes without a BOM.
 
 `collection.decryptShapeObject(bytes, { handle, offset, epoch, keyId }, { signal? })`
 fetches the matching epoch key with `cache: "no-store"`, derives the per-object key

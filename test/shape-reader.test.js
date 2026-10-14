@@ -31,6 +31,23 @@ test.each(vectors("offset_vectors"))("offset grammar matches upstream: $value", 
   else expect(() => requireShapeOffset(row.value)).toThrow();
 });
 
+test.each(vectors("cursor_vectors").filter(row => row.id !== "opaque-r8-proof"))("live bucket passthrough matches upstream: $id", async row => {
+  const response = vector("live-timeout").response;
+  let calls = 0;
+  const t = transport(() => {
+    calls++;
+    return new Response(response.body_utf8, { headers: { ...response.headers, "TB-Shape-Cursor": row.expected_cursor } });
+  });
+  const result = readShapePage(t, params, { handle, offset: "4", live: true, cursor: row.input_cursor }, undefined);
+  if (row.expected_error !== undefined) {
+    await expect(result).rejects.toThrow(/below Int64.MaxValue/u);
+    expect(calls).toBe(0);
+  } else {
+    expect((await result).cursor).toBe(row.expected_cursor);
+    expect(calls).toBe(1);
+  }
+});
+
 test("shape fixtures are source-bound and explicitly defer presigned-manifest", async () => {
   const source = JSON.parse(readFileSync(new URL("./fixtures/shape-vectors.source.json", import.meta.url), "utf8"));
   expect(shapeVectorDigest()).toBe(source.sha256);
@@ -62,7 +79,10 @@ describe("origin free shape reads", () => {
   });
   test.each(["proven-cursor-resume-query", "large-resume-token-uses-header"])("passes opaque resume verbatim: %s", async id => {
     const row = vector(id);
-    const token = row.request.query.cursor ?? row.request.headers["TB-Shape-Resume"];
+    const token = id === "proven-cursor-resume-query"
+      ? vectors("cursor_vectors").find(row => row.id === "opaque-r8-proof").token
+      : row.request.headers["TB-Shape-Resume"];
+    if (id === "proven-cursor-resume-query") expect(token).toBe(row.request.query.cursor);
     let calls = 0;
     const t = transport((url, init) => {
       if (++calls === 1) {
@@ -88,6 +108,18 @@ describe("origin free shape reads", () => {
     const page = await readShapePage(t, params, { ...row.request.query, live: true }, undefined);
     expect(page.upToDate).toBe(true);
     await expect(readShapePage(t, params, { ...row.request.query, live: true, cursor: page.cursor }, undefined)).rejects.toThrow(/cursor advance/u);
+  });
+  test("accepts the maximum response bucket but never sends the forbidden maximum input", async () => {
+    const row = vector("live-timeout");
+    let calls = 0;
+    const t = transport(() => {
+      calls++;
+      return new Response(row.response.body_utf8, { headers: { ...row.response.headers, "TB-Shape-Cursor": "9223372036854775807" } });
+    });
+    const page = await readShapePage(t, params, { ...row.request.query, live: true, cursor: "9223372036854775806" }, undefined);
+    expect(page.cursor).toBe("9223372036854775807");
+    await expect(readShapePage(t, params, { ...row.request.query, live: true, cursor: page.cursor }, undefined)).rejects.toThrow(/below Int64.MaxValue/u);
+    expect(calls).toBe(1);
   });
   test("rejects a malformed response before applying any operation", () => {
     const body = structuredClone(vector("closed-commit-upsert-delete").response.body);
