@@ -153,6 +153,17 @@ internal sealed class ReplicationTenant
 
     public async Task BindAsync(TerraBaseTestServer other)
     {
+        await BindCatalogAsync(other);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        var engine = other.Services.GetRequiredService<IStorageEngine>();
+        foreach (var database in _databases.Values)
+        {
+            await engine.CreateDatabaseAsync(database, deadline.Token);
+        }
+    }
+
+    public async Task BindCatalogAsync(TerraBaseTestServer other)
+    {
         ArgumentNullException.ThrowIfNull(other);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var engine = other.Services.GetRequiredService<IStorageEngine>();
@@ -166,11 +177,6 @@ internal sealed class ReplicationTenant
             }
 
             await write.CommitAsync(deadline.Token);
-        }
-
-        foreach (var database in _databases.Values)
-        {
-            await engine.CreateDatabaseAsync(database, deadline.Token);
         }
     }
 }

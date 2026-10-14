@@ -4,6 +4,7 @@ using Google.Protobuf;
 using Grpc.Core;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
+using TerraBase.Errors;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -109,6 +110,14 @@ internal sealed class AntiEntropy : BackgroundService
     internal async Task<int?> RefillAsync(TenantContext database, string machine, Hlc horizon, Ulid incarnation, CancellationToken cancellationToken)
     {
         var peer = Peers(await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false)).FirstOrDefault(member => member.Name == machine);
+        // A copy or restore refills before any batch has created the local file; catalog placement still controls creation.
+        if (peer is not null && database != ChangeGroups.System
+            && (await _tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is not true
+                || await _tenants.EnsureLocalDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not Done))
+        {
+            return null;
+        }
+
         return peer is null ? null : await CompareAsync(database, peer, force: true, cancellationToken, horizon, incarnation).ConfigureAwait(false);
     }
 

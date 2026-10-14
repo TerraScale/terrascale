@@ -402,6 +402,7 @@ public sealed class RemoteAckTests
             var copy = await pair.CopyAsync("copy");
             var cursor = await pair.Source.AckedAsync(copy, pair.PeerNode, pair.Token);
             await Assert.That(cursor is { Acked: 0, RequiresRefill: true }).IsTrue().Because("the copied peer row names the source's incarnation");
+            await Assert.That(await pair.PeerServer.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(copy, pair.Token)).IsNull().Because("catalog replication has not created the peer's restored file");
 
             var id = EntityIds.New().ToString();
             pending = pair.Client.PutAsJsonAsync(pair.Document(id, "copy"), new { n = 1 }, pair.Token);
@@ -1345,7 +1346,7 @@ public sealed class RemoteAckTests
             }
 
             await _tenant.CaptureDatabaseAsync(_origin.Server, name);
-            await _tenant.BindAsync(_peer!.Server);
+            await _tenant.BindCatalogAsync(_peer!.Server);
             return _tenant.Database(name);
         }
 
@@ -1356,6 +1357,8 @@ public sealed class RemoteAckTests
                 ?? throw new InvalidOperationException("the database is missing"));
 
         public TerraBaseTestServer OriginServer => _origin!.Server;
+
+        public TerraBaseTestServer PeerServer => _peer!.Server;
 
         public ShapeSealer OriginSealer => SealerOf(_origin!.Server, _origin!.Server.Services.GetRequiredService<IRemoteDurability>());
 
