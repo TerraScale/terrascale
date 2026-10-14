@@ -305,7 +305,6 @@ export const es: Messages = {
     titleAccent: 'algo juntos.',
     subtitle:
       '¿Tienes preguntas? ¿Necesitas un plan personalizado? ¿Quieres integrarte con TerraScale? Nos encantaría saber de ti.',
-    formTitle: 'Envíanos un mensaje',
     labels: {
       name: 'Nombre',
       email: 'Correo',
@@ -329,7 +328,7 @@ export const es: Messages = {
     errorNoForm: 'No se pudo enviar el formulario. Escríbenos directamente por correo.',
     errorSend: 'Algo salió mal al enviar tu mensaje. Inténtalo de nuevo o escríbenos directamente por correo.',
     note: 'El tráfico del cliente requiere TLS 1.2 o posterior. Los datos en reposo usan cifrado calificado por el servicio.',
-    channelsTitle: 'Otras formas de contactarnos',
+    channelsTitle: 'Contáctanos',
     channels: [
       { value: 'support@terrascale.tech' },
       { value: 'Únete a nuestra comunidad' },

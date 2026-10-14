@@ -303,7 +303,6 @@ export const en = {
     titleAccent: 'something together.',
     subtitle:
       'Have questions? Need a custom plan? Want to integrate with TerraScale? We’d love to hear from you.',
-    formTitle: 'Send us a message',
     labels: {
       name: 'Name',
       email: 'Email',
@@ -327,7 +326,7 @@ export const en = {
     errorNoForm: 'The form could not be submitted. Please email us directly.',
     errorSend: 'Something went wrong sending your message. Please try again, or email us directly.',
     note: 'Customer traffic requires TLS 1.2 or newer. Data at rest uses service-qualified encryption.',
-    channelsTitle: 'Other ways to reach us',
+    channelsTitle: 'Reach us',
     channels: [
       { value: 'support@terrascale.tech' },
       { value: 'Join our community' },
