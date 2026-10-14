@@ -30,6 +30,7 @@ internal sealed class AntiEntropy : BackgroundService
     private const int MaxPageStates = ChangeGroups.MaxDeltas;
 
     private readonly IMembership _membership;
+    private readonly PeerCredential _credential;
     private readonly IChangeGroupSource _source;
     private readonly IReplicaStates _states;
     private readonly IChangeGroupSink _sink;
@@ -43,8 +44,9 @@ internal sealed class AntiEntropy : BackgroundService
 
     public AntiEntropy(
         IMembership membership, IChangeGroupSource source, IReplicaStates states, IChangeGroupSink sink, ITenantDirectory tenants, TimeProvider time,
-        IMeterFactory meters, ILogger<AntiEntropy> logger)
+        IMeterFactory meters, ILogger<AntiEntropy> logger, PeerCredential credential)
     {
+        _credential = credential;
         (_membership, _source, _states, _sink, _tenants, _time, _logger) = (membership, source, states, sink, tenants, time, logger);
         _repairs = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.replication.repairs", "{document}",
             "Documents anti-entropy changed, by the peer region they came from.");
@@ -120,7 +122,7 @@ internal sealed class AntiEntropy : BackgroundService
         }
 
         var ours = local.Buckets;
-        using var channel = PeerChannel.Create(new Uri(peer.PeerAddress));
+        using var channel = PeerChannel.Create(new Uri(peer.PeerAddress), _credential);
         var client = new V1.Replication.ReplicationClient(channel);
         // gRPC evaluates absolute deadlines against the real clock, independently of scheduling and HLC clocks.
         var reply = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(database, incarnation) },

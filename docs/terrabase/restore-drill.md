@@ -8,7 +8,7 @@ An existing machine waits for all recorded/listed peers, or a trusted majority w
 
 Revocations and destructive management routes anchor before acknowledging success, including commit-envelope replay. Failure returns 503 `catalog_anchor_unavailable`; the local commit may exist, so retry. Tenant writes and non-revoking management commits do not wait; background anchoring runs every 15 seconds.
 
-Inspect over `fly ssh`: `curl --http2-prior-knowledge http://<machine-private-address>:8081/v1/catalog-gate`. The response reports `open`, `trusted`, `pending` and SHA-256 of the catalog bucket digests. Unverified tenant recovery never opens the catalog.
+Inspect `/v1/catalog-gate` over `fly ssh` using HTTP/2 and the [peer credential](peer-authentication.md), supplied to curl through a mode-0600 header file that is deleted after use. A bare request on 8081 is currently recorded as unmatched; the following enforcement release will refuse it with 401. The response reports `open`, `trusted`, `pending` and SHA-256 of the catalog bucket digests. Unverified tenant recovery never opens the catalog.
 
 Identical organization/project/database creates reuse live catalog entries without changing versions; missing local storage initializes after successful commit. Different content, ownership, placement and tombstones remain `id_taken`. Shutdown-caused cancelled RPCs become normal cancellation; real faults still surface. Parallel Fast integration controls cover these behaviors and stale/absent/tampered anchors.
 

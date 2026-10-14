@@ -44,7 +44,7 @@ region only.
 ## Who reaches them
 
 - The platform operator: TerraBase's internal listener (`http://top1.nearest.of.ts-terrabase.internal:8081`, HTTP/2
-  prior knowledge, no credential). Fly's private network is the trust boundary. ts-auth stores here
+  prior knowledge, sending `X-TerraBase-Peer-Credential` from `TERRABASE_PEER_SECRET`). Verification outcomes are recorded; refusal is the following rollout phase. ts-auth stores here
   (`App.StorageProject`, `App.StorageDatabase`).
 - Matching scoped project tokens signed by the global issuer: only their own project and database routes, with the
   required scopes. Another project, issuer, customer API key or ordinary user membership cannot grant access
@@ -57,9 +57,12 @@ The dashboard (C# rewrite) reaches TerraBase through the ts-dotnet SDK, like ts-
 
 ```csharp
 var http = new HttpClient(TerraBaseHttp.CreateHandler());
+http.DefaultRequestHeaders.Add("X-TerraBase-Peer-Credential",
+    Environment.GetEnvironmentVariable("TERRABASE_PEER_SECRET")
+        ?? throw new InvalidOperationException("TERRABASE_PEER_SECRET is required"));
 var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
 {
-    // No credential: the internal listener trusts Fly's private network. The SDK sends HTTP/2 prior knowledge.
+    // This internal-only transport sends the Fly credential; the SDK sends HTTP/2 prior knowledge.
     BaseAddress = new Uri("http://top1.nearest.of.ts-terrabase.internal:8081"),
 }).Database("00000000000000000000000005", "ts-dashboard");
 

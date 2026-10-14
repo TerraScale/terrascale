@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.AspNetCore.Connections.Features;
@@ -7,6 +8,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.Management;
 using TerraBase.Features.Pressure;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Hosting;
 
@@ -15,7 +17,7 @@ public enum TerraBaseListener
 {
     /// <summary>
     /// Fly's private network only (<c>fly-local-6pn</c>), HTTP/2 without TLS: inter-node gRPC, administration and the
-    /// platform operator's API. The network is the trust boundary; no service credential is presented.
+    /// platform operator's API. Every request verifies the shared peer credential from Fly secrets and records the outcome.
     /// </summary>
     Internal,
 
@@ -41,7 +43,7 @@ public sealed record ListenerMetadata(params IReadOnlyList<TerraBaseListener> Li
     public static ListenerMetadata Client { get; } = new(TerraBaseListener.Client, TerraBaseListener.Internal);
 
     /// <summary>
-    /// Metadata for unauthenticated health probes, served on the internal listener and, for Fly's health checks, on the
+    /// Metadata for health probes, recording peer credential verification internally and served without it for Fly's checks on the
     /// public listener. They never answer with tenant data.
     /// </summary>
     public static ListenerMetadata Probe { get; } = new(TerraBaseListener.Internal, TerraBaseListener.Client);
@@ -261,9 +263,17 @@ public static class Listeners
     public static WebApplication UseTerraBaseListeners(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
+        var peerRequests = app.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName)
+            .CreateCounter<long>("terrabase.peer.authentication.requests", description: "Internal requests by peer credential verification outcome.");
         app.Use(async (context, next) =>
         {
             var arrivedOn = ArrivedOn(context);
+            if (arrivedOn == TerraBaseListener.Internal)
+            {
+                var matched = context.RequestServices.GetRequiredService<PeerCredential>().Matches(context);
+                peerRequests.Add(1, new KeyValuePair<string, object?>("credential", matched ? "matched" : "unmatched"));
+            }
+
             if (arrivedOn == TerraBaseListener.Client)
             {
                 var region = RegionOf(context);

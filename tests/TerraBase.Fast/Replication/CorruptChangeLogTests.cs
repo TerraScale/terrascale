@@ -196,7 +196,7 @@ public sealed class CorruptChangeLogTests
         };
         var garbage = new Delta { Collection = Items, Id = "y", Stamp = at.Stamp.Value + 1, State = ByteString.CopyFrom([0xFF, 0x00, 0x13, 0x37, 0x42]) };
 
-        using var channel = PeerChannel.Create(node.Api.Server.BaseAddress);
+        using var channel = PeerChannel.Create(node.Api.Server.BaseAddress, PeerTls.Credential);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
         using var call = await HelloAsync(client, origin);
         await call.RequestStream.WriteAsync(new PushFrame { Batch = Batch(node.Database, (1, good), (2, garbage)) });

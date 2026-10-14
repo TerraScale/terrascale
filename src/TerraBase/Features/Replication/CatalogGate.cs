@@ -94,6 +94,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     private static readonly TimeSpan StartBudget = TimeSpan.FromSeconds(5);
 
     private readonly IMembership _membership;
+    private readonly PeerCredential _credential;
     private readonly IMemberDirectory? _directory;
     private readonly AntiEntropy _antiEntropy;
     private readonly IReplicaStates _states;
@@ -133,9 +134,10 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
 
     public CatalogGate(
         IMembership membership, AntiEntropy antiEntropy, IReplicaStates states, IChangeGroupSource source, IStorageEngine engine, TerraBaseOptions options,
-        TimeProvider time, IMeterFactory meters, ILogger<CatalogGate> logger, IMemberDirectory? directory = null,
+        TimeProvider time, IMeterFactory meters, ILogger<CatalogGate> logger, PeerCredential credential, IMemberDirectory? directory = null,
         IObjectStore? bucket = null, DataKeys? keys = null)
     {
+        _credential = credential;
         (_membership, _directory, _antiEntropy, _states, _source, _engine, _options, _time, _logger) =
             (membership, directory, antiEntropy, states, source, engine, options, time, logger);
         // The anchor needs the backup bucket and its keys: it is sealed like every backup object.
@@ -396,9 +398,9 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
 
     // Whether the peer's catalog is known not to be a restored older copy (its gate's Trusted, GET /catalog-gate on its
     // internal listener); a pull from it verifies nothing otherwise.
-    private static async Task<bool> PeerTrustedAsync(ClusterMember peer, CancellationToken cancellationToken)
+    private async Task<bool> PeerTrustedAsync(ClusterMember peer, CancellationToken cancellationToken)
     {
-        using var client = new HttpClient
+        using var client = new HttpClient(_credential.Wrap(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }))
         {
             BaseAddress = new Uri(peer.PeerAddress),
             DefaultRequestVersion = System.Net.HttpVersion.Version20,

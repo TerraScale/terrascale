@@ -6,10 +6,12 @@ namespace TerraBase.Features.Replication;
 internal static class PeerChannel
 {
     /// <summary>A channel to <paramref name="address"/> (<c>http://host:port</c>).</summary>
-    public static GrpcChannel Create(Uri address)
+    public static GrpcChannel Create(Uri address, PeerCredential credential)
     {
         var handler = new SocketsHttpHandler
         {
+            AllowAutoRedirect = false,
+            UseCookies = false,
             ConnectTimeout = ReplicationProtocol.ProgressTimeout,
             // HTTP/2 pings find a silently dropped connection in seconds, not at the TCP retransmission timeout.
             KeepAlivePingDelay = TimeSpan.FromSeconds(10),
@@ -18,7 +20,7 @@ internal static class PeerChannel
         };
         return GrpcChannel.ForAddress(address, new GrpcChannelOptions
         {
-            HttpHandler = handler,
+            HttpHandler = credential.Wrap(handler),
             DisposeHttpClient = true,
             MaxSendMessageSize = ReplicationProtocol.MaxMessageBytes,
             MaxReceiveMessageSize = ReplicationProtocol.MaxMessageBytes,

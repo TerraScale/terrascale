@@ -38,7 +38,7 @@ public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
                 request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
             }
 
-            using var response = await fixture.Server.Http.SendAsync(request);
+            using var response = await (client == "management" ? fixture.Server.Http : fixture.Server.PublicHttp).SendAsync(request);
             if (response.StatusCode is HttpStatusCode.MethodNotAllowed
                 || response.StatusCode is HttpStatusCode.NotFound
                 && (await response.Content.ReadAsStringAsync()) is var body && (body.Length == 0 || body.Contains("unknown_route", StringComparison.Ordinal)))

@@ -39,20 +39,24 @@ prerequisites() {
   gh auth status > /dev/null 2>&1 || die "gh is not logged in"
 }
 
-# gru's internal listener: h2c, no credential (Fly's private network is the trust boundary).
+# gru's authenticated internal listener; the secret never appears in curl's arguments.
 open_proxy() {
+  [[ ${TERRABASE_PEER_SECRET:-} =~ ^[[:xdigit:]]{64}$ ]] || die "TERRABASE_PEER_SECRET must contain 64 hexadecimal characters"
+  umask 077
+  peer_headers=$(mktemp /tmp/terrabase-peer-headers.XXXXXX)
+  trap 'if [[ -n ${proxy:-} ]]; then kill "$proxy" 2> /dev/null || true; fi; rm -f -- "$peer_headers"' EXIT
+  printf 'X-TerraBase-Peer-Credential: %s\n' "$TERRABASE_PEER_SECRET" > "$peer_headers"
   flyctl proxy "$PORT:8081" "gru.$APP.internal" --app "$APP" > /dev/null 2>&1 &
   proxy=$!
-  trap 'kill "$proxy" 2> /dev/null || true' EXIT
   local _
   for _ in $(seq 1 30); do
-    [[ $(curl -s -m 2 --http2-prior-knowledge "$BASE/healthz" | jq -r '.region // empty' 2> /dev/null) == gru ]] && return 0
+    [[ $(curl -s -m 2 --http2-prior-knowledge --header "@$peer_headers" "$BASE/healthz" | jq -r '.region // empty' 2> /dev/null) == gru ]] && return 0
     sleep 1
   done
   die "gru's TerraBase internal listener did not answer through flyctl proxy"
 }
 
-management() { curl -sS --fail --http2-prior-knowledge -H "X-TerraBase-User-Id: $OWNER" -H 'content-type: application/json' "$@"; }
+management() { curl -sS --fail --http2-prior-knowledge --header "@$peer_headers" -H "X-TerraBase-User-Id: $OWNER" -H 'content-type: application/json' "$@"; }
 
 find_ids() {
   local m="$BASE/v1/management/organizations"
@@ -90,7 +94,7 @@ install() {
   fi
   previous=$(management "$(keys_path)" | jq -r --arg n "$KEY_NAME" '.items[] | select(.name == $n) | .id')
   # The key goes from TerraBase's response into GitHub through the pipe only.
-  curl -sS --fail --http2-prior-knowledge -H 'content-type: application/json' \
+  curl -sS --fail --http2-prior-knowledge --header "@$peer_headers" -H 'content-type: application/json' \
     -d "$(jq -cn --arg n "$KEY_NAME" --arg o "$organization" --arg p "$project" \
       '{name: $n, scopes: ["documents:read", "documents:write"], organizationId: $o, projectId: $p}')" \
     "$BASE/admin/api-keys" | jq -jer .secret | gh secret set "$SECRET" --repo "$REPO"

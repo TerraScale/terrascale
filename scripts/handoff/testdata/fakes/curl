@@ -2,19 +2,24 @@
 # Fake curl: ts-auth/TerraBase readiness and gru's TerraBase internal listener (management, API keys) as JSON state in
 # $FAKE_DIR/tb.json. Logs method and URL only.
 set -euo pipefail
-method="" data="" out="" write="" fail=0 url=""
+method="" data="" out="" write="" fail=0 url="" peer_header=""
 while [[ $# -gt 0 ]]; do
   case $1 in
     -X) method=$2; shift ;;
     -d) data=$2; shift ;;
     -o) out=$2; shift ;;
     -w) write=$2; shift ;;
+    --header) peer_header=$2; shift ;;
     -H | -m) shift ;;
     --fail | -sS | --fail-with-body) fail=1 ;;
     http*) url=$1 ;;
   esac
   shift
 done
+if [[ $url == http://127.0.0.1:18082/* ]]; then
+  [[ $peer_header == @/* && $(stat -c %a "${peer_header#@}") == 600 ]] || { echo "fake curl: missing private peer header file" >&2; exit 2; }
+  [[ $(cat "${peer_header#@}") == "X-TerraBase-Peer-Credential: $TERRABASE_PEER_SECRET" ]] || { echo "fake curl: incorrect peer header" >&2; exit 2; }
+fi
 [[ -n $method ]] || { [[ -n $data ]] && method=POST || method=GET; }
 echo "curl $method $url" >> "$FAKE_LOG"
 state="$FAKE_DIR/tb.json"

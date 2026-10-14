@@ -393,7 +393,7 @@ seconds is not ready. Unknown `region` is omitted.
 
 Zero-config: TerraBase seeds the platform project `00000000000000000000000002` with database `ts-auth` on every
 start, and ts-auth stores everything there through TerraBase's internal listener
-(every write and every read but discovery's and the JWKS's at gru's `http://gru.ts-terrabase.internal:8081`, failing closed when it does not answer; discovery and the JWKS at its own region's; no credential; see [csharp-port.md](csharp-port.md), "Storage endpoints"). At startup every replica creates
+(every write and every read but discovery's and the JWKS's at gru's `http://gru.ts-terrabase.internal:8081`, failing closed when it does not answer; discovery and the JWKS at its own region's; the shared peer credential from `TERRABASE_PEER_SECRET`; see [csharp-port.md](csharp-port.md), "Storage endpoints"). At startup every replica creates
 `AuthStore.RequiredCollections`, seeds the TerraScale owner and both projects, and provisions the first encrypted
 signing key when absent (all idempotent), retrying after five seconds and backing off
 ([signing-keys.md](signing-keys.md), [platform-bootstrap.md](platform-bootstrap.md)). `/readyz` answers 503 until startup

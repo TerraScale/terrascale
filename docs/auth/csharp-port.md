@@ -106,7 +106,7 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
     drop one to a machine that vanished, so these reads are back in the own region within about 30 s of it answering
     again. A TerraBase that cannot be reached answers 503 `temporarily_unavailable`. `/readyz` is ready only while gru
     takes writes.
-  - No credential, so there is no API key, member list, CA or failover setting. In a PR preview (`FLY_APP_NAME` is
+  - Both TerraBase storage transports send `X-TerraBase-Peer-Credential` from the shared Fly secret `TERRABASE_PEER_SECRET` (64 hexadecimal characters). A missing or malformed secret refuses ts-auth startup on Fly. There is no member list, CA or failover setting. In a PR preview (`FLY_APP_NAME` is
     `ts-pr-<n>`, in the separate org `terrascale-previews`) the app's one machine runs TerraBase next to ts-auth, so
     reads and writes go to `http://<FLY_REGION>.ts-pr-<n>.internal:8081`: that same machine.
 - **Consistency across regions.** Writes and authorization reads see one copy, gru's, so every conditional write keeps

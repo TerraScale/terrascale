@@ -37,32 +37,34 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 
     /// <summary>
     /// Points a ts-auth server's storage at <paramref name="databaseName"/> of the tenant's project in this fixture: by
-    /// default through TerraBase's internal listener without a credential, as ts-auth reaches it on Fly; with
+    /// default through TerraBase's internal listener with the peer credential, as ts-auth reaches it on Fly; with
     /// <paramref name="apiKey"/>, through the public listener with that key. A test may register its own HttpClient,
     /// wrapping <see cref="NewHandler"/>.
     /// </summary>
     public void UseStorage(IServiceCollection services, TerraBaseTestTenant tenant, string databaseName = "auth", string? apiKey = null)
     {
-        services.AddSingleton(this.Server.Http);
+        services.AddSingleton(apiKey is null ? this.Server.Http : this.Server.PublicHttp);
         services.AddSingleton(provider => new TerraBaseDocumentsClient(provider.GetRequiredService<HttpClient>(), apiKey is null
             ? new TerraBaseDocumentsClientOptions { BaseAddress = this.Server.InternalAddress }
             : new TerraBaseDocumentsClientOptions { BaseAddress = this.Server.ClientAddress, ApiKey = apiKey }).Database(tenant.Project.Id, databaseName));
     }
 
     /// <summary>
-    /// Points storage at the tenant's databases as ts-auth reaches them on Fly (internal listeners, no credential), through
-    /// ts-auth's own transports: discovery and JWKS reads at <paramref name="ownRegion"/> (database
-    /// <paramref name="localDatabase"/>), at <paramref name="otherRegion"/> when it does not answer; everything else at
-    /// <paramref name="designatedRegion"/> (database <paramref name="designatedDatabase"/>), with no fallback. Two database
-    /// names stand for two regions' copies that have not replicated.
+    /// Points storage at the tenant's databases as ts-auth reaches them on Fly (internal listeners, with the peer credential
+    /// passed explicitly to the transports), through ts-auth's own transports: discovery and JWKS reads at
+    /// <paramref name="ownRegion"/> (database <paramref name="localDatabase"/>), at <paramref name="otherRegion"/> when it does
+    /// not answer; everything else at <paramref name="designatedRegion"/> (database <paramref name="designatedDatabase"/>), with
+    /// no fallback. Two database names stand for two regions' copies that have not replicated.
     /// </summary>
     public static void UseRegionalStorage(IServiceCollection services, TerraBaseTestTenant tenant, Uri ownRegion, TcpRelay otherRegion, Uri designatedRegion,
         string localDatabase = "auth", string designatedDatabase = "auth")
     {
-        services.AddSingleton(new HttpClient(TerraBaseTransport.CreateHandler([new DnsEndPoint("127.0.0.1", otherRegion.Port)], NullLogger.Instance)));
+        services.AddSingleton(new HttpClient(TerraBaseTransport.CreateHandler([new DnsEndPoint("127.0.0.1", otherRegion.Port)], NullLogger.Instance,
+            peerSecret: TerraBaseTestServer.PeerSecret)));
         services.AddSingleton(provider => new TerraBaseDocumentsClient(provider.GetRequiredService<HttpClient>(),
             new TerraBaseDocumentsClientOptions { BaseAddress = ownRegion }).Database(tenant.Project.Id, localDatabase));
-        services.AddKeyedSingleton(App.StorageAuthority, new HttpClient(TerraBaseTransport.CreateHandler([], NullLogger.Instance)));
+        services.AddKeyedSingleton(App.StorageAuthority, new HttpClient(TerraBaseTransport.CreateHandler([], NullLogger.Instance,
+            peerSecret: TerraBaseTestServer.PeerSecret)));
         services.AddKeyedSingleton(App.StorageAuthority, (provider, _) => new TerraBaseDocumentsClient(provider.GetRequiredKeyedService<HttpClient>(App.StorageAuthority),
             new TerraBaseDocumentsClientOptions { BaseAddress = designatedRegion }).Database(tenant.Project.Id, designatedDatabase));
     }
@@ -76,10 +78,13 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         return copy;
     }
 
-    public static HttpClient NewHttpClient() => new(NewHandler());
+    public static HttpClient NewHttpClient() => new(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
 
-    /// <summary>A handler for this fixture's TerraBase that never follows redirects.</summary>
-    public static SocketsHttpHandler NewHandler() => new() { AllowAutoRedirect = false, UseCookies = false };
+    /// <summary>A handler for this fixture's TerraBase that never follows redirects and sends the peer credential.</summary>
+    public static HttpMessageHandler NewHandler() => new PeerCredentialHandler(TerraBaseTestServer.PeerSecret)
+    {
+        InnerHandler = new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false },
+    };
 
     public static JsonElement Json(string json)
     {

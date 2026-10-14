@@ -34,10 +34,12 @@ var environmentName = args.LastOrDefault(argument => argument.StartsWith("--envi
     ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
     ?? Environments.Production;
 TerraBaseOptions options;
+PeerCredential peerCredential;
 IPAddress internalAddress;
 try
 {
     options = TerraBaseOptions.FromProcess(args);
+    peerCredential = PeerCredential.FromProcess(options);
     internalAddress = Listeners.InternalAddress(options);
 }
 catch (TerraBaseConfigurationException error)
@@ -61,7 +63,8 @@ var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args 
 builder.Configuration.Sources.Clear();
 builder.WebHost.ConfigureKestrel(kestrel => kestrel.AddTerraBaseListeners(options, internalAddress, environmentName));
 // Per-request framework logs are metrics' job; keep the log stream for events. An unauthenticated request is answered 401
-// on purpose, so its challenge is not an event either.
+// on purpose, so its challenge is not an event either. Peer credential verification outcomes are counters,
+// never per-request logs or secret values.
 builder.Logging.AddTerraBaseLogging();
 
 var runCompletion = new ApplicationRunCompletion();
@@ -69,6 +72,7 @@ builder.Services.AddSingleton(runCompletion);
 builder.Services.AddSingleton<Shutdown>();
 builder.Services.Configure<HostOptions>(host => host.ShutdownTimeout = Shutdown.HostedBudget);
 builder.Services.AddSingleton(options);
+builder.Services.AddSingleton(peerCredential);
 builder.Services.AddSingleton(TimeProvider.System);
 // Outbound clients keep one handler for the host's lifetime and recycle its connections instead (DNS changes still
 // apply). A rotated handler's expiry timer would keep a stopped host's whole service provider, metrics included,
@@ -131,6 +135,7 @@ try
     app.UseTerraBaseBadRequests();
     app.UseTerraBaseLegacyRoutes();
     app.UseRouting();
+    app.UseTerraBaseListeners();
     // Refuse new work on existing connections while preserving the probes' shutdown responses.
     app.Use((context, next) =>
     {
@@ -143,7 +148,6 @@ try
 
         return next(context);
     });
-    app.UseTerraBaseListeners();
     app.UseTerraBaseQosMemory();
     app.UseTerraBaseCatalogGate();
     app.UseAuthentication();

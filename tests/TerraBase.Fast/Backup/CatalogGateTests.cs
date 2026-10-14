@@ -7,6 +7,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Errors;
+using TerraBase.Fast.Replication;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
 using TerraBase.Features.Replication;
@@ -133,6 +134,15 @@ public sealed class CatalogGateTests
             services.AddSingleton<IMemberDirectory>(members);
         });
         await Assert.That(replacement.Services.GetRequiredService<ICatalogGate>().IsOpen).IsTrue();
+
+        // The trust probe reached healthy's internal listener, the only peer it has, and crossed the credential check.
+        using (var scraper = new HttpClient { BaseAddress = healthy.Server.MetricsAddress, Timeout = Timeout.InfiniteTimeSpan })
+        {
+            var (matched, unmatched) = await PeerCredentialObservationTests.CountsAsync(scraper);
+            await Assert.That(matched).IsGreaterThan(0);
+            await Assert.That(unmatched).IsEqualTo(0);
+        }
+
         var recovered = await replacement.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
         await using var read = await recovered.BeginTransactionAsync(write: false, token);
         await Assert.That(await read.GetAsync("organizations", organization, token)).IsNotNull();
@@ -319,7 +329,7 @@ public sealed class CatalogGateTests
             var gate = restored.Services.GetRequiredService<ICatalogGate>();
             await Assert.That(gate.IsOpen).IsFalse();
             await Assert.That(gate.Trusted).IsFalse();
-            using var channel = PeerChannel.Create(restored.PeerAddress!);
+            using var channel = PeerChannel.Create(restored.PeerAddress!, PeerTls.Credential);
             var peer = new TerraBase.Features.Replication.V1.Replication.ReplicationClient(channel);
             var digest = await peer.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(ChangeGroups.System, null) }, cancellationToken: token);
             await Assert.That(digest.Held).IsFalse();

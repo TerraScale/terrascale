@@ -119,7 +119,7 @@ public sealed class IncarnationContractTests
         await Assert.That(pin).IsNotEqualTo(other);
         var bucket = SqliteStorageTransaction.Bucket("items", id);
 
-        using var channel = PeerChannel.Create(gru.Api.Server.BaseAddress);
+        using var channel = PeerChannel.Create(gru.Api.Server.BaseAddress, PeerTls.Credential);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
         var discovered = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(cluster.Database, null) });
         await Assert.That(discovered.Held).IsTrue();
@@ -172,7 +172,7 @@ public sealed class IncarnationContractTests
         await using var cluster = await ReplicaCluster.StartAsync("gru");
         var gru = cluster["gru"];
         await gru.WriteAsync(async transaction => _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None));
-        using var channel = PeerChannel.Create(gru.Api.Server.BaseAddress);
+        using var channel = PeerChannel.Create(gru.Api.Server.BaseAddress, PeerTls.Credential);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push();
         var origin = ReplicaId.Of(1, 7, 0);
         await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = origin.Value, Region = "sjc" } });
