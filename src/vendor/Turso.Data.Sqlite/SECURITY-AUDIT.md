@@ -162,13 +162,26 @@ covers the patch; it does not repeat the package or Rust advisory audit above.
 ### Patch 0006 (2026-10-14)
 
 `SqliteDataReader` uses the existing native column-declaration binding before falling back to schema queries,
-and numeric or null values do not look up a GUID declaration. This removes repeated PRAGMA preparations from
-the value-reading path. GUID conversion and stripped type names remain unchanged; expression columns retain
-the existing fallback. No native package, dependency, configuration, public API or persisted format changes.
+and numeric or null values do not look up a GUID declaration. This avoids schema-query preparation when native
+metadata supplies the declaration; expressions with no native declaration retain the existing fallback.
+No native package, dependency, configuration, public API signature or persisted format changes.
+
+Real-native comparison against the parent commit measured these metadata changes:
+
+| Query | Before | Patch 0006 |
+|---|---|---|
+| Table GUID column | GUID declaration and `Guid` value | Unchanged |
+| Second-table GUID column in a join | First table's same-named column declaration | Correct source declaration (`UNIQUEIDENTIFIER`) and `Guid` value |
+| Aliased VARCHAR column | TEXT | VARCHAR |
+| View over GUID/VARCHAR columns | GUID/`Guid`, VARCHAR | Native affinities NUMERIC/`string`, TEXT |
+| Literal column from a FROM-subquery | INTEGER/`long` metadata | BLOB/`byte[]` metadata; value remains `long` |
+
+The view case loses GUID conversion. TerraBase creates no views, declares no GUID/UNIQUEIDENTIFIER columns,
+and does not call these type-metadata APIs; its FROM-subquery reads values by runtime type.
 
 Real-native regression tests cover both GUID encodings, text, blobs, integers, reals, nulls and expression columns
-across result sets. Native metadata returns GUID and VARCHAR declarations in the pinned library. All nine driver
-tests passed locally; TerraBase and hosted performance qualification remain pending. This supplement does not
+across result sets. Join and view tests pin the changed metadata behaviour. Native metadata returns GUID and
+VARCHAR declarations for table columns in the pinned library. Hosted performance qualification remains pending. This supplement does not
 repeat the package or Rust advisory audit above.
 
 ## 6. Rust crates in `libturso_sdk_kit`

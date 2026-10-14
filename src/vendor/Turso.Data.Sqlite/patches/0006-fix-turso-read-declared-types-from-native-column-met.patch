@@ -3,6 +3,11 @@ From: mariogk <mariogk@terrascale.tech>
 Date: Wed, 14 Oct 2026 15:58:28 -0300
 Subject: [PATCH] fix(turso): read declared types from native column metadata
 
+Table GUID conversion is preserved; joins and aliases use source declarations.
+Turso v0.8.2 returns affinities for view columns (GUID becomes NUMERIC/string,
+VARCHAR becomes TEXT) and BLOB metadata for FROM-subquery literals. TerraBase
+has no views or GUID declarations and reads those subquery values by runtime type.
+
 ---
  src/Turso.Data.Sqlite/SqliteDataReader.cs | 7 ++++++-
  1 file changed, 6 insertions(+), 1 deletion(-)
