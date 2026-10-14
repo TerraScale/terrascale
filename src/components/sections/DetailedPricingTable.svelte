@@ -260,5 +260,10 @@
       white-space: normal;
       overflow-wrap: anywhere;
     }
+
+    .detailed__table tbody tr:nth-child(-n + 5) td {
+      white-space: nowrap;
+      overflow-wrap: normal;
+    }
   }
 </style>
