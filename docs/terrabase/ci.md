@@ -1,6 +1,6 @@
 # CI and releases
 
-`.github/workflows/ci.yml` runs on every pull request, merge-group check and push to main. Every job selects `${{ vars.CI_RUNNER || 'ubuntu-latest' }}`; the public migration owner deletes `CI_RUNNER` only after the repository becomes public. Its one required check, `test`, passes when every area job that ran passed. The area jobs run in parallel. Each exports its `build-<area>` layer after whitespace format, Release compilation with analyzers as errors, static checks and service publication, then runs Fast without caching test results. Fast, Slow, preview and production images reuse that compiled layer with identical build arguments.
+`.github/workflows/ci.yml` runs on every pull request, merge-group check and push to main. The repository is public and every job runs on GitHub-hosted `ubuntu-latest`; the old `CI_RUNNER` variable has been removed. Its one required check, `test`, passes when every area job that ran passed. The area jobs run in parallel. Each exports its `build-<area>` layer after whitespace format, Release compilation with analyzers as errors, static checks and service publication, then runs Fast without caching test results. Fast, Slow, preview and production images reuse that compiled layer with identical build arguments.
 
 | Job | Stage | Runs on a pull request when these change |
 |---|---|---|
