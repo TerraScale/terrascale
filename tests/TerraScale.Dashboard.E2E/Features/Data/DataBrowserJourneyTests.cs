@@ -77,7 +77,7 @@ public sealed class DataBrowserJourneyTests(DashboardRootFixture fixture)
         await page.Locator("#documents thead").GetByRole(AriaRole.Link, new() { Name = "total", Exact = true }).ClickAsync();
         await page.WaitForURLAsync("**/documents/orders?sort=total");
         await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
-        await Assert.That(await page.Locator("#documents th[aria-sort='ascending'] .ts-data-sort span").InnerTextAsync()).IsEqualTo("total");
+        await Assert.That(await page.Locator("#documents th[aria-sort='ascending'] .ts-data-sort span").TextContentAsync()).IsEqualTo("total");
         await Assert.That((await page.Locator("#documents .ts-data-doc-id").AllTextContentsAsync()).SequenceEqual(new[] { ascendingIds[2], ascendingIds[0], ascendingIds[1] })).IsTrue();
 
         await NavigateAsync(database + "/sql");
