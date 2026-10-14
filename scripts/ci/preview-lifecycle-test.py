@@ -22,8 +22,12 @@ for job in (preview, discover, cleanup):
     assert "    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}\n" in job and "runs-on: alpha" not in job
 
 # Discovery publishes what it decided even when it fails; cleanup runs only for a non-empty JSON list.
-cleanup_if = "if: ${{ !cancelled() && startsWith(needs.discover.outputs.prs, '[') && needs.discover.outputs.prs != '[]' }}"
-assert cleanup_if in cleanup
+cleanup_if = (
+    "!cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) "
+    "&& startsWith(needs.discover.outputs.prs, '[') && needs.discover.outputs.prs != '[]'"
+)
+condition = re.search(r"^    if: >-\n((?:      .+\n)+)", cleanup, re.M)
+assert condition and " ".join(condition[1].split()) == cleanup_if
 discover_run = textwrap.dedent(discover.split("        run: |\n", 1)[1])
 for event, printed, script_exit, prs, job_exit in [
         ("pull_request", "", 0, "[123]", 0), ("schedule", "[1,3]", 0, "[1,3]", 0), ("schedule", "[]", 0, "[]", 0),
