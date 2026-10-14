@@ -6,6 +6,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
 using TerraBase.Features.Shapes;
 using TerraBase.Fast.Documents;
 using TerraBase.Testing;
@@ -220,6 +222,8 @@ public sealed class ShapeMirrorHttpTests
             {
                 s3.RoutePlatform(services);
                 ManualBackupHosting.Configure(services);
+                // The engine stamps sealed_at with its deadline clock; freeze at test start so chunks stay inside retention.
+                services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider(DateTimeOffset.UtcNow));
             });
             return new MirrorHost(api, s3);
         }
