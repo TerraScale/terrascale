@@ -432,6 +432,17 @@ from the object. A mismatched object fails its tags. Reject the whole object, ap
 
 Whatever the client already read stays readable.
 
+**FR-21 integration.** `IShapeCrypto.EncryptAsync` accepts a tenant, handle, canonical request offset and the exact
+sealed plaintext bytes. It returns a disposable `ShapeCiphertext` owning memory admission, with its bytes, epoch and
+project data-key id. It always selects the current epoch; callers cannot supply an old epoch or a deterministic salt.
+`CurrentEpoch` and `CurrentKeyAsync` expose the current epoch and its handle-scoped key. Keys reuse the platform backup
+`DataKeys` and `BackupLayout.KeyScope`; a development host without that key store answers `503 unavailable`.
+
+The key endpoint uses `IShapeLineages` to validate the collection's current handle. Until FR-20 connects filtered
+lineage lookup, only the unfiltered lineage is resolvable. Historical `(epoch, key_id)` pairs require
+`IShapeKeyRetention.HasObjectAsync` proof from the retained T1 objects; FR-22 supplies that proof. Before T1 objects
+exist the default refuses historical pairs with `409 must_refetch`, rather than releasing unproven keys.
+
 ## 14. Manifest (presigned, D2)
 
 `GET …/collections/{collection}/shape/manifest?handle=&offset=`, with the same scope, tenancy and errors as section 13.
