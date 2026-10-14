@@ -34,6 +34,7 @@ type bench struct {
 	sse        *http.Client
 	shape      *http.Client // follows no redirect: the bootstrap's 307 is read, then followed by hand
 	metrics    string
+	admitBy    time.Time // shape followers repeat a refusal before admission until then (live load only)
 }
 
 // probe holds a step's raw metric lines, for the report.
@@ -105,10 +106,13 @@ func (b *bench) findMetrics(ctx context.Context) error {
 
 // measure is one step's delivery record.
 type measure struct {
-	bytes   atomic.Int64 // response body bytes read by admitted followers
-	atHead  atomic.Int64 // shape followers that sent their first live long-poll (client side, before it reaches the server)
-	retries atomic.Int64 // shape requests repeated after a busy or unavailable refusal in the window
-	qosBusy atomic.Int64 // 429 tenant_busy answers to followers, before or after admission; each is repeated after Retry-After
+	bytes    atomic.Int64      // response body bytes read by admitted followers
+	atHead   atomic.Int64      // shape followers that sent their first live long-poll (client side, before it reaches the server)
+	retries  atomic.Int64      // shape requests repeated after a busy or unavailable refusal in the window
+	qosBusy  atomic.Int64      // 429 tenant_busy answers to followers, before or after admission; each is repeated after Retry-After
+	refused  atomic.Int64      // shape refusals before admission repeated until bench.admitBy (live load only)
+	failures atomic.Int64      // shape followers that ended on an error
+	codes    [600]atomic.Int64 // shape responses by HTTP status
 
 	mu         sync.Mutex
 	start, end time.Time // the recorded window, by write send time
@@ -463,9 +467,13 @@ func (b *bench) write(ctx context.Context, t0, start, end time.Time, inWindow, q
 			resp, err := b.put(ctx, replbench.DocPath(b.collection, ulid.Make().String()), document(sent), qosBusy)
 			switch {
 			case err != nil:
-				once.Do(func() { failed = fmt.Errorf("write sent at %s answered after %s: %w", sent.UTC().Format(time.RFC3339Nano), time.Since(sent), err) })
+				once.Do(func() {
+					failed = fmt.Errorf("write sent at %s answered after %s: %w", sent.UTC().Format(time.RFC3339Nano), time.Since(sent), err)
+				})
 			case resp.Status/100 != 2:
-				once.Do(func() { failed = fmt.Errorf("write sent at %s answered after %s: HTTP %d %s", sent.UTC().Format(time.RFC3339Nano), time.Since(sent), resp.Status, resp.Body) })
+				once.Do(func() {
+					failed = fmt.Errorf("write sent at %s answered after %s: HTTP %d %s", sent.UTC().Format(time.RFC3339Nano), time.Since(sent), resp.Status, resp.Body)
+				})
 			case !sent.Before(start) && sent.Before(end):
 				inWindow.Add(1)
 			}

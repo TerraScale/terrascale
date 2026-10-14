@@ -62,6 +62,7 @@ func (b *bench) followShape(ctx context.Context, m *measure, outcomes chan<- str
 	)
 	fail := func(err error) {
 		if ctx.Err() == nil {
+			m.failures.Add(1)
 			m.fail(err)
 		}
 		if !admitted {
@@ -133,6 +134,14 @@ func (b *bench) followShape(ctx context.Context, m *measure, outcomes chan<- str
 				continue
 			}
 			if !admitted && (resp.status == http.StatusTooManyRequests && code == "shape_busy" || resp.status == http.StatusServiceUnavailable && code == "shape_too_large") {
+				// The live load (load.go) repeats a refusal until b.admitBy, as a client would; B2 leaves admitBy zero.
+				if time.Now().Before(b.admitBy) {
+					m.refused.Add(1)
+					if !sleep(ctx, shapeRetryWait) {
+						return
+					}
+					continue
+				}
 				outcomes <- "rejected_" + code
 				return
 			}
@@ -161,6 +170,7 @@ func (b *bench) shapeGet(ctx context.Context, m *measure, target string) (shapeR
 		return shapeResponse{}, err
 	}
 	defer resp.Body.Close()
+	m.codes[min(resp.StatusCode, len(m.codes)-1)].Add(1)
 	body, err := io.ReadAll(countingReader{resp.Body, &m.bytes})
 	if err != nil {
 		return shapeResponse{}, err

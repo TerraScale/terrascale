@@ -91,6 +91,15 @@ var followers = []int{1, 10, 100, 1000}
 var spec = apibench.Spec{WarmupS: 5, StepS: 30, Safety: apibench.Safety{MaxErrorRate: 0.0001}}
 
 func main() {
+	run := run
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "load":
+			run = func() error { return load(os.Args[2:]) }
+		case "merge":
+			run = func() error { return mergeCmd(os.Args[2:]) }
+		}
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "shape-bench:", err)
 		os.Exit(1)
