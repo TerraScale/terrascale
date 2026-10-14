@@ -13,6 +13,7 @@ using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -1132,20 +1133,32 @@ public sealed class PeerStreamTests
         await Assert.That(sjc.RefillMemory.Reserved).IsEqualTo(0);
     }
 
-    // Shutdown ends a push stream that has not finished its hello (F8): the handler returns at once and the call ends cleanly,
-    // rather than holding the host's graceful drain until its connection is aborted.
+    // F8: observe the receiver's clean end before allowing Kestrel to tear down the HTTP/2 transport.
     [Test]
     public async Task Shutdown_ends_a_push_stream_still_waiting_for_its_hello()
     {
-        await using var cluster = await Cluster.StartAsync("gru");
+        var shutdown = new ShutdownBarrier();
+        await using var cluster = await Cluster.StartAsync(cdc: false, clock: null,
+            configure: (_, services) => services.AddHostedService(_ => shutdown), "gru");
         var gru = cluster["gru"];
         using var channel = PeerChannel.Create(gru.Api.Server.BaseAddress, PeerTls.Credential);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push();
-        await Assert.That(await gru.UntilMetricAsync("http_server_active_requests", value => value >= 1, "http_request_method=\"POST\"")).IsTrue();
-
-        gru.Api.Server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await Assert.That(await call.ResponseStream.MoveNext(timeout.Token)).IsFalse();
+        try
+        {
+            _ = await call.ResponseHeadersAsync.WaitAsync(Deadline);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var ending = call.ResponseStream.MoveNext(timeout.Token);
+            shutdown.Hold();
+            gru.Api.Server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
+            await shutdown.Entered.Task.WaitAsync(timeout.Token);
+            await Assert.That(await ending).IsFalse();
+            shutdown.Release.SetResult();
+            await gru.Api.Server.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task.WaitAsync(Deadline);
+        }
+        finally
+        {
+            _ = shutdown.Release.TrySetResult();
+        }
     }
 
     // A refill certifies its head only for complete coverage: a source that no longer holds the database covered nothing,
@@ -1623,7 +1636,14 @@ public sealed class PeerStreamTests
     [Test]
     public async Task Shutdown_ends_a_replacement_waiting_for_its_predecessors_refill()
     {
-        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var shutdown = new ShutdownBarrier();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock: null, configure: (region, services) =>
+        {
+            if (region == "sjc")
+            {
+                services.AddHostedService(_ => shutdown);
+            }
+        }, "gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         var lost = EntityIds.New().ToString();
         await gru.WriteAsync(async transaction =>
@@ -1654,14 +1674,20 @@ public sealed class PeerStreamTests
             };
             using var replacement = await RawPush.OpenAsync(sjc, peer);
             await observed.Task.WaitAsync(Deadline);
-            // Headers arrive while the predecessor still holds the refill; shutdown must finish an accepted response.
+            // The accepted response ends on the real shutdown signal, before Kestrel closes its transport.
             _ = await replacement.HeadersAsync().WaitAsync(Deadline);
+            var ending = replacement.WelcomeAsync();
+            shutdown.Hold();
             sjc.Api.Server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
             exit.SetResult();
-            await Assert.That(await replacement.WelcomeAsync()).IsFalse();
+            await shutdown.Entered.Task.WaitAsync(Deadline);
+            await Assert.That(await ending).IsFalse();
+            shutdown.Release.SetResult();
+            await sjc.Api.Server.Services.GetRequiredService<ApplicationRunCompletion>().Completion.Task.WaitAsync(Deadline);
         }
         finally
         {
+            _ = shutdown.Release.TrySetResult();
             _ = exit.TrySetResult();
         }
     }
@@ -2050,6 +2076,31 @@ public sealed class PeerStreamTests
         var (matched, unmatched) = await PeerCredentialObservationTests.CountsAsync(scraper);
         await Assert.That(matched).IsGreaterThan(0).Because(machine.Region);
         await Assert.That(unmatched).IsEqualTo(0).Because(machine.Region);
+    }
+
+    // Hold only transport teardown: ApplicationStopping still cancels the real receiver. Kestrel can otherwise
+    // send GOAWAY before its queued gRPC trailers, making clean handler completion look like an Internal error.
+    private sealed class ShutdownBarrier : IHostedLifecycleService
+    {
+        // Startup failures must never wait for a test body that has not started.
+        private Task _released = Task.CompletedTask;
+
+        public void Hold() => _released = Release.Task;
+
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task StoppingAsync(CancellationToken cancellationToken)
+        {
+            _ = Entered.TrySetResult();
+            await _released.WaitAsync(cancellationToken);
+        }
+
+        public Task StartingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     /// <summary>One machine per region, all listed in one fake DNS, each holding the same database.</summary>
