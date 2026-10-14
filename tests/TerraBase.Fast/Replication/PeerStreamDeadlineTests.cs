@@ -938,6 +938,7 @@ public sealed class PeerStreamDeadlineTests
         }
 
         public ValueTask<bool> AckAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken) => inner.AckAsync(database, incarnation, peer, changeId, stable, cancellationToken);
+        public ValueTask<bool> ProveAsync(TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken) => inner.ProveAsync(database, incarnation, from, through, held, cancellationToken);
         public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) => inner.RetainsAsync(database, incarnation, after, cancellationToken);
         public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) => inner.HeadAsync(database, incarnation, cancellationToken);
         public Task ChangedAsync(CancellationToken cancellationToken) => inner.ChangedAsync(cancellationToken);

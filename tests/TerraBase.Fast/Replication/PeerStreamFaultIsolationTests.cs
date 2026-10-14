@@ -242,6 +242,34 @@ public sealed class PeerStreamFaultIsolationTests
     }
 
     [Test]
+    public async Task Shape_proofs_pass_a_healthy_pin_and_refuse_stale_pins_faulted_copies_and_faulted_nodes()
+    {
+        await using var node = await Node.StartAsync();
+        var source = node.Api.Server.Services.GetRequiredService<FaultAwareReplicaSource>();
+        using var deadline = Timeout();
+        await node.PutAsync(node.Database, "proved", deadline.Token);
+        await node.PutAsync(node.Second, "proved", deadline.Token);
+        var head = await source.HeadAsync(node.Database, node.Pin(node.Database), deadline.Token)
+            ?? throw new InvalidOperationException("the healthy source head was refused");
+        var none = new HashSet<ReplicaId>();
+        await Assert.That(await source.ProveAsync(node.Database, node.Pin(node.Database), 0, head, none, deadline.Token)).IsTrue();
+        await Assert.That(await source.ProveAsync(node.Database, Ulid.NewUlid(), 0, head, none, deadline.Token)).IsFalse()
+            .Because("a proof for another incarnation must not move this copy's remote durable frontier");
+
+        await node.FaultAsync(node.Database, nodeFault: false, deadline.Token);
+        await Assert.That(await source.ProveAsync(node.Database, node.Pin(node.Database), 0, head, none, deadline.Token)).IsFalse()
+            .Because("an established copy fault refuses the proof instead of advancing a faulted frontier");
+        var second = await source.HeadAsync(node.Second, node.Pin(node.Second), deadline.Token)
+            ?? throw new InvalidOperationException("the healthy second head was refused");
+        await Assert.That(await source.ProveAsync(node.Second, node.Pin(node.Second), 0, second, none, deadline.Token)).IsTrue()
+            .Because("a tenant copy fault stays isolated to that tenant");
+
+        await node.FaultAsync(node.Database, nodeFault: true, deadline.Token);
+        _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () =>
+            await source.ProveAsync(node.Second, node.Pin(node.Second), 0, second, none, deadline.Token));
+    }
+
+    [Test]
     public async Task A_cold_SYSTEM_cursor_refusal_keeps_tenant_replication_and_ACKs_progressing()
     {
         await using var receiver = await Node.StartAsync();
@@ -788,6 +816,9 @@ public sealed class PeerStreamFaultIsolationTests
             }
             return inner.AckedAsync(database, peer, cancellationToken);
         }
+
+        public ValueTask<bool> ProveAsync(TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken) =>
+            inner.ProveAsync(database, incarnation, from, through, held, cancellationToken);
 
         public ValueTask<bool> AckAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken) =>
             BookkeepingAsync(database, stableReport: false, changeId, () => inner.AckAsync(database, incarnation, peer, changeId, stable, cancellationToken), cancellationToken);
