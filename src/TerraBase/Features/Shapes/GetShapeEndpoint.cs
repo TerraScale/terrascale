@@ -75,7 +75,7 @@ internal sealed class GetShapeEndpoint(
                 Schema = new OpenApiSchema { Type = JsonSchemaType.String },
             });
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
-        Metadata(ListenerMetadata.Client);
+        Metadata(new ListenerMetadata(TerraBaseListener.Client));
     }
 
     private static OpenApiParameter Query(string name, string description, bool required = false) => new()

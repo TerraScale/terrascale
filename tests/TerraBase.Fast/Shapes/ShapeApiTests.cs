@@ -401,7 +401,7 @@ public sealed class ShapeApiTests
     }
 
     [Test]
-    public async Task The_shape_needs_documents_read_and_the_internal_listener_reaches_it_as_the_operator()
+    public async Task The_shape_needs_documents_read_and_is_not_served_on_the_internal_listener()
     {
         await using var api = await DocumentApi.StartAsync();
         using var writeOnly = await api.ClientWithScopesAsync("documents:write");
@@ -411,9 +411,7 @@ public sealed class ShapeApiTests
 
         await Assert.That(denied.Status).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(denied.Code).IsEqualTo("forbidden_scope");
-        // Client routes are also served on the internal listener, as the platform operator (Listeners.cs).
-        await Assert.That(internalListener.Status).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(internalListener.Code).IsEqualTo("unavailable");
+        await Assert.That(internalListener.Status).IsEqualTo(HttpStatusCode.NotFound);
     }
 
     [Test]
