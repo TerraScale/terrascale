@@ -35,7 +35,7 @@
           <p class="feature-card__text">{feature.text}</p>
           <div class="feature-card__bullets">
             {#each feature.bullets as bullet (bullet)}
-              {#if bullet === 'gru' || bullet === 'sjc'}
+              {#if bullet === 'gru' || bullet === 'sjc' || bullet === 'fra'}
                 <RegionFlag code={bullet} />
               {:else}
                 <span class="feature-card__bullet">{bullet}</span>

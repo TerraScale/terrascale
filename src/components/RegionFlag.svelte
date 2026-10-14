@@ -1,5 +1,5 @@
 <script lang="ts">
-  export let code: 'gru' | 'sjc'
+  export let code: 'gru' | 'sjc' | 'fra'
 </script>
 
 <span class="region-flag">
@@ -8,6 +8,10 @@
       <rect width="16" height="12" fill="#009b3a" />
       <path d="M8 1.6 14.4 6 8 10.4 1.6 6z" fill="#fedf00" />
       <circle cx="8" cy="6" r="2.5" fill="#002776" />
+    {:else if code === 'fra'}
+      <rect width="16" height="4" fill="#000" />
+      <rect y="4" width="16" height="4" fill="#dd0000" />
+      <rect y="8" width="16" height="4" fill="#ffce00" />
     {:else}
       <rect width="16" height="12" fill="#fff" />
       {#each [0, 2, 4, 6, 8, 10] as stripe}

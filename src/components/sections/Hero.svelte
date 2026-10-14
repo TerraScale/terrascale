@@ -1,16 +1,14 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
   import RegionFlag from '@/components/RegionFlag.svelte'
-  import ExternalLink from '@/components/ExternalLink.svelte'
   import {
     REGIONS,
     WORLD_MAP_VIEWBOX,
     type Region,
   } from '@/lib/world-map.generated'
-  import { launchPhase, registrationUrl } from '@/lib/site'
   import { dict } from '@/lib/i18n'
 
-  const highlightIcons = ['globe', 'activity', 'code2'] as const
+  const highlightIcons = ['globe', 'activity', 'code2', 'bot'] as const
   $: highlights = $dict.hero.highlights.map((label, i) => ({
     icon: highlightIcons[i] ?? 'globe',
     label,
@@ -24,7 +22,6 @@
     gru: 'São Paulo',
     sjc: 'San Francisco Bay Area',
   }
-  // One arc only, gru to sjc, as in the r4 spec.
   const arcPath = (a: Region, b: Region) => {
     const mx = (a.x + b.x) / 2
     const len = Math.hypot(b.x - a.x, b.y - a.y)
@@ -33,11 +30,26 @@
     return `M ${a.x} ${a.y} Q ${mx} ${cy} ${b.x} ${b.y}`
   }
 
-  const gru = REGIONS.find((r) => r.id === 'gru')
-  const sjc = REGIONS.find((r) => r.id === 'sjc')
-  const arcD = gru && sjc ? arcPath(gru, sjc) : ''
-  // Same curve traced back, so replication pulses run both ways.
-  const arcBackD = gru && sjc ? arcPath(sjc, gru) : ''
+  // Full replication mesh: gru draws out to sjc and fra, then sjc links to fra
+  // once both have landed. Pulses are staggered so they never fire together.
+  const byId = (id: string) => REGIONS.find((r) => r.id === id)
+  const arcs = [
+    ['gru', 'sjc', 0.4],
+    ['gru', 'fra', 0.4],
+    ['sjc', 'fra', 1.9],
+  ].flatMap(([from, to, delay], i) => {
+    const a = byId(from as string)
+    const b = byId(to as string)
+    return a && b
+      ? [{
+          id: `${from}-${to}`,
+          d: arcPath(a, b),
+          // Same curve traced back, so replication pulses run both ways.
+          backD: arcPath(b, a),
+          style: `--draw-delay: ${delay}s; --pulse-delay: ${2 + i * 1.2}s`,
+        }]
+      : []
+  })
 </script>
 
 <section class="hero">
@@ -51,23 +63,28 @@
         preserveAspectRatio="none"
         aria-hidden="true"
       >
-        <path pathLength="1" d={arcD} class="hero__line hero__line--halo" />
-        <path pathLength="1" d={arcD} class="hero__line" />
-        <path pathLength="1" d={arcD} class="hero__pulse" />
-        <path pathLength="1" d={arcBackD} class="hero__pulse hero__pulse--back" />
+        {#each arcs as arc (arc.id)}
+          <g style={arc.style}>
+            <path pathLength="1" d={arc.d} class="hero__line hero__line--halo" />
+            <path pathLength="1" d={arc.d} class="hero__line" />
+            <path pathLength="1" d={arc.d} class="hero__pulse" />
+            <path pathLength="1" d={arc.backD} class="hero__pulse hero__pulse--back" />
+          </g>
+        {/each}
       </svg>
 
       {#each REGIONS as r (r.id)}
         <span
           class="hero__pin"
-          class:hero__pin--arrival={r.id === 'sjc'}
+          class:hero__pin--arrival={r.id !== 'gru'}
+          class:hero__pin--label-up={r.id === 'fra'}
           style="left: {(r.x / vbW) * 100}%; top: {(r.y / vbH) * 100}%;"
           title={regionLabel[r.id] ?? r.city}
         >
           <span class="hero__pin-ring"></span>
           <span class="hero__pin-core"></span>
           <span class="hero__pin-label">
-            {#if r.id === 'gru' || r.id === 'sjc'}<RegionFlag code={r.id} />{/if}
+            {#if r.id === 'gru' || r.id === 'sjc' || r.id === 'fra'}<RegionFlag code={r.id} />{/if}
           </span>
         </span>
       {/each}
@@ -96,21 +113,6 @@
     <p class="hero__subtitle">
       {$dict.hero.subtitle}
     </p>
-
-    <div class="hero__ctas">
-      <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary">
-        {launchPhase === 'public-alpha' ? $dict.hero.ctaPrimary : $dict.hero.ctaPrelaunch}
-        <Icon name="arrowRight" className="hero__cta-icon" />
-      </ExternalLink>
-      <ExternalLink
-        href="https://docs.terrascale.tech"
-        target="_blank"
-        class="ts-btn ts-btn-glass"
-      >
-        <Icon name="bookOpen" className="hero__cta-icon" />
-        {$dict.hero.ctaSecondary}
-      </ExternalLink>
-    </div>
 
     <ul class="hero__highlights" aria-label={$dict.hero.highlightsAria}>
       {#each highlights as h (h.label)}
@@ -181,7 +183,7 @@
     stroke-linecap: round;
     stroke-dasharray: 1;
     stroke-dashoffset: 1;
-    animation: ts-line-draw 1.6s cubic-bezier(0.65, 0, 0.35, 1) 0.4s forwards;
+    animation: ts-line-draw 1.6s cubic-bezier(0.65, 0, 0.35, 1) var(--draw-delay) forwards;
   }
 
   .hero__line--halo {
@@ -203,11 +205,11 @@
     stroke-dasharray: 0.07 2;
     stroke-dashoffset: 0.07;
     opacity: 0;
-    animation: ts-pulse 3.6s cubic-bezier(0.45, 0, 0.55, 1) 2s infinite;
+    animation: ts-pulse 3.6s cubic-bezier(0.45, 0, 0.55, 1) var(--pulse-delay) infinite;
   }
 
   .hero__pulse--back {
-    animation-delay: 3.8s;
+    animation-delay: calc(var(--pulse-delay) + 1.8s);
   }
 
   @keyframes ts-pulse {
@@ -225,7 +227,7 @@
     background: var(--ts-primary);
     box-shadow: 0 0 0 3px var(--ts-bg-base), 0 0 16px 2px rgba(var(--ts-primary-rgb), 0.55);
     pointer-events: none;
-    /* gru pops in as the arc starts, sjc as it lands. */
+    /* gru pops in as the arcs start, sjc and fra as they land. */
     --pin-delay: 0.3s;
     animation: ts-pin-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) var(--pin-delay) both;
   }
@@ -276,6 +278,15 @@
     line-height: 1;
   }
 
+  /* fra sits right behind the headline, so its label goes above the pin. */
+  .hero__pin--label-up .hero__pin-label {
+    right: auto;
+    left: 50%;
+    top: auto;
+    bottom: 26px;
+    translate: -50% 0;
+  }
+
   .hero__inner {
     position: relative;
     z-index: 1;
@@ -320,44 +331,20 @@
     color: var(--ts-primary);
   }
 
+  /* The map and arcs run behind this copy: brighter text plus a soft scrim
+     halo keeps it above WCAG AA over the dots. */
   .hero__subtitle {
     font-family: var(--ts-font-accent);
-    font-size: 16px;
-    color: var(--ts-text-muted);
-    line-height: 1.7;
+    font-size: 18px;
+    color: color-mix(in srgb, var(--ts-text) 88%, transparent);
+    line-height: 1.65;
     max-width: 60ch;
     margin: 0;
-    font-weight: 400;
-  }
-
-  .hero__ctas {
-    display: flex;
-    gap: 8px;
-    justify-content: center;
-    flex-wrap: wrap;
-    margin-top: 8px;
-  }
-
-  .hero :global(.hero__ctas .ts-btn) {
-    height: 40px;
-    padding: 0 20px;
-  }
-
-  .hero :global(.ts-btn-glass) {
-    background: var(--ts-bg-card);
-    border-color: rgb(255 255 255 / 0.17);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-
-  .hero :global(.ts-btn-glass:hover) {
-    background: var(--ts-divider);
-    border-color: rgba(var(--ts-primary-rgb), 0.5);
-  }
-
-  :global(.hero__cta-icon) {
-    width: 14px;
-    height: 14px;
+    font-weight: 450;
+    text-shadow:
+      0 0 2px var(--ts-bg-base),
+      0 0 8px var(--ts-bg-base),
+      0 0 18px var(--ts-bg-base);
   }
 
   .hero__highlights {
@@ -411,15 +398,7 @@
       font-size: 24px;
     }
     .hero__subtitle {
-      font-size: 14px;
-    }
-    .hero__ctas {
-      width: 100%;
-      flex-wrap: nowrap;
-    }
-    .hero :global(.hero__ctas .ts-btn) {
-      flex: 1;
-      width: 100%;
+      font-size: 15px;
     }
   }
 
