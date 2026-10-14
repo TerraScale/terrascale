@@ -2,6 +2,9 @@
 
 Package `v1` is the TerraBase client for project JWTs: databases, collections,
 documents, queries, transactions, read-only SQL and database change streams.
+It also implements the proposed shape-reads v1 client, with local conformance
+coverage; deployed shape endpoints are not qualified. See the
+[shapes contract](contracts/shapes.md) for protocol provenance and limits.
 `tsauth` exchanges customer API keys and user tokens for project access tokens.
 The root package holds hosted TSAuth clients and pure schema and SQL builders.
 The [compatibility matrix](contracts/terrabase-compatibility.md) records the
@@ -133,6 +136,37 @@ The pinned server still implements If-Match/ETags and lacks deduplicated PUT,
 read-write SQL and RFC 9457 errors. TS-748 describes future producer changes;
 this client does not assume those changes have shipped.
 
+### Collection shapes
+
+Subscribe to one collection, optionally using the existing query filter helpers.
+Each update is the current local state after a whole response and includes its
+checkpoint. Breaking the loop stops requests; cancelling `ctx` stops a long-poll
+or backoff wait. A refused resume emits an empty reset before bootstrapping again.
+
+```go
+for state, err := range users.Subscribe(ctx, tb.ShapeOptions{Where: tb.Eq("/active", true)}) {
+    if err != nil { return err }
+    // Persist documents and checkpoint together if the application needs storage.
+    render(state.Documents, state.UpToDate)
+}
+```
+
+The client pages a snapshot, reads sealed chunks, then long-polls with live
+cursor buckets. Fly may change the serving machine under the same global API
+origin: one proven cursor resume retains state; refusal drops it and restarts.
+Repeated events are applied because their materialized value can be newer.
+Snapshot page cursors become usable only after the entire snapshot.
+
+`users.ShapeKey(ctx, handle, epoch, keyID)` fetches an authenticated no-store
+epoch key, reused in process memory by `(handle, epoch, keyID)` within the client's
+collection scope. Past epochs and shape/key 409 responses evict cached keys;
+keys are never persisted. The returned key's `Decrypt(offset, ciphertext)`
+verifies and opens TBS1 AES-256-GCM bytes for that authorized binding.
+The origin subscription consumes plaintext JSON; manifests,
+302 and automatic object-storage fetching are deferred until FR-22.
+
+### Transactions
+
 Transactions apply up to 1024 ops atomically; failures name the op index:
 
 ```go
@@ -262,8 +296,10 @@ creating a new commit ID. Retain the handle until the outcome is resolved.
 
 Public client gaps include backups, branches/placement updates, index tooling,
 JSON schema, saved queries and query shapes. Existing hidden aliases do not
-prove public JWT compatibility for those methods. Collection shape/subscription
-routes were removed; query `explain` and `Idempotency-Key` remain unserved.
+prove public JWT compatibility for those methods. Historical collection shape
+routes were removed; the SDK's new v1 subscription follows the proposed
+[shape protocol](contracts/shapes.md). Query `explain` and `Idempotency-Key`
+remain unserved.
 
 ### Replication and analytics (TS-762)
 
