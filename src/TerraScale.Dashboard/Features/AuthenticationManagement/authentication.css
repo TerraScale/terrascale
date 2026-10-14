@@ -2,14 +2,6 @@
    provider gallery, strategy switches, the setup checklist, and the hosted
    sign-in preview. Category glyphs and fills remain neutral. */
 
-.ts-idp-title {
-  margin: 0;
-  font-size: var(--ts-fs-3xl);
-  font-weight: 600;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-}
-
 /* Neutral icon tiles and avatars. */
 .ts-idp-tile {
   display: inline-grid;
@@ -625,16 +617,31 @@ button.ts-idp-provider:focus-visible {
   color: var(--ts-danger);
 }
 
+/* No page header and no outer page inset: the rail is a full-height pane and
+   the content keeps its own inset (approved prototype, 2026-10-14). */
+.ts-page.ts-idp {
+  gap: 0;
+  padding: 0;
+}
+
 .ts-idp-layout {
   display: grid;
   grid-template-columns: 200px minmax(0, 1fr);
-  align-items: start;
-  gap: var(--ts-s6);
+  align-items: stretch;
+  min-height: 100vh;
 }
 
 .ts-idp-layout > nav {
   display: grid;
+  align-content: start;
   gap: var(--ts-s4);
+  padding: var(--ts-s4) var(--ts-s3);
+  border-right: 1px solid var(--ts-line);
+}
+
+.ts-idp-content {
+  min-width: 0;
+  padding: var(--ts-s6);
 }
 
 .ts-idp-layout > nav .ts-nav-link {
@@ -654,6 +661,8 @@ button.ts-idp-provider:focus-visible {
     display: flex;
     align-items: center;
     gap: var(--ts-s2);
+    padding: var(--ts-s3);
+    border-bottom: 1px solid var(--ts-line);
   }
 
   .ts-idp-mobile-nav .ts-select {
@@ -663,9 +672,18 @@ button.ts-idp-provider:focus-visible {
 
   .ts-idp-layout {
     grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
   }
 
   .ts-idp-layout > nav {
     display: none;
   }
+
+  .ts-idp-content {
+    padding: var(--ts-s4);
+  }
+}
+
+@media (max-width: 47.99rem) {
+  .ts-idp-mobile-nav { padding-left: 64px; min-height: 64px; }
 }

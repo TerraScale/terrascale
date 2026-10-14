@@ -88,7 +88,7 @@
                 <input type="hidden" name="_csrf" value="@Model.CsrfToken" /><input type="hidden" name="step" value="project" />
                 <div class="ts-field"><label class="ts-label" for="projectName">Project name</label><input class="ts-input" id="projectName" name="name" maxlength="100" value="Personal" autocomplete="organization" required /></div>
                 <div class="ts-field"><label class="ts-label" for="region">Primary region</label>
-                    @(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.RegionPicker, RegionMapField>(new("region", "GRU")))
+                    @(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.RegionPicker, RegionMapField>(new("region", "GRU", Available: ["GRU", "SFO"])))
                     <select class="ts-select" id="region" name="region" required aria-describedby="region-hint"><option value="GRU" selected>GRU · São Paulo</option><option value="SFO">SFO · San Francisco</option></select><p class="ts-field-hint" id="region-hint">You can add regions to your project later.</p>
                 </div>
                 <div class="ts-onboarding-footer"><span></span><button class="ts-btn ts-btn-primary ts-btn-lg" type="submit">Create project and open Dashboard <span aria-hidden="true">→</span></button></div>

@@ -4,7 +4,7 @@
 @inject AssetUrls Assets
 @{ var current = Model.Section; }
 <main class="ts-page ts-idp" data-auth-section="@current.Key">
-<h1 class="ts-idp-title">@Model.Heading</h1><div class="ts-page-actions"></div>
+<h1 class="ts-sr-only">@Model.Heading</h1><div class="ts-page-actions"></div>
 <form class="ts-idp-mobile-nav" method="get" action="/auth"><label class="ts-sr-only" for="auth-section-select">Authentication section</label><select class="ts-select" id="auth-section-select" name="section" data-on:change="el.form.requestSubmit()">@foreach(var section in AuthenticationSection.All){<option value="@(section.Key)" selected="@(section.Key == current.Key)">@(section.Title)</option>}</select><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Open</button></form>
 <div class="ts-idp-layout"><nav aria-label="Authentication sections">@foreach (var group in NavGroups()) { <div class="ts-nav-group">@if (group[0].Group.Length > 0) { <div class="ts-nav-group-label">@group[0].Group</div> }<ul class="ts-nav">@foreach (var section in group) { <li><a class="ts-nav-link" href="@("/auth/" + section.Key)" aria-current="@(section.Key == current.Key ? "page" : null)"><span class="ts-nav-icon" aria-hidden="true">@Icons.Render(section.Icon, 16)</span><span class="ts-nav-label">@(section.Title)</span></a></li> }</ul></div> }</nav><div class="ts-stack-lg ts-idp-content">
 <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationConsole.Unavailable</p></div>
