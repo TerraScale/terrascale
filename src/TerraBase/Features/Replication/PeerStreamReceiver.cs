@@ -200,6 +200,11 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     _ = Incarnation(frontier.Database);
                     if (cut.Contains(at) || refills.Keys.Any(running => running.Database == at))
                     {
+                        // Release the sender's response budget without certifying progress across an unfinished refill.
+                        await responseStream.WriteAsync(new AckFrame
+                        {
+                            Stable = new StableReport { Database = frontier.Database, Stable = 0 },
+                        }, stream.Token).ConfigureAwait(false);
                         continue;
                     }
 

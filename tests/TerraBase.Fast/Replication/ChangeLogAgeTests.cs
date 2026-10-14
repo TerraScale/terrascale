@@ -90,7 +90,7 @@ public sealed class ChangeLogAgeTests
         await peer.AckAsync(first);
         await Assert.That(await gru.UntilAckedAsync(peer.Replica, c0)).IsTrue();
         var evicted = ReplicaId.Of(2, 7, 0);
-        _ = await Run(store, $"INSERT INTO _tb_peers (node, applied, acked, stable, seen) VALUES ({unchecked((long)evicted.Value)}, 0, {c0}, 0, 0);");
+        _ = await Run(store, $"INSERT INTO _tb_peers (node, applied, acked, stable, seen, incarnation) VALUES ({unchecked((long)evicted.Value)}, 0, {c0}, 0, 0, '{store.Incarnation}');");
         await gru.WriteAsync(async transaction => _ = await transaction.PutAsync(Items, "newest", Json("""{"n":1}"""), CancellationToken.None));
         var newest = await gru.HeadAsync();
         var pending = await peer.NextAsync();
@@ -157,14 +157,14 @@ public sealed class ChangeLogAgeTests
         await pair.UnlistAsync();
         await gru.WriteAsync(async transaction => _ = await transaction.PutAsync(Items, "held", Json("""{"n":1}"""), CancellationToken.None));
         var missing = await gru.HeadAsync();
-        await Assert.That(await gru.Groups.RetainsAsync(pair.Database, acked, CancellationToken.None)).IsTrue();
+        await Assert.That(await gru.RetainsAsync(acked)).IsTrue();
 
         clock.Offset = TimeSpan.FromHours(25);
         await gru.TrimAsync();
-        var retainedAck = await gru.Groups.AckedAsync(pair.Database, sjcNode, CancellationToken.None);
+        var retainedAck = await gru.AckedAsync(sjcNode);
         await Assert.That(retainedAck).IsLessThan(missing).Because("quiet rows may advance the cursor, but the missing local group is never acknowledged");
         await Assert.That(await gru.FloorAsync(clock.GetUtcNow())).IsNull().Because("sjc has been absent past the bound");
-        await Assert.That(await gru.Groups.RetainsAsync(pair.Database, acked, CancellationToken.None)).IsFalse().Because("the 24 h age cut passed the stuck ack");
+        await Assert.That(await gru.RetainsAsync(acked)).IsFalse().Because("the 24 h age cut passed the stuck ack");
 
         pair.List();
         await Assert.That(await sjc.UntilAsync("held", """{"n":1}""")).IsTrue().Because("sjc refills the cut write");
@@ -272,7 +272,7 @@ public sealed class ChangeLogAgeTests
             await Assert.That(call.ResponseStream.Current.Welcome).IsNotNull();
             await call.RequestStream.WriteAsync(new PushFrame
             {
-                Frontier = new Frontier { Database = ChangeGroups.Wire(Database) },
+                Frontier = new Frontier { Database = ChangeGroups.Wire(Database, (await Sender.StoreAsync()).Incarnation) },
             }, deadline.Token);
             await Assert.That(await call.ResponseStream.MoveNext(deadline.Token)).IsTrue();
             await Assert.That(call.ResponseStream.Current.Stable).IsNotNull();
@@ -370,7 +370,17 @@ public sealed class ChangeLogAgeTests
                 return true;
             }, static _ => true, CancellationToken.None);
 
-        public async Task<long> HeadAsync() => await Groups.HeadAsync(database, CancellationToken.None);
+        public async Task<long> HeadAsync() =>
+            await Groups.HeadAsync(database, (await StoreAsync()).Incarnation, CancellationToken.None) ?? throw new InvalidOperationException("the copy refused its own incarnation");
+
+        public async Task<bool> RetainsAsync(long after) =>
+            await Groups.RetainsAsync(database, (await StoreAsync()).Incarnation, after, CancellationToken.None) ?? throw new InvalidOperationException("the copy refused its own incarnation");
+
+        public async Task<long> AckedAsync(ReplicaId peer)
+        {
+            var cursor = await Groups.AckedAsync(database, peer, CancellationToken.None) ?? throw new InvalidOperationException("the database is missing");
+            return cursor.Incarnation == (await StoreAsync()).Incarnation ? cursor.Acked : throw new InvalidOperationException("the cursor names another incarnation");
+        }
 
         // One retention pass, as the tailer's 5 s pass runs it.
         public async Task TrimAsync() => await ((TursoChangeGroupSource)Groups).TrimAsync(await StoreAsync(), CancellationToken.None);
@@ -389,10 +399,12 @@ public sealed class ChangeLogAgeTests
             var deadline = DateTime.UtcNow + Deadline;
             while (DateTime.UtcNow < deadline)
             {
-                var transaction = (SqliteStorageTransaction)await (await StoreAsync()).BeginTransactionAsync(write: false, CancellationToken.None);
+                var store = await StoreAsync();
+                var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None);
                 await using (transaction)
                 {
-                    if (await transaction.GetAckedAsync(peer, CancellationToken.None) >= changeId)
+                    if (await transaction.GetAckedAsync(peer, store.Incarnation, CancellationToken.None) is { RequiresRefill: false } cursor
+                        && cursor.Acked >= changeId)
                     {
                         return true;
                     }

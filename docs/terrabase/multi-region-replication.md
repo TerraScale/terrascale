@@ -378,7 +378,8 @@ An accepted `Push` publishes its gRPC response headers before waiting for a pred
   On the sender, heartbeats and response reads run independently of local database work, with serialized writes and at most 32
   response-producing frames awaiting local processing. A matching batch/refill response satisfies its peer progress
   deadline on receipt; the durable cursor advances only when the sender processes that response. Progress deadlines
-  remain active while another database's local read waits. The receiver processes ordinary batches and frontier reports
+  remain active while another database's local read waits. A frontier blocked by an unfinished refill receives a zero
+  stable report to release its response slot; the refill block remains until repair completes. The receiver processes ordinary batches and frontier reports
   in order; that local work must finish within 15 s so it can continue reading heartbeats. A longer wait ends the stream
   and retries from the durable ACK. Refills run separately and keep their 10-minute allowance.
 

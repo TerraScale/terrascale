@@ -84,8 +84,8 @@ public sealed class PeerStreamDeadlineTests
     {
         var time = new ObservedTime();
         await using var peer = await FakePeer.StartAsync(silentStreams: 0);
-        var source = new FakeChangeGroupSource();
-        await using var api = await StartSenderAsync(peer, source, time);
+        var (source, bindSource) = CreateSource();
+        await using var api = await StartSenderAsync(peer, source, bindSource, time);
 
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
         // The heartbeat uses one periodic timer; each answer resets the silence timer before the next clock advance.
@@ -108,8 +108,8 @@ public sealed class PeerStreamDeadlineTests
         var time = new ObservedTime();
         var warnings = new PeerWarnings(time);
         await using var peer = await FakePeer.StartAsync(silentStreams: 0, unansweredStreams: 1);
-        var source = new FakeChangeGroupSource();
-        await using var api = await StartSenderAsync(peer, source, time, warnings: warnings);
+        var (source, bindSource) = CreateSource();
+        await using var api = await StartSenderAsync(peer, source, bindSource, time, warnings: warnings);
 
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
         await time.UntilTimerAsync(Idle, after: 0, period: Idle);
@@ -144,8 +144,8 @@ public sealed class PeerStreamDeadlineTests
     {
         var time = new ObservedTime();
         await using var peer = await FakePeer.StartAsync(silentStreams: 1);
-        var source = new FakeChangeGroupSource();
-        await using var api = await StartSenderAsync(peer, source, time);
+        var (source, bindSource) = CreateSource();
+        await using var api = await StartSenderAsync(peer, source, bindSource, time);
         var database = await CreateDatabaseAsync(api);
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
 
@@ -171,20 +171,20 @@ public sealed class PeerStreamDeadlineTests
         var time = new ObservedTime();
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var peer = await FakePeer.StartAsync(silentStreams: 0, frontierRelease: release);
-        var source = new FakeChangeGroupSource();
+        var (source, bindSource) = CreateSource();
         var replica = ReplicaId.Of(1, 9, 0);
         TenantContext[] databases = [];
-        await using var api = await StartSenderAsync(peer, source, time, async api =>
+        await using var api = await StartSenderAsync(peer, source, bindSource, time, async api =>
         {
             databases = await CreateDatabasesAsync(api, 2);
             var node = api.Server.Services.GetRequiredService<LocalReplica>().Id;
             // The first database has no unsent groups, so its Frontier precedes the second database's large Batch.
             var head = source.Add(databases[0], Incompressible(node, 32));
-            await source.AckAsync(databases[0], replica, head, default, CancellationToken.None);
+            await Assert.That(await source.AckAsync(databases[0], await IncarnationAsync(api, databases[0]), replica, head, default, CancellationToken.None)).IsTrue();
             _ = source.Add(databases[1], Incompressible(node, 512 * 1024));
         });
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
-        await Assert.That((await peer.NextAsync()).Frontier.Database).IsEqualTo(ChangeGroups.Wire(databases[0]));
+        await Assert.That((await peer.NextAsync()).Frontier.Database).IsEqualTo(ChangeGroups.Wire(databases[0], await IncarnationAsync(api, databases[0])));
         await peer.Stalled.Task.WaitAsync(Deadline);
         await time.UntilTimerAsync(Idle, after: 0, period: Idle);
 
@@ -215,9 +215,9 @@ public sealed class PeerStreamDeadlineTests
     {
         var time = new ObservedTime();
         await using var peer = await FakePeer.StartAsync(silentStreams: 0);
-        var source = new FakeChangeGroupSource();
+        var (source, bindSource) = CreateSource();
         var held = new HeldSource(source);
-        await using var api = await StartSenderAsync(peer, held, time);
+        await using var api = await StartSenderAsync(peer, held, bindSource, time);
         var database = await CreateDatabaseAsync(api);
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
         await time.UntilTimerAsync(Idle, after: 0, period: Idle);
@@ -243,10 +243,10 @@ public sealed class PeerStreamDeadlineTests
         var time = new ObservedTime();
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var peer = await FakePeer.StartAsync(silentStreams: 0, batchRelease: release);
-        var source = new FakeChangeGroupSource();
+        var (source, bindSource) = CreateSource();
         var held = new HeldSource(source);
         TenantContext[] databases = [];
-        await using var api = await StartSenderAsync(peer, held, time, async api =>
+        await using var api = await StartSenderAsync(peer, held, bindSource, time, async api =>
         {
             databases = await CreateDatabasesAsync(api, 71);
             held.Database = databases[^1];
@@ -259,7 +259,7 @@ public sealed class PeerStreamDeadlineTests
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
         for (var index = 0; index < 32; index++)
         {
-            await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[index]));
+            await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[index], await IncarnationAsync(api, databases[index])));
         }
 
         await time.UntilTimerAsync(Idle, after: 0, period: Idle);
@@ -275,7 +275,7 @@ public sealed class PeerStreamDeadlineTests
         release.SetResult();
         for (var index = 32; index < 70; index++)
         {
-            await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[index]));
+            await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[index], await IncarnationAsync(api, databases[index])));
         }
 
         await held.Entered.Task.WaitAsync(Deadline);
@@ -294,7 +294,7 @@ public sealed class PeerStreamDeadlineTests
         await Assert.That(source.AckedBy(databases[^1], ReplicaId.Of(1, 9, 0))).IsEqualTo(0);
 
         held.Release.SetResult();
-        await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[^1]));
+        await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[^1], await IncarnationAsync(api, databases[^1])));
         using var deadline = new CancellationTokenSource(Deadline);
         await Task.WhenAll(databases.Select(database => source.UntilAckedAsync(database, ReplicaId.Of(1, 9, 0), 1, deadline.Token)));
         await Assert.That(peer.Streams).IsEqualTo(1);
@@ -307,10 +307,10 @@ public sealed class PeerStreamDeadlineTests
         var warnings = new PeerWarnings(time);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var peer = await FakePeer.StartAsync(silentStreams: 0, batchRelease: release);
-        var source = new FakeChangeGroupSource();
+        var (source, bindSource) = CreateSource();
         var held = new HeldSource(source);
         TenantContext[] databases = [];
-        await using var api = await StartSenderAsync(peer, held, time, async api =>
+        await using var api = await StartSenderAsync(peer, held, bindSource, time, async api =>
         {
             databases = await CreateDatabasesAsync(api, 2);
             held.Database = databases[1];
@@ -321,7 +321,7 @@ public sealed class PeerStreamDeadlineTests
             }
         }, warnings);
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
-        await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[0]));
+        await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[0], await IncarnationAsync(api, databases[0])));
         await held.Entered.Task.WaitAsync(Deadline);
         await time.UntilTimerAsync(Idle, after: 0, period: Idle);
         for (var elapsed = Idle; elapsed < ReplicationProtocol.ProgressTimeout; elapsed += Idle)
@@ -361,9 +361,9 @@ public sealed class PeerStreamDeadlineTests
         var time = new ObservedTime();
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var peer = await FakePeer.StartAsync(silentStreams: 0, refillRelease: release);
-        var source = new FakeChangeGroupSource();
+        var (source, bindSource) = CreateSource();
         TenantContext database = null!;
-        await using var api = await StartSenderAsync(peer, source, time, async api =>
+        await using var api = await StartSenderAsync(peer, source, bindSource, time, async api =>
         {
             database = await CreateDatabaseAsync(api);
             var node = api.Server.Services.GetRequiredService<LocalReplica>().Id;
@@ -413,7 +413,7 @@ public sealed class PeerStreamDeadlineTests
         await call.RequestStream.WriteAsync(new PushFrame { Hello = hello });
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None).WaitAsync(Deadline)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Welcome).IsNotNull();
-        await call.RequestStream.WriteAsync(new PushFrame { Refill = new Refill { Database = ChangeGroups.Wire(database), ChangeId = 57 } });
+        await call.RequestStream.WriteAsync(new PushFrame { Refill = new Refill { Database = ChangeGroups.Wire(database, peer.Incarnation), ChangeId = 57 } });
         await held.Entered.Task.WaitAsync(Deadline);
         await Assert.That(memory.Reserved).IsEqualTo(RefillMemory.BytesPerRefill);
         await call.RequestStream.WriteAsync(new PushFrame { Heartbeat = new Heartbeat() });
@@ -450,7 +450,7 @@ public sealed class PeerStreamDeadlineTests
         });
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None).WaitAsync(Deadline)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Welcome).IsNotNull();
-        await call.RequestStream.WriteAsync(new PushFrame { Refill = new Refill { Database = ChangeGroups.Wire(database), ChangeId = 57 } });
+        await call.RequestStream.WriteAsync(new PushFrame { Refill = new Refill { Database = ChangeGroups.Wire(database, peer.Incarnation), ChangeId = 57 } });
         await held.Entered.Task.WaitAsync(Deadline);
 
         for (var round = 0; round < 3; round++)
@@ -468,7 +468,7 @@ public sealed class PeerStreamDeadlineTests
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None).WaitAsync(Deadline)).IsTrue();
         var ack = call.ResponseStream.Current.Ack;
         await Assert.That(ack).IsNotNull();
-        await Assert.That(ack.Database).IsEqualTo(ChangeGroups.Wire(database));
+        await Assert.That(ack.Database).IsEqualTo(ChangeGroups.Wire(database, peer.Incarnation));
         await Assert.That(ack.Refused).IsTrue();
         await Assert.That(ack.ChangeId).IsEqualTo(0UL);
         await Assert.That(ack.Applied).IsEqualTo(0UL);
@@ -490,7 +490,8 @@ public sealed class PeerStreamDeadlineTests
         {
             services.AddSingleton<IMemberDirectory>(members);
             services.AddSingleton<IMembership>(provider => ActivatorUtilities.CreateInstance<DirectoryMembership>(provider, time));
-            services.AddSingleton<IChangeGroupSource>(new FakeChangeGroupSource());
+            services.AddSingleton<IChangeGroupSource>(provider => new FakeChangeGroupSource((database, token) =>
+                IncarnationAsync(provider.GetRequiredService<IStorageEngine>(), database, token)));
             services.AddSingleton<IChangeGroupSink>(provider => new HeldSink(ActivatorUtilities.CreateInstance<StorageChangeGroupSink>(provider), held));
             services.AddSingleton(provider => ActivatorUtilities.CreateInstance<PeerStreamReceiver>(provider, time));
             var memory = services.Single(service => service.ServiceType == typeof(IMemoryBudget));
@@ -508,7 +509,8 @@ public sealed class PeerStreamDeadlineTests
     }
 
     private static async Task<ManagementApi> StartSenderAsync(
-        FakePeer peer, IChangeGroupSource source, ObservedTime time, Func<ManagementApi, Task>? beforeJoin = null, PeerWarnings? warnings = null)
+        FakePeer peer, IChangeGroupSource source, Action<IStorageEngine> bindSource, ObservedTime time,
+        Func<ManagementApi, Task>? beforeJoin = null, PeerWarnings? warnings = null)
     {
         var members = new FakeMemberStore();
         var api = await ManagementApi.StartAsync(settings =>
@@ -519,7 +521,11 @@ public sealed class PeerStreamDeadlineTests
         {
             services.AddSingleton<IMemberDirectory>(members);
             services.AddSingleton<IMembership>(provider => ActivatorUtilities.CreateInstance<DirectoryMembership>(provider, time));
-            services.AddSingleton<IChangeGroupSource>(source);
+            services.AddSingleton<IChangeGroupSource>(provider =>
+            {
+                bindSource(provider.GetRequiredService<IStorageEngine>());
+                return source;
+            });
             services.AddSingleton(provider => ActivatorUtilities.CreateInstance<PeerStreams>(provider, time));
             if (warnings is not null)
             {
@@ -545,6 +551,23 @@ public sealed class PeerStreamDeadlineTests
         time.Advance(DirectoryMembership.Heartbeat);
         return api;
     }
+
+    private static (FakeChangeGroupSource Source, Action<IStorageEngine> Bind) CreateSource()
+    {
+        IStorageEngine? engine = null;
+        // Hosted services can read the source before StartAsync returns: bind to the engine when DI resolves it.
+        return (new FakeChangeGroupSource((database, token) =>
+            IncarnationAsync(engine ?? throw new InvalidOperationException("the source engine is not bound"), database, token)), current => engine = current);
+    }
+
+    private static async ValueTask<Ulid?> IncarnationAsync(IStorageEngine engine, TenantContext database, CancellationToken token) =>
+        database == ChangeGroups.System
+            ? (await engine.OpenSystemDatabaseAsync(token)).Incarnation
+            : (await engine.OpenDatabaseAsync(database, token))?.Incarnation;
+
+    private static async Task<Ulid> IncarnationAsync(ManagementApi api, TenantContext database) =>
+        await IncarnationAsync(api.Server.Services.GetRequiredService<IStorageEngine>(), database, CancellationToken.None)
+            ?? throw new InvalidOperationException("the database is missing");
 
     // A database of this machine placed in the peer's region too.
     private static async Task<TenantContext> CreateDatabaseAsync(ManagementApi api) => (await CreateDatabasesAsync(api, 1))[0];
@@ -642,7 +665,7 @@ public sealed class PeerStreamDeadlineTests
         public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken) => source.ListDatabasesAsync(cancellationToken);
-        public async ValueTask<IReadOnlyList<OriginGroup>> ReadAsync(TenantContext database, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
+        public async ValueTask<SourceGroups?> ReadAsync(TenantContext database, Ulid incarnation, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
         {
             if (Database is null || database == Database)
             {
@@ -658,14 +681,14 @@ public sealed class PeerStreamDeadlineTests
                 }
             }
 
-            return await source.ReadAsync(database, after, maxGroups, maxBytes, cancellationToken);
+            return await source.ReadAsync(database, incarnation, after, maxGroups, maxBytes, cancellationToken);
         }
 
-        public ValueTask<long> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) => source.AckedAsync(database, peer, cancellationToken);
-        public ValueTask AckAsync(TenantContext database, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken) => source.AckAsync(database, peer, changeId, stable, cancellationToken);
-        public ValueTask RecordStableAsync(TenantContext database, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) => source.RecordStableAsync(database, peer, stable, cancellationToken);
-        public ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken) => source.RetainsAsync(database, after, cancellationToken);
-        public ValueTask<long> HeadAsync(TenantContext database, CancellationToken cancellationToken) => source.HeadAsync(database, cancellationToken);
+        public ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) => source.AckedAsync(database, peer, cancellationToken);
+        public ValueTask<bool> AckAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken) => source.AckAsync(database, incarnation, peer, changeId, stable, cancellationToken);
+        public ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) => source.RecordStableAsync(database, incarnation, peer, stable, cancellationToken);
+        public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) => source.RetainsAsync(database, incarnation, after, cancellationToken);
+        public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) => source.HeadAsync(database, incarnation, cancellationToken);
         public Task ChangedAsync(CancellationToken cancellationToken) => source.ChangedAsync(cancellationToken);
     }
 
@@ -931,6 +954,8 @@ public sealed class PeerStreamDeadlineTests
 
         public string Address { get; private set; } = "";
 
+        public Ulid Incarnation { get; } = Ulid.NewUlid();
+
         public int Streams => Volatile.Read(ref _streams);
         public int BatchesBeforeRelease => Volatile.Read(ref _batchesBeforeRelease);
 
@@ -966,15 +991,21 @@ public sealed class PeerStreamDeadlineTests
 
         public override Task<DigestReply> Digest(DigestRequest request, ServerCallContext context) => Task.FromResult(new DigestReply
         {
-            Held = _repair is not null,
+            Held = _repair is not null && (ChangeGroups.Incarnation(request.Database) is not { } expected || expected == Incarnation),
+            Incarnation = Google.Protobuf.ByteString.CopyFrom(Incarnation.ToByteArray()),
             Buckets = Google.Protobuf.UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(Enumerable.Repeat((byte)1, 4096 * 16).ToArray())),
         });
 
         public override async Task ReadBucket(BucketRequest request, IServerStreamWriter<StatePage> responseStream, ServerCallContext context)
         {
+            if (ChangeGroups.RequiredIncarnation(request.Database) != Incarnation)
+            {
+                throw new RpcException(new Status(StatusCode.FailedPrecondition, "the test peer holds another incarnation"));
+            }
+
             if (_repair is not null)
             {
-                await responseStream.WriteAsync(AntiEntropy.Encode([_repair]), context.CancellationToken);
+                await responseStream.WriteAsync(AntiEntropy.Encode([_repair], Incarnation), context.CancellationToken);
             }
         }
 

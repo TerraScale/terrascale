@@ -280,7 +280,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
                 if (response.Stable is { } report)
                 {
-                    await _source.RecordStableAsync(ChangeGroups.Tenant(report.Database), peer, new Hlc(report.Stable), activity.Token).ConfigureAwait(false);
+                    // A report for a frontier of a replaced copy says nothing of the copy in place.
+                    _ = await _source.RecordStableAsync(
+                        ChangeGroups.Tenant(report.Database), ChangeGroups.RequiredIncarnation(report.Database), peer, new Hlc(report.Stable), activity.Token).ConfigureAwait(false);
                 }
                 else
                 {
@@ -334,7 +336,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                             lock (link.Gate)
                             {
                                 var cursor = link.Cursors.GetValueOrDefault(database);
-                                if (cursor?.InFlight is { } inFlight && (ack.Refused || ack.ChangeId == (ulong)inFlight))
+                                if (cursor?.InFlight is { } inFlight && cursor.Incarnation is { } pinned
+                                    && ChangeGroups.RequiredIncarnation(ack.Database) == pinned && (ack.Refused || ack.ChangeId == (ulong)inFlight))
                                 {
                                     // Receipt satisfies the peer's deadline. It never advances the durable cursor.
                                     cursor.ResponseReceived = true;
