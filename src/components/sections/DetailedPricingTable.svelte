@@ -52,7 +52,9 @@
         <tr>
           <th scope="col">{compare.head}</th>
           {#each comparePlans as plan (plan.slug)}
-            <th scope="col">{plan.name}</th>
+            <th scope="col" class:is-popular={plan.popular} style:--plan-accent={plan.accent}>
+              <span class="detailed__plan">{plan.name}</span>
+            </th>
           {/each}
         </tr>
       </thead>
@@ -60,8 +62,8 @@
         {#each limitRows as row (row.label)}
           <tr>
             <th scope="row">{row.label}</th>
-            {#each row.cells as cell}
-              <td>{cell}</td>
+            {#each row.cells as cell, i}
+              <td class:is-popular={comparePlans[i].popular}>{cell}</td>
             {/each}
           </tr>
         {/each}
@@ -165,6 +167,29 @@
     white-space: nowrap;
   }
 
+  .detailed__plan {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .detailed__plan::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--plan-accent);
+  }
+
+  .detailed__table .is-popular {
+    background: rgba(var(--ts-primary-rgb), 0.1);
+  }
+
+  .detailed__table thead th.is-popular {
+    box-shadow: inset 0 2px 0 var(--ts-primary);
+    color: var(--ts-primary-light);
+  }
+
   .detailed__table tbody tr:hover {
     background: rgb(255 255 255 / 0.05);
   }
@@ -255,15 +280,19 @@
       white-space: normal;
     }
 
+    /* Hyphenate long words instead of splitting them at arbitrary letters. */
     .detailed__table tbody th,
     .detailed__table td {
       white-space: normal;
-      overflow-wrap: anywhere;
+      hyphens: auto;
+    }
+
+    .detailed__plan::before {
+      display: none;
     }
 
     .detailed__table tbody tr:nth-child(-n + 5) td {
       white-space: nowrap;
-      overflow-wrap: normal;
     }
   }
 </style>
