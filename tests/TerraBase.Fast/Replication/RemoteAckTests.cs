@@ -407,7 +407,7 @@ public sealed class RemoteAckTests
             pending = pair.Client.PutAsJsonAsync(pair.Document(id, "copy"), new { n = 1 }, pair.Token);
             var marker = await pair.ReachedWait.Task.WaitAsync(pair.Token);
             await Assert.That(marker.Incarnation).IsEqualTo(cursor!.Value.Incarnation);
-            await Assert.That(await pair.Source.RetainsAsync(copy, marker.Incarnation, 0, pair.Token)).IsEqualTo(true).Because("the copy's own change log is whole");
+            await Assert.That(await pair.Source.RetainsAsync(copy, marker.Incarnation, 0, pair.Token)).IsTrue().Because("the copy's own change log is whole");
             head.TrySetResult();
 
             response = await pending.WaitAsync(pair.Token);
