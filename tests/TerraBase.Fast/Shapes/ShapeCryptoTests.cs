@@ -330,9 +330,12 @@ public sealed class ShapeCryptoTests
     [Test]
     public async Task A_machine_whose_catalog_is_unproven_for_an_epoch_withholds_keys_until_anti_entropy_proves_it_again()
     {
-        // A partition can hold back a revocation committed on another machine: a after b is cut off from it.
+        // A partition can hold back a revocation committed on another machine: a after b is cut off from it. a's writes
+        // answer after their local commit, so its setup needs no peer stream; its catalog proofs are what is under test.
         var members = new FakeMemberStore();
-        await using var host = await CryptoHost.StartAsync(services: collection => collection.AddSingleton<IMemberDirectory>(members),
+        await using var host = await CryptoHost.StartAsync(services: collection => collection
+                .AddSingleton<IMemberDirectory>(members)
+                .AddSingleton<IRemoteDurability>(new LocalDurability()),
             configure: settings =>
             {
                 settings["node-name"] = "a";
