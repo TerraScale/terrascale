@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E.Features.AuthenticationManagement;
@@ -26,6 +27,27 @@ public sealed class AuthenticationMcpJourneyTests(DashboardRootFixture fixture)
         ["auth_send_test_email"] = new { template = "sign_in_code", locale = "en" }
     };
     private const string Unavailable = "Authentication management is unavailable for this project. ts-auth has a project-scoped tenant, but its customer management API and matching project credential binding are unavailable to the dashboard.";
+
+    [Test]
+    public async Task DangerZoneIsTheLastNavSectionAndStaysUnavailable()
+    {
+        await using var scenario = await AuthProviderScenario.StartAsync(fixture.Root);
+        using var browser = scenario.CreateClient();
+        using var login = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me");
+        Check(login.StatusCode == HttpStatusCode.SeeOther, "A signed-in user opens the authentication console");
+        using var selected = await browser.GetAsync("/auth?section=danger");
+        Check(selected.StatusCode == HttpStatusCode.SeeOther && selected.Headers.Location?.OriginalString == "/auth/danger",
+            "The mobile section selector redirects to the existing section route");
+        using var response = await browser.GetAsync("/auth/danger");
+        var html = await response.Content.ReadAsStringAsync();
+        Check(response.StatusCode == HttpStatusCode.ServiceUnavailable, "The danger zone route answers 503 while ts-auth management is unavailable");
+        Check(html.Contains("id=\"auth-danger\"") && html.Contains("Sign out all users") && html.Contains("Reset emails"),
+            "The danger zone lists both rows with their actions");
+        Check(Regex.Matches(html, "<button[^>]*disabled>(Sign out all users|Reset emails)</button>").Count == 2, "Both danger actions are disabled");
+        var nav = Regex.Match(html, "<nav aria-label=\"Authentication sections\">(.*?)</nav>", RegexOptions.Singleline).Groups[1].Value;
+        var links = Regex.Matches(nav, "href=\"/auth/([^\"]+)\"").Select(match => match.Groups[1].Value).ToArray();
+        Check(links.Length > 0 && links[^1] == "danger", "The danger zone is the last authentication nav section");
+    }
 
     [Test]
     public async Task NativePatDiscoversTypedAuthContractsAndNeverBorrowsDashboardTenantAuthority()
