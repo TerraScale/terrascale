@@ -32,7 +32,7 @@ internal sealed class GetShapeEndpoint(
 
     // Envelope: marker, 16 scope bytes, then a changes feed cursor of at most 256 origins.
     private const int ResumeScopeBytes = 16;
-    private static readonly int MaxResume = Base64Url.GetEncodedLength(1 + ResumeScopeBytes + 17 + (56 * ChangeCursor.MaxOrigins));
+    private static readonly int MaxResume = Base64Url.GetEncodedLength(1 + ResumeScopeBytes + ChangeCursor.MaxBytes);
 
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
     private static readonly Validation BadOffset = new("offset must be -1, snap.<S>.<P> or a decimal commit boundary");

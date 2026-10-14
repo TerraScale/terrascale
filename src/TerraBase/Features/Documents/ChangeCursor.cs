@@ -25,6 +25,9 @@ internal static class ChangeCursor
     private const int MaxMachineBytes = 63;
     private const int OriginBytes = 56;
 
+    /// <summary>Maximum decoded cursor length, including the issuing machine and every origin.</summary>
+    public const int MaxBytes = HeaderBytes + MaxMachineBytes + (OriginBytes * MaxOrigins);
+
     /// <exception cref="InvalidOperationException">More than <see cref="MaxOrigins"/> origins: no cursor this API would accept.</exception>
     public static string Encode(FeedCursor cursor)
     {
@@ -62,7 +65,7 @@ internal static class ChangeCursor
     /// <summary>The cursor <paramref name="text"/> encodes, or null when it is not a canonical cursor.</summary>
     public static FeedCursor? Decode(string text)
     {
-        if (text.Length > Base64Url.GetEncodedLength(HeaderBytes + MaxMachineBytes + (OriginBytes * MaxOrigins)) || !Base64Url.IsValid(text, out var length) || length < HeaderBytes)
+        if (text.Length > Base64Url.GetEncodedLength(MaxBytes) || !Base64Url.IsValid(text, out var length) || length < HeaderBytes)
         {
             return null;
         }
