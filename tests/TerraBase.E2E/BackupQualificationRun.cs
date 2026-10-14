@@ -61,7 +61,7 @@ internal static class BackupQualificationRun
 
             var digest = Docs.Digest(acknowledged.Select(pair => (pair.Key, pair.Value)));
             _ = await Converge.ListedAsync(cluster, digest, "acknowledged writes before backup");
-            await CheckpointMarkerAsync(cluster, acknowledged, acknowledgedVersions, token);
+            var firstCommitted = await CheckpointMarkerAsync(cluster, acknowledged, acknowledgedVersions, token);
             var initial = await CaptureVersionsAsync(client, cluster, organization, projectId, sourceId, acknowledged, acknowledgedVersions, token);
             using var backup = await client.PostAsync(Uri(cluster.DatabasePath + "/backups"), content: null, token);
             await Docs.EnsureSuccessAsync(backup);
@@ -71,8 +71,8 @@ internal static class BackupQualificationRun
                 throw new InvalidOperationException("manual backup did not report ready for the source database");
             }
 
-            // A shipped checkpoint, not the runner's clock or an HTTP Date rounded to a second, chooses the PIT cut.
-            var checkpoint = await ShippedAsync(cluster, DateTimeOffset.FromUnixTimeMilliseconds(initial.Values.Max(document => document.Stamp) >> 16), token);
+            // A shipped checkpoint past every member's server clock after the marker committed, not the runner's clock, chooses the PIT cut.
+            var checkpoint = await ShippedAsync(cluster, firstCommitted, token);
             var first = Expected(initial, sourceId, placement);
             var changed = acknowledged.Keys.First();
             var update = new JsonObject { ["region"] = Cluster.Gru, ["text"] = fake.Lorem.Sentence() };
@@ -90,9 +90,9 @@ internal static class BackupQualificationRun
             }, token);
             await RecordAcknowledgementsAsync(committedLater, acknowledgedVersions, token);
             _ = await Converge.ListedAsync(cluster, Docs.Digest(acknowledged.Select(pair => (pair.Key, pair.Value))), "later writes");
-            await CheckpointMarkerAsync(cluster, acknowledged, acknowledgedVersions, token);
+            var latestCommitted = await CheckpointMarkerAsync(cluster, acknowledged, acknowledgedVersions, token);
             var latestDocuments = await CaptureVersionsAsync(client, cluster, organization, projectId, sourceId, acknowledged, acknowledgedVersions, token);
-            var latest = await ShippedAsync(cluster, DateTimeOffset.FromUnixTimeMilliseconds(latestDocuments.Values.Max(document => document.Stamp) >> 16), token);
+            var latest = await ShippedAsync(cluster, latestCommitted, token);
             plan.AddRange([
                 new(cuts[0], true, first), new(cuts[1], true, first), new(cuts[2], true, Expected(latestDocuments, sourceId, placement)),
                 // Before the oldest snapshot yet inside the plan's retention window: the backup does not hold it, a typed 409.
@@ -205,8 +205,9 @@ internal static class BackupQualificationRun
         return errors.Count == 0 ? result! : throw new AggregateException("backup qualification or cleanup failed", errors);
     }
 
-    // Every member already holds the earlier writes before this marker can reach whichever member ships the backup.
-    private static async Task CheckpointMarkerAsync(Cluster cluster, Dictionary<string, string> bodies, Dictionary<string, string> versions, CancellationToken token)
+    // Every member already holds the earlier writes before this marker can reach whichever member ships the backup. Answers
+    // a restore point at or after which every member's copy of the marker is restorable.
+    private static async Task<DateTimeOffset> CheckpointMarkerAsync(Cluster cluster, Dictionary<string, string> bodies, Dictionary<string, string> versions, CancellationToken token)
     {
         var id = EntityIds.New().ToString();
         var body = new JsonObject { ["checkpoint"] = id };
@@ -217,6 +218,23 @@ internal static class BackupQualificationRun
         }, token);
         await RecordAcknowledgementsAsync(committed, versions, token);
         _ = await Converge.ListedAsync(cluster, Docs.Digest(bodies.Select(pair => (pair.Key, pair.Value))), "checkpoint marker");
+        // The shipper stamps its commit row with its own wall clock in whole seconds, not with the marker's HLC version, and
+        // a restore at T holds it only once that second ends by T. Kestrel's Date is a cache its heartbeat refreshes every
+        // second, so a served Date can predate the commit; one that changes after the marker was listed everywhere was set
+        // later than that member's commit, and the second after it ends the commit's second.
+        var dates = await Task.WhenAll(cluster.Regions.Select(async region =>
+        {
+            var served = await ServedAtAsync(cluster[region], cluster.DatabasePath, token);
+            return await Converge.UntilAsync(() => ServedAtAsync(cluster[region], cluster.DatabasePath, token), date => date > served, $"a refreshed {region} server Date");
+        }));
+        return dates.Max().AddSeconds(1);
+    }
+
+    private static async Task<DateTimeOffset> ServedAtAsync(HttpClient client, string path, CancellationToken token)
+    {
+        using var response = await client.GetAsync(Uri(path), token);
+        await Docs.EnsureSuccessAsync(response);
+        return response.Headers.Date ?? throw new InvalidOperationException("a member answered without a Date header");
     }
 
     private static async Task RecordAcknowledgementsAsync(HttpResponseMessage committed, Dictionary<string, string> versions, CancellationToken token)
@@ -239,7 +257,7 @@ internal static class BackupQualificationRun
         Docs.Digest(documents.Select(pair => (pair.Key, Docs.Canonical(JsonNode.Parse(pair.Value.Body))))),
         documents.ToDictionary(pair => pair.Key, pair => pair.Value.Version, StringComparer.Ordinal), sourceId, placement);
 
-    private static async Task<JsonElement> ShippedAsync(Cluster cluster, DateTimeOffset? after, CancellationToken token) => await Converge.UntilAsync(async () =>
+    private static async Task<JsonElement> ShippedAsync(Cluster cluster, DateTimeOffset from, CancellationToken token) => await Converge.UntilAsync(async () =>
     {
         await cluster.ShipBackupAsync(token);
         using var window = await cluster[Cluster.Gru].GetAsync(Uri(cluster.DatabasePath + "/point-in-time"), token);
@@ -250,7 +268,7 @@ internal static class BackupQualificationRun
 
         await Docs.EnsureSuccessAsync(window);
         return await window.Content.ReadFromJsonAsync<JsonElement>(token);
-    }, window => window is { } found && (after is null || found.GetProperty("latest").GetDateTimeOffset() > after),
+    }, window => window is { } found && found.GetProperty("latest").GetDateTimeOffset() >= from,
         "a newer shipped backup checkpoint") is { } shipped ? shipped : throw new InvalidOperationException("no shipped checkpoint");
 
     private static async Task<Dictionary<string, Document>> CaptureVersionsAsync(HttpClient client, Cluster cluster, string organization, string project, string database,
