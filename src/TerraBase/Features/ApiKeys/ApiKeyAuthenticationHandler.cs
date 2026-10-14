@@ -20,17 +20,9 @@ internal sealed class ApiKeyAuthenticationHandler(
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        // The scheme name is case-insensitive (RFC 9110); the secret is not.
-        var header = Request.Headers.Authorization.ToString();
-        if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        if (Secret(Request) is not { } secret)
         {
-            return AuthenticateResult.NoResult();
-        }
-
-        var secret = header["Bearer ".Length..].Trim();
-        if (!secret.StartsWith(EngineApiKeyStore.SecretPrefix, StringComparison.Ordinal))
-        {
-            // Another scheme's token: leave it to that scheme instead of logging a failed API key.
+            // No bearer token, or another scheme's: leave it to that scheme instead of logging a failed API key.
             return AuthenticateResult.NoResult();
         }
 
@@ -44,5 +36,19 @@ internal sealed class ApiKeyAuthenticationHandler(
         Claim[] claims = [new(ClaimTypes.NameIdentifier, key.Id), .. key.Scopes.Select(scope => new Claim(ScopeClaim, scope))];
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
+    }
+
+    /// <summary>The API key secret <paramref name="request"/> presents as its bearer token, or null.</summary>
+    internal static string? Secret(HttpRequest request)
+    {
+        // The scheme name is case-insensitive (RFC 9110); the secret is not.
+        var header = request.Headers.Authorization.ToString();
+        if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var secret = header["Bearer ".Length..].Trim();
+        return secret.StartsWith(EngineApiKeyStore.SecretPrefix, StringComparison.Ordinal) ? secret : null;
     }
 }
