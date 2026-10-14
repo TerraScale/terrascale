@@ -721,13 +721,10 @@ public sealed class ExplainSqlBoundaryTests
         await using var tls = socket.GetStream();
         var headers = $"POST {Path(database)} HTTP/1.1\r\nHost: {address.Authority}\r\nAuthorization: {client.DefaultRequestHeaders.Authorization}\r\nContent-Type: application/json\r\nContent-Length: 1\r\nConnection: close\r\n\r\n";
         await tls.WriteAsync(Encoding.ASCII.GetBytes(headers), deadline.Token);
-        using var reader = new StreamReader(tls, Encoding.ASCII, leaveOpen: true);
-        var result = new List<string>();
-        while (await reader.ReadLineAsync(deadline.Token) is { Length: > 0 } line)
-        {
-            result.Add(line);
-        }
-
-        return result;
+        // Read through connection close before checking that request reservations were released.
+        var response = await ReadUntilClosedAsync(tls, deadline.Token);
+        var headerEnd = response.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+        await Assert.That(headerEnd).IsGreaterThan(0);
+        return [.. response[..headerEnd].Split("\r\n")];
     }
 }
