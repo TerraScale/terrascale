@@ -14,8 +14,10 @@ public static class StorageFormat
     /// or collections.generation (R2c-2). 5: the system database is a lattice database (R10a): document states, HLC
     /// versions and tombstones, no catalog journal. 6: persisted feed sequence and derived shape storage.
     /// 7: document digests include the length-prefixed collection and id.
+    /// 8: <c>_tb_peers.incarnation</c> scopes each peer's ack to the
+    /// incarnation of the file whose change log it names (R3).
     /// </summary>
-    public const int Version = 7;
+    public const int Version = 8;
 
     /// <summary>The format this build writes, for example <c>2-3f1a09c4e7b2</c>.</summary>
     public static string Id { get; } = $"{Version}-{Convert.ToHexStringLower(SqliteDatabaseStore.FormatDigest)[..12]}";

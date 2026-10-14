@@ -67,15 +67,49 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             ? (SqliteDatabaseStore)await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)
             : (SqliteDatabaseStore?)await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<IReadOnlyList<OriginGroup>> ReadAsync(TenantContext database, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
+    // A transaction of the database's copy in place, when that copy is `incarnation`: checked against the file's persisted
+    // incarnation inside the transaction (for a write, once it holds the writer), so a copy, restore or rebuild that
+    // reopened the file meanwhile is refused. Null, with nothing begun, otherwise.
+    private async ValueTask<(SqliteDatabaseStore Store, SqliteStorageTransaction Transaction)?> BeginAsync(
+        TenantContext database, Ulid incarnation, bool write, CancellationToken cancellationToken)
     {
-        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        if (incarnation == Ulid.Empty)
         {
-            return [];
+            throw new ArgumentException("an incarnation is named", nameof(incarnation));
         }
 
-        var start = QuietEnd(store.Incarnation, after);
-        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store || store.Incarnation != incarnation)
+        {
+            return null;
+        }
+
+        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) == incarnation)
+            {
+                return (store, transaction);
+            }
+        }
+        catch
+        {
+            await transaction.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        await transaction.DisposeAsync().ConfigureAwait(false);
+        return null;
+    }
+
+    public async ValueTask<SourceGroups?> ReadAsync(
+        TenantContext database, Ulid incarnation, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
+    {
+        var start = QuietEnd(incarnation, after);
+        if (await BeginAsync(database, incarnation, write: false, cancellationToken).ConfigureAwait(false) is not (_, var transaction))
+        {
+            return null;
+        }
+
         await using (transaction.ConfigureAwait(false))
         {
             var (groups, quiet, _) = await transaction.ReadChangeGroupsAsync(start, maxGroups, maxBytes, _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
@@ -83,56 +117,53 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             // local groups (the range would then let RetainsAsync skip a refill the peer needs).
             if (quiet > after && await transaction.RetainsAsync(start, cancellationToken).ConfigureAwait(false))
             {
-                Remember(store.Incarnation, after, quiet);
+                Remember(incarnation, after, quiet);
             }
 
-            return groups;
+            // The incarnation this transaction read from: BeginAsync checked it against the persisted one.
+            return new SourceGroups(incarnation, groups);
         }
     }
 
-    public async ValueTask<long> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken)
+    public async ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken)
     {
-        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        // Null also when the copy is replaced between these steps: the caller asks again on its next pass.
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store
+            || await BeginAsync(database, store.Incarnation, write: false, cancellationToken).ConfigureAwait(false) is not (_, var transaction))
         {
-            return 0;
+            return null;
         }
 
-        _tracked[store.Incarnation] = database;
-        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        var incarnation = store.Incarnation;
+        _tracked[incarnation] = database;
         await using (transaction.ConfigureAwait(false))
         {
-            if (await transaction.GetAckedAsync(peer, cancellationToken).ConfigureAwait(false) is { } acked)
+            if (await transaction.GetAckedAsync(peer, incarnation, cancellationToken).ConfigureAwait(false) is { } cursor)
             {
-                return acked;
+                return cursor;
             }
         }
 
         // A peer's stream reaches the database for the first time, or this file is a restore or a copy: from now on its
         // unshipped rows stay until it acks them.
-        await RecordAsync(store, peer, 0, default, cancellationToken).ConfigureAwait(false);
-        return 0;
+        return await RecordAsync(database, incarnation, peer, 0, default, cancellationToken).ConfigureAwait(false) ? new SourceCursor(incarnation, 0) : null;
     }
 
-    public async ValueTask AckAsync(TenantContext database, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken)
-    {
-        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is { } store)
-        {
-            await RecordAsync(store, peer, changeId, stable, cancellationToken).ConfigureAwait(false);
-        }
-    }
+    public ValueTask<bool> AckAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken) =>
+        RecordAsync(database, incarnation, peer, changeId, stable, cancellationToken);
 
-    public async ValueTask RecordStableAsync(TenantContext database, ReplicaId peer, Hlc stable, CancellationToken cancellationToken)
+    public async ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken)
     {
-        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        if (await BeginAsync(database, incarnation, write: true, cancellationToken).ConfigureAwait(false) is not (_, var transaction))
         {
-            return;
+            return false;
         }
 
-        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             await transaction.RecordStableAsync(peer, stable, _engine.HostTime.GetUtcNow(), cancellationToken).ConfigureAwait(false);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return true;
         }
     }
 
@@ -142,16 +173,22 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     public async ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken) =>
         await ReadAsync(database, (transaction, now) => transaction.GetHorizonAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
 
-    public async ValueTask<int> ForgetAsync(TenantContext database, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken)
+    public async ValueTask<int?> ForgetAsync(
+        TenantContext database, Ulid incarnation, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken)
     {
-        if (keys.Count == 0 || await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        // Every write transaction is durable (FULL); the incarnation is checked under the writer like an ack's.
+        if (await BeginAsync(database, incarnation, write: true, cancellationToken).ConfigureAwait(false) is not (_, var transaction))
         {
-            return 0;
+            return null;
         }
 
-        var transaction = (SqliteStorageTransaction)await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
+            if (keys.Count == 0)
+            {
+                return 0;
+            }
+
             var forgotten = await transaction.ForgetAsync(keys, horizon, cancellationToken).ConfigureAwait(false);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             return forgotten;
@@ -178,15 +215,14 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     // Every row the peer lacks past `after` is still here: the rows past the end of the known quiet ranges from `after` are
     // all kept. Those ranges hold no local group, so deleted rows inside them are none a peer lacks: a live stream whose
     // in-memory ack stayed below the acks retention raised over joined rows is not told to refill.
-    public async ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken)
+    public async ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken)
     {
-        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        var start = QuietEnd(incarnation, after);
+        if (await BeginAsync(database, incarnation, write: false, cancellationToken).ConfigureAwait(false) is not (_, var transaction))
         {
-            return true;
+            return null;
         }
 
-        var start = QuietEnd(store.Incarnation, after);
-        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             return await transaction.RetainsAsync(start, cancellationToken).ConfigureAwait(false);
@@ -278,43 +314,46 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         }
     }
 
-    public async ValueTask<long> HeadAsync(TenantContext database, CancellationToken cancellationToken)
+    public async ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken)
     {
-        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        if (await BeginAsync(database, incarnation, write: false, cancellationToken).ConfigureAwait(false) is not (_, var transaction))
         {
-            return 0;
+            return null;
         }
 
-        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             return await transaction.GetHeadAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
-    public async ValueTask<byte[]?> DigestAsync(TenantContext database, CancellationToken cancellationToken)
+    public async ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken)
     {
-        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        // Discovery pins the copy in place first; the transaction then checks it is still that copy.
+        var incarnation = expected
+            ?? (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is { } store ? (Ulid?)store.Incarnation : null);
+        if (incarnation is not { } named
+            || await BeginAsync(database, named, write: false, cancellationToken).ConfigureAwait(false) is not (_, var transaction))
         {
             return null;
         }
 
-        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            return await transaction.ReadDigestsAsync(cancellationToken).ConfigureAwait(false);
+            // One snapshot: the head is the change id the digests cover.
+            var buckets = await transaction.ReadDigestsAsync(cancellationToken).ConfigureAwait(false);
+            return new ReplicaDigest(named, await transaction.GetHeadAsync(cancellationToken).ConfigureAwait(false), buckets);
         }
     }
 
-    public async ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)> ReadBucketsAsync(
-        TenantContext database, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken)
+    public async ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)?> ReadBucketsAsync(
+        TenantContext database, Ulid incarnation, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken)
     {
-        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        if (await BeginAsync(database, incarnation, write: false, cancellationToken).ConfigureAwait(false) is not (_, var transaction))
         {
-            return ([], null);
+            return null;
         }
 
-        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             return await transaction.ReadBucketStatesAsync(buckets, after, maxStates, maxBytes, cancellationToken).ConfigureAwait(false);
@@ -334,6 +373,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
                     {
                         _ = _tracked.TryRemove(incarnation, out _);
                         _ = _tail.TryRemove(incarnation, out _);
+                        _ = _backlog.TryRemove(incarnation, out _);
                         lock (_gate)
                         {
                             _ = _quiet.Remove(incarnation);
@@ -363,37 +403,51 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
+            // The file this transaction holds, which a reopen may have made another than the store's cached one.
+            var incarnation = await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false);
             (var left, floor, var raised, var oldest) = await transaction.TrimAsync(store.BackupAnchor, _engine.HostTime.GetUtcNow(), _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
             // Before the commit wakes a stream: its RetainsAsync then already sees the ranges the raises proved quiet (which
             // hold whether or not the commit lands; the rows are unchanged until a later cut).
             foreach (var (from, to) in raised)
             {
-                Remember(store.Incarnation, from, to);
+                Remember(incarnation, from, to);
             }
 
             var horizon = await transaction.GetHorizonAsync(_engine.Member.Clock.Tick(), cancellationToken).ConfigureAwait(false);
             _ = await transaction.CollectAsync(horizon, cancellationToken).ConfigureAwait(false);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            _backlog[store.Incarnation] = left;
-            Prune(store.Incarnation, oldest);
+            _backlog[incarnation] = left;
+            Prune(incarnation, oldest);
         }
 
         await TailAsync(store, floor, cancellationToken).ConfigureAwait(false);
     }
 
-    private async ValueTask RecordAsync(SqliteDatabaseStore store, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken)
+    // Records an ack of `incarnation` under the writer; false, with nothing written, when the copy in place is another.
+    private async ValueTask<bool> RecordAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken)
     {
+        if (await BeginAsync(database, incarnation, write: true, cancellationToken).ConfigureAwait(false) is not (var store, var transaction))
+        {
+            return false;
+        }
+
         long? floor;
-        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            (var left, floor) = await transaction.RecordAckedAsync(peer, changeId, stable, store.BackupAnchor, _engine.HostTime.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+            if (await transaction.RecordAckedAsync(peer, incarnation, changeId, stable, store.BackupAnchor, _engine.HostTime.GetUtcNow(), cancellationToken)
+                .ConfigureAwait(false) is not (var left, var lowest))
+            {
+                return false;
+            }
+
+            floor = lowest;
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            _backlog[store.Incarnation] = left;
+            _backlog[incarnation] = left;
         }
 
         // After the writer is released: the gauge's read must not hold it.
         await TailAsync(store, floor, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     // The oldest local group above the slowest live peer's ack, looked at no more than once a second per database. Only a

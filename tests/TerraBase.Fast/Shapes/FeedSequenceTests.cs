@@ -142,8 +142,9 @@ public sealed class FeedSequenceTests
         await Assert.That(await ScalarAsync(store, "SELECT COUNT(*) FROM turso_cdc WHERE table_name IN ('_tb_shape_chunk', '_tb_shape_snapshot');")).IsEqualTo(0L);
 
         var groups = await api.Server.Services.GetRequiredService<TursoChangeGroupSource>()
-            .ReadAsync(tenant, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
-        var deltas = groups.SelectMany(group => group.Deltas).ToArray();
+            .ReadAsync(tenant, store.Incarnation, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+        await Assert.That(groups).IsNotNull();
+        var deltas = groups!.Groups.SelectMany(group => group.Deltas).ToArray();
         await Assert.That(deltas.Any(delta => delta.Id == document)).IsTrue().Because("a captured write ships, so the read itself works");
         await Assert.That(deltas.Any(delta => delta.Collection is "_tb_shape_chunk" or "_tb_shape_snapshot")).IsFalse();
     }

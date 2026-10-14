@@ -22,8 +22,28 @@ public sealed record OriginGroup(long ChangeId, IReadOnlyList<ChangeDelta> Delta
 public sealed record ChangeDelta(string Collection, string Id, Hlc Stamp, DocumentState State);
 
 /// <summary>
+/// A peer's cursor in one incarnation of this machine's copy of a database: change ids and acks name rows of that file's
+/// change log only, and every copy, restore or rebuild is a new incarnation whose ids restart.
+/// </summary>
+/// <param name="Incarnation">The copy the cursor belongs to.</param>
+/// <param name="Acked">The last change id the peer acknowledged in it, or 0.</param>
+public readonly record struct SourceCursor(Ulid Incarnation, long Acked)
+{
+    /// <summary>A copied or restored peer row must refill this incarnation before resuming its change log.</summary>
+    public bool RequiresRefill { get; init; }
+}
+
+/// <summary>Groups read from one incarnation of this machine's copy of a database.</summary>
+/// <param name="Incarnation">The incarnation the read's own storage transaction found in place.</param>
+/// <param name="Groups">The groups, in change id order; empty when there are none.</param>
+public sealed record SourceGroups(Ulid Incarnation, IReadOnlyList<OriginGroup> Groups);
+
+/// <summary>
 /// Where the peer streams read this machine's own change groups: the CDC tailer (slice R3). Only groups of local
 /// writes: a group joined from a peer (its origin is another node, or 0 for a repair) is never returned, so nothing echoes.
+/// Every read and write but <see cref="AckedAsync"/> names the incarnation it expects, checked inside its storage
+/// transaction (for writes, under the writer), and is refused (null or false, nothing written) when the copy in place is
+/// another or this machine no longer holds the database.
 /// </summary>
 public interface IChangeGroupSource
 {
@@ -31,33 +51,46 @@ public interface IChangeGroupSource
     IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken);
 
     /// <summary>
-    /// The database's groups with a change id above <paramref name="after"/>, in change id order: at most
-    /// <paramref name="maxGroups"/>, and no more than <paramref name="maxBytes"/> of encoded deltas unless the first group alone
-    /// is larger. Empty when there are none.
+    /// The database's groups with a change id above <paramref name="after"/> in <paramref name="incarnation"/>, in change id
+    /// order: at most <paramref name="maxGroups"/>, and no more than <paramref name="maxBytes"/> of encoded deltas unless the
+    /// first group alone is larger, with the incarnation the read's transaction found. Null when refused.
     /// </summary>
-    ValueTask<IReadOnlyList<OriginGroup>> ReadAsync(TenantContext database, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken);
-
-    /// <summary>The last change id <paramref name="peer"/> acknowledged for the database (its <c>_tb_peers.acked</c>), or 0.</summary>
-    ValueTask<long> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken);
+    ValueTask<SourceGroups?> ReadAsync(
+        TenantContext database, Ulid incarnation, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Records that <paramref name="peer"/> durably applied every group up to <paramref name="changeId"/>: the cursor a
-    /// reconnecting stream resumes from, and what CDC retention may drop once every peer acknowledged it; and the peer's
-    /// reported stable stamp, which bounds garbage collection here.
+    /// The copy in place and the last change id <paramref name="peer"/> acknowledged in it (its <c>_tb_peers.acked</c>), or 0
+    /// when it acknowledged nothing of this incarnation. A copied peer row sets <see cref="SourceCursor.RequiresRefill"/>
+    /// until a refill ACK persists the new scope. Null when this machine does not hold the database, or when its copy was
+    /// replaced during this read (ask again).
     /// </summary>
-    ValueTask AckAsync(TenantContext database, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken);
+    ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records that <paramref name="peer"/> durably applied every group of <paramref name="incarnation"/> up to
+    /// <paramref name="changeId"/>: the cursor a reconnecting stream resumes from, and what CDC retention may drop once every
+    /// peer acknowledged it; and the peer's reported stable stamp, which bounds garbage collection here. False, with nothing
+    /// recorded, when refused.
+    /// </summary>
+    ValueTask<bool> AckAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken);
 
     /// <summary>Completes once a group may have committed after the call (or when the source cannot tell): a wake-up, not a guarantee.</summary>
     Task ChangedAsync(CancellationToken cancellationToken);
 
-    /// <summary>Records <paramref name="peer"/>'s stable stamp of the database, reported without an acknowledgement.</summary>
-    ValueTask RecordStableAsync(TenantContext database, ReplicaId peer, Hlc stable, CancellationToken cancellationToken);
+    /// <summary>
+    /// Records <paramref name="peer"/>'s stable stamp of the database, reported without an acknowledgement to a frontier of
+    /// <paramref name="incarnation"/>. False, with nothing recorded, when refused.
+    /// </summary>
+    ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken);
 
-    /// <summary>Whether every group after <paramref name="after"/> is still held; false once retention cut some, so the peer refills.</summary>
-    ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken);
+    /// <summary>
+    /// Whether every group of <paramref name="incarnation"/> after <paramref name="after"/> is still held; false once retention
+    /// cut some, so the peer refills; null when refused.
+    /// </summary>
+    ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken);
 
-    /// <summary>The database's newest change id, or 0: where a refilled peer's stream goes on.</summary>
-    ValueTask<long> HeadAsync(TenantContext database, CancellationToken cancellationToken);
+    /// <summary>The newest change id of <paramref name="incarnation"/>, or 0: where a refilled peer's stream goes on; null when refused.</summary>
+    ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken);
 }
 
 /// <summary>Where a receiver joins the groups an origin streams to it.</summary>
@@ -104,8 +137,27 @@ internal static class ChangeGroups
     /// <summary>Encoded groups per batch, before the LZ4 envelope; a single larger group still travels alone.</summary>
     public const int MaxBatchBytes = 2 * 1024 * 1024;
 
-    public static V1.Database Wire(TenantContext database) =>
-        new() { OrganizationId = database.OrganizationId, ProjectId = database.ProjectId, DatabaseId = database.DatabaseId };
+    /// <summary>The wire name of <paramref name="database"/>, of <paramref name="incarnation"/> when there is one.</summary>
+    public static V1.Database Wire(TenantContext database, Ulid? incarnation) =>
+        new()
+        {
+            OrganizationId = database.OrganizationId,
+            ProjectId = database.ProjectId,
+            DatabaseId = database.DatabaseId,
+            Incarnation = incarnation is { } named ? ByteString.CopyFrom(named.ToByteArray()) : ByteString.Empty,
+        };
+
+    /// <summary>The incarnation a wire database names, or null when it names none.</summary>
+    /// <exception cref="InvalidDataException">It is not 16 bytes, or is the empty ULID.</exception>
+    public static Ulid? Incarnation(V1.Database? database) =>
+        database is null || database.Incarnation.IsEmpty ? null
+        : database.Incarnation.Length == 16 && new Ulid(database.Incarnation.Span) is var incarnation && incarnation != Ulid.Empty ? incarnation
+        : throw new InvalidDataException("a database's incarnation is a 16-byte ULID");
+
+    /// <summary>The incarnation a wire database must name.</summary>
+    /// <exception cref="InvalidDataException">It names none, or a malformed one.</exception>
+    public static Ulid RequiredIncarnation(V1.Database? database) =>
+        Incarnation(database) ?? throw new InvalidDataException("the frame names the incarnation of its database");
 
     /// <exception cref="InvalidDataException">The ids are neither canonical ULIDs nor the system database's.</exception>
     public static TenantContext Tenant(V1.Database? database) =>

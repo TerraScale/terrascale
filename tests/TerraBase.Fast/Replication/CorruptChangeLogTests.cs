@@ -136,11 +136,11 @@ public sealed class CorruptChangeLogTests
         var peer = ReplicaId.Of(99, 1, 0);
         for (var started = DateTime.UtcNow; DateTime.UtcNow - started < TimeSpan.FromSeconds(1.5); await Task.Delay(100))
         {
-            await node.Groups.AckAsync(node.Database, peer, before, default, CancellationToken.None);
+            await Assert.That(await node.Groups.AckAsync(node.Database, await node.IncarnationAsync(node.Database), peer, before, default, CancellationToken.None)).IsTrue();
         }
 
-        await Assert.That(await node.Groups.AckedAsync(node.Database, peer, CancellationToken.None)).IsEqualTo(before);
-        await Assert.That(await node.Groups.AckedAsync(node.Database, ReplicaId.Of(98, 1, 0), CancellationToken.None)).IsLessThanOrEqualTo(before);
+        await Assert.That(await node.AckedAsync(node.Database, peer)).IsEqualTo(before);
+        await Assert.That(await node.AckedAsync(node.Database, ReplicaId.Of(98, 1, 0))).IsLessThanOrEqualTo(before);
     }
 
     // Recovery: a held database is read again. gru's write to `first` is damaged while sjc is unlisted, so the stream holds
@@ -202,15 +202,15 @@ public sealed class CorruptChangeLogTests
         await call.RequestStream.WriteAsync(new PushFrame { Batch = Batch(node.Database, (1, good), (2, garbage)) });
         var refused = await AckAsync(call);
         await Assert.That(refused.Refused).IsTrue();
-        await Assert.That(refused.Database).IsEqualTo(ChangeGroups.Wire(node.Database));
+        await Assert.That(refused.Database).IsEqualTo(ChangeGroups.Wire(node.Database, Sender));
         await Assert.That(await node.ReadAsync(node.Database, "x")).IsNull().Because("no group of a refused batch is applied");
 
         await call.RequestStream.WriteAsync(new PushFrame { Batch = Batch(node.Second, (1, good)) });
         var other = await AckAsync(call);
-        await Assert.That((other.Refused, other.ChangeId, other.Database)).IsEqualTo((false, 1UL, ChangeGroups.Wire(node.Second)));
+        await Assert.That((other.Refused, other.ChangeId, other.Database)).IsEqualTo((false, 1UL, ChangeGroups.Wire(node.Second, Sender)));
         await call.RequestStream.WriteAsync(new PushFrame { Batch = Batch(node.Database, (1, good)) });
         var again = await AckAsync(call);
-        await Assert.That((again.Refused, again.ChangeId, again.Database)).IsEqualTo((false, 1UL, ChangeGroups.Wire(node.Database)));
+        await Assert.That((again.Refused, again.ChangeId, again.Database)).IsEqualTo((false, 1UL, ChangeGroups.Wire(node.Database, Sender)));
 
         await Assert.That(await node.ReadAsync(node.Second, "x")).IsEqualTo("""{"n":1}""");
         await Assert.That(await node.ReadAsync(node.Database, "x")).IsEqualTo("""{"n":1}""");
@@ -311,6 +311,9 @@ public sealed class CorruptChangeLogTests
         return call.ResponseStream.Current.Ack;
     }
 
+    // The made-up origin's copy that every raw batch names, and its acks echo.
+    private static readonly Ulid Sender = Ulid.NewUlid();
+
     private static Batch Batch(TenantContext database, params (ulong ChangeId, Delta Delta)[] groups)
     {
         var list = new GroupList();
@@ -323,7 +326,7 @@ public sealed class CorruptChangeLogTests
 
         return new Batch
         {
-            Database = ChangeGroups.Wire(database),
+            Database = ChangeGroups.Wire(database, Sender),
             LastChangeId = groups[^1].ChangeId,
             Groups = UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(list.ToByteArray())),
         };
@@ -431,10 +434,18 @@ public sealed class CorruptChangeLogTests
             }, static _ => true, CancellationToken.None);
         }
 
-        public async Task<IReadOnlyList<OriginGroup>> ReadGroupsAsync(TenantContext database, long after) =>
-            await Groups.ReadAsync(database, after, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+        // The copy in place, which the source's reads and acks name; its own incarnation is never refused.
+        public async Task<Ulid> IncarnationAsync(TenantContext database) => (await StoreAsync(database)).Incarnation;
 
-        public async Task<long> HeadAsync(TenantContext database) => await Groups.HeadAsync(database, CancellationToken.None);
+        public async Task<IReadOnlyList<OriginGroup>> ReadGroupsAsync(TenantContext database, long after) =>
+            (await Groups.ReadAsync(database, await IncarnationAsync(database), after, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)
+                ?? throw new InvalidOperationException("the copy refused its own incarnation")).Groups;
+
+        public async Task<long> HeadAsync(TenantContext database) =>
+            await Groups.HeadAsync(database, await IncarnationAsync(database), CancellationToken.None) ?? throw new InvalidOperationException("the copy refused its own incarnation");
+
+        public async Task<long> AckedAsync(TenantContext database, ReplicaId peer) =>
+            (await Groups.AckedAsync(database, peer, CancellationToken.None))?.Acked ?? throw new InvalidOperationException("the database is missing");
 
         public async Task<string> WalAsync(TenantContext database) => (await StoreAsync(database)).FilePath + "-wal";
 

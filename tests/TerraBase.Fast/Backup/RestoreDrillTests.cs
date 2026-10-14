@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
@@ -36,31 +35,30 @@ public sealed class RestoreDrillTests
         var at = host.Status().LastShippedAt!.Value;
         var tenant = new TenantContext(host.Database.Organization, PlanTier.Enterprise, host.Database.Project, host.Database.Id);
         var states = host.Api.Server.Services.GetRequiredService<IReplicaStates>();
-        var digest = await states.DigestAsync(tenant, token);
-        await Assert.That(digest).IsNotNull();
+        var original = await states.DigestAsync(tenant, null, token);
+        await Assert.That(original).IsNotNull();
+        var digest = original!.Buckets;
         await Assert.That(host.S3.Objects.Keys.Any(key => key.StartsWith(host.File + "/wal/", StringComparison.Ordinal))).IsTrue();
 
         var engine = host.Api.Server.Services.GetRequiredService<IStorageEngine>();
         var path = Path.Combine(host.Api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId!, tenant.DatabaseId + ".db");
         await Assert.That(await engine.DeleteDatabaseAsync(tenant, token)).IsTrue();
         await Assert.That(File.Exists(path)).IsFalse();
-        await Assert.That(await states.DigestAsync(tenant, token)).IsNull();
+        await Assert.That(await states.DigestAsync(tenant, null, token)).IsNull();
 
         var restoreTimer = Stopwatch.StartNew();
         await host.RestoreAsync(at, "recovered", token);
         restoreTimer.Stop();
-        using var response = await host.Api.Client.GetAsync(ManagementApi.Uri($"/v1/management/organizations/{tenant.OrganizationId}/projects/{tenant.ProjectId}/databases"), token);
-        response.EnsureSuccessStatusCode();
-        var listing = await response.Content.ReadFromJsonAsync<JsonElement>(token);
-        var restoredId = listing.GetProperty("items").EnumerateArray().Single(item => item.GetProperty("name").GetString() == "recovered").GetProperty("id").GetString()!;
-        var restoredDigest = await states.DigestAsync(tenant with { DatabaseId = restoredId }, token);
-        await Assert.That(restoredDigest).IsEquivalentTo(digest!);
+        var restoredId = await host.DatabaseIdAsync("recovered", token);
+        var restoredDigest = await states.DigestAsync(tenant with { DatabaseId = restoredId }, null, token);
+        await Assert.That(restoredDigest!.Buckets).IsEquivalentTo(digest);
+        await Assert.That(restoredDigest.Incarnation).IsNotEqualTo(original.Incarnation).Because("a restore is a new copy, whose change ids restart");
         foreach (var (name, text) in expected)
         {
             await Assert.That(await host.ReadAsync("recovered", "people", name, token)).IsEqualTo(text);
         }
 
-        Console.WriteLine($"RESTORE_DRILL documents={expected.Count} backup_ms={backupTimer.Elapsed.TotalMilliseconds:F1} restore_ms={restoreTimer.Elapsed.TotalMilliseconds:F1} digest={Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(digest!))}");
+        Console.WriteLine($"RESTORE_DRILL documents={expected.Count} backup_ms={backupTimer.Elapsed.TotalMilliseconds:F1} restore_ms={restoreTimer.Elapsed.TotalMilliseconds:F1} digest={Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(digest))}");
     }
 
 }

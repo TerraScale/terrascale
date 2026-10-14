@@ -207,6 +207,7 @@ CREATE INDEX _tb_state_dead ON _tb_state (stamp) WHERE live = 0;
 CREATE TABLE _tb_peers (node INTEGER PRIMARY KEY,     -- every origin and every peer of this database
   applied INTEGER NOT NULL,   -- highest stamp applied from this origin, in stream order (or heartbeat)
   acked   INTEGER NOT NULL,   -- sender side: highest local change_id this peer acknowledged
+  incarnation TEXT NOT NULL DEFAULT '', -- the local file incarnation whose change_id the ACK names; empty before ACK contact
   stable  INTEGER NOT NULL,   -- the peer's last reported stable stamp (section 11)
   seen    INTEGER NOT NULL);  -- Unix ms last heard from
 CREATE TABLE _tb_feed (seq INTEGER NOT NULL UNIQUE, commit_offset INTEGER NOT NULL,
@@ -938,10 +939,13 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   (`IStorageTransaction.MaxChangeGroupChanges`/`MaxChangeGroupBytes`). Past that, a transaction alone fails with
   `ChangeGroupCapacityException` (the existing 503 `capacity` answer); a group commit write that would push a
   shared transaction past it moves to the next batch (`LimitsReached`). One document of up to 1 MiB always fits.
-- **Cursors.** `_tb_peers.acked`, written with capture suspended (the tailer's bookkeeping, in no backup). A peer's first
-  `AckedAsync` gives it a row at 0, so it holds retention from first contact. An `acked` above the file's newest change id
-  came from another file's `turso_cdc` (a restore or a copy) and resets to 0; peers then re-send what is retained, and the
-  joins are idempotent.
+- **Cursors.** `_tb_peers.acked` names a position in `_tb_peers.incarnation`, written with capture suspended (the
+  tailer's bookkeeping). A peer's first `AckedAsync` returns the file incarnation and gives it a row at 0, so it holds
+  retention from first contact. Reads, heads and retention checks require that incarnation. ACK persistence checks the
+  expected incarnation under the writer and refuses another file's ACK, including one whose numeric position fits the
+  current head. Copies and restores reset stored ACKs; mismatched peer rows return 0 and require refill before their
+  persisted scope advances. The internal v1 wire and
+  digest/bucket reads pin the source incarnation as described in [the incarnation contract](replication-incarnations.md).
 - **Retention** (`SqliteStorageTransaction.Retention`, run after every ack and by the backup tap's trim): delete below the
   newest COMMIT row that is at or below every peer's `acked` (peers heard from in the last 24 h), at or below the backup
   tap's anchor, and, once the database has a `_tb_peers` row, at least 60 s old by the host clock (Turso's `change_time`

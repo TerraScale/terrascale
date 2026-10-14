@@ -27,13 +27,18 @@ public sealed class CommitMarkerTests
         using var data = await api.CreateClientAsync(managed.Organization, "documents:write", "documents:read");
         await ManagementApi.CreateCollectionAsync(data, managed, "items");
         var (store, source, tenant) = await OpenAsync(api, managed, token);
-        var before = await source.HeadAsync(tenant, token);
+        var before = await HeadAsync(source, store, tenant, token);
         var id = EntityIds.New().ToString();
         var (_, firstCommit) = await PutAsync(store, id, token);
         await Assert.That(firstCommit.Marker).IsNotNull();
         var marker = firstCommit.Marker!.Value;
         await Assert.That(marker.Incarnation).IsEqualTo(store.Incarnation).Because("the marker must name the writer's actual incarnation");
-        await Assert.That(marker.ChangeId).IsEqualTo((await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token))
+        var read = await source.ReadAsync(tenant, marker.Incarnation, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token);
+        await Assert.That(read).IsNotNull();
+        await Assert.That(read!.Incarnation).IsEqualTo(marker.Incarnation).Because("a read reports the copy it read, which the marker names");
+        await Assert.That(await source.ReadAsync(tenant, Ulid.NewUlid(), before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token))
+            .IsNull().Because("a read pinned to another copy is refused");
+        await Assert.That(marker.ChangeId).IsEqualTo(read.Groups
             .Single(group => group.Deltas.Any(delta => delta.Id == id)).ChangeId).Because("the marker must name this mutation's own committed CDC group");
         await Assert.That(firstCommit.Offset).IsGreaterThan(0);
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.OK);
@@ -45,7 +50,7 @@ public sealed class CommitMarkerTests
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
         }
 
-        await Assert.That(await source.HeadAsync(tenant, token)).IsGreaterThan(marker.ChangeId);
+        await Assert.That(await HeadAsync(source, store, tenant, token)).IsGreaterThan(marker.ChangeId);
         await AssertValueAsync(data, managed, later, 2, token);
         var (asserted, assertionCommit) = await store.WriteAsync((transaction, inner) => transaction.GetAsync("items", id, inner), document => document is not null, token);
         await Assert.That(asserted).IsNotNull();
@@ -74,7 +79,7 @@ public sealed class CommitMarkerTests
         using var data = await api.CreateClientAsync(managed.Organization, "documents:write", "documents:read");
         await ManagementApi.CreateCollectionAsync(data, managed, "items");
         var (store, source, tenant) = await OpenAsync(api, managed, token);
-        var before = await source.HeadAsync(tenant, token);
+        var before = await HeadAsync(source, store, tenant, token);
         var firstId = EntityIds.New().ToString();
         var laterId = EntityIds.New().ToString();
         await using var transaction = await store.BeginTransactionAsync(write: true, token);
@@ -105,7 +110,7 @@ public sealed class CommitMarkerTests
         await Assert.That(original.Marker!.Value.Incarnation).IsEqualTo(store.Incarnation);
         await Assert.That(laterCommit.Marker!.Value.Incarnation).IsEqualTo(original.Marker.Value.Incarnation);
         await Assert.That(laterCommit.Marker.Value.ChangeId).IsGreaterThan(original.Marker.Value.ChangeId);
-        var groups = await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token);
+        var groups = await ReadAsync(source, store, tenant, before, token);
         await Assert.That(original.Marker.Value.ChangeId).IsEqualTo(groups.Single(group => group.Deltas.Any(delta => delta.Id == firstId)).ChangeId);
         await Assert.That(laterCommit.Marker.Value.ChangeId).IsEqualTo(groups.Single(group => group.Deltas.Any(delta => delta.Id == laterId)).ChangeId);
         await AssertValueAsync(data, managed, firstId, 1, token);
@@ -124,7 +129,7 @@ public sealed class CommitMarkerTests
         var (store, source, tenant) = await OpenAsync(api, managed, token);
         var seed = EntityIds.New().ToString();
         _ = await PutAsync(store, seed, token);
-        var before = await source.HeadAsync(tenant, token);
+        var before = await HeadAsync(source, store, tenant, token);
         var kept = EntityIds.New().ToString();
         var alsoKept = EntityIds.New().ToString();
         var refused = EntityIds.New().ToString();
@@ -163,7 +168,7 @@ public sealed class CommitMarkerTests
         await AssertValueAsync(data, managed, kept, 1, token);
         await AssertValueAsync(data, managed, alsoKept, 1, token);
         await Assert.That(await StatusAsync(data, managed, refused, token)).IsEqualTo(HttpStatusCode.NotFound);
-        var groups = await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token);
+        var groups = await ReadAsync(source, store, tenant, before, token);
         await Assert.That(groups.Single(group => group.Deltas.Any(delta => delta.Id == kept)).ChangeId).IsEqualTo(writtenCommit.Marker!.Value.ChangeId);
         await Assert.That(groups.Single(group => group.Deltas.Any(delta => delta.Id == alsoKept)).ChangeId).IsEqualTo(writtenCommit.Marker!.Value.ChangeId);
         await Assert.That(groups.SelectMany(group => group.Deltas).Any(delta => delta.Id == refused)).IsFalse();
@@ -205,7 +210,7 @@ public sealed class CommitMarkerTests
         var (store, source, tenant) = await OpenAsync(api, managed, token);
         committing = store;
         _ = await PutAsync(store, EntityIds.New().ToString(), token);
-        var before = await source.HeadAsync(tenant, token);
+        var before = await HeadAsync(source, store, tenant, token);
         var incarnation = store.Incarnation;
         var sequence = store.CommitSequence;
         var session = store.CurrentWriter();
@@ -237,7 +242,7 @@ public sealed class CommitMarkerTests
         await Assert.That(store.Incarnation).IsEqualTo(incarnation);
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.OK);
         await AssertValueAsync(data, managed, id, 1, token);
-        await Assert.That((await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token))
+        await Assert.That((await ReadAsync(source, store, tenant, before, token))
             .Count(group => group.Deltas.Any(delta => delta.Id == id))).IsEqualTo(1);
         await Assert.That((await PutAsync(store, EntityIds.New().ToString(), token)).Commit.Marker).IsNotNull();
     }
@@ -279,7 +284,7 @@ public sealed class CommitMarkerTests
         var (store, source, tenant) = await OpenAsync(api, managed, token);
         committing = store;
         _ = await PutAsync(store, EntityIds.New().ToString(), token);
-        var before = await source.HeadAsync(tenant, token);
+        var before = await HeadAsync(source, store, tenant, token);
         var incarnation = store.Incarnation;
         var id = EntityIds.New().ToString();
         Volatile.Write(ref target, tenant.DatabaseId);
@@ -304,7 +309,7 @@ public sealed class CommitMarkerTests
         await Assert.That(store.Incarnation).IsEqualTo(incarnation);
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.OK);
         await AssertValueAsync(data, managed, id, 1, token);
-        await Assert.That((await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token))
+        await Assert.That((await ReadAsync(source, store, tenant, before, token))
             .Count(group => group.Deltas.Any(delta => delta.Id == id))).IsEqualTo(1).Because("a failed response never replays the ambiguous mutation");
 
         var nextId = EntityIds.New().ToString();
@@ -323,7 +328,7 @@ public sealed class CommitMarkerTests
         using var data = await api.CreateClientAsync(managed.Organization, "documents:write", "documents:read");
         await ManagementApi.CreateCollectionAsync(data, managed, "items");
         var (store, source, tenant) = await OpenAsync(api, managed, token);
-        var before = await source.HeadAsync(tenant, token);
+        var before = await HeadAsync(source, store, tenant, token);
         var incarnation = store.Incarnation;
         var sequence = store.CommitSequence;
         var id = EntityIds.New().ToString();
@@ -341,12 +346,20 @@ public sealed class CommitMarkerTests
         await Assert.That(store.CommitSequence).IsEqualTo(sequence);
         await Assert.That(store.Incarnation).IsEqualTo(incarnation);
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That((await source.ReadAsync(tenant, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token))
+        await Assert.That((await ReadAsync(source, store, tenant, before, token))
             .Any(group => group.Deltas.Any(delta => delta.Id == id))).IsFalse();
     }
 
     private static ValueTask<(long Result, CommitResult Commit)> PutAsync(SqliteDatabaseStore store, string id, CancellationToken token) =>
         store.WriteAsync((transaction, inner) => transaction.PutAsync("items", id, Body, inner), _ => true, token);
+
+    // The source's reads of the copy in place, which never refuse its own incarnation.
+    private static async Task<long> HeadAsync(IChangeGroupSource source, SqliteDatabaseStore store, TenantContext tenant, CancellationToken token) =>
+        await source.HeadAsync(tenant, store.Incarnation, token) ?? throw new InvalidOperationException("the copy refused its own incarnation");
+
+    private static async Task<IReadOnlyList<OriginGroup>> ReadAsync(IChangeGroupSource source, SqliteDatabaseStore store, TenantContext tenant, long after, CancellationToken token) =>
+        (await source.ReadAsync(tenant, store.Incarnation, after, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token)
+            ?? throw new InvalidOperationException("the copy refused its own incarnation")).Groups;
 
     private static async Task<(SqliteDatabaseStore Store, IChangeGroupSource Source, TenantContext Tenant)> OpenAsync(
         ManagementApi api, ManagedDatabaseRef managed, CancellationToken token)

@@ -16,7 +16,7 @@ public sealed class F4DiagnosticTests
         var engine = management.Server.Services.GetRequiredService<SqliteStorageEngine>();
         var source = management.Server.Services.GetRequiredService<IChangeGroupSource>();
         var store = await engine.OpenSystemDatabaseAsync(deadline.Token);
-        _ = await source.HeadAsync(ChangeGroups.System, deadline.Token);
+        _ = await source.HeadAsync(ChangeGroups.System, store.Incarnation, deadline.Token) ?? throw new InvalidOperationException("the copy refused its own incarnation");
         using var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var read = engine.Io.RunAsync(() =>
@@ -25,7 +25,7 @@ public sealed class F4DiagnosticTests
             release.Wait(deadline.Token);
         }, deadline.Token);
         await entered.Task.WaitAsync(deadline.Token);
-        Task? ack = null;
+        Task<bool>? ack = null;
         var writerCompleted = false;
         try
         {
@@ -35,7 +35,7 @@ public sealed class F4DiagnosticTests
                 _ = await control.CommitAsync(deadline.Token);
             }
 
-            ack = source.AckAsync(ChangeGroups.System, ReplicaId.Of(1, 7, 0), 0, default, deadline.Token).AsTask();
+            ack = source.AckAsync(ChangeGroups.System, store.Incarnation, ReplicaId.Of(1, 7, 0), 0, default, deadline.Token).AsTask();
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(10));
             while (engine.Io.Queued == 0)
             {
@@ -68,5 +68,6 @@ public sealed class F4DiagnosticTests
             _ = await recovered.CommitAsync(deadline.Token);
         }
         await Assert.That(writerCompleted).IsTrue();
+        await Assert.That(await ack!).IsTrue().Because("the ack names the copy in place");
     }
 }

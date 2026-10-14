@@ -56,15 +56,17 @@ public sealed class ApplyDurabilityTests
         var stamp = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
         OriginGroup[] groups = [.. GroupSizes.Select((count, index) => new OriginGroup(index + 1,
             [.. Enumerable.Range(0, count).Select(_ => Put(origin, stamp + (ulong)index, EntityIds.New().ToString()))]))];
+        // The made-up origin's copy of the database, which the ack echoes.
+        var sender = ChangeGroups.Wire(tenant, Ulid.NewUlid());
         await call.RequestStream.WriteAsync(new PushFrame
         {
-            Batch = new Batch { Database = ChangeGroups.Wire(tenant), LastChangeId = 3, Groups = ChangeGroups.Encode(groups) },
+            Batch = new Batch { Database = sender, LastChangeId = 3, Groups = ChangeGroups.Encode(groups) },
         });
         await Assert.That(await call.ResponseStream.MoveNext(deadline.Token)).IsTrue();
         var ack = call.ResponseStream.Current.Ack;
         await Assert.That(ack.Refused).IsFalse();
         await Assert.That(ack.ChangeId).IsEqualTo(3UL);
-        await Assert.That(ack.Database).IsEqualTo(ChangeGroups.Wire(tenant));
+        await Assert.That(ack.Database).IsEqualTo(sender);
         await Assert.That(string.Join(", ", modes)).IsEqualTo("2, 2").Because("every receiver transaction commits with synchronous FULL");
 
         foreach (var group in groups)

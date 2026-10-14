@@ -6,7 +6,8 @@ option csharp_namespace = "TerraBase.Features.Replication.V1";
 
 // Internal: peer streams of client databases (docs/terrabase/multi-region-replication.md sections 8 and 9). Each machine
 // pushes only the change groups of its own local writes, directly to every other machine whose region holds the database,
-// so nothing is forwarded and nothing echoes. Fly's private network is the trust boundary; no service credential.
+// so nothing is forwarded and nothing echoes. Every peer RPC requires X-TerraBase-Peer-Credential from Fly's
+// TERRABASE_PEER_SECRET.
 service Replication {
   // One stream per (sender, receiver) machine pair, for every database they share. The sender opens it with a Hello,
   // the receiver answers with a Welcome, then acks every batch after its durable commit.
@@ -56,11 +57,15 @@ message Refill {
   fixed64 horizon = 3;
 }
 
-// A client database: its organization, project and database ULIDs.
+// A client database: its organization, project and database ULIDs; and the incarnation (the 16-byte ULID of one database
+// file, renewed by every copy, restore and rebuild) of the sender's copy that a frame's change ids, acks and states belong
+// to. Batch, Refill and Frontier carry the sender's; Ack and StableReport echo the frame they answer; a DigestRequest names
+// the answering copy's expected incarnation, or none to discover it; a BucketRequest always names it.
 message Database {
   string organization_id = 1;
   string project_id = 2;
   string database_id = 3;
+  bytes incarnation = 4;
 }
 
 // Consecutive change groups of one database, the last one's change id, and the groups: a GroupList inside a TBLZ4E01 LZ4
@@ -129,22 +134,29 @@ message DigestRequest {
   Database database = 1;
 }
 
-// Held: the machine holds the database. Buckets: a TBLZ4E01 envelope of 4096 x (h1, h2), each a little-endian 64-bit
-// integer: the XOR of the digests of the bucket's document states.
+// Held: the machine holds the database, as the requested incarnation when the request named one. Buckets: a TBLZ4E01
+// envelope of 4096 x (h1, h2), each a little-endian 64-bit integer: the XOR of the digests of the bucket's document states.
+// Incarnation: the held copy's, which a following BucketRequest names; head_change_id: its newest change id, read in the
+// same snapshot as the digests.
 message DigestReply {
   bool held = 1;
   bytes buckets = 2;
+  bytes incarnation = 3;
+  uint64 head_change_id = 4;
 }
 
-// At most 4096 distinct buckets, each 0 to 4095.
+// At most 4096 distinct buckets, each 0 to 4095, of the named incarnation: the stream fails with FAILED_PRECONDITION once
+// the answering copy is another.
 message BucketRequest {
   Database database = 1;
   repeated uint32 buckets = 2;
 }
 
-// A TBLZ4E01 envelope of a StateList: at most 1024 states and 2 MiB of encoded states.
+// A TBLZ4E01 envelope of a StateList: at most 1024 states and 2 MiB of encoded states; and the incarnation the request
+// named, which every page echoes.
 message StatePage {
   bytes states = 1;
+  bytes incarnation = 2;
 }
 
 message StateList {
