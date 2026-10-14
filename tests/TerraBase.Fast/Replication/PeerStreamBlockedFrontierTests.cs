@@ -3,7 +3,7 @@ using Grpc.Core;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
-using TerraBase.Testing;
+using TerraBase.Primitives;
 using ReplicaCluster = TerraBase.Fast.Replication.PeerStreamTests.Cluster;
 
 namespace TerraBase.Fast.Replication;
