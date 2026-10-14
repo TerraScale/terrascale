@@ -33,15 +33,26 @@ case "$1 $2" in
     done
     test ! -e "$STATE/fail-secret" ;;
   "ssh console") printf '%s\n' "$*" >> "$STATE/provision" ;;
-  "storage destroy") echo "$1 $2 $3" >> "$STATE/destroy"; test ! -e "$STATE/fail-storage" ;;
-  "apps destroy") echo "$1 $2 $3" >> "$STATE/destroy" ;;
+  "storage destroy") echo "$1 $2 $3" >> "$STATE/destroy"; test ! -e "$STATE/fail-storage"; sed -i "/^$3\$/d" "$STATE/buckets" ;;
+  "apps destroy") echo "$1 $2 $3" >> "$STATE/destroy"; test ! -e "$STATE/fail-app" ;;
   *) echo "unexpected flyctl command: $1 $2" >&2; exit 1 ;;
 esac
 FAKE
 cat > "$state/bin/curl" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ $* == *'/healthz'* || $* == *'/readyz'* ]]; then
+if [[ $* == *'https://api.fly.io/graphql'* ]]; then
+  while (($#)); do
+    if [[ $1 == -d ]]; then printf '%s\n' "$2" > "$STATE/graphql-request"; break; fi
+    shift
+  done
+  [[ ! -e $STATE/fail-graphql ]] || exit 22
+  if [[ -e $STATE/graphql-response ]]; then
+    cat "$STATE/graphql-response"
+  else
+    jq -Rn '{data: {organization: {addOns: {nodes: [inputs | {name: .}]}}}}' < "$STATE/buckets"
+  fi
+elif [[ $* == *'/healthz'* || $* == *'/readyz'* ]]; then
   printf '%s\n' "${*: -1}" >> "$STATE/checks"
   [[ ! -e $STATE/fail-ready || $* != *'/readyz'* ]] || exit 22
 elif [[ $* == *' -X POST '* ]]; then
@@ -57,6 +68,7 @@ FAKE
 chmod +x "$state/bin/"*
 export PATH="$state/bin:$PATH" FLY_API_TOKEN=fixture
 printf '%s\n' TS_AUTH_MASTER_KEY TS_AUTH_AUDIT_SIGNING_KEY BUCKET_NAME TERRABASE_MASTER_KEY TERRABASE_PEER_SECRET > "$state/secrets"
+printf '%s\n' terrascale-ts-pr-123 > "$state/buckets"
 "$here/preview.sh" app 123
 test ! -e "$state/set"
 sed -i '/TS_AUTH_AUDIT_SIGNING_KEY/d' "$state/secrets"
@@ -121,4 +133,38 @@ test "$(cat "$state/destroy")" = 'storage destroy terrascale-ts-pr-123'
 rm "$state/fail-storage" "$state/destroy"
 "$here/preview.sh" destroy 123
 test "$(cat "$state/destroy")" = $'storage destroy terrascale-ts-pr-123\napps destroy ts-pr-123'
+test ! -s "$state/buckets"
+jq -e '.variables == {orgSlug: "terrascale-previews-515", addOnType: "tigris"}' "$state/graphql-request" >/dev/null
+
+# An earlier attempt deleted the bucket, then the app deletion failed: the retry skips the gone bucket and deletes the app.
+printf '%s\n' terrascale-ts-pr-123 > "$state/buckets"
+rm "$state/destroy"
+touch "$state/fail-app"
+if "$here/preview.sh" destroy 123; then
+  echo 'preview: reported success after app deletion failed' >&2
+  exit 1
+fi
+test "$(cat "$state/destroy")" = $'storage destroy terrascale-ts-pr-123\napps destroy ts-pr-123'
+rm "$state/fail-app" "$state/destroy"
+"$here/preview.sh" destroy 123
+test "$(cat "$state/destroy")" = 'apps destroy ts-pr-123'
+
+# A failed or malformed bucket lookup deletes nothing, so the app stays for the next reap.
+printf '%s\n' terrascale-ts-pr-123 > "$state/buckets"
+rm "$state/destroy"
+for failure in transport empty-body errors null-organization bad-name; do
+  case $failure in
+    transport) touch "$state/fail-graphql" ;;
+    empty-body) : > "$state/graphql-response" ;;
+    errors) echo '{"data":null,"errors":[{"message":"denied"}]}' > "$state/graphql-response" ;;
+    null-organization) echo '{"data":{"organization":null}}' > "$state/graphql-response" ;;
+    bad-name) echo '{"data":{"organization":{"addOns":{"nodes":[{"name":5}]}}}}' > "$state/graphql-response" ;;
+  esac
+  if "$here/preview.sh" destroy 123; then
+    echo "preview: deleted resources after bucket lookup failed ($failure)" >&2
+    exit 1
+  fi
+  test ! -e "$state/destroy"
+  rm -f "$state/fail-graphql" "$state/graphql-response"
+done
 echo 'preview: all checks passed'

@@ -15,9 +15,30 @@ set +x
 org=terrascale-previews-515
 api() { curl -sS --fail-with-body -H "Authorization: $FLY_API_TOKEN" -H 'Content-Type: application/json' "$@"; }
 machines=https://api.machines.dev/v1
+# Bucket names in this org, read through GraphQL. A failed or malformed answer stops before anything is deleted.
+tigris_buckets() {
+  local body response
+  body=$(jq -n --arg org "$org" '{
+    query: "query($orgSlug: String!, $addOnType: AddOnType) { organization(slug: $orgSlug) { addOns(type: $addOnType) { nodes { name } } } }",
+    variables: {orgSlug: $org, addOnType: "tigris"}}')
+  response=$(api -X POST https://api.fly.io/graphql -d "$body")
+  # -e fails on empty input too, so a request that produced no answer cannot read as "no buckets".
+  jq -e '
+    if has("errors") or ((.data.organization.addOns.nodes | type) != "array") or any(.data.organization.addOns.nodes[]; .name | type != "string")
+    then error("malformed bucket list") else [.data.organization.addOns.nodes[].name] end
+  ' <<<"$response"
+}
 # The preview's Tigris bucket (terrascale-<app>; bucket names are global) outlives the app unless destroyed first.
-# A failed bucket deletion stops here so the app stays listed and the next reap can retry.
-destroy_app() { flyctl storage destroy "terrascale-$1" --yes; flyctl apps destroy "$1" --yes; }
+# flyctl storage destroy is not idempotent, so a bucket already gone is skipped. A failed bucket deletion stops here
+# so the app stays listed and the next reap can retry.
+destroy_app() {
+  local bucket=terrascale-$1 buckets
+  buckets=$(tigris_buckets)
+  if jq -e --arg bucket "$bucket" 'any(. == $bucket)' <<<"$buckets" >/dev/null; then
+    flyctl storage destroy "$bucket" --yes
+  fi
+  flyctl apps destroy "$1" --yes
+}
 
 case ${1:-} in
   app)
