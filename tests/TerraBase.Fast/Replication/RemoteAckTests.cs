@@ -797,7 +797,7 @@ public sealed class RemoteAckTests
         var probe = "~probe-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8));
         // One autocommit statement with capture on: more images than one pass walks (64 pages of 512), one commit row, no
         // feed row. The rows sit under a handle no shape can name.
-        var (images, commits) = await (await pair.OriginSqliteAsync()).WithWriterAsync(session =>
+        var (images, commits, captured) = await (await pair.OriginSqliteAsync()).WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
             command.CommandText = "SELECT coalesce(max(change_id), 0) FROM turso_cdc;";
@@ -809,17 +809,34 @@ public sealed class RemoteAckTests
             command.Parameters.AddWithValue("$handle", probe);
             _ = command.ExecuteNonQuery();
             command.Parameters.Clear();
-            command.CommandText = "SELECT coalesce(sum(change_type <> 2), 0), coalesce(sum(change_type = 2), 0) FROM turso_cdc WHERE change_id > $before;";
+            command.CommandText = "SELECT coalesce(sum(change_type <> 2), 0), coalesce(sum(change_type = 2), 0), max(change_id) FROM turso_cdc WHERE change_id > $before;";
             command.Parameters.AddWithValue("$before", before);
             using var reader = command.ExecuteReader();
             _ = reader.Read();
-            return (reader.GetInt64(0), reader.GetInt64(1));
+            return (reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2));
         }, "a test capturing one large transaction", pair.Token);
         await Assert.That(images).IsGreaterThan(64 * 512);
         await Assert.That(commits).IsEqualTo(1);
+        // Retention passes walk past it before the write: an ack proves before it confirms, so a write's own proof walking all
+        // these images could legitimately miss the 10 s bound under load (write_outcome_unknown).
+        var retention = pair.OriginServer.Services.GetRequiredService<TursoChangeGroupSource>();
+        try
+        {
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+            {
+                await retention.TrimAsync(await pair.OriginSqliteAsync(), token);
+                return await pair.OriginScannedAsync(token) >= captured;
+            }, TimeSpan.FromSeconds(20));
+        }
+        catch (OperationCanceledException) when (!pair.Token.IsCancellationRequested)
+        {
+            throw new TimeoutException($"the origin's frontier stopped at the large transaction: {await pair.OriginFrontierAsync()}");
+        }
+
         var id = EntityIds.New().ToString();
         using (var response = await pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token))
         {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
             await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString())
                 .IsEqualTo("remote_durable");
         }
@@ -1299,6 +1316,15 @@ public sealed class RemoteAckTests
         public Task<string> PeerFrontierAsync() => FrontierStateAsync(_peer!.Server);
 
         public Task<string> OriginFrontierAsync() => FrontierStateAsync(_origin!.Server);
+
+        // The last commit change id the origin's frontier walked past (the body is "2 incarnation scanned ranges...").
+        public async Task<long> OriginScannedAsync(CancellationToken cancellationToken) =>
+            await (await OriginSqliteAsync()).WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT CAST(body AS TEXT) FROM _tb_shape_chunk WHERE handle = '~frontier';";
+                return command.ExecuteScalar() is string body ? long.Parse(body.Split(' ')[2], CultureInfo.InvariantCulture) : 0;
+            }, "a test reading the scanned frontier", cancellationToken);
 
         // Ages every captured row of the origin past retention's 60 s hold, as if the commits were older.
         public async Task AgeOriginCaptureAsync() =>
