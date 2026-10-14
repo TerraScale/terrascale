@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -87,10 +88,26 @@ public sealed class ShapeIsolationTests
         {
             parked.Add(api.Client.GetAsync(target(n), cancellationToken));
             var admitted = n;
-            await TerraBaseTestServer.EventuallyAsync(async ct => await api.Server.MetricAsync("terrabase_shape_requests_waiting", cancellationToken: ct) >= admitted);
+            await TerraBaseTestServer.EventuallyAsync(async ct =>
+                parked.Any(request => request.IsCompleted) || await WaitingAsync(api.Server, ct) >= admitted);
+            foreach (var completed in parked.Where(request => request.IsCompleted))
+            {
+                using var early = await completed;
+                throw new InvalidOperationException($"reader answered before all {count} parked: {early.StatusCode}, {await early.Content.ReadAsStringAsync(cancellationToken)}");
+            }
         }
 
         return parked;
+    }
+
+    // The waiting gauge has no sample until the first reader parks, so an absent gauge reads as zero.
+    private static async Task<double> WaitingAsync(TerraBaseTestServer server, CancellationToken token)
+    {
+        var scrape = await server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), token);
+        return scrape.Split('\n')
+            .Where(line => line.StartsWith("terrabase_shape_requests_waiting ", StringComparison.Ordinal)
+                || line.StartsWith("terrabase_shape_requests_waiting{", StringComparison.Ordinal))
+            .Sum(line => double.Parse(line.Split(' ')[^1], CultureInfo.InvariantCulture));
     }
 
     // A second organization on the same server bootstraps and reads at the sealed head.
