@@ -22,15 +22,15 @@ Fly inspection at 2026-10-14 07:13Z found the app suspended with zero machines.
 | Baseline critical-path segment | Duration | Implemented change | Measured effect |
 |---|---:|---|---|
 | Merge to deploy job start | 236 s | Existing supersession cancellation/freshness checks retained | Pending |
-| TerraBase image build | 264 s | Build once; reuse its SHA-tagged image in all regions | Pending |
+| TerraBase image build | 264 s | Reuse the area's compiled/published cache; push one SHA-tagged runtime image | Pending |
 | TerraBase regional rollout step | 154 s | Retain GRU first and each region's health/backup/SHA gate | Pending |
-| ts-auth image build after TerraBase rollout | 117 s | Build both app images concurrently using separate app-scoped tokens | Pending |
+| ts-auth image build after TerraBase rollout | 117 s | Reuse each area's published output and push both images concurrently | Pending |
 | ts-auth regional rollout step | 89 s | Reuse the published image; retain ordered regional health/SHA gates | Pending |
 
 The final main `deploy-status` guard fails if the current commit's quality gate, deployment or live E2E is missing,
 skipped, cancelled or failed. Obsolete green runs report supersession; GitHub API errors fail. Reset approval names
 the exact target `StorageFormat.Id`, preventing approval for format 9 from permitting format 10 or another schema.
-These are locally verified changes; no production speedup is claimed before the new workflow and rollout run.
+The guard self-checks pass locally; hosted cache reuse remains to be measured. No production speedup is claimed before the new workflow and rollout run.
 
 Reproduce the baseline observations with `gh run view 38470728889 -R TerraScale/terrascale --json jobs`,
 `gh run view 38470728889 -R TerraScale/terrascale --job 115548797510 --log`, and
