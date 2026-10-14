@@ -2,7 +2,9 @@
 """Fail a current push/main run unless Fast, deployment and live E2E passed.
 
 The final workflow job must use always(), need [test, deploy, e2e], and pass
-toJSON(needs) as NEEDS_JSON. Only superseded green main runs may skip deployment.
+toJSON(needs) as NEEDS_JSON. Superseded runs still require successful Fast, but
+this guard does not require their deployment or E2E to succeed. Failures remain
+visible in those jobs and keep the superseded workflow red.
 """
 import json
 import os
