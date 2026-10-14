@@ -72,6 +72,9 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
     [Arguments("event_name", "workflow_dispatch")]
     [Arguments("workflow_ref", "TerraScale/terrascale/.github/workflows/other.yml@refs/heads/main")]
     [Arguments("job_workflow_ref", "Attacker/repo/.github/workflows/reusable.yml@refs/heads/main")]
+    [Arguments("job_workflow_ref", "TerraScale/terrascale/.github/workflows/reusable.yml@refs/heads/main")]
+    [Arguments("job_workflow_ref", "TerraScale/terrascale/.github/workflows/ci.yml@refs/heads/feature")]
+    [Arguments("job_workflow_ref", "")]
     [Arguments("jti", null)]
     [Arguments("run_id", null)]
     [Arguments("repository_id", null)]
@@ -80,7 +83,6 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
     [Arguments("ref", null)]
     [Arguments("event_name", null)]
     [Arguments("workflow_ref", null)]
-    [Arguments("job_workflow_ref", null)]
     [Arguments("repository_id", "")]
     [Arguments("workflow_ref", "terrascale/terrascale/.github/workflows/ci.yml@refs/heads/main")]
     public async Task A_token_outside_the_trust_policy_is_refused(string claim, string? value)
@@ -92,6 +94,42 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         var (_, error) = await ErrorAsync(await RequestAsync(oidc, github.Mint(OidcHarness.Issuer, new Dictionary<string, string?> { [claim] = value })));
 
         await Assert.That(error).IsEqualTo("invalid_grant");
+    }
+
+    [Test]
+    [Arguments("null")]
+    [Arguments("42")]
+    [Arguments("true")]
+    [Arguments("{}")]
+    [Arguments("[\"TerraScale/terrascale/.github/workflows/ci.yml@refs/heads/main\"]")]
+    public async Task A_job_workflow_ref_that_is_not_ci_yml_s_string_is_refused(string json)
+    {
+        // Present in any non-string JSON form, job_workflow_ref is not "absent": it is refused, never read as a plain workflow.
+        using var github = new FakeGitHubActions();
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
+        await GitHubActionsBinding.BindAsync(oidc.Server.App.Services, CancellationToken.None);
+        using var value = JsonDocument.Parse(json);
+
+        var (_, error) = await ErrorAsync(await RequestAsync(oidc, github.Mint(OidcHarness.Issuer,
+            json: new Dictionary<string, JsonElement> { ["job_workflow_ref"] = value.RootElement.Clone() })));
+
+        await Assert.That(error).IsEqualTo("invalid_grant");
+    }
+
+    [Test]
+    public async Task A_job_of_ci_yml_itself_without_job_workflow_ref_gets_the_bound_project_token()
+    {
+        // GitHub documents job_workflow_ref only for jobs of a reusable workflow; a job of ci.yml itself may carry none.
+        using var github = new FakeGitHubActions();
+        await using var oidc = await OidcHarness.StartAsync(fixture, services: github.Route);
+        var (organization, project, _) = await GitHubActionsBinding.BindAsync(oidc.Server.App.Services, CancellationToken.None);
+
+        using var response = await RequestAsync(oidc, github.Mint(OidcHarness.Issuer, new Dictionary<string, string?> { ["job_workflow_ref"] = null }));
+        var access = new JsonWebToken((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("access_token").GetString());
+
+        await Assert.That((int)response.StatusCode).IsEqualTo(200);
+        await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(project);
+        await Assert.That(access.GetClaim("org_id").Value).IsEqualTo(organization);
     }
 
     [Test]

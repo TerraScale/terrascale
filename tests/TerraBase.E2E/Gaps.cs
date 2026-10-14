@@ -36,29 +36,14 @@ internal static class Gaps
         ["storage-stall-single"] = new("E2E harness: the storage stall hook (Cluster.StallStorageAsync) not wired to this scenario", "not supported"),
     };
 
-    // BLOCKED on Fly, not an expected failure there: the Fly suite's TerraBase API key holds documents:read/write on the e2e
-    // project only, so these scenarios' database, index or schema writes (databases:write) are refused before the slice's
-    // gap is even reached; counting that 403 as the gap would be a fake pass. Unblocked by a ts-auth project token with
-    // databases:* (GitHub OIDC exchange).
-    private const string NoDatabaseScope = "no appropriately-scoped auth on Fly (API keys can't hold databases:*)";
-
-    private static readonly Dictionary<string, string> BlockedOnFly = new(StringComparer.Ordinal)
-    {
-        ["E12"] = NoDatabaseScope,
-        ["E13"] = NoDatabaseScope,
-        ["deleted-database-stays-deleted"] = NoDatabaseScope,
-        ["flow-control"] = NoDatabaseScope,
-        ["ddl-replication"] = NoDatabaseScope,
-    };
-
-    /// <summary>Runs <paramref name="scenario"/>: plainly, or as a strict expected failure while it is listed; skipped as BLOCKED on Fly when it is.</summary>
+    /// <summary>Runs <paramref name="scenario"/>: plainly, or as a strict expected failure while it is listed.</summary>
+    /// <remarks>
+    /// No scenario is skipped for its credential: on Fly every request carries the bound e2e project's ts-auth project token
+    /// (databases:* and documents:*), so an authentication refusal is a failure, never a gap. A scenario that faults Fly
+    /// machines keeps its own guard (SkipOnFlyUnlessOutageRun, Cluster's fault checks).
+    /// </remarks>
     public static async Task RunAsync(string id, Func<Task> scenario)
     {
-        if (Cluster.FlyRequested && BlockedOnFly.TryGetValue(id, out var blocked))
-        {
-            Skip.Test($"BLOCKED on Fly: {blocked}");
-        }
-
         // A pinned run is acceptance evidence: only passing scenarios count, so a listed one fails before its cluster starts.
         if (Cluster.FlyPinned && PinnedRefusal(id) is { } refusal)
         {

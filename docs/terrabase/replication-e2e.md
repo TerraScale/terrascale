@@ -19,7 +19,8 @@ Set these variables, then run the same target:
 | Variable | Meaning |
 |---|---|
 | `TERRABASE_E2E_FLY_URL` | Public base URL, for example `https://ts-terrabase.fly.dev`. Its presence selects Fly. |
-| `TERRABASE_E2E_FLY_API_KEY` | A TerraBase API key of the dedicated e2e project (`documents:read`, `documents:write`, no expiry by user decision 2026-10-12), issued inside the Fly org by TerraBase's operator listener. It stays valid until a human revokes it: `scripts/handoff/morning-credentials.sh install e2e` installs and rotates it, `revoke e2e` revokes it and deletes the secrets, `cleanup e2e` also deletes the e2e tenant (`dry-run`, `status` change nothing); agents never run it. E12 and E13 create databases, which needs `databases:write` (ts-auth project tokens only), so on Fly they are skipped as BLOCKED (`Gaps.cs`) until the OIDC-federated token replaces the key. |
+| `TERRABASE_E2E_FLY_API_KEY` | The documents client's bearer. In CI it is the 15-minute ts-auth project token of the bound e2e project (`scripts/e2e/ci-oidc-credential.sh`, docs/auth/github-actions-oidc.md), the same value as `TERRABASE_E2E_FLY_PROJECT_TOKEN`, so every request of the run is for one project. A manual run may use a TerraBase API key of a project instead (`documents:read`, `documents:write`); `/sql` and database creation still need the project token. |
+| `TERRABASE_E2E_FLY_PROJECT_TOKEN` | A ts-auth project token of the same project (`databases:*`, `documents:*`), for `/sql`. |
 | `TERRABASE_E2E_FLY_PROJECT` | The project id. |
 | `TERRABASE_E2E_FLY_DATABASE` | The database name. |
 
@@ -49,9 +50,17 @@ E13 (live move, R11) and E14 (GC, R7 #120: no tombstone of a deleted document is
 passes fails the test with a message to remove its row; one that fails any other way fails it too. Every other scenario,
 `Concurrent_writes_to_different_fields_both_survive` (per-field lattice) included, runs as a plain assertion.
 
+E11's SQL statements go to `/sql`, which takes a ts-auth project token (`databases:read`), never an API key. On Fly it
+uses `TERRABASE_E2E_FLY_PROJECT_TOKEN` and fails without it. A refused token (401/403) fails E11 as an unexpected failure:
+only the R9 signature "only SELECT statements are supported" counts as its gap.
+
 ## CI
 
-Run `make terrabase-e2e` with the `TERRABASE_E2E_FLY_*` variables from CI secrets after the `sjc` deploy. Replication needs
+Run `make terrabase-e2e` after the deploys with the `TERRABASE_E2E_FLY_*` variables that `scripts/e2e/ci-oidc-credential.sh` exports from the GitHub OIDC exchange (no e2e secret is stored). The deploy job passes
+`--treenode-filter "/*/*/*/*[Category!=local-only]" --minimum-expected-tests 138` (every test case but the local-only
+ones): the `local-only` category (whole-database backups, every node
+stopped, a changes-feed issuer stopped, the proxy and pin harness) runs instead in CI's required `test-terrabase` stage
+with `make terrabase-e2e-local`, which requires all 27 tests to pass with no skip. Replication needs
 both regions live, so a run after the `gru` deploy alone cannot check it. Do not set `TERRABASE_E2E_FLY_OUTAGE` in CI.
 The suite is not part of `make check`.
 

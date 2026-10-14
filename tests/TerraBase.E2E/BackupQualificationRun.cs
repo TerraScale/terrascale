@@ -38,6 +38,10 @@ internal static class BackupQualificationRun
             var source = await GetAsync(client, cluster.DatabasePath, token);
             var organization = cluster.OrganizationId ?? throw new InvalidOperationException("backup qualification needs the source organization id");
             var sourceId = source.GetProperty("id").GetString()!;
+            // Placement is frozen from the source record before any restore: a restore is placed as a new database, at the
+            // serving region (gru) with every other serving region as a replica, which is where the source was created.
+            string[] placement = [source.GetProperty("homeRegion").GetString()!,
+                .. source.GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString()!)];
             var projectId = cluster.ProjectPath.Split('/')[^1];
             var acknowledged = new Dictionary<string, string>(StringComparer.Ordinal);
             var acknowledgedVersions = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -69,7 +73,7 @@ internal static class BackupQualificationRun
 
             // A shipped checkpoint, not the runner's clock or an HTTP Date rounded to a second, chooses the PIT cut.
             var checkpoint = await ShippedAsync(cluster, DateTimeOffset.FromUnixTimeMilliseconds(initial.Values.Max(document => document.Stamp) >> 16), token);
-            var first = Expected(initial, sourceId);
+            var first = Expected(initial, sourceId, placement);
             var changed = acknowledged.Keys.First();
             var update = new JsonObject { ["region"] = Cluster.Gru, ["text"] = fake.Lorem.Sentence() };
             acknowledged[changed] = Docs.Canonical(update);
@@ -90,8 +94,9 @@ internal static class BackupQualificationRun
             var latestDocuments = await CaptureVersionsAsync(client, cluster, organization, projectId, sourceId, acknowledged, acknowledgedVersions, token);
             var latest = await ShippedAsync(cluster, DateTimeOffset.FromUnixTimeMilliseconds(latestDocuments.Values.Max(document => document.Stamp) >> 16), token);
             plan.AddRange([
-                new(cuts[0], true, first), new(cuts[1], true, first), new(cuts[2], true, Expected(latestDocuments, sourceId)),
-                new(cuts[3], false, first, "invalid_request", 400),
+                new(cuts[0], true, first), new(cuts[1], true, first), new(cuts[2], true, Expected(latestDocuments, sourceId, placement)),
+                // Before the oldest snapshot yet inside the plan's retention window: the backup does not hold it, a typed 409.
+                new(cuts[3], false, first, "backup_history_incomplete", 409),
             ]);
             foreach (var cut in plan)
             {
@@ -178,11 +183,8 @@ internal static class BackupQualificationRun
             {
                 try
                 {
-                    using var deleted = await client.DeleteAsync(Uri(path), TestContext.Current!.Execution.CancellationToken);
-                    if (deleted.StatusCode != HttpStatusCode.NotFound)
-                    {
-                        await Docs.EnsureSuccessAsync(deleted);
-                    }
+                    // A restore inherits the source's replica regions, so it is deleted the way every owned database is.
+                    await Cluster.DeleteDatabaseAsync(region => cluster[region], Cluster.Gru, path);
                 }
                 catch (Exception cleanupError)
                 {
@@ -233,9 +235,9 @@ internal static class BackupQualificationRun
         }
     }
 
-    private static Contents Expected(Dictionary<string, Document> documents, string sourceId) => new(documents.Count,
+    private static Contents Expected(Dictionary<string, Document> documents, string sourceId, string[] placement) => new(documents.Count,
         Docs.Digest(documents.Select(pair => (pair.Key, Docs.Canonical(JsonNode.Parse(pair.Value.Body))))),
-        documents.ToDictionary(pair => pair.Key, pair => pair.Value.Version, StringComparer.Ordinal), sourceId, [Cluster.Gru]);
+        documents.ToDictionary(pair => pair.Key, pair => pair.Value.Version, StringComparer.Ordinal), sourceId, placement);
 
     private static async Task<JsonElement> ShippedAsync(Cluster cluster, DateTimeOffset? after, CancellationToken token) => await Converge.UntilAsync(async () =>
     {

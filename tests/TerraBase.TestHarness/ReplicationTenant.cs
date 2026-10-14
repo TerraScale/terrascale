@@ -153,24 +153,28 @@ internal sealed class ReplicationTenant
 
     public async Task BindAsync(TerraBaseTestServer other)
     {
-        ArgumentNullException.ThrowIfNull(other);
+        await BindCatalogAsync(other);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var engine = other.Services.GetRequiredService<IStorageEngine>();
-        var store = await engine.OpenSystemDatabaseAsync(deadline.Token);
-        await using (var write = await store.BeginTransactionAsync(write: true, deadline.Token))
-        {
-            foreach (var (collection, document) in _catalog)
-            {
-                await write.CreateCollectionAsync(new CollectionInfo(collection, 0), deadline.Token);
-                await write.PutAsync(collection, document.Id, document.Json, deadline.Token);
-            }
-
-            await write.CommitAsync(deadline.Token);
-        }
-
         foreach (var database in _databases.Values)
         {
             await engine.CreateDatabaseAsync(database, deadline.Token);
         }
+    }
+
+    public async Task BindCatalogAsync(TerraBaseTestServer other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        var engine = other.Services.GetRequiredService<IStorageEngine>();
+        var store = await engine.OpenSystemDatabaseAsync(deadline.Token);
+        await using var write = await store.BeginTransactionAsync(write: true, deadline.Token);
+        foreach (var (collection, document) in _catalog)
+        {
+            await write.CreateCollectionAsync(new CollectionInfo(collection, 0), deadline.Token);
+            await write.PutAsync(collection, document.Id, document.Json, deadline.Token);
+        }
+
+        await write.CommitAsync(deadline.Token);
     }
 }

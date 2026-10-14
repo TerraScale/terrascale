@@ -126,6 +126,12 @@ into the disposable app's machines, and root firewall changes inside them. Nothi
 (clean), on one region's machine while the other two write; then convergence, per-region counts and digests, and the
 restarted machine's `/catalog-gate` (it opens by pulling from its trusted peers). Disposable app only.
 
+Changes-feed issuer stop (`ChangesFeedE2ETests`, fly-outage category, `make terrabase-e2e-fly-outage`): a cursor taken
+from sjc's feed, then `flyctl machine stop` of the sjc machine, then the resume entering at the fra machine
+(`fly-force-instance-id`, `MachinePin`) must be answered by fra itself, with every later write once in per-origin order.
+Whether Fly follows TerraBase's `fly-replay: instance=…;fallback=force_self` from a force-instance request, and falls back
+to fra when sjc is stopped, has no live evidence yet: this run is that evidence, and it has not run.
+
 ## Backup (A7YES)
 
 Invariant: a backup at time T contains every write acknowledged before T, or the restore answers a typed refusal; never
@@ -159,12 +165,15 @@ marker. This can cause a false failure, but cannot produce a passing qualificati
 Before later writes it takes a ready manual backup and records a shipped PIT checkpoint. It then
 updates a document and inserts another in a transaction, waits for convergence and a newer shipped checkpoint, and
 restores the frozen supported cuts (manual, earlier PIT, latest PIT) into separate new databases. The earlier cuts
-must exclude those later changes. A cut before the restore window must answer exactly HTTP 400 `invalid_request`;
-a generic 5xx or an invented snake_case code never counts as safety proof.
+must exclude those later changes. A cut a minute before the restore window's `earliest`, still inside the plan's
+retention window, must answer exactly HTTP 409 `backup_history_incomplete` (the restore API contract: 400 only after now
+or before retention); another 409 code, that code at another status, a generic 5xx or an invented snake_case code never
+counts as safety proof.
 
 Each restored database is read back over HTTP. Count, canonical digest, source id and placement must match.
-Restores deliberately live at home (gru) only under the current API; they do not inherit the source's three-region
-placement. Public ETags include the new database identity, so the harness verifies stored versions by reconstructing
+A restore is placed as a new database: home at the serving region (gru) and every other serving region as a replica.
+The expected placement is frozen from the source record before any write, since the source was created the same way;
+it is compared as a sorted sequence and is never taken from a restore's own answer. Public ETags include the new database identity, so the harness verifies stored versions by reconstructing
 the expected ETag under that identity from each source change-feed stamp and body. A local integration regression
 rewrites the same restored body and proves the judge rejects the changed version even when count/digest match.
 No engine code is changed.
@@ -180,6 +189,11 @@ database scopes. `TERRABASE_E2E_FLY_ORGANIZATION` supplies that project's TerraB
 scope check; a wrong id fails against the real source acknowledgement ETags. A missing token or organization id, unpinned run, missing backup window, failed backup, refused supported cut or wrong
 restore fails; none is converted into a skip or expected failure. The source and every restore are cleaned up,
 including failed-cut database names. Production apps and `ts-pr-*` remain refused.
+
+The scenario is in the `local-only` category: CI's required `test-terrabase` stage runs it on local nodes
+(`make terrabase-e2e-local`, which fails on any skip), and the deploy job's run against production excludes the
+category with `--treenode-filter "/*/*/*/*[Category!=local-only]"`, so production never creates or restores a
+database. A pinned disposable-app run selects it by name, as above.
 
 Set `TERRABASE_E2E_RESULTS` (the make target does this) to retain the frozen plan, actual restore contents/refusals and
 judge failures in the normal per-test JSONL evidence. Per-cut console records also include the requested timestamp

@@ -39,12 +39,16 @@ public sealed class Cluster : IAsyncDisposable
     private readonly Local? _local;
     private readonly Dictionary<string, string>? _identities;
     private readonly Func<Task> _release;
+    private readonly Func<string, string, Task<HttpClient>> _via;
+    private readonly Func<string, HttpClient> _sql;
     private DisposableTarget.Target? FlyTarget { get; }
 
     private Cluster(
         string projectPath, string databasePath, string collection, Dictionary<string, HttpClient> clients, Local? local, Dictionary<string, string>? identities,
-        Func<Task> release, DisposableTarget.Target? flyTarget = null, string? organization = null)
+        Func<Task> release, Func<string, string, Task<HttpClient>> via, Func<string, HttpClient> sql, DisposableTarget.Target? flyTarget = null, string? organization = null)
     {
+        _via = via;
+        _sql = sql;
         FlyTarget = flyTarget;
         OrganizationId = local?.OrganizationId ?? organization;
         ProjectPath = projectPath;
@@ -93,6 +97,26 @@ public sealed class Cluster : IAsyncDisposable
     public HttpClient this[string region] => _clients.TryGetValue(region, out var client)
         ? client
         : throw new ArgumentOutOfRangeException(nameof(region), region, "not a region of this cluster");
+
+    /// <summary>
+    /// A client entering at <paramref name="edge"/> whose answers must come from <paramref name="served"/>: a changes-feed
+    /// resume, which TerraBase replays to its cursor's issuing machine, or serves itself when that machine is down
+    /// (docs/terrabase/multi-region-replication.md, issuer routing). On Fly the request is forced onto the edge's machine (the
+    /// pinned one, or the one that answers the edge's <c>/healthz</c> as itself), so Fly cannot fall back to another region and
+    /// pass a direct answer off as a replay; the answer must name <paramref name="served"/> (and its pinned machine). The
+    /// caller disposes it.
+    /// </summary>
+    public Task<HttpClient> ViaAsync(string edge, string served) => _via(edge, served);
+
+    /// <summary>
+    /// A client of <paramref name="region"/> for <c>/sql</c>, which takes a ts-auth project token, never an API key: locally the
+    /// nodes' project token; on Fly the existing <c>TERRABASE_E2E_FLY_PROJECT_TOKEN</c>, required (nothing is minted). Pinned
+    /// like <see cref="this[string]"/>; the caller disposes it.
+    /// </summary>
+    public HttpClient Sql(string region) => _sql(region);
+
+    /// <summary>Local nodes only: every <c>fly-replay</c> the local stand-in for Fly's proxy followed, in order.</summary>
+    internal IReadOnlyCollection<LocalFlyProxy.Replay> Replays => RequireLocal().Replays;
 
     /// <summary>The document with <paramref name="id"/> in this test's collection.</summary>
     public Uri Document(string id) => new($"{DatabasePath}/collections/{Collection}/documents/by-key?id={Uri.EscapeDataString(id)}", UriKind.Relative);
@@ -235,7 +259,7 @@ public sealed class Cluster : IAsyncDisposable
                 }
 
                 await local.DisposeAsync();
-            });
+            }, (edge, served) => Task.FromResult(local.Via(edge, served)), local.Client);
         }
         catch
         {
@@ -254,8 +278,8 @@ public sealed class Cluster : IAsyncDisposable
         var revision = Environment.GetEnvironmentVariable(FlyRevisionVariable) is { Length: > 0 } expected ? expected : null;
         var target = revision is null ? null : DisposableTarget.Resolve(Environment.GetEnvironmentVariable, regions);
         var url = new Uri(Required(FlyUrlVariable), UriKind.Absolute);
-        // A TerraBase API key of the dedicated e2e project (documents:read and documents:write, with an expiry):
-        // .cos/e2e-credential-plan.md.
+        // The documents client's bearer: in CI the bound e2e project's 15-minute ts-auth project token
+        // (scripts/e2e/ci-oidc-credential.sh), the same project as /sql's TERRABASE_E2E_FLY_PROJECT_TOKEN.
         var organization = backup ? Required("TERRABASE_E2E_FLY_ORGANIZATION") : null;
         var key = Required(backup ? "TERRABASE_E2E_FLY_PROJECT_TOKEN" : "TERRABASE_E2E_FLY_API_KEY");
         var projectPath = $"/v1/projects/{Required("TERRABASE_E2E_FLY_PROJECT")}";
@@ -274,6 +298,24 @@ public sealed class Cluster : IAsyncDisposable
         if (revision is not null)
         {
             await CheckIdentitiesAsync(clients, machines!, revision);
+        }
+
+        // ViaAsync's machines: the pinned ones, or on an unpinned run each region's machine identified once and reused, so a
+        // cursor issued through ViaAsync(issuer, issuer) and its resume's expected issuer are the same exact machine.
+        var identified = new Dictionary<string, string>(StringComparer.Ordinal);
+        async Task<string> ViaMachineAsync(string region)
+        {
+            if (machines[region] is { } pinned)
+            {
+                return pinned;
+            }
+
+            if (!identified.TryGetValue(region, out var machine))
+            {
+                identified[region] = machine = await EdgeMachineAsync(clients[region], region, TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+            }
+
+            return machine;
         }
 
         var collection = NewCollection();
@@ -301,11 +343,7 @@ public sealed class Cluster : IAsyncDisposable
             {
                 if (owned is not null)
                 {
-                    using var deleted = await clients[Gru].DeleteAsync(new Uri(owned, UriKind.Relative));
-                    if (deleted.StatusCode != HttpStatusCode.NotFound)
-                    {
-                        await Docs.EnsureSuccessAsync(deleted);
-                    }
+                    await DeleteDatabaseAsync(region => clients[region], Gru, owned);
                 }
                 else
                 {
@@ -344,7 +382,7 @@ public sealed class Cluster : IAsyncDisposable
                 {
                     if (owned is not null)
                     {
-                        await Docs.DeleteAsync(clients[Gru], new Uri(owned, UriKind.Relative));
+                        await DeleteDatabaseAsync(region => clients[region], Gru, owned);
                     }
                     else
                     {
@@ -359,7 +397,8 @@ public sealed class Cluster : IAsyncDisposable
                     client.Dispose();
                 }
             }
-        }, target, organization);
+        }, async (edge, served) => FlyClient(url, key, edge, await ViaMachineAsync(edge), served, await ViaMachineAsync(served)),
+            region => FlyClient(url, Required("TERRABASE_E2E_FLY_PROJECT_TOKEN"), region, machines[region]), target, organization);
     }
 
     // Creates the collection in gru and waits until every other region serves it, so every test starts from a replicated database.
@@ -389,6 +428,83 @@ public sealed class Cluster : IAsyncDisposable
         }
     }
 
+    // Deletes a database this run created, through its home after dropping its replica regions: DELETE answers 421
+    // wrong_region elsewhere and 409 database_replicated while it has any (a default placement or a restore always does).
+    // The home is read through via, the region the run created it in, since a move or a same-name twin may have changed it.
+    // Its own one-minute bound, so cleanup still runs after the scenario's deadline or the test token fired; 404 is gone.
+    internal static async Task DeleteDatabaseAsync(Func<string, HttpClient> regions, string via, string path)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+        var uri = new Uri(path, UriKind.Relative);
+        using var existing = await regions(via).GetAsync(uri, deadline.Token);
+        if (existing.StatusCode == HttpStatusCode.NotFound)
+        {
+            return;
+        }
+
+        await Docs.EnsureSuccessAsync(existing);
+        var record = await existing.Content.ReadFromJsonAsync<JsonElement>(deadline.Token);
+        var home = regions(record.GetProperty("homeRegion").GetString()!);
+        if (record.GetProperty("replicaRegions").GetArrayLength() > 0)
+        {
+            using var unreplicated = await home.PatchAsJsonAsync(uri, new { replicaRegions = Array.Empty<string>() }, deadline.Token);
+            if (unreplicated.StatusCode == HttpStatusCode.NotFound)
+            {
+                return;
+            }
+
+            await Docs.EnsureSuccessAsync(unreplicated);
+        }
+
+        using var deleted = await home.DeleteAsync(uri, deadline.Token);
+        if (deleted.StatusCode != HttpStatusCode.NotFound)
+        {
+            await Docs.EnsureSuccessAsync(deleted);
+        }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="scenario"/>, which adds each database it creates (the region it creates it through, its name)
+    /// before creating it, then deletes every one of them (<see cref="DeleteDatabaseAsync"/>). Every deletion is tried, and
+    /// a cleanup failure joins the scenario's own failure instead of replacing it.
+    /// </summary>
+    internal async Task OwningDatabasesAsync(Func<List<(string Region, string Name)>, Task> scenario)
+    {
+        var created = new List<(string Region, string Name)>();
+        var errors = new List<Exception>();
+        try
+        {
+            await scenario(created);
+        }
+        catch (Exception error)
+        {
+            errors.Add(error);
+        }
+
+        foreach (var (region, name) in created)
+        {
+            try
+            {
+                await DeleteDatabaseAsync(other => this[other], region, $"{ProjectPath}/databases/{name}");
+            }
+            catch (Exception error)
+            {
+                errors.Add(error);
+            }
+        }
+
+        if (errors.Count == 1)
+        {
+            // The scenario's own failure keeps its type and stack: Gaps matches it against its signature.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(errors[0]);
+        }
+
+        if (errors.Count > 1)
+        {
+            throw new AggregateException(errors);
+        }
+    }
+
     private static string NewCollection() => $"e2e-{Guid.NewGuid():N}";
 
     // Each region's machine answers /healthz as itself (machine, region) running the commit under test, or the run stops
@@ -407,16 +523,32 @@ public sealed class Cluster : IAsyncDisposable
                     $"{region}'s machine {machines[region]} must run {revision}; /healthz answered region {served ?? "(none)"}, machine {machine ?? "(none)"}, revision {built ?? "(none)"}");
             }
         }
-
-        static string? Text(JsonDocument body, string name)
-        {
-            return body.RootElement.TryGetProperty(name, out var value) ? value.GetString() : null;
-        }
     }
 
-    private static HttpClient FlyClient(Uri url, string key, string region, string? machine)
+    // An unpinned run's edge machine for ViaAsync: the one that answers /healthz through the region's pinned client (RegionPin
+    // refuses another region) naming the region and itself in both the body and X-TerraBase-Machine. Any other answer stops the
+    // test; nothing is retried.
+    internal static async Task<string> EdgeMachineAsync(HttpClient client, string region, CancellationToken cancellationToken = default)
     {
-        DelegatingHandler pin = machine is null ? new RegionPin(region) : new MachinePin(region, machine);
+        using var health = await client.GetAsync(new Uri("/healthz", UriKind.Relative), cancellationToken);
+        await Docs.EnsureSuccessAsync(health);
+        using var body = JsonDocument.Parse(await health.Content.ReadAsStringAsync(cancellationToken));
+        var (served, machine) = (Text(body, "region"), Text(body, "machine"));
+        var header = health.Headers.TryGetValues("X-TerraBase-Machine", out var values) ? string.Join(',', values) : null;
+        return served == region && machine is { Length: > 0 } && machine == header
+            ? machine
+            : throw new InvalidOperationException(
+                $"{region}'s /healthz must name {region} and the answering machine; it answered region {served ?? "(none)"}, machine {machine ?? "(none)"}, X-TerraBase-Machine {header ?? "(none)"}");
+    }
+
+    private static string? Text(JsonDocument body, string name) =>
+        body.RootElement.TryGetProperty(name, out var value) ? value.GetString() : null;
+
+    private static HttpClient FlyClient(Uri url, string key, string region, string? machine, string? served = null, string? servedMachine = null)
+    {
+        DelegatingHandler pin = machine is null
+            ? new RegionPin(region)
+            : new MachinePin(region, machine, served is null ? null : (served, servedMachine));
         pin.InnerHandler = new SocketsHttpHandler();
         var client = new HttpClient(pin) { BaseAddress = url, Timeout = Timeout.InfiniteTimeSpan };
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key);
@@ -434,6 +566,8 @@ public sealed class Cluster : IAsyncDisposable
     {
         private readonly FakeMemberStore _machines = new();
         private readonly Dictionary<string, Node> _nodes = [with(StringComparer.Ordinal)];
+        private readonly System.Collections.Concurrent.ConcurrentQueue<LocalFlyProxy.Replay> _replays = new();
+        public IReadOnlyCollection<LocalFlyProxy.Replay> Replays => _replays;
         public string OrganizationId { get; } = EntityIds.New().ToString();
         private readonly string _user = EntityIds.New().ToString();
         private readonly string _project = EntityIds.New().ToString();
@@ -580,14 +714,16 @@ public sealed class Cluster : IAsyncDisposable
         }
 
         // A region's client through the local stand-in for Fly's proxy; it finds the region's current node per request.
-        public HttpClient Client(string region) =>
-            new(new LocalFlyProxy(region, target => _nodes.TryGetValue(target, out var node) && node.Project is { } project
+        public HttpClient Client(string region) => new(Proxy(region)) { BaseAddress = new Uri("https://localhost/"), Timeout = Timeout.InfiniteTimeSpan };
+
+        // Cluster.Via: the edge's proxy, refusing an answer from any node but served's.
+        public HttpClient Via(string edge, string served) =>
+            new(new RegionPin(edge, served) { InnerHandler = Proxy(edge) }) { BaseAddress = new Uri("https://localhost/"), Timeout = Timeout.InfiniteTimeSpan };
+
+        private LocalFlyProxy Proxy(string region) =>
+            new(region, target => _nodes.TryGetValue(target, out var node) && node.Project is { } project
                 ? project
-                : throw new HttpRequestException($"{target} is down", null, HttpStatusCode.ServiceUnavailable)))
-            {
-                BaseAddress = new Uri("https://localhost/"),
-                Timeout = Timeout.InfiniteTimeSpan,
-            };
+                : throw new HttpRequestException($"{target} is down", null, HttpStatusCode.ServiceUnavailable), Region, _replays.Enqueue);
 
         public (Uri Address, string Token, string DataDirectory) Endpoint(string region)
         {
@@ -620,6 +756,10 @@ public sealed class Cluster : IAsyncDisposable
             try
             {
                 await AuthorizeAsync(node, restart: true);
+                // Nodes restarted together answer 503 catalog_unverified until their gates verify each other's catalogs;
+                // ready means the persisted binding serves the database to the new project token.
+                _ = await Converge.UntilAsync(() => Docs.StatusAsync(node.Project!, new Uri(DatabasePath, UriKind.Relative)), status => status == HttpStatusCode.OK,
+                    $"the database on restarted {node.Region}");
             }
             catch
             {
@@ -676,8 +816,8 @@ public sealed class Cluster : IAsyncDisposable
             }, time: node.Skew == TimeSpan.Zero ? null : new SkewedTime(node.Skew), userId: _user);
         }
 
-        // Each start is a new ts-auth stand-in, so the project binding and the project token are set again, for the
-        // user who registered the organization at the first start; the plan stays in the node's catalog.
+        // Each start is a new ts-auth stand-in, so the project token is minted again, for the user who registered the
+        // organization at the first start; the plan and the verified binding stay in the node's catalog.
         private async Task AuthorizeAsync(Node node, bool restart)
         {
             var api = node.Api!;
@@ -686,11 +826,8 @@ public sealed class Cluster : IAsyncDisposable
             {
                 // The enterprise plan lifts the organization's request budget, as the cross-region suite does. Fly's plan is its own.
                 await api.SetPlanAsync(node.User, OrganizationId, "enterprise");
-            }
-
-            // Project tokens act on the project only once ts-auth's binding of it to the organization is verified.
-            using (var owner = api.As(node.User))
-            {
+                // Project tokens act on the project only once ts-auth's binding of it to the organization is verified.
+                using var owner = api.As(node.User);
                 await api.VerifyProjectBindingAsync(OrganizationId, _project, owner);
             }
 
