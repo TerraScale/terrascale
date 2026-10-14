@@ -288,12 +288,10 @@ button.ts-idp-provider:focus-visible {
   border-bottom: 0;
 }
 
+/* Done marker: a small semantic check, not a badge. */
 .ts-idp-check-icon {
   display: inline-grid;
   flex: none;
-  place-items: center;
-  width: 32px;
-  height: 32px;
   color: var(--ts-success);
 }
 
@@ -303,13 +301,79 @@ button.ts-idp-provider:focus-visible {
   text-decoration-color: var(--ts-ink-3);
 }
 
-.ts-idp-experience {
-  display: grid;
-  gap: var(--ts-s2);
+/* Overview: stat separators, label/value rows with hairlines, neutral method badges. */
+.ts-idp-stats::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: var(--ts-s5);
+  height: 1px;
+  background: var(--ts-line);
 }
 
-.ts-idp-experience > .ts-idp-chips + .ts-label {
-  margin-top: var(--ts-s2);
+.ts-idp-stat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--ts-chart-1);
+  flex: none;
+}
+
+.ts-idp-experience,
+.ts-idp-endpoints {
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
+  gap: 0 var(--ts-s6);
+}
+
+.ts-idp-experience > dt,
+.ts-idp-experience > dd,
+.ts-idp-endpoints > dt,
+.ts-idp-endpoints > dd {
+  padding: var(--ts-s3) 0;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-idp-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s1);
+}
+
+.ts-idp-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--ts-s2);
+  border-radius: var(--ts-radius-sm);
+  background: var(--ts-surface-3);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
+}
+
+.ts-idp-issuer .ts-idp-copy-value {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@container page (width < 768px) {
+  .ts-idp-experience,
+  .ts-idp-endpoints {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .ts-idp-experience > dt,
+  .ts-idp-endpoints > dt {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  .ts-idp-experience > dd,
+  .ts-idp-endpoints > dd {
+    padding-top: var(--ts-s1);
+  }
 }
 
 /* Numbered steps (quickstart and step-up flow). */
@@ -818,3 +882,8 @@ button.ts-idp-provider:focus-visible {
 @media (max-width: 47.99rem) {
   .ts-idp-mobile-nav { padding-left: 64px; min-height: 64px; }
 }
+
+.ts-idp-stat-dot[data-hue="2"] { background: var(--ts-chart-2); }
+.ts-idp-stat-dot[data-hue="3"] { background: var(--ts-chart-3); }
+.ts-idp-stat-dot[data-hue="4"] { background: var(--ts-chart-4); }
+.ts-idp-stat-dot[data-hue="5"] { background: var(--ts-chart-5); }
