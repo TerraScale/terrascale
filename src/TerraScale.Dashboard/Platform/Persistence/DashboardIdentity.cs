@@ -59,7 +59,7 @@ public sealed record DashboardCredentials(string AuthClientSecret, string Sessio
             throw new IOException("Dashboard Stripe identity is invalid.");
         // 32 random bytes as 64 hexadecimal characters, the format TerraBase and ts-auth accept.
         if (TerraBasePeerSecret is not { Length: 64 } || !TerraBasePeerSecret.All(char.IsAsciiHexDigit))
-            throw new IOException("Dashboard TerraBase peer credential is invalid.");
+            throw new IOException("Dashboard secret TERRABASE_PEER_SECRET must be 64 hexadecimal characters.");
     }
 
     public override string ToString() => "Dashboard credentials [REDACTED]";

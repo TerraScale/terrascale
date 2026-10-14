@@ -106,7 +106,12 @@ public sealed class StateSdkScenario : IAsyncDisposable
         transports.Add(transport);
         builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
         // Only the network hop is replaced: the state client keeps its production handler pipeline (TerraBasePeerCredential).
-        builder.Services.AddHttpClient(TerraBaseDashboardState.ClientName).ConfigurePrimaryHttpMessageHandler(() => new StateTransport(ProviderOrigin, fallback, this));
+        builder.Services.AddHttpClient(TerraBaseDashboardState.ClientName).ConfigurePrimaryHttpMessageHandler(() =>
+        {
+            var stateTransport = new StateTransport(ProviderOrigin, fallback, this);
+            lock (transports) transports.Add(stateTransport);
+            return stateTransport;
+        });
         builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(services => new StateFactory(transport, services.GetRequiredService<IHttpMessageHandlerFactory>())));
         builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState, TerraBaseDashboardState>());
         builder.Services.Replace(ServiceDescriptor.Singleton<IAuthAttemptBudget, AuthAttemptBudget>());

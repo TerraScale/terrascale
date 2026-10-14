@@ -16,6 +16,7 @@ Fly secrets are the only secret store. `fly secrets set` delivers them to the
 machine as environment variables; there is no file, default or fallback. The
 app reads them at startup (startup fails closed when one is missing or
 invalid) and on each use, and never logs them.
+All five secrets are required in Development too; test-only hosts supply synthetic identities.
 
 | Environment variable | Format checked by the app | Used for | Issued by |
 | --- | --- | --- | --- |
