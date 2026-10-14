@@ -17,8 +17,8 @@ type ShapeKey struct {
 	Handle string
 	Epoch  uint64
 	KeyID  string
-	// Indirection keeps reflection-based diagnostics from exposing the bytes.
-	key *[]byte
+	// A function keeps reflection-based diagnostics from traversing key bytes.
+	key func() []byte
 }
 
 // String and Format keep epoch-key bytes out of diagnostics for every verb.
@@ -71,7 +71,7 @@ func (col *Collection) ShapeKey(ctx context.Context, handle string, epoch uint64
 	if err != nil || len(key) != 32 || base64.RawURLEncoding.EncodeToString(key) != body.Key {
 		return nil, errors.New("terrabase: shape key must be unpadded base64url for 32 bytes")
 	}
-	return &ShapeKey{Handle: handle, Epoch: epoch, KeyID: keyID, key: &key}, nil
+	return &ShapeKey{Handle: handle, Epoch: epoch, KeyID: keyID, key: func() []byte { return key }}, nil
 }
 
 // Decrypt opens one TBS1 object fetched at offset. Snapshot and boundary offsets
@@ -83,7 +83,7 @@ func (k *ShapeKey) Decrypt(offset string, ciphertext []byte) ([]byte, error) {
 	if k.key == nil {
 		return nil, errors.New("terrabase: shape epoch key is missing")
 	}
-	return decryptShapeObject(ciphertext, *k.key, k.Handle, offset, k.Epoch, k.KeyID)
+	return decryptShapeObject(ciphertext, k.key(), k.Handle, offset, k.Epoch, k.KeyID)
 }
 
 // hasNoStore reports whether any Cache-Control header carries the no-store directive.
