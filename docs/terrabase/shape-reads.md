@@ -523,10 +523,10 @@ from the object. A mismatched object fails its tags. Reject the whole object, ap
   catalog of every machine the directory lists. Only a completed anti-entropy comparison of the system database counts
   as proof, timed from when it began. Otherwise it answers `503 catalog_stale` with `Retry-After` and `private,
   no-store`, before any tenancy check, and releases nothing.
-  - Bound: a revocation committed at `R` is held by the serving machine, or that machine stops releasing keys before
-    `R + 600 s`. The last released key opens objects sealed until the end of its epoch, so a revoked API key gets no
-    object sealed after `R + 600 s + the rest of that epoch`, under 20 minutes, partition included. The bound uses
-    only the serving machine's monotonic clock.
+  - Bound: a revocation committed at `R`, in epoch `E`, is held by the serving machine, or that machine stops releasing
+    keys before `R + 600 s`, which falls inside epoch `E + 1`. So a revoked API key gets no object sealed after epoch
+    `E + 1` (at most 20 minutes after `R`), partition included. The 600 s is measured on the serving machine's
+    monotonic clock; epoch numbers come from machine wall clocks, assumed in sync.
   - Availability: one listed machine unreachable for an epoch stops key release on every machine that cannot reach
     it. Shape reads continue; clients keep their keys and retry.
   - Limit: a machine that leaves the directory (stopped or destroyed) no longer counts. A revocation committed only

@@ -24,7 +24,7 @@ internal sealed class GetShapeKeyEndpoint(
     : EndpointWithoutRequest<IResult>
 {
     // One epoch: a revocation this machine cannot have seen stops key release within it, so a revoked credential reads
-    // nothing sealed after the epoch that follows (docs/terrabase/shape-reads.md, revocation bound).
+    // nothing sealed after the epoch following the revocation's (docs/terrabase/shape-reads.md, revocation bound).
     private static readonly TimeSpan CatalogWindow = TimeSpan.FromSeconds(ShapeCrypto.EpochSeconds);
 
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
