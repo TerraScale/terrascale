@@ -17,9 +17,9 @@ public sealed class F4RestartDiagnosticTests
         await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
         var uri = cluster.Document(EntityIds.New().ToString());
         await Converge.SeedAsync(cluster, uri, new JsonObject { ["n"] = 1 });
-        await Task.WhenAll(cluster.Regions.Select(cluster.StopAsync));
+        await Task.WhenAll(cluster.Regions.Select(region => cluster.StopAsync(region)));
         var started = Stopwatch.GetTimestamp();
-        await Task.WhenAll(cluster.Regions.Select(cluster.StartAgainAsync));
+        await Task.WhenAll(cluster.Regions.Select(region => cluster.StartAgainAsync(region)));
         Console.WriteLine($"F4 simultaneous restart returned in {Stopwatch.GetElapsedTime(started).TotalSeconds:F1} s");
         foreach (var region in cluster.Regions)
         {

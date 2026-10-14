@@ -24,21 +24,22 @@ internal static class Docs
 
     public static async Task PutAsync(HttpClient client, Uri uri, JsonNode body, CancellationToken token = default)
     {
-        using var response = await AdmittedAsync(() => client.PutAsync(uri, Json(body, "application/json"), token));
+        using var response = await AdmittedAsync(() => client.PutAsync(uri, Json(body, "application/json"), token), token: token);
         await EnsureSuccessAsync(response);
     }
 
     // PUT that is also sent again after 503 remote_region_unavailable or confirmation_busy, which the write route answers
-    // before it executes anything; write_outcome_unknown (or any other 503) is never sent again.
-    public static async Task PutRefusedBeforeRunAsync(HttpClient client, Uri uri, JsonNode body)
+    // before it executes anything; write_outcome_unknown (or any other 503) is never sent again. Answers the write's
+    // durability as the region acknowledged it (remote_durable, local_durable), or null when the answer names none.
+    public static async Task<string?> PutRefusedBeforeRunAsync(HttpClient client, Uri uri, JsonNode body, CancellationToken token = default)
     {
-        using var response = await AdmittedAsync(() => client.PutAsync(uri, Json(body, "application/json")), refusedBeforeRun: true);
-        await EnsureSuccessAsync(response);
+        using var response = await AdmittedAsync(() => client.PutAsync(uri, Json(body, "application/json"), token), refusedBeforeRun: true, token: token);
+        return (await BodyAsync(response, token))?["durability"]?.GetValue<string>();
     }
 
     public static async Task PatchAsync(HttpClient client, Uri uri, JsonNode merge, CancellationToken token = default)
     {
-        using var response = await AdmittedAsync(() => client.PatchAsync(uri, Json(merge, "application/merge-patch+json"), token));
+        using var response = await AdmittedAsync(() => client.PatchAsync(uri, Json(merge, "application/merge-patch+json"), token), token: token);
         await EnsureSuccessAsync(response);
     }
 
@@ -52,20 +53,20 @@ internal static class Docs
     // A POST with a JSON body; answers the JSON body, or null when there is none.
     public static async Task<JsonNode?> PostAsync(HttpClient client, Uri uri, JsonNode body, CancellationToken token = default)
     {
-        using var response = await AdmittedAsync(() => client.PostAsync(uri, Json(body, "application/json"), token));
+        using var response = await AdmittedAsync(() => client.PostAsync(uri, Json(body, "application/json"), token), token: token);
         return await BodyAsync(response, token);
     }
 
     public static async Task DeleteAsync(HttpClient client, Uri uri, CancellationToken token = default)
     {
-        using var response = await AdmittedAsync(() => client.DeleteAsync(uri, token));
+        using var response = await AdmittedAsync(() => client.DeleteAsync(uri, token), token: token);
         await EnsureSuccessAsync(response);
     }
 
     // The document as this region serves it, or null while it is absent.
     public static async Task<JsonNode?> ReadAsync(HttpClient client, Uri uri, CancellationToken token = default)
     {
-        using var response = await AdmittedAsync(() => client.GetAsync(uri, token));
+        using var response = await AdmittedAsync(() => client.GetAsync(uri, token), token: token);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             return null;
@@ -79,14 +80,14 @@ internal static class Docs
     // A JSON body read with GET, or null when the answer is 404.
     public static async Task<JsonNode?> GetJsonAsync(HttpClient client, Uri uri, CancellationToken token = default)
     {
-        using var response = await AdmittedAsync(() => client.GetAsync(uri, token));
+        using var response = await AdmittedAsync(() => client.GetAsync(uri, token), token: token);
         return response.StatusCode == HttpStatusCode.NotFound ? null : await BodyAsync(response, token);
     }
 
     // A deleted document's answer: 404 with its retained tombstone's ETag, or null for a document never written (or collected).
     public static async Task<string?> TombstoneAsync(HttpClient client, Uri uri, CancellationToken token = default)
     {
-        using var response = await AdmittedAsync(() => client.GetAsync(uri, token));
+        using var response = await AdmittedAsync(() => client.GetAsync(uri, token), token: token);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             return response.Headers.ETag?.Tag;
@@ -98,7 +99,7 @@ internal static class Docs
 
     public static async Task<HttpStatusCode> StatusAsync(HttpClient client, Uri uri, CancellationToken token = default)
     {
-        using var response = await AdmittedAsync(() => client.GetAsync(uri, token));
+        using var response = await AdmittedAsync(() => client.GetAsync(uri, token), token: token);
         return response.StatusCode;
     }
 
@@ -111,7 +112,7 @@ internal static class Docs
         {
             var cursorQuery = cursor is null ? "" : $"&cursor={Uri.EscapeDataString(cursor)}";
             var uri = new Uri($"{cluster.DatabasePath}/collections/{cluster.Collection}/documents?limit={ListPage}{cursorQuery}", UriKind.Relative);
-            using var response = await AdmittedAsync(() => client.GetAsync(uri, token));
+            using var response = await AdmittedAsync(() => client.GetAsync(uri, token), token: token);
             await EnsureSuccessAsync(response);
             using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
             foreach (var item in json.RootElement.GetProperty("items").EnumerateArray())
@@ -159,7 +160,7 @@ internal static class Docs
 
     // Tenant admission answers 429 with Retry-After before it runs the request, so sending it again cannot repeat it.
     // Past the convergence deadline the 429 is returned, and the caller reports it.
-    private static async Task<HttpResponseMessage> AdmittedAsync(Func<Task<HttpResponseMessage>> send, bool refusedBeforeRun = false)
+    private static async Task<HttpResponseMessage> AdmittedAsync(Func<Task<HttpResponseMessage>> send, bool refusedBeforeRun = false, CancellationToken token = default)
     {
         var clock = Stopwatch.StartNew();
         while (true)
@@ -167,7 +168,7 @@ internal static class Docs
             var response = await send();
             var refused = response.StatusCode == HttpStatusCode.TooManyRequests
                 || (refusedBeforeRun && response.StatusCode == HttpStatusCode.ServiceUnavailable
-                    && await response.Content.ReadAsStringAsync() is var answer
+                    && await response.Content.ReadAsStringAsync(token) is var answer
                     && (answer.Contains("\"remote_region_unavailable\"", StringComparison.Ordinal) || answer.Contains("\"confirmation_busy\"", StringComparison.Ordinal)));
             if (!refused || clock.Elapsed > Converge.Deadline)
             {
@@ -176,7 +177,7 @@ internal static class Docs
 
             var wait = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(1);
             response.Dispose();
-            await Task.Delay(wait);
+            await Task.Delay(wait, token);
         }
     }
 

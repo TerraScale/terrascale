@@ -25,7 +25,7 @@ public sealed class FlyOutageE2ETests
             cancellationToken.ThrowIfCancellationRequested();
             // A collection per outage: its digest names only this outage's documents, and its cleanup runs with every machine up.
             await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
-            await ReplicationMatrixTests.RejoinAsync(cluster, offline);
+            await ReplicationMatrixTests.RejoinAsync(cluster, offline, cancellationToken);
         }
     }
 }

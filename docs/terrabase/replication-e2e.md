@@ -38,14 +38,27 @@ nice -n 19 make terrabase-e2e-fly-outage
 For gru, sjc and fra in turn, each on a collection of its own: stops the region's single machine of a pinned disposable
 app, writes 40 documents, deletes a seeded document and patches one shared document from both survivors, starts the
 machine and waits until it serves both backlogs, every tombstone (404 with an equal ETag in every region) and the
-settled conflict, and every region lists the same collection digest. Before the outage writes, each survivor's write
-must be confirmed by the other; only `remote_region_unavailable` and `confirmation_busy` (refused before execution) are
+settled conflict, and every region lists the same collection digest. Before the outage writes, each survivor's probe
+write must be acknowledged `remote_durable` and then served by the other survivor; only `remote_region_unavailable` and `confirmation_busy` (refused before execution) are
 sent again. It reports six `rejoin <survivor> to <stopped>` latencies. The target fails unless this test is an actual
 pass on Fly. The target selects only `replication-matrix-fly-outage`; the broader `fly-outage` scenarios remain separate
-because they stop the same app's machines. It needs `flyctl` logged in. It runs alone because it stops a machine the other tests use. It never targets
+because they stop the same app's machines. If anything fails or the 30-minute timeout cancels the test while a region may
+be down, that machine is started again on a clock of its own and the failure is reported, with the restart's own failure
+if it has one. It needs `flyctl` logged in. It runs alone because it stops a machine the other tests use. It never targets
 production: without `TERRABASE_E2E_FLY_URL`, `TERRABASE_E2E_FLY_REVISION` and `TERRABASE_E2E_FLY_OUTAGE=1` it is reported
 as skipped, and `TERRABASE_E2E_FLY_APP` must name the disposable app (no default; production and preview apps are refused,
 see `e2e-disposable-app.md`).
+
+The other `fly-outage` scenarios (region down, restart, ack-then-stop, restarted backlog, deleted database) run with:
+
+```sh
+TERRABASE_E2E_FLY_OUTAGE=1 E2E_LABEL=fly-outage-broad nice -n 19 make terrabase-e2e \
+  TEST_ARGS="--treenode-filter '/*/*/*/*[(Category=fly-outage)&(Category!=replication-matrix-fly-outage)]'"
+```
+
+with the same pinned disposable app variables. Never run it at the same time as `terrabase-e2e-fly-outage`, `terrabase-e2e`
+or another run against the same app: each stops machines the others use. Its scenarios also stop machines in parallel
+with each other, so a failure there is not evidence about the all-regions proof, and a pass there is not that proof.
 
 ## Expected failures
 

@@ -214,7 +214,7 @@ internal static class BackupQualificationRun
             ops = new[] { new { op = "put", collection = cluster.Collection, id, document = body } },
         }, token);
         await RecordAcknowledgementsAsync(committed, versions, token);
-        _ = await Converge.ListedAsync(cluster, Docs.Digest(bodies.Select(pair => (pair.Key, pair.Value))), "checkpoint marker");
+        _ = await Converge.ListedAsync(cluster, Docs.Digest(bodies.Select(pair => (pair.Key, pair.Value))), "checkpoint marker", token);
     }
 
     private static async Task RecordAcknowledgementsAsync(HttpResponseMessage committed, Dictionary<string, string> versions, CancellationToken token)
@@ -249,7 +249,7 @@ internal static class BackupQualificationRun
         await Docs.EnsureSuccessAsync(window);
         return await window.Content.ReadFromJsonAsync<JsonElement>(token);
     }, window => window is { } found && (after is null || found.GetProperty("latest").GetDateTimeOffset() > after),
-        "a newer shipped backup checkpoint") is { } shipped ? shipped : throw new InvalidOperationException("no shipped checkpoint");
+        "a newer shipped backup checkpoint", token) is { } shipped ? shipped : throw new InvalidOperationException("no shipped checkpoint");
 
     private static async Task<Dictionary<string, Document>> CaptureVersionsAsync(HttpClient client, Cluster cluster, string organization, string project, string database,
         Dictionary<string, string> acknowledged, Dictionary<string, string> acknowledgedVersions, CancellationToken token)
