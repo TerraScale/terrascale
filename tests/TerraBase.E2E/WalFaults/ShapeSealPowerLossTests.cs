@@ -174,7 +174,7 @@ public sealed class ShapeSealPowerLossTests
     {
         var shape = $"{regions.DatabasePath}/collections/{RegionProcesses.CollectionName}/shape";
         var read = new ShapeRead(handle ?? "", offset, ops ?? [], 0, false);
-        HashSet<string> missing = [with(StringComparer.Ordinal), .. wanted];
+        HashSet<string> missing = [with(StringComparer.Ordinal), .. wanted.Except(read.Ops.Select(op => op.Id), StringComparer.Ordinal)];
         var deadline = DateTime.UtcNow + Converge.Deadline;
         var target = new Uri(offset == "-1" ? $"{shape}?offset=-1" : Continue(), UriKind.Relative);
         string Continue()
