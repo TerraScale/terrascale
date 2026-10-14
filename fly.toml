@@ -15,7 +15,7 @@ swap_size_mb = 4096
   min_machines_running = 1
 
 [[vm]]
-  size = "shared-cpu-1x"
+  size = "shared-cpu-2x"
   memory = "512mb"
 
 [[http_service.checks]]
