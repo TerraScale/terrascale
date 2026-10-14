@@ -250,7 +250,7 @@
 .ts-badge-danger { --badge: var(--ts-danger); }
 .ts-badge-tone { --badge: var(--tone); }
 /* Category hues, not status: text is lifted toward ink for AA. */
-.ts-badge-violet, .ts-badge-blue { color: color-mix(in oklab, var(--badge) 60%, var(--ts-ink)); }
+.ts-badge-tone, .ts-badge-violet, .ts-badge-blue { color: color-mix(in oklab, var(--badge) 60%, var(--ts-ink)); }
 .ts-badge-violet { --badge: var(--ts-chart-4); }
 .ts-badge-blue { --badge: var(--ts-chart-1); }
 
