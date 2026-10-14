@@ -183,8 +183,47 @@ internal sealed class TerraBaseConnection
     internal Task<OpenResponse> OpenChangesAsync(string path, Action<HttpRequestHeaders>? headers, CancellationToken cancellationToken) =>
         OpenAsync(HttpMethod.Get, path, null, headers, "text/event-stream", streaming: true, cancellationToken);
 
+    /// <summary>
+    /// Sends a GET and lets <paramref name="read"/> handle every status, including redirects and errors, within the
+    /// request deadline. <paramref name="origin"/> pins the request to a previously validated origin instead of
+    /// resolving one.
+    /// </summary>
+    internal async Task<T> ExchangeAsync<T>(string path, Uri? origin, Action<HttpRequestHeaders>? headers,
+        Func<OpenResponse, Task<T>> read, CancellationToken cancellationToken)
+    {
+        using var opened = await OpenAsync(HttpMethod.Get, path, null, headers, "application/json", streaming: false, cancellationToken, origin, throwOnError: false).ConfigureAwait(false);
+        try
+        {
+            try
+            {
+                return await read(opened).ConfigureAwait(false);
+            }
+            finally
+            {
+                opened.Token.ThrowIfCancellationRequested();
+            }
+        }
+        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested && opened.Token.IsCancellationRequested)
+        {
+            throw new TimeoutException("TerraBase did not answer within the request deadline.", error);
+        }
+        finally
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
+
+    /// <summary>Reads a response body bounded by the connection's response limit.</summary>
+    internal async Task<byte[]> ReadBodyAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        using var body = new BoundedHttpBodyStream(
+            maxResponseBytes, () => new TerraBaseException(response.StatusCode, "TerraBase returned a response larger than the client's limit.", "invalid_response", null), cancellationToken);
+        await response.Content.CopyToAsync(body, cancellationToken).ConfigureAwait(false);
+        return body.ToArray();
+    }
+
     private async Task<OpenResponse> OpenAsync(HttpMethod method, string path, HttpContent? content,
-        Action<HttpRequestHeaders>? headers, string accept, bool streaming, CancellationToken cancellationToken)
+        Action<HttpRequestHeaders>? headers, string accept, bool streaming, CancellationToken cancellationToken, Uri? pinnedOrigin = null, bool throwOnError = true)
     {
         var expiry = new CancellationTokenSource(timeout, timeProvider);
         var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, expiry.Token);
@@ -196,7 +235,7 @@ internal sealed class TerraBaseConnection
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(accept));
             headers?.Invoke(request.Headers);
             if (regionPin is not null) request.Headers.Add(TerraBaseRegion.PinHeader, regionPin);
-            var origin = Origin(await endpointResolver.ResolveAsync(deadline.Token).ConfigureAwait(false));
+            var origin = pinnedOrigin ?? Origin(await endpointResolver.ResolveAsync(deadline.Token).ConfigureAwait(false));
             deadline.Token.ThrowIfCancellationRequested();
             if (anonymous && origin.Scheme == Uri.UriSchemeHttps)
                 throw new InvalidOperationException("A client without a credential reaches only a private plain-HTTP TerraBase listener.");
@@ -214,7 +253,7 @@ internal sealed class TerraBaseConnection
             }
             request.RequestUri = new Uri(origin, path);
             response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
+            if (throwOnError && !response.IsSuccessStatusCode)
                 throw await TerraBaseException.FromResponseAsync(response, deadline.Token).ConfigureAwait(false);
             // Stream lifetime belongs to enumeration, not the ordinary JSON request timeout.
             if (streaming) expiry.CancelAfter(Timeout.InfiniteTimeSpan);
@@ -255,6 +294,7 @@ internal sealed class TerraBaseConnection
         CancellationToken token) : IDisposable
     {
         public HttpResponseMessage Response { get; } = response;
+        public Uri RequestUri => request.RequestUri!;
         public CancellationToken Token { get; } = token;
         public void Dispose()
         {
