@@ -145,7 +145,7 @@ public sealed class ShapeSealTests
         await Assert.That(first.Ops.Count(op => op.Kind == "delete")).IsEqualTo(5);
     }
 
-    // a is rewritten after its first event, b deleted, f stops matching the filter, never never matches. Every op carries
+    // a is rewritten, b deleted, f stops matching; never fails the JSON predicate and excluded fails its id check. Each op carries
     // the value at values_at, as stored bytes with the Document API version; deletes and nonmatches are delete ops.
     [Test]
     public async Task Ops_carry_current_stored_documents_and_deletes_for_absent_or_nonmatching_ones()
@@ -155,12 +155,14 @@ public sealed class ShapeSealTests
         var faker = new Faker();
         var start = await db.HeadAsync();
         var (a, b, f, never) = (DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId());
+        var excluded = DocumentApi.NewId();
         _ = await db.CommitAsync(async transaction =>
         {
             _ = await transaction.PutAsync(Collection, a, Json(new { keep = true, v = 1 }), CancellationToken.None);
             _ = await transaction.PutAsync(Collection, b, Json(new { keep = true }), CancellationToken.None);
             _ = await transaction.PutAsync(Collection, f, Json(new { keep = true }), CancellationToken.None);
             _ = await transaction.PutAsync(Collection, never, Json(new { keep = false }), CancellationToken.None);
+            _ = await transaction.PutAsync(Collection, excluded, Json(new { keep = true }), CancellationToken.None);
         });
         (await api.PutAsync(a, new { keep = true, v = 2, text = faker.Lorem.Sentence() })).Status.ShouldBe(System.Net.HttpStatusCode.OK);
         var head = await db.CommitAsync(async transaction =>
@@ -169,7 +171,7 @@ public sealed class ShapeSealTests
             _ = await transaction.PutAsync(Collection, f, Json(new { keep = false }), CancellationToken.None);
         });
 
-        var shape = await ShapeAsync(db, json => json.Span.IndexOf("\"keep\":true"u8) >= 0);
+        var shape = await ShapeAsync(db, document => document.Id != excluded && document.Json.Span.IndexOf("\"keep\":true"u8) >= 0);
         _ = await db.SealAsync(shape, start);
         var chunks = await db.ReadAllAsync(shape.Handle, start, head);
         var ops = chunks.SelectMany(chunk => chunk.Ops).ToArray();
@@ -180,13 +182,15 @@ public sealed class ShapeSealTests
         await Assert.That(ops.Count(op => op.Id == a)).IsEqualTo(2);
         await Assert.That(ops.Where(op => op.Id == a).All(op => op.Kind == "upsert" && op.Document == stored && op.Version == version)).IsTrue()
             .Because("a's first event carries the newer value, as stored bytes with the version a read returns");
-        foreach (var id in new[] { b, f, never })
+        foreach (var id in new[] { b, f, never, excluded })
         {
             await Assert.That(ops.Where(op => op.Id == id).All(op => op is { Kind: "delete", Version: null, Document: null })).IsTrue();
         }
 
         await Assert.That(ops.Count(op => op.Id == b)).IsEqualTo(2);
         await Assert.That(ops.Count(op => op.Id == f)).IsEqualTo(2);
+        await Assert.That(ops.Count(op => op.Id == excluded)).IsEqualTo(1)
+            .Because("the predicate can reject a document by id even when its JSON matches");
         foreach (var change in ops.GroupBy(op => op.Commit))
         {
             await Assert.That(change.Select(op => op.Id).SequenceEqual(change.Select(op => op.Id).Order(StringComparer.Ordinal))).IsTrue()
@@ -653,7 +657,7 @@ public sealed class ShapeSealTests
         }
     }
 
-    private static async Task<ShapeSealDefinition> ShapeAsync(Database db, Func<ReadOnlyMemory<byte>, bool>? predicate = null)
+    private static async Task<ShapeSealDefinition> ShapeAsync(Database db, Func<StoredDocument, bool>? predicate = null)
     {
         await using var transaction = await db.Store.BeginTransactionAsync(write: false, CancellationToken.None);
         var collection = await transaction.GetCollectionAsync(db.CollectionName, CancellationToken.None)

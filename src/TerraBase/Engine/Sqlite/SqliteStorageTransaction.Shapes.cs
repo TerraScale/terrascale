@@ -251,7 +251,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             if (document is not null)
             {
                 DocumentJson.ValidateStored(document.Json.Span);
-                if (shape.Predicate is not null && !shape.Predicate(document.Json))
+                if (shape.Predicate is not null && !shape.Predicate(document))
                 {
                     document = null;
                 }

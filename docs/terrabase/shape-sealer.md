@@ -6,8 +6,9 @@
 `Engine/Sqlite/SqliteStorageTransaction.Shapes.cs`. The storage format remains v7.
 
 The caller supplies a `ShapeSealDefinition`: lineage-bound shape id and handle,
-collection and generation, 16-byte resume scope, and an optional predicate over
-materialized JSON.
+collection and generation, 16-byte resume scope, and an optional
+`Func<StoredDocument, bool>` predicate over the materialized document, including its
+id. This seam is intended to accept FR-15's `Matches(StoredDocument)` delegate.
 The identity and predicate must remain fixed for that handle. The writer verifies
 the collection generation before sealing, so a stale handle cannot seal a re-created
 collection. An absent predicate includes every visible document. Registration and endpoint wiring belong to FR-10
