@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using TerraBase.Engine.Lattices;
 using TerraBase.Features.Memory;
 using TerraBase.Primitives;
 
@@ -15,18 +16,18 @@ internal sealed partial class SqliteStorageTransaction
     public ValueTask<JsonElement?> GetCollectionSchemaAsync(string name, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
-            using var reservation = ReserveCollectionMetadata(name);
+            using var reservation = ReserveCollectionMetadata(name, out _);
             return ReadCollectionSchema(name);
         }, cancellationToken);
 
-    private IMemoryReservation? ReserveCollectionMetadata(string name)
+    private IMemoryReservation? ReserveCollectionMetadata(string name, out long? bytes)
     {
         var command = store.IsSystem
             ? Command("SELECT octet_length(body) FROM documents WHERE collection = $collection AND id = $id;", DocumentDelta.Collections)
             : TableCommand("SELECT octet_length(doc) FROM {0} WHERE id = $id;", DocumentDelta.Collections);
         command.Parameters.AddWithValue("$id", name);
-        var bytes = command.ExecuteScalar();
-        return bytes is long length ? ReserveSchemaMemory(8L * length, MemoryLane.Foreground) : null;
+        bytes = command.ExecuteScalar() as long?;
+        return bytes is { } length ? ReserveSchemaMemory(8L * length, MemoryLane.Foreground) : null;
     }
 
     private IMemoryReservation? ReserveSchemaMemory(long bytes, MemoryLane lane)
@@ -50,6 +51,17 @@ internal sealed partial class SqliteStorageTransaction
 
         using var metadata = ReadCollectionMetadata(name);
         return metadata is not null && metadata.RootElement.TryGetProperty("schema", out var schema) ? schema.Clone() : null;
+    }
+
+    private static JsonElement? ReadCollectionSchema(DocumentState state)
+    {
+        if (state.Materialize() is not { } json)
+        {
+            return null;
+        }
+
+        using var metadata = ParseCollectionMetadata(json);
+        return metadata.RootElement.TryGetProperty("schema", out var schema) ? schema.Clone() : null;
     }
 
     public ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken) =>
@@ -83,7 +95,7 @@ internal sealed partial class SqliteStorageTransaction
                 throw new InvalidDataException("invalid collection schema");
             }
 
-            using var metadataReservation = ReserveCollectionMetadata(name);
+            using var metadataReservation = ReserveCollectionMetadata(name, out _);
             using var metadata = ReadCollectionMetadata(name);
             // Count the exact encoded bytes before allocating the output and admitting its write.
             var bytes = 2;
@@ -173,12 +185,17 @@ internal sealed partial class SqliteStorageTransaction
             return null;
         }
 
-        if (stored.Json.Length > MaxDocumentBytes)
+        return ParseCollectionMetadata(stored.Json);
+    }
+
+    private static JsonDocument ParseCollectionMetadata(ReadOnlyMemory<byte> json)
+    {
+        if (json.Length > MaxDocumentBytes)
         {
             throw new StorageWriteLimitException("collection metadata is at most 1 MiB");
         }
 
-        var metadata = JsonDocument.Parse(stored.Json, new JsonDocumentOptions { MaxDepth = DocumentJson.MaxStoredDepth });
+        var metadata = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = DocumentJson.MaxStoredDepth });
         if (metadata.RootElement.ValueKind != JsonValueKind.Object)
         {
             metadata.Dispose();

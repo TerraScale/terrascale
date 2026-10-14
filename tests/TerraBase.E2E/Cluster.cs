@@ -203,6 +203,9 @@ public sealed class Cluster : IAsyncDisposable
     /// <summary>Local nodes only: the Prometheus listener of <paramref name="region"/>'s node.</summary>
     public Uri MetricsAddress(string region) => RequireLocal().MetricsAddress(region);
 
+    /// <summary>Local nodes only: connected outbound peer streams reported by the internal listener.</summary>
+    public Task<JsonElement> ReplicationAsync(string region) => RequireLocal().ReplicationAsync(region);
+
     /// <summary>
     /// Local nodes only: sends the peer traffic between <paramref name="a"/> and <paramref name="b"/> through the link
     /// <paramref name="link"/> builds for <paramref name="b"/>'s peer endpoint, and answers it. Peer streams (R4a) publish
@@ -536,6 +539,10 @@ public sealed class Cluster : IAsyncDisposable
 
         public Uri MetricsAddress(string region) =>
             (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.MetricsAddress;
+
+        public Task<JsonElement> ReplicationAsync(string region) =>
+            (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.Client
+                .GetFromJsonAsync<JsonElement>(new Uri("/replication", UriKind.Relative));
 
         public string ProjectPath => $"/v1/projects/{_project}";
 
