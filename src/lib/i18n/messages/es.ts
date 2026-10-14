@@ -262,6 +262,7 @@ export const es: Messages = {
       docsLink: 'Documentación completa de precios',
     },
     faq: {
+      eyebrow: 'Preguntas frecuentes',
       titleLead: 'Preguntas',
       titleAccent: 'frecuentes',
       subtitle: 'Respuestas directas sobre los planes de Public Alpha.',

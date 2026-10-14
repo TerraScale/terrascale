@@ -6,57 +6,90 @@
 </script>
 
 <section class="pricing-cta">
-  <div class="pricing-cta__inner">
-    <h2 class="pricing-cta__title">{$dict.pricing.finalCta.titleLead} <span class="ts-text-gradient">{$dict.pricing.finalCta.titleAccent}</span></h2>
-    <p class="pricing-cta__text">
-      {$dict.pricing.finalCta.text}
-    </p>
-    <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine">
-      {launchPhase === 'public-alpha' ? $dict.pricing.finalCta.cta : $dict.hero.ctaPrelaunch}
-      <Icon name="arrowRight" className="pricing-cta__icon" />
-    </ExternalLink>
+  <div class="pricing-cta__card">
+    <div>
+      <h2 class="pricing-cta__title">{$dict.pricing.finalCta.titleLead} {$dict.pricing.finalCta.titleAccent}</h2>
+      <p class="pricing-cta__text">{$dict.pricing.finalCta.text}</p>
+    </div>
+    <div class="pricing-cta__actions">
+      <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary pricing-cta__btn">
+        {launchPhase === 'public-alpha' ? $dict.pricing.finalCta.cta : $dict.hero.ctaPrelaunch}
+        <Icon name="arrowRight" className="pricing-cta__icon" />
+      </ExternalLink>
+      <ExternalLink href="https://docs.terrascale.tech" class="ts-btn ts-btn-glass pricing-cta__btn">
+        {$dict.pricing.faq.readDocs}
+      </ExternalLink>
+    </div>
   </div>
 </section>
 
 <style>
   .pricing-cta {
-    position: relative;
-    padding: 80px 0 100px;
-    overflow: hidden;
+    padding: var(--ts-space-20) clamp(16px, 2.5vw, 40px);
+    border-top: 1px solid var(--ts-divider);
   }
 
-  .pricing-cta__inner {
-    position: relative;
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 0 40px;
-    text-align: center;
+  .pricing-cta__card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--ts-space-8);
+    padding: var(--ts-space-10);
+    border: 1px solid var(--ts-divider);
+    border-radius: var(--ts-radius-xl);
+    background: var(--ts-bg-surface);
   }
 
   .pricing-cta__title {
-    font-size: clamp(2rem, 2.5vw + 1rem, 3rem);
-    font-weight: 700;
+    margin: 0;
+    font-size: 32px;
+    font-weight: 600;
+    letter-spacing: -0.035em;
     color: var(--ts-text);
-    letter-spacing: -0.025em;
-    line-height: 1.12;
-    margin: 0 0 14px;
   }
 
   .pricing-cta__text {
-    font-family: var(--ts-font-accent);
-    font-size: 17px;
+    margin: var(--ts-space-2) 0 0;
+    font-size: 16px;
     color: var(--ts-text-muted);
-    margin: 0 0 28px;
+  }
+
+  .pricing-cta__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ts-space-3);
+  }
+
+  :global(.pricing-cta__btn) {
+    height: 44px;
+    padding: 0 var(--ts-space-5);
   }
 
   :global(.pricing-cta__icon) {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
   }
 
   @media (max-width: 640px) {
-    .pricing-cta__inner {
-      padding: 0 20px;
+    .pricing-cta {
+      padding-block: var(--ts-space-12);
+    }
+
+    .pricing-cta__card {
+      padding: var(--ts-space-6);
+    }
+
+    .pricing-cta__title {
+      font-size: 24px;
+    }
+
+    .pricing-cta__actions {
+      width: 100%;
+    }
+
+    :global(.pricing-cta__btn) {
+      width: 100%;
     }
   }
 </style>

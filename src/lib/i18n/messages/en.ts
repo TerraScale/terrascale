@@ -260,6 +260,7 @@ export const en = {
       docsLink: 'Full Pricing Docs',
     },
     faq: {
+      eyebrow: 'FAQ',
       titleLead: 'Frequently Asked',
       titleAccent: 'Questions',
       subtitle: 'Get answers to common questions about our pricing and plans.',
