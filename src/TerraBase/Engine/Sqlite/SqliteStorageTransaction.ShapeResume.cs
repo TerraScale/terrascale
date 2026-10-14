@@ -15,7 +15,13 @@ internal sealed partial class SqliteStorageTransaction : IShapeResumeStorage
         {
             cancellationToken.ThrowIfCancellationRequested();
             var command = Command("""
-                SELECT min(seq) FROM _tb_feed WHERE origin = $origin AND (stamp > $stamp OR stamp <= $floor) AND collection = $collection AND seq <= $head;
+                SELECT min(seq) FROM (
+                    SELECT min(seq) AS seq FROM _tb_feed
+                    WHERE origin = $origin AND stamp > $stamp AND collection = $collection AND seq <= $head
+                    UNION ALL
+                    SELECT min(seq) AS seq FROM _tb_feed
+                    WHERE origin = $origin AND stamp <= $floor AND collection = $collection AND seq <= $head
+                );
                 """);
             command.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
             // An origin the cursor does not name covers none of its rows.

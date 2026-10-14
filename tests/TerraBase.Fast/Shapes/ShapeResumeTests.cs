@@ -10,7 +10,6 @@ using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Shapes;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Shapes;
 
@@ -107,8 +106,8 @@ public sealed partial class ShapeResumeTests
         return await FollowAsync(http, path, bootstrap.Location!, state);
     }
 
-    // Reads from a redirect target until up to date, applying each whole response (section 7 rules 1 and 2).
-    private static async Task<Synced> FollowAsync(HttpClient http, string path, string target, Dictionary<string, string> state)
+    // Reads from a redirect target until up to date, applying each whole response (section 7 rules 1 and 2); `applied` gets each op's id in order.
+    private static async Task<Synced> FollowAsync(HttpClient http, string path, string target, Dictionary<string, string> state, List<string>? applied = null)
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         while (true)
@@ -119,6 +118,7 @@ public sealed partial class ShapeResumeTests
             foreach (var op in body.GetProperty("changes").EnumerateArray().SelectMany(change => change.GetProperty("ops").EnumerateArray()))
             {
                 var id = op.GetProperty("id").GetString()!;
+                applied?.Add(id);
                 if (op.GetProperty("op").GetString() == "upsert")
                 {
                     state[id] = op.GetProperty("document").GetRawText();

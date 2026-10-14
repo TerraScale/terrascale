@@ -1,36 +1,27 @@
 # Shape resume across machines (FR-23)
 
 Implements [shape-reads.md](../shape-reads.md) section 9. A resume is `GET …/shape?offset=-1` with no `handle` and the
-`cursor_resume` envelope in `cursor` or `TB-Shape-Resume`. Code: `src/TerraBase/Features/Shapes/ShapeResume.cs` and
-`src/TerraBase/Engine/Sqlite/SqliteStorageTransaction.ShapeResume.cs`.
-
-## Rules as built
+`cursor_resume` envelope in `cursor` or `TB-Shape-Resume`. A proven resume answers `307` with `Cache-Control: no-store`
+to `?handle=<local>&offset=<target>`.
 
 | Rule | Check | Refusal |
 | --- | --- | --- |
-| 0 | Envelope scope equals `ShapeService.ResumeScope` of this shape | `409 must_refetch` |
-| 1 | Issued within 7 days; the R8 feed read (`ReadFeedAsync`, the collection only, zero events) is not expired: no promised event was trimmed and, for a cursor from another machine, each named origin's local prefix hash equals the cursor's | `409 must_refetch` |
-| 2 | Every named origin's local head stamp is at or above the cursor's | `409 must_refetch` (behind) |
-| 3 | A local row is covered only within a verified origin prefix: above its proof floor and at or below its cursor stamp | none |
-| 4 | Target = the commit boundary before the first uncovered row's commit, else the sealed head; it must be a proven boundary at or above the handle's retention floor | `409 must_refetch` |
+| 0 | Envelope scope matches tenant, collection generation, canonical filter and wire format | `409 must_refetch` |
+| 1 | Issued within 7 days; R8 retention and origin-prefix verification pass | `409 must_refetch` |
+| 2 | Every named origin's local head stamp reaches the cursor's stamp | `409 must_refetch` |
+| 3 | Cover rows within verified origin prefixes, above their proof floors and at or below their cursor stamps | none |
+| 4 | Target is the boundary before the first uncovered collection row's commit, capped at the local head | `409` for an unproven boundary or target below the shape retention floor |
 
-Rules 1 to 4 read in one read transaction, so the head, proof and target agree. A proven resume answers
-`307` with `Cache-Control: no-store` to `?handle=<local>&offset=<target>`.
+Proof, origin heads and target read in one transaction. Rows at or below a proof floor replay conservatively.
+Covered rows after the target are delivered again with destination values. The client keeps state and applies
+responses in order; delivery is at least once.
 
-## Delivery
+The merge prerequisite is #211's persisted feed proofs. Its issuing-machine routing applies to the SSE feed.
+Shape resumes verify proofs on the destination and fail closed when those proofs cannot be verified there.
+An origin the destination forgot counts as behind. No storage format is added here.
 
-At least once. Covered rows after the target are delivered again with this machine's values; the client applies them in
-order (section 7 rule 4). The target never moves past an uncovered row on a stamp comparison alone.
+`ShapeResumeExtensions` registers `IShapeResume` after `ShapesExtensions`, replacing the old gate's registration.
+The old implementation and planned-gate paragraph can be removed when the shared Shapes lane is free.
 
-## Limits
-
-- Rule 1 verifies the prefix on the receiving machine. Rows at or below the proof floor replay conservatively. Replaying a resume to its issuing machine arrives with #211; until
-  then a refill or repair gap on the receiving machine refuses the resume (`409`), it never skips.
-- An origin the receiving machine forgot (all its events aged out) counts as behind.
-- `ShapeService.ResolveAsync` keeps the old gate but is no longer registered; `ShapeResumeExtensions` replaces the
-  `IShapeResume` registration. Delete the gate when the shape files are free to edit.
-
-## Tests
-
-`tests/TerraBase.Fast/Shapes/ShapeResumeTests.cs`: rules 0 to 4 and both transports on one machine, a target below the
-retention floor, and a client synced on gru that resumes on sjc of a replicated pair and converges (repeats allowed).
+Fast HTTP coverage lives in `ShapeResumeTests.cs`; the second stack layer adds `ShapeResumeRegionTests.cs`
+for gru-to-sjc failover with a deterministic covered-row replay and a third region confirming writes during restarts.
