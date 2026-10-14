@@ -61,4 +61,15 @@ Measured live on `ts-vtest-tb` by another agent; the owner fills this in.
 
 ## 4. CI outcome of the new test
 
-_pending: filled in from PR #301 CI._
+Read from the completed job log, not the check status. Head `9872dc928c17806e5f9575b42b115d696f8e32cc`.
+
+| Item | Value |
+| --- | --- |
+| Test | `UserAuthTests.A_project_token_whose_signing_key_is_withdrawn_reads_shapes_until_the_next_scheduled_refresh_and_never_after` |
+| Outcome | **NOT VERIFIED: not found in the logs.** The CI Fast run prints only a suite summary, never test names. The name appears 0 times in the `terrabase` and `test` job logs, and the run has no test-result artifact (only the docker build record) |
+| Duration | Not in the logs |
+| Suite log line | `terrabase` job, 2026-10-14T19:55:08Z: `Test run summary: Passed! - …/TerraBase.Fast.dll` with `total: 1895`, `failed: 0`, `succeeded: 1895`, `skipped: 0` |
+| Run | https://github.com/TerraScale/terrascale/actions/runs/38625957004 |
+| Job | https://github.com/TerraScale/terrascale/actions/runs/38625957004/job/116065633084 (`terrabase`, success); https://github.com/TerraScale/terrascale/actions/runs/38625957004/job/116073039205 (`test`, success) |
+
+The suite summary has zero failures and zero skips, but this does not show by name that the test ran.
