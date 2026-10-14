@@ -80,7 +80,8 @@ public sealed partial class InvitationTests(TerraBaseFixture fixture)
     [Test]
     public async Task An_organization_sends_at_most_a_hundred_invitations_an_hour()
     {
-        await using var oidc = await StartAsync();
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        await using var oidc = await StartAsync(clock);
         var (_, aliceToken) = await oidc.SignInUserAsync("alice@example.test");
         var id = await oidc.CreateOrganizationAsync(aliceToken);
         var invitations = $"{Organizations}/{id}/invitations";
