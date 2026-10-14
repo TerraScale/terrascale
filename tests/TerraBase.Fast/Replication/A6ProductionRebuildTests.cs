@@ -176,9 +176,9 @@ public sealed class A6ProductionRebuildTests
 
         using var root = new TempDirectory();
         var data = Directory.CreateDirectory(Path.Combine(root.Root, "data")).FullName;
-        var (exit, output) = await RunChildAsync(nameof(A_crash_before_a_replacement_fault_is_durable_faults_the_salvaged_replacement_from_its_own_write_intent), root.Root);
+        var (exit, crashedAtStep, output) = await RunChildAsync(nameof(A_crash_before_a_replacement_fault_is_durable_faults_the_salvaged_replacement_from_its_own_write_intent), root.Root, RebuildLedger.Recording);
         await Assert.That(exit).IsNotEqualTo(0).Because(output);
-        await Assert.That(output).Contains($"crashed at {RebuildLedger.Recording}");
+        await Assert.That(crashedAtStep).IsTrue().Because(output);
         var crashed = JsonSerializer.Deserialize<Crashed>(await File.ReadAllTextAsync(Path.Combine(root.Root, "crashed.json")))!;
         var database = new TenantContext(crashed.Organization, PlanTier.Hobby, crashed.Project, crashed.Database);
         var (original, replacement) = (Ulid.Parse(crashed.Incarnation), Ulid.Parse(crashed.Replacement!));
@@ -287,9 +287,9 @@ public sealed class A6ProductionRebuildTests
 
         using var root = new TempDirectory();
         var data = Directory.CreateDirectory(Path.Combine(root.Root, "data")).FullName;
-        var (exit, output) = await RunChildAsync(test, root.Root);
+        var (exit, crashedAtStep, output) = await RunChildAsync(test, root.Root, step);
         await Assert.That(exit).IsNotEqualTo(0).Because(output);
-        await Assert.That(output).Contains($"crashed at {step}");
+        await Assert.That(crashedAtStep).IsTrue().Because(output);
         var crashed = JsonSerializer.Deserialize<Crashed>(await File.ReadAllTextAsync(Path.Combine(root.Root, "crashed.json")))!;
         var database = new TenantContext(crashed.Organization, PlanTier.Hobby, crashed.Project, crashed.Database);
 
@@ -328,8 +328,9 @@ public sealed class A6ProductionRebuildTests
         throw new InvalidOperationException($"the child outlived {step}");
     }
 
-    // Runs `test` again in a child of the test executable with CrashRoot set; its exit code and output tail.
-    private static async Task<(int ExitCode, string Output)> RunChildAsync(string test, string root)
+    // Runs `test` again in a child of the test executable with CrashRoot set; its exit code, whether it failed fast at
+    // `step`, and its output tail.
+    private static async Task<(int ExitCode, bool CrashedAtStep, string Output)> RunChildAsync(string test, string root, string step)
     {
         var executable = Environment.ProcessPath ?? throw new InvalidOperationException("the test executable path is unavailable");
         var start = new ProcessStartInfo(executable) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -368,8 +369,10 @@ public sealed class A6ProductionRebuildTests
             }
         }
 
-        var text = await output + await error;
-        return (child.ExitCode, text.Length > 16384 ? text[^16384..] : text);
+        // FailFast writes its message to stderr before the stack, which alone can outgrow the tail: look for it in the whole stream.
+        var (stdout, stderr) = (await output, await error);
+        var text = stdout + stderr;
+        return (child.ExitCode, stderr.Contains($"crashed at {step}", StringComparison.Ordinal), text.Length > 16384 ? text[^16384..] : text);
     }
 
     private static Task<ManagementApi> StartAsync(string? directory, Probe? probe = null, TimeProvider? time = null, Action<IServiceCollection>? configure = null) =>
