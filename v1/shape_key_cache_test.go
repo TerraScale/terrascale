@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -250,7 +251,7 @@ func TestShapeKeyCoalescesConcurrentFetchesAndHonorsWaiterCancel(t *testing.T) {
 	}()
 	<-srv.arrived
 
-	// Done signals that get reached its wait on the in-flight key.
+	// Done signals that the waiter reached its select on the in-flight key.
 	cancelled, cancel := context.WithCancel(t.Context())
 	waiting := &shapeKeyWaitContext{Context: cancelled, entered: make(chan struct{})}
 	cancelResult := make(chan error, 1)
@@ -296,6 +297,73 @@ type shapeKeyWaitContext struct {
 func (ctx *shapeKeyWaitContext) Done() <-chan struct{} {
 	ctx.once.Do(func() { close(ctx.entered) })
 	return ctx.Context.Done()
+}
+
+func TestShapeKeyLiveWaiterRetriesWhenFetchOwnerCancels(t *testing.T) {
+	srv, col := newShapeKeyServer(t)
+	srv.with(func() { srv.gate = "100" })
+	leaderCtx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	leader := make(chan error, 1)
+	go func() {
+		_, err := shapeKeyFetch(leaderCtx, col, 100)
+		leader <- err
+	}()
+	<-srv.arrived
+	waiting := &shapeKeyWaitContext{Context: t.Context(), entered: make(chan struct{})}
+	joiner := make(chan error, 1)
+	go func() {
+		_, err := shapeKeyFetch(waiting, col, 100)
+		joiner <- err
+	}()
+	<-waiting.entered
+	cancel()
+	if err := <-leader; !errors.Is(err, context.Canceled) {
+		t.Fatalf("fetch owner error = %v, want context.Canceled", err)
+	}
+	select {
+	case err := <-joiner:
+		t.Fatalf("live waiter returned before its retry: %v", err)
+	case <-srv.arrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("live waiter did not retry the cancelled fetch")
+	}
+	close(srv.release)
+	if err := <-joiner; err != nil {
+		t.Fatalf("live waiter error = %v", err)
+	}
+	if srv.count() != 2 {
+		t.Fatalf("requests = %d, want cancelled fetch plus one retry", srv.count())
+	}
+	if _, err := shapeKeyFetch(t.Context(), col, 100); err != nil {
+		t.Fatal(err)
+	}
+	if srv.count() != 2 {
+		t.Fatal("successful retry was not cached")
+	}
+}
+
+func TestShapeKeyCacheReturnsHTTPTimeoutWithoutRestartingFetch(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	c, err := New(Config{BaseURL: server.URL, Token: shapeKeyToken, MaxRetries: -1,
+		HTTPClient: &http.Client{Timeout: 20 * time.Millisecond}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+	key, err := shapeKeyFetch(ctx, c.Database(shapeKeyProject, "demo").Collection("notes"), 100)
+	if !errors.Is(err, context.DeadlineExceeded) || key != nil || ctx.Err() != nil {
+		t.Fatalf("key = %v, error = %v, caller context = %v; want HTTP timeout with live caller", key, err, ctx.Err())
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("requests = %d, want one timed-out fetch", calls.Load())
+	}
 }
 
 func TestShapeKeyInvalidatedInFlightFetchDoesNotRepopulate(t *testing.T) {

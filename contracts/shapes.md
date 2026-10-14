@@ -46,6 +46,8 @@ are rejected while additional unknown members remain compatible. Repeated
 bootstrap refusals use a cancellable backoff after the first immediate restart.
 Epoch-key diagnostics redact secret bytes.
 The key bytes are held behind a function so reflection cannot print them.
+Each client represents one principal; token refresh must retain that principal.
+Live waiters retry a shared key fetch if its initiating caller cancels.
 
 The shape body carries materialized values that may be newer than their event.
 The vector `cross-lineage-repeat-has-newer-materialized-value` requires applying

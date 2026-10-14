@@ -69,6 +69,7 @@ type Config struct {
 	Token string
 	// TokenSource supplies a current project access token, for example a
 	// tsauth API key or token exchange source. Set either Token or TokenSource.
+	// A Client represents one principal; its source must not switch principals.
 	TokenSource TokenSource
 	// HTTPClient is used for every request. Nil uses a client that requires
 	// TLS 1.3. The client is copied and its redirect policy replaced, so the

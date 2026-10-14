@@ -94,10 +94,11 @@ type shapeKeyIdentity struct {
 }
 
 type shapeKeyEntry struct {
-	ready chan struct{}
-	key   ShapeKey
-	err   error
-	timer *time.Timer
+	ready          chan struct{}
+	key            ShapeKey
+	err            error
+	ownerCancelled bool
+	timer          *time.Timer
 }
 
 type shapeKeyCache struct {
@@ -114,8 +115,22 @@ func (cache *shapeKeyCache) timeNow() time.Time {
 }
 
 func (cache *shapeKeyCache) get(ctx context.Context, id shapeKeyIdentity, fetch func() (*ShapeKey, error)) (*ShapeKey, error) {
+	for {
+		key, err, retry := cache.getOnce(ctx, id, fetch)
+		if ownErr := ctx.Err(); ownErr != nil {
+			return nil, ownErr
+		}
+		// A live waiter retries with its own context when the fetch owner cancels.
+		if retry {
+			continue
+		}
+		return key, err
+	}
+}
+
+func (cache *shapeKeyCache) getOnce(ctx context.Context, id shapeKeyIdentity, fetch func() (*ShapeKey, error)) (*ShapeKey, error, bool) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, err, false
 	}
 	cache.mu.Lock()
 	now := cache.timeNow()
@@ -128,13 +143,13 @@ func (cache *shapeKeyCache) get(ctx context.Context, id shapeKeyIdentity, fetch 
 		cache.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, ctx.Err(), false
 		case <-entry.ready:
 			if entry.err != nil {
-				return nil, entry.err
+				return nil, entry.err, entry.ownerCancelled
 			}
 			key := entry.key
-			return &key, nil
+			return &key, nil, false
 		}
 	}
 	if cache.entries == nil {
@@ -152,6 +167,7 @@ func (cache *shapeKeyCache) get(ctx context.Context, id shapeKeyIdentity, fetch 
 		err = ErrMustRefetch
 	}
 	entry.err = err
+	entry.ownerCancelled = ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded))
 	if err == nil {
 		entry.key = *key
 		now = cache.timeNow()
@@ -177,10 +193,10 @@ func (cache *shapeKeyCache) get(ctx context.Context, id shapeKeyIdentity, fetch 
 	}
 	close(entry.ready)
 	if err != nil {
-		return nil, err
+		return nil, err, false
 	}
 	copy := entry.key
-	return &copy, nil
+	return &copy, nil, false
 }
 
 // remove is called with mu held. Returned caller-owned keys remain their responsibility.
