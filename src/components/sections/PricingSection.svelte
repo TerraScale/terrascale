@@ -60,8 +60,11 @@
         data-popular={plan.popular}
         class:is-popular={plan.popular}
         class:is-unavailable={!plan.available}
+        style:--plan-accent={plan.accent}
+        style:--plan-accent-rgb={plan.accentRgb}
       >
         <svelte:element this={planTag} class="pricing-card__name">
+          <span class="pricing-card__icon"><Icon name={plan.icon} className="pricing-card__icon-glyph" /></span>
           {plan.name}
           {#if plan.popular}
             <span class="pricing-card__badge">{$dict.pricing.badge}</span>
@@ -105,6 +108,10 @@
 <style>
   .pricing-section {
     padding: var(--ts-space-16) clamp(16px, 2.5vw, 40px) var(--ts-space-20);
+    background:
+      radial-gradient(60% 50% at 70% 75%, rgba(var(--ts-primary-rgb), 0.12), transparent 70%),
+      radial-gradient(40% 40% at 15% 85%, rgba(var(--ts-secondary-rgb), 0.07), transparent 70%),
+      radial-gradient(35% 40% at 95% 60%, rgba(var(--ts-tertiary-rgb), 0.07), transparent 70%);
   }
 
   .pricing-section__head {
@@ -174,12 +181,21 @@
   }
 
   .pricing-toggle button[aria-pressed='true'] {
-    background: #2c2c2c;
+    background: var(--ts-primary);
+    color: #fff;
+  }
+
+  .pricing-toggle button:focus-visible {
+    outline: 2px solid var(--ts-primary-light);
+    outline-offset: 2px;
   }
 
   .pricing-cycle__save {
-    font-size: 14px;
-    color: var(--ts-text-muted);
+    padding: 2px var(--ts-space-2);
+    border-radius: var(--ts-radius-pill);
+    background: rgba(var(--ts-secondary-rgb), 0.12);
+    color: color-mix(in oklab, var(--ts-secondary) 70%, white);
+    font-size: 13px;
   }
 
   .pricing-grid {
@@ -190,6 +206,9 @@
   }
 
   .pricing-card {
+    /* Icons and checks need >=3:1 on the surface; lift the tier accent toward white. */
+    --plan-ink: color-mix(in oklab, var(--plan-accent) 65%, white);
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: var(--ts-space-4);
@@ -197,21 +216,55 @@
     padding: var(--ts-space-6);
     border: 1px solid var(--ts-divider);
     border-radius: var(--ts-radius-lg);
-    background: var(--ts-bg-surface);
+    background:
+      radial-gradient(120% 60% at 0% 0%, rgba(var(--plan-accent-rgb), 0.14), transparent 60%),
+      var(--ts-bg-surface);
+    box-shadow: inset 0 2px 0 rgba(var(--plan-accent-rgb), 0.85);
+    transition:
+      transform var(--ts-transition-normal),
+      border-color var(--ts-transition-normal),
+      box-shadow var(--ts-transition-normal);
+  }
+
+  .pricing-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(var(--plan-accent-rgb), 0.45);
   }
 
   .pricing-card.is-popular {
-    border-color: color-mix(in oklab, var(--ts-primary) 70%, transparent);
+    border-color: transparent;
+    background:
+      radial-gradient(120% 60% at 50% 0%, rgba(var(--ts-primary-rgb), 0.28), transparent 65%) padding-box,
+      linear-gradient(var(--ts-bg-surface), var(--ts-bg-surface)) padding-box,
+      linear-gradient(140deg, var(--ts-primary-light), var(--ts-secondary) 45%, var(--ts-tertiary)) border-box;
+    box-shadow:
+      0 0 0 1px rgba(var(--ts-primary-rgb), 0.25),
+      0 18px 50px -12px rgba(var(--ts-primary-rgb), 0.55);
+  }
+
+  .pricing-card__icon {
+    display: inline-grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--ts-radius-md);
+    background: rgba(var(--plan-accent-rgb), 0.18);
+    color: var(--plan-ink);
+  }
+
+  :global(.pricing-card__icon-glyph) {
+    width: 15px;
+    height: 15px;
   }
 
   .pricing-card__name {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: var(--ts-space-3);
+    gap: var(--ts-space-2) var(--ts-space-3);
     margin: 0;
-    font-size: 16px;
-    font-weight: 500;
+    font-size: 17px;
+    font-weight: 600;
     color: var(--ts-text);
   }
 
@@ -221,8 +274,8 @@
     height: 22px;
     padding: 0 var(--ts-space-2);
     border-radius: var(--ts-radius-sm);
-    background: rgba(var(--ts-primary-light-rgb), 0.16);
-    color: var(--ts-primary-light);
+    background: linear-gradient(90deg, var(--ts-primary), color-mix(in oklab, var(--ts-primary) 55%, var(--ts-secondary)));
+    color: #fff;
     font-size: 12px;
     font-weight: 500;
     white-space: nowrap;
@@ -244,9 +297,17 @@
   }
 
   .pricing-card__price strong {
-    font: 500 40px / 1 var(--ts-font-mono);
+    font: 600 44px / 1 var(--ts-font-mono);
     letter-spacing: -0.04em;
+    font-variant-numeric: tabular-nums;
     color: var(--ts-text);
+  }
+
+  .is-popular .pricing-card__price strong {
+    background: linear-gradient(120deg, #fff 20%, var(--ts-primary-light));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
 
   .pricing-card__badge--neutral {
@@ -285,6 +346,7 @@
     width: 14px;
     height: 14px;
     margin-top: 2px;
+    color: var(--plan-ink);
   }
 
   :global(.pricing-card__cta) {
@@ -294,6 +356,16 @@
 
   .pricing-card.is-unavailable :global(.pricing-card__cta) {
     background: transparent;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pricing-card {
+      transition: none;
+    }
+
+    .pricing-card:hover {
+      transform: none;
+    }
   }
 
   @media (max-width: 1280px) {
