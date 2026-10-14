@@ -26,6 +26,7 @@ internal sealed class GetShapeKeyEndpoint(
     // One epoch: a revocation this machine cannot have seen stops key release within it, so a revoked credential reads
     // nothing sealed after the epoch following the revocation's (docs/terrabase/shape-reads.md, revocation bound).
     private static readonly TimeSpan CatalogWindow = TimeSpan.FromSeconds(ShapeCrypto.EpochSeconds);
+    private static readonly Unavailable CatalogStale = new("this machine cannot confirm current credentials; retry later", "catalog_stale");
 
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
 
@@ -35,7 +36,7 @@ internal sealed class GetShapeKeyEndpoint(
         Get(DocumentRoute.Collections + "/{collection}/shape/keys");
         Name("getShapeKey");
         Summary("Gets a shape epoch key");
-        Description("Requires documents:read. Releases the AES-256 epoch key for the current handle and a served epoch/key_id pair. The key opens only that handle and epoch. Epochs last 10 minutes. Future epochs are refused; stale handles and unretained pairs answer 409 must_refetch. Responses are private, no-store. API key revocation prevents further key release; offline JWT acceptance lasts until expiry plus clock skew. When this machine's catalog was not proved current against every listed machine within one epoch (a partition), it answers 503 catalog_stale with Retry-After and releases nothing. Previously released keys and read data remain usable.");
+        Description("Requires documents:read. Releases the AES-256 epoch key for the current handle and a served epoch/key_id pair. The key opens only that handle and epoch. Epochs last 10 minutes. Future epochs are refused; stale handles and unretained pairs answer 409 must_refetch. Responses are private, no-store. API key revocation prevents further key release; offline JWT acceptance lasts until expiry plus clock skew. Unless this machine listed itself in its last directory read and proved its catalog within one epoch against every listed machine and every other recorded region (checked before tenancy and again before the key is returned), it answers 503 catalog_stale with Retry-After and releases nothing. Previously released keys and read data remain usable.");
         Tags("Live");
         Produces<ShapeKeyResponse>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -66,7 +67,7 @@ internal sealed class GetShapeKeyEndpoint(
         HttpContext.Response.Headers.CacheControl = "private, no-store";
         if (!await catalog.IsFreshAsync(CatalogWindow, cancellationToken))
         {
-            return ErrorResponse.From(new Unavailable("this machine cannot confirm current credentials; retry later", "catalog_stale"));
+            return ErrorResponse.From(CatalogStale);
         }
 
         return await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
@@ -133,6 +134,12 @@ internal sealed class GetShapeKeyEndpoint(
 
             try
             {
+                // Again after the lookups (up to the 30 s deadline): the catalog may have gone stale while they ran.
+                if (!await catalog.IsFreshAsync(CatalogWindow, cancellationToken))
+                {
+                    return ErrorResponse.From(CatalogStale);
+                }
+
                 return TypedResults.Json(new ShapeKeyResponse(handle, epoch.ToString(CultureInfo.InvariantCulture), key.KeyId,
                     Base64Url.EncodeToString(key.Key)), ShapeKeyJsonContext.Default.ShapeKeyResponse);
             }

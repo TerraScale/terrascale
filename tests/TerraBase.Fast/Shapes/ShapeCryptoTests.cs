@@ -330,46 +330,93 @@ public sealed class ShapeCryptoTests
     [Test]
     public async Task A_machine_whose_catalog_is_unproven_for_an_epoch_withholds_keys_until_anti_entropy_proves_it_again()
     {
-        // A partition can hold back a revocation committed on another machine: a after b is cut off from it. a's writes
-        // answer after their local commit, so its setup needs no peer stream; its catalog proofs are what is under test.
-        var members = new FakeMemberStore();
-        await using var host = await CryptoHost.StartAsync(services: collection => collection
-                .AddSingleton<IMemberDirectory>(members)
-                .AddSingleton<IRemoteDurability>(new LocalDurability()),
-            configure: settings =>
-            {
-                settings["node-name"] = "a";
-                settings["region"] = "gru";
-            });
-        await using var peer = await TerraBaseTestServer.StartAsync(settings =>
-        {
-            host.S3.Configure(settings);
-            settings["node-name"] = "b";
-            settings["region"] = "sjc";
-        }, services =>
-        {
-            host.S3.Route(services);
-            ManualBackupHosting.Configure(services);
-            services.AddSingleton<IMemberDirectory>(members);
-        });
+        // A partition can hold back a revocation committed on another machine: a after b is cut off from it.
+        await using var pair = await Pair.StartAsync();
+        var host = pair.Host;
 
         // Past a membership heartbeat, a lists b, which no comparison has proved yet.
         host.Time.Advance(TimeSpan.FromSeconds(6));
-        await AssertCatalogStaleAsync(await host.GetKeyAsync(host.Api.Client, host.Handle, host.Crypto.CurrentEpoch, host.KeyId));
-        await AssertReleasedAsync(host, await UntilReleasedAsync(host));
+        await AssertCatalogStaleAsync(await pair.GetKeyAsync());
+        await pair.ProveAsync();
+        await AssertReleasedAsync(host, await pair.GetKeyAsync());
 
-        members.Map = (viewer, member) => viewer == "a" && member.Name == "b" ? member with { PeerAddress = "http://127.0.0.1:9/" } : member;
-        // The last proof began at most a round before the cut, so eight minutes on it still holds and eleven it does not.
-        host.Time.Advance(TimeSpan.FromMinutes(8));
-        await AssertReleasedAsync(host, await host.GetKeyAsync(host.Api.Client, host.Handle, host.Crypto.CurrentEpoch, host.KeyId));
-        host.Time.Advance(TimeSpan.FromMinutes(3));
-        await AssertCatalogStaleAsync(await host.GetKeyAsync(host.Api.Client, host.Handle, host.Crypto.CurrentEpoch, host.KeyId));
+        pair.Cut();
+        // The proof began exactly now: it holds for the whole epoch and not a second more.
+        host.Time.Advance(TimeSpan.FromSeconds(599));
+        await AssertReleasedAsync(host, await pair.GetKeyAsync());
+        host.Time.Advance(TimeSpan.FromSeconds(2));
+        await AssertCatalogStaleAsync(await pair.GetKeyAsync());
         // Refused before the tenancy checks, so a stale machine reveals nothing about collections either.
         await AssertCatalogStaleAsync(await host.Api.Client.GetAsync(new Uri(
             $"{host.Api.Collections}/missing/shape/keys?handle={host.Handle}&epoch={Decimal(host.Crypto.CurrentEpoch)}&key_id={host.KeyId}", UriKind.Relative)));
 
-        members.Map = null;
-        await AssertReleasedAsync(host, await UntilReleasedAsync(host));
+        pair.Heal();
+        await pair.ProveAsync();
+        await AssertReleasedAsync(host, await pair.GetKeyAsync());
+    }
+
+    [Test]
+    public async Task An_empty_or_partial_directory_never_lifts_the_catalog_bound()
+    {
+        await using var pair = await Pair.StartAsync();
+        var host = pair.Host;
+        host.Time.Advance(TimeSpan.FromSeconds(6));
+        await pair.ProveAsync();
+        var listed = await pair.Members.ListAsync(CancellationToken.None);
+
+        // Fly's DNS answers a lost name with no records: a view without this machine proves nothing, even with b just proved.
+        foreach (var member in listed)
+        {
+            pair.Members.Leave(member.Name);
+        }
+
+        host.Time.Advance(TimeSpan.FromSeconds(6));
+        await AssertCatalogStaleAsync(await pair.GetKeyAsync());
+        foreach (var member in listed)
+        {
+            pair.Members.Join(member);
+        }
+
+        host.Time.Advance(TimeSpan.FromSeconds(6));
+        await AssertReleasedAsync(host, await pair.GetKeyAsync());
+
+        // A self-only view: b is no longer listed, but the catalog records its region, which still needs a proof in the window.
+        pair.Members.Leave("b");
+        host.Time.Advance(TimeSpan.FromSeconds(6));
+        await AssertReleasedAsync(host, await pair.GetKeyAsync());
+        host.Time.Advance(TimeSpan.FromSeconds(600));
+        await AssertCatalogStaleAsync(await pair.GetKeyAsync());
+
+        pair.Members.Join(listed.Single(member => member.Name == "b"));
+        host.Time.Advance(TimeSpan.FromSeconds(6));
+        await pair.ProveAsync();
+        await AssertReleasedAsync(host, await pair.GetKeyAsync());
+    }
+
+    [Test]
+    public async Task A_catalog_that_goes_stale_during_the_key_lookup_releases_no_key()
+    {
+        var lookup = new GatedLineage();
+        await using var pair = await Pair.StartAsync(collection =>
+        {
+            lookup.Inner = (IShapeLineages)collection.Last(service => service.ServiceType == typeof(IShapeLineages)).ImplementationInstance!;
+            collection.AddSingleton<IShapeLineages>(lookup);
+        });
+        var host = pair.Host;
+        // Mid-epoch, so the lookup below ends in the epoch the request names.
+        host.Time.Advance(TimeSpan.FromSeconds(300));
+        await pair.ProveAsync();
+        pair.Cut();
+        host.Time.Advance(TimeSpan.FromSeconds(590));
+        await AssertReleasedAsync(host, await pair.GetKeyAsync());
+
+        // Fresh at the first check; the lookup then outlives the proof, within the endpoint's 30 s deadline.
+        var entered = lookup.Arm();
+        var pending = pair.GetKeyAsync();
+        await entered.WaitAsync(TimeSpan.FromSeconds(10), TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        host.Time.Advance(TimeSpan.FromSeconds(20));
+        lookup.Release();
+        await AssertCatalogStaleAsync(await pending.WaitAsync(TimeSpan.FromSeconds(10), TUnit.Core.TestContext.Current!.Execution.CancellationToken));
     }
 
     [Test]
@@ -646,30 +693,6 @@ public sealed class ShapeCryptoTests
         await Assert.That(error.TryGetProperty("key", out _)).IsFalse();
     }
 
-    // Advances a round at a time until anti-entropy has compared the catalog with every listed machine (a bucket still
-    // settling waits a second round) and the key is released.
-    private static async Task<HttpResponseMessage> UntilReleasedAsync(CryptoHost host)
-    {
-        for (var round = 0; round < 10; round++)
-        {
-            host.Time.Advance(AntiEntropy.Round);
-            var polling = System.Diagnostics.Stopwatch.StartNew();
-            while (polling.Elapsed < TimeSpan.FromSeconds(5))
-            {
-                var response = await host.GetKeyAsync(host.Api.Client, host.Handle, host.Crypto.CurrentEpoch, host.KeyId);
-                if (response.StatusCode == HttpStatusCode.OK)
-                {
-                    return response;
-                }
-
-                response.Dispose();
-                await Task.Delay(50);
-            }
-        }
-
-        throw new TimeoutException("anti-entropy never proved the catalog current");
-    }
-
     private static async Task AssertReleasedAsync(CryptoHost host, HttpResponseMessage response)
     {
         using (response)
@@ -817,6 +840,105 @@ public sealed class ShapeCryptoTests
         }
 
         public ValueTask DisposeAsync() => Api.DisposeAsync();
+    }
+
+    /// <summary>
+    /// a (gru, the key server) and b (sjc) in one directory. a's writes answer after their local commit, so its setup needs
+    /// no peer stream; its catalog proofs are what is under test. Cut drops a's route to b, as a partition does.
+    /// </summary>
+    private sealed class Pair(CryptoHost host, TerraBaseTestServer peer, FakeMemberStore members) : IAsyncDisposable
+    {
+        public CryptoHost Host { get; } = host;
+
+        public FakeMemberStore Members { get; } = members;
+
+        public static async Task<Pair> StartAsync(Action<IServiceCollection>? services = null)
+        {
+            var members = new FakeMemberStore();
+            var host = await CryptoHost.StartAsync(services: collection =>
+            {
+                collection.AddSingleton<IMemberDirectory>(members).AddSingleton<IRemoteDurability>(new LocalDurability());
+                services?.Invoke(collection);
+            }, configure: settings =>
+            {
+                settings["node-name"] = "a";
+                settings["region"] = "gru";
+            });
+            try
+            {
+                var peer = await TerraBaseTestServer.StartAsync(settings =>
+                {
+                    host.S3.Configure(settings);
+                    settings["node-name"] = "b";
+                    settings["region"] = "sjc";
+                }, collection =>
+                {
+                    host.S3.Route(collection);
+                    ManualBackupHosting.Configure(collection);
+                    collection.AddSingleton<IMemberDirectory>(members);
+                });
+                return new Pair(host, peer, members);
+            }
+            catch
+            {
+                await host.DisposeAsync();
+                throw;
+            }
+        }
+
+        public Task<HttpResponseMessage> GetKeyAsync() => Host.GetKeyAsync(Host.Api.Client, Host.Handle, Host.Crypto.CurrentEpoch, Host.KeyId);
+
+        /// <summary>Runs a's catalog rounds until one proves b as of now (a bucket still settling waits a second round).</summary>
+        public async Task ProveAsync()
+        {
+            var antiEntropy = Host.Api.Server.Services.GetRequiredService<AntiEntropy>();
+            for (var round = 0; round < 5; round++)
+            {
+                await antiEntropy.RunRoundAsync(CancellationToken.None, system: true);
+                if ((await antiEntropy.CatalogHeldWithinAsync(TimeSpan.FromTicks(1), CancellationToken.None)).Contains("b"))
+                {
+                    return;
+                }
+            }
+
+            throw new TimeoutException("anti-entropy never proved b's catalog");
+        }
+
+        public void Cut() => Members.Map = (viewer, member) => viewer == "a" && member.Name == "b" ? member with { PeerAddress = "http://127.0.0.1:9/" } : member;
+
+        public void Heal() => Members.Map = null;
+
+        public async ValueTask DisposeAsync()
+        {
+            await peer.DisposeAsync();
+            await Host.DisposeAsync();
+        }
+    }
+
+    /// <summary>The fixture's lineage; once armed, the next handle lookup waits for <see cref="Release"/>.</summary>
+    private sealed class GatedLineage : IShapeLineages
+    {
+        private TaskCompletionSource? _entered;
+        private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public IShapeLineages Inner { get; set; } = null!;
+
+        public Task Arm() => (_entered = new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+
+        public void Release() => _released.TrySetResult();
+
+        public ValueTask<LineageResult> ResolveAsync(ShapeScope scope, CancellationToken cancellationToken) => Inner.ResolveAsync(scope, cancellationToken);
+
+        public async ValueTask<LineageResult> ResolveHandleAsync(TenantContext database, CollectionInfo collection, string handle, CancellationToken cancellationToken)
+        {
+            if (Interlocked.Exchange(ref _entered, null) is { } entered)
+            {
+                entered.TrySetResult();
+                await _released.Task;
+            }
+
+            return await Inner.ResolveHandleAsync(database, collection, handle, cancellationToken);
+        }
     }
 
     private sealed class FixedLineage(ShapeLineage lineage) : IShapeLineages

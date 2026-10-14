@@ -23,7 +23,7 @@ namespace TerraBase.Features.Replication;
 /// Without garbage collection (R7) a repair merges old state safely. Once tombstones are collected, a machine away past the
 /// GC horizon must refill by copying instead of merging (section 10), or it would bring collected deletions back.
 /// </remarks>
-internal sealed class AntiEntropy : BackgroundService, ICatalogFreshness
+internal sealed class AntiEntropy : BackgroundService
 {
     internal static readonly TimeSpan Round = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan DigestTimeout = TimeSpan.FromSeconds(30);
@@ -41,11 +41,11 @@ internal sealed class AntiEntropy : BackgroundService, ICatalogFreshness
     private readonly ILogger<AntiEntropy> _logger;
     private readonly Counter<long> _repairs;
 
-    // Per (database, peer machine): the buckets that differed in the last round, and when that round began.
-    private readonly ConcurrentDictionary<(TenantContext Database, string Peer), (HashSet<int> Buckets, long At)> _differed = new();
+    // Per (database, peer machine): the buckets that differed in the last round, when it began and the copies it compared.
+    private readonly ConcurrentDictionary<(TenantContext Database, string Peer), (HashSet<int> Buckets, long At, Ulid Local, Ulid Source)> _differed = new();
 
-    // Per peer machine: the timestamp as of which its system catalog was last proved held here.
-    private readonly ConcurrentDictionary<string, long> _catalogHeld = new(StringComparer.Ordinal);
+    // Per peer machine: the timestamp as of which its system catalog was last proved held in this machine's copy Local.
+    private readonly ConcurrentDictionary<string, (long At, Ulid Local)> _catalogHeld = new(StringComparer.Ordinal);
 
     public AntiEntropy(
         IMembership membership, IChangeGroupSource source, IReplicaStates states, IChangeGroupSink sink, ITenantDirectory tenants, TimeProvider time,
@@ -57,14 +57,19 @@ internal sealed class AntiEntropy : BackgroundService, ICatalogFreshness
             "Documents anti-entropy changed, by the peer region they came from.");
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    // The system catalog runs its own rounds: a slow tenant repair (up to its 10 min read) must not age the catalog proofs
+    // shape keys depend on (ICatalogFreshness).
+    protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
+        Task.WhenAll(RoundsAsync(system: true, stoppingToken), RoundsAsync(system: false, stoppingToken));
+
+    private async Task RoundsAsync(bool system, CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(Round, _time);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
             try
             {
-                await RunRoundAsync(stoppingToken).ConfigureAwait(false);
+                await RunRoundAsync(stoppingToken, system).ConfigureAwait(false);
             }
             catch (RpcException error) when (stoppingToken.IsCancellationRequested && error.StatusCode == StatusCode.Cancelled)
             {
@@ -75,12 +80,20 @@ internal sealed class AntiEntropy : BackgroundService, ICatalogFreshness
         }
     }
 
-    /// <summary>One round over every database and peer; a peer that fails is tried again next round.</summary>
-    internal async Task RunRoundAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// One round over every database (only the system catalog, or only the others, when <paramref name="system"/> says so)
+    /// and peer; a peer that fails is tried again next round.
+    /// </summary>
+    internal async Task RunRoundAsync(CancellationToken cancellationToken, bool? system = null)
     {
         var peers = Peers(await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false));
         await foreach (var database in _source.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
+            if (system is { } only && only != (database == ChangeGroups.System))
+            {
+                continue;
+            }
+
             // The system database is placed in every region.
             var placement = database == ChangeGroups.System ? null
                 : await _tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord record ? record.Placement
@@ -127,21 +140,50 @@ internal sealed class AntiEntropy : BackgroundService, ICatalogFreshness
     internal Task<int?> PullAsync(TenantContext database, ClusterMember peer, CancellationToken cancellationToken) =>
         CompareAsync(database, peer, force: true, cancellationToken);
 
-    public async ValueTask<bool> IsFreshAsync(TimeSpan window, CancellationToken cancellationToken) =>
-        Peers(await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false))
-            .All(peer => _catalogHeld.TryGetValue(peer.Name, out var at) && _time.GetElapsedTime(at) < window);
+    /// <summary>
+    /// The machines whose system catalog a comparison proved held here less than <paramref name="window"/> ago, counting
+    /// only proofs into the copy still in place (a rebuilt or restored catalog starts without any).
+    /// </summary>
+    internal async ValueTask<HashSet<string>> CatalogHeldWithinAsync(TimeSpan window, CancellationToken cancellationToken)
+    {
+        var held = new HashSet<string>(StringComparer.Ordinal);
+        var inPlace = new Dictionary<Ulid, bool>();
+        foreach (var (peer, proof) in _catalogHeld)
+        {
+            if (_time.GetElapsedTime(proof.At) >= window)
+            {
+                continue;
+            }
 
-    // Monotonic: a slow comparison that began earlier never moves a peer's proof back.
-    private void CatalogHeld(TenantContext database, ClusterMember peer, long? at)
+            if (!inPlace.TryGetValue(proof.Local, out var current))
+            {
+                inPlace[proof.Local] = current = await LocalHeldAsync(ChangeGroups.System, proof.Local, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (current)
+            {
+                _ = held.Add(peer);
+            }
+        }
+
+        return held;
+    }
+
+    // Monotonic within one local copy: a slow comparison that began earlier never moves a peer's proof back.
+    private void CatalogHeld(TenantContext database, ClusterMember peer, long? at, Ulid local)
     {
         if (database == ChangeGroups.System && at is { } began)
         {
-            _ = _catalogHeld.AddOrUpdate(peer.Name, began, (_, known) => Math.Max(known, began));
+            _ = _catalogHeld.AddOrUpdate(peer.Name, (began, local),
+                (_, known) => known.Local == local ? (Math.Max(known.At, began), local) : (began, local));
         }
     }
 
-    private List<ClusterMember> Peers(ClusterView view) =>
-        [.. view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Where(member => member.Name != _membership.Self.Name && member.PeerAddress.Length > 0)];
+    /// <summary>The other members of <paramref name="view"/> with a peer listener: the machines anti-entropy compares with.</summary>
+    internal static List<ClusterMember> Peers(ClusterView view, string self) =>
+        [.. view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Where(member => member.Name != self && member.PeerAddress.Length > 0)];
+
+    private List<ClusterMember> Peers(ClusterView view) => Peers(view, _membership.Self.Name);
 
     // Compares digests with the peer and joins the buckets to repair; null when this machine does not hold the database.
     // With a horizon (a refill), it copies: a local state of a repaired bucket that the peer lacks and that lies wholly below
@@ -186,10 +228,12 @@ internal sealed class AntiEntropy : BackgroundService, ICatalogFreshness
 
         var differing = Enumerable.Range(0, 4096).Where(bucket => !ours.AsSpan(bucket * 16, 16).SequenceEqual(theirs.AsSpan(bucket * 16, 16))).ToHashSet();
         var compared = _differed.TryGetValue((database, peer.Name), out var previous);
-        _differed[(database, peer.Name)] = (differing, began);
+        _differed[(database, peer.Name)] = (differing, began, local.Incarnation, source);
         HashSet<int> repair = force ? differing : compared ? [.. differing.Where(previous.Buckets.Contains)] : [];
-        // A bucket left for the next round differs only since the last one began, when it matched: held as of then.
-        long? held = repair.Count == differing.Count ? began : compared ? previous.At : null;
+        // A bucket left for the next round differs only since the last one began, when it matched: held as of then, if
+        // that round compared the same two copies.
+        long? held = repair.Count == differing.Count ? began
+            : compared && previous.Local == local.Incarnation && previous.Source == source ? previous.At : null;
         if (repair.Count == 0)
         {
             // Covered only if the copy compared is still the one in place: a copy recreated meanwhile was never compared.
@@ -198,7 +242,7 @@ internal sealed class AntiEntropy : BackgroundService, ICatalogFreshness
                 return null;
             }
 
-            CatalogHeld(database, peer, held);
+            CatalogHeld(database, peer, held, local.Incarnation);
             return 0;
         }
 
@@ -256,7 +300,7 @@ internal sealed class AntiEntropy : BackgroundService, ICatalogFreshness
         }
 
         _repairs.Add(changed, new KeyValuePair<string, object?>("peer_region", peer.Region));
-        CatalogHeld(database, peer, held);
+        CatalogHeld(database, peer, held, local.Incarnation);
         return changed;
     }
 

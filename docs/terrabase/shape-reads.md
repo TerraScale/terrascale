@@ -518,19 +518,28 @@ from the object. A mismatched object fails its tags. Reject the whole object, ap
 **Revocation bound.** A key is released only to a credential accepted at that moment.
 
 - **API key:** once its revocation reaches the serving machine, no key is released for any epoch. Peer streams
-  usually deliver it in about a second, but a partition can hold it back. So the endpoint also releases keys only
-  while this machine's catalog was proved, less than one epoch (600 s, `ShapeCrypto.EpochSeconds`) ago, to hold the
-  catalog of every machine the directory lists. Only a completed anti-entropy comparison of the system database counts
-  as proof, timed from when it began. Otherwise it answers `503 catalog_stale` with `Retry-After` and `private,
-  no-store`, before any tenancy check, and releases nothing.
+  usually deliver it in about a second, but a partition can hold it back. So the endpoint releases a key only while
+  this machine's catalog is fresh: checked before any tenancy check, and again just before the key is returned.
+  Otherwise it answers `503 catalog_stale` with `Retry-After` and `no-store`, and releases nothing. The catalog is
+  fresh when all of these hold, within one epoch (600 s, `ShapeCrypto.EpochSeconds`):
+  - the last directory read listed this machine. Fly's DNS answers a lost name with no records, and such a view proves
+    nothing;
+  - every machine the directory lists was proved. A proof is a completed anti-entropy comparison of the system
+    database into the copy still in place, timed from when it began. The system catalog runs its own anti-entropy
+    rounds, every 60 s, apart from tenant databases;
+  - every other region the catalog records (`cluster_members`, written by each machine before it serves) has a proved
+    machine, listed or not. So a directory that drops a region, or lists only this machine, never lifts the bound.
   - Bound: a revocation committed at `R`, in epoch `E`, is held by the serving machine, or that machine stops releasing
     keys before `R + 600 s`, which falls inside epoch `E + 1`. So a revoked API key gets no object sealed after epoch
     `E + 1` (at most 20 minutes after `R`), partition included. The 600 s is measured on the serving machine's
     monotonic clock; epoch numbers come from machine wall clocks, assumed in sync.
-  - Availability: one listed machine unreachable for an epoch stops key release on every machine that cannot reach
-    it. Shape reads continue; clients keep their keys and retry.
-  - Limit: a machine that leaves the directory (stopped or destroyed) no longer counts. A revocation committed only
-    there and never streamed out before it left is not covered.
+  - Availability: a region that cannot be reached for an epoch stops key release on every machine that cannot reach
+    it. So does a region recorded in the catalog with no running machine: retiring a region means removing its
+    `cluster_members` records through reviewed recovery. Shape reads continue; clients keep their keys and retry.
+  - Limits: a revocation commits to the catalog of the machine that served it and streams from there; its `204` does
+    not wait for another region. If that machine stops before the revocation streams out, no running machine holds it
+    until the machine returns, and every authorization check, not only this one, misses it. A machine of this machine's
+    own region that the directory stops listing is not required (one machine per region today).
 - **JWT:** TerraBase validates ts-auth JWTs offline, so an upstream-revoked token is accepted until it expires plus the
   allowed clock skew (30 s, `UserAuthenticationHandler.ClockSkew`). Its holder may already hold the current `K_e`, which
   opens objects sealed in the rest of that epoch. The worst case from upstream revocation is: remaining token lifetime +

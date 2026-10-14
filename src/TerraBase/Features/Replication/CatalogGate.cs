@@ -430,18 +430,27 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     }
 
     // Every other machine the catalog records.
-    private async Task<HashSet<string>> RecordedMachinesAsync(CancellationToken cancellationToken)
+    private async Task<HashSet<string>> RecordedMachinesAsync(CancellationToken cancellationToken) =>
+        new((await RecordedAsync(_engine, cancellationToken).ConfigureAwait(false)).Keys.Where(id => id != _options.MachineId), StringComparer.Ordinal);
+
+    /// <summary>Every machine the catalog records (this one included), with its recorded region, or null when unreadable.</summary>
+    internal static async Task<Dictionary<string, string?>> RecordedAsync(IStorageEngine engine, CancellationToken cancellationToken)
     {
         const int Page = 100;
-        var machines = new HashSet<string>(StringComparer.Ordinal);
-        var store = await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        var machines = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         string? afterId = null;
         do
         {
             var page = await transaction.ListAsync(Members, afterId, Page, 1024 * 1024, cancellationToken).ConfigureAwait(false);
-            machines.UnionWith(page.Documents.Select(member => member.Id).Where(id => id != _options.MachineId));
-            if (machines.Count > MaxMembers)
+            foreach (var member in page.Documents)
+            {
+                machines[member.Id] = RegionOf(member.Json.Span);
+            }
+
+            // One more than the limit: the record of the machine reading them.
+            if (machines.Count > MaxMembers + 1)
             {
                 throw new InvalidDataException("the catalog gate's member limit was exceeded");
             }
