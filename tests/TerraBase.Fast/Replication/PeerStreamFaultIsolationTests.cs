@@ -78,6 +78,33 @@ public sealed class PeerStreamFaultIsolationTests
     }
 
     [Test]
+    public async Task Thirty_two_faulted_frontiers_keep_heartbeats_alive_and_acknowledge_a_healthy_sentinel()
+    {
+        await using var node = await Node.StartAsync();
+        using var deadline = Timeout();
+        await node.FaultAsync(node.Database, nodeFault: false, deadline.Token);
+        using var channel = PeerChannel.Create(node.Api.Server.BaseAddress, PeerTls.Credential);
+        using var call = await HelloAsync(new Features.Replication.V1.Replication.ReplicationClient(channel), deadline.Token);
+        for (var index = 0; index < 32; index++)
+        {
+            await call.RequestStream.WriteAsync(new PushFrame
+            {
+                Frontier = new Frontier { Database = ChangeGroups.Wire(node.Database, node.Pin(node.Database)), Hlc = Stamp().Value },
+            }, deadline.Token);
+            await call.RequestStream.WriteAsync(new PushFrame { Heartbeat = new Heartbeat() }, deadline.Token);
+            await Assert.That(await call.ResponseStream.MoveNext(deadline.Token)).IsTrue();
+            await Assert.That(call.ResponseStream.Current.KindCase).IsEqualTo(AckFrame.KindOneofCase.None)
+                .Because("the faulted frontier has no response; only the heartbeat gets an empty reply");
+        }
+
+        await call.RequestStream.WriteAsync(Frame(node.Second, node.Pin(node.Second), 1, "sentinel"), deadline.Token);
+        var ack = await AckAsync(call, deadline.Token);
+        await Assert.That((ack.Database, ack.Refused, ack.ChangeId))
+            .IsEqualTo((ChangeGroups.Wire(node.Second, node.Pin(node.Second)), false, 1UL));
+        await Assert.That(await node.HasAsync(node.Second, "sentinel", deadline.Token)).IsTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task A_fault_between_apply_and_stable_never_acknowledges_the_committed_batch(bool nodeFault)

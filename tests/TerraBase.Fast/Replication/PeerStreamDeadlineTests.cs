@@ -16,6 +16,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
@@ -301,6 +302,193 @@ public sealed class PeerStreamDeadlineTests
     }
 
     [Test]
+    public async Task Thirty_two_unanswered_frontiers_do_not_consume_the_healthy_batch_budget()
+    {
+        var time = new ObservedTime();
+        var answered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        answered.SetResult();
+        await using var peer = await FakePeer.StartAsync(silentStreams: 0, batchRelease: answered);
+        var (unused, bind) = CreateSource();
+        ResetSource? source = null;
+        TenantContext[] databases = [];
+        var replica = ReplicaId.Of(1, 9, 0);
+        await using var api = await StartSenderAsync(peer, unused, bind, time, async api =>
+        {
+            databases = await CreateDatabasesAsync(api, 2);
+            source!.Databases = databases;
+            foreach (var database in databases)
+            {
+                await PutStoredAsync(api, database, "warm");
+                var pin = await IncarnationAsync(api, database);
+                var head = await source.HeadAsync(database, pin, CancellationToken.None)
+                    ?? throw new InvalidOperationException("the source head was refused");
+                await Assert.That(await source.AckAsync(database, pin, replica, head, default, CancellationToken.None)).IsTrue();
+            }
+        }, sourceFactory: provider => source = new ResetSource(provider.GetRequiredService<FaultAwareReplicaSource>()));
+        await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
+        await time.UntilTimerAsync(Idle, after: 0, period: Idle);
+        for (var round = 0; round < 16; round++)
+        {
+            var frontiers = 0;
+            while (frontiers < 2)
+            {
+                var frame = await peer.NextAsync();
+                await Assert.That(frame.Hello).IsNull();
+                if (frame.Frontier is not null)
+                {
+                    frontiers++;
+                }
+            }
+            await time.UntilTimerAsync(Idle, after: 0, period: Timeout.InfiniteTimeSpan, createdAt: time.GetUtcNow());
+            // Advance only one second after the frontier pass: no frontier is due, so a heartbeat must answer.
+            var changes = time.Changes;
+            time.Advance(Idle);
+            await Assert.That((await peer.NextAsync()).Heartbeat).IsNotNull();
+            await time.UntilChangeAsync(ReplicationProtocol.ProgressTimeout, changes);
+            if (round < 15)
+            {
+                time.Advance(TimeSpan.FromSeconds(4));
+            }
+        }
+
+        await PutStoredAsync(api, databases[1], "sentinel");
+        PushFrame sentinel;
+        do
+        {
+            sentinel = await peer.NextAsync();
+            await Assert.That(sentinel.Hello).IsNull();
+        }
+        while (sentinel.Batch is null);
+        await Assert.That(sentinel.Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[1], await IncarnationAsync(api, databases[1])));
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await source!.AckedAsync(databases[1], replica, token))?.Acked == (long)sentinel.Batch.LastChangeId, Deadline);
+        await Assert.That(peer.Streams).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task Sixty_five_optional_stable_replies_cannot_block_heartbeats_while_a_real_source_read_is_held()
+    {
+        var time = new ObservedTime();
+        var answered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        answered.SetResult();
+        await using var peer = await FakePeer.StartAsync(silentStreams: 0, batchRelease: answered, stableBurst: true);
+        var (unused, bind) = CreateSource();
+        ResetSource? source = null;
+        TenantContext database = null!;
+        var replica = ReplicaId.Of(1, 9, 0);
+        await using var api = await StartSenderAsync(peer, unused, bind, time, async api =>
+        {
+            database = await CreateDatabaseAsync(api);
+            source!.Databases = [database];
+            await PutStoredAsync(api, database, "warm");
+            var pin = await IncarnationAsync(api, database);
+            var head = await source.HeadAsync(database, pin, CancellationToken.None)
+                ?? throw new InvalidOperationException("the source head was refused");
+            await Assert.That(await source.AckAsync(database, pin, replica, head, default, CancellationToken.None)).IsTrue();
+        }, sourceFactory: provider => source = new ResetSource(provider.GetRequiredService<FaultAwareReplicaSource>()));
+        await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
+        await Assert.That((await peer.NextAsync()).Frontier).IsNotNull();
+        await time.UntilTimerAsync(Idle, after: 0, period: Idle);
+        source!.HoldDatabase = database;
+        await PutStoredAsync(api, database, "sentinel");
+        await source.Prepared.Task.WaitAsync(Deadline);
+        var changes = time.Changes;
+        time.Advance(Idle);
+        await Assert.That((await peer.NextAsync()).Heartbeat).IsNotNull();
+        await peer.StableSent.Task.WaitAsync(Deadline);
+        // Every received frame resets silence: 65 Stable frames plus the heartbeat prove receipt beyond the 64-slot queue.
+        await time.UntilChangeAsync(ReplicationProtocol.ProgressTimeout, changes, count: 66);
+        await Assert.That(source.Release.Task.IsCompleted).IsFalse();
+        await Assert.That(peer.Streams).IsEqualTo(1);
+        await Assert.That(peer.FirstEnded.Task.IsCompleted).IsFalse();
+        source.Release.SetResult();
+        var stored = api.Server.Services.GetRequiredService<FaultAwareReplicaSource>();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (await stored.AckedAsync(database, replica, token))?.Acked
+                == await stored.HeadAsync(database, await IncarnationAsync(api, database), token), Deadline);
+        await Assert.That(peer.Streams).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task A_delayed_stable_reset_during_a_full_budget_abandons_the_prepared_batch_without_reconnecting()
+    {
+        var time = new ObservedTime();
+        var warnings = new PeerWarnings(time, streamFailuresOnly: true);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var peer = await FakePeer.StartAsync(silentStreams: 0, batchRelease: release, stableBeforeBatches: true);
+        var (unused, bind) = CreateSource();
+        ResetSource? source = null;
+        TenantContext[] databases = [];
+        var replica = ReplicaId.Of(1, 9, 0);
+        await using var api = await StartSenderAsync(peer, unused, bind, time, async api =>
+        {
+            databases = await CreateDatabasesAsync(api, 33);
+            source!.Databases = databases;
+            foreach (var database in databases)
+            {
+                await PutStoredAsync(api, database, "warm");
+            }
+
+            var pin = await IncarnationAsync(api, databases[0]);
+            var head = await source.HeadAsync(databases[0], pin, CancellationToken.None)
+                ?? throw new InvalidOperationException("the source head was refused");
+            await Assert.That(await source.AckAsync(databases[0], pin, replica, head, default, CancellationToken.None)).IsTrue();
+        }, warnings, provider => source = new ResetSource(provider.GetRequiredService<FaultAwareReplicaSource>()));
+        await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
+        await Assert.That((await peer.NextAsync()).Frontier.Database).IsEqualTo(ChangeGroups.Wire(databases[0], await IncarnationAsync(api, databases[0])));
+        for (var index = 1; index < databases.Length; index++)
+        {
+            await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[index], await IncarnationAsync(api, databases[index])));
+        }
+
+        await Assert.That(peer.BatchesBeforeRelease).IsEqualTo(32);
+        source!.ResetDatabase = databases[0];
+        await PutStoredAsync(api, databases[0], "prepared");
+        await source.Prepared.Task.WaitAsync(Deadline);
+        // Stable is queued before the held page returns; only ReserveAsync can drain it during this prepared send.
+        release.SetResult();
+        await peer.StableSent.Task.WaitAsync(Deadline);
+        source.Release.SetResult();
+        await source.Reset.Task.WaitAsync(Deadline);
+        var stored = api.Server.Services.GetRequiredService<FaultAwareReplicaSource>();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            foreach (var database in databases.Skip(1))
+            {
+                var pin = await IncarnationAsync(api, database);
+                var head = await stored.HeadAsync(database, pin, token);
+                if ((await stored.AckedAsync(database, replica, token))?.Acked != head)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }, Deadline);
+        await source.Reinitialized.Task.WaitAsync(Deadline);
+        var abandoned = await stored.AckedAsync(databases[0], replica, CancellationToken.None)
+            ?? throw new InvalidOperationException("the reset source cursor was refused");
+        var preparedHead = await stored.HeadAsync(databases[0], await IncarnationAsync(api, databases[0]), CancellationToken.None)
+            ?? throw new InvalidOperationException("the prepared source head was refused");
+        await Assert.That(abandoned.Acked).IsLessThan(preparedHead)
+            .Because("the prepared frame is abandoned when the matching cursor is reset");
+        await Assert.That(peer.Streams).IsEqualTo(1);
+        await Assert.That(peer.FirstEnded.Task.IsCompleted).IsFalse();
+        await Assert.That(warnings.Failure.Task.IsCompleted).IsFalse();
+    }
+
+    private static async Task PutStoredAsync(ManagementApi api, TenantContext database, string id)
+    {
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        var store = await engine.OpenDatabaseAsync(database, CancellationToken.None)
+            ?? throw new InvalidOperationException("the test database is missing");
+        await using var transaction = await store.BeginDurableTransactionAsync(CancellationToken.None);
+        _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+        _ = await transaction.PutAsync("items", id, "{\"n\":1}"u8.ToArray(), CancellationToken.None);
+        _ = await transaction.CommitAsync(CancellationToken.None);
+    }
+
+    [Test]
     public async Task An_unacknowledged_batch_expires_while_another_database_read_is_held_despite_live_heartbeats()
     {
         var time = new ObservedTime();
@@ -510,7 +698,8 @@ public sealed class PeerStreamDeadlineTests
 
     private static async Task<ManagementApi> StartSenderAsync(
         FakePeer peer, IChangeGroupSource source, Action<IStorageEngine> bindSource, ObservedTime time,
-        Func<ManagementApi, Task>? beforeJoin = null, PeerWarnings? warnings = null)
+        Func<ManagementApi, Task>? beforeJoin = null, PeerWarnings? warnings = null,
+        Func<IServiceProvider, IChangeGroupSource>? sourceFactory = null)
     {
         var members = new FakeMemberStore();
         var api = await ManagementApi.StartAsync(settings =>
@@ -524,7 +713,7 @@ public sealed class PeerStreamDeadlineTests
             services.AddSingleton<IChangeGroupSource>(provider =>
             {
                 bindSource(provider.GetRequiredService<IStorageEngine>());
-                return source;
+                return sourceFactory?.Invoke(provider) ?? source;
             });
             services.AddSingleton(provider => ActivatorUtilities.CreateInstance<PeerStreams>(provider, time));
             if (warnings is not null)
@@ -635,7 +824,7 @@ public sealed class PeerStreamDeadlineTests
         }
     }
 
-    private sealed class PeerWarnings(ObservedTime time) : ILogger<PeerStreams>
+    private sealed class PeerWarnings(ObservedTime time, bool streamFailuresOnly = false) : ILogger<PeerStreams>
     {
         public TaskCompletionSource<Exception?> Failure { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -648,7 +837,8 @@ public sealed class PeerStreamDeadlineTests
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            if (logLevel == LogLevel.Warning)
+            if (logLevel == LogLevel.Warning
+                && (!streamFailuresOnly || formatter(state, exception).Contains("reconnects and resumes", StringComparison.Ordinal)))
             {
                 // RunAsync logs after stream cleanup and before scheduling its reconnect backoff.
                 _ = BackoffBoundary.TrySetResult(time.Timers);
@@ -692,6 +882,65 @@ public sealed class PeerStreamDeadlineTests
         public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) => source.RetainsAsync(database, incarnation, after, cancellationToken);
         public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) => source.HeadAsync(database, incarnation, cancellationToken);
         public Task ChangedAsync(CancellationToken cancellationToken) => source.ChangedAsync(cancellationToken);
+    }
+
+    // Storage stays real; only the prepared read boundary and one tenant-local bookkeeping error are controlled.
+    private sealed class ResetSource(FaultAwareReplicaSource inner) : IChangeGroupSource
+    {
+        public TenantContext[] Databases { get; set; } = [];
+        public TenantContext? ResetDatabase { get; set; }
+        public TenantContext? HoldDatabase { get; set; }
+        public TaskCompletionSource Prepared { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Reset { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Reinitialized { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async IAsyncEnumerable<TenantContext> ListDatabasesAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            foreach (var database in Databases)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return database;
+            }
+
+            await Task.CompletedTask;
+        }
+
+        public async ValueTask<SourceGroups?> ReadAsync(TenantContext database, Ulid incarnation, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
+        {
+            var page = await inner.ReadAsync(database, incarnation, after, maxGroups, maxBytes, cancellationToken);
+            if (database == (HoldDatabase ?? ResetDatabase) && page is { Groups.Count: > 0 } && Prepared.TrySetResult())
+            {
+                await Release.Task.WaitAsync(cancellationToken);
+            }
+
+            return page;
+        }
+
+        public async ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken)
+        {
+            if (database == ResetDatabase && Reset.Task.IsCompleted)
+            {
+                _ = Reinitialized.TrySetResult();
+            }
+
+            return await inner.AckedAsync(database, peer, cancellationToken);
+        }
+
+        public ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken)
+        {
+            if (database == ResetDatabase && Reset.TrySetResult())
+            {
+                throw new InvalidOperationException("a test tenant bookkeeping error without an established copy fault");
+            }
+
+            return inner.RecordStableAsync(database, incarnation, peer, stable, cancellationToken);
+        }
+
+        public ValueTask<bool> AckAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken) => inner.AckAsync(database, incarnation, peer, changeId, stable, cancellationToken);
+        public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) => inner.RetainsAsync(database, incarnation, after, cancellationToken);
+        public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) => inner.HeadAsync(database, incarnation, cancellationToken);
+        public Task ChangedAsync(CancellationToken cancellationToken) => inner.ChangedAsync(cancellationToken);
     }
 
     private sealed class HeldRepair
@@ -877,7 +1126,7 @@ public sealed class PeerStreamDeadlineTests
             }
         }
 
-        public async Task UntilChangeAsync(TimeSpan due, int after)
+        public async Task UntilChangeAsync(TimeSpan due, int after, int count = 1)
         {
             using var deadline = new CancellationTokenSource(Deadline);
             while (true)
@@ -885,7 +1134,7 @@ public sealed class PeerStreamDeadlineTests
                 Task next;
                 lock (_gate)
                 {
-                    if (_changes.Skip(after).Contains(due))
+                    if (_changes.Skip(after).Count(change => change == due) >= count)
                     {
                         return;
                     }
@@ -938,13 +1187,15 @@ public sealed class PeerStreamDeadlineTests
         private readonly TaskCompletionSource? _refillRelease;
         private readonly TaskCompletionSource? _batchRelease;
         private readonly TaskCompletionSource? _frontierRelease;
+        private readonly bool _stableBeforeBatches;
+        private readonly bool _stableBurst;
         private WebApplication? _app;
         private int _streams;
         private int _batchesBeforeRelease;
 
         private FakePeer(
             int silentStreams, RepairState? repair, TaskCompletionSource? refillRelease, TaskCompletionSource? batchRelease,
-            TaskCompletionSource? frontierRelease, int unansweredStreams)
+            TaskCompletionSource? frontierRelease, int unansweredStreams, bool stableBeforeBatches, bool stableBurst)
         {
             _silentStreams = silentStreams;
             _unansweredStreams = unansweredStreams;
@@ -952,6 +1203,8 @@ public sealed class PeerStreamDeadlineTests
             _refillRelease = refillRelease;
             _batchRelease = batchRelease;
             _frontierRelease = frontierRelease;
+            _stableBeforeBatches = stableBeforeBatches;
+            _stableBurst = stableBurst;
         }
 
         public string Address { get; private set; } = "";
@@ -964,13 +1217,15 @@ public sealed class PeerStreamDeadlineTests
         // Completes once a silent stream holds a window's worth of unread frames: the sender cannot write more to it.
         public TaskCompletionSource Stalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public TaskCompletionSource StableSent { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public TaskCompletionSource FirstEnded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public static async Task<FakePeer> StartAsync(
             int silentStreams, RepairState? repair = null, TaskCompletionSource? refillRelease = null, TaskCompletionSource? batchRelease = null,
-            TaskCompletionSource? frontierRelease = null, int unansweredStreams = 0)
+            TaskCompletionSource? frontierRelease = null, int unansweredStreams = 0, bool stableBeforeBatches = false, bool stableBurst = false)
         {
-            var peer = new FakePeer(silentStreams, repair, refillRelease, batchRelease, frontierRelease, unansweredStreams);
+            var peer = new FakePeer(silentStreams, repair, refillRelease, batchRelease, frontierRelease, unansweredStreams, stableBeforeBatches, stableBurst);
             var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
             builder.Configuration.Sources.Clear();
             builder.Logging.ClearProviders();
@@ -1087,6 +1342,7 @@ public sealed class PeerStreamDeadlineTests
             var released = _batchRelease!.Task;
             var reading = requests.MoveNext(context.CancellationToken);
             Queue<Ack> pending = [];
+            Frontier? frontier = null;
             try
             {
                 while (true)
@@ -1096,6 +1352,13 @@ public sealed class PeerStreamDeadlineTests
                         _ = await Task.WhenAny(reading, released);
                         if (released.IsCompleted)
                         {
+                            if (_stableBeforeBatches && frontier is not null)
+                            {
+                                await responses.WriteAsync(new AckFrame { Stable = new StableReport { Database = frontier.Database, Stable = frontier.Hlc } }, context.CancellationToken);
+                                frontier = null;
+                                StableSent.SetResult();
+                            }
+
                             while (pending.TryDequeue(out var ack))
                             {
                                 await responses.WriteAsync(new AckFrame { Ack = ack }, context.CancellationToken);
@@ -1128,12 +1391,30 @@ public sealed class PeerStreamDeadlineTests
                             pending.Enqueue(ack);
                         }
                     }
+                    else if (frame.Frontier is not null && (_stableBeforeBatches || _stableBurst))
+                    {
+                        frontier = frame.Frontier;
+                    }
                     else if (frame.Hello is not null)
                     {
                         await responses.WriteAsync(new AckFrame { Welcome = new Welcome { Node = ReplicaId.Of(1, 9, 0).Value } }, context.CancellationToken);
                     }
                     else if (frame.Heartbeat is not null)
                     {
+                        if (_stableBurst && frontier is not null)
+                        {
+                            for (var index = 0; index < 65; index++)
+                            {
+                                await responses.WriteAsync(new AckFrame
+                                {
+                                    Stable = new StableReport { Database = frontier.Database, Stable = frontier.Hlc },
+                                }, context.CancellationToken);
+                            }
+
+                            frontier = null;
+                            _ = StableSent.TrySetResult();
+                        }
+
                         await responses.WriteAsync(new AckFrame(), context.CancellationToken);
                     }
 

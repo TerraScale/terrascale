@@ -257,7 +257,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         }
     }
 
-    // The peer answers every frame (a heartbeat with an empty frame), so silence for the progress timeout means a half-open
+    // Heartbeats are answered even when a tenant frontier is refused, so silence for the progress timeout means a half-open
     // connection or a peer that stopped reading, where this side's writes stall: either ends the stream, which reconnects.
     private async Task StreamAsync(Link link, Action welcomed, CancellationToken cancellationToken)
     {
@@ -305,7 +305,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         var reading = responses.Reader.ReadAsync(activity.Token).AsTask();
         var pending = 0;
         ExceptionDispatchInfo? failure = null;
-        using var writer = new LinkWriter(call.RequestStream, _time, ReserveAsync);
+        using var writer = new LinkWriter(call.RequestStream, _time, ReserveAsync, () => pending--);
         var receiving = ReceiveAsync();
         var heartbeats = HeartbeatAsync();
         var progress = ProgressAsync();
@@ -351,11 +351,6 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             while (reading.IsCompleted)
             {
                 var response = await reading.ConfigureAwait(false);
-                if (pending == 0)
-                {
-                    throw new InvalidDataException("the peer sent a response with no frame outstanding");
-                }
-
                 if (response.Stable is { } report)
                 {
                     var database = ChangeGroups.Tenant(report.Database);
@@ -393,15 +388,20 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 }
                 else
                 {
+                    if (pending == 0)
+                    {
+                        throw new InvalidDataException("the peer sent a response with no frame outstanding");
+                    }
+
                     await AckedAsync(link, response.Ack, peer, activity.Token).ConfigureAwait(false);
+                    pending--;
                 }
 
-                pending--;
                 reading = responses.Reader.ReadAsync(activity.Token).AsTask();
             }
         }
 
-        // At most 32 response-producing frames await durable processing, leaving room to read their replies and heartbeats
+        // At most 32 batches/refills await durable processing, leaving room to read their replies and heartbeats
         // even while local storage is busy. The budget is released by the single consumer, not by mere receipt.
         async ValueTask ReserveAsync()
         {
@@ -437,6 +437,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     var frame = call.ResponseStream.Current;
                     if (frame.KindCase != AckFrame.KindOneofCase.None)
                     {
+                        if (frame.Stable is not null)
+                        {
+                            // Keep half the buffer available for mandatory ACKs; optional stable proofs may be omitted.
+                            _ = responses.Reader.Count < MaxPendingResponses && responses.Writer.TryWrite(frame);
+                            continue;
+                        }
+
                         if (frame.Ack is { } ack)
                         {
                             var database = ChangeGroups.Tenant(ack.Database);
@@ -625,6 +632,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 await stream.ReserveAsync().ConfigureAwait(false);
                 lock (link.Gate)
                 {
+                    if (cursor.Incarnation != incarnation)
+                    {
+                        stream.Release();
+                        continue;
+                    }
+
                     cursor.BehindSince ??= _time.GetTimestamp();
                     (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (refillResume, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true);
                     cursor.ResponseReceived = false;
@@ -642,7 +655,6 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             {
                 if (_time.GetElapsedTime(cursor.FrontierAt) >= FrontierEvery || cursor.FrontierAt == 0)
                 {
-                    await stream.ReserveAsync().ConfigureAwait(false);
                     await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database, incarnation), Hlc = frontier.Value } }, cancellationToken)
                         .ConfigureAwait(false);
                     cursor.FrontierAt = _time.GetTimestamp();
@@ -661,6 +673,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             await stream.ReserveAsync().ConfigureAwait(false);
             lock (link.Gate)
             {
+                if (cursor.Incarnation != incarnation)
+                {
+                    stream.Release();
+                    continue;
+                }
+
                 cursor.BehindSince ??= _time.GetTimestamp();
                 (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (last, groups.Count, _time.GetTimestamp(), Math.Max(cursor.Head, last), false);
                 cursor.ResponseReceived = false;
@@ -811,6 +829,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     {
         lock (link.Gate)
         {
+            // A late optional stable report cannot erase the scope needed to validate an outstanding batch's ACK.
+            if (cursor.InFlight is not null)
+            {
+                return;
+            }
+
             (cursor.Incarnation, cursor.Acked, cursor.Head, cursor.RequiresRefill, cursor.Live) = (null, null, 0, false, null);
             (cursor.FrontierAt, cursor.BehindSince, cursor.Convergence) = (0, null, null);
         }
@@ -867,7 +891,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             new KeyValuePair<string, object?>("peer_region", region.Key)));
 
     // gRPC permits one pending write. Heartbeats can run beside storage reads, but never beside a batch write.
-    private sealed class LinkWriter(IClientStreamWriter<PushFrame> stream, TimeProvider time, Func<ValueTask> reserve) : IDisposable
+    private sealed class LinkWriter(IClientStreamWriter<PushFrame> stream, TimeProvider time, Func<ValueTask> reserve, Action release) : IDisposable
     {
         private readonly SemaphoreSlim _writing = new(1, 1);
         private long _lastWrite = time.GetTimestamp();
@@ -875,6 +899,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         public TimeSpan Quiet => time.GetElapsedTime(Interlocked.Read(ref _lastWrite));
 
         public ValueTask ReserveAsync() => reserve();
+
+        public void Release() => release();
 
         public async Task WriteAsync(PushFrame frame, CancellationToken cancellationToken)
         {

@@ -592,8 +592,13 @@ public sealed class RebuildFaultSafetyTests
                 await child.WaitForExitAsync(CancellationToken.None);
             }
         }
-        var text = await output + await error;
-        return (child.ExitCode, text.Length > 16384 ? text[^16384..] : text);
+        // FailFast identifies the crash before its stack trace; retain both ends of each redirected stream.
+        return (child.ExitCode, Excerpt(await output) + Excerpt(await error));
+
+        static string Excerpt(string text)
+        {
+            return text.Length > 8192 ? text[..4096] + text[^4096..] : text;
+        }
     }
 
     private sealed record ReadCrash(string Organization, string Project, string Database, string Incarnation);
