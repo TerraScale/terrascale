@@ -261,11 +261,6 @@ th[aria-sort] > .ts-data-sort {
   gap: var(--ts-s10);
 }
 
-/* The narrow saved-queries column keeps its action beside the heading. */
-.ts-data-sql-side .ts-card-heading {
-  flex-basis: 0;
-}
-
 .ts-data-queries {
   display: grid;
   list-style: none;
@@ -310,8 +305,6 @@ th[aria-sort] > .ts-data-sort {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--ts-s6);
   }
-
-
 }
 
 /* Query results: one row per document and one column per field. The table
