@@ -1,6 +1,8 @@
 using System.Buffers.Text;
 using System.Text;
+using System.Text.Json;
 using TerraBase.Engine.Lattices;
+using TerraBase.Features.Management;
 using TerraBase.Features.Replication;
 
 namespace TerraBase.Engine.Sqlite;
@@ -52,6 +54,21 @@ internal sealed partial class SqliteStorageTransaction
         long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken) =>
         RunAsync(() => ReadChangeGroups(after, maxGroups, maxBytes, self, cancellationToken), cancellationToken);
 
+    // A supported immutable version can travel as a dependency without rewriting its future remote stamp.
+    private DocumentState? ReadCatalogVersionProof()
+    {
+        var state = ReadState(ManagementCatalog.Collection, ManagementCatalog.VersionId);
+        if (state.Materialize() is not { } body)
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(body);
+        return document.RootElement.EnumerateObject().Count() == 1
+            && document.RootElement.TryGetProperty("\0", out var version) && version.ValueKind == JsonValueKind.String
+            && version.GetString() == ManagementCatalog.Version ? state : null;
+    }
+
     // Worker-only. Rows come in commit order: one writer per file, so a transaction's rows are contiguous and end with its
     // commit row (change_type 2), and a reader never sees part of one.
     private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) ReadChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken)
@@ -64,6 +81,7 @@ internal sealed partial class SqliteStorageTransaction
             return (groups, quiet, null);
         }
 
+        var proof = store.IsSystem ? ReadCatalogVersionProof() : null;
         var bytes = 0;
         long? first = null;
         var transaction = new TailTransaction();
@@ -93,6 +111,18 @@ internal sealed partial class SqliteStorageTransaction
                     {
                         if (transaction.Deltas.Count > 0)
                         {
+                            if (proof is not null && !transaction.Deltas.Any(delta => delta.Collection == ManagementCatalog.Collection && delta.Id == ManagementCatalog.VersionId))
+                            {
+                                if (transaction.Deltas.Count == IStorageTransaction.MaxSystemGroupChanges)
+                                {
+                                    throw new InvalidDataException("a system group has no room for its catalog version proof");
+                                }
+
+                                // Preserve the received state; its proof is not a new mint or this origin's applied frontier.
+                                var stamp = transaction.Deltas.MaxBy(delta => delta.Stamp.Value)!.Stamp;
+                                transaction.Deltas.Insert(0, new ChangeDelta(ManagementCatalog.Collection, ManagementCatalog.VersionId, stamp, proof));
+                            }
+
                             var size = transaction.Deltas.Sum(delta => DocumentStateEncoding.Encode(delta.State).Length);
                             if (groups.Count > 0 && bytes + size > maxBytes)
                             {

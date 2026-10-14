@@ -22,10 +22,12 @@ public sealed class CatalogBootstrapTests
             first.Server.Services.GetRequiredService<LocalReplica>().Id, original, token);
         var project = await middle.CreateProjectAsync(organization, "Dependent origin");
         var dependent = await GroupsAsync(middle, token);
-        var version = dependent.SingleOrDefault(group => group.Deltas.Any(delta => delta.Collection == "catalog" && delta.Id == "version"));
-        await Assert.That(version).IsNotNull();
         var creation = dependent.Single(group => group.Deltas.Any(delta => delta.Collection == "project_organizations" && delta.Id == project));
-        await Assert.That(version!.ChangeId).IsLessThan(creation.ChangeId);
+        await Assert.That(creation.Deltas[0].Collection).IsEqualTo("catalog");
+        await Assert.That(creation.Deltas[0].Id).IsEqualTo("version");
+        var originalVersion = original.SelectMany(group => group.Deltas).First(delta => delta.Collection == "catalog" && delta.Id == "version");
+        await Assert.That(creation.Deltas[0].State).IsEqualTo(originalVersion.State);
+        await Assert.That(creation.Deltas[0].Stamp.Value).IsLessThanOrEqualTo(creation.Deltas.Skip(1).Max(delta => delta.Stamp.Value));
 
         await using var last = await ManagementApi.StartAsync(userId: first.User);
         var sink = last.Server.Services.GetRequiredService<IChangeGroupSink>();

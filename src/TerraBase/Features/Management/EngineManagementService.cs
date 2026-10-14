@@ -49,10 +49,10 @@ internal sealed partial class EngineManagementService(
 {
     private const string Organizations = "organizations";
     private const string CurrentOrganizations = "current_organizations";
-    private const string Catalog = "catalog";
-    private const string CatalogVersionId = "version";
+    private const string Catalog = ManagementCatalog.Collection;
+    private const string CatalogVersionId = ManagementCatalog.VersionId;
 
-    private const string CatalogVersion = "1";
+    private const string CatalogVersion = ManagementCatalog.Version;
     private const string PendingDatabaseCleanup = "pending_database_cleanup";
 
     // Global: project id to its organization id, so a client-chosen project id is unique across organizations.
@@ -1241,8 +1241,6 @@ internal sealed partial class EngineManagementService(
             var version = await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false);
             if (version == CatalogVersion)
             {
-                // A joined version is not re-shipped: stamp it locally before this origin's dependent catalog writes.
-                await PutAsync(transaction, Catalog, CatalogVersionId, CatalogVersion, Id, cancellationToken).ConfigureAwait(false);
                 return new Done();
             }
 
