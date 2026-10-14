@@ -34,7 +34,7 @@ WORKDIR /src/terrascale
 FROM base AS source
 COPY . .
 
-# Packages are restored into this layer, shared by every area (and deduplicated across concurrent CI jobs): a BuildKit
+# Shared packages are restored into this layer (and deduplicated across concurrent CI jobs): a BuildKit
 # cache mount is best-effort and may come up empty in a later stage, so it only holds NuGet's download cache.
 FROM source AS restored
 RUN --mount=type=cache,target=/root/.local/share/NuGet/http-cache,id=nuget-http \
@@ -44,9 +44,9 @@ RUN --mount=type=cache,target=/root/.local/share/NuGet/http-cache,id=nuget-http 
 # One build and one test stage per area; CI runs the areas as parallel jobs. A build stage checks whitespace format,
 # builds its projects in Release with analyzers as errors (libs.slnf, auth.slnf, terrabase.slnf) and runs its static
 # checks: BuildKit reuses it only for byte-identical inputs. The test stage runs the area's tests on that build (its
-# `dotnet build` calls are incremental no-ops; `-o restore` keeps restore from rewriting project.assets.json, which
-# would force a recompile). CI passes no-cache-filters for test-<area>, so tests always execute. build-auth also builds
-# the TerraBase that ts-auth's tests start (auth.slnf does not include it).
+# `dotnet build` calls reuse compiled outputs; `-o restore` retains the assets prepared by the build stage).
+# CI passes no-cache-filters for test-<area>, so tests always execute. build-auth also builds the TerraBase that
+# ts-auth's tests start (auth.slnf does not include it); publishing restores the SDK's linux-x64 assets.
 FROM restored AS build-libs
 RUN make -o restore fmt-check libs-build CONFIGURATION=Release
 
@@ -57,7 +57,7 @@ FROM restored AS build-auth
 ARG TS_AUTH_REVISION
 RUN make -o restore fmt-check auth-check auth-build CONFIGURATION=Release \
     && dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo \
-    && dotnet publish src/TerraScale.Authentication --configuration Release --runtime linux-x64 --self-contained --no-restore --output /out
+    && make auth-publish RUNTIME=linux-x64 PUBLISH_DIR=/out
 
 FROM build-auth AS test-auth
 ARG TS_AUTH_REVISION
