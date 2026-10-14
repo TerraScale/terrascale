@@ -94,6 +94,18 @@ public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
         await Assert.That(await toggle.GetAttributeAsync("aria-expanded")).IsEqualTo("false");
         await Assert.That(await sidebar.IsVisibleAsync()).IsFalse();
 
+        await toggle.FocusAsync();
+        await page.Keyboard.PressAsync("Control+k");
+        var search = page.Locator("#ts-search-dialog[open]");
+        await search.WaitForAsync();
+        await search.GetByRole(AriaRole.Searchbox).FillAsync("no matching page");
+        await Assert.That(await search.GetByText("No pages match", new() { Exact = true }).IsVisibleAsync()).IsTrue();
+        await search.GetByRole(AriaRole.Searchbox).FillAsync("database");
+        await Assert.That(await search.GetByRole(AriaRole.Link, new() { Name = "Databases", Exact = true }).IsVisibleAsync()).IsTrue();
+        await Assert.That(await search.GetByRole(AriaRole.Link, new() { Name = "Overview", Exact = true }).IsVisibleAsync()).IsFalse();
+        await page.Keyboard.PressAsync("Escape");
+        await page.WaitForFunctionAsync("() => !document.querySelector('#ts-search-dialog').open && document.activeElement?.id === 'ts-nav-toggle'");
+
         await toggle.ClickAsync();
         await WaitForDrawerAsync(true);
         await Assert.That(await sidebar.IsVisibleAsync()).IsTrue();

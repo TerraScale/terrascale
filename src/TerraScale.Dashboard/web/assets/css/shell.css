@@ -1,7 +1,8 @@
-/* Signed-in shell: sidebar, context switchers, colorful navigation, account
-   menu, and the mobile drawer. */
+/* Signed-in shell: frosted sidebar, context switcher, neutral navigation,
+   account menu, and the mobile drawer. */
 
 .ts-shell {
+  --ts-sidebar-width: 256px;
   display: grid;
   grid-template-columns: var(--ts-sidebar-width) minmax(0, 1fr);
   min-height: 100dvh;
@@ -14,11 +15,13 @@
   top: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--ts-s4);
+  gap: var(--ts-s3);
   height: 100dvh;
   padding: var(--ts-s5) var(--ts-s3) var(--ts-s3);
   overflow: hidden;
   background: var(--ts-sidebar);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
 }
 
 .ts-sidebar-header {
@@ -28,16 +31,13 @@
   padding-inline: var(--ts-s2);
 }
 
-/* On desktop a header holding only the drawer close button stays hidden. */
-.ts-sidebar-header:not(:has(> :not(.ts-sidebar-close))) {
-  display: none;
-}
-
+/* Visual order only: DOM order keeps the drawer's focus trap boundaries. */
 .ts-sidebar-brand {
-  display: grid;
-  place-items: center;
-  padding: var(--ts-s1) var(--ts-s2) var(--ts-s3);
-  border-bottom: 1px solid var(--ts-line);
+  display: flex;
+  align-items: center;
+  order: 1;
+  flex: 1;
+  min-width: 0;
 }
 
 .ts-sidebar-brand img {
@@ -49,9 +49,31 @@
   text-decoration: none;
 }
 
+.ts-sidebar-notifications {
+  position: relative;
+  order: 2;
+}
+
+.ts-sidebar .ts-sidebar-notifications > .ts-nav-count {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  min-width: 18px;
+  padding: 0 5px;
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+  line-height: 18px;
+  box-shadow: 0 0 0 2px var(--ts-canvas);
+}
+
 .ts-sidebar .ts-sidebar-close {
   display: none;
+  order: 3;
   margin-left: auto;
+}
+
+.ts-fab-nav {
+  display: none;
 }
 
 /* Organization and project switcher. Sidebar menus span the width of their
@@ -79,15 +101,15 @@ details[open] > .ts-context-trigger {
   background-color: var(--ts-surface-2);
 }
 
-/* Organization and project initials sit on flat tiles tinted in their tone. */
+/* Organization and project initials sit on neutral tiles. */
 .ts-context-icon,
 .ts-menu-tile {
   display: grid;
   flex: none;
   place-items: center;
   border-radius: var(--ts-radius);
-  background: color-mix(in oklab, var(--tone) 20%, transparent);
-  color: var(--tone);
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
   font-weight: 700;
 }
 
@@ -143,7 +165,7 @@ details[open] > .ts-context-trigger {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--tone);
+  background: var(--ts-ink-3);
 }
 
 .ts-context-menu {
@@ -165,7 +187,7 @@ details[open] > .ts-context-trigger {
   overflow-y: auto;
 }
 
-/* Navigation: every destination carries its own tone ([data-tone]). */
+/* Navigation: neutral icons and labels; the active row is an 8% white fill. */
 .ts-sidebar-content {
   display: grid;
   flex: 1;
@@ -201,17 +223,17 @@ details[open] > .ts-context-trigger {
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--ts-s3);
-  min-height: 36px;
-  padding: var(--ts-s1) var(--ts-s2);
-  border-radius: var(--ts-radius);
+  gap: 10px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
   color: var(--ts-ink-2);
-  font-weight: 500;
+  font-weight: 400;
   transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
 }
 
 .ts-nav-link:hover {
-  background: var(--ts-surface-2);
+  background: rgb(255 255 255 / 0.04);
   color: var(--ts-ink);
   text-decoration: none;
 }
@@ -220,12 +242,20 @@ details[open] > .ts-context-trigger {
   display: grid;
   flex: none;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  background: color-mix(in oklab, var(--tone) 14%, transparent);
-  color: var(--tone);
-  transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
+  width: 16px;
+  height: 16px;
+  color: var(--ts-ink-3);
+  transition: color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-nav-icon svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.5;
+}
+
+.ts-nav-link:hover .ts-nav-icon {
+  color: var(--ts-ink);
 }
 
 .ts-nav-label {
@@ -237,14 +267,13 @@ details[open] > .ts-context-trigger {
 }
 
 .ts-nav-link[aria-current="page"] {
-  background: var(--ts-accent-soft);
-  color: #cfe0ff;
-  font-weight: 600;
+  background: rgb(255 255 255 / 0.08);
+  color: var(--ts-ink);
+  font-weight: 500;
 }
 
 .ts-nav-link[aria-current="page"] .ts-nav-icon {
-  background: var(--tone);
-  color: #0a0c12;
+  color: var(--ts-ink);
 }
 
 /* Collapsible section: the summary looks like a link and the chevron turns
@@ -308,28 +337,17 @@ details[open] > .ts-context-trigger {
 }
 
 .ts-subnav-link[aria-current="page"] {
-  background: var(--ts-accent-soft);
-  color: #cfe0ff;
-  font-weight: 600;
+  background: rgb(255 255 255 / 0.08);
+  color: var(--ts-ink);
+  font-weight: 500;
 }
 
-.ts-subnav-link[aria-current="page"]::before {
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: calc(-1 * var(--ts-s3) - 1px);
-  width: 2px;
-  border-radius: 2px;
-  background: var(--tone);
-  content: "";
-}
-
-.ts-nav-count {
+/* Counts are plain numbers, never tinted pills. */
+.ts-sidebar .ts-nav-count {
   min-width: 20px;
   padding: 0 6px;
-  border-radius: var(--ts-radius-pill);
-  background: color-mix(in oklab, var(--tone) 18%, transparent);
-  color: color-mix(in oklab, var(--tone) 60%, var(--ts-ink));
+  background: transparent;
+  color: var(--ts-ink-3);
   font-size: 11px;
   font-weight: 600;
   line-height: 20px;
@@ -341,6 +359,16 @@ details[open] > .ts-context-trigger {
   display: grid;
   gap: var(--ts-s2);
   padding-top: var(--ts-s3);
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-sidebar-links {
+  display: grid;
+  gap: 2px;
+}
+
+.ts-sidebar-links .ts-nav-link {
+  font-size: var(--ts-fs-sm);
 }
 
 .ts-account-trigger {
@@ -387,33 +415,16 @@ details[open] > .ts-account-trigger {
   font-weight: 700;
 }
 
-/* The account avatar is a flat violet tile with a presence dot. */
+/* The account avatar is a neutral initials tile. */
 .ts-account-avatar {
-  position: relative;
-  background: color-mix(in oklab, #a78bfa 24%, transparent);
-  color: #c4b5fd;
-}
-
-.ts-account-avatar::after {
-  position: absolute;
-  right: -1px;
-  bottom: -1px;
-  width: 9px;
-  height: 9px;
-  border: 2px solid var(--ts-sidebar);
-  border-radius: 50%;
-  background: var(--ts-success);
-  content: "";
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
 }
 
 .ts-account-avatar-lg {
   width: 38px;
   height: 38px;
   font-size: 13px;
-}
-
-.ts-account-avatar-lg::after {
-  border-color: var(--ts-surface);
 }
 
 .ts-account-meta {
@@ -446,6 +457,57 @@ details[open] > .ts-account-trigger {
   min-width: 0;
 }
 
+/* Search: a full-width field under the switcher that opens the search dialog. */
+.ts-search {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--ts-s2);
+  border: 1px solid var(--ts-control-line);
+  border-radius: var(--ts-radius);
+  background: transparent;
+  color: var(--ts-ink-3);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-search:hover {
+  background: var(--ts-hover);
+  color: var(--ts-ink-2);
+}
+
+.ts-search > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.ts-search > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-search kbd {
+  padding: 0 var(--ts-s1);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius-sm);
+  color: var(--ts-ink-3);
+  font: 500 11px / 18px var(--ts-font-mono);
+}
+
+#ts-search-dialog {
+  width: min(560px, calc(100vw - 32px));
+  margin-top: 12vh;
+  padding: var(--ts-s2);
+}
+
 /* Page area. */
 .ts-inset {
   display: flex;
@@ -454,12 +516,8 @@ details[open] > .ts-account-trigger {
   border-left: 1px solid var(--ts-line);
 }
 
-.ts-topbar {
-  display: none;
-}
-
 /* Containment also scopes fixed descendants and stacks in-page overlays below
-   the mobile sticky topbar. Viewport overlays belong outside this container or
+   the mobile nav button. Viewport overlays belong outside this container or
    in the dialog top layer. */
 .ts-main {
   flex: 1;
@@ -570,10 +628,6 @@ details[open] > .ts-account-trigger {
     transition: transform var(--ts-base) var(--ts-ease);
   }
 
-  .ts-sidebar-header:not(:has(> :not(.ts-sidebar-close))) {
-    display: flex;
-  }
-
   .ts-sidebar .ts-sidebar-close {
     display: inline-grid;
   }
@@ -586,38 +640,29 @@ details[open] > .ts-account-trigger {
     background: var(--ts-scrim);
   }
 
-  .ts-topbar {
-    position: sticky;
-    top: 0;
-    z-index: var(--ts-z-sticky);
-    display: flex;
-    align-items: center;
-    gap: var(--ts-s3);
-    height: 56px;
-    padding-inline: var(--ts-s4);
-    border-bottom: 1px solid var(--ts-line);
-    background: var(--ts-canvas);
+  /* Floating nav button, top-left over the page; the page reserves its space
+     (see layout.css). Hidden while the drawer is open. */
+  .ts-fab-nav {
+    position: fixed;
+    top: var(--ts-s3);
+    left: var(--ts-s3);
+    z-index: var(--ts-z-overlay);
+    display: inline-grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border: 0;
+    border-radius: var(--ts-radius-lg);
+    background: var(--ts-glass);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    box-shadow: var(--ts-shadow-overlay);
+    color: var(--ts-ink);
+    cursor: pointer;
   }
 
-  .ts-topbar-brand {
-    height: 20px;
-    width: auto;
-  }
-
-  .ts-topbar-notifications {
-    position: relative;
-    margin-inline-start: auto;
-  }
-
-  .ts-topbar-notifications > .ts-nav-count {
-    position: absolute;
-    top: -6px;
-    right: -8px;
-    min-width: 18px;
-    padding: 0 5px;
-    background: var(--tone);
-    color: var(--ts-canvas);
-    line-height: 18px;
+  html:has(.ts-shell.nav-open) .ts-fab-nav {
+    display: none;
   }
 
   .ts-status-notice {

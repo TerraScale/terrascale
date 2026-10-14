@@ -61,6 +61,11 @@ public sealed class SyntheticNotificationsBrowserJourneyTests(DashboardRootFixtu
         var output = BrowserAudit.Output(fixture.Root, "oct13-synthetic-notifications");
         foreach (var closeByEscape in new[] { false, true })
         {
+            if (width < 768 && await page.Locator("#ts-nav-toggle").GetAttributeAsync("aria-expanded") != "true")
+            {
+                await page.Locator("#ts-nav-toggle").ClickAsync();
+                await page.WaitForFunctionAsync("() => document.querySelector('#ts-nav-toggle')?.getAttribute('aria-expanded') === 'true'");
+            }
             if (width >= 768) await page.Locator("details.ts-account summary").ClickAsync();
             var opener = page.Locator(width < 768 ? "#ts-notifications-topbar" : "#ts-notifications-menu");
             await opener.FocusAsync();

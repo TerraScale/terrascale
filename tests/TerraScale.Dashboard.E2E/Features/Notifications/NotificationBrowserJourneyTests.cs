@@ -83,7 +83,11 @@ public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture
 
         async Task<IResponse> OpenDialogAsync() => await page.RunAndWaitForResponseAsync(async () =>
         {
-            if (width < 768) await page.Locator("#ts-notifications-topbar").ClickAsync();
+            if (width < 768)
+            {
+                await OpenNavigationAsync();
+                await page.Locator("#ts-notifications-topbar").ClickAsync();
+            }
             else
             {
                 await page.Locator("details.ts-account summary").ClickAsync();
@@ -92,6 +96,8 @@ public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture
         }, response => response.Request.Method == "GET" && new Uri(response.Url).AbsolutePath == "/notifications/dialog");
         var opened = await OpenDialogAsync();
         await AssertPatchAsync(opened);
+        if (width < 768) await Assert.That(await page.Locator("#ts-navigation #ts-notifications-topbar .ts-nav-count").IsVisibleAsync()).IsTrue()
+            .Because("The unread badge is visible on the bell inside the open mobile drawer.");
         var dialog = page.Locator("#ts-notifications-dialog[open]");
         await dialog.WaitForAsync();
         await dialog.Locator(".ts-notification-list article").Nth(3).WaitForAsync();
@@ -123,8 +129,12 @@ public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture
         await page.WaitForFunctionAsync("selector => document.activeElement === document.querySelector(selector)",
             width < 768 ? "#ts-notifications-topbar" : "details.ts-account summary");
         if (width < 768)
+        {
+            await Assert.That(await page.Locator("#ts-nav-toggle").GetAttributeAsync("aria-expanded")).IsEqualTo("true")
+                .Because("The drawer stays open while its bell's dialog closes, so focus lands on a visible bell.");
             await Assert.That(await page.Locator("#ts-notifications-topbar").EvaluateAsync<bool>("el => document.activeElement === el"))
-                .IsTrue().Because("Closing the dialog restores focus to its mobile topbar opener.");
+                .IsTrue().Because("Closing the dialog restores focus to the bell inside the open navigation drawer.");
+        }
         else
             await Assert.That(await page.Locator("details.ts-account summary").EvaluateAsync<bool>("el => document.activeElement === el"))
                 .IsTrue().Because("Closing the dialog restores focus to the desktop account menu after its details panel closes.");
@@ -140,7 +150,7 @@ public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture
         await Assert.That(page.Url).IsEqualTo(dialogUrl).Because("Escape closes the live dialog without changing the page URL.");
         if (width < 768)
             await Assert.That(await page.Locator("#ts-notifications-topbar").EvaluateAsync<bool>("el => document.activeElement === el"))
-                .IsTrue().Because("Escape restores focus to the mobile topbar opener.");
+                .IsTrue().Because("Escape restores focus to the bell inside the open navigation drawer.");
         else
             await Assert.That(await page.Locator("details.ts-account summary").EvaluateAsync<bool>("el => document.activeElement === el"))
                 .IsTrue().Because("Escape restores focus to the desktop account menu after its details panel closes.");
@@ -169,6 +179,12 @@ public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture
             var response = await page.GotoAsync(new Uri(scenario.Origin, path).ToString(), new() { WaitUntil = WaitUntilState.DOMContentLoaded });
             await Assert.That(response!.Status).IsEqualTo(200);
         }
+        async Task OpenNavigationAsync()
+        {
+            if (await page.Locator("#ts-nav-toggle").GetAttributeAsync("aria-expanded") == "true") return;
+            await page.Locator("#ts-nav-toggle").ClickAsync();
+            await page.WaitForFunctionAsync("() => document.querySelector('#ts-nav-toggle')?.getAttribute('aria-expanded') === 'true'");
+        }
         async Task AssertBadgeAsync(int unread)
         {
             var label = unread == 0 ? "Notifications" : "Notifications, " + unread + " unread";
@@ -179,6 +195,8 @@ public sealed class NotificationBrowserJourneyTests(DashboardRootFixture fixture
                 await Assert.That(await button.Locator(".ts-nav-count").CountAsync()).IsEqualTo(unread == 0 ? 0 : 1);
                 if (unread > 0) await Assert.That(await button.Locator(".ts-nav-count").TextContentAsync()).IsEqualTo(unread.ToString());
             }
+            if (width < 768) await Assert.That(await page.Locator("#ts-navigation #ts-notifications-topbar").CountAsync()).IsEqualTo(1)
+                .Because("On mobile the bell lives inside the navigation drawer, not the topbar.");
         }
         async Task FulfillFromServerAsync(IRoute route)
         {
