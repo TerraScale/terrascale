@@ -4,7 +4,7 @@ export const ptBr: Messages = {
   meta: {
     title: 'TerraScale Public Alpha | Banco de Documentos Regional',
     description:
-      'O TerraScale Public Alpha oferece um banco de documentos tipado com replicação assíncrona em São Paulo e San Jose.',
+      'O TerraScale Public Alpha oferece um banco de documentos tipado com replicação assíncrona em São Paulo e San Francisco Bay Area.',
   },
 
   chrome: {
@@ -75,7 +75,7 @@ export const ptBr: Messages = {
     headlineLead: 'TerraScale',
     headlineAccent: 'Public Alpha',
     subtitle:
-      'Um banco de documentos tipado com replicação assíncrona em São Paulo e San Jose. O endpoint global encaminha para a região selecionada saudável mais próxima. O Public Alpha não tem percentual de disponibilidade nem SLA.',
+      'Um banco de documentos tipado com replicação assíncrona em São Paulo e San Francisco Bay Area. O endpoint global encaminha para a região selecionada saudável mais próxima. O Public Alpha não tem percentual de disponibilidade nem SLA.',
     ctaPrimary: 'Cadastre-se no Public Alpha',
     ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'Ver documentação',
@@ -102,7 +102,7 @@ export const ptBr: Messages = {
       },
       {
         title: 'Regiões de lançamento',
-        text: 'Escolha São Paulo ou San Jose durante o Public Alpha.',
+        text: 'Escolha São Paulo ou San Francisco Bay Area durante o Public Alpha.',
         bullets: ['gru', 'sjc'],
       },
       {
@@ -293,7 +293,7 @@ export const ptBr: Messages = {
     titleLead: 'Globalmente distribuída,',
     titleAccent: 'infraestrutura de banco de dados.',
     subtitle:
-      'O TerraScale Public Alpha oferece um banco de documentos em São Paulo e San Jose com replicação assíncrona.',
+      'O TerraScale Public Alpha oferece um banco de documentos em São Paulo e San Francisco Bay Area com replicação assíncrona.',
     ctaPricing: 'Ver preços',
     ctaContact: 'Fale conosco',
     missionEyebrow: 'Missão',
