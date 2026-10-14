@@ -1,7 +1,7 @@
 # Deployment speed, 2026-10-14
 
 UTC timestamps come from GitHub job/step records and the deploy script's pinned regional checks. The baseline is one
-sample, not a latency distribution. Post-change timings remain pending a green-main rollout after the approved reset.
+sample, not a latency distribution. Post-change timings remain pending the #291 build-once rollout and cache proof.
 
 | Service | Baseline main | Merge UTC | GRU live UTC / elapsed | SJC live UTC / elapsed | FRA live UTC / elapsed | Post-change all-region elapsed |
 |---|---|---|---|---|---|---|
@@ -19,9 +19,36 @@ Dashboard's [baseline CI](https://github.com/TerraScale/ts-dashboard/actions/run
 575 seconds after its main commit. That workflow had no deployment job, so there is no numeric merge-to-live baseline.
 Fly inspection at 2026-10-14 07:13Z found the app suspended with zero machines.
 
+The later [#231 main run](https://github.com/TerraScale/terrascale/actions/runs/38609315584) deployed all six
+TerraBase/auth machines at `c6ba61dbe5355d301239758a2f2a92cd06d3c139`: merge 17:45:09Z, final region live
+17:56:04Z, 655 seconds. Fast passed; the full run failed E2E and TerraBase Slow. This precedes #291 and is
+another before measurement, not evidence of a speedup from the build-once changes.
+
+| Hosted CI sample | TerraBase job minutes | Auth job minutes | Libs job minutes | After #291 |
+|---|---:|---:|---:|---|
+| Cache handoff baseline (no run URL supplied) | 17.00 | 13.40 | 8.00 | Pending |
+| #231 main, run `38609315584` | 13.17 | 11.32 | 6.73 | Pending |
+| #291 before cache patch, run `38573026022` | 19.83 | 17.10 | 7.52 | Pending |
+
+Job minutes are `completedAt - startedAt`, including setup, build, tests and cache export, excluding runner queue.
+Different commits and workloads limit comparisons; the after measurement must report its run and cache hits.
+
+| Cache inventory before change | Total decimal GB | Main GB | Other refs GB | Cleanup/after |
+|---|---:|---:|---:|---|
+| Initial handoff (49 entries) | 10.40 | Not supplied | About 6 GB PR BuildKit blobs | Pending |
+| Fresh inventory (63 entries) | 14.990 | 4.089 | 10.901 | Pending |
+| Follow-up inventory (54 entries) | 11.737 | 1.834 | 9.903 | Pending |
+
+No caches were deleted for these observations. Automatic eviction changes the inventory between reads.
+Only main exports the three area caches after this patch; every consumer restores them. NuGet's Docker layer
+uses project, MSBuild and lockfile contents, so source-only edits retain package restore. Native E2E hashes
+both repositories' lockfiles. The development-only Aspire tool is not installed in CI. Old PR-ref caches will
+be deleted after the cache policy lands, then the second PR run must show dependency hits and no cache export.
+Cache usage is not a permanent size guarantee: new main commits accumulate layers until GitHub evicts older ones.
+
 | Baseline critical-path segment | Duration | Implemented change | Measured effect |
 |---|---:|---|---|
-| Merge to deploy job start | 236 s | Existing supersession cancellation/freshness checks retained | Pending |
+| Merge to deploy job start | 236 s | Superseded PR cancellation and main freshness checks; active main rollouts finish | Pending |
 | TerraBase image build | 264 s | Reuse the area's compiled/published cache; push one SHA-tagged runtime image | Pending |
 | TerraBase regional rollout step | 154 s | Retain GRU first and each region's health/backup/SHA gate | Pending |
 | ts-auth image build after TerraBase rollout | 117 s | Reuse each area's published output and push both images concurrently | Pending |

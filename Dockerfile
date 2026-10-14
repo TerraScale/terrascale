@@ -31,15 +31,26 @@ RUN npx --yes playwright@1.63.0 install --with-deps chromium \
 COPY --from=ts-dotnet --exclude=.git . /src/ts-dotnet
 WORKDIR /src/terrascale
 
-FROM base AS source
-COPY . .
+# COPY from this filtered stage keys restore on manifest contents, not changes to application source.
+FROM base AS restore-inputs
+COPY . /restore-inputs
+RUN mkdir /restore-manifests \
+    && cd /restore-inputs \
+    && find . -type f \( -name '*.csproj' -o -name '*.props' -o -name '*.targets' \
+        -o -name '*.slnx' -o -name '*.slnf' -o -name '*packages.lock.json' \
+        -o -name 'NuGet.config' -o -name 'global.json' -o -name 'dotnet-tools.json' \
+        -o -name 'Makefile' \) -exec cp --parents '{}' /restore-manifests/ \;
 
 # Shared packages are restored into this layer (and deduplicated across concurrent CI jobs): a BuildKit
 # cache mount is best-effort and may come up empty in a later stage, so it only holds NuGet's download cache.
-FROM source AS restored
+FROM base AS restored
+COPY --from=restore-inputs /restore-manifests/ .
 RUN --mount=type=cache,target=/root/.local/share/NuGet/http-cache,id=nuget-http \
     --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
     make restore
+
+FROM restored AS source
+COPY . .
 
 # One build and one test stage per area; CI runs the areas as parallel jobs. A build stage checks whitespace format,
 # builds its projects in Release with analyzers as errors (libs.slnf, auth.slnf, terrabase.slnf) and runs its static
@@ -47,13 +58,13 @@ RUN --mount=type=cache,target=/root/.local/share/NuGet/http-cache,id=nuget-http 
 # `dotnet build` calls reuse compiled outputs; `-o restore` retains the assets prepared by the build stage).
 # CI passes no-cache-filters for test-<area>, so tests always execute. build-auth also builds the TerraBase that
 # ts-auth's tests start (auth.slnf does not include it); publishing restores the SDK's linux-x64 assets.
-FROM restored AS build-libs
+FROM source AS build-libs
 RUN make -o restore fmt-check libs-build CONFIGURATION=Release
 
 FROM build-libs AS test-libs
 RUN make -o restore libs-check libs-test CONFIGURATION=Release && touch /passed
 
-FROM restored AS build-auth
+FROM source AS build-auth
 ARG TS_AUTH_REVISION
 RUN make -o restore fmt-check auth-check auth-build CONFIGURATION=Release \
     && dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo \
@@ -63,7 +74,7 @@ FROM build-auth AS test-auth
 ARG TS_AUTH_REVISION
 RUN make -o restore auth-audit auth-test-fast CONFIGURATION=Release && touch /passed
 
-FROM restored AS build-terrabase
+FROM source AS build-terrabase
 # The commit /healthz reports as revision (MSBuild reads it from the environment); the image has no .git.
 ARG TERRABASE_REVISION
 RUN make -o restore fmt-check terrabase-check CONFIGURATION=Release \

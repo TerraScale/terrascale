@@ -26,10 +26,10 @@ on:
     types: [checks_requested]
   workflow_dispatch:
 
-# A newer push cancels obsolete tests and rollouts; manual test runs cannot cancel the push's deployment.
+# Cancel superseded PR tests; main runs finish without interrupting a regional rollout.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -136,7 +136,7 @@ jobs:
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
           driver: docker-container
-      # Only this step writes the area's build cache; consumers never overwrite it with test results.
+      # Only main writes shared area caches; PR/queue refs restore without evicting them with private copies.
       - &build-stage
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -151,7 +151,7 @@ jobs:
             DOTNET_GCHeapCount=8
           push: false
           cache-from: ${{ format('type=gha,scope={0}', github.job) }}
-          cache-to: ${{ format('type=gha,mode=max,scope={0}', github.job) }}
+          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', github.job) || '' }}
       - &build-area
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -221,6 +221,7 @@ jobs:
           python3 terrascale/scripts/ci/slow-report-test.py
           python3 terrascale/scripts/ci/e2e-status-test.py
           python3 terrascale/scripts/ci/latest-main-test.py
+          python3 terrascale/scripts/ci/cache-policy-test.py
           python3 terrascale/scripts/ci/deploy-status-test.py
           bash terrascale/scripts/fly/deploy-test.sh
           bash terrascale/scripts/fly/preview-test.sh
@@ -519,7 +520,10 @@ jobs:
         with:
           global-json-file: terrascale/global.json
           cache: true
-          cache-dependency-path: terrascale/tests/TerraBase.E2E/packages.lock.json
+          cache-dependency-path: |
+            terrascale/**/packages.lock.json
+            terrascale/src/vendor/Turso.Data.Sqlite/locks/*.packages.lock.json
+            ts-dotnet/**/packages.lock.json
       - name: Six-direction replication matrix against Fly (gru, sjc, fra)
         shell: bash
         working-directory: terrascale
