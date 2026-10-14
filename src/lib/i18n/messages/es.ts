@@ -211,6 +211,7 @@ export const es: Messages = {
       storage: '{n} entre regiones',
       operationUnits: '{n} unidades de operación/mes',
     },
+    usage: { eyebrow: 'Cómo se mide el uso', title: 'Almacenamiento y unidades de operación.' },
     triad: [
       { title: 'Almacenamiento entre regiones', text: 'Los bytes cuentan una vez en cada región seleccionada' },
       { title: 'Unidades de operación', text: 'Cada 4 KiB iniciados leídos o escritos cuentan como una unidad' },

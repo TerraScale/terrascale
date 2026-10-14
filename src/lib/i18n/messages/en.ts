@@ -209,6 +209,7 @@ export const en = {
       storage: '{n} across regions',
       operationUnits: '{n} operation units/month',
     },
+    usage: { eyebrow: 'How usage is measured', title: 'Storage and operation units.' },
     triad: [
       { title: 'Storage Across Regions', text: 'Stored bytes count once in every selected region' },
       { title: 'Operation Units', text: 'Each started 4 KiB read or written counts as one unit' },
