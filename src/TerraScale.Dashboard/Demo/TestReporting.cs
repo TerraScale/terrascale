@@ -14,7 +14,8 @@ namespace TerraScale.Dashboard.Demo;
 // Test-only producer protocol. Real dashboard HTTP endpoints, reporting
 // adapters, SDK retention requests and persisted CAS writes remain in use.
 sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Func<string, (string UserId, string Email)?> resolveToken, HttpMessageHandler stripe,
-    Func<string, (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)?> resolveProjectToken, TestAuthApiKeys apiKeys) : HttpMessageHandler
+    Func<string, (string UserId, string OrganizationId, string ProjectId, IReadOnlyList<string> Scopes)?> resolveProjectToken, TestAuthApiKeys apiKeys,
+    TestDocuments documents) : HttpMessageHandler
 {
     private readonly HttpMessageInvoker vendor = new(stripe, false);
     private readonly ConcurrentDictionary<string, string> scenarios = new();
@@ -50,7 +51,8 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var response = await SendProducerAsync(request, cancellationToken);
-        if (request.RequestUri is { Host: "gru.api.terrascale.tech" } uri &&
+        // An open changes stream is never buffered into the probe log.
+        if (request.RequestUri is { Host: "gru.api.terrascale.tech" } uri && response.Content.Headers.ContentType?.MediaType != "text/event-stream" &&
             request.Headers.Authorization?.Parameter is { } token && ResolveUser(token) is { } actor)
         {
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -69,9 +71,10 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
     {
         cancellationToken.ThrowIfCancellationRequested();
         var uri = request.RequestUri!;
+        var changesPath = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries) is ["v1", "projects", _, "databases", _, "changes"];
         if (uri.Host == "api.stripe.com") return await vendor.SendAsync(request, cancellationToken);
         if (uri.Host == "auth.terrascale.tech") return await apiKeys.SendAsync(request, cancellationToken);
-        if (uri.Host is not ("api.terrascale.tech" or "gru.api.terrascale.tech") || request.Headers.Authorization is not { Scheme: "Bearer", Parameter: { } token }) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
+        if (!(uri.Host is "api.terrascale.tech" or "gru.api.terrascale.tech" || uri.Host == "sfo.api.terrascale.tech" && changesPath) || request.Headers.Authorization is not { Scheme: "Bearer", Parameter: { } token }) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
         var sessionActor = resolveToken(token);
         var scopedActor = resolveProjectToken(token);
         if (sessionActor is null && scopedActor is null) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
@@ -100,7 +103,11 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
         // TerraBase canonical usage (I2 GetUsageAsync) reads with an exchanged databases:read project token.
         var isCanonicalUsage = segments is ["v1", "projects", _, "usage"] or ["v1", "projects", _, "databases", _, "usage"];
         if (isCanonicalUsage && scopedActor?.Scopes.Contains("databases:read") != true) return Json(new { error = new { code = "forbidden_scope", message = "databases:read is required" } }, HttpStatusCode.Forbidden);
-        var isScopedReporting = segments.Last() is "analytics" or "replication" || isCanonicalUsage;
+        // TerraBase document changes stream with an exchanged documents:read project token for the path's project.
+        var isDocumentChanges = segments is ["v1", "projects", _, "databases", _, "changes"];
+        if (isDocumentChanges && sessionActor is not null) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
+        if (isDocumentChanges && scopedActor?.Scopes.Contains("documents:read") != true) return Json(new { error = new { code = "forbidden_scope", message = "documents:read is required" } }, HttpStatusCode.Forbidden);
+        var isScopedReporting = segments.Last() is "analytics" or "replication" || isCanonicalUsage || isDocumentChanges;
         var actorUserId = sessionActor?.UserId ?? scopedActor!.Value.UserId;
         if (isScopedReporting && (sessionActor is not null || scopedActor is null || scopedActor.Value.ProjectId != id || scopedActor.Value.OrganizationId != org?.Id) ||
             !isScopedReporting && sessionActor is null) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
@@ -121,6 +128,10 @@ sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Fu
             return Json(new { days = policies.GetValueOrDefault(org.Id, 90) });
         }
         if (project is null || request.Method != HttpMethod.Get) throw new HttpRequestException("Unknown reporting fixture request.");
+        if (isDocumentChanges)
+            return project.Databases.Values.Any(database => database.Name == segments[4])
+                ? documents.Changes(project.Id, segments[4], uri.Host == "api.terrascale.tech" ? null : uri.Host.Split('.')[0], request)
+                : Json(new { error = new { code = "not_found", message = "database not found" } }, HttpStatusCode.NotFound);
         var scenario = scenarios.GetValueOrDefault(project.Id, "valid");
         if (scenario == "offline") return Json(new { error = "unavailable" }, HttpStatusCode.ServiceUnavailable);
         if (scenario == "not-metered") return Json(new { error = "not_metered" }, HttpStatusCode.NotFound);
