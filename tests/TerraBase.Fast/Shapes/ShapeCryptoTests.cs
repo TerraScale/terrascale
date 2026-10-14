@@ -644,6 +644,30 @@ public sealed class ShapeCryptoTests
         }
     }
 
+    [Test]
+    public async Task Manifest_vectors_load_as_strict_json_and_match_the_ciphertext_contract()
+    {
+        using var vectors = await LoadVectorsAsync();
+        var http = vectors.RootElement.GetProperty("http_vectors").EnumerateArray().ToList();
+        var response = http.Single(vector => vector.GetProperty("id").GetString() == "presigned-manifest").GetProperty("response");
+        using var wire = JsonDocument.Parse(response.GetProperty("body_utf8").GetString()!);
+        await Assert.That(JsonElement.DeepEquals(wire.RootElement, response.GetProperty("body"))).IsTrue();
+
+        var body = wire.RootElement;
+        var entry = body.GetProperty("objects")[0];
+        var handle = body.GetProperty("handle").GetString()!;
+        var binding = handle + "\0" + entry.GetProperty("offset").GetString();
+        await Assert.That(entry.GetProperty("binding").GetString()).IsEqualTo(binding);
+        var ciphertext = http.Single(vector => vector.GetProperty("id").GetString() == "tigris-sealed-ciphertext");
+        var plain = ciphertext.GetProperty("expected_body");
+        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(plain.GetProperty("shape_id").GetString() + "\0" + binding)));
+        await Assert.That(entry.GetProperty("object").GetString()).IsEqualTo("v1/shapes/" + handle + "/" + hash);
+        await Assert.That(entry.GetProperty("url").GetString()).IsEqualTo(ciphertext.GetProperty("request").GetProperty("url").GetString());
+        var bytes = Hex(ciphertext.GetProperty("response"), "body_hex");
+        await Assert.That(entry.GetProperty("size").GetInt64()).IsEqualTo(bytes.LongLength);
+        await Assert.That(entry.GetProperty("sha256").GetString()).IsEqualTo(Convert.ToHexStringLower(SHA256.HashData(bytes)));
+    }
+
     private static async Task AssertIntermediatesAsync(JsonElement vector, byte[] bytes, byte[] epochKey, byte[] plain)
     {
         var (handle, offset, _, _) = Identity(vector);

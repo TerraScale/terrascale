@@ -304,9 +304,17 @@ public sealed class ShapeMirrorTests
         try
         {
             await Assert.That(harness.Queue(chunk, restarted)).IsTrue();
-            await harness.MirroredAsync(1);
-            var after = (await restarted.ManifestAsync(harness.Tenant, harness.Shape.ShapeId, harness.Shape.Handle, Text(start), 0,
-                harness.Cancellation)).Objects.Single();
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(harness.Cancellation, deadline.Token);
+            ShapeMirrorManifest manifest;
+            do
+            {
+                manifest = await restarted.ManifestAsync(harness.Tenant, harness.Shape.ShapeId, harness.Shape.Handle, Text(start), 0, linked.Token);
+                await Task.Yield();
+            }
+            while (manifest.Objects.Count == 0);
+
+            var after = manifest.Objects.Single();
             await Assert.That(after.Object).IsEqualTo(before.Object);
             await Assert.That(after.Sha256).IsEqualTo(before.Sha256);
             await Assert.That(after.Epoch).IsEqualTo(before.Epoch).Because("the adopted object keeps the epoch it was encrypted under");
@@ -320,7 +328,26 @@ public sealed class ShapeMirrorTests
             await restarted.StopAsync(deadline.Token);
         }
 
+        await Assert.That(harness.PendingMirrorCompletions).IsEqualTo(0).Because("adoption is not a new upload lag sample");
+    }
 
+    [Test]
+    public async Task A_missing_database_does_not_turn_an_unknown_floor_into_remote_deletion()
+    {
+        await using var harness = await Harness.StartAsync();
+        var start = await harness.Db.HeadAsync();
+        _ = await harness.CommitLargeAsync();
+        var chunk = await harness.SealAsync(start);
+        await Assert.That(harness.Queue(chunk)).IsTrue();
+        await harness.MirroredAsync(1);
+        var stored = (await harness.ManifestAsync(start)).Objects.Single();
+
+        await Assert.That(await harness.DropDatabaseAsync()).IsTrue();
+        var deleted = await harness.Mirror.TrimAsync(harness.Tenant, harness.Shape.Handle, 0, harness.Cancellation);
+        await Assert.That(deleted).IsEqualTo(0);
+        await Assert.That(harness.S3.Objects.ContainsKey(stored.Object)).IsTrue();
+        await Assert.That((await harness.ManifestAsync(start)).Objects.Count).IsEqualTo(0)
+            .Because("a missing database cannot prove that its remote object is retained");
     }
 
     [Test]
@@ -500,7 +527,7 @@ public sealed class ShapeMirrorTests
     private sealed class Harness : IAsyncDisposable
     {
         private readonly DocumentApi _api;
-        // Released by the mirror after an object is listed in its cache, so a manifest read after a release is settled.
+        // Released by the upload lag metric after a winning PUT is cached; adoption emits no release.
         private readonly SemaphoreSlim _mirrored;
         // Released by the platform for each PUT attempt, whether or not the platform accepts it.
         private readonly SemaphoreSlim _attempts;
@@ -537,6 +564,11 @@ public sealed class ShapeMirrorTests
         public ShapeSnapshots Snapshots { get; }
 
         public IShapeMirror Mirror => _api.Server.Services.GetRequiredService<IShapeMirror>();
+
+        public int PendingMirrorCompletions => _mirrored.CurrentCount;
+
+        public Task<bool> DropDatabaseAsync() => _api.Server.Services.GetRequiredService<IStorageEngine>()
+            .DeleteDatabaseAsync(Tenant, Cancellation).AsTask();
 
         public CancellationToken Cancellation { get; } = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
 

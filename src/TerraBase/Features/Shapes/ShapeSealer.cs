@@ -47,10 +47,10 @@ internal interface IShapeStorageTransaction
 {
     /// <summary>
     /// Seals one whole-commit prefix, returning its end, this transaction's committed head and the bytes of the chunk this call
-    /// inserted (0 when the chunk already existed or nothing was sealed). With <paramref name="remote"/> nothing is sealed while
+    /// inserted with its admission (null when reused or nothing was sealed). The caller disposes it after commit or failure. With <paramref name="remote"/> nothing is sealed while
     /// the remote durable frontier is below the head (values_at): the end is then <paramref name="offset"/>.
     /// </summary>
-    ValueTask<(long Offset, long Head, long PublishedBytes)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through, bool remote,
+    ValueTask<(long Offset, long Head, ShapeSealedChunk? Chunk)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through, bool remote,
         IMemoryBudget memory, CancellationToken cancellationToken);
     /// <summary>The remote durable frontier with <paramref name="remote"/> (0 when none), else the committed feed head.</summary>
     ValueTask<long> ReadShapeFrontierAsync(bool remote, CancellationToken cancellationToken);
@@ -117,75 +117,78 @@ internal sealed class ShapeSealer(
         using var proof = new CancellationTokenSource(ProofTimeout, time ?? TimeProvider.System);
         do
         {
-            // Read before the attempt: a frontier move after it wakes the wait below.
-            var sealedFrom = offset;
-            var sequence = store.CommitSequence;
-            long sealedOffset;
-            // Read before the writer is taken: joined commits of these origins are held elsewhere.
-            var held = await HeldOriginsAsync(store, cancellationToken).ConfigureAwait(false);
-            // A standalone write transaction keeps capture suspension out of other requests' group commits.
-            var started = Stopwatch.GetTimestamp();
-            var transaction = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
-            await using (transaction.ConfigureAwait(false))
+            ShapeSealedChunk? chunk = null;
+            try
             {
-                var shapes = (IShapeStorageTransaction)transaction;
-                if (held is not null)
+                // Read before the attempt: a frontier move after it wakes the wait below.
+                var sequence = store.CommitSequence;
+                long sealedOffset;
+                // Read before the writer is taken: joined commits of these origins are held elsewhere.
+                var held = await HeldOriginsAsync(store, cancellationToken).ConfigureAwait(false);
+                // A standalone write transaction keeps capture suspension out of other requests' group commits.
+                var started = Stopwatch.GetTimestamp();
+                var transaction = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
+                await using (transaction.ConfigureAwait(false))
                 {
-                    // A receive-only replica has no own ack to prove with: its seal requests move the frontier.
-                    _ = await shapes.AdvanceShapeFrontierAsync(held, cancellationToken).ConfigureAwait(false);
+                    var shapes = (IShapeStorageTransaction)transaction;
+                    if (held is not null)
+                    {
+                        // A receive-only replica has no own ack to prove with: its seal requests move the frontier.
+                        _ = await shapes.AdvanceShapeFrontierAsync(held, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    (sealedOffset, var head, chunk) = await shapes.SealShapeChunkAsync(shape, offset, through,
+                        durability.Confirms, memory, cancellationToken).ConfigureAwait(false);
+                    _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                    // Recorded after the commit: a publication is a chunk that is durable, and a reused chunk publishes nothing.
+                    if (chunk is not null)
+                    {
+                        metrics?.RecordSeal(chunk.Body.Length, Stopwatch.GetElapsedTime(started));
+                    }
+
+                    through ??= head;
                 }
 
-                (sealedOffset, var head, var published) = await shapes.SealShapeChunkAsync(shape, offset, through,
-                    durability.Confirms, memory, cancellationToken).ConfigureAwait(false);
-                _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-                // Recorded after the commit: a publication is a chunk that is durable, and a reused chunk publishes nothing.
-                if (published > 0)
+                if (sealedOffset == offset && offset < through.Value)
                 {
-                    metrics?.RecordSeal(published, Stopwatch.GetElapsedTime(started));
+                    // The head is not remote durable yet: wait outside the writer, never weakening the gate. The attempt after
+                    // the bound passes is the last one.
+                    if (proof.IsCancellationRequested)
+                    {
+                        throw new ShapeUndurableException();
+                    }
+
+                    using (var poll = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, proof.Token))
+                    {
+                        _ = await Task.WhenAny(store.WaitForCommitAsync(sequence, poll.Token), Task.Delay(FrontierPoll, poll.Token)).ConfigureAwait(false);
+                        await poll.CancelAsync().ConfigureAwait(false);
+                    }
+
+                    cancellationToken.ThrowIfCancellationRequested();
+                    continue;
                 }
 
-                through ??= head;
+                offset = sealedOffset;
+                if (onSealed is not null && chunk is not null)
+                {
+                    PublishSealed(store, shape, chunk, cancellationToken);
+                }
             }
-
-            if (sealedOffset == offset && offset < through.Value)
+            finally
             {
-                // The head is not remote durable yet: wait outside the writer, never weakening the gate. The attempt after
-                // the bound passes is the last one.
-                if (proof.IsCancellationRequested)
-                {
-                    throw new ShapeUndurableException();
-                }
-
-                using (var poll = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, proof.Token))
-                {
-                    _ = await Task.WhenAny(store.WaitForCommitAsync(sequence, poll.Token), Task.Delay(FrontierPoll, poll.Token)).ConfigureAwait(false);
-                    await poll.CancelAsync().ConfigureAwait(false);
-                }
-
-                cancellationToken.ThrowIfCancellationRequested();
-                continue;
-            }
-
-            offset = sealedOffset;
-            if (onSealed is not null && offset > sealedFrom)
-            {
-                await PublishSealedAsync(store, shape, sealedFrom, cancellationToken).ConfigureAwait(false);
+                chunk?.Dispose();
             }
         }
         while (offset < through.Value);
         return offset;
     }
 
-    private async ValueTask PublishSealedAsync(IDatabaseStore store, ShapeSealDefinition shape, long offset, CancellationToken cancellationToken)
+    private void PublishSealed(IDatabaseStore store, ShapeSealDefinition shape, ShapeSealedChunk chunk, CancellationToken cancellationToken)
     {
         try
         {
-            // The chunk is re-read after the writer is disposed, so the callback sees only persisted bytes.
-            using var chunk = await ReadChunkAsync(store, shape.Handle, offset, cancellationToken).ConfigureAwait(false);
-            if (chunk is not null)
-            {
-                onSealed!(store, shape, chunk);
-            }
+            // The committed transaction's own encoded bytes; publication adds no body SELECT.
+            onSealed!(store, shape, chunk);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {

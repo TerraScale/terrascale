@@ -72,6 +72,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 
     internal void ChunkSealed(IDatabaseStore store, ShapeSealDefinition shape, ShapeSealedChunk chunk)
     {
+        // shortcut: refused or failed work stays origin-only; add bounded backfill when complete T1 coverage is required.
         if (store.Tenant is { } tenant)
         {
             _ = Queue(tenant, shape.ShapeId, shape.Handle, Number(chunk.Offset), Number(chunk.EndOffset),
@@ -554,6 +555,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         var owner = ShapeObjectStore.Owner(pending.Database);
         var head = await _objects.HeadAsync(key, linked.Token).ConfigureAwait(false);
+        var uploaded = false;
         if (head is null && pending.AdoptOnly)
         {
             RememberMissing(key, pending.Database);
@@ -566,7 +568,9 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 pending.Body, linked.Token).ConfigureAwait(false);
             head = new(owner, key[(key.LastIndexOf('/') + 1)..], Convert.ToHexStringLower(SHA256.HashData(cipher.Bytes.Span)),
                 cipher.Bytes.Length, cipher.Epoch, cipher.KeyId, pending.SealedAt.ToUnixTimeMilliseconds(), floorOffset);
-            head = await _objects.PutAsync(key, head, cipher.Bytes, linked.Token).ConfigureAwait(false);
+            var written = await _objects.PutAsync(key, head, cipher.Bytes, linked.Token).ConfigureAwait(false);
+            uploaded = ReferenceEquals(written, head);
+            head = written;
         }
 
         floor = await FloorAsync(pending.Database, pending.Handle, linked.Token).ConfigureAwait(false);
@@ -600,7 +604,10 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
             }
         }
 
-        _metrics.RecordMirrorLag(TimeSpan.FromMilliseconds(Math.Max(0, _time.GetUtcNow().ToUnixTimeMilliseconds() - head.SealedAt)));
+        if (uploaded)
+        {
+            _metrics.RecordMirrorLag(TimeSpan.FromMilliseconds(Math.Max(0, _time.GetUtcNow().ToUnixTimeMilliseconds() - head.SealedAt)));
+        }
     }
 
     private async ValueTask<long> FloorAsync(TenantContext database, string handle, CancellationToken cancellationToken)

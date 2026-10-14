@@ -26,7 +26,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
     // JsonDocument uses 12 bytes per token; three capacities can coexist while its metadata buffer grows.
     private const int ShapeCaptureMemoryPerToken = 12 * 3;
 
-    public async ValueTask<(long Offset, long Head, long PublishedBytes)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through,
+    public async ValueTask<(long Offset, long Head, ShapeSealedChunk? Chunk)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through,
         bool remote, IMemoryBudget memory, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
@@ -43,7 +43,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
 
     // With `remote`, seals only while the remote durable frontier is the head this transaction materializes at, so the
     // chunk's covered offset and values_at are both durable when it is stored (shape-reads.md section 10).
-    private (long Offset, long Head, long PublishedBytes) SealShapeChunk(ShapeSealDefinition shape, long offset, long? through,
+    private (long Offset, long Head, ShapeSealedChunk? Chunk) SealShapeChunk(ShapeSealDefinition shape, long offset, long? through,
         bool remote, IMemoryBudget memory, CancellationToken cancellationToken)
     {
         CountRead("shape");
@@ -60,17 +60,17 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         CountRead("shape");
         if (stored.ExecuteScalar() is long existing)
         {
-            return (existing, head, 0);
+            return (existing, head, null);
         }
         if (offset == head)
         {
-            return (offset, head, 0);
+            return (offset, head, null);
         }
 
         if (remote && offset < head && ShapeFrontierOrHead(remote: true) < head)
         {
             // Nothing sealed: the head holds a write no other region is known to hold yet.
-            return (offset, head, 0);
+            return (offset, head, null);
         }
 
         var end = Math.Min(through ?? head, head);
@@ -150,10 +150,14 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         insert.Parameters.AddWithValue("$offset", offset);
         insert.Parameters.AddWithValue("$end", covered);
         insert.Parameters.AddWithValue("$body", body);
-        insert.Parameters.AddWithValue("$at", Member.Clock.UtcNow.ToUnixTimeMilliseconds());
+        var sealedAt = Member.Clock.UtcNow.ToUnixTimeMilliseconds();
+        insert.Parameters.AddWithValue("$at", sealedAt);
         insert.ExecuteNonQuery();
         insert.Parameters.Clear();
-        return (covered, head, body.Length);
+        // The caller keeps the inserted bytes and their admission through commit, so publication never rereads the body.
+        var retained = new ShapeMemory(memory, store.Tenant);
+        admission.TransferTo(retained);
+        return (covered, head, new ShapeSealedChunk(offset, covered, head, body, retained, sealedAt));
     }
 
     private bool ShapeBoundary(long offset)
@@ -675,9 +679,11 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         throw new InvalidDataException("a sealed shape chunk has no materialization head");
     }
 
-    private sealed class ShapeMemory(IMemoryBudget memory, TenantContext? tenant) : IDisposable
+    private sealed class ShapeMemory(IMemoryBudget memory, TenantContext? tenant) : IMemoryReservation
     {
         private readonly List<IMemoryReservation> _reservations = [];
+
+        public long Bytes => _reservations.Sum(reservation => reservation.Bytes);
 
         public void Reserve(long bytes) => _reservations.Add(memory.TryReserve(MemoryLane.Bulk, bytes, tenant) ?? throw new QosMemoryException());
 

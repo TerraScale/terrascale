@@ -431,6 +431,8 @@ lands after #211. There is no runtime switch. Until then, every resume answers `
 | Keys and manifest | `private, no-store` |
 | TBS1 objects in Tigris | `public, max-age=31536000, immutable` (FR-24, after A1 and FR-21) |
 
+Downloaded or cached ciphertext can remain available after seven-day source deletion or URL expiry; retention blocks new manifests and key grants, but cannot erase those copies.
+
 | Header | On | Value |
 | --- | --- | --- |
 | `ETag` | `200`, `304` | `"<shape_id>:<handle>:<offset>:<next_offset>:<digest>"`, digest = hex of the first 8 bytes of SHA-256 over the body bytes |
@@ -565,6 +567,22 @@ objects; FR-22 supplies that proof. Before T1 objects exist the default refuses 
 ## 14. Manifest (presigned, D2)
 
 `GET …/collections/{collection}/shape/manifest?handle=&offset=`, with the same scope, tenancy and errors as section 13.
+
+### 14.1 SDK transport contract (presigned manifest; no 302)
+
+D2 selects the **presigned manifest**, not a `302` redirect to ciphertext. `GET …/shape` continues to return
+plaintext (`200`) or revalidate that plaintext (`304`); its bootstrap and resume redirects remain `307` (sections 3
+and 9). It never redirects an origin fallback to Tigris. SDKs fetch `…/shape/manifest` explicitly after resolving a
+concrete handle and offset; `-1`, `live`, `cursor` and resume parameters are not accepted by that route. Forward
+the canonical `where` filter when present. Manifest requests require the same `documents:read` authorization as
+origin reads, and answer `200 application/json` with `Cache-Control: private, no-store`.
+
+Fetch each manifest URL as an opaque bearer URL, without forwarding origin authorization or cookies. The downloaded
+body is TBS1 ciphertext, never shape JSON. An empty manifest, expired URL, download failure or any verification
+failure means read that object's offset from the plaintext origin; do not apply ciphertext or partially verified
+plaintext. The origin never answers `302`; SDKs must not treat any redirect as a ciphertext transport.
+
+### 14.2 Objects and lifecycle
 
 - Body: `{"handle":"h1-…","objects":[…]}`. At most **8** entries in total. The first entry's `offset` is the
   requested offset; each later entry's `offset` is the previous `next_offset`. The list stops at the first object that

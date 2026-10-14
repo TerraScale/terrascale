@@ -391,6 +391,32 @@ public sealed class ShapeSealTests
     }
 
     [Test]
+    public async Task A_sealed_chunk_is_published_from_its_committed_bytes_without_rereading_them()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
+        var start = await db.HeadAsync();
+        var head = await db.PutAsync(DocumentApi.NewId(), new { n = new Faker().Random.Int() });
+        var shape = await ShapeAsync(db);
+        var memory = new ObservedBudget(api.Server.Services.GetRequiredService<IMemoryBudget>());
+        var storage = new ObservedShapeStorage(db.Storage);
+        var published = new List<(long Offset, long EndOffset, byte[] Body, long SealedAt, long Admitted)>();
+        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, storage,
+            onSealed: (_, _, chunk) => published.Add((chunk.Offset, chunk.EndOffset, chunk.Body.ToArray(), chunk.SealedAt, memory.ReservedBytes)));
+
+        await Assert.That(await sealer.SealUpToHeadAsync(db.Store, shape, start, CancellationToken.None)).IsEqualTo(head);
+        await Assert.That(storage.ReadTransactions).IsEqualTo(0).Because("publication reuses the committed bytes instead of a body SELECT");
+        await Assert.That(memory.ReservedBytes).IsEqualTo(0L).Because("the retained admission ends with the callback");
+        var (offset, endOffset, body, sealedAt, admitted) = published.Single();
+        await Assert.That(admitted).IsGreaterThanOrEqualTo((long)body.Length).Because("the bytes stay admitted through the callback");
+        using var stored = (await sealer.ReadChunkAsync(db.Store, shape.Handle, start, CancellationToken.None))!;
+        await Assert.That(offset).IsEqualTo(start);
+        await Assert.That(endOffset).IsEqualTo(stored.EndOffset);
+        await Assert.That(sealedAt).IsEqualTo(stored.SealedAt);
+        await Assert.That(body.AsSpan().SequenceEqual(stored.Body.Span)).IsTrue();
+    }
+
+    [Test]
     public async Task Escaped_ids_are_admitted_for_the_simultaneously_live_output_arrays()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -1024,14 +1050,21 @@ public sealed class ShapeSealTests
     private sealed class ObservedShapeStorage(IShapeStorage inner) : IShapeStorage
     {
         private int _writeTransactions;
+        private int _readTransactions;
 
         public int WriteTransactions => Volatile.Read(ref _writeTransactions);
+
+        public int ReadTransactions => Volatile.Read(ref _readTransactions);
 
         public ValueTask<IStorageTransaction> BeginTransactionAsync(IDatabaseStore store, bool write, CancellationToken cancellationToken)
         {
             if (write)
             {
                 Interlocked.Increment(ref _writeTransactions);
+            }
+            else
+            {
+                Interlocked.Increment(ref _readTransactions);
             }
             return inner.BeginTransactionAsync(store, write, cancellationToken);
         }

@@ -306,6 +306,11 @@ T1 details:
 - **Caching.** T1 objects carry `public, max-age=31536000, immutable` and no `Vary: Authorization`. Presigned URLs
   differ per manifest, so shared-cache hit rates depend on URL keying. FR-22 measures this, along with the Tigris
   pricing check.
+- **Cached copies.** Seven-day source deletion and URL expiry cannot erase downloaded or cached ciphertext; retention
+  prevents new manifests and key grants for expired objects.
+- **Admission and failures.** The background queue admits at most 32 items and 64 MiB through the memory budget.
+  Refused or failed work remains available at the origin, without automatic backfill. A failed snapshot page stops
+  mirroring that chain; manifests end at the first unmirrored object. Origin reads only adopt existing T1 objects.
 - FR-00 is no longer a gate. The remaining caching-proxy question applies only to T2, which is not selected.
 
 FR-22 pricing and caching check (official documentation, 2026-10-14; no account changes or live bucket runs):
