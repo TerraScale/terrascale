@@ -9,6 +9,24 @@ restarts at `-1` (no resume until FR-23); `429`/`503` keep the view and retry; `
 `ShapeConvergenceE2ETests` keeps one reader per region and, after each fault, waits until **every region's view equals
 the documents that region lists** and every region lists the expected digest.
 
+## S3 and S4 on Fly at `3c459a5f` (2026-10-14 19:45–20:05Z): both PASS
+
+Image `registry.fly.io/ts-vtest-tb:vtest-3c459a5fa160@sha256:96573646bbd6557de5891ba356be031a9d6ce02e4e1aa5d6369df20cbff6f0fe`
+(owner's deploy of `fix/shape-load-abort-vtest` = main + #307 + #309 + #314), same three machines, harness `c0a4218e`
+(S3) / `cc50c613` (S4) on this branch, pinned fault runs from beta.
+
+| Row | Scenario | Result | Numbers | Run (UTC) | Raw log (sha256) |
+| --- | --- | --- | --- | --- | --- |
+| S3 | sjc genuinely loses an acknowledged document (`Cluster.LoseDocumentAsync`: machine idled with `sleep infinity`, its `_tb_state` row deleted with sqlite3, terrabase started again; terrabase holds the file lock, so editing it live fails with `database is locked`) | **PASS** | `deleted 1 from _tb_state` in the e2e database file; sjc ready again 43.8 s after the loss began; the document **absent on sjc** right after (asserted); all 3 shape views = listings (30 docs, `B020B407…`) **123.7 s** after sjc was back (anti-entropy rounds); 0 refetches | 20:02:53Z | `2026-10-14-replication-vtest/evidence/raw/3c459a5f-ShapeConvergenceE2ETests-Shape_clients_converge_after_anti_entropy_repairs_a_lost_document.txt` (`3c0fd6e7…`) |
+| S4 | Clock skew on real VMs: `date -s` as root steps sjc +2,000 ms and fra −2,000 ms (no chronyd/ntpd in the VM), both cases concurrently; shared document written skewed → gru → skewed; clocks stepped back in `finally` | **PASS ×2** | steps: sjc `+2000.0` / back `-2000.0`, fra `-2000.0` / back `+2000.0` (each step lags by ≈1 ms, so the residual is ≈2 ms per machine); 31 docs, views = listings in 42.9 s (sjc case, `DA7CC1ED…`) and 42.9 s (fra case, `492A452F…`) vs 50 ms locally; 0 refetches | 19:45:58Z | `2026-10-14-replication-vtest/evidence/raw/3c459a5f-ShapeConvergenceE2ETests-Shape_clients_converge_under_clock_skew.txt` (`2907c8b3…`) |
+
+Failed attempts kept as evidence: S3 attempt 1 (SIGSTOP + edit: `database is locked`, nothing deleted, the test's
+"lost" assertion failed; `…/raw/3c459a5f-attempt1-S3-file-locked.txt`, `b589515f…`) and attempt 2 (a merged
+`--machine-config` cannot clear the entrypoint override, so sjc stayed idle until restored by hand at ≈20:00Z;
+`…/raw/3c459a5f-attempt2-S3-entrypoint-not-restored.txt`, `afee7d73…`). sjc's config now names `/app/terrabase` as its
+entrypoint explicitly (the image's own). Open question for the owner: S4's 42.9 s convergence under ±2 s skew vs ≈1.6 s
+unskewed on Fly; the harness does not show where the time goes.
+
 ## Rerun at `7bf8dd3a` (2026-10-14 18:44Z): S1 and S2 PASS on Fly
 
 `ts-vtest-tb` redeployed by the V-wave owner (not by this lane) at `7bf8dd3a2a845240aa74e675eda23457adc67e56`
@@ -23,7 +41,7 @@ on all three machines shows only the ACCEPT policies (healed).
 | S2 | Collection drop and re-create | Fly @ `7bf8dd3a` | **PASS** | before: 30 docs in 1,583 ms; after drop: 0 in 582 ms; after re-create: 30 docs (`07985613…`) in 1,562 ms; 0 refetches | 18:44:16Z | `2026-10-14-replication-vtest/evidence/raw/7bf8dd3a-ShapeConvergenceE2ETests-Shape_clients_follow_a_collection_drop_and_re_create.txt` (`1d6dd896…`) |
 | V5 R1 (regression check) | 201 `remote_durable`, another region serves the first read | Fly @ `7bf8dd3a` | PASS 3/3 | ack gru 266 / sjc 398 / fra 474 ms; both other regions held it on the first read (716–797 ms after send) | 18:45:34Z | `2026-10-14-replication-vtest/evidence/raw/7bf8dd3a-WaveAE2ETests-A_201_is_remote_durable.txt` (`82a40986…`) |
 
-S3 (repair) and S4 (skew) stay BLOCKED on Fly (harness), S5 on FR-23. The `a439e1d1` rows below are kept as history:
+S3 and S4 ran on Fly at `3c459a5f` (section above); S5 stays BLOCKED on FR-23. The `a439e1d1` rows below are kept as history:
 F-V2-1 (`429 shape_busy`) is fixed by #307/#309 on this candidate; it is fixed on main only once both merge.
 
 ## History at `a439e1d1`
