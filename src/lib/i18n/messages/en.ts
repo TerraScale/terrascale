@@ -2,7 +2,7 @@ export const en = {
   meta: {
     title: 'TerraScale Public Alpha | Regional Document Database',
     description:
-      'TerraScale Public Alpha provides a typed document database with asynchronous replication across São Paulo and San Jose.',
+      'TerraScale Public Alpha provides a typed document database with asynchronous replication across São Paulo and the San Francisco Bay Area.',
   },
 
   chrome: {
@@ -73,7 +73,7 @@ export const en = {
     headlineLead: 'TerraScale',
     headlineAccent: 'Public Alpha',
     subtitle:
-      'A typed document database with asynchronous replication across São Paulo and San Jose. The global endpoint routes to the nearest healthy region selected by your project. Public Alpha has no uptime percentage or SLA.',
+      'A typed document database with asynchronous replication across São Paulo and the San Francisco Bay Area. The global endpoint routes to the nearest healthy region selected by your project. Public Alpha has no uptime percentage or SLA.',
     ctaPrimary: 'Register for Public Alpha',
     ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'View Docs',
@@ -100,7 +100,7 @@ export const en = {
       },
       {
         title: 'Launch Regions',
-        text: 'Choose São Paulo or San Jose during Public Alpha.',
+        text: 'Choose São Paulo or the San Francisco Bay Area during Public Alpha.',
         bullets: ['gru', 'sjc'],
       },
       {
@@ -291,7 +291,7 @@ export const en = {
     titleLead: 'Globally distributed',
     titleAccent: 'database infrastructure.',
     subtitle:
-      'TerraScale Public Alpha provides a document database across São Paulo and San Jose with asynchronous replication.',
+      'TerraScale Public Alpha provides a document database across São Paulo and the San Francisco Bay Area with asynchronous replication.',
     ctaPricing: 'View Pricing',
     ctaContact: 'Talk to Us',
     missionEyebrow: 'Mission',
