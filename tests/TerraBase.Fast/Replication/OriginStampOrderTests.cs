@@ -2,10 +2,12 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -84,7 +86,9 @@ public sealed class OriginStampOrderTests
         }
     }
 
+    // Twenty isolated pairs exercise the skew precondition under parallel load in local and CI runs.
     [Test]
+    [Repeat(19)]
     public async Task An_unrelated_document_observing_a_future_stamp_mints_within_the_skew_bound_before_any_local_rewrite()
     {
         await using var pair = await Pair.StartAsync();
@@ -92,7 +96,9 @@ public sealed class OriginStampOrderTests
         var remoteId = EntityIds.New().ToString();
         await pair.Gru.PutAsync(remoteId, """{"n":1}""");
         await pair.Sjc.UntilAsync(remoteId, """{"n":1}""");
-        var (remote, _) = await pair.Sjc.StampAsync(remoteId);
+        var (remote, remoteOrigin) = await pair.Sjc.StampAsync(remoteId);
+        await Assert.That(remoteOrigin).IsEqualTo(pair.Gru.Node).Because("sjc observed gru's stamp through replication");
+        await Assert.That(remote.Milliseconds > Now() + SkewMilliseconds).IsTrue().Because("the observed stamp exceeds the skew bound");
 
         // Unrelated documents on sjc, while the future document is still untouched there.
         for (var i = 0; i < 2; i++)
@@ -101,6 +107,9 @@ public sealed class OriginStampOrderTests
             await pair.Sjc.PutAsync(id, """{"n":5}""");
             var (stamp, origin) = await pair.Sjc.StampAsync(id);
             var clock = Now();
+            var (stillRemote, stillRemoteOrigin) = await pair.Sjc.StampAsync(remoteId);
+            await Assert.That(stillRemote).IsEqualTo(remote).Because("sjc has not rewritten the future document");
+            await Assert.That(stillRemoteOrigin).IsEqualTo(pair.Gru.Node);
             await Assert.That(origin).IsEqualTo(pair.Sjc.Node);
             await Assert.That(stamp.Milliseconds < remote.Milliseconds).IsTrue()
                 .Because($"{id} must not take the future stamp's time ({remote.Milliseconds} ms)");
@@ -314,7 +323,13 @@ public sealed class OriginStampOrderTests
                 settings["region"] = region;
                 settings["node-name"] = Name;
                 settings["data-directory"] = _directory;
-            }, services => services.AddSingleton<IMemberDirectory>(pair.Members), time, userId: pair.User);
+            }, services =>
+            {
+                services.AddSingleton<IMemberDirectory>(pair.Members);
+                // Both machines flush usage into the same replicated catalog documents; sjc's flush rewriting gru's
+                // future copy is a local rewrite that lawfully lifts sjc's member-wide clock past the future stamp (#262).
+                services.Remove(services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(UsageFlushService)));
+            }, time, userId: pair.User);
             if (first)
             {
                 await RegisterAsync();
