@@ -126,6 +126,7 @@ func (b *bench) followShape(ctx context.Context, m *measure, outcomes chan<- str
 			target = b.shapeURL(q)
 		default:
 			code := errorCode(bytes.NewReader(resp.body))
+			m.countReason(resp.status, resp.body)
 			if resp.status == http.StatusTooManyRequests && code == "tenant_busy" {
 				m.qosBusy.Add(1)
 				if !sleep(ctx, qosWait(resp.header)) {

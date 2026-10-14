@@ -125,4 +125,7 @@ func TestFollowShapeRepeatsRefusalUntilAdmitBy(t *testing.T) {
 	if got := <-outcomes; got != "rejected_shape_busy" || m.refused.Load() < 2 || m.codes[429].Load() != calls.Load() {
 		t.Fatalf("outcome %q, refused %d, 429s %d of %d", got, m.refused.Load(), m.codes[429].Load(), calls.Load())
 	}
+	if n, ok := m.reasons.Load("429 shape_busy: busy"); !ok || n.(*atomic.Int64).Load() != calls.Load() {
+		t.Fatalf("refusal reasons: %v", n)
+	}
 }

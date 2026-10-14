@@ -48,7 +48,8 @@ type shardStep struct {
 	Admitted, Unresolved, Delivered, Refused, Retries, QoS, Failures int64
 	Bytes                                                            int64
 	Codes                                                            map[int]int64
-	Error                                                            string `json:",omitempty"`
+	Reasons                                                          map[string]int64 // refusals by status, code and message
+	Error                                                            string           `json:",omitempty"`
 	Hist                                                             *hdrhistogram.Snapshot
 	LoadCPU, LoadRSSMB                                               float64
 	Writes                                                           int64      `json:",omitzero"` // shard 0 only
@@ -163,7 +164,7 @@ func runLoadStep(ctx context.Context, b *bench, at time.Time, n, shard, shards i
 	if shard < n%shards {
 		share++
 	}
-	s := shardStep{N: n, Readers: share, Codes: map[int]int64{}}
+	s := shardStep{N: n, Readers: share, Codes: map[int]int64{}, Reasons: map[string]int64{}}
 	m := &measure{hist: hdrhistogram.New(1, 120_000_000, 3)}
 	writeAt := at.Add(admitByS * time.Second)
 	m.start = writeAt.Add(time.Duration(spec.WarmupS) * time.Second)
@@ -219,6 +220,7 @@ func runLoadStep(ctx context.Context, b *bench, at time.Time, n, shard, shards i
 			s.Codes[code] = v
 		}
 	}
+	m.reasons.Range(func(k, v any) bool { s.Reasons[k.(string)] = v.(*atomic.Int64).Load(); return true })
 	for i, u := range nodes {
 		nd, err := nodeDelta(u, scrapes[0][i], scrapes[1][i], scrapes[2][i], scrapes[3][i])
 		if err != nil {
@@ -318,6 +320,7 @@ type v3Row struct {
 	Refused, Retries, QoS, Failures, Bytes          int64
 	P50MS, P99MS, Ratio304                          float64
 	Codes                                           map[int]int64
+	Reasons                                         map[string]int64
 	LoadCPUPct, LoadRSSMB                           []float64
 	Nodes                                           []nodeStep
 	Errors, Over                                    []string
@@ -329,7 +332,7 @@ func mergeReport(out string, shards [][]shardStep) error {
 	var rows []v3Row
 	var failed []string
 	for i := range shards[0] {
-		r := v3Row{N: shards[0][i].N, Codes: map[int]int64{}, Writes: shards[0][i].Writes, Nodes: shards[0][i].Nodes}
+		r := v3Row{N: shards[0][i].N, Codes: map[int]int64{}, Reasons: map[string]int64{}, Writes: shards[0][i].Writes, Nodes: shards[0][i].Nodes}
 		var hist *hdrhistogram.Histogram
 		for _, sh := range shards {
 			s := sh[i]
@@ -337,6 +340,9 @@ func mergeReport(out string, shards [][]shardStep) error {
 			r.Refused, r.Retries, r.QoS, r.Failures, r.Bytes = r.Refused+s.Refused, r.Retries+s.Retries, r.QoS+s.QoS, r.Failures+s.Failures, r.Bytes+s.Bytes
 			for c, v := range s.Codes {
 				r.Codes[c] += v
+			}
+			for k, v := range s.Reasons {
+				r.Reasons[k] += v
 			}
 			r.LoadCPUPct, r.LoadRSSMB = append(r.LoadCPUPct, s.LoadCPU), append(r.LoadRSSMB, s.LoadRSSMB)
 			if s.Error != "" {
@@ -402,6 +408,12 @@ func v3Table(rows []v3Row) string {
 			reads := nd.Reads["shape"] + nd.Reads["shape_body"]
 			fmt.Fprintf(&b, "%s| %s | %d | %d | %d | %d / %d / %d | %.2f | %.0f / %.0f | %s |\n", head, nd.Node, nd.Parked, nd.Sealed, nd.Mirrored,
 				nd.Reads["shape"], nd.Reads["shape_body"], nd.Reads["point"], float64(reads)/float64(max(nd.Sealed+nd.Mirrored, 1)), nd.CPUPct, nd.RSSMB, verdict)
+		}
+	}
+	b.WriteString("\nRefusals by status, code and message:\n\n")
+	for _, r := range rows {
+		for _, k := range slices.Sorted(maps.Keys(r.Reasons)) {
+			fmt.Fprintf(&b, "- N=%d: %d × %s\n", r.N, r.Reasons[k], k)
 		}
 	}
 	return b.String()

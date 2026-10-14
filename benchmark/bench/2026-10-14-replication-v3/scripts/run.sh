@@ -43,13 +43,14 @@ trap cleanup EXIT
 commit "$(jq -cn --arg o "$organization" --arg p "$project" --arg d "$database" '[{op: "create_organization", id: $o, name: "V3 shape load"},
   {op: "set_plan", organization: $o, plan: "enterprise"}, {op: "create_project", organization: $o, id: $p, name: "v3"},
   {op: "create_database", organization: $o, project: $p, name: "v3", id: $d, home_region: "gru", replica_regions: ["sjc", "fra"]}]')" > /dev/null
-log "created organization $organization, project $project, database $database (gru + sjc, fra) on $tb"
+log "created organization $organization (owner user $owner, enterprise plan), project $project, database $database (gru + sjc, fra) on $tb"
 flyctl apps list -o "$org" --json | jq -e --arg a "$load" 'any(.[]; .Name == $a)' > /dev/null || { flyctl apps create "$load" -o "$org" > /dev/null; log "created app $load"; }
 # One pipe: the id goes to a variable, the secret straight into Fly.
 key_id=$(internal POST /admin/api-keys -d "$(jq -cn --arg o "$organization" --arg p "$project" --arg d "$database" --arg e "$(date -u -d '+6 hours' +%FT%TZ)" \
   '{name: "v3-load", scopes: ["documents:read", "documents:write"], organizationId: $o, projectId: $p, databaseId: $d, expiresAt: $e}')" \
-  | jq -jer '"\(.id)\nTS_BENCH_API_KEY=\(.secret)\n"' | { read -r id; flyctl secrets import -a "$load" > /dev/null && echo "$id"; })
-[[ -n "$key_id" ]] || { log "key mint or secret import failed"; exit 1; }
+  | jq -jer '"\(.id)\nTS_BENCH_API_KEY=\(.secret)\n"' | { read -r id; echo "$id"; flyctl secrets import -a "$load" --stage > /dev/null || echo "import failed" >&2; })
+[[ -n "$key_id" ]] || { log "key mint failed"; exit 1; }
+flyctl secrets list -a "$load" --json | jq -e 'any(.[]; (.name // .Name) == "TS_BENCH_API_KEY")' > /dev/null || { log "secret import failed"; exit 1; }
 log "key $key_id (documents read/write on database $database, 6 h) set as $load secret TS_BENCH_API_KEY"
 
 cp "$bin" "$work/shape-bench"; printf 'FROM alpine:3.22\nCOPY shape-bench /shape-bench\n' > "$work/Dockerfile"; printf 'app = "%s"\n' "$load" > "$work/fly.toml"
@@ -63,7 +64,7 @@ for i in "${!regions[@]}"; do
   r=${regions[$i]}
   cmd="/shape-bench load -app $tb -project $project -database v3 -collection $collection -start $start -shard $i -shards ${#regions[@]} -steps $steps -out /work/shard.json > /work/load.log 2>&1; echo \$? > /work/exit; sleep infinity"
   machine[$r]=$(flyctl machine run "registry.fly.io/$load:$label" -a "$load" -r "$r" --vm-size shared-cpu-2x --vm-memory 2048 --name "v3-load-$r" \
-    --restart no --autostop off --detach -- sh -c "mkdir -p /work; $cmd" | sed -n 's/.*Machine ID: \([0-9a-f]*\).*/\1/p')
+    --restart no --autostop=off --detach -- sh -c "mkdir -p /work; $cmd" | sed -n 's/.*Machine ID: \([0-9a-f]*\).*/\1/p')
   log "load machine ${machine[$r]} in $r (shard $i, shared-cpu-2x 2048 MB)"
 done
 log "start $(date -u -d @"$start" +%FT%TZ), steps $steps, collection $collection"
@@ -77,3 +78,4 @@ for r in sjc fra; do flyctl ssh sftp put -a "$load" --machine "${machine[gru]}" 
 flyctl ssh console -a "$load" --machine "${machine[gru]}" -C "sh -c '/shape-bench merge -out /work/v3 /work/shard.json /work/shard-sjc.json /work/shard-fra.json > /work/merge.log 2>&1; echo merge exit \$? >> /work/merge.log'" > /dev/null || true
 for f in v3.md v3.json merge.log; do flyctl ssh sftp get -a "$load" --machine "${machine[gru]}" "/work/$f" "$out/$f" > /dev/null || log "no $f"; done
 log "finished; $(tail -1 "$out/merge.log")"
+grep -q "^merge exit 0$" "$out/merge.log"  # the run fails when merge found the bound broken or a shard error
