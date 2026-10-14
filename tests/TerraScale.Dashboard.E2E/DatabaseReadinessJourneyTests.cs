@@ -196,7 +196,7 @@ public sealed class DatabaseReadinessJourneyTests(DashboardRootFixture fixture)
         {
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because(await EvidenceAsync(response, producer));
             var html = System.Net.WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync());
-            await Assert.That(html).Contains("The database is managed in SFO · San Francisco. Nothing was changed.");
+            await Assert.That(html).Contains("The database is managed in sfo · San Francisco. Nothing was changed.");
         }
         await Assert.That(string.Join(";", attempts)).IsEqualTo("gru.api.terrascale.tech pin=gru").Because("one pinned request, no retry or redirect");
         var database = (await JsonAsync(client, "/api/v1/dashboard/databases"))[0];

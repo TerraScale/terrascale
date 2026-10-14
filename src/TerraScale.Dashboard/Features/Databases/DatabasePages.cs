@@ -12,14 +12,14 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     public int Ready => All.Count(database => database.Status == "ready");
     public int Progress => All.Count(database => database.Status is "provisioning" or "accepted" or "pending");
     public int Failed => All.Count(database => database.Status == "failed");
-    public IReadOnlyList<string> Regions => All.SelectMany(DatabaseService.Regions).Distinct().Order().ToArray();
+    public IReadOnlyList<string> Regions => All.SelectMany(DatabaseService.Regions).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase).ToArray();
     public IReadOnlyList<string> Selected => Selection ?? (Context.Project is null || Context.Project.Region.Length == 0 ? [] : [Context.Project.Region]);
     public bool CanProvision => Context.Organization?.CanProvision(Context.UserId) ?? false;
     public string Description => Search.Length == 0 ? $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} in this project" : $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} matching \"{Search}\"";
     public static string Tone(string status) => status switch { "ready" => "emerald", "failed" => "rose", "provisioning" or "accepted" or "pending" => "amber", _ => "slate" };
     // Shown while the only listed region is the one that answered: TerraBase publishes no region catalog yet.
     public const string SingleRegionNotice = "TerraBase does not list its other regions yet, so adding replica regions is unavailable here.";
-    public static string RegionDisplay(string code) => code.ToUpperInvariant() switch { "SFO" => "SFO · San Francisco", "GRU" => "GRU · São Paulo", "" => "Not configured", _ => code.ToUpperInvariant() };
+    public static string RegionDisplay(string code) => code switch { "" => "Not configured", _ => TerraScale.Dashboard.UI.Regions.Name(code) is { Length: > 0 } name ? $"{code.ToLowerInvariant()} · {name}" : code.ToLowerInvariant() };
     public static string Bytes(long bytes) => bytes < 1024 ? $"{bytes} B" : bytes < 1024 * 1024 ? $"{bytes / 1024d:0.0} KiB" : $"{bytes / (1024d * 1024):0.0} MiB";
 }
 

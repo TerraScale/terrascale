@@ -291,6 +291,8 @@ dialog.ts-dialog::backdrop {
 
 .ts-region-node[data-region="SFO"] { top: 35.73%; left: 15.44%; }
 .ts-region-node[data-region="GRU"] { top: 74.7%; left: 36.76%; }
+.ts-region-node[data-region="FRA"] { top: 25.4%; left: 52.32%; }
+.ts-region-node[data-region="SJC"] { top: 36.04%; left: 15.6%; }
 
 .ts-region-node-core,
 .ts-region-node-ring {
@@ -389,6 +391,12 @@ dialog.ts-dialog::backdrop {
   transform: translateY(calc(-50% + 6px));
 }
 
+/* Separate adjacent Bay Area targets when both catalog regions are available. */
+.ts-region-map[data-select-id]:has(button[data-region="SJC"]) button[data-region="SFO"] { margin-left: -18px; }
+.ts-region-map[data-select-id]:has(button[data-region="SFO"]) button[data-region="SJC"] { margin-left: 18px; }
+.ts-region-map[data-select-id]:has(button[data-region="SJC"]) button[data-region="SFO"] .ts-region-node-label { transform: translateY(calc(-50% - 30px)); }
+.ts-region-map[data-select-id] button.ts-region-node[data-region="SJC"] .ts-region-node-label { transform: translateY(50%); }
+
 @container (width < 15rem) {
   .ts-region-map[data-select-id] .ts-region-node-label {
     padding: 2px 6px;
@@ -433,12 +441,16 @@ dialog.ts-dialog::backdrop {
 }
 
 .ts-region-map[data-selected~="SFO"] .ts-region-node[data-region="SFO"],
-.ts-region-map[data-selected~="GRU"] .ts-region-node[data-region="GRU"] {
+.ts-region-map[data-selected~="GRU"] .ts-region-node[data-region="GRU"],
+.ts-region-map[data-selected~="FRA"] .ts-region-node[data-region="FRA"],
+.ts-region-map[data-selected~="SJC"] .ts-region-node[data-region="SJC"] {
   opacity: 1;
 }
 
 .ts-region-map[data-selected~="SFO"] [data-region="SFO"] .ts-region-node-ring,
-.ts-region-map[data-selected~="GRU"] [data-region="GRU"] .ts-region-node-ring {
+.ts-region-map[data-selected~="GRU"] [data-region="GRU"] .ts-region-node-ring,
+.ts-region-map[data-selected~="FRA"] [data-region="FRA"] .ts-region-node-ring,
+.ts-region-map[data-selected~="SJC"] [data-region="SJC"] .ts-region-node-ring {
   animation: ts-pin-pulse 2.6s var(--ts-ease) infinite;
 }
 
