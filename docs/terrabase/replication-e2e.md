@@ -48,7 +48,8 @@ be down, that machine is started again on a clock of its own and the failure is 
 if it has one. It needs `flyctl` logged in. It runs alone because it stops a machine the other tests use. It never targets
 production: without `TERRABASE_E2E_FLY_URL`, `TERRABASE_E2E_FLY_REVISION` and `TERRABASE_E2E_FLY_OUTAGE=1` it is reported
 as skipped, and `TERRABASE_E2E_FLY_APP` must name the disposable app (no default; production and preview apps are refused,
-see `e2e-disposable-app.md`).
+see `e2e-disposable-app.md`). Its test app is deleted, with every machine and volume, right after a successful run
+(Q-E2E-CAP, 2026-10-14); it is not kept for later runs.
 
 The other `fly-outage` scenarios (region down, restart, ack-then-stop, restarted backlog, deleted database) run with:
 

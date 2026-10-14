@@ -211,3 +211,8 @@ binding before a live run without reading back secrets.
 Only the disposable app and its own test bucket, after the evidence is written to `benchmark/bench/`: `flyctl apps
 destroy <app>` and `flyctl storage destroy <bucket>`, each confirmed at the time and logged in the ledger row. No other
 resource is touched; no production volume is reset; nothing is deleted to make room.
+
+**All-regions outage proof (Q-E2E-CAP, 2026-10-14):** its fresh test app (three shared-cpu-2x 512 MB machines in gru,
+sjc and fra, three 1 GB volumes, its own peer secret, nothing shared with production) is not retained. Right after a
+successful `make terrabase-e2e-fly-outage`, the whole test app with its machines and volumes is deleted; machines are
+not stopped between runs.
