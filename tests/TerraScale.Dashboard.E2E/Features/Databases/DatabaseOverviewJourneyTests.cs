@@ -75,6 +75,7 @@ public sealed class DatabaseOverviewJourneyTests(DashboardRootFixture fixture)
             await Assert.That(legacy.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
             await Assert.That(legacy.Headers.Location?.OriginalString).IsEqualTo(path + "/danger?delete=1");
         }
+        await Assert.That(await PageAsync(client, "/danger?delete=1")).Contains("data-init=\"el.showModal()\"");
         var danger = await PageAsync(client, "/danger");
         await Assert.That(Regex.IsMatch(danger, "aria-current=\"page\"[^>]*><span>Danger zone</span>")).IsTrue();
         await Assert.That(danger).Contains("data-init=\"void 0\"");
@@ -84,7 +85,7 @@ public sealed class DatabaseOverviewJourneyTests(DashboardRootFixture fixture)
             refused.Headers.Accept.ParseAdd("text/html");
             refused.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
             using var response = await client.SendAsync(refused);
-            await Assert.That((int)response.StatusCode).IsGreaterThanOrEqualTo(400);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
             var reopened = WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync());
             await Assert.That(Regex.IsMatch(reopened, "aria-current=\"page\"[^>]*><span>Danger zone</span>")).IsTrue();
             await Assert.That(reopened).Contains("data-init=\"el.showModal()\"");

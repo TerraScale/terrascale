@@ -70,8 +70,9 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
         var initial = await PageAsync(client);
         await Assert.That(initial).Contains("SFO · San Francisco</td><td class=\"ts-num\">Not measured");
         await Assert.That(initial).Contains("No provider latency measurements are available.");
-        await Assert.That(initial).Contains("Per database and region · 24h · TerraBase replication_bytes meter");
-        await Assert.That(initial).Contains("/analytics?database=" + databaseId + "&project=" + projectId + "&range=24h");
+        var initialReplication = await PageAsync(client, "/replication");
+        await Assert.That(initialReplication).Contains("Per database and region · 24h · TerraBase replication_bytes meter");
+        await Assert.That(initialReplication).Contains("/analytics?database=" + databaseId + "&project=" + projectId + "&range=24h");
         await Assert.That(initial.Contains("0 ms", StringComparison.Ordinal)).IsFalse();
         var home = Regex.Match(initial, "<input[^>]+type=\"checkbox\"[^>]+value=\"SFO\"[^>]*>").Value;
         await Assert.That(home).Contains("required");
@@ -106,6 +107,9 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
         var overview = await PageAsync(replica, "?range=1h");
         await Assert.That(overview.Contains("Per database and region", StringComparison.Ordinal)).IsFalse()
             .Because("replication measurements render only on the replication tab");
+        var identityRow = Regex.Match(overview, "<div class=\"ts-db-identity\">.*?</header>", RegexOptions.Singleline).Value;
+        await Assert.That(identityRow).Contains("flags/br.svg");
+        await Assert.That(identityRow.IndexOf("data-region=\"gru\"", StringComparison.Ordinal)).IsLessThan(identityRow.IndexOf("data-region=\"sfo\"", StringComparison.Ordinal));
         var measured = await PageAsync(replica, "/replication?range=1h");
         await Assert.That(Regex.IsMatch(measured, "aria-current=\"page\"[^>]*><span>Replication</span>")).IsTrue();
         await Assert.That(measured).Contains("Per database and region · 1h · TerraBase replication_bytes meter");
@@ -135,6 +139,20 @@ public sealed class DatabasePlacementJourneyTests(DashboardRootFixture fixture)
         using (var refused = await ChangeRegionsAsync(["SFO", "GRU"]))
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(await RegionsAsync()).IsEqualTo("SFO");
+        var memberDanger = await PageAsync(client, "/danger?delete=1");
+        await Assert.That(memberDanger).Contains("Only organization members who can manage databases can delete this database.");
+        await Assert.That(memberDanger.Contains("id=\"delete-database\"", StringComparison.Ordinal)).IsFalse();
+        using (var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/databases/delete")
+        { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["confirmName"] = "native-placement" }) })
+        {
+            request.Headers.Accept.ParseAdd("text/html");
+            using var refused = await client.SendAsync(request);
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+            var html = WebUtility.HtmlDecode(await refused.Content.ReadAsStringAsync());
+            await Assert.That(html).Contains("Organization management access is required.");
+            await Assert.That(html).Contains("role=\"alert\"");
+            await Assert.That(html.Contains("id=\"delete-database\"", StringComparison.Ordinal)).IsFalse();
+        }
         using (var restored = await producer.PostAsJsonAsync("/__test/control", new { command = "role", value = "owner", organizationId }))
             await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         using (var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new()
