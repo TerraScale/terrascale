@@ -126,7 +126,9 @@ public sealed class ShapeMirrorHttpTests
         var objects = await host.ManifestAsync(shape, shape.Snapshot, count: 1);
         using var closed = await host.GetAsync(shape.Uri(shape.Snapshot));
         await Assert.That(closed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That((await host.OpenAsync(shape, objects[0])).SequenceEqual(await closed.Content.ReadAsByteArrayAsync())).IsTrue();
+        var decrypted = await host.OpenAsync(shape, objects[0]);
+        var closedBytes = await closed.Content.ReadAsByteArrayAsync();
+        await Assert.That(decrypted.SequenceEqual(closedBytes)).IsTrue();
     }
 
     [Test]
@@ -144,7 +146,9 @@ public sealed class ShapeMirrorHttpTests
         {
             await Assert.That(chunk.StatusCode).IsEqualTo(HttpStatusCode.OK);
             var objects = await host.ManifestAsync(shape, shape.Snapshot, count: 1);
-            await Assert.That((await host.OpenAsync(shape, objects[0])).SequenceEqual(await chunk.Content.ReadAsByteArrayAsync())).IsTrue()
+            var decrypted = await host.OpenAsync(shape, objects[0]);
+            var chunkBytes = await chunk.Content.ReadAsByteArrayAsync();
+            await Assert.That(decrypted.SequenceEqual(chunkBytes)).IsTrue()
                 .Because("the key route releases the filtered handle's key, which opens its mirrored chunk");
         }
 
