@@ -255,7 +255,7 @@ public sealed class ShapeMetricsTests
         await Assert.That(paths).Contains("query");
         await Assert.That(paths).Contains("feed");
         await Assert.That(paths).Contains("shape");
-        await Assert.That(paths.All(path => path is "point" or "query" or "feed" or "shape")).IsTrue();
+        await Assert.That(paths.All(path => path is "point" or "query" or "feed" or "shape" or "shape_body")).IsTrue();
 
         foreach (var (name, keys, values) in measured)
         {
@@ -426,9 +426,10 @@ public sealed class ShapeMetricsTests
             .Because("the retained floor reads its sentinel, sequence, head and first feed row");
     }
 
+    // Shape SQL is counted under path="shape" (metadata and proofs) and path="shape_body" (the stored payload SELECT).
     private static double ShapeStorageReads(string scrape) => scrape.Split('\n')
         .Where(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith('#') && MetricName(line) == "terrabase_storage_reads_total"
-            && line.Contains("path=\"shape\"", StringComparison.Ordinal))
+            && (line.Contains("path=\"shape\"", StringComparison.Ordinal) || line.Contains("path=\"shape_body\"", StringComparison.Ordinal)))
         .Sum(line => double.Parse(line.Split(' ')[^1], CultureInfo.InvariantCulture));
 
     // The sum of terrabase_storage_reads point samples, which every document, version, size and system lookup feeds.

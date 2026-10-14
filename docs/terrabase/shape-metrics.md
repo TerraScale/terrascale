@@ -22,7 +22,7 @@ both process and organization limits; null charges system work only. Reservation
 ## Origin storage reads
 
 `terrabase.storage.reads` counts backend document/feed SELECT executions, rather than returned rows or HTTP requests.
-Its only application label is `path`, whose bounded values are `point`, `query`, `feed` and `shape`. Each instrument
+Its only application label is `path`, whose bounded values are `point`, `query`, `feed`, `shape` and `shape_body`. Each instrument
 update adds one immediately before an attempted SELECT; misses and empty results
 count, while reads answered from a document or sealed-body cache do not execute those storage sites.
 
@@ -38,7 +38,9 @@ independently of the rows returned; an additional sort-budget pre-scan counts se
 also count individually under `path="query"`, so a query can perform more than one backend read.
 
 Shape sealing's feed enumeration, size projections, document materialization and resume-prefix reads count under
-`path="shape"`, as do persisted chunk size/body reads and shape retention's floor/candidate SELECTs. Reusing a stored
+`path="shape"`, as do persisted chunk size reads and shape retention's floor/candidate SELECTs. Persisted payload
+SELECTs use `path="shape_body"`, so a shared flight's one body read can be distinguished from its metadata and
+proof reads. One payload read does not mean one total SQL statement. Reusing a stored
 seal counts its head and stored-chunk lookups; an absent chunk counts its attempted size SELECT. Collection-lineage
 admission and CDC validation remain excluded, following the metadata/capture exclusions above.
 

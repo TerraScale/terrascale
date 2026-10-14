@@ -55,3 +55,9 @@ concurrent maintenance. A separate successful `CheckOffsetAsync` call is not a
 lease on a sealed object. Offset grammar, commit-boundary checks, stale-handle
 checks, the current handle response field and `TB-Shape-Handle` stay at the
 endpoint boundary.
+
+FR-20 invokes bounded passes for served handles and retires observed rotations
+in a bounded, memory-admitted queue. Restart, queue overflow, registry eviction
+and collection drops without a later shape request can leave derived chunks and
+snapshots behind. A durable database-wide retirement sweep is still needed;
+the current per-handle retention pass cannot discover these forgotten handles.

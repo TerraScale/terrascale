@@ -27,6 +27,9 @@ public sealed class ShapeLiveTests
     // A client head no store ever reports: the probe finds the shape changed, so the flight reads at once.
     private const long StaleHead = -1;
 
+    // The machine's flights split into whole organization shares: four organizations reach the machine cap.
+    private const int Organizations = ShapeFlights<ShapePage>.MaxFlights / ShapeFlights<ShapePage>.MaxFlightsPerOrganization;
+
     [Test]
     public async Task Parked_live_waiters_wake_on_one_real_commit_with_exactly_one_seal_and_one_read()
     {
@@ -280,14 +283,15 @@ public sealed class ShapeLiveTests
     {
         await using var api = await StartAsync(new FakeTimeProvider(Start), new FakeSealer());
         var flights = Flights(api);
-        var database = await api.TenantOfAsync();
+        var databases = await OrganizationDatabasesAsync(api, Organizations + 1);
         using var hold = new Latch();
         var shape = new FakeShape(Sealer(api), StaleHead, hold);
 
+        // Each organization fills its own share of the 32 machine flights; the fifth organization meets the machine cap.
         var running = Enumerable.Range(0, ShapeFlights<ShapePage>.MaxFlights)
-            .Select(n => ReadFlightAsync(flights, LiveRequest(database, $"h-{n}"), shape))
+            .Select(n => ReadFlightAsync(flights, LiveRequest(databases[n / ShapeFlights<ShapePage>.MaxFlightsPerOrganization], $"h-{n}"), shape))
             .ToArray();
-        var refused = await ReadFlightAsync(flights, LiveRequest(database, "h-overflow"), shape).WaitAsync(Deadline);
+        var refused = await ReadFlightAsync(flights, LiveRequest(databases[Organizations], "h-overflow"), shape).WaitAsync(Deadline);
         hold.Open();
         foreach (var answer in await Task.WhenAll(running).WaitAsync(Deadline))
         {
@@ -302,14 +306,15 @@ public sealed class ShapeLiveTests
     {
         await using var api = await StartAsync(new FakeTimeProvider(Start), new FakeSealer());
         var flights = Flights(api);
-        var database = await api.TenantOfAsync();
+        var databases = await OrganizationDatabasesAsync(api, Organizations + 1);
         using var hold = new Latch();
         var shape = new FakeShape(Sealer(api), StaleHead, hold);
 
+        // Four organizations fill the 256 machine requesters, 64 each; the fifth meets the machine cap.
         var joined = Enumerable.Range(0, ShapeFlights<ShapePage>.MaxRequesters)
-            .Select(_ => ReadFlightAsync(flights, LiveRequest(database), shape))
+            .Select(n => ReadFlightAsync(flights, LiveRequest(databases[n / ShapeFlights<ShapePage>.MaxRequestersPerOrganization]), shape))
             .ToArray();
-        var refused = await ReadFlightAsync(flights, LiveRequest(database), shape).WaitAsync(Deadline);
+        var refused = await ReadFlightAsync(flights, LiveRequest(databases[Organizations]), shape).WaitAsync(Deadline);
         hold.Open();
         foreach (var answer in await Task.WhenAll(joined).WaitAsync(Deadline))
         {
@@ -317,7 +322,7 @@ public sealed class ShapeLiveTests
         }
 
         await Assert.That(refused is QuotaExceeded { Code: "shape_busy" }).IsTrue();
-        await Assert.That(shape.Reads).IsEqualTo(1).Because("all 256 requesters share one read");
+        await Assert.That(shape.Reads).IsEqualTo(Organizations).Because("each organization's requesters share one read");
     }
 
     [Test]
@@ -443,22 +448,26 @@ public sealed class ShapeLiveTests
     {
         await using var api = await StartAsync(new FakeTimeProvider(Start), new FakeSealer());
         var flights = Flights(api);
-        var database = await api.TenantOfAsync();
+        var databases = await OrganizationDatabasesAsync(api, Organizations + 1);
         using var hold = new Latch();
         // Reads that ignore cancellation keep their flights running after every requester has left.
         var abandonedShape = new FakeShape(Sealer(api), StaleHead, hold, ignoreCancel: true);
         var others = new FakeShape(Sealer(api), StaleHead, hold, ignoreCancel: true);
         using var leaving = new CancellationTokenSource();
+        ShapeFlightRequest Request(int n)
+        {
+            return LiveRequest(databases[n / ShapeFlights<ShapePage>.MaxFlightsPerOrganization], $"h-{n}");
+        }
 
-        var abandoned = ReadFlightAsync(flights, LiveRequest(database, "h-abandoned"), abandonedShape, leaving.Token);
+        var abandoned = ReadFlightAsync(flights, Request(0), abandonedShape, leaving.Token);
         await abandonedShape.ReadEntered.WaitAsync(Deadline);
         leaving.Cancel();
         await Assert.That(async () => await abandoned.WaitAsync(Deadline)).Throws<OperationCanceledException>();
 
         var running = Enumerable.Range(1, ShapeFlights<ShapePage>.MaxFlights - 1)
-            .Select(n => ReadFlightAsync(flights, LiveRequest(database, $"h-{n}"), others))
+            .Select(n => ReadFlightAsync(flights, Request(n), others))
             .ToArray();
-        var refused = await ReadFlightAsync(flights, LiveRequest(database, "h-after"), others).WaitAsync(Deadline);
+        var refused = await ReadFlightAsync(flights, LiveRequest(databases[Organizations], "h-after"), others).WaitAsync(Deadline);
         await Assert.That(refused is QuotaExceeded { Code: "shape_busy" }).IsTrue()
             .Because("the abandoned flight still occupies one of the 32 running slots");
 
@@ -567,6 +576,21 @@ public sealed class ShapeLiveTests
 
     private static ShapeFlight<ShapePage> Flight(ShapeFlightResult<ShapePage> result) =>
         result is ShapeFlight<ShapePage> flight ? flight : throw new InvalidOperationException("expected a flight, not a refusal");
+
+    // One database in each of <paramref name="count"/> new organizations, so a test can fill the machine caps by share.
+    private static async Task<TenantContext[]> OrganizationDatabasesAsync(DocumentApi api, int count)
+    {
+        var databases = new TenantContext[count];
+        for (var n = 0; n < count; n++)
+        {
+            using var tenant = await api.Management.CreateTenantAsync("documents:read", "documents:write");
+            var created = await DocumentApi.SendAsync(tenant.Data, HttpMethod.Put, $"/v1/projects/{tenant.ProjectId}/databases/{DocumentApi.Database}");
+            created.Status.ShouldBe(HttpStatusCode.Created);
+            databases[n] = new TenantContext(tenant.OrganizationId, PlanTier.Hobby, tenant.ProjectId, created.Json.GetProperty("id").GetString());
+        }
+
+        return databases;
+    }
 
     private static async Task<SqliteDatabaseStore> StoreAsync(DocumentApi api, TenantContext database) =>
         (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;

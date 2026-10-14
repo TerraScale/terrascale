@@ -3,8 +3,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
 using TerraBase.Features.Shapes;
 using TerraBase.Fast.Documents;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Shapes;
@@ -244,7 +246,7 @@ public sealed class ShapeApiTests
     [Test]
     public async Task A_continuation_target_over_the_8128_budget_is_414_uri_too_long_as_json_with_no_store()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await StartWithFixturesAsync();
         // Budget (contract step 9): path?where=<canonical, %-encoded>&handle=<19>&offset=snap.<19 digits>.<1024> must be at
         // most 8128 characters (8 KiB less 64 reserved). The client's own request is a bootstrap whose line stays under 8 KiB.
         string Where(int padding)
@@ -264,8 +266,7 @@ public sealed class ShapeApiTests
 
         var allowed = await GetShapeAsync(api.Client, Shape(api, "?offset=-1&where=" + Uri.EscapeDataString(Where(padding - 1))));
         await Assert.That(Continuation(padding - 1).Length).IsEqualTo(8128);
-        await Assert.That(allowed.Status).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(allowed.Code).IsEqualTo("unavailable");
+        await Assert.That(allowed.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
 
         var reply = await GetShapeAsync(api.Client, target);
 
@@ -289,21 +290,25 @@ public sealed class ShapeApiTests
     }
 
     [Test]
-    public async Task Valid_offsets_reach_the_unavailable_production_backend_without_publishing_fixture_data()
+    public async Task The_production_backend_bootstraps_a_real_lineage_and_refuses_fixture_handles()
     {
         await using var api = await DocumentApi.StartAsync();
+        var bootstrap = await GetShapeAsync(api.Client, Shape(api, "?offset=-1"));
+        await Assert.That(bootstrap.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
+        await Assert.That(bootstrap.Handle).IsNotNull();
+        await Assert.That(bootstrap.Handle).IsNotEqualTo(Handle);
         foreach (var query in new[]
         {
-            "?offset=-1", $"?handle={Handle}&offset=0", $"?handle={Handle}&offset=9223372036854775807",
+            $"?handle={Handle}&offset=0", $"?handle={Handle}&offset=9223372036854775807",
             $"?handle={Handle}&offset=snap.0.0", $"?handle={Handle}&offset=snap.2.Zg",
             $"?handle={Handle}&offset=0&live=true",
         })
         {
             var reply = await GetShapeAsync(api.Client, Shape(api, query));
-            await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-            await Assert.That(reply.Code).IsEqualTo("unavailable");
+            await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.Conflict);
+            await Assert.That(reply.Code).IsEqualTo("must_refetch");
             await Assert.That(reply.CacheControl).IsEqualTo("no-store");
-            await Assert.That(reply.Handle).IsNull();
+            await Assert.That(reply.Handle).IsEqualTo(bootstrap.Handle);
         }
     }
 
@@ -482,6 +487,9 @@ public sealed class ShapeApiTests
     private sealed class FixtureLineages : IShapeLineages
     {
         public ValueTask<LineageResult> ResolveAsync(ShapeScope scope, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<LineageResult>(new ShapeLineage(ShapeId, Handle));
+
+        ValueTask<LineageResult> IShapeLineages.ResolveHandleAsync(TenantContext database, CollectionInfo collection, string handle, CancellationToken cancellationToken) =>
             ValueTask.FromResult<LineageResult>(new ShapeLineage(ShapeId, Handle));
     }
 

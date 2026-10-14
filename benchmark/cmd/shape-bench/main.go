@@ -1,9 +1,8 @@
-// Command shape-bench measures the changes feed's fan-out on one of two local TerraBase nodes: a steady writer
-// at a fixed rate into one collection, and N = 1, 10, 100 and 1000 followers of the same database's
-// GET …/changes SSE stream, one N
-// per step. It records requested, admitted and rejected followers (the server admits 32 streams per database and 1024
-// per machine), delivery lag, SSE body bytes, the server's CPU and memory, its feed storage reads and its document
-// accounting reads.
+// Command shape-bench measures fan-out on one of two local TerraBase nodes: a steady writer at a fixed rate into one
+// collection, and N = 1, 10, 100 and 1000 followers of the same collection, one N per step, for each target: the
+// changes feed (GET …/changes SSE) and the shape endpoint (GET …/shape, snapshot, chunks and live long-poll). It records
+// requested, admitted and rejected followers (the feed admits 32 streams per database and 1024 per machine), delivery
+// lag, response body bytes, the server's CPU and memory, its storage reads by path and its document accounting reads.
 //
 // Run it from benchmark/ after a Release build of the host (README.md). It takes no flags.
 package main
@@ -14,10 +13,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -42,16 +44,43 @@ const (
 	grace = 5 * time.Second
 )
 
-// target is one followed endpoint below the database URL; the report names its steps by name and transport.
+// target is one followed endpoint below the database URL; the report names its steps by name and transport. reads are the
+// terrabase.storage.reads paths the step reports, one status key each; inferred marks a target with a source-derived
+// document-SELECT estimate.
 type target struct {
 	name, transport, path string
+	reads                 []readPath
+	inferred              bool
 	follow                func(*bench, context.Context, *measure, chan<- string)
-	waitReady             func(*bench, context.Context, int64) error
+	waitReady             func(*bench, context.Context, *measure, int64) (int64, error)
 }
 
-// targets is the fixed target list, each run at every follower count.
-var targets = []target{{name: "changes.fanout", transport: "sse-http1", path: "/changes",
-	follow: (*bench).followChanges, waitReady: (*bench).waitStreams}}
+// readPath is one bounded path label of terrabase.storage.reads and the status key its step delta is reported under.
+type readPath struct{ key, path string }
+
+// targets is the fixed target list, each run at every follower count. changes.fanout comes first: it calibrates the
+// metrics listener.
+var targets = []target{
+	{name: "changes.fanout", transport: "sse-http1", path: "/changes", inferred: true,
+		reads:     []readPath{{key: "storage_reads_delta", path: "feed"}},
+		follow:    (*bench).followChanges,
+		waitReady: (*bench).waitStreams},
+	// Shape metadata SQL (path shape), payload-body SELECTs (path shape_body) and document checks (path point, node-wide:
+	// it also counts the writer's own point reads) are separate deltas, never summed.
+	{name: "shape.fanout", transport: "http1-long-poll", path: "/shape",
+		reads:     []readPath{{key: "storage_reads_delta_shape", path: "shape"}, {key: "storage_reads_delta_shape_body", path: "shape_body"}, {key: "storage_reads_delta_point", path: "point"}},
+		follow:    (*bench).followShape,
+		waitReady: waitParked},
+}
+
+// paths are the terrabase.storage.reads path labels the target reports.
+func (t target) paths() []string {
+	var out []string
+	for _, r := range t.reads {
+		out = append(out, r.path)
+	}
+	return out
+}
 
 // followers are the follower counts: every N runs, even past the admission cap.
 var followers = []int{1, 10, 100, 1000}
@@ -94,7 +123,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	ready := apibench.Ready{Client: "shape-bench", SDK: "raw HTTP/1.1 SSE", SDKVersion: "-", Runtime: runtime.Version(),
+	ready := apibench.Ready{Client: "shape-bench", SDK: "raw HTTP/1.1 (SSE and JSON long-poll)", SDKVersion: "-", Runtime: runtime.Version(),
 		Database: h.targets.Database, SetupMS: float64(time.Since(setup).Milliseconds())}
 
 	var probes []probe
@@ -202,14 +231,18 @@ func notes(results []apibench.Result, probes []probe, pid int, metricsURL, commi
 	fmt.Fprintf(&b, "- %s\n", commits)
 	fmt.Fprintf(&b, "- Two local nodes (%s) in the tests/TerraBase.E2E BenchmarkClusterHost process: placement requires two regions; writes and followers target only %s. Plain HTTP on loopback: no WAN, no Fly Proxy, no TLS. No network probe ran; the startup row is one host launch until its targets file appeared.\n", hostRegions, region)
 	fmt.Fprintln(&b, "- Shared reporter placeholders: network probe, startup max RSS, MB out, and auth ms are unmeasured here; their zeros are placeholders. The shared startup heading says 5 launches, but this run has one launch.")
-	fmt.Fprintf(&b, "- Writer: %d PUTs/s of %d-byte documents into one collection, open loop; every write must succeed. Followers: GET …/changes?cursor=now&collections=<that collection>, opened one at a time at %d/s, each awaiting its admission or rejection (the local tenant is on the Hobby QoS plan), then all read together through the measured window.\n", writeRate, payloadBytes, admitRate)
-	fmt.Fprintf(&b, "- Columns: conc = requested N; rate = writes/s; req/s = deliveries/s summed over admitted followers; p50…max = delivery lag from the write's send time (in the document) to the follower reading its change event; err %% = missed deliveries of in-window writes to admitted followers (grace %s); MB in = SSE response body bytes of admitted streams in the window; CPU %% and RSS MB = the combined host process (/proc/%d: both nodes, replication work, ts-auth stand-in and test runner), not this client.\n", grace, pid)
-	fmt.Fprintf(&b, "- Admission: the server admits at most 32 streams per database per machine and 1024 per machine (DatabaseChanges.cs). Above 32, only admitted followers are measured: req/s and MB in do not grow with requested N, and no gain past the cap is claimed.\n")
-	fmt.Fprintf(&b, "- storage_reads_delta (primary): terrabase.storage.reads{path=\"feed\"} (terrabase_storage_reads_total) from %s, after minus before the step, gru node only; sjc reads are not included. It counts every physical backend SELECT the feed runs on this node: head, floor, prefix and retention reads, and each document body, including zero-row reads and misses. Page cache hits count; this is not disk I/O.\n", metricsURL)
-	fmt.Fprintf(&b, "- Storage window: the scrape before admission (before the first follower opens) through the scrape after warmup, the 30 s measured window, grace and a 6 s settle. A step's delta therefore includes admission, warmup and grace reads, not the measured window alone. A fall of the counter fails the step (reset or restarted node); an absent feed series fails it too, never as zero.\n")
+	fmt.Fprintf(&b, "- Writer: %d PUTs/s of %d-byte documents into one collection, open loop; every write must succeed. Followers are opened one at a time at %d/s, each awaiting its admission or rejection (the local tenant is on the Hobby QoS plan), then all read together through the measured window. Per target: changes.fanout opens GET …/changes?cursor=now&collections=<that collection> as an SSE stream; shape.fanout opens GET …/shape as HTTP/1.1 JSON requests (bootstrap offset=-1, then snapshot pages, chunks and live long-polls).\n", writeRate, payloadBytes, admitRate)
+	fmt.Fprintf(&b, "- Columns: conc = requested N; rate = writes/s; req/s = deliveries/s summed over admitted followers; p50…max = delivery lag from the write's send time (in the document) to the follower reading its change event; err %% = missed deliveries of in-window writes to admitted followers (grace %s); MB in = response body bytes read by admitted followers in the window (changes: SSE stream bytes; shape: JSON response bodies); CPU %% and RSS MB = the combined host process (/proc/%d: both nodes, replication work, ts-auth stand-in and test runner), not this client.\n", grace, pid)
+	fmt.Fprintf(&b, "- QoS budget: the local tenant is on the Hobby plan (QosPolicy.cs: 50 requests/s sustained, burst 100, concurrency 4). The writer and every follower's request share it. A refusal is 429 tenant_busy with Retry-After; each is repeated after its Retry-After (at least 200 ms) and counted: qos_busy_followers (both targets) and qos_busy_writes. A repeat delays a delivery and is not a loss; a delivery that misses the window and grace is counted as missed.\n")
+	fmt.Fprintf(&b, "- Admission, changes.fanout: the server admits at most 32 streams per database per machine and 1024 per machine (DatabaseChanges.cs); rejections are changes_busy. Above 32, only admitted followers are measured: req/s and MB in do not grow with requested N, and no gain past the cap is claimed.\n")
+	fmt.Fprintf(&b, "- Admission, shape.fanout: a follower is admitted on its first 200 body. Refusals before admission are shape_busy (429, the running-flight caps: 32 per machine and 8 per organization (ShapeFlights.cs MaxFlights, MaxFlightsPerOrganization), no queue) and shape_too_large (503); anything else is an invalid measurement. Concurrent identical live polls join one flight. Live requesters are capped at 256 per machine and 64 per organization, across all flights (ShapeFlights.cs MaxRequesters, MaxRequestersPerOrganization); a live poll beyond that answers shape_busy and is retried, so at N above 256 only the parked ones receive writes. server_at_ready is the gauge terrabase.shape.requests.waiting when the step became ready (shape), or the open feed streams (changes). req/s and origin reads are the measured outcome, not an assumed collapse.\n")
+	fmt.Fprintf(&b, "- Capacity rows: a step that reaches a limit is a row, not a failed run. Its stopped column names the limit: no follower admitted, the admission deadline, or a readiness timeout (all before the window, so writes, deliveries, storage reads and latency are n/a; the shared table's zeros there are placeholders, not measurements), or no delivery in the window (measured: every expected delivery is missed). Rejected counts and qos_busy_followers are kept for every row.\n")
+	fmt.Fprintf(&b, "- Storage reads (primary, measured): terrabase.storage.reads{path} (terrabase_storage_reads_total) from %s, after minus before the step, gru node only; sjc reads are not included. Each target names its paths. The feed reports path=\"feed\": head, floor, prefix and retention reads, and each document body. The shape target reports path=\"shape\" (metadata SQL), path=\"shape_body\" (payload-body SELECTs) and path=\"point\" (document checks) as separate deltas, never summed here. The point delta is node-wide: it also counts the writer's point reads during the step, so it is not attributable to shape followers alone. Every count includes zero-row reads and misses; page cache hits count; this is not disk I/O.\n", metricsURL)
+	fmt.Fprintf(&b, "- Storage window: the scrape before admission (before the first follower opens) through the scrape after warmup, the 30 s measured window, grace and a 6 s settle. A step's delta therefore includes admission, warmup and grace reads, not the measured window alone. A fall of a counter fails the step (reset or restarted node). A path absent before the step counts as zero, since its counter starts at zero in a process; a path absent after it fails the step, never as zero.\n")
+	fmt.Fprintf(&b, "- Shape followers: each bootstraps at offset=-1 (307 to the newest snapshot's first page), pages the snapshot, catches up through chunks, then long-polls live at the sealed head. Their response bytes are JSON bodies over HTTP/1.1, not SSE; each request is one answer, and each follower holds at most one open live poll. Retries after shape_busy or unavailable are counted in the status \"retries\"; they are neither delivered nor missed.\n")
 	fmt.Fprintf(&b, "- accounting_reads_delta (secondary): terrabase.stats.operations{kind=\"read\"} from %s, after minus before the step, gru node only. It is document accounting (document GETs and queries), published per closed 5 s window; it is not a storage read count.\n", metricsURL)
-	fmt.Fprintf(&b, "- inferred_min_doc_selects (secondary, a source-based estimate, not measured): gru feed only. SqliteStorageTransaction.Feed.cs reads each upsert's current document with one SELECT per stream. The estimate counts received upserts of in-window writes through delivery grace, including redeliveries; warmup upserts, feed-table reads and other storage work are excluded. Compare it with storage_reads_delta, which is measured.\n")
-	fmt.Fprintf(&b, "\n| target | requested N | admitted | rejected | writes in window | delivered | missed | deliveries/s per admitted follower | storage reads delta (feed) | accounting reads delta (secondary) | inferred min doc SELECTs (secondary estimate) |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	fmt.Fprintf(&b, "- inferred_min_doc_selects (secondary, a source-based estimate, not measured; changes target only): gru feed only. SqliteStorageTransaction.Feed.cs reads each upsert's current document with one SELECT per stream. The estimate counts received upserts of in-window writes through delivery grace, including redeliveries; warmup upserts, feed-table reads and other storage work are excluded. Compare it with the measured storage reads, not as equivalent to them.\n")
+	fmt.Fprintf(&b, "\n| target | requested N | admitted | rejected | writes in window | delivered | missed | deliveries/s per admitted follower | storage reads delta (by path) | accounting reads delta (secondary) | inferred min doc SELECTs (secondary estimate) | stopped |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, r := range results {
 		var rejected []string
 		for k, v := range r.Status {
@@ -217,18 +250,49 @@ func notes(results []apibench.Result, probes []probe, pid int, metricsURL, commi
 				rejected = append(rejected, fmt.Sprintf("%d %s", v, code))
 			}
 		}
-		per := 0.0
-		if a := r.Status["admitted"]; a > 0 {
-			per = r.RPS / float64(a)
+		// A row without a writes count stopped before its window: its window figures were not measured.
+		window := []string{"n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a"}
+		if w, ok := r.Status["writes"]; ok {
+			per := 0.0
+			if a := r.Status["admitted"]; a > 0 {
+				per = r.RPS / float64(a)
+			}
+			inferred := "n/a"
+			if v, ok := r.Status["inferred_min_doc_selects"]; ok {
+				inferred = strconv.FormatInt(v, 10)
+			}
+			window = []string{strconv.FormatInt(w, 10), strconv.FormatInt(r.OK, 10), strconv.FormatInt(r.Errors, 10), fmt.Sprintf("%.2f", per),
+				storageCell(r.Status), strconv.FormatInt(r.Status["accounting_reads_delta"], 10), inferred}
 		}
-		fmt.Fprintf(&b, "| %s | %d | %d | %s | %d | %d | %d | %.2f | %d | %d | %d |\n", r.Scenario, r.Concurrency, r.Status["admitted"], cmp.Or(strings.Join(rejected, ", "), "0"),
-			r.Status["writes"], r.OK, r.Errors, per, r.Status["storage_reads_delta"], r.Status["accounting_reads_delta"], r.Status["inferred_min_doc_selects"])
+		fmt.Fprintf(&b, "| %s | %d | %d | %s | %s | %s |\n", r.Scenario, r.Concurrency, r.Status["admitted"], cmp.Or(strings.Join(rejected, ", "), "0"),
+			strings.Join(window, " | "), cmp.Or(r.Stopped, "-"))
 	}
 	fmt.Fprintf(&b, "\n### Raw metric lines\n")
 	for _, p := range probes {
+		if p.after == "" {
+			fmt.Fprintf(&b, "\n%s N=%d: no window, so no after scrape (the step stopped at a capacity limit before it).\n", p.target, p.n)
+			continue
+		}
 		fmt.Fprintf(&b, "\n%s N=%d before:\n\n```\n%s```\n\n%s N=%d after:\n\n```\n%s```\n", p.target, p.n, p.before, p.target, p.n, p.after)
 	}
 	return b.String()
+}
+
+// storageCell is a row's storage reads: a single path's delta as a bare number, or each labelled path's delta in turn.
+func storageCell(status map[string]int64) string {
+	var parts []string
+	for _, k := range slices.Sorted(maps.Keys(status)) {
+		rest, ok := strings.CutPrefix(k, "storage_reads_delta")
+		if !ok {
+			continue
+		}
+		if label := strings.TrimPrefix(rest, "_"); label == "" {
+			parts = append(parts, strconv.FormatInt(status[k], 10))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s %d", label, status[k]))
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func git(args ...string) string {

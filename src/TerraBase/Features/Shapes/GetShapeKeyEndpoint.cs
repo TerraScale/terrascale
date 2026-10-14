@@ -96,11 +96,14 @@ internal sealed class GetShapeKeyEndpoint(
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30), time);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-            var resolved = await lineages.ResolveAsync(new ShapeScope(database, collection, string.Empty, null), linked.Token);
+            var resolved = await lineages.ResolveHandleAsync(database, collection, handle, linked.Token);
             if (resolved is not ShapeLineage lineage)
             {
                 return resolved switch
                 {
+                    Evicted evicted => Refetch(evicted.Lineage, "the filtered shape was evicted"),
+                    QuotaExceeded refused => ErrorResponse.From(refused),
+                    NotFound missing => ErrorResponse.From(missing),
                     Unavailable unavailable => ErrorResponse.From(unavailable),
                     ShapeLineage => throw new System.Diagnostics.UnreachableException(),
                 };

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TerraBase.Engine;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
@@ -37,8 +38,11 @@ public sealed class ShapeSealOffsetException() : IOException("must_refetch: the 
 /// <summary>The engine boundary for shape sealing; implementations execute on their transaction's lane.</summary>
 internal interface IShapeStorageTransaction
 {
-    /// <summary>Seals one whole-commit prefix, returning its end and this transaction's committed head.</summary>
-    ValueTask<(long Offset, long Head)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through,
+    /// <summary>
+    /// Seals one whole-commit prefix, returning its end, this transaction's committed head and the bytes of the chunk this call
+    /// inserted (0 when the chunk already existed or nothing was sealed).
+    /// </summary>
+    ValueTask<(long Offset, long Head, long PublishedBytes)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through,
         IMemoryBudget memory, CancellationToken cancellationToken);
     /// <summary>Reads only persisted bytes, retaining the result's memory reservation.</summary>
     ValueTask<ShapeSealedChunk?> ReadShapeChunkAsync(string handle, long offset, IMemoryBudget memory,
@@ -66,7 +70,7 @@ public interface IShapeSealer
         CancellationToken cancellationToken);
 }
 
-internal sealed class ShapeSealer(IMemoryBudget memory, ILogger<ShapeSealer> logger, IShapeStorage storage) : IShapeSealer
+internal sealed class ShapeSealer(IMemoryBudget memory, ILogger<ShapeSealer> logger, IShapeStorage storage, IShapeMetrics? metrics = null) : IShapeSealer
 {
     private static readonly TimeSpan RefusalBackoff = TimeSpan.FromSeconds(30);
     private const int MaxWorkerRequests = 65_536;
@@ -80,11 +84,18 @@ internal sealed class ShapeSealer(IMemoryBudget memory, ILogger<ShapeSealer> log
         do
         {
             // A standalone write transaction keeps capture suspension out of other requests' group commits.
+            var started = Stopwatch.GetTimestamp();
             var transaction = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
-                var (sealedOffset, head) = await ((IShapeStorageTransaction)transaction).SealShapeChunkAsync(shape, offset, through, memory, cancellationToken).ConfigureAwait(false);
+                var (sealedOffset, head, published) = await ((IShapeStorageTransaction)transaction).SealShapeChunkAsync(shape, offset, through, memory, cancellationToken).ConfigureAwait(false);
                 _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                // Recorded after the commit: a publication is a chunk that is durable, and a reused chunk publishes nothing.
+                if (published > 0)
+                {
+                    metrics?.RecordSeal(published, Stopwatch.GetElapsedTime(started));
+                }
+
                 through ??= head;
                 offset = sealedOffset;
             }

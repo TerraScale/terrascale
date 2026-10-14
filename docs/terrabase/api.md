@@ -299,14 +299,18 @@ rejects invalid SQL with `400 invalid_request`. It does not execute or meter the
 | GET | `D/changes` | `streamDatabaseChanges` | `documents:read` |
 | GET | `C/shape?where=&handle=&offset=&live=&cursor=` | `getShape` | `documents:read` |
 
-Shape reads use the [v1 protocol](https://github.com/TerraScale/terrascale/blob/78be1988ff987def254a89afb933eeb50ea378a3/docs/terrabase/shape-reads.md).
+Shape reads use the [v1 protocol](shape-reads.md).
 `offset` is required. Bootstrap (`offset=-1`, without a handle) redirects with `307` to the newest sealed
 snapshot; a stale handle returns `409 must_refetch`. Validation rejects malformed or duplicate parameters
 with `400`. Before redirecting, the endpoint checks that every continuation target fits the 8 KiB request
 line with 64 bytes reserved; otherwise it returns `414 uri_too_long`. Requests exceeding the listener's
 request-line limit can be rejected before JSON error handling; large resume cursors belong in `TB-Shape-Resume`.
-The route is client-listener only and preserves project/database isolation. The endpoint skeleton returns
-`503 unavailable` until the snapshot, chunk and live-tail components are connected. It publishes no shape data.
+The route is client-listener only and preserves project/database isolation.
+The origin connects the snapshot, chunk and shared live-tail components. Bootstrap follows the newest sealed snapshot,
+then immutable chunks and `live=true` long-polls. Filters use canonical `where` values; lineage changes and offsets below
+the retention floor require a `409 must_refetch` restart. Origin bytes stay plaintext and privately revalidated, with
+strong ETags and `304` responses. `cursor_resume` carries the reached R8 vector; cross-machine resume proofs remain
+fail closed pending FR-23. Tigris mirror encryption and upload belong to the FR-22 background worker.
 
 The database's changes feed as Server-Sent Events (slice R8, [multi-region replication](multi-region-replication.md)
 section 14). `change` events carry `{collection, id, op, version, origin, document}`; `cursor` events (when the stream

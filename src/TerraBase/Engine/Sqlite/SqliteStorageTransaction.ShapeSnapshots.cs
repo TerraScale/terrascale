@@ -31,7 +31,8 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
         RunAsync(() =>
         {
             var latest = NewestShapeSnapshot(handle);
-            if (latest is null)
+            // A snapshot below the retention floor is never a bootstrap answer: reseal at the head.
+            if (latest is null || latest.Offset < ShapeFloor(handle))
             {
                 return true;
             }
@@ -109,9 +110,15 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
         ShapeSnapshotDefinition shape, long offset, string? afterId, string cursor, IMemoryBudget memory, TimeProvider time,
         CancellationToken cancellationToken)
     {
-        if (store.IsSystem || !HasTable(shape.Collection))
+        if (store.IsSystem)
         {
             throw new InvalidDataException("a shape snapshot requires an existing client collection");
+        }
+        CountRead("shape");
+        if (Command("SELECT entity_id FROM collections WHERE name = $collection;", shape.Collection).ExecuteScalar()
+            is not string generation || generation != shape.CollectionGeneration)
+        {
+            throw new ShapeSealOffsetException();
         }
 
         // Ops, serialized response, growth/copies and framing are admitted before any row is materialized.
@@ -380,7 +387,7 @@ internal sealed class SqliteShapeSnapshotTransactions(SqliteStorageEngine engine
             : throw new InvalidOperationException("shapes belong to client databases");
         if (underlying is null || underlying.Incarnation != store.Incarnation || store.IsClosed)
         {
-            throw new InvalidOperationException("the shape database incarnation is no longer available");
+            throw new ShapeSealOffsetException();
         }
 
         return await underlying.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false);

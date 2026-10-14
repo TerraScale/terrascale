@@ -26,7 +26,7 @@ internal interface IShapeRetentionTransaction
     ValueTask<int> DropShapeAsync(string handle, int maxRows, long maxBytes, CancellationToken cancellationToken);
 }
 
-internal sealed class ShapeRetention(TimeProvider time) : IShapeRetention
+internal sealed class ShapeRetention(TimeProvider time, IShapeStorage storage) : IShapeRetention
 {
     private static readonly SearchValues<char> HandleHex = SearchValues.Create("0123456789abcdef");
     internal const int BatchRows = 1024;
@@ -35,7 +35,7 @@ internal sealed class ShapeRetention(TimeProvider time) : IShapeRetention
     public async ValueTask<long> GetFloorAsync(IDatabaseStore store, string handle, CancellationToken cancellationToken)
     {
         Validate(store, handle);
-        await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        await using var transaction = await storage.BeginTransactionAsync(store, write: false, cancellationToken).ConfigureAwait(false);
         return await Storage(transaction).ReadShapeFloorAsync(handle, cancellationToken).ConfigureAwait(false);
     }
 
@@ -48,7 +48,7 @@ internal sealed class ShapeRetention(TimeProvider time) : IShapeRetention
     {
         Validate(store, handle);
         var before = (time.GetUtcNow() - FeedCursor.Retention).ToUnixTimeMilliseconds();
-        await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        await using var transaction = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
         var deleted = await Storage(transaction).TrimShapeAsync(handle, before, BatchRows, BatchBytes, cancellationToken).ConfigureAwait(false);
         _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return deleted;
@@ -57,7 +57,7 @@ internal sealed class ShapeRetention(TimeProvider time) : IShapeRetention
     public async ValueTask<int> DropHandleAsync(IDatabaseStore store, string handle, CancellationToken cancellationToken)
     {
         Validate(store, handle);
-        await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        await using var transaction = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
         var deleted = await Storage(transaction).DropShapeAsync(handle, BatchRows, BatchBytes, cancellationToken).ConfigureAwait(false);
         _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return deleted;

@@ -211,7 +211,8 @@ func promValue(body, base, label string) (float64, bool) {
 // path label is one of storageReadPaths; any other value fails the step rather than joining a delta.
 const storageReadsMetric = "terrabase_storage_reads"
 
-var storageReadPaths = []string{"point", "query", "feed", "shape"}
+// shape_body is one served chunk's payload SELECT; shape is every other shape SELECT (metadata, probes, seals).
+var storageReadPaths = []string{"point", "query", "feed", "shape", "shape_body"}
 
 var pathLabel = regexp.MustCompile(`[{,]path="([^"]*)"`)
 
@@ -236,31 +237,48 @@ func storageReads(body string) (map[string]float64, error) {
 	return out, nil
 }
 
-// feedReads is the feed path's count. The series appears with the first feed SELECT, so an absent series is an error,
-// not zero.
-func feedReads(body string) (float64, error) {
+// pathCounts is each path's counter before a step. A path whose series is absent counts as zero: the counter is created
+// with the first SELECT of its path, and it starts at zero in each process.
+func pathCounts(body string, paths []string) (map[string]float64, error) {
 	counts, err := storageReads(body)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	v, ok := counts["feed"]
-	if !ok {
-		return 0, fmt.Errorf("metrics: no %s{path=\"feed\"}: no feed SELECT has run on this node, or the feed is not instrumented", storageReadsMetric)
+	out := map[string]float64{}
+	for _, p := range paths {
+		out[p] = counts[p]
 	}
-	return v, nil
+	return out, nil
 }
 
-// feedDelta is the feed SELECTs between two scrapes. A counter that fell was reset or its node restarted.
-func feedDelta(before, after float64) (int64, error) {
-	if after < before {
-		return 0, fmt.Errorf("%s{path=\"feed\"} fell from %v to %v during the step: the counter reset or the node restarted", storageReadsMetric, before, after)
+// pathDeltas is the SELECTs of each path between the before counts and the scrape after the step. An absent series
+// after the step fails it, never as zero; a counter that fell was reset or its node restarted.
+func pathDeltas(before map[string]float64, after string, paths []string) (map[string]int64, error) {
+	counts, err := storageReads(after)
+	if err != nil {
+		return nil, err
 	}
-	return int64(after - before), nil
+	out := map[string]int64{}
+	for _, p := range paths {
+		v, ok := counts[p]
+		if !ok {
+			return nil, fmt.Errorf("metrics: no %s{path=%q} after the step: no %s SELECT has run on this node, or the path is not instrumented", storageReadsMetric, p, p)
+		}
+		if v < before[p] {
+			return nil, fmt.Errorf("%s{path=%q} fell from %v to %v during the step: the counter reset or the node restarted", storageReadsMetric, p, before[p], v)
+		}
+		out[p] = int64(v - before[p])
+	}
+	return out, nil
 }
 
-// rawSamples are the scrape lines the step's deltas come from, for the report.
+// rawSamples are the scrape lines the step's deltas come from, for the report: the accounting and storage counters and
+// the shape gauges and counter.
 func rawSamples(body string) string {
-	lines := append(promLines(body, "terrabase_stats_operations"), promLines(body, storageReadsMetric)...)
+	var lines []string
+	for _, base := range []string{"terrabase_stats_operations", storageReadsMetric, "terrabase_shape_reads", "terrabase_shape_requests_waiting", "terrabase_shape_flights_active"} {
+		lines = append(lines, promLines(body, base)...)
+	}
 	return strings.Join(lines, "\n") + "\n"
 }
 

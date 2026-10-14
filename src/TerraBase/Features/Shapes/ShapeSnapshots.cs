@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Text;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -11,7 +12,7 @@ namespace TerraBase.Features.Shapes;
 
 /// <summary>Identity supplied by the handle lane; the predicate is supplied by the filtered-shape lane.</summary>
 internal sealed record ShapeSnapshotDefinition(
-    string Handle, string ShapeId, string Collection, ReadOnlyMemory<byte> ResumeScope,
+    string Handle, string ShapeId, string Collection, string CollectionGeneration, ReadOnlyMemory<byte> ResumeScope,
     Func<StoredDocument, bool>? Predicate = null);
 
 internal sealed record ShapeSnapshot(long Offset, long SealedAt)
@@ -54,7 +55,7 @@ internal interface IShapeSnapshotTransactions
 }
 
 /// <summary>Persisted, immutable snapshots; registration and scheduling belong to FR-10/FR-20.</summary>
-internal sealed class ShapeSnapshots(IMemoryBudget memory, TimeProvider time, IShapeSnapshotTransactions transactions) : IShapeSnapshotSealer
+internal sealed class ShapeSnapshots(IMemoryBudget memory, TimeProvider time, IShapeSnapshotTransactions transactions, IShapeMetrics? metrics = null) : IShapeSnapshotSealer
 {
     // One admitted seal per singleton; callers retry rather than queueing unbounded scans.
     private int _sealing;
@@ -80,7 +81,8 @@ internal sealed class ShapeSnapshots(IMemoryBudget memory, TimeProvider time, IS
         if (shape.Handle.Length != 19 || !shape.Handle.StartsWith("h1-", StringComparison.Ordinal)
             || shape.Handle.AsSpan(3).ContainsAnyExcept(LowerHex)
             || shape.ShapeId.Length != 32 || shape.ShapeId.AsSpan().ContainsAnyExcept(LowerHex)
-            || shape.ResumeScope.Length != 16 || !DatabaseName.TryParse(shape.Collection, out _))
+            || shape.ResumeScope.Length != 16 || !DatabaseName.TryParse(shape.Collection, out _)
+            || !TerraBase.Primitives.EntityIds.IsValid(shape.CollectionGeneration))
         {
             throw new ArgumentException("invalid snapshot identity", nameof(shape));
         }
@@ -104,6 +106,7 @@ internal sealed class ShapeSnapshots(IMemoryBudget memory, TimeProvider time, IS
             using var admission = memory.TryReserve(MemoryLane.Bulk, 4096, store.Tenant) ?? throw new StorageBusyException();
             await using var reader = await transactions.BeginAsync(store, write: false, cancellationToken).ConfigureAwait(false);
             var storage = Storage(reader);
+            var started = Stopwatch.GetTimestamp();
             var now = time.GetUtcNow();
             if (!await storage.ShapeSnapshotDueAsync(shape.Handle, now.ToUnixTimeMilliseconds(), cancellationToken).ConfigureAwait(false))
             {
@@ -126,17 +129,21 @@ internal sealed class ShapeSnapshots(IMemoryBudget memory, TimeProvider time, IS
 
             string? after = null;
             var page = 0;
+            var published = 0L;
             do
             {
                 using var body = await storage.BuildShapeSnapshotPageAsync(shape, offset, after, cursor, memory, time, cancellationToken).ConfigureAwait(false);
                 await using var writer = await transactions.BeginAsync(store, write: true, cancellationToken).ConfigureAwait(false);
                 await Storage(writer).InsertShapeSnapshotPageAsync(shape.Handle, offset, page, body, now.ToUnixTimeMilliseconds(), cancellationToken).ConfigureAwait(false);
                 _ = await writer.CommitAsync(cancellationToken).ConfigureAwait(false);
+                // Counted per committed page; the snapshot's publication is recorded once, after its last page.
+                published += body.Body.Length;
                 after = body.NextId;
                 page = checked(page + 1);
             }
             while (after is not null);
 
+            metrics?.RecordSeal(published, Stopwatch.GetElapsedTime(started));
             return new ShapeSnapshot(offset, now.ToUnixTimeMilliseconds());
         }
         finally
