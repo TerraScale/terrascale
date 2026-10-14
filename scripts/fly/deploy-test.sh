@@ -15,6 +15,7 @@ cat >"$tmp/bin/flyctl" <<'FAKE'
 echo "$*" >>"$STATE/calls"
 case "$1 $2" in
   "machine list")
+    [[ ! -e $STATE/list-failed ]] || exit 1
     state=started
     image=$IMAGE
     [[ ! -e $STATE/digest ]] || image="$IMAGE@sha256:0f"
@@ -114,6 +115,9 @@ done
 
 ! run no-docker ts-terrabase "" no-docker || fail "rolled out without the new image's format"
 [[ -z $(steps no-docker) ]] || fail "no-docker: $(steps no-docker)"
+! run list-failed ts-terrabase "" list-failed || fail "accepted a failed machine lookup"
+[[ -z $(steps list-failed) ]] || fail "failed lookup mutated the cluster"
+grep -q 'could not inspect' "$tmp/list-failed/out" || fail "failed lookup was not reported"
 
 # ts-auth has no volume and no format: no gate, and a failed live check stops the rollout without a reset.
 ! run auth ts-auth "m-gru" || fail "ts-auth kept rolling out after a failed live check"
