@@ -1,10 +1,12 @@
 //! Local, genuinely signed Atlas fixtures; no production network access.
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use bytes::Bytes;
+use futures_util::StreamExt;
 use http_body_util::Full;
 use hyper::{service::service_fn, Request, Response};
 use hyper_util::rt::TokioIo;
@@ -30,6 +32,8 @@ struct Fixture {
     replacement: Arc<Mutex<Option<Value>>>,
     fault: Arc<Mutex<Option<(u16, usize)>>>,
     disconnected: Arc<AtomicBool>,
+    scripted: Arc<Mutex<VecDeque<Reply>>>,
+    shape_seen: Arc<Mutex<Vec<ShapeRequest>>>,
     signer: EcdsaKeyPair,
     task: tokio::task::JoinHandle<()>,
 }
@@ -58,6 +62,9 @@ impl Fixture {
         let faults = fault.clone();
         let replacement = Arc::new(Mutex::new(None::<Value>));
         let replacements = replacement.clone();
+        let scripted = Arc::new(Mutex::new(VecDeque::<Reply>::new()));
+        let shape_seen = Arc::new(Mutex::new(Vec::<ShapeRequest>::new()));
+        let (sc, sh) = (scripted.clone(), shape_seen.clone());
         let (r, k, q, d) = (
             response.clone(),
             keys.clone(),
@@ -66,6 +73,7 @@ impl Fixture {
         );
         let task = tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
+                let (scripted, shapes) = (sc.clone(), sh.clone());
                 let (r, k, q, d, faults, replacements) = (
                     r.clone(),
                     k.clone(),
@@ -82,8 +90,22 @@ impl Fixture {
                         ));
                         let path = request.uri().path();
                         let disconnected = d.load(Ordering::Relaxed);
+                        let shape = path.ends_with("/shape").then(|| {
+                            shapes.lock().unwrap().push(ShapeRequest::new(&request));
+                            scripted
+                                .lock()
+                                .unwrap()
+                                .pop_front()
+                                .unwrap_or_else(|| Reply {
+                                    status: 404,
+                                    headers: Vec::new(),
+                                    body: json!({"error":{"code":"unscripted"}}).to_string(),
+                                })
+                        });
                         let data_reply = path != "/v1/keys" && path != "/v1/resolve";
-                        let (status, body) = if path == "/v1/keys" {
+                        let (status, body) = if let Some(reply) = &shape {
+                            (reply.status, reply.body.clone())
+                        } else if path == "/v1/keys" {
                             (200, k.lock().unwrap().to_string())
                         } else if path == "/v1/resolve" {
                             (200, r.lock().unwrap().to_string())
@@ -116,17 +138,25 @@ impl Fixture {
                             if disconnected {
                                 return Err(std::io::Error::other("fixture unavailable"));
                             }
-                            let mut builder = Response::builder();
-                            if data_reply {
-                                builder = builder.header("x-terrabase-region", "new-region-9");
+                            let mut builder = Response::builder().status(status);
+                            match &shape {
+                                Some(reply) => {
+                                    for (name, value) in &reply.headers {
+                                        builder = builder.header(name, value);
+                                    }
+                                }
+                                None => {
+                                    if data_reply {
+                                        builder =
+                                            builder.header("x-terrabase-region", "new-region-9");
+                                    }
+                                    builder = builder
+                                        .header("content-type", "application/json")
+                                        .header("location", "https://credential-trap.invalid/");
+                                }
                             }
                             Ok::<_, std::io::Error>(
-                                builder
-                                    .status(status)
-                                    .header("content-type", "application/json")
-                                    .header("location", "https://credential-trap.invalid/")
-                                    .body(Full::new(Bytes::from(body)))
-                                    .unwrap(),
+                                builder.body(Full::new(Bytes::from(body))).unwrap(),
                             )
                         }
                     });
@@ -144,6 +174,8 @@ impl Fixture {
             replacement,
             fault,
             disconnected,
+            scripted,
+            shape_seen,
             signer,
             task,
         };
@@ -191,6 +223,136 @@ impl Fixture {
             self.url.parse().unwrap(),
         )
     }
+}
+
+impl Fixture {
+    fn script(&self, replies: Vec<Reply>) {
+        self.scripted.lock().unwrap().extend(replies);
+    }
+    fn shapes(&self) -> Vec<ShapeRequest> {
+        self.shape_seen.lock().unwrap().clone()
+    }
+}
+
+#[derive(Clone)]
+struct Reply {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: String,
+}
+
+#[derive(Clone)]
+struct ShapeRequest {
+    uri: String,
+    authorization: Option<String>,
+    pin: Option<String>,
+    resume_header: bool,
+}
+impl ShapeRequest {
+    fn new<B>(request: &Request<B>) -> Self {
+        let header = |name: &str| {
+            request
+                .headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned)
+        };
+        Self {
+            uri: request.uri().to_string(),
+            authorization: header("authorization"),
+            pin: header("x-terrascale-region-pin"),
+            resume_header: request.headers().contains_key("tb-shape-resume"),
+        }
+    }
+}
+
+// The vector file uses its own project id; retarget it to this file's project.
+const VECTOR_PROJECT: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+// Snapshot-last-page cursor_resume from shape-vectors.json.
+// Snapshot-first-page next_offset: the offset an update reports after applying that page.
+const SNAPSHOT_NEXT: &str = "snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQjA";
+const PROVEN_CURSOR: &str = "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm";
+
+// Replays one shape-vectors.json HTTP case for this test project and the given region.
+fn shape_reply(id: &str, region: &str) -> Reply {
+    let vectors: Value = serde_json::from_str(include_str!("fixtures/shape-vectors.json")).unwrap();
+    let case = vectors["http_vectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["id"] == id)
+        .unwrap();
+    let response = &case["response"];
+    let mut headers: Vec<(String, String)> = response["headers"]
+        .as_object()
+        .map(|headers| {
+            headers
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        value.as_str().unwrap().replace(VECTOR_PROJECT, PROJECT),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    headers.push(("x-terrabase-region".to_owned(), region.to_owned()));
+    let body = response
+        .get("body_utf8")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| (!response["body"].is_null()).then(|| response["body"].to_string()))
+        .unwrap_or_default()
+        .replace(VECTOR_PROJECT, PROJECT);
+    Reply {
+        status: response["status"].as_u64().unwrap() as u16,
+        headers,
+        body,
+    }
+}
+
+fn misdirected(region: &str) -> Reply {
+    Reply {
+        status: 421,
+        headers: vec![("x-terrabase-region".to_owned(), region.to_owned())],
+        body: json!({"error":{"code":"misdirected_request"}}).to_string(),
+    }
+}
+
+fn shape_query(uri: &str) -> HashMap<String, String> {
+    url::Url::parse(&format!("http://fixture{uri}"))
+        .unwrap()
+        .query_pairs()
+        .into_owned()
+        .collect()
+}
+
+fn failover_client(atlas: &Fixture) -> terrascale::v1::Client {
+    terrascale::v1::Client::for_project(PROJECT, "fixture-access-token")
+        .atlas_base_url(&atlas.url)
+        .retry_policy(terrascale::v1::RetryPolicy::none())
+        .build()
+        .unwrap()
+}
+
+fn assert_routed(requests: &[ShapeRequest], region: &str) {
+    assert!(!requests.is_empty());
+    for request in requests {
+        assert_eq!(
+            request.authorization.as_deref(),
+            Some("Bearer fixture-access-token")
+        );
+        assert_eq!(request.pin.as_deref(), Some(region));
+    }
+}
+
+fn assert_atlas_unauthenticated(atlas: &Fixture) {
+    let requests = atlas.requests.lock().unwrap();
+    assert!(requests
+        .iter()
+        .filter(|(path, _)| path.starts_with("/v1/resolve") || path == "/v1/keys")
+        .all(|(_, auth)| !auth));
 }
 
 #[tokio::test]
@@ -630,4 +792,190 @@ async fn public_static_endpoint_bypasses_atlas_entirely() {
     assert!(requests
         .iter()
         .all(|(path, auth)| path.starts_with("/v1/projects/") && *auth));
+}
+
+// Shared setup: Atlas points at `old`, which serves a complete snapshot and saves its cursor.
+async fn complete_snapshot_on_old(atlas: &Fixture, old: &Fixture, new: &Fixture) {
+    atlas.publish(
+        json!({"database": "demo", "api": old.url, "region": "old-region-1"}),
+        json!({}),
+    );
+    old.script(vec![
+        shape_reply("bootstrap", "old-region-1"),
+        shape_reply("snapshot-first-page", "old-region-1"),
+        shape_reply("snapshot-last-page", "old-region-1"),
+    ]);
+    new.script(vec![
+        shape_reply("proven-cursor-resume-query", "new-region-9"),
+        shape_reply("resume-header-preserved-on-followup", "new-region-9"),
+    ]);
+}
+
+#[tokio::test]
+async fn region_failover_resumes_complete_snapshot_cursor_at_offset_minus_one() {
+    let (atlas, old, new) = (
+        Fixture::new().await,
+        Fixture::new().await,
+        Fixture::new().await,
+    );
+    complete_snapshot_on_old(&atlas, &old, &new).await;
+    let stream = failover_client(&atlas)
+        .database("demo")
+        .collection("notes")
+        .shape()
+        .stream();
+    futures_util::pin_mut!(stream);
+    stream.next().await.unwrap().unwrap();
+    stream.next().await.unwrap().unwrap();
+    // Atlas now routes to the new region; the next old-region request gets 421.
+    atlas.publish(json!({"database": "demo", "api": new.url}), json!({}));
+    old.script(vec![misdirected("old-region-1")]);
+    let update = stream.next().await.unwrap().unwrap();
+    assert_eq!(update.offset, "4");
+
+    let old_requests = old.shapes();
+    assert_eq!(old_requests.len(), 4);
+    assert_routed(&old_requests, "old-region-1");
+    let new_requests = new.shapes();
+    assert_eq!(new_requests.len(), 2);
+    assert_routed(&new_requests, "new-region-9");
+    // The new endpoint gets only the saved cursor at offset=-1: no old handle or offset.
+    let resume = shape_query(&new_requests[0].uri);
+    assert_eq!(resume.len(), 2);
+    assert_eq!(resume["offset"], "-1");
+    assert_eq!(resume["cursor"], PROVEN_CURSOR);
+    assert!(!new_requests[0].resume_header);
+    let continued = shape_query(&new_requests[1].uri);
+    assert_eq!(continued["handle"], "h1-d90dddd41bd8282d");
+    assert_eq!(continued["offset"], "2");
+    assert_atlas_unauthenticated(&atlas);
+}
+
+#[tokio::test]
+async fn transport_failure_refreshes_route_and_resumes_saved_cursor_once() {
+    let (atlas, old, new) = (
+        Fixture::new().await,
+        Fixture::new().await,
+        Fixture::new().await,
+    );
+    complete_snapshot_on_old(&atlas, &old, &new).await;
+    let stream = failover_client(&atlas)
+        .database("demo")
+        .collection("notes")
+        .shape()
+        .stream();
+    futures_util::pin_mut!(stream);
+    stream.next().await.unwrap().unwrap();
+    stream.next().await.unwrap().unwrap();
+    // The old endpoint drops connections; the fresh Atlas answer names the new one.
+    atlas.publish(json!({"database": "demo", "api": new.url}), json!({}));
+    old.disconnected.store(true, Ordering::Relaxed);
+    let update = stream.next().await.unwrap().unwrap();
+    assert_eq!(update.offset, "4");
+
+    assert_routed(&old.shapes(), "old-region-1");
+    let new_requests = new.shapes();
+    assert_eq!(new_requests.len(), 2);
+    assert_routed(&new_requests, "new-region-9");
+    let resume = shape_query(&new_requests[0].uri);
+    assert_eq!(resume["offset"], "-1");
+    assert_eq!(resume["cursor"], PROVEN_CURSOR);
+    assert!(!resume.contains_key("handle"));
+    assert_atlas_unauthenticated(&atlas);
+}
+
+#[tokio::test]
+async fn interrupted_snapshot_resets_instead_of_resuming_after_region_failover() {
+    let (atlas, old, new) = (
+        Fixture::new().await,
+        Fixture::new().await,
+        Fixture::new().await,
+    );
+    atlas.publish(
+        json!({"database": "demo", "api": old.url, "region": "old-region-1"}),
+        json!({}),
+    );
+    old.script(vec![
+        shape_reply("bootstrap", "old-region-1"),
+        shape_reply("snapshot-first-page", "old-region-1"),
+    ]);
+    new.script(vec![
+        shape_reply("bootstrap", "new-region-9"),
+        shape_reply("snapshot-first-page", "new-region-9"),
+    ]);
+    let stream = failover_client(&atlas)
+        .database("demo")
+        .collection("notes")
+        .shape()
+        .stream();
+    futures_util::pin_mut!(stream);
+    let first = stream.next().await.unwrap().unwrap();
+    assert_eq!(first.offset, SNAPSHOT_NEXT);
+    // Mid-snapshot there is no complete-snapshot cursor, so failover must reset.
+    atlas.publish(json!({"database": "demo", "api": new.url}), json!({}));
+    old.script(vec![misdirected("old-region-1")]);
+    let update = stream.next().await.unwrap().unwrap();
+    assert_eq!(update.offset, SNAPSHOT_NEXT);
+
+    assert_routed(&old.shapes(), "old-region-1");
+    let new_requests = new.shapes();
+    assert_eq!(new_requests.len(), 2);
+    assert_routed(&new_requests, "new-region-9");
+    let bootstrap = shape_query(&new_requests[0].uri);
+    assert_eq!(bootstrap.len(), 1);
+    assert_eq!(bootstrap["offset"], "-1");
+    assert!(!new_requests[0].resume_header);
+    let snapshot = shape_query(&new_requests[1].uri);
+    assert_eq!(snapshot["handle"], "h1-f3171a2230109328");
+    assert_eq!(snapshot["offset"], "snap.2.0");
+    assert_atlas_unauthenticated(&atlas);
+}
+
+#[tokio::test]
+async fn failed_resume_resets_once_without_a_second_cursor_attempt() {
+    let (atlas, old, new) = (
+        Fixture::new().await,
+        Fixture::new().await,
+        Fixture::new().await,
+    );
+    complete_snapshot_on_old(&atlas, &old, &new).await;
+    // Replace the successful resume with a must_refetch, then serve a fresh bootstrap.
+    new.scripted.lock().unwrap().clear();
+    new.script(vec![
+        shape_reply(
+            "resume-followup-second-machine-refetch-does-not-loop",
+            "new-region-9",
+        ),
+        shape_reply("bootstrap", "new-region-9"),
+        shape_reply("snapshot-first-page", "new-region-9"),
+    ]);
+    let stream = failover_client(&atlas)
+        .database("demo")
+        .collection("notes")
+        .shape()
+        .stream();
+    futures_util::pin_mut!(stream);
+    stream.next().await.unwrap().unwrap();
+    stream.next().await.unwrap().unwrap();
+    atlas.publish(json!({"database": "demo", "api": new.url}), json!({}));
+    old.script(vec![misdirected("old-region-1")]);
+    let update = stream.next().await.unwrap().unwrap();
+    assert_eq!(update.offset, SNAPSHOT_NEXT);
+
+    let new_requests = new.shapes();
+    assert_eq!(new_requests.len(), 3);
+    assert_routed(&new_requests, "new-region-9");
+    let cursors = new_requests
+        .iter()
+        .filter(|request| shape_query(&request.uri).contains_key("cursor"))
+        .count();
+    assert_eq!(cursors, 1);
+    let bootstrap = shape_query(&new_requests[1].uri);
+    assert_eq!(bootstrap.len(), 1);
+    assert_eq!(bootstrap["offset"], "-1");
+    assert_eq!(
+        shape_query(&new_requests[2].uri)["handle"],
+        "h1-f3171a2230109328"
+    );
+    assert_atlas_unauthenticated(&atlas);
 }

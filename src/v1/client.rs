@@ -499,6 +499,26 @@ impl Resp {
     pub fn check_status(&self, allowed: &[StatusCode]) -> Result<()> {
         if allowed.contains(&self.status) {
             Ok(())
+        } else if !self.status.is_success() && self.status != StatusCode::NOT_MODIFIED {
+            let retry_after = self
+                .header("Retry-After")
+                .and_then(|value| parse_retry_after(value, std::time::SystemTime::now()));
+            Err(if self.project {
+                errors::from_project_response(
+                    self.status.as_u16(),
+                    self.header("ETag"),
+                    retry_after,
+                    self.header("X-Request-ID"),
+                    &self.body,
+                )
+            } else {
+                errors::from_response(
+                    self.status.as_u16(),
+                    self.header("ETag"),
+                    retry_after,
+                    &self.body,
+                )
+            })
         } else {
             Err(self.invalid(format!("unexpected HTTP status {}", self.status.as_u16())))
         }
@@ -536,6 +556,73 @@ enum Attempt {
 }
 
 impl Client {
+    /// Resolves shape routing without replaying machine-local offsets on a new endpoint.
+    pub(crate) async fn shape_endpoint(
+        &self,
+        database: &str,
+        fresh: bool,
+    ) -> Result<(Url, Option<String>)> {
+        let project = self.inner.project.as_deref().ok_or_else(|| {
+            Error::InvalidInput("shape reads require a C# TerraBase project client".into())
+        })?;
+        if let Some(atlas) = &self.inner.atlas {
+            let endpoint = atlas.resolve(project, Some(database), fresh).await?;
+            Ok((endpoint.api, Some(endpoint.region)))
+        } else {
+            Ok((self.inner.base.clone(), self.inner.region_pin.clone()))
+        }
+    }
+
+    pub(crate) fn shape_url(
+        &self,
+        base: &Url,
+        database: &str,
+        collection: &str,
+        suffix: Option<&str>,
+        query: &[(&str, String)],
+    ) -> Result<Url> {
+        let mut segments = vec![
+            "v1",
+            "databases",
+            database,
+            "collections",
+            collection,
+            "shape",
+        ];
+        if let Some(suffix) = suffix {
+            segments.push(suffix);
+        }
+        self.url(base, &segments, query)
+    }
+
+    /// Shape protocol owns redirects and must-refetch; preserve their headers and bytes.
+    pub(crate) async fn shape_get(
+        &self,
+        url: &Url,
+        region: Option<&str>,
+        headers: &[(&'static str, String)],
+    ) -> Result<Resp> {
+        let mut req = Req::new(Method::GET, Vec::new());
+        req.headers = headers.to_vec();
+        match self.attempt(&req, url, region, None, true).await {
+            Attempt::Done(resp) => Ok(resp),
+            Attempt::Failed(error, _) => Err(error),
+        }
+    }
+
+    pub(crate) async fn shape_retry(&self, attempt: u32, retry_after: Option<&str>) -> bool {
+        let policy = &self.inner.retry;
+        if attempt >= policy.max_retries {
+            return false;
+        }
+        let delay = retry_after
+            .and_then(|value| parse_retry_after(value, std::time::SystemTime::now()))
+            .map(|delay| delay.min(policy.max_retry_after))
+            .unwrap_or_else(|| backoff(policy, attempt));
+        tokio::time::sleep(delay).await;
+        true
+    }
+
     pub(crate) fn is_project(&self) -> bool {
         self.inner.project.is_some()
     }
@@ -624,7 +711,7 @@ impl Client {
                 }
             }
             match self
-                .attempt(&req, &url, region.as_deref(), body.clone())
+                .attempt(&req, &url, region.as_deref(), body.clone(), false)
                 .await
             {
                 Attempt::Done(resp) => return Ok(resp),
@@ -687,6 +774,7 @@ impl Client {
         url: &Url,
         region: Option<&str>,
         body: Option<bytes::Bytes>,
+        raw_status: bool,
     ) -> Attempt {
         let mut rb = self
             .inner
@@ -763,7 +851,7 @@ impl Client {
                 None,
             );
         }
-        if status.is_success() || status == StatusCode::NOT_MODIFIED {
+        if raw_status || status.is_success() || status == StatusCode::NOT_MODIFIED {
             return Attempt::Done(Resp {
                 status,
                 headers,

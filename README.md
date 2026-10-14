@@ -63,3 +63,8 @@ consumer authorization remain necessary. TerraBase credentials and routing selec
 Current project SQL uses the implemented HTTP `sql`, `sql/check` and `sql/explain` routes through `Database::run_sql`, `check_sql` and `explain_sql`. The optional PostgreSQL consumer in `src/postgres.rs` belongs to the older producer; it does not qualify the current C# server. Its Cargo feature remains inventoried for removal. Actual admitted-listener and packaged qualification remain open; source presence does not prove that runtime works. Native unique/schema extensions, actual Atlas/native packaged caller and clock qualification, durable security authority and real packaged producer evidence remain release blockers. Local codec tests are not deployment or serving evidence.
 
 Run `cargo fmt --all --check`, `cargo clippy --locked --all-targets --all-features -- -D warnings`, and `cargo test --locked --all-features`. `scripts/check-native-contract.py` verifies the exact producer contract pin and `scripts/check-atlas-contract.py` separately verifies the frozen receiver contract and fixed-clock raw codec fixtures; `scripts/qualification/run.sh` exercises a separately unpacked `.crate` against a real native producer and fails when required fixture configuration is absent.
+
+Project-scoped collection shapes are documented in [docs/shape-reads.md](docs/shape-reads.md):
+snapshot pages, sealed chunks, live polling, safe cursor resume, and TBS1
+conformance. Object-storage redirects and manifests remain deferred to FR-22.
+Shape qualification uses HTTP fakes and upstream vectors only.

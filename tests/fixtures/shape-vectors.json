@@ -1,0 +1,2556 @@
+{
+  "format": "TB-SHAPE-VECTORS-V1",
+  "protocol_version": 1,
+  "description": "Proposed v1 contract fixtures. All keys, tokens, URLs and data are synthetic; no TerraBase process or production credential is needed.",
+  "conventions": {
+    "hex": "lowercase, no prefix",
+    "binary_strings": "unpadded canonical base64url unless field name ends _hex",
+    "integers": "offsets, epochs, replica ids and stamps are decimal strings; byte counts are JSON integers",
+    "http": "headers shown are required subsets; body is parsed JSON, body_hex is exact wire bytes; Authorization fixture token is intentionally not a real JWT",
+    "negative_crypto": "reject the complete object without applying any plaintext or advancing offset",
+    "generated_crypto": "build plaintext_recipe, encrypt with fixed vector keys/salt, compare size/SHA256 and per-frame tags, decrypt, then test mutations"
+  },
+  "fixture": {
+    "scope": {
+      "organization_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "database_id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+      "incarnation": "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+      "replica_id": "281475785752579",
+      "replica_epoch": "3",
+      "collection": "notes",
+      "collection_generation": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      "canonical_filter": "",
+      "wire_format": "1"
+    },
+    "destination_scope": {
+      "organization_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      "database_id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+      "incarnation": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+      "replica_id": "562954402660355",
+      "replica_epoch": "3",
+      "collection": "notes",
+      "collection_generation": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+      "canonical_filter": "",
+      "wire_format": "1"
+    },
+    "shape_id": "a07ef7c2873b7b4c4fcbb88c9e682ca5",
+    "handle": "h1-f3171a2230109328",
+    "destination": {
+      "shape_id": "a8ddeff90c3256fa71b80acd13b7a91f",
+      "handle": "h1-d90dddd41bd8282d"
+    },
+    "version_scope_guid_n": "7b035c60908a7d4dc270f574ae8de381",
+    "retention_floor": "0",
+    "committed_head": "4",
+    "sealed_head": "4"
+  },
+  "identity_vectors": [
+    {
+      "id": "unfiltered",
+      "input": {
+        "organization_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "database_id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+        "incarnation": "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+        "replica_id": "281475785752579",
+        "replica_epoch": "3",
+        "collection": "notes",
+        "collection_generation": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "canonical_filter": "",
+        "wire_format": "1"
+      },
+      "expected": {
+        "shape_id": "a07ef7c2873b7b4c4fcbb88c9e682ca5",
+        "handle": "h1-f3171a2230109328",
+        "resume_scope_hex": "2ec21d527f0de22614bc50cdb638c945"
+      }
+    },
+    {
+      "id": "other-machine",
+      "input": {
+        "organization_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "database_id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+        "incarnation": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+        "replica_id": "562954402660355",
+        "replica_epoch": "3",
+        "collection": "notes",
+        "collection_generation": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "canonical_filter": "",
+        "wire_format": "1"
+      },
+      "expected": {
+        "shape_id": "a8ddeff90c3256fa71b80acd13b7a91f",
+        "handle": "h1-d90dddd41bd8282d",
+        "resume_scope_hex": "2ec21d527f0de22614bc50cdb638c945"
+      }
+    },
+    {
+      "id": "filtered",
+      "input": {
+        "organization_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        "database_id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+        "incarnation": "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+        "replica_id": "281475785752579",
+        "replica_epoch": "3",
+        "collection": "notes",
+        "collection_generation": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        "canonical_filter": "{\"eq\":[\"/read\",false]}",
+        "wire_format": "1"
+      },
+      "expected": {
+        "shape_id": "9ac2ab50df78fca7b866629354277453",
+        "handle": "h1-fd3c00678fd0bac7",
+        "resume_scope_hex": "28cef43cdd61ef348ea8b49e9da2d3eb"
+      }
+    }
+  ],
+  "filter_vectors": [
+    {
+      "id": "filter-absent-1",
+      "equivalence_group": "absent",
+      "input_where_utf8": null,
+      "expected": {
+        "canonical_filter": "",
+        "shape_id": "a07ef7c2873b7b4c4fcbb88c9e682ca5",
+        "handle": "h1-f3171a2230109328",
+        "resume_scope_hex": "2ec21d527f0de22614bc50cdb638c945"
+      }
+    },
+    {
+      "id": "filter-and-order-1",
+      "equivalence_group": "and-order",
+      "input_where_utf8": "{\"and\":[{\"eq\":[\"/n\",1]},{\"eq\":[\"/s\",\"a\"]}]}",
+      "expected": {
+        "canonical_filter": "{\"and\":[{\"eq\":[\"/n\",1]},{\"eq\":[\"/s\",\"a\"]}]}",
+        "shape_id": "beaa9454d516243c51627aaf9e6c1b95",
+        "handle": "h1-69e9daaee81a2de3",
+        "resume_scope_hex": "2fd89e5476cc1b802f0e7352065af754"
+      }
+    },
+    {
+      "id": "filter-and-order-2",
+      "equivalence_group": "and-order",
+      "input_where_utf8": "{ \"and\": [{\"eq\":[\"/s\",\"a\"]},{\"and\":[{\"eq\":[\"/n\",1.0]},{\"eq\":[\"/s\",\"a\"]}]}] }",
+      "expected": {
+        "canonical_filter": "{\"and\":[{\"eq\":[\"/n\",1]},{\"eq\":[\"/s\",\"a\"]}]}",
+        "shape_id": "beaa9454d516243c51627aaf9e6c1b95",
+        "handle": "h1-69e9daaee81a2de3",
+        "resume_scope_hex": "2fd89e5476cc1b802f0e7352065af754"
+      }
+    },
+    {
+      "id": "filter-or-order-1",
+      "equivalence_group": "or-order",
+      "input_where_utf8": "{\"or\":[{\"eq\":[\"/s\",\"a\"]},{\"eq\":[\"/n\",1]},{\"eq\":[\"/n\",1.0]}]}",
+      "expected": {
+        "canonical_filter": "{\"or\":[{\"eq\":[\"/n\",1]},{\"eq\":[\"/s\",\"a\"]}]}",
+        "shape_id": "2c0d0fcfe0ff35df026f3c00941759b7",
+        "handle": "h1-062957e9df4c25bc",
+        "resume_scope_hex": "18338af621145eb60ac1f9bef66eccb6"
+      }
+    },
+    {
+      "id": "filter-or-order-2",
+      "equivalence_group": "or-order",
+      "input_where_utf8": "{\"or\":[{\"or\":[{\"eq\":[\"/n\",1]}]},{\"eq\":[\"/s\",\"a\"]}]}",
+      "expected": {
+        "canonical_filter": "{\"or\":[{\"eq\":[\"/n\",1]},{\"eq\":[\"/s\",\"a\"]}]}",
+        "shape_id": "2c0d0fcfe0ff35df026f3c00941759b7",
+        "handle": "h1-062957e9df4c25bc",
+        "resume_scope_hex": "18338af621145eb60ac1f9bef66eccb6"
+      }
+    },
+    {
+      "id": "filter-in-order-1",
+      "equivalence_group": "in-order",
+      "input_where_utf8": "{\"in\":[\"/n\",[3,1,2,1]]}",
+      "expected": {
+        "canonical_filter": "{\"in\":[\"/n\",[1,2,3]]}",
+        "shape_id": "409891f38b5e439c93c9d8c9e22b0c47",
+        "handle": "h1-cacb3a43f3c33a4a",
+        "resume_scope_hex": "624c25dc98c33b90b94870ba373c1c1c"
+      }
+    },
+    {
+      "id": "filter-in-order-2",
+      "equivalence_group": "in-order",
+      "input_where_utf8": "{\"or\":[{\"in\":[\"/n\",[2.0,3,1]]}]}",
+      "expected": {
+        "canonical_filter": "{\"in\":[\"/n\",[1,2,3]]}",
+        "shape_id": "409891f38b5e439c93c9d8c9e22b0c47",
+        "handle": "h1-cacb3a43f3c33a4a",
+        "resume_scope_hex": "624c25dc98c33b90b94870ba373c1c1c"
+      }
+    },
+    {
+      "id": "filter-zero-negation-1",
+      "equivalence_group": "zero-negation",
+      "input_where_utf8": "{\"ne\":[\"/n\",0]}",
+      "expected": {
+        "canonical_filter": "{\"ne\":[\"/n\",0]}",
+        "shape_id": "604e89375e70cdeeed74a8b9746ff49b",
+        "handle": "h1-27c992f954da579e",
+        "resume_scope_hex": "a04ebbf7c7accda4fda36c4c4217a3ba"
+      }
+    },
+    {
+      "id": "filter-zero-negation-2",
+      "equivalence_group": "zero-negation",
+      "input_where_utf8": "{\"not\":{\"eq\":[\"/n\",-0]}}",
+      "expected": {
+        "canonical_filter": "{\"ne\":[\"/n\",0]}",
+        "shape_id": "604e89375e70cdeeed74a8b9746ff49b",
+        "handle": "h1-27c992f954da579e",
+        "resume_scope_hex": "a04ebbf7c7accda4fda36c4c4217a3ba"
+      }
+    },
+    {
+      "id": "filter-zero-negation-3",
+      "equivalence_group": "zero-negation",
+      "input_where_utf8": "{\"not\":{\"in\":[\"/n\",[0.0,0]]}}",
+      "expected": {
+        "canonical_filter": "{\"ne\":[\"/n\",0]}",
+        "shape_id": "604e89375e70cdeeed74a8b9746ff49b",
+        "handle": "h1-27c992f954da579e",
+        "resume_scope_hex": "a04ebbf7c7accda4fda36c4c4217a3ba"
+      }
+    },
+    {
+      "id": "filter-zero-negation-4",
+      "equivalence_group": "zero-negation",
+      "input_where_utf8": "{\"nin\":[\"/n\",[0]]}",
+      "expected": {
+        "canonical_filter": "{\"ne\":[\"/n\",0]}",
+        "shape_id": "604e89375e70cdeeed74a8b9746ff49b",
+        "handle": "h1-27c992f954da579e",
+        "resume_scope_hex": "a04ebbf7c7accda4fda36c4c4217a3ba"
+      }
+    },
+    {
+      "id": "filter-nin-order-1",
+      "equivalence_group": "nin-order",
+      "input_where_utf8": "{\"nin\":[\"/s\",[\"z\",\"a\"]]}",
+      "expected": {
+        "canonical_filter": "{\"nin\":[\"/s\",[\"a\",\"z\"]]}",
+        "shape_id": "7e381835de0e2204f57f83e381d8e54c",
+        "handle": "h1-1980968ecc0fd5be",
+        "resume_scope_hex": "8639562d6011809048f2407425380409"
+      }
+    },
+    {
+      "id": "filter-nin-order-2",
+      "equivalence_group": "nin-order",
+      "input_where_utf8": "{\"not\":{\"in\":[\"/s\",[\"a\",\"z\",\"a\"]]}}",
+      "expected": {
+        "canonical_filter": "{\"nin\":[\"/s\",[\"a\",\"z\"]]}",
+        "shape_id": "7e381835de0e2204f57f83e381d8e54c",
+        "handle": "h1-1980968ecc0fd5be",
+        "resume_scope_hex": "8639562d6011809048f2407425380409"
+      }
+    },
+    {
+      "id": "filter-exists-1",
+      "equivalence_group": "exists",
+      "input_where_utf8": "{\"exists\":\"/b\"}",
+      "expected": {
+        "canonical_filter": "{\"exists\":\"/b\"}",
+        "shape_id": "ba6496caf72297fe3148760e8a2b695f",
+        "handle": "h1-e13b2b29dd933d38",
+        "resume_scope_hex": "ed7b9ed7b1438e382621c8a74f8c3547"
+      }
+    },
+    {
+      "id": "filter-exists-2",
+      "equivalence_group": "exists",
+      "input_where_utf8": "{\"not\":{\"not\":{\"exists\":\"/b\"}}}",
+      "expected": {
+        "canonical_filter": "{\"exists\":\"/b\"}",
+        "shape_id": "ba6496caf72297fe3148760e8a2b695f",
+        "handle": "h1-e13b2b29dd933d38",
+        "resume_scope_hex": "ed7b9ed7b1438e382621c8a74f8c3547"
+      }
+    },
+    {
+      "id": "filter-exists-3",
+      "equivalence_group": "exists",
+      "input_where_utf8": "{\"or\":[{\"exists\":\"/b\"},{\"exists\":\"/b\"}]}",
+      "expected": {
+        "canonical_filter": "{\"exists\":\"/b\"}",
+        "shape_id": "ba6496caf72297fe3148760e8a2b695f",
+        "handle": "h1-e13b2b29dd933d38",
+        "resume_scope_hex": "ed7b9ed7b1438e382621c8a74f8c3547"
+      }
+    },
+    {
+      "id": "filter-integer-one-1",
+      "equivalence_group": "integer-one",
+      "input_where_utf8": "{\"eq\":[\"/n\",1]}",
+      "expected": {
+        "canonical_filter": "{\"eq\":[\"/n\",1]}",
+        "shape_id": "701c375ecd6808fd89a267858fa649f7",
+        "handle": "h1-5048e169a219cd18",
+        "resume_scope_hex": "12fe317359f8022312da776c26ca3d2f"
+      }
+    },
+    {
+      "id": "filter-integer-one-2",
+      "equivalence_group": "integer-one",
+      "input_where_utf8": "{\"in\":[\"/n\",[1.0,1e0,1]]}",
+      "expected": {
+        "canonical_filter": "{\"eq\":[\"/n\",1]}",
+        "shape_id": "701c375ecd6808fd89a267858fa649f7",
+        "handle": "h1-5048e169a219cd18",
+        "resume_scope_hex": "12fe317359f8022312da776c26ca3d2f"
+      }
+    },
+    {
+      "id": "filter-string-one-1",
+      "equivalence_group": "string-one",
+      "input_where_utf8": "{\"eq\":[\"/n\",\"1\"]}",
+      "expected": {
+        "canonical_filter": "{\"eq\":[\"/n\",\"1\"]}",
+        "shape_id": "65baa0bf60976180a67261d8c9879199",
+        "handle": "h1-46afa15aa1844e51",
+        "resume_scope_hex": "aaa4e1ff1d796f220d252e3718297943"
+      }
+    },
+    {
+      "id": "filter-boolean-1",
+      "equivalence_group": "boolean",
+      "input_where_utf8": "{\"eq\":[\"/n\",true]}",
+      "expected": {
+        "canonical_filter": "{\"eq\":[\"/n\",true]}",
+        "shape_id": "28113a65d1b82deac6875947c9fea07a",
+        "handle": "h1-edf6caf18462c306",
+        "resume_scope_hex": "18fa03dd03bb5a202a72349ea65c2f1f"
+      }
+    },
+    {
+      "id": "filter-null-1",
+      "equivalence_group": "null",
+      "input_where_utf8": "{\"eq\":[\"/n\",null]}",
+      "expected": {
+        "canonical_filter": "{\"eq\":[\"/n\",null]}",
+        "shape_id": "3a21555369ce26ad81d91b86a1a3bfcd",
+        "handle": "h1-bdb1841a18eb51e0",
+        "resume_scope_hex": "17a81506cbb3dba1062492e8da207cc7"
+      }
+    },
+    {
+      "id": "filter-fraction-1",
+      "equivalence_group": "fraction",
+      "input_where_utf8": "{\"eq\":[\"/n\",1.5]}",
+      "expected": {
+        "canonical_filter": "{\"eq\":[\"/n\",1.5]}",
+        "shape_id": "e1a843b436e6646ea7545dbd386daa71",
+        "handle": "h1-1f447a8f9cd271c1",
+        "resume_scope_hex": "6dd7713693b2c90d8d1028aac3948e77"
+      }
+    },
+    {
+      "id": "filter-large-int-a-1",
+      "equivalence_group": "large-int-a",
+      "input_where_utf8": "{\"eq\":[\"/n\",9007199254740993]}",
+      "expected": {
+        "canonical_filter": "{\"eq\":[\"/n\",9007199254740993]}",
+        "shape_id": "029e8ca4bd5fe086f11b898c4e637b17",
+        "handle": "h1-c691a93620be5179",
+        "resume_scope_hex": "2e05a7814eb69a2b0a24947684c1e26b"
+      }
+    },
+    {
+      "id": "filter-large-int-b-1",
+      "equivalence_group": "large-int-b",
+      "input_where_utf8": "{\"eq\":[\"/n\",9007199254740992]}",
+      "expected": {
+        "canonical_filter": "{\"eq\":[\"/n\",9007199254740992]}",
+        "shape_id": "a954fc6043debf059607598c5674db35",
+        "handle": "h1-59e0d47ede6b6df7",
+        "resume_scope_hex": "9a9994d04bcfa748badff4a2df29204b"
+      }
+    },
+    {
+      "id": "filter-int64-min-1",
+      "equivalence_group": "int64-min",
+      "input_where_utf8": "{\"eq\":[\"/n\",-9223372036854775808]}",
+      "expected": {
+        "canonical_filter": "{\"eq\":[\"/n\",-9223372036854775808]}",
+        "shape_id": "f28ab07ed8dab72ca91f5755414f8e95",
+        "handle": "h1-3c47a48085928365",
+        "resume_scope_hex": "d80fb7d5cbc349e4b06f69176094bddf"
+      }
+    },
+    {
+      "id": "filter-int64-max-1",
+      "equivalence_group": "int64-max",
+      "input_where_utf8": "{\"eq\":[\"/n\",9223372036854775807]}",
+      "expected": {
+        "canonical_filter": "{\"eq\":[\"/n\",9223372036854775807]}",
+        "shape_id": "4cc3d888b4d390bb540cce696255179f",
+        "handle": "h1-c0752998b50e3132",
+        "resume_scope_hex": "636204291a111d6b4243fa3fd2f43c53"
+      }
+    },
+    {
+      "id": "filter-relaxed-1",
+      "equivalence_group": "relaxed",
+      "input_where_utf8": "{\"eq\":[\"/s\",\"<b>\"]}",
+      "expected": {
+        "canonical_filter": "{\"eq\":[\"/s\",\"<b>\"]}",
+        "shape_id": "adabff38fef21857cb7916c3db522252",
+        "handle": "h1-29a03add18723094",
+        "resume_scope_hex": "73e662fb9f8898abdd5f7c112efe7a2d"
+      }
+    },
+    {
+      "id": "filter-relaxed-2",
+      "equivalence_group": "relaxed",
+      "input_where_utf8": "{\"eq\":[\"/s\",\"\\u003Cb\\u003E\"]}",
+      "expected": {
+        "canonical_filter": "{\"eq\":[\"/s\",\"<b>\"]}",
+        "shape_id": "adabff38fef21857cb7916c3db522252",
+        "handle": "h1-29a03add18723094",
+        "resume_scope_hex": "73e662fb9f8898abdd5f7c112efe7a2d"
+      }
+    },
+    {
+      "id": "filter-pointer-1",
+      "equivalence_group": "pointer",
+      "input_where_utf8": "{\"exists\":\"/a~1b/~0c\"}",
+      "expected": {
+        "canonical_filter": "{\"exists\":\"/a~1b/~0c\"}",
+        "shape_id": "b2825a98cdbd646857384af3fd1fcaec",
+        "handle": "h1-215126062f86f1de",
+        "resume_scope_hex": "206976b57b9989d541d87cd235d20b7c"
+      }
+    },
+    {
+      "id": "filter-pointer-2",
+      "equivalence_group": "pointer",
+      "input_where_utf8": "{\"exists\":\"\\u002Fa~1b/~0c\"}",
+      "expected": {
+        "canonical_filter": "{\"exists\":\"/a~1b/~0c\"}",
+        "shape_id": "b2825a98cdbd646857384af3fd1fcaec",
+        "handle": "h1-215126062f86f1de",
+        "resume_scope_hex": "206976b57b9989d541d87cd235d20b7c"
+      }
+    },
+    {
+      "id": "filter-mixed-in-1",
+      "equivalence_group": "mixed-in",
+      "input_where_utf8": "{\"in\":[\"/n\",[null,true,\"1\",1.0,false,1,\"é\",\"a\"]]}",
+      "expected": {
+        "canonical_filter": "{\"in\":[\"/n\",[\"1\",\"a\",\"é\",1,false,null,true]]}",
+        "shape_id": "c6f06131b174c3d7d068f1a5d2a1af2f",
+        "handle": "h1-fbd497bd4fd3f766",
+        "resume_scope_hex": "8501def5087cf672c6461d00eaebd9ff"
+      }
+    },
+    {
+      "id": "filter-fanout-120-1",
+      "equivalence_group": "fanout-120",
+      "input_where_utf8": "{\"and\":[{\"and\":[{\"ne\":[\"/n000\",0]},{\"ne\":[\"/n001\",1]},{\"ne\":[\"/n002\",2]},{\"ne\":[\"/n003\",3]},{\"ne\":[\"/n004\",4]},{\"ne\":[\"/n005\",5]},{\"ne\":[\"/n006\",6]},{\"ne\":[\"/n007\",7]},{\"ne\":[\"/n008\",8]},{\"ne\":[\"/n009\",9]},{\"ne\":[\"/n010\",10]},{\"ne\":[\"/n011\",11]},{\"ne\":[\"/n012\",12]},{\"ne\":[\"/n013\",13]},{\"ne\":[\"/n014\",14]},{\"ne\":[\"/n015\",15]},{\"ne\":[\"/n016\",16]},{\"ne\":[\"/n017\",17]},{\"ne\":[\"/n018\",18]},{\"ne\":[\"/n019\",19]},{\"ne\":[\"/n020\",20]},{\"ne\":[\"/n021\",21]},{\"ne\":[\"/n022\",22]},{\"ne\":[\"/n023\",23]},{\"ne\":[\"/n024\",24]},{\"ne\":[\"/n025\",25]},{\"ne\":[\"/n026\",26]},{\"ne\":[\"/n027\",27]},{\"ne\":[\"/n028\",28]},{\"ne\":[\"/n029\",29]},{\"ne\":[\"/n030\",30]},{\"ne\":[\"/n031\",31]},{\"ne\":[\"/n032\",32]},{\"ne\":[\"/n033\",33]},{\"ne\":[\"/n034\",34]},{\"ne\":[\"/n035\",35]},{\"ne\":[\"/n036\",36]},{\"ne\":[\"/n037\",37]},{\"ne\":[\"/n038\",38]},{\"ne\":[\"/n039\",39]},{\"ne\":[\"/n040\",40]},{\"ne\":[\"/n041\",41]},{\"ne\":[\"/n042\",42]},{\"ne\":[\"/n043\",43]},{\"ne\":[\"/n044\",44]},{\"ne\":[\"/n045\",45]},{\"ne\":[\"/n046\",46]},{\"ne\":[\"/n047\",47]},{\"ne\":[\"/n048\",48]},{\"ne\":[\"/n049\",49]},{\"ne\":[\"/n050\",50]},{\"ne\":[\"/n051\",51]},{\"ne\":[\"/n052\",52]},{\"ne\":[\"/n053\",53]},{\"ne\":[\"/n054\",54]},{\"ne\":[\"/n055\",55]},{\"ne\":[\"/n056\",56]},{\"ne\":[\"/n057\",57]},{\"ne\":[\"/n058\",58]},{\"ne\":[\"/n059\",59]}]},{\"and\":[{\"ne\":[\"/n060\",60]},{\"ne\":[\"/n061\",61]},{\"ne\":[\"/n062\",62]},{\"ne\":[\"/n063\",63]},{\"ne\":[\"/n064\",64]},{\"ne\":[\"/n065\",65]},{\"ne\":[\"/n066\",66]},{\"ne\":[\"/n067\",67]},{\"ne\":[\"/n068\",68]},{\"ne\":[\"/n069\",69]},{\"ne\":[\"/n070\",70]},{\"ne\":[\"/n071\",71]},{\"ne\":[\"/n072\",72]},{\"ne\":[\"/n073\",73]},{\"ne\":[\"/n074\",74]},{\"ne\":[\"/n075\",75]},{\"ne\":[\"/n076\",76]},{\"ne\":[\"/n077\",77]},{\"ne\":[\"/n078\",78]},{\"ne\":[\"/n079\",79]},{\"ne\":[\"/n080\",80]},{\"ne\":[\"/n081\",81]},{\"ne\":[\"/n082\",82]},{\"ne\":[\"/n083\",83]},{\"ne\":[\"/n084\",84]},{\"ne\":[\"/n085\",85]},{\"ne\":[\"/n086\",86]},{\"ne\":[\"/n087\",87]},{\"ne\":[\"/n088\",88]},{\"ne\":[\"/n089\",89]},{\"ne\":[\"/n090\",90]},{\"ne\":[\"/n091\",91]},{\"ne\":[\"/n092\",92]},{\"ne\":[\"/n093\",93]},{\"ne\":[\"/n094\",94]},{\"ne\":[\"/n095\",95]},{\"ne\":[\"/n096\",96]},{\"ne\":[\"/n097\",97]},{\"ne\":[\"/n098\",98]},{\"ne\":[\"/n099\",99]},{\"ne\":[\"/n100\",100]},{\"ne\":[\"/n101\",101]},{\"ne\":[\"/n102\",102]},{\"ne\":[\"/n103\",103]},{\"ne\":[\"/n104\",104]},{\"ne\":[\"/n105\",105]},{\"ne\":[\"/n106\",106]},{\"ne\":[\"/n107\",107]},{\"ne\":[\"/n108\",108]},{\"ne\":[\"/n109\",109]},{\"ne\":[\"/n110\",110]},{\"ne\":[\"/n111\",111]},{\"ne\":[\"/n112\",112]},{\"ne\":[\"/n113\",113]},{\"ne\":[\"/n114\",114]},{\"ne\":[\"/n115\",115]},{\"ne\":[\"/n116\",116]},{\"ne\":[\"/n117\",117]},{\"ne\":[\"/n118\",118]},{\"ne\":[\"/n119\",119]}]}]}",
+      "expected": {
+        "canonical_filter": "{\"and\":[{\"and\":[{\"ne\":[\"/n063\",63]},{\"ne\":[\"/n064\",64]},{\"ne\":[\"/n065\",65]},{\"ne\":[\"/n066\",66]},{\"ne\":[\"/n067\",67]},{\"ne\":[\"/n068\",68]},{\"ne\":[\"/n069\",69]},{\"ne\":[\"/n070\",70]},{\"ne\":[\"/n071\",71]},{\"ne\":[\"/n072\",72]},{\"ne\":[\"/n073\",73]},{\"ne\":[\"/n074\",74]},{\"ne\":[\"/n075\",75]},{\"ne\":[\"/n076\",76]},{\"ne\":[\"/n077\",77]},{\"ne\":[\"/n078\",78]},{\"ne\":[\"/n079\",79]},{\"ne\":[\"/n080\",80]},{\"ne\":[\"/n081\",81]},{\"ne\":[\"/n082\",82]},{\"ne\":[\"/n083\",83]},{\"ne\":[\"/n084\",84]},{\"ne\":[\"/n085\",85]},{\"ne\":[\"/n086\",86]},{\"ne\":[\"/n087\",87]},{\"ne\":[\"/n088\",88]},{\"ne\":[\"/n089\",89]},{\"ne\":[\"/n090\",90]},{\"ne\":[\"/n091\",91]},{\"ne\":[\"/n092\",92]},{\"ne\":[\"/n093\",93]},{\"ne\":[\"/n094\",94]},{\"ne\":[\"/n095\",95]},{\"ne\":[\"/n096\",96]},{\"ne\":[\"/n097\",97]},{\"ne\":[\"/n098\",98]},{\"ne\":[\"/n099\",99]},{\"ne\":[\"/n100\",100]},{\"ne\":[\"/n101\",101]},{\"ne\":[\"/n102\",102]},{\"ne\":[\"/n103\",103]},{\"ne\":[\"/n104\",104]},{\"ne\":[\"/n105\",105]},{\"ne\":[\"/n106\",106]},{\"ne\":[\"/n107\",107]},{\"ne\":[\"/n108\",108]},{\"ne\":[\"/n109\",109]},{\"ne\":[\"/n110\",110]},{\"ne\":[\"/n111\",111]},{\"ne\":[\"/n112\",112]},{\"ne\":[\"/n113\",113]},{\"ne\":[\"/n114\",114]},{\"ne\":[\"/n115\",115]},{\"ne\":[\"/n116\",116]},{\"ne\":[\"/n117\",117]},{\"ne\":[\"/n118\",118]},{\"ne\":[\"/n119\",119]}]},{\"ne\":[\"/n000\",0]},{\"ne\":[\"/n001\",1]},{\"ne\":[\"/n002\",2]},{\"ne\":[\"/n003\",3]},{\"ne\":[\"/n004\",4]},{\"ne\":[\"/n005\",5]},{\"ne\":[\"/n006\",6]},{\"ne\":[\"/n007\",7]},{\"ne\":[\"/n008\",8]},{\"ne\":[\"/n009\",9]},{\"ne\":[\"/n010\",10]},{\"ne\":[\"/n011\",11]},{\"ne\":[\"/n012\",12]},{\"ne\":[\"/n013\",13]},{\"ne\":[\"/n014\",14]},{\"ne\":[\"/n015\",15]},{\"ne\":[\"/n016\",16]},{\"ne\":[\"/n017\",17]},{\"ne\":[\"/n018\",18]},{\"ne\":[\"/n019\",19]},{\"ne\":[\"/n020\",20]},{\"ne\":[\"/n021\",21]},{\"ne\":[\"/n022\",22]},{\"ne\":[\"/n023\",23]},{\"ne\":[\"/n024\",24]},{\"ne\":[\"/n025\",25]},{\"ne\":[\"/n026\",26]},{\"ne\":[\"/n027\",27]},{\"ne\":[\"/n028\",28]},{\"ne\":[\"/n029\",29]},{\"ne\":[\"/n030\",30]},{\"ne\":[\"/n031\",31]},{\"ne\":[\"/n032\",32]},{\"ne\":[\"/n033\",33]},{\"ne\":[\"/n034\",34]},{\"ne\":[\"/n035\",35]},{\"ne\":[\"/n036\",36]},{\"ne\":[\"/n037\",37]},{\"ne\":[\"/n038\",38]},{\"ne\":[\"/n039\",39]},{\"ne\":[\"/n040\",40]},{\"ne\":[\"/n041\",41]},{\"ne\":[\"/n042\",42]},{\"ne\":[\"/n043\",43]},{\"ne\":[\"/n044\",44]},{\"ne\":[\"/n045\",45]},{\"ne\":[\"/n046\",46]},{\"ne\":[\"/n047\",47]},{\"ne\":[\"/n048\",48]},{\"ne\":[\"/n049\",49]},{\"ne\":[\"/n050\",50]},{\"ne\":[\"/n051\",51]},{\"ne\":[\"/n052\",52]},{\"ne\":[\"/n053\",53]},{\"ne\":[\"/n054\",54]},{\"ne\":[\"/n055\",55]},{\"ne\":[\"/n056\",56]},{\"ne\":[\"/n057\",57]},{\"ne\":[\"/n058\",58]},{\"ne\":[\"/n059\",59]},{\"ne\":[\"/n060\",60]},{\"ne\":[\"/n061\",61]},{\"ne\":[\"/n062\",62]}]}",
+        "shape_id": "1d878a008a77438f4577d4fb07c4c9e7",
+        "handle": "h1-d2bdbc451651d069",
+        "resume_scope_hex": "f76a2817aebcc0e8401d744dc8ae72a8"
+      }
+    },
+    {
+      "id": "filter-fanout-120-2",
+      "equivalence_group": "fanout-120",
+      "input_where_utf8": "{\"and\":[{\"and\":[{\"ne\":[\"/n119\",119]},{\"ne\":[\"/n118\",118]},{\"ne\":[\"/n117\",117]},{\"ne\":[\"/n116\",116]},{\"ne\":[\"/n115\",115]},{\"ne\":[\"/n114\",114]},{\"ne\":[\"/n113\",113]},{\"ne\":[\"/n112\",112]},{\"ne\":[\"/n111\",111]},{\"ne\":[\"/n110\",110]},{\"ne\":[\"/n109\",109]},{\"ne\":[\"/n108\",108]},{\"ne\":[\"/n107\",107]},{\"ne\":[\"/n106\",106]},{\"ne\":[\"/n105\",105]},{\"ne\":[\"/n104\",104]},{\"ne\":[\"/n103\",103]},{\"ne\":[\"/n102\",102]},{\"ne\":[\"/n101\",101]},{\"ne\":[\"/n100\",100]},{\"ne\":[\"/n099\",99]},{\"ne\":[\"/n098\",98]},{\"ne\":[\"/n097\",97]},{\"ne\":[\"/n096\",96]},{\"ne\":[\"/n095\",95]},{\"ne\":[\"/n094\",94]},{\"ne\":[\"/n093\",93]},{\"ne\":[\"/n092\",92]},{\"ne\":[\"/n091\",91]},{\"ne\":[\"/n090\",90]},{\"ne\":[\"/n089\",89]},{\"ne\":[\"/n088\",88]},{\"ne\":[\"/n087\",87]},{\"ne\":[\"/n086\",86]},{\"ne\":[\"/n085\",85]},{\"ne\":[\"/n084\",84]},{\"ne\":[\"/n083\",83]},{\"ne\":[\"/n082\",82]},{\"ne\":[\"/n081\",81]},{\"ne\":[\"/n080\",80]},{\"ne\":[\"/n079\",79]},{\"ne\":[\"/n078\",78]},{\"ne\":[\"/n077\",77]},{\"ne\":[\"/n076\",76]},{\"ne\":[\"/n075\",75]},{\"ne\":[\"/n074\",74]},{\"ne\":[\"/n073\",73]},{\"ne\":[\"/n072\",72]},{\"ne\":[\"/n071\",71]},{\"ne\":[\"/n070\",70]},{\"ne\":[\"/n069\",69]},{\"ne\":[\"/n068\",68]},{\"ne\":[\"/n067\",67]},{\"ne\":[\"/n066\",66]},{\"ne\":[\"/n065\",65]},{\"ne\":[\"/n064\",64]},{\"ne\":[\"/n063\",63]},{\"ne\":[\"/n062\",62]},{\"ne\":[\"/n061\",61]},{\"ne\":[\"/n060\",60]}]},{\"and\":[{\"ne\":[\"/n059\",59]},{\"ne\":[\"/n058\",58]},{\"ne\":[\"/n057\",57]},{\"ne\":[\"/n056\",56]},{\"ne\":[\"/n055\",55]},{\"ne\":[\"/n054\",54]},{\"ne\":[\"/n053\",53]},{\"ne\":[\"/n052\",52]},{\"ne\":[\"/n051\",51]},{\"ne\":[\"/n050\",50]},{\"ne\":[\"/n049\",49]},{\"ne\":[\"/n048\",48]},{\"ne\":[\"/n047\",47]},{\"ne\":[\"/n046\",46]},{\"ne\":[\"/n045\",45]},{\"ne\":[\"/n044\",44]},{\"ne\":[\"/n043\",43]},{\"ne\":[\"/n042\",42]},{\"ne\":[\"/n041\",41]},{\"ne\":[\"/n040\",40]},{\"ne\":[\"/n039\",39]},{\"ne\":[\"/n038\",38]},{\"ne\":[\"/n037\",37]},{\"ne\":[\"/n036\",36]},{\"ne\":[\"/n035\",35]},{\"ne\":[\"/n034\",34]},{\"ne\":[\"/n033\",33]},{\"ne\":[\"/n032\",32]},{\"ne\":[\"/n031\",31]},{\"ne\":[\"/n030\",30]},{\"ne\":[\"/n029\",29]},{\"ne\":[\"/n028\",28]},{\"ne\":[\"/n027\",27]},{\"ne\":[\"/n026\",26]},{\"ne\":[\"/n025\",25]},{\"ne\":[\"/n024\",24]},{\"ne\":[\"/n023\",23]},{\"ne\":[\"/n022\",22]},{\"ne\":[\"/n021\",21]},{\"ne\":[\"/n020\",20]},{\"ne\":[\"/n019\",19]},{\"ne\":[\"/n018\",18]},{\"ne\":[\"/n017\",17]},{\"ne\":[\"/n016\",16]},{\"ne\":[\"/n015\",15]},{\"ne\":[\"/n014\",14]},{\"ne\":[\"/n013\",13]},{\"ne\":[\"/n012\",12]},{\"ne\":[\"/n011\",11]},{\"ne\":[\"/n010\",10]},{\"ne\":[\"/n009\",9]},{\"ne\":[\"/n008\",8]},{\"ne\":[\"/n007\",7]},{\"ne\":[\"/n006\",6]},{\"ne\":[\"/n005\",5]},{\"ne\":[\"/n004\",4]},{\"ne\":[\"/n003\",3]},{\"ne\":[\"/n002\",2]},{\"ne\":[\"/n001\",1]},{\"ne\":[\"/n000\",0]}]}]}",
+      "expected": {
+        "canonical_filter": "{\"and\":[{\"and\":[{\"ne\":[\"/n063\",63]},{\"ne\":[\"/n064\",64]},{\"ne\":[\"/n065\",65]},{\"ne\":[\"/n066\",66]},{\"ne\":[\"/n067\",67]},{\"ne\":[\"/n068\",68]},{\"ne\":[\"/n069\",69]},{\"ne\":[\"/n070\",70]},{\"ne\":[\"/n071\",71]},{\"ne\":[\"/n072\",72]},{\"ne\":[\"/n073\",73]},{\"ne\":[\"/n074\",74]},{\"ne\":[\"/n075\",75]},{\"ne\":[\"/n076\",76]},{\"ne\":[\"/n077\",77]},{\"ne\":[\"/n078\",78]},{\"ne\":[\"/n079\",79]},{\"ne\":[\"/n080\",80]},{\"ne\":[\"/n081\",81]},{\"ne\":[\"/n082\",82]},{\"ne\":[\"/n083\",83]},{\"ne\":[\"/n084\",84]},{\"ne\":[\"/n085\",85]},{\"ne\":[\"/n086\",86]},{\"ne\":[\"/n087\",87]},{\"ne\":[\"/n088\",88]},{\"ne\":[\"/n089\",89]},{\"ne\":[\"/n090\",90]},{\"ne\":[\"/n091\",91]},{\"ne\":[\"/n092\",92]},{\"ne\":[\"/n093\",93]},{\"ne\":[\"/n094\",94]},{\"ne\":[\"/n095\",95]},{\"ne\":[\"/n096\",96]},{\"ne\":[\"/n097\",97]},{\"ne\":[\"/n098\",98]},{\"ne\":[\"/n099\",99]},{\"ne\":[\"/n100\",100]},{\"ne\":[\"/n101\",101]},{\"ne\":[\"/n102\",102]},{\"ne\":[\"/n103\",103]},{\"ne\":[\"/n104\",104]},{\"ne\":[\"/n105\",105]},{\"ne\":[\"/n106\",106]},{\"ne\":[\"/n107\",107]},{\"ne\":[\"/n108\",108]},{\"ne\":[\"/n109\",109]},{\"ne\":[\"/n110\",110]},{\"ne\":[\"/n111\",111]},{\"ne\":[\"/n112\",112]},{\"ne\":[\"/n113\",113]},{\"ne\":[\"/n114\",114]},{\"ne\":[\"/n115\",115]},{\"ne\":[\"/n116\",116]},{\"ne\":[\"/n117\",117]},{\"ne\":[\"/n118\",118]},{\"ne\":[\"/n119\",119]}]},{\"ne\":[\"/n000\",0]},{\"ne\":[\"/n001\",1]},{\"ne\":[\"/n002\",2]},{\"ne\":[\"/n003\",3]},{\"ne\":[\"/n004\",4]},{\"ne\":[\"/n005\",5]},{\"ne\":[\"/n006\",6]},{\"ne\":[\"/n007\",7]},{\"ne\":[\"/n008\",8]},{\"ne\":[\"/n009\",9]},{\"ne\":[\"/n010\",10]},{\"ne\":[\"/n011\",11]},{\"ne\":[\"/n012\",12]},{\"ne\":[\"/n013\",13]},{\"ne\":[\"/n014\",14]},{\"ne\":[\"/n015\",15]},{\"ne\":[\"/n016\",16]},{\"ne\":[\"/n017\",17]},{\"ne\":[\"/n018\",18]},{\"ne\":[\"/n019\",19]},{\"ne\":[\"/n020\",20]},{\"ne\":[\"/n021\",21]},{\"ne\":[\"/n022\",22]},{\"ne\":[\"/n023\",23]},{\"ne\":[\"/n024\",24]},{\"ne\":[\"/n025\",25]},{\"ne\":[\"/n026\",26]},{\"ne\":[\"/n027\",27]},{\"ne\":[\"/n028\",28]},{\"ne\":[\"/n029\",29]},{\"ne\":[\"/n030\",30]},{\"ne\":[\"/n031\",31]},{\"ne\":[\"/n032\",32]},{\"ne\":[\"/n033\",33]},{\"ne\":[\"/n034\",34]},{\"ne\":[\"/n035\",35]},{\"ne\":[\"/n036\",36]},{\"ne\":[\"/n037\",37]},{\"ne\":[\"/n038\",38]},{\"ne\":[\"/n039\",39]},{\"ne\":[\"/n040\",40]},{\"ne\":[\"/n041\",41]},{\"ne\":[\"/n042\",42]},{\"ne\":[\"/n043\",43]},{\"ne\":[\"/n044\",44]},{\"ne\":[\"/n045\",45]},{\"ne\":[\"/n046\",46]},{\"ne\":[\"/n047\",47]},{\"ne\":[\"/n048\",48]},{\"ne\":[\"/n049\",49]},{\"ne\":[\"/n050\",50]},{\"ne\":[\"/n051\",51]},{\"ne\":[\"/n052\",52]},{\"ne\":[\"/n053\",53]},{\"ne\":[\"/n054\",54]},{\"ne\":[\"/n055\",55]},{\"ne\":[\"/n056\",56]},{\"ne\":[\"/n057\",57]},{\"ne\":[\"/n058\",58]},{\"ne\":[\"/n059\",59]},{\"ne\":[\"/n060\",60]},{\"ne\":[\"/n061\",61]},{\"ne\":[\"/n062\",62]}]}",
+        "shape_id": "1d878a008a77438f4577d4fb07c4c9e7",
+        "handle": "h1-d2bdbc451651d069",
+        "resume_scope_hex": "f76a2817aebcc0e8401d744dc8ae72a8"
+      }
+    },
+    {
+      "id": "filter-fanout-120-3",
+      "equivalence_group": "fanout-120",
+      "input_where_utf8": "{\"and\":[{\"and\":[{\"ne\":[\"/n063\",63]},{\"ne\":[\"/n064\",64]},{\"ne\":[\"/n065\",65]},{\"ne\":[\"/n066\",66]},{\"ne\":[\"/n067\",67]},{\"ne\":[\"/n068\",68]},{\"ne\":[\"/n069\",69]},{\"ne\":[\"/n070\",70]},{\"ne\":[\"/n071\",71]},{\"ne\":[\"/n072\",72]},{\"ne\":[\"/n073\",73]},{\"ne\":[\"/n074\",74]},{\"ne\":[\"/n075\",75]},{\"ne\":[\"/n076\",76]},{\"ne\":[\"/n077\",77]},{\"ne\":[\"/n078\",78]},{\"ne\":[\"/n079\",79]},{\"ne\":[\"/n080\",80]},{\"ne\":[\"/n081\",81]},{\"ne\":[\"/n082\",82]},{\"ne\":[\"/n083\",83]},{\"ne\":[\"/n084\",84]},{\"ne\":[\"/n085\",85]},{\"ne\":[\"/n086\",86]},{\"ne\":[\"/n087\",87]},{\"ne\":[\"/n088\",88]},{\"ne\":[\"/n089\",89]},{\"ne\":[\"/n090\",90]},{\"ne\":[\"/n091\",91]},{\"ne\":[\"/n092\",92]},{\"ne\":[\"/n093\",93]},{\"ne\":[\"/n094\",94]},{\"ne\":[\"/n095\",95]},{\"ne\":[\"/n096\",96]},{\"ne\":[\"/n097\",97]},{\"ne\":[\"/n098\",98]},{\"ne\":[\"/n099\",99]},{\"ne\":[\"/n100\",100]},{\"ne\":[\"/n101\",101]},{\"ne\":[\"/n102\",102]},{\"ne\":[\"/n103\",103]},{\"ne\":[\"/n104\",104]},{\"ne\":[\"/n105\",105]},{\"ne\":[\"/n106\",106]},{\"ne\":[\"/n107\",107]},{\"ne\":[\"/n108\",108]},{\"ne\":[\"/n109\",109]},{\"ne\":[\"/n110\",110]},{\"ne\":[\"/n111\",111]},{\"ne\":[\"/n112\",112]},{\"ne\":[\"/n113\",113]},{\"ne\":[\"/n114\",114]},{\"ne\":[\"/n115\",115]},{\"ne\":[\"/n116\",116]},{\"ne\":[\"/n117\",117]},{\"ne\":[\"/n118\",118]},{\"ne\":[\"/n119\",119]}]},{\"ne\":[\"/n000\",0]},{\"ne\":[\"/n001\",1]},{\"ne\":[\"/n002\",2]},{\"ne\":[\"/n003\",3]},{\"ne\":[\"/n004\",4]},{\"ne\":[\"/n005\",5]},{\"ne\":[\"/n006\",6]},{\"ne\":[\"/n007\",7]},{\"ne\":[\"/n008\",8]},{\"ne\":[\"/n009\",9]},{\"ne\":[\"/n010\",10]},{\"ne\":[\"/n011\",11]},{\"ne\":[\"/n012\",12]},{\"ne\":[\"/n013\",13]},{\"ne\":[\"/n014\",14]},{\"ne\":[\"/n015\",15]},{\"ne\":[\"/n016\",16]},{\"ne\":[\"/n017\",17]},{\"ne\":[\"/n018\",18]},{\"ne\":[\"/n019\",19]},{\"ne\":[\"/n020\",20]},{\"ne\":[\"/n021\",21]},{\"ne\":[\"/n022\",22]},{\"ne\":[\"/n023\",23]},{\"ne\":[\"/n024\",24]},{\"ne\":[\"/n025\",25]},{\"ne\":[\"/n026\",26]},{\"ne\":[\"/n027\",27]},{\"ne\":[\"/n028\",28]},{\"ne\":[\"/n029\",29]},{\"ne\":[\"/n030\",30]},{\"ne\":[\"/n031\",31]},{\"ne\":[\"/n032\",32]},{\"ne\":[\"/n033\",33]},{\"ne\":[\"/n034\",34]},{\"ne\":[\"/n035\",35]},{\"ne\":[\"/n036\",36]},{\"ne\":[\"/n037\",37]},{\"ne\":[\"/n038\",38]},{\"ne\":[\"/n039\",39]},{\"ne\":[\"/n040\",40]},{\"ne\":[\"/n041\",41]},{\"ne\":[\"/n042\",42]},{\"ne\":[\"/n043\",43]},{\"ne\":[\"/n044\",44]},{\"ne\":[\"/n045\",45]},{\"ne\":[\"/n046\",46]},{\"ne\":[\"/n047\",47]},{\"ne\":[\"/n048\",48]},{\"ne\":[\"/n049\",49]},{\"ne\":[\"/n050\",50]},{\"ne\":[\"/n051\",51]},{\"ne\":[\"/n052\",52]},{\"ne\":[\"/n053\",53]},{\"ne\":[\"/n054\",54]},{\"ne\":[\"/n055\",55]},{\"ne\":[\"/n056\",56]},{\"ne\":[\"/n057\",57]},{\"ne\":[\"/n058\",58]},{\"ne\":[\"/n059\",59]},{\"ne\":[\"/n060\",60]},{\"ne\":[\"/n061\",61]},{\"ne\":[\"/n062\",62]}]}",
+      "expected": {
+        "canonical_filter": "{\"and\":[{\"and\":[{\"ne\":[\"/n063\",63]},{\"ne\":[\"/n064\",64]},{\"ne\":[\"/n065\",65]},{\"ne\":[\"/n066\",66]},{\"ne\":[\"/n067\",67]},{\"ne\":[\"/n068\",68]},{\"ne\":[\"/n069\",69]},{\"ne\":[\"/n070\",70]},{\"ne\":[\"/n071\",71]},{\"ne\":[\"/n072\",72]},{\"ne\":[\"/n073\",73]},{\"ne\":[\"/n074\",74]},{\"ne\":[\"/n075\",75]},{\"ne\":[\"/n076\",76]},{\"ne\":[\"/n077\",77]},{\"ne\":[\"/n078\",78]},{\"ne\":[\"/n079\",79]},{\"ne\":[\"/n080\",80]},{\"ne\":[\"/n081\",81]},{\"ne\":[\"/n082\",82]},{\"ne\":[\"/n083\",83]},{\"ne\":[\"/n084\",84]},{\"ne\":[\"/n085\",85]},{\"ne\":[\"/n086\",86]},{\"ne\":[\"/n087\",87]},{\"ne\":[\"/n088\",88]},{\"ne\":[\"/n089\",89]},{\"ne\":[\"/n090\",90]},{\"ne\":[\"/n091\",91]},{\"ne\":[\"/n092\",92]},{\"ne\":[\"/n093\",93]},{\"ne\":[\"/n094\",94]},{\"ne\":[\"/n095\",95]},{\"ne\":[\"/n096\",96]},{\"ne\":[\"/n097\",97]},{\"ne\":[\"/n098\",98]},{\"ne\":[\"/n099\",99]},{\"ne\":[\"/n100\",100]},{\"ne\":[\"/n101\",101]},{\"ne\":[\"/n102\",102]},{\"ne\":[\"/n103\",103]},{\"ne\":[\"/n104\",104]},{\"ne\":[\"/n105\",105]},{\"ne\":[\"/n106\",106]},{\"ne\":[\"/n107\",107]},{\"ne\":[\"/n108\",108]},{\"ne\":[\"/n109\",109]},{\"ne\":[\"/n110\",110]},{\"ne\":[\"/n111\",111]},{\"ne\":[\"/n112\",112]},{\"ne\":[\"/n113\",113]},{\"ne\":[\"/n114\",114]},{\"ne\":[\"/n115\",115]},{\"ne\":[\"/n116\",116]},{\"ne\":[\"/n117\",117]},{\"ne\":[\"/n118\",118]},{\"ne\":[\"/n119\",119]}]},{\"ne\":[\"/n000\",0]},{\"ne\":[\"/n001\",1]},{\"ne\":[\"/n002\",2]},{\"ne\":[\"/n003\",3]},{\"ne\":[\"/n004\",4]},{\"ne\":[\"/n005\",5]},{\"ne\":[\"/n006\",6]},{\"ne\":[\"/n007\",7]},{\"ne\":[\"/n008\",8]},{\"ne\":[\"/n009\",9]},{\"ne\":[\"/n010\",10]},{\"ne\":[\"/n011\",11]},{\"ne\":[\"/n012\",12]},{\"ne\":[\"/n013\",13]},{\"ne\":[\"/n014\",14]},{\"ne\":[\"/n015\",15]},{\"ne\":[\"/n016\",16]},{\"ne\":[\"/n017\",17]},{\"ne\":[\"/n018\",18]},{\"ne\":[\"/n019\",19]},{\"ne\":[\"/n020\",20]},{\"ne\":[\"/n021\",21]},{\"ne\":[\"/n022\",22]},{\"ne\":[\"/n023\",23]},{\"ne\":[\"/n024\",24]},{\"ne\":[\"/n025\",25]},{\"ne\":[\"/n026\",26]},{\"ne\":[\"/n027\",27]},{\"ne\":[\"/n028\",28]},{\"ne\":[\"/n029\",29]},{\"ne\":[\"/n030\",30]},{\"ne\":[\"/n031\",31]},{\"ne\":[\"/n032\",32]},{\"ne\":[\"/n033\",33]},{\"ne\":[\"/n034\",34]},{\"ne\":[\"/n035\",35]},{\"ne\":[\"/n036\",36]},{\"ne\":[\"/n037\",37]},{\"ne\":[\"/n038\",38]},{\"ne\":[\"/n039\",39]},{\"ne\":[\"/n040\",40]},{\"ne\":[\"/n041\",41]},{\"ne\":[\"/n042\",42]},{\"ne\":[\"/n043\",43]},{\"ne\":[\"/n044\",44]},{\"ne\":[\"/n045\",45]},{\"ne\":[\"/n046\",46]},{\"ne\":[\"/n047\",47]},{\"ne\":[\"/n048\",48]},{\"ne\":[\"/n049\",49]},{\"ne\":[\"/n050\",50]},{\"ne\":[\"/n051\",51]},{\"ne\":[\"/n052\",52]},{\"ne\":[\"/n053\",53]},{\"ne\":[\"/n054\",54]},{\"ne\":[\"/n055\",55]},{\"ne\":[\"/n056\",56]},{\"ne\":[\"/n057\",57]},{\"ne\":[\"/n058\",58]},{\"ne\":[\"/n059\",59]},{\"ne\":[\"/n060\",60]},{\"ne\":[\"/n061\",61]},{\"ne\":[\"/n062\",62]}]}",
+        "shape_id": "1d878a008a77438f4577d4fb07c4c9e7",
+        "handle": "h1-d2bdbc451651d069",
+        "resume_scope_hex": "f76a2817aebcc0e8401d744dc8ae72a8"
+      }
+    }
+  ],
+  "offset_vectors": [
+    {
+      "value": "-1",
+      "valid": true
+    },
+    {
+      "value": "0",
+      "valid": true
+    },
+    {
+      "value": "2",
+      "valid": true
+    },
+    {
+      "value": "9223372036854775807",
+      "valid": true
+    },
+    {
+      "value": "snap.0.0",
+      "valid": true
+    },
+    {
+      "value": "snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQjA",
+      "valid": true
+    },
+    {
+      "value": "",
+      "valid": false,
+      "error": "invalid_request"
+    },
+    {
+      "value": "-2",
+      "valid": false,
+      "error": "invalid_request"
+    },
+    {
+      "value": "+1",
+      "valid": false,
+      "error": "invalid_request"
+    },
+    {
+      "value": "01",
+      "valid": false,
+      "error": "invalid_request"
+    },
+    {
+      "value": "1.0",
+      "valid": false,
+      "error": "invalid_request"
+    },
+    {
+      "value": "9223372036854775808",
+      "valid": false,
+      "error": "invalid_request"
+    },
+    {
+      "value": "snap.01.0",
+      "valid": false,
+      "error": "invalid_request"
+    },
+    {
+      "value": "snap.2.",
+      "valid": false,
+      "error": "invalid_request"
+    },
+    {
+      "value": "snap.2.Zg==",
+      "valid": false,
+      "error": "invalid_request"
+    },
+    {
+      "value": "snap.2._w",
+      "valid": false,
+      "error": "invalid_request"
+    },
+    {
+      "value": "snap.2.Zg.0",
+      "valid": false,
+      "error": "invalid_request"
+    }
+  ],
+  "cursor_vectors": [
+    {
+      "id": "opaque-r8-proof",
+      "bytes_hex": "012ec21d527f0de22614bc50cdb638c9450100000000000007d00001000030390003000100003039000300000000000003e80000000000000000f4f590245ed567ca1d963a5b2f4b9430c7cdf378fc562ef2f195326eb4f64a66",
+      "token": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm",
+      "resume_scope_hex": "2ec21d527f0de22614bc50cdb638c945",
+      "inner_bytes_hex": "0100000000000007d00001000030390003000100003039000300000000000003e80000000000000000f4f590245ed567ca1d963a5b2f4b9430c7cdf378fc562ef2f195326eb4f64a66",
+      "decoded": {
+        "envelope_marker": 1,
+        "inner_marker": 1,
+        "issued": "2000",
+        "issuer": "281475785752579",
+        "origins": [
+          {
+            "origin": "281475785752579",
+            "stamp": "1000",
+            "floor": "0",
+            "prefix_hash_hex": "f4f590245ed567ca1d963a5b2f4b9430c7cdf378fc562ef2f195326eb4f64a66"
+          }
+        ]
+      },
+      "proof_events": [
+        {
+          "stamp": "1000",
+          "collection": "notes",
+          "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+          "deleted": false
+        },
+        {
+          "stamp": "1000",
+          "collection": "notes",
+          "id": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+          "deleted": false
+        }
+      ],
+      "expected_action": "store_and_return_token_verbatim_after_complete_snapshot"
+    },
+    {
+      "id": "live-bucket-clock-regression",
+      "unix_seconds": "800",
+      "input_cursor": "50",
+      "expected_cursor": "51"
+    },
+    {
+      "id": "live-bucket-without-input",
+      "unix_seconds": "1000",
+      "expected_cursor": "50"
+    },
+    {
+      "id": "live-bucket-max-rejected",
+      "unix_seconds": "1000",
+      "input_cursor": "9223372036854775807",
+      "expected_error": "invalid_request"
+    }
+  ],
+  "http_vectors": [
+    {
+      "id": "bootstrap",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 307,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, max-age=0, must-revalidate",
+          "Vary": "Authorization",
+          "Location": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape?handle=h1-f3171a2230109328&offset=snap.2.0",
+          "TB-Shape-Handle": "h1-f3171a2230109328"
+        },
+        "body": null
+      },
+      "expected_action": "follow_redirect"
+    },
+    {
+      "id": "snapshot-first-page",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "offset": "snap.2.0"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, max-age=0, must-revalidate",
+          "Vary": "Authorization",
+          "ETag": "\"a07ef7c2873b7b4c4fcbb88c9e682ca5:h1-f3171a2230109328:snap.2.0:snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQjA:9c6a07040a7bf371\"",
+          "TB-Shape-Handle": "h1-f3171a2230109328",
+          "TB-Shape-Next-Offset": "snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQjA",
+          "TB-Shape-Up-To-Date": "false"
+        },
+        "body": {
+          "shape_id": "a07ef7c2873b7b4c4fcbb88c9e682ca5",
+          "handle": "h1-f3171a2230109328",
+          "offset": "snap.2.0",
+          "next_offset": "snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQjA",
+          "covered_offset": "2",
+          "values_at": "2",
+          "up_to_date": false,
+          "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm",
+          "changes": [
+            {
+              "offset": "2",
+              "ops": [
+                {
+                  "op": "upsert",
+                  "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+                  "version": "tbv1-b803db62170176ffadaa0ee88b8cb332",
+                  "document": {
+                    "title": "Hi <there>",
+                    "read": false
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "body_utf8": "{\"shape_id\":\"a07ef7c2873b7b4c4fcbb88c9e682ca5\",\"handle\":\"h1-f3171a2230109328\",\"offset\":\"snap.2.0\",\"next_offset\":\"snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQjA\",\"covered_offset\":\"2\",\"values_at\":\"2\",\"up_to_date\":false,\"cursor_resume\":\"AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm\",\"changes\":[{\"offset\":\"2\",\"ops\":[{\"op\":\"upsert\",\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FB0\",\"version\":\"tbv1-b803db62170176ffadaa0ee88b8cb332\",\"document\":{\"title\":\"Hi <there>\",\"read\":false}}]}]}"
+      },
+      "expected_action": "apply_then_continue_snapshot"
+    },
+    {
+      "id": "snapshot-last-page",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "offset": "snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQjA"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, max-age=0, must-revalidate",
+          "Vary": "Authorization",
+          "ETag": "\"a07ef7c2873b7b4c4fcbb88c9e682ca5:h1-f3171a2230109328:snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQjA:2:86a7f184d1b5b5d3\"",
+          "TB-Shape-Handle": "h1-f3171a2230109328",
+          "TB-Shape-Next-Offset": "2",
+          "TB-Shape-Up-To-Date": "false"
+        },
+        "body": {
+          "shape_id": "a07ef7c2873b7b4c4fcbb88c9e682ca5",
+          "handle": "h1-f3171a2230109328",
+          "offset": "snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQjA",
+          "next_offset": "2",
+          "covered_offset": "2",
+          "values_at": "2",
+          "up_to_date": false,
+          "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm",
+          "changes": [
+            {
+              "offset": "2",
+              "ops": [
+                {
+                  "op": "upsert",
+                  "id": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+                  "version": "tbv1-86f0b3251c928096e66782e532821fed",
+                  "document": {
+                    "title": "Second",
+                    "read": false
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "body_utf8": "{\"shape_id\":\"a07ef7c2873b7b4c4fcbb88c9e682ca5\",\"handle\":\"h1-f3171a2230109328\",\"offset\":\"snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQjA\",\"next_offset\":\"2\",\"covered_offset\":\"2\",\"values_at\":\"2\",\"up_to_date\":false,\"cursor_resume\":\"AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm\",\"changes\":[{\"offset\":\"2\",\"ops\":[{\"op\":\"upsert\",\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FB1\",\"version\":\"tbv1-86f0b3251c928096e66782e532821fed\",\"document\":{\"title\":\"Second\",\"read\":false}}]}]}"
+      },
+      "expected_action": "apply_then_read_log"
+    },
+    {
+      "id": "closed-commit-upsert-delete",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "offset": "2"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, max-age=0, must-revalidate",
+          "Vary": "Authorization",
+          "ETag": "\"a07ef7c2873b7b4c4fcbb88c9e682ca5:h1-f3171a2230109328:2:4:8eed4a924d9ef0b7\"",
+          "TB-Shape-Handle": "h1-f3171a2230109328",
+          "TB-Shape-Next-Offset": "4",
+          "TB-Shape-Up-To-Date": "false"
+        },
+        "body": {
+          "shape_id": "a07ef7c2873b7b4c4fcbb88c9e682ca5",
+          "handle": "h1-f3171a2230109328",
+          "offset": "2",
+          "next_offset": "4",
+          "covered_offset": "4",
+          "values_at": "4",
+          "up_to_date": false,
+          "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAQAAMDkAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO",
+          "changes": [
+            {
+              "offset": "4",
+              "ops": [
+                {
+                  "op": "upsert",
+                  "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+                  "version": "tbv1-def52df94d5598d237cf1184a4f5cb00",
+                  "document": {
+                    "title": "Updated",
+                    "read": true
+                  }
+                },
+                {
+                  "op": "delete",
+                  "id": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+                }
+              ]
+            }
+          ]
+        },
+        "body_utf8": "{\"shape_id\":\"a07ef7c2873b7b4c4fcbb88c9e682ca5\",\"handle\":\"h1-f3171a2230109328\",\"offset\":\"2\",\"next_offset\":\"4\",\"covered_offset\":\"4\",\"values_at\":\"4\",\"up_to_date\":false,\"cursor_resume\":\"AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAQAAMDkAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO\",\"changes\":[{\"offset\":\"4\",\"ops\":[{\"op\":\"upsert\",\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FB0\",\"version\":\"tbv1-def52df94d5598d237cf1184a4f5cb00\",\"document\":{\"title\":\"Updated\",\"read\":true}},{\"op\":\"delete\",\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FB1\"}]}]}"
+      },
+      "expected_action": "apply_whole_commit_then_continue"
+    },
+    {
+      "id": "live-timeout",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "offset": "4",
+          "live": "true",
+          "cursor": "50"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, max-age=0, must-revalidate",
+          "Vary": "Authorization",
+          "ETag": "\"a07ef7c2873b7b4c4fcbb88c9e682ca5:h1-f3171a2230109328:4:4:c2cbfda4de5fdeb4\"",
+          "TB-Shape-Handle": "h1-f3171a2230109328",
+          "TB-Shape-Next-Offset": "4",
+          "TB-Shape-Up-To-Date": "true",
+          "TB-Shape-Cursor": "51"
+        },
+        "body": {
+          "shape_id": "a07ef7c2873b7b4c4fcbb88c9e682ca5",
+          "handle": "h1-f3171a2230109328",
+          "offset": "4",
+          "next_offset": "4",
+          "covered_offset": "4",
+          "values_at": "4",
+          "up_to_date": true,
+          "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAQAAMDkAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO",
+          "changes": []
+        },
+        "body_utf8": "{\"shape_id\":\"a07ef7c2873b7b4c4fcbb88c9e682ca5\",\"handle\":\"h1-f3171a2230109328\",\"offset\":\"4\",\"next_offset\":\"4\",\"covered_offset\":\"4\",\"values_at\":\"4\",\"up_to_date\":true,\"cursor_resume\":\"AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAQAAMDkAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO\",\"changes\":[]}"
+      },
+      "clock": {
+        "unix_seconds": "1000"
+      },
+      "expected_action": "poll_with_cursor_51"
+    },
+    {
+      "id": "conditional-304",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "offset": "2"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token",
+          "If-None-Match": "W/\"a07ef7c2873b7b4c4fcbb88c9e682ca5:h1-f3171a2230109328:2:4:8eed4a924d9ef0b7\""
+        }
+      },
+      "response": {
+        "status": 304,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, max-age=0, must-revalidate",
+          "Vary": "Authorization",
+          "ETag": "\"a07ef7c2873b7b4c4fcbb88c9e682ca5:h1-f3171a2230109328:2:4:8eed4a924d9ef0b7\"",
+          "TB-Shape-Handle": "h1-f3171a2230109328",
+          "TB-Shape-Next-Offset": "4",
+          "TB-Shape-Up-To-Date": "false"
+        },
+        "body": null
+      },
+      "expected_action": "reuse_cached_body"
+    },
+    {
+      "id": "stale-handle",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-0000000000000000",
+          "offset": "4"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-f3171a2230109328"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "shape lineage changed",
+            "handle": "h1-f3171a2230109328"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"shape lineage changed\",\"handle\":\"h1-f3171a2230109328\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "expired-offset",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "offset": "1"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "retention_floor": "2"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-f3171a2230109328"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "offset is below retention floor",
+            "handle": "h1-f3171a2230109328"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"offset is below retention floor\",\"handle\":\"h1-f3171a2230109328\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "future-offset",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "offset": "5"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "sealed_head": "4"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-f3171a2230109328"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "offset is above sealed head",
+            "handle": "h1-f3171a2230109328"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"offset is above sealed head\",\"handle\":\"h1-f3171a2230109328\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "proven-cursor-resume-query",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "proof_matches": true,
+        "local_commits": [
+          {
+            "first_seq": "1",
+            "last_seq": "2",
+            "covered": true
+          },
+          {
+            "first_seq": "3",
+            "last_seq": "4",
+            "covered": false
+          }
+        ]
+      },
+      "response": {
+        "status": 307,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "Vary": "Authorization",
+          "Location": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape?handle=h1-d90dddd41bd8282d&offset=2",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d"
+        },
+        "body": null
+      },
+      "expected_action": "preserve_state_then_follow_local_lineage"
+    },
+    {
+      "id": "proven-cursor-resume-header",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token",
+          "TB-Shape-Resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        }
+      },
+      "fixture": {
+        "proof_matches": true,
+        "local_commits": [
+          {
+            "first_seq": "1",
+            "last_seq": "2",
+            "covered": true
+          },
+          {
+            "first_seq": "3",
+            "last_seq": "4",
+            "covered": false
+          }
+        ]
+      },
+      "response": {
+        "status": 307,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "Vary": "Authorization",
+          "Location": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape?handle=h1-d90dddd41bd8282d&offset=2",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d"
+        },
+        "body": null
+      },
+      "expected_action": "preserve_state_then_follow_local_lineage"
+    },
+    {
+      "id": "resume-unproven-prefix",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "proof_matches": false
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "resume prefix cannot be proven",
+            "handle": "h1-d90dddd41bd8282d"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"resume prefix cannot be proven\",\"handle\":\"h1-d90dddd41bd8282d\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "resume-behind-destination",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "destination_high_stamp": "900"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "destination is behind the resume cursor",
+            "handle": "h1-d90dddd41bd8282d"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"destination is behind the resume cursor\",\"handle\":\"h1-d90dddd41bd8282d\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "resume-expired",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "resume_issued_before_retention": true
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "resume cursor expired",
+            "handle": "h1-d90dddd41bd8282d"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"resume cursor expired\",\"handle\":\"h1-d90dddd41bd8282d\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "resume-malformed-token",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "not%base64url"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "Cache-Control": "no-store"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "resume cursor is malformed"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"resume cursor is malformed\"}}"
+      },
+      "expected_action": "reject_request"
+    },
+    {
+      "id": "resume-duplicate-transports",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token",
+          "TB-Shape-Resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "Cache-Control": "no-store"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "resume must use one transport"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"resume must use one transport\"}}"
+      },
+      "expected_action": "reject_request"
+    },
+    {
+      "id": "resume-with-handle-refused",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "handle": "h1-f3171a2230109328",
+          "cursor": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "Cache-Control": "no-store"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "resume cannot carry a handle"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"resume cannot carry a handle\"}}"
+      },
+      "expected_action": "reject_request"
+    },
+    {
+      "id": "resume-with-live-refused",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "live": "true",
+          "cursor": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "Cache-Control": "no-store"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "live requires a decimal offset and bucket"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"live requires a decimal offset and bucket\"}}"
+      },
+      "expected_action": "reject_request"
+    },
+    {
+      "id": "snapshot-page-missing",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "offset": "snap.2.dW5zZWFsZWQta2V5"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "snapshot_page_exists": false
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-f3171a2230109328"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "snapshot page is not retained",
+            "handle": "h1-f3171a2230109328"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"snapshot page is not retained\",\"handle\":\"h1-f3171a2230109328\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "oversize-materialized-commit",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "offset": "2"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "serialized_commit_bytes": "8388609"
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "Cache-Control": "no-store"
+        },
+        "body": {
+          "error": {
+            "code": "shape_too_large",
+            "message": "materialized commit exceeds 8 MiB"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"shape_too_large\",\"message\":\"materialized commit exceeds 8 MiB\"}}"
+      },
+      "expected_action": "preserve_state_and_offset"
+    },
+    {
+      "id": "large-resume-token-uses-header",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token",
+          "TB-Shape-Resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwADAAAAAQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAACAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAAMAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAABAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAAFAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAAYAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAABwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAAIAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAAkAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAACgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAALAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAAwAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAADQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAAOAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAA8AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAEAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAARAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAABIAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAEwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAAUAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAABUAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAFgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAAXAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAABgAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAGQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAAaAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAABsAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAHAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAAdAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAB4AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAHwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAAgAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAACEAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAIgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAAjAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAACQAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAJQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAAmAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAACcAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAKAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAApAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAACoAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAKwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAAsAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAC0AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAALgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAAvAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAADAAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAMQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAAyAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAADMAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAANAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAA1AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAADYAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAANwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAA4AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAADkAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAOgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAA7AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAADwAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAPQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAA-AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAD8AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAQAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABBAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAEIAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAQwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABEAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAEUAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAARgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABHAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAEgAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAASQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABKAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAEsAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAATAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABNAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAE4AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAATwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABQAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAFEAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAUgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABTAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAFQAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAVQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABWAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAFcAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAWAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABZAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAFoAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAWwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABcAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAF0AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAXgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABfAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAGAAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAYQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABiAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAGMAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAZAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABlAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAGYAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAZwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABoAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAGkAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAagADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABrAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAGwAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAbQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABuAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAG8AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAcAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAABxAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAHIAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAcwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAB0AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAHUAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAdgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAB3AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAHgAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAeQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAB6AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAHsAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAfAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAB9AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAH4AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAfwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACAAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAIEAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAggADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACDAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAIQAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAhQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACGAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAIcAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAiAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACJAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAIoAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAiwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACMAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAI0AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAjgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACPAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAJAAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAkQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACSAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAJMAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAlAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACVAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAJYAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAlwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACYAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAJkAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAmgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACbAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAJwAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAnQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACeAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAJ8AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAoAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAChAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAKIAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAowADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACkAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAKUAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAApgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACnAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAKgAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAqQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACqAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAKsAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAArAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACtAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAK4AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAArwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACwAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAALEAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAsgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAACzAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAALQAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAtQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAC2AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAALcAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAuAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAC5AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAALoAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAuwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAC8AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAL0AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAvgADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAC_AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAMAAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAwQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADCAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAMMAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAxAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADFAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAMYAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAxwADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADIAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAMkAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAygADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADLAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAMwAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAAzQADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADOAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAM8AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA0AADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADRAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAANIAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA0wADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADUAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAANUAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA1gADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADXAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAANgAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA2QADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADaAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAANsAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA3AADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADdAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAN4AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA3wADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADgAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAOEAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA4gADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADjAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAOQAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA5QADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADmAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAOcAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA6AADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADpAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAOoAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA6wADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADsAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAO0AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA7gADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADvAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAPAAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA8QADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAADyAAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAPMAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA9AADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAD1AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAPYAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA9wADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAD4AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAPkAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA-gADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAD7AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAPwAAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAAA_QADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINoAAMAAAD-AAMAAAAAAAAD6AAAAAAAAAAAZcT0Uz-M5MT-SoFOP6djAKRG7LE5iGD_LQG0wvyMg2gAAwAAAP8AAwAAAAAAAAPoAAAAAAAAAABlxPRTP4zkxP5KgU4_p2MApEbssTmIYP8tAbTC_IyDaAADAAABAAADAAAAAAAAA-gAAAAAAAAAAGXE9FM_jOTE_kqBTj-nYwCkRuyxOYhg_y0BtML8jINo"
+        }
+      },
+      "fixture": {
+        "proof_matches": true,
+        "token_origins": 256,
+        "token_bytes": 14370,
+        "request_line_limit": 8192,
+        "all_local_commits_covered": true
+      },
+      "response": {
+        "status": 307,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "Vary": "Authorization",
+          "Location": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape?handle=h1-d90dddd41bd8282d&offset=4",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d"
+        },
+        "body": null
+      },
+      "expected_action": "preserve_full_token_and_state_then_follow_redirect"
+    },
+    {
+      "id": "resume-other-collection",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "AX5fLAhmiKw6duf9TdDK_l0BAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "cursor_scope": {
+          "organization_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+          "database_id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+          "incarnation": "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+          "replica_id": "281475785752579",
+          "replica_epoch": "3",
+          "collection": "tasks",
+          "collection_generation": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+          "canonical_filter": "",
+          "wire_format": "1"
+        },
+        "proof_matches": true
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "resume scope differs from requested shape",
+            "handle": "h1-d90dddd41bd8282d"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"resume scope differs from requested shape\",\"handle\":\"h1-d90dddd41bd8282d\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "resume-other-filter",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "ASjO9DzdYe80jqi0np2i0-sBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "cursor_scope": {
+          "organization_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+          "database_id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+          "incarnation": "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+          "replica_id": "281475785752579",
+          "replica_epoch": "3",
+          "collection": "notes",
+          "collection_generation": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+          "canonical_filter": "{\"eq\":[\"/read\",false]}",
+          "wire_format": "1"
+        },
+        "proof_matches": true
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "resume scope differs from requested shape",
+            "handle": "h1-d90dddd41bd8282d"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"resume scope differs from requested shape\",\"handle\":\"h1-d90dddd41bd8282d\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "resume-other-generation",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "AQdLX00uxxZLRi7K6jFjeuoBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "cursor_scope": {
+          "organization_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+          "database_id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+          "incarnation": "01ARZ3NDEKTSV4RRFFQ69G5FAY",
+          "replica_id": "281475785752579",
+          "replica_epoch": "3",
+          "collection": "notes",
+          "collection_generation": "01ARZ3NDEKTSV4RRFFQ69G5FB3",
+          "canonical_filter": "",
+          "wire_format": "1"
+        },
+        "proof_matches": true
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "resume scope differs from requested shape",
+            "handle": "h1-d90dddd41bd8282d"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"resume scope differs from requested shape\",\"handle\":\"h1-d90dddd41bd8282d\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "resume-uncovered-row-above-sealed-head",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "proof_matches": true,
+        "sealed_head": "2",
+        "first_uncovered_commit_first_seq": "5",
+        "boundary_before_first_uncovered_commit": "4"
+      },
+      "response": {
+        "status": 307,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          "Vary": "Authorization",
+          "Location": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape?handle=h1-d90dddd41bd8282d&offset=2",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d"
+        },
+        "body": null
+      },
+      "expected_action": "preserve_state_then_redeliver_from_sealed_head"
+    },
+    {
+      "id": "resume-target-below-retention-floor",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "proof_matches": true,
+        "sealed_head": "4",
+        "boundary_before_first_uncovered_commit": "0",
+        "retention_floor": "2"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "resume target is below retention floor",
+            "handle": "h1-d90dddd41bd8282d"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"resume target is below retention floor\",\"handle\":\"h1-d90dddd41bd8282d\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "resume-truncated-envelope",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "AS7CHVJ_DeImFLxQzbY4yQ"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "Cache-Control": "no-store"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "resume cursor is malformed"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"resume cursor is malformed\"}}"
+      },
+      "expected_action": "reject_request"
+    },
+    {
+      "id": "resume-bad-envelope-marker",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "Ai7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "Cache-Control": "no-store"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "resume cursor is malformed"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"resume cursor is malformed\"}}"
+      },
+      "expected_action": "reject_request"
+    },
+    {
+      "id": "resume-bad-inner-marker",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "cursor": "AS7CHVJ_DeImFLxQzbY4yUUCAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "Cache-Control": "no-store"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "resume cursor is malformed"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"resume cursor is malformed\"}}"
+      },
+      "expected_action": "reject_request"
+    },
+    {
+      "id": "epoch-key",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape/keys",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "epoch": "100",
+          "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "current_epoch": "100",
+        "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, no-store"
+        },
+        "body": {
+          "handle": "h1-f3171a2230109328",
+          "epoch": "100",
+          "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+          "key": "hunfuJAccVHoXLOVd_t4sE3RV9_6Y0IAlZ4G139hEAU"
+        },
+        "body_utf8": "{\"handle\":\"h1-f3171a2230109328\",\"epoch\":\"100\",\"key_id\":\"01ARZ3NDEKTSV4RRFFQ69G5FC0\",\"key\":\"hunfuJAccVHoXLOVd_t4sE3RV9_6Y0IAlZ4G139hEAU\"}"
+      },
+      "expected_action": "cache_key_in_memory_for_epoch"
+    },
+    {
+      "id": "future-key-refused",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape/keys",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "epoch": "101",
+          "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "current_epoch": "100"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "Cache-Control": "no-store"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "future epochs cannot be requested"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"future epochs cannot be requested\"}}"
+      },
+      "expected_action": "do_not_prefetch_future_key"
+    },
+    {
+      "id": "key-id-required",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape/keys",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "epoch": "100"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "current_epoch": "100"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "Cache-Control": "no-store"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "key_id is required"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"key_id is required\"}}"
+      },
+      "expected_action": "reject_request"
+    },
+    {
+      "id": "retired-epoch-key-pair",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape/keys",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "epoch": "99",
+          "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "current_epoch": "100",
+        "retained_pair_exists": false
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-f3171a2230109328"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "epoch and key pair is not retained",
+            "handle": "h1-f3171a2230109328"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"epoch and key pair is not retained\",\"handle\":\"h1-f3171a2230109328\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "resume-header-preserved-on-followup",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-d90dddd41bd8282d",
+          "offset": "2"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token",
+          "TB-Shape-Resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        }
+      },
+      "fixture": {
+        "redirected_from": "proven-cursor-resume-header"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, max-age=0, must-revalidate",
+          "Vary": "Authorization",
+          "ETag": "\"a8ddeff90c3256fa71b80acd13b7a91f:h1-d90dddd41bd8282d:2:4:ee1af19a6b1f0674\"",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d",
+          "TB-Shape-Next-Offset": "4",
+          "TB-Shape-Up-To-Date": "false"
+        },
+        "body": {
+          "shape_id": "a8ddeff90c3256fa71b80acd13b7a91f",
+          "handle": "h1-d90dddd41bd8282d",
+          "offset": "2",
+          "next_offset": "4",
+          "covered_offset": "4",
+          "values_at": "4",
+          "up_to_date": false,
+          "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAgABCTIAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO",
+          "changes": [
+            {
+              "offset": "4",
+              "ops": [
+                {
+                  "op": "upsert",
+                  "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+                  "version": "tbv1-def52df94d5598d237cf1184a4f5cb00",
+                  "document": {
+                    "title": "Updated",
+                    "read": true
+                  }
+                },
+                {
+                  "op": "delete",
+                  "id": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+                }
+              ]
+            }
+          ]
+        },
+        "body_utf8": "{\"shape_id\":\"a8ddeff90c3256fa71b80acd13b7a91f\",\"handle\":\"h1-d90dddd41bd8282d\",\"offset\":\"2\",\"next_offset\":\"4\",\"covered_offset\":\"4\",\"values_at\":\"4\",\"up_to_date\":false,\"cursor_resume\":\"AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAgABCTIAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO\",\"changes\":[{\"offset\":\"4\",\"ops\":[{\"op\":\"upsert\",\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FB0\",\"version\":\"tbv1-def52df94d5598d237cf1184a4f5cb00\",\"document\":{\"title\":\"Updated\",\"read\":true}},{\"op\":\"delete\",\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FB1\"}]}]}"
+      },
+      "expected_action": "ignore_leftover_resume_header_then_apply_chunk"
+    },
+    {
+      "id": "bootstrap-with-handle-refetch",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "handle": "h1-f3171a2230109328"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-f3171a2230109328"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "bootstrap cannot carry a handle",
+            "handle": "h1-f3171a2230109328"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"bootstrap cannot carry a handle\",\"handle\":\"h1-f3171a2230109328\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "bootstrap-with-handle-ignores-resume-header",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "offset": "-1",
+          "handle": "h1-f3171a2230109328"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token",
+          "TB-Shape-Resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-f3171a2230109328"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "bootstrap cannot carry a handle",
+            "handle": "h1-f3171a2230109328"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"bootstrap cannot carry a handle\",\"handle\":\"h1-f3171a2230109328\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap"
+    },
+    {
+      "id": "changed-machine-continuation-tries-resume-once",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "offset": "2"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "serving_scope": {
+          "organization_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          "project_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+          "database_id": "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+          "incarnation": "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+          "replica_id": "562954402660355",
+          "replica_epoch": "3",
+          "collection": "notes",
+          "collection_generation": "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+          "canonical_filter": "",
+          "wire_format": "1"
+        },
+        "saved_handle": "h1-f3171a2230109328",
+        "saved_cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm",
+        "snapshot_complete": true,
+        "resume_attempts": 0
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-d90dddd41bd8282d"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "handle belongs to another serving lineage",
+            "handle": "h1-d90dddd41bd8282d"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"handle belongs to another serving lineage\",\"handle\":\"h1-d90dddd41bd8282d\"}}"
+      },
+      "expected_action": "try_one_cursor_resume_before_discarding_state"
+    },
+    {
+      "id": "resume-followup-second-machine-refetch-does-not-loop",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape",
+        "query": {
+          "handle": "h1-d90dddd41bd8282d",
+          "offset": "2"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token",
+          "TB-Shape-Resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm"
+        }
+      },
+      "fixture": {
+        "saved_handle": "h1-f3171a2230109328",
+        "saved_cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAAB9AAAQAAMDkAAwABAAAwOQADAAAAAAAAA-gAAAAAAAAAAPT1kCRe1WfKHZY6Wy9LlDDHzfN4_FYu8vGVMm609kpm",
+        "snapshot_complete": true,
+        "resume_attempts": 1,
+        "resume_followup": true
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "Cache-Control": "no-store",
+          "TB-Shape-Handle": "h1-f3171a2230109328"
+        },
+        "body": {
+          "error": {
+            "code": "must_refetch",
+            "message": "handle changed again during resume",
+            "handle": "h1-f3171a2230109328"
+          }
+        },
+        "body_utf8": "{\"error\":{\"code\":\"must_refetch\",\"message\":\"handle changed again during resume\",\"handle\":\"h1-f3171a2230109328\"}}"
+      },
+      "expected_action": "discard_state_then_bootstrap_without_second_resume"
+    },
+    {
+      "id": "presigned-manifest",
+      "request": {
+        "method": "GET",
+        "path": "/v1/projects/01ARZ3NDEKTSV4RRFFQ69G5FAW/databases/demo/collections/notes/shape/manifest",
+        "query": {
+          "handle": "h1-f3171a2230109328",
+          "offset": "2"
+        },
+        "headers": {
+          "Authorization": "Bearer fixture-access-token"
+        }
+      },
+      "fixture": {
+        "unix_seconds": "60000",
+        "current_epoch": "100"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "private, no-store"
+        },
+        "body": {
+          "handle": "h1-f3171a2230109328",
+          "objects": [
+            {
+              "offset": "2",
+              "next_offset": "4",
+              "binding": "h1-f3171a2230109328\u00002",
+              "object": "v1/shapes/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07",
+              "url": "https://shapes.example.invalid/v1/shapes/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07?signature=fixture-only",
+              "expires_at": "1970-01-01T16:50:00Z",
+              "epoch": "100",
+              "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+              "sha256": "1cd40c912c1d8c5283192aeb04c4d9aec3d4629d96d0b2f8110da808dabae99f",
+              "size": 622
+            }
+          ]
+        },
+        "body_utf8": "{\"handle\":\"h1-f3171a2230109328\",\"objects\":[{\"offset\":\"2\",\"next_offset\":\"4\",\"binding\":\"h1-f3171a2230109328\\u00002\",\"object\":\"v1/shapes/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07\",\"url\":\"https://shapes.example.invalid/v1/shapes/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07?signature=fixture-only\",\"expires_at\":\"1970-01-01T16:50:00Z\",\"epoch\":\"100\",\"key_id\":\"01ARZ3NDEKTSV4RRFFQ69G5FC0\",\"sha256\":\"1cd40c912c1d8c5283192aeb04c4d9aec3d4629d96d0b2f8110da808dabae99f\",\"size\":622}]}"
+      },
+      "expected_action": "fetch_ciphertext_then_verify_size_hash_binding_and_decrypt"
+    },
+    {
+      "id": "tigris-sealed-ciphertext",
+      "request": {
+        "method": "GET",
+        "url": "https://shapes.example.invalid/v1/shapes/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07?signature=fixture-only",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/octet-stream",
+          "Cache-Control": "public, max-age=31536000, immutable"
+        },
+        "body_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f2"
+      },
+      "expected_body": {
+        "shape_id": "a07ef7c2873b7b4c4fcbb88c9e682ca5",
+        "handle": "h1-f3171a2230109328",
+        "offset": "2",
+        "next_offset": "4",
+        "covered_offset": "4",
+        "values_at": "4",
+        "up_to_date": false,
+        "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAQAAMDkAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO",
+        "changes": [
+          {
+            "offset": "4",
+            "ops": [
+              {
+                "op": "upsert",
+                "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+                "version": "tbv1-def52df94d5598d237cf1184a4f5cb00",
+                "document": {
+                  "title": "Updated",
+                  "read": true
+                }
+              },
+              {
+                "op": "delete",
+                "id": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+              }
+            ]
+          }
+        ]
+      },
+      "expected_action": "decrypt_then_apply"
+    }
+  ],
+  "apply_vectors": [
+    {
+      "id": "commit-is-atomic",
+      "initial_state": {
+        "01ARZ3NDEKTSV4RRFFQ69G5FB0": {
+          "version": "tbv1-b803db62170176ffadaa0ee88b8cb332",
+          "document": {
+            "title": "Hi <there>",
+            "read": false
+          }
+        },
+        "01ARZ3NDEKTSV4RRFFQ69G5FB1": {
+          "version": "tbv1-86f0b3251c928096e66782e532821fed",
+          "document": {
+            "title": "Second",
+            "read": false
+          }
+        }
+      },
+      "body": {
+        "shape_id": "a07ef7c2873b7b4c4fcbb88c9e682ca5",
+        "handle": "h1-f3171a2230109328",
+        "offset": "2",
+        "next_offset": "4",
+        "covered_offset": "4",
+        "values_at": "4",
+        "up_to_date": false,
+        "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAQAAMDkAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO",
+        "changes": [
+          {
+            "offset": "4",
+            "ops": [
+              {
+                "op": "upsert",
+                "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+                "version": "tbv1-def52df94d5598d237cf1184a4f5cb00",
+                "document": {
+                  "title": "Updated",
+                  "read": true
+                }
+              },
+              {
+                "op": "delete",
+                "id": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+              }
+            ]
+          }
+        ]
+      },
+      "expected_state": {
+        "01ARZ3NDEKTSV4RRFFQ69G5FB0": {
+          "version": "tbv1-def52df94d5598d237cf1184a4f5cb00",
+          "document": {
+            "title": "Updated",
+            "read": true
+          }
+        }
+      },
+      "expected_offset": "4"
+    },
+    {
+      "id": "delete-for-unseen-document",
+      "initial_state": {},
+      "body": {
+        "shape_id": "a07ef7c2873b7b4c4fcbb88c9e682ca5",
+        "handle": "h1-f3171a2230109328",
+        "offset": "2",
+        "next_offset": "4",
+        "covered_offset": "4",
+        "values_at": "4",
+        "up_to_date": false,
+        "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAQAAMDkAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO",
+        "changes": [
+          {
+            "offset": "4",
+            "ops": [
+              {
+                "op": "delete",
+                "id": "01ARZ3NDEKTSV4RRFFQ69G5FB1"
+              }
+            ]
+          }
+        ]
+      },
+      "expected_state": {},
+      "expected_offset": "4"
+    },
+    {
+      "id": "cross-lineage-repeat-has-newer-materialized-value",
+      "initial_state": {
+        "01ARZ3NDEKTSV4RRFFQ69G5FB0": {
+          "version": "tbv1-b803db62170176ffadaa0ee88b8cb332",
+          "document": {
+            "title": "Hi <there>",
+            "read": false
+          }
+        }
+      },
+      "prior_event_identity": {
+        "origin": "281475785752579",
+        "stamp": "1000",
+        "collection": "notes",
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "body": {
+        "shape_id": "a8ddeff90c3256fa71b80acd13b7a91f",
+        "handle": "h1-d90dddd41bd8282d",
+        "offset": "2",
+        "next_offset": "4",
+        "covered_offset": "4",
+        "values_at": "6",
+        "up_to_date": false,
+        "cursor_resume": "AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAgABCTIAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO",
+        "changes": [
+          {
+            "offset": "4",
+            "ops": [
+              {
+                "op": "upsert",
+                "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+                "version": "tbv1-b9a54642e86bd83f460ea839d3dc5e51",
+                "document": {
+                  "title": "Updated",
+                  "read": true
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "repeated_event_identity": {
+        "origin": "281475785752579",
+        "stamp": "1000",
+        "collection": "notes",
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+      },
+      "expected_state": {
+        "01ARZ3NDEKTSV4RRFFQ69G5FB0": {
+          "version": "tbv1-b9a54642e86bd83f460ea839d3dc5e51",
+          "document": {
+            "title": "Updated",
+            "read": true
+          }
+        }
+      },
+      "expected_offset": "4",
+      "expected_action": "apply_despite_repeated_event_identity"
+    }
+  ],
+  "durability_vectors": [
+    {
+      "id": "snapshot-page-publication",
+      "committed_head": "6",
+      "remote_frontier": "2",
+      "object_next_offset": "snap.2.MDFBUlozTkRFS1RTVjRSUkZGUTY5RzVGQjA",
+      "object_covered_offset": "2",
+      "object_values_at": "2",
+      "expected_publish": true
+    },
+    {
+      "id": "unacked-newer-materialization",
+      "committed_head": "6",
+      "remote_frontier": "4",
+      "object_next_offset": "4",
+      "object_covered_offset": "4",
+      "object_values_at": "6",
+      "expected_publish": false
+    },
+    {
+      "id": "materialization-fully-acked",
+      "committed_head": "6",
+      "remote_frontier": "6",
+      "object_next_offset": "4",
+      "object_covered_offset": "4",
+      "object_values_at": "6",
+      "expected_publish": true
+    },
+    {
+      "id": "local-full-frontier",
+      "committed_head": "6",
+      "local_frontier": "6",
+      "object_next_offset": "4",
+      "object_covered_offset": "4",
+      "object_values_at": "6",
+      "expected_publish": true,
+      "qualification": "local commit only; host loss is not covered"
+    }
+  ],
+  "tbs1_vectors": [
+    {
+      "id": "closed-chunk-json",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "project_data_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "object_salt_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "binding_hex": "68312d663331373161323233303130393332380032",
+      "object_key_hex": "7a66b4e4aa3a5fd077a3b9a2d03f758a4c08f1ec939478005491e1bbf29d7184",
+      "header_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "frames": [
+        {
+          "index": "0",
+          "length_word_hex": "80000214",
+          "nonce_hex": "000000000000000000000000",
+          "aad_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000080000214",
+          "ciphertext_sha256": "656801ae4892ae4172f5e69b99fbb94618f64061e29c00bfc1ccbe1db4ae139e",
+          "tag_hex": "1c1698689c00f7bc254324cc292a59f2"
+        }
+      ],
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f2",
+      "plaintext_utf8": "{\"shape_id\":\"a07ef7c2873b7b4c4fcbb88c9e682ca5\",\"handle\":\"h1-f3171a2230109328\",\"offset\":\"2\",\"next_offset\":\"4\",\"covered_offset\":\"4\",\"values_at\":\"4\",\"up_to_date\":false,\"cursor_resume\":\"AS7CHVJ_DeImFLxQzbY4yUUBAAAAAAAACDQAAQAAMDkAAwABAAAwOQADAAAAAAAABEwAAAAAAAAAABO87tfJZTbz2Hsco3pHdJdPmj8XnpbiMzsUO-orOVTO\",\"changes\":[{\"offset\":\"4\",\"ops\":[{\"op\":\"upsert\",\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FB0\",\"version\":\"tbv1-def52df94d5598d237cf1184a4f5cb00\",\"document\":{\"title\":\"Updated\",\"read\":true}},{\"op\":\"delete\",\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FB1\"}]}]}",
+      "ciphertext_sha256": "1cd40c912c1d8c5283192aeb04c4d9aec3d4629d96d0b2f8110da808dabae99f",
+      "ciphertext_size": 622
+    },
+    {
+      "id": "empty-object",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "snap.0.0",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "project_data_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "object_salt_hex": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "binding_hex": "68312d6633313731613232333031303933323800736e61702e302e30",
+      "object_key_hex": "3c9ae8212a89fd822b8d9b89fa07584b1ace272a7195f1577ad9e86eb2bb1f04",
+      "header_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "frames": [
+        {
+          "index": "0",
+          "length_word_hex": "80000000",
+          "nonce_hex": "000000000000000000000000",
+          "aad_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf000000000000000080000000",
+          "ciphertext_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tag_hex": "4cc2b3f8dc137206acb773182a7cb2c4"
+        }
+      ],
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf800000004cc2b3f8dc137206acb773182a7cb2c4",
+      "plaintext_utf8": "",
+      "ciphertext_sha256": "1ae80877cd0552300400c73162d3cd963191fb21212b473f1a6b328fec3ca955",
+      "ciphertext_size": 90
+    }
+  ],
+  "tbs1_rejection_vectors": [
+    {
+      "id": "bad-magic",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "tbs1_hex": "554253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f2",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "tampered-epoch",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "tbs1_hex": "544253310000000000000065303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f2",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "tampered-key-id",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464331a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f2",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "tampered-salt",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a1a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f2",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "tampered-ciphertext",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214175cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f2",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "tampered-tag",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f3",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "truncated-header",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbe",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "truncated-tag",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "missing-last-flag",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf00000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f2",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "trailing-bytes",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f200",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "wrong-handle",
+      "handle": "h1-d90dddd41bd8282d",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f2",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "wrong-offset",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "3",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f2",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "wrong-key",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f2",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "wrong-expected-epoch",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "101",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "04293c52eccac93c30284d139e2e73f19cca02d5a4fed29dca0007204439b03b",
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80000214165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f2",
+      "expected_result": "reject_without_applying"
+    },
+    {
+      "id": "oversized-frame",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "2",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "tbs1_hex": "544253310000000000000064303141525a334e44454b54535634525246465136394735464330a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf80100001165cb2d8f6e474ca0da6434d3d311c614a47a1b3a849dde98806d03b2e276060a4adc3596a0c9443961aa83452fd5a0b4b4176435d594905dd78b6959968cf877c6a8eabfc7c0a937596e151098c085c23df0d8c6da12fa0bcb3140bf80c7257ab6a4a36e0dcbb0fd8e50ca8652917f324e1eb7ac00778207270891dc755dd3f1223027b1054d6b84192002d9887ed4173bb6714778e4bc45b6231b6a996856a981e0bc531c4481c29f07a9fe29b1166da61f3ad533e7212b6189cbcb07399345de953b2c50353a027a151af31a4c20275079727096474d740aadb59597216edfe130497b0a71126af2b8beb54a7754567fe3363a1e1ffe51f91c920b2f951dec807490b6211c9fbfbf1ef64e1ca2dff4e88bb491c47917693a0951cb59bd419265f31500b9a2d345168bff38bcf3c5db4b6ce4db471fe8816aa038435648f86394c551f6762b936e8122b65e64acc23c3c349afcea2bb222852aaebb24ff1ed8fe59a10f8bd4fbb3a3514def4e98b9c09f787aeaf7923993d55e0e0b11a118433c2cbe5bce55c841a155a9f44d23cddee18d288e046c9503fdc6f36ee5a6585fbf99d1448e2fa70cd51120064c328f76ae53aa5a921e7308835032a1b9664c80c0c1dea9aa19129c6a6600af09b9ed4bbfa2dd321d1be96d254fa8e7e675a29c54ed9e49747d968e9c44bb3c5fc7201f1dd6532ddd85a8b1a510e58c9452bd7f15d580fafef23adbcb2d0806f147e9110674e0b1c1698689c00f7bc254324cc292a59f2",
+      "expected_result": "reject_without_applying"
+    }
+  ],
+  "tbs1_generated_vectors": [
+    {
+      "id": "exact-one-mib-requires-empty-final-frame",
+      "handle": "h1-f3171a2230109328",
+      "request_offset": "4",
+      "epoch": "100",
+      "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
+      "project_data_key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "epoch_key_hex": "86e9dfb8901c7151e85cb39577fb78b04dd157dffa634200959e06d77f611005",
+      "object_salt_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "binding_hex": "68312d663331373161323233303130393332380034",
+      "object_key_hex": "3f204ac2763ed225f0a6baa087bf0605e7e0c39a384238c290391997a8bd5a75",
+      "header_hex": "544253310000000000000064303141525a334e44454b545356345252464651363947354643301111111111111111111111111111111111111111111111111111111111111111",
+      "frames": [
+        {
+          "index": "0",
+          "length_word_hex": "00100000",
+          "nonce_hex": "000000000000000000000000",
+          "aad_hex": "544253310000000000000064303141525a334e44454b545356345252464651363947354643301111111111111111111111111111111111111111111111111111111111111111000000000000000000100000",
+          "ciphertext_sha256": "6ce0e6bfd5072bf2c8ae08ea1bf8ad2c87eac046cdbb77b70203026078d57a56",
+          "tag_hex": "f8ca522f0d678c8f4ed475275ba99779"
+        },
+        {
+          "index": "1",
+          "length_word_hex": "80000000",
+          "nonce_hex": "000000000000000000000001",
+          "aad_hex": "544253310000000000000064303141525a334e44454b545356345252464651363947354643301111111111111111111111111111111111111111111111111111111111111111000000000000000180000000",
+          "ciphertext_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "tag_hex": "8a833c1cf095e2ba0363c7e590f6ee55"
+        }
+      ],
+      "ciphertext_sha256": "54cdc7c4b8e613fd0f956ed8d92b35ab123831f9ad9e2cbebb0347feb04fcafb",
+      "ciphertext_size": 1048686,
+      "plaintext_recipe": {
+        "repeat_byte_hex": "61",
+        "length": 1048576
+      },
+      "mutations": [
+        {
+          "id": "swap-frame-0-and-1",
+          "operation": "swap_frames",
+          "indices": [
+            0,
+            1
+          ],
+          "expected_result": "reject_without_applying"
+        },
+        {
+          "id": "drop-final-frame",
+          "operation": "drop_frame",
+          "index": 1,
+          "expected_result": "reject_without_applying"
+        },
+        {
+          "id": "full-frame-marked-final",
+          "operation": "set_last_flag_recompute_tag_and_drop_following_frames",
+          "index": 0,
+          "expected_result": "reject_without_applying"
+        }
+      ]
+    }
+  ]
+}
