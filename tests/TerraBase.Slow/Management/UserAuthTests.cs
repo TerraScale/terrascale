@@ -83,6 +83,39 @@ public sealed class UserAuthTests
         await Assert.That(await StatusAsync(anonymous, organizations.OriginalString, token)).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
+    [Test]
+    public async Task The_github_actions_workload_token_creates_and_uses_its_bound_projects_database_only()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var auth = await RealAuthFixture.StartAsync(token);
+        var (accessToken, project) = await auth.GitHubActionsTokenAsync(token);
+        using var tls = new ClientTls();
+        await using var server = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            tls.Apply(settings);
+            RealAuthFixture.Configure(settings);
+        }, auth.TrustIssuer);
+        using var client = tls.CreateClient(server.ClientAddress!, accessToken);
+        var database = $"/v1/projects/{project}/databases/ci-e2e";
+
+        // As ci.yml's e2e job does first: TerraBase refused a workload sub that was not a ULID here with 401.
+        using var created = await client.PostAsJsonAsync(new Uri($"/v1/projects/{project}/databases", UriKind.Relative), new { name = "ci-e2e" }, token);
+        await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        using var collection = await client.PostAsJsonAsync(new Uri(database + "/collections", UriKind.Relative), new { name = "runs" }, token);
+        await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        var name = new Faker().Lorem.Word();
+        using var written = await client.PostAsJsonAsync(new Uri(database + "/collections/runs/documents", UriKind.Relative), new { name }, token);
+        await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        var id = (await written.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("id").GetString()!;
+        var read = await client.GetFromJsonAsync<JsonElement>(new Uri($"{database}/collections/runs/documents/by-key?id={Uri.EscapeDataString(id)}", UriKind.Relative), token);
+        await Assert.That(read.GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
+
+        // Its project only: another project and the membership API answer 404.
+        using var elsewhere = await client.PostAsJsonAsync(new Uri($"/v1/projects/{EntityIds.New()}/databases", UriKind.Relative), new { name = "ci-e2e" }, token);
+        await Assert.That(elsewhere.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(await StatusAsync(client, "/v1/management/organizations", token)).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
     private static async Task<HttpStatusCode> StatusAsync(HttpClient client, string path, CancellationToken cancellationToken = default)
     {
         using var response = await client.GetAsync(new Uri(path, UriKind.Relative), cancellationToken);

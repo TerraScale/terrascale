@@ -6,11 +6,16 @@
     <RootNamespace>TerraBase.Slow</RootNamespace>
     <OutputType>Exe</OutputType>
     <IsTestProject>true</IsTestProject>
+    <!-- Linked ts-auth harness files name ts-auth through the tsauth alias below. -->
+    <DefineConstants>$(DefineConstants);TSAUTH_ALIAS</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <!-- The real ts-auth, run in process, for the token interoperability test (Management/RealAuthFixture.cs). The alias
          keeps its generated Program apart from TerraBase's. -->
     <ProjectReference Include="../../src/TerraScale.Authentication/TerraScale.Authentication.csproj" Aliases="tsauth" />
     <!-- ts-auth's storage in that test: the TerraBase release its own suite pins. -->
+    <!-- ts-auth's own stand-in for GitHub's OIDC issuer, for the GitHub Actions workload token; TSAUTH_ALIAS makes it name
+         ts-auth's types through the alias. -->
+    <Compile Include="../TerraScale.Authentication.TestHarness/FakeGitHubActions.cs" Link="Management/FakeGitHubActions.cs" />
   </ItemGroup>
 </Project>

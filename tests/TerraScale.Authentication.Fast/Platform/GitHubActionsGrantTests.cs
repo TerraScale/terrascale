@@ -46,7 +46,7 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
         await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(project);
         await Assert.That(access.GetClaim("org_id").Value).IsEqualTo(organization);
         await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(GitHubActionsGrant.Scopes);
-        await Assert.That(access.Subject).IsEqualTo($"github-actions:{GitHubActionsGrant.RepositoryId}:18000000001");
+        await Assert.That(access.Subject).IsEqualTo(GitHubActionsGrant.ClientId);
         await Assert.That(access.ValidTo - access.IssuedAt).IsLessThanOrEqualTo(TimeSpan.FromMinutes(15));
         await Assert.That(body.TryGetProperty("refresh_token", out _)).IsFalse();
 
