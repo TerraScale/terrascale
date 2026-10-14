@@ -7,6 +7,348 @@
     "FR-24 (not written)"
   ],
   "bound": "per TerraBase node: storage reads on paths shape + shape_body <= sealed objects + mirrored objects (one read per sealed object per cache location)",
+  "live_3c459a5f": {
+    "run": "live7",
+    "start": "2026-10-14T19:28:50Z",
+    "end": "2026-10-14T19:34:24Z",
+    "harness_commit": "3f5d1c6a",
+    "load_image": "registry.fly.io/ts-vtest-load:v3-20261014192440@sha256:08ffe35d6484da843b7b16cf217639b8807bc6b3850778b7fe82abf3a636eb11",
+    "load_machines": {
+      "gru": "83d1951c7dd748",
+      "sjc": "e82d392c111d08",
+      "fra": "18577ee4a62e28"
+    },
+    "load_size": "shared-cpu-2x 2048 MB",
+    "tenant_plan": "enterprise",
+    "cluster": {
+      "app": "ts-vtest-tb",
+      "machines": {
+        "gru": "891e70eb4d0378",
+        "sjc": "6835466b44e258",
+        "fra": "48e4967a225338"
+      },
+      "size": "shared-cpu-2x 512 MB",
+      "revision": "3c459a5fa160d5f2b6142254430bcf0bd8a8d863",
+      "composition": "7bf8dd3a (main + PR #307 + PR #309) merged with PR #314 fix/shape-load-abort",
+      "image": "registry.fly.io/ts-vtest-tb:vtest-3c459a5fa160@sha256:96573646bbd6557de5891ba356be031a9d6ce02e4e1aa5d6369df20cbff6f0fe",
+      "deployed": "2026-10-14T19:23:05Z"
+    },
+    "node_restarts": [],
+    "not_run_at_this_candidate": [
+      1,
+      100
+    ],
+    "note": "No node exited: machine events after the run show only the 19:21-19:22Z rollout; every node answered the end-of-step scrape. sjc logged the anti-entropy placement warning 3 times at 19:31:32Z (the path that aborted before PR #314). N=10000 had no in-window writes. Evidence: evidence/live7-3c459a5f/.",
+    "steps": [
+      {
+        "n": 1000,
+        "readers_admitted": 448,
+        "readers_rejected": 552,
+        "readers_unresolved": 0,
+        "writes_in_window": 600,
+        "delivered": 210326,
+        "missed": 58474,
+        "latency_ms": {
+          "p50": 4259.839,
+          "p99": 31080.447
+        },
+        "ratio_304": 0,
+        "statuses": {
+          "200": 36842,
+          "307": 1000,
+          "429": 182744,
+          "503": 64
+        },
+        "refusal_reasons": {
+          "429 shape_busy: shape reads are at capacity; retry later": 182744,
+          "503 unavailable: the shape head is not remote durable yet; retry later": 64
+        },
+        "refused_before_admission": 105342,
+        "retries": 76914,
+        "reader_failures": 0,
+        "load_cpu_pct_by_shard": [
+          5.709528117884497,
+          26.29990990562414,
+          16.299717076406438
+        ],
+        "load_rss_mb_by_shard": [
+          20.89453125,
+          31.37109375,
+          29.86328125
+        ],
+        "nodes": [
+          {
+            "region": "fra",
+            "sealed": 91,
+            "mirrored": 0,
+            "parked": 0,
+            "storage_reads": {
+              "feed": 1273,
+              "point": 11970,
+              "query": 194,
+              "shape": 64306,
+              "shape_body": 2975
+            },
+            "reads_per_object_per_location": 739.3516483516484,
+            "cpu_pct": 138.0604966666666,
+            "rss_mb": 344.19140625
+          },
+          {
+            "region": "gru",
+            "sealed": 4,
+            "mirrored": 0,
+            "parked": 64,
+            "storage_reads": {
+              "feed": 1401,
+              "point": 8080,
+              "query": 179,
+              "shape": 27922,
+              "shape_body": 80
+            },
+            "reads_per_object_per_location": 7000.5,
+            "cpu_pct": 68.17061333333328,
+            "rss_mb": 323.7109375
+          },
+          {
+            "region": "sjc",
+            "sealed": 150,
+            "mirrored": 0,
+            "parked": 30,
+            "storage_reads": {
+              "feed": 1401,
+              "point": 9289,
+              "query": 194,
+              "shape": 141413,
+              "shape_body": 6989
+            },
+            "reads_per_object_per_location": 989.3466666666667,
+            "cpu_pct": 171.01768999999996,
+            "rss_mb": 338.54296875
+          }
+        ],
+        "errors": null
+      },
+      {
+        "n": 10000,
+        "readers_admitted": 2062,
+        "readers_rejected": 7938,
+        "readers_unresolved": 0,
+        "writes_in_window": 0,
+        "delivered": 0,
+        "missed": 0,
+        "latency_ms": {
+          "p50": 0,
+          "p99": 0
+        },
+        "ratio_304": 0,
+        "statuses": {
+          "200": 13382,
+          "307": 3856,
+          "429": 110893,
+          "503": 6890
+        },
+        "refusal_reasons": {
+          "429 shape_busy: shape reads are at capacity; retry later": 110893,
+          "503 storage_busy: storage is busy; retry later": 6859,
+          "503 unavailable: shape storage changed or is busy; retry later": 31
+        },
+        "refused_before_admission": 66019,
+        "retries": 42902,
+        "reader_failures": 6883,
+        "load_cpu_pct_by_shard": [
+          0.928527863151495,
+          1.0000440935984316,
+          0.5517957782058751
+        ],
+        "load_rss_mb_by_shard": [
+          71.81640625,
+          68.17578125,
+          60.71875
+        ],
+        "nodes": [
+          {
+            "region": "fra",
+            "sealed": 0,
+            "mirrored": 0,
+            "parked": 0,
+            "storage_reads": {
+              "feed": 162,
+              "point": 11774,
+              "query": 106,
+              "shape": 4653,
+              "shape_body": 52
+            },
+            "reads_per_object_per_location": 4705.0,
+            "cpu_pct": 16.202740000000045,
+            "rss_mb": 370.68359375
+          },
+          {
+            "region": "gru",
+            "sealed": 0,
+            "mirrored": 0,
+            "parked": 0,
+            "storage_reads": {
+              "feed": 162,
+              "point": 32622,
+              "query": 157,
+              "shape": 28249,
+              "shape_body": 243
+            },
+            "reads_per_object_per_location": 28492.0,
+            "cpu_pct": 20.90481999999999,
+            "rss_mb": 367.1640625
+          },
+          {
+            "region": "sjc",
+            "sealed": 0,
+            "mirrored": 0,
+            "parked": 0,
+            "storage_reads": {
+              "feed": 162,
+              "point": 14568,
+              "query": 107,
+              "shape": 32550,
+              "shape_body": 2153
+            },
+            "reads_per_object_per_location": 34703.0,
+            "cpu_pct": 23.40214666666668,
+            "rss_mb": 367.0546875
+          }
+        ],
+        "errors": [
+          "http://gru.ts-vtest-tb.internal:8080/v1/projects/01M4XXZ6WBT7NREG5P5N5PNF6C/databases/v3/collections/v3-01m4xxzrxdmsxbm9a0wz7p8wch/shape?handle=h1-d46ebad91d7ec30c&offset=snap.0.0: HTTP 503 {\"error\":{\"code\":\"storage_busy\",\"message\":\"storage is busy; retry later\"}}",
+          "http://sjc.ts-vtest-tb.internal:8080/v1/projects/01M4XXZ6WBT7NREG5P5N5PNF6C/databases/v3/collections/v3-01m4xxzrxdmsxbm9a0wz7p8wch/shape?handle=h1-fd770340854cb2ec&offset=188: HTTP 503 {\"error\":{\"code\":\"storage_busy\",\"message\":\"storage is busy; retry later\"}}",
+          "http://fra.ts-vtest-tb.internal:8080/v1/projects/01M4XXZ6WBT7NREG5P5N5PNF6C/databases/v3/collections/v3-01m4xxzrxdmsxbm9a0wz7p8wch/shape?offset=-1: HTTP 503 {\"error\":{\"code\":\"storage_busy\",\"message\":\"storage is busy; retry later\"}}"
+        ]
+      }
+    ]
+  },
+  "abort_repro_7bf8dd3a": {
+    "run": "live-abort-repro",
+    "start": "2026-10-14T19:14:27Z",
+    "end": "2026-10-14T19:18:15Z",
+    "harness_commit": "3f5d1c6a",
+    "load_image": "registry.fly.io/ts-vtest-load:v3-20261014191003@sha256:08ffe35d6484da843b7b16cf217639b8807bc6b3850778b7fe82abf3a636eb11",
+    "load_machines": {
+      "gru": "8ed941ef791258",
+      "sjc": "d894031c903978",
+      "fra": "185d176c314d08"
+    },
+    "load_size": "shared-cpu-2x 2048 MB",
+    "tenant_plan": "enterprise",
+    "cluster": {
+      "app": "ts-vtest-tb",
+      "machines": {
+        "gru": "891e70eb4d0378",
+        "sjc": "6835466b44e258",
+        "fra": "48e4967a225338"
+      },
+      "size": "shared-cpu-2x 512 MB",
+      "revision": "7bf8dd3a",
+      "image": "registry.fly.io/ts-vtest-tb:vtest-7bf8dd3a2a84"
+    },
+    "node_restarts": [
+      {
+        "region": "fra",
+        "machine": "48e4967a225338",
+        "sigabrt_logged_at": "2026-10-14T19:15:11.238Z"
+      },
+      {
+        "region": "gru",
+        "machine": "891e70eb4d0378",
+        "sigabrt_logged_at": "2026-10-14T19:15:12.398Z"
+      },
+      {
+        "region": "sjc",
+        "machine": "6835466b44e258",
+        "sigabrt_logged_at": "2026-10-14T19:15:16.337Z"
+      }
+    ],
+    "abort_cause": "Unhandled TerraBase.Engine.StorageBusyException from SqliteIoPool.Admit():192 via EngineManagementService.ReadCachedAsync and AntiEntropy.RunRoundAsync (AntiEntropy.cs:81) faulted the AntiEntropy BackgroundService; BackgroundServiceExceptionBehavior StopHost stopped the host and ApplicationRunCompletion rethrew it (SIGABRT, exit 134). Same stack as live6 sjc 18:58:44Z. Fixed by PR #314.",
+    "note": "Node scrapes failed (all three restarted mid-step): the zeros are not measurements. The 500 internal_error answers follow the first StopHost line (19:14:58Z). Evidence: evidence/live-abort-repro/.",
+    "steps": [
+      {
+        "n": 10000,
+        "readers_admitted": 542,
+        "readers_rejected": 9458,
+        "readers_unresolved": 0,
+        "writes_in_window": 62,
+        "delivered": 0,
+        "missed": 33604,
+        "latency_ms": {
+          "p50": 0,
+          "p99": 0
+        },
+        "ratio_304": 0,
+        "statuses": {
+          "200": 890,
+          "307": 4296,
+          "429": 138221,
+          "500": 885,
+          "503": 2914
+        },
+        "refusal_reasons": {
+          "429 shape_busy: shape reads are at capacity; retry later": 138221,
+          "500 internal_error: ": 885,
+          "503 storage_busy: storage is busy; retry later": 2872,
+          "503 unavailable: ": 33,
+          "503 unavailable: shape storage changed or is busy; retry later": 9
+        },
+        "refused_before_admission": 131175,
+        "retries": 7047,
+        "reader_failures": 10000,
+        "load_cpu_pct_by_shard": [
+          0.7930736168559951,
+          0.06896329406441637,
+          0.03448294151821146
+        ],
+        "load_rss_mb_by_shard": [
+          50.265625,
+          15.40234375,
+          14.70703125
+        ],
+        "nodes": [
+          {
+            "region": "fra",
+            "sealed": 0,
+            "mirrored": 0,
+            "parked": 0,
+            "storage_reads": {},
+            "reads_per_object_per_location": 0.0,
+            "cpu_pct": 0,
+            "rss_mb": 0
+          },
+          {
+            "region": "gru",
+            "sealed": 0,
+            "mirrored": 0,
+            "parked": 0,
+            "storage_reads": {},
+            "reads_per_object_per_location": 0.0,
+            "cpu_pct": 0,
+            "rss_mb": 0
+          },
+          {
+            "region": "sjc",
+            "sealed": 0,
+            "mirrored": 0,
+            "parked": 0,
+            "storage_reads": {
+              "feed": 387
+            },
+            "reads_per_object_per_location": 0.0,
+            "cpu_pct": 0,
+            "rss_mb": 0
+          }
+        ],
+        "errors": [
+          "http://gru.ts-vtest-tb.internal:8080/v1/projects/01M4XX4B7WY81Y64KXZGV36PF3/databases/v3/collections/v3-01m4xx5dgyqcnhd4bp3vgcc3cn/shape?offset=-1: HTTP 503 {\"error\":{\"code\":\"storage_busy\",\"message\":\"storage is busy; retry later\"}}",
+          "http://sjc.ts-vtest-tb.internal:8080/v1/projects/01M4XX4B7WY81Y64KXZGV36PF3/databases/v3/collections/v3-01m4xx5dgyqcnhd4bp3vgcc3cn/shape?handle=h1-d721a661c18777c2&offset=snap.0.0: HTTP 503 {\"error\":{\"code\":\"storage_busy\",\"message\":\"storage is busy; retry later\"}}",
+          "http://fra.ts-vtest-tb.internal:8080/v1/projects/01M4XX4B7WY81Y64KXZGV36PF3/databases/v3/collections/v3-01m4xx5dgyqcnhd4bp3vgcc3cn/shape?offset=-1: HTTP 503 {\"error\":{\"code\":\"storage_busy\",\"message\":\"storage is busy; retry later\"}}"
+        ]
+      }
+    ]
+  },
   "live_7bf8dd3a": {
     "run": "live6",
     "start": "2026-10-14T18:51:53Z",
@@ -1097,5 +1439,9 @@
         "verdict": "FAIL"
       }
     ]
+  },
+  "explanations": {
+    "n1_latency_live6": "FR-25 seal starvation: a chunk seals only when the remote-durable frontier reaches the head (src/TerraBase/Engine/Sqlite/SqliteStorageTransaction.Shapes.cs:70); a live read retries up to 20 s (ShapeSealer.cs:102, :147-163), then answers 503 'the shape head is not remote durable yet' (ShapeRegistry.cs:266-269); the background sealer backs off 30 s (ShapeSealer.cs:103). Documented in docs/terrabase/shape-reads.md:409-413. live6 N=1: 600 deliveries in 8 x 200, gru sealed 3, 1 x that 503.",
+    "writer_503_live6_n1000": "503 write_outcome_unknown (src/TerraBase/Errors/Errors.cs:81), 'no other region confirmed the write within 10 s' = DocumentService.cs:387-389: committed in gru, no peer ack within RemoteAckWaiter.Bound 10 s (RemoteAckWaiter.cs:21) while sjc ran at 122 % CPU. Defined overload answer, not a crash. live7 N=1000 had none (600 writes)."
   }
 }

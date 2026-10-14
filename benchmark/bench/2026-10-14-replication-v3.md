@@ -1,6 +1,109 @@
 # TerraBase V3 shape load — 2026-10-14
 
-## 0. Current result: rerun at `7bf8dd3a` (run live6)
+## 0. Current result: rerun at `3c459a5f` (run live7)
+
+- **V3: FAIL. Still BLOCKED on FR-22 (PR #283, open) and FR-24 (not written).** ts-vtest-tb ran `3c459a5f`
+  (`fix/shape-load-abort-vtest`: `7bf8dd3a` = main + PR #307 + PR #309, merged with PR #314
+  `fix/shape-load-abort`), image `registry.fly.io/ts-vtest-tb:vtest-3c459a5fa160@sha256:96573646…f0fe`, deployed
+  19:23:05Z.
+- **No crash.** No node exited during N = 1,000 or N = 10,000. The machine list captured after the run shows only the
+  19:21–19:22Z rollout's launch/start events. All three nodes answered the scrape at the end of both steps. sjc logged
+  `Anti-entropy could not read the placement of database {Database}; the next round tries again` three times at
+  19:31:32Z: this is the path that aborted the process before the fix. Overload now answers 429 `shape_busy` and 503
+  `storage_busy`, with no 500.
+- **Abort cause (old image, reproduced at 19:15Z, run `live-abort-repro`).** gru, sjc and fra all exited with SIGABRT
+  (exit 134). The log shows `Unhandled exception. TerraBase.Engine.StorageBusyException: storage is busy` at
+  `SqliteIoPool.Admit():192` → `EngineManagementService.ReadCachedAsync` → `AntiEntropy.RunRoundAsync` (`AntiEntropy.cs:81`)
+  → `AntiEntropy.ExecuteAsync`, followed by the host's "BackgroundService failed … StopHost". The anti-entropy round read a
+  database's placement outside its `try`. The faulted worker stopped the host, and `ApplicationRunCompletion` rethrew the
+  fault. The 18:58Z sjc exit in live6 has the same stack. PR #314 skips that database until the next round. The
+  500 `internal_error` answers (885 in the harness, 104 in live6) are canceled shape requests during that shutdown: the
+  first StopHost line is at 19:14:58Z, and the 719 `Unhandled error serving` lines the nodes logged start at 19:15:05Z
+  (`node-500s-and-stophost.jsonl`).
+- **The bound is still broken on every node at both steps:** 739 to 34,703 `shape` + `shape_body` reads per sealed
+  object per node (bound: 1).
+- **N = 1 and N = 100 were not run at this candidate.**
+
+### Live run at `3c459a5f` (live7), per step
+
+| N | admitted | rejected | writes | delivered | missed | p50 ms | p99 ms | statuses | load CPU % gru/sjc/fra | load RSS MB gru/sjc/fra |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | not run at this candidate | | | | | | | | | |
+| 100 | not run at this candidate | | | | | | | | | |
+| 1,000 | 448 | 552 | 600 | 210,326 | 58,474 | 4,260 | 31,080 | 200: 36,842, 307: 1,000, 429: 182,744, 503: 64 | 6 / 26 / 16 | 21 / 31 / 30 |
+| 10,000 | 2,062 | 7,938 | 0 | 0 | n/a | n/a | n/a | 200: 13,382, 307: 3,856, 429: 110,893, 503: 6,890 | 1 / 1 / 1 | 72 / 68 / 61 |
+
+Refusal reasons:
+- N = 1,000: 182,744 × 429 `shape_busy` and 64 × `503 unavailable` ("the shape head is not remote durable yet").
+- N = 10,000: 110,893 × 429 `shape_busy`, 6,859 × `503 storage_busy` and 31 × `503 unavailable` ("shape storage
+  changed or is busy").
+- At N = 10,000, 6,883 readers stopped on `503 storage_busy`; the harness counts them as failures. As in live6, there
+  were no in-window writes at N = 10,000, so missed and latency are n/a. This run does not show why.
+- At N = 1,000 the writer landed all 600 window writes; no `write_outcome_unknown` appears in the live7 records.
+
+| N | node | sealed objects | `shape` reads | `shape_body` reads | `point` reads | reads per object per location | parked | node CPU % | node RSS MB |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1,000 | gru | 4 | 27,922 | 80 | 8,080 | 7,001 | 64 | 68 | 324 |
+| 1,000 | sjc | 150 | 141,413 | 6,989 | 9,289 | 989 | 30 | 171 | 339 |
+| 1,000 | fra | 91 | 64,306 | 2,975 | 11,970 | 739 | 0 | 138 | 344 |
+| 10,000 | gru | 0 | 28,249 | 243 | 32,622 | 28,492 | 0 | 21 | 367 |
+| 10,000 | sjc | 0 | 32,550 | 2,153 | 14,568 | 34,703 | 0 | 23 | 367 |
+| 10,000 | fra | 0 | 4,653 | 52 | 11,774 | 4,705 | 0 | 16 | 371 |
+
+### Abort reproduction on the old image `7bf8dd3a` (live-abort-repro, 19:14:27Z, N = 10,000 only)
+
+| N | admitted | rejected | writes | delivered | missed | statuses | node exits (SIGABRT, from node logs) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 10,000 | 542 | 9,458 | 62 | 0 | 33,604 | 200: 890, 307: 4,296, 429: 138,221, 500: 885, 503: 2,914 | fra 19:15:11.2Z, gru 19:15:12.4Z, sjc 19:15:16.3Z |
+
+All three node scrapes failed: the merged JSON shows zeros, which are not measurements.
+
+### Why one reader waits 15.8 s (live6, N = 1)
+
+This is FR-25 seal starvation. It is the documented behaviour of the remote-durable gate, not a crash or a harness
+artifact.
+- **What the harness measures:** latency runs from the writer's send to the moment the reader reads the document.
+- **The gate:** a chunk seals only when the remote-durable frontier has reached the head
+  (`src/TerraBase/Engine/Sqlite/SqliteStorageTransaction.Shapes.cs:70`). At 20 writes/s the frontier is almost always
+  behind the head.
+- **How a read waits:** a live read retries on each commit or every 1 s for up to 20 s
+  (`src/TerraBase/Features/Shapes/ShapeSealer.cs:102`, `:147-163`). It then answers `503 unavailable`, "the shape head is
+  not remote durable yet" (`ShapeRegistry.cs:266-269`). The background sealer backs off 30 s (`ShapeSealer.cs:103`).
+- **How it shows in live6:** 600 deliveries arrived in eight 200 answers, gru sealed 3 objects, and the step logged
+  1 × that 503.
+- **It is documented:** `docs/terrabase/shape-reads.md:409-413` says "Under sustained writes the head can stay ahead
+  of `F`, so seals and snapshots can starve for as long as the lag lasts."
+
+### Why the writer got 503 at N = 1,000 (live6)
+
+`503 write_outcome_unknown` (`src/TerraBase/Errors/Errors.cs:81`) with "no other region confirmed the write within
+10 s" is `DocumentService.cs:387-389`. The write committed in gru, but no peer acknowledged it within
+`RemoteAckWaiter.Bound` = 10 s (`RemoteAckWaiter.cs:21`), while sjc ran at 122 % CPU. This is a defined overload answer
+(never replayed automatically), not a crash. It does show that replica-region readers can delay the home region's write
+confirmations. The writer kept sending: 434 is the count of successful window writes. live7 at N = 1,000 had no such 503.
+
+### Provenance and ledger (live7, live-abort-repro)
+
+- **Evidence directories:**
+  - `evidence/live7-3c459a5f/`: shard and merged JSON, `v3.md`, merge, load and run output, deploy line, the machine
+    list after the run, the anti-entropy warning lines, `cleanup.txt` and `SHA256SUMS`.
+  - `evidence/live-abort-repro/`: the same harness output, the node log excerpts with the abort stacks
+    (`node-abort-1915.jsonl`, plus live6's sjc stack in `node-abort-sjc-1858-live6.jsonl`), the 500 and StopHost lines
+    (`node-500s-and-stophost.jsonl`) and `SHA256SUMS`.
+- **Harness:** the same binary as live6 (harness `3f5d1c6a`), load image digest
+  `sha256:08ffe35d6484da843b7b16cf217639b8807bc6b3850778b7fe82abf3a636eb11`.
+- **live-abort-repro resources:**
+  - Tenant org `01M4XX4B7JAPDK67BCZW4NP79N` and key `01M4XX4KT885T5M0MR5P27ARP1`: deleted and revoked 19:18:15Z.
+  - Load machines `8ed941ef791258`, `d894031c903978`, `185d176c314d08`: destroyed by 19:18:14Z.
+- **live7 resources:**
+  - Tenant org `01M4XXZ6QKHNY5WTDE8XKMMVZQ` and key `01M4XXZBJE1P8NAYKVM1VQGBQS`: deleted and revoked 19:34:24Z.
+  - Load machines `83d1951c7dd748`, `e82d392c111d08`, `18577ee4a62e28`: destroyed by 19:34:23Z.
+  - App `ts-vtest-load`: destroyed between 19:34:24Z and 19:40:56Z (`cleanup.txt`).
+- **Node log streams:** captured with `flyctl logs -m` for each machine. The live7 streams for sjc and fra stop at
+  19:32:17Z and 19:32:45Z, so the no-crash claim for the rest of the run rests on the machine events and the scrapes
+  at the end of each step.
+
+## 0a. History: rerun at `7bf8dd3a` (run live6)
 
 - **V3: FAIL. Still BLOCKED on FR-22 (PR #283, open) and FR-24 (not written).** ts-vtest-tb ran `7bf8dd3a`
   (`fix/shape-frontier-stuck-vtest`: PR #307 memory fix + PR #309 frontier fix). The cluster was not redeployed.
