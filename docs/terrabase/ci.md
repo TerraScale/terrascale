@@ -31,7 +31,8 @@ first 12 hex digits of the schema digest. A directory records it in its lock fil
   if it then fails, its logs are checked for the refusal (reset) and anything else stops the rollout. Resets only run
   while `ops/fly/greenfield-no-customer-data` contains `storage-format=<StorageFormat.Id>` matching the target image's
   executable. A later version or schema digest refuses before any Fly mutation and needs separate approval. Remove the
-  marker after the approved regional reset finishes. Each reset is listed in the deploy job summary with its snapshot ID.
+  marker only after gru, sjc and fra have all completed the approved reset. Each reset is listed in the deploy job
+  summary with its snapshot ID.
 - Formats: 2 was SQLite (Microsoft.Data.Sqlite); 3 is Turso (T1); 4 drops the change feed and history tables (R2c-2). A format-3 build refuses a format-2 data directory at
   start with `data directory has storage format 2-…; this build writes 3-…`; there is no conversion.
 - Storage train: a pull request that changes what is on disk bumps `StorageFormat.Version` and carries the label
