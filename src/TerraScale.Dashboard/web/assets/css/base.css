@@ -1,24 +1,22 @@
 /* Fonts, reset, document defaults, accessibility helpers, and the
    navigation progress bar. */
 
-/* Fonts are preloaded by the layout; "block" keeps text invisible for the few
-   milliseconds a cached font needs instead of flashing the fallback face. */
+/* Self-hosted variable Geist. "swap" shows the system face until the file
+   arrives, so text is never invisible. */
 @font-face {
-  font-family: "Oxanium";
+  font-family: "Geist";
   font-style: normal;
-  font-weight: 200 800;
-  font-display: block;
-  src: url("/fonts/oxanium-latin-wght-normal.woff2") format("woff2");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/Geist-Variable.woff2") format("woff2");
 }
 
 @font-face {
-  font-family: "JetBrains Mono";
+  font-family: "Geist Mono";
   font-style: normal;
-  font-weight: 100 800;
-  font-display: block;
-  src: url("/fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/GeistMono-Variable.woff2") format("woff2");
 }
 
 *,
@@ -115,7 +113,7 @@ hr {
 }
 
 :focus-visible {
-  outline: 2px solid var(--ts-accent);
+  outline: 2px solid var(--ts-focus);
   outline-offset: 2px;
 }
 
@@ -158,23 +156,20 @@ hr {
 
 /* Navigation activity: Datastar sets body.ts-nav-pending while the next
    document loads (see UI/Slices/ShellDocument.cshtml). Wait before revealing the
-   full-width bar so quick navigations never flash it. A bright shimmer shows
-   an ongoing wait without implying a measured completion percentage. */
+   full-width bar so quick navigations never flash it. A flat pulse shows an
+   ongoing wait without implying a measured completion percentage. */
 body.ts-nav-pending::before {
   content: "";
   position: fixed;
   inset: 0 0 auto;
   z-index: var(--ts-z-progress);
   height: 5px;
-  background:
-    linear-gradient(90deg, transparent, rgb(255 255 255 / 0.55), transparent) 0 0 / 35% 100% no-repeat,
-    var(--ts-accent);
-  box-shadow: 0 1px 8px rgb(59 130 246 / 0.35);
+  background: var(--ts-accent);
   opacity: 0;
   pointer-events: none;
   animation:
     ts-progress-reveal 100ms ease-out 80ms forwards,
-    ts-progress-shine 1.2s linear 80ms infinite;
+    ts-progress-pulse 1.2s ease-in-out 80ms infinite;
 }
 
 @keyframes ts-progress-reveal {
@@ -182,9 +177,8 @@ body.ts-nav-pending::before {
   to { opacity: 1; }
 }
 
-@keyframes ts-progress-shine {
-  from { background-position: -45% 0, 0 0; }
-  to { background-position: 145% 0, 0 0; }
+@keyframes ts-progress-pulse {
+  50% { background-color: var(--ts-accent-fill-hover); }
 }
 
 @keyframes ts-pop-in {
