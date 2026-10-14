@@ -34,7 +34,7 @@ Checks, in order, each stopping the run (`DisposableTarget`, negative controls i
 
 1. **Configuration, before any flyctl call or request:** a missing variable; `ts-terrabase`, `ts-auth`, `ts-dashboard` or
    any `ts-pr-*` app; a URL other than the app's own host (so production's `.fly.dev` hosts, `api.`, `auth.` and the
-   regional aliases are refused); the previews' org except the exact approved pair `ts-terrabase-e2e` / `terrascale-previews-515`;
+   regional aliases are refused); the previews' org except the approved apps `ts-terrabase-e2e` and `ts-vtest-tb` (V-wave, `benchmark/bench/2026-10-14-replication-vtest`) in `terrascale-previews-515`;
    org `terrascale` without a network; a region of the run without a
    named machine.
 2. **Read-only, before any write or fault:** `flyctl apps list --org <org> --json` must show the app in that org on that

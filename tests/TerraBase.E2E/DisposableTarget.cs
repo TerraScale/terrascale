@@ -16,6 +16,9 @@ internal static class DisposableTarget
     public const string NetworkVariable = "TERRABASE_E2E_FLY_NETWORK";
     public const string MachinesVariable = "TERRABASE_E2E_FLY_MACHINES";
     public const string ApprovedApp = "ts-terrabase-e2e";
+
+    // The V-wave qualification cluster (benchmark/bench/2026-10-14-replication-vtest), in the same approved org.
+    public const string VtestApp = "ts-vtest-tb";
     public const string ApprovedOrg = "terrascale-previews-515";
 
     // Production's org; an app there is isolated only on its own private network (option A).
@@ -46,7 +49,7 @@ internal static class DisposableTarget
 
         var org = Required(variable, OrgVariable, "the disposable app's org");
         if (org.StartsWith("terrascale-previews", StringComparison.OrdinalIgnoreCase)
-            && !(org == ApprovedOrg && app == ApprovedApp))
+            && !(org == ApprovedOrg && app is ApprovedApp or VtestApp))
         {
             throw new InvalidOperationException($"{org} is the PR previews' org; a machine-pinned run targets only a disposable app's org");
         }

@@ -183,6 +183,62 @@ public sealed class Cluster : IAsyncDisposable
         await _local.StartAgainAsync(region);
     }
 
+    /// <summary>
+    /// Cuts <paramref name="region"/> off from <paramref name="from"/> (every other region when empty). Local nodes drop the
+    /// peer links (<see cref="Partition"/>). On a pinned disposable app's fault run each machine pair drops the other's 6PN
+    /// packets both ways (<c>ip6tables</c> over <c>flyctl ssh</c>; the test-only faults image), while Fly Proxy still
+    /// reaches every machine.
+    /// </summary>
+    public async Task IsolateAsync(string region, params string[] from)
+    {
+        var others = from.Length > 0 ? from : [.. Regions.Where(other => other != region)];
+        if (_local is not null)
+        {
+            foreach (var other in others)
+            {
+                _local.Partition(region, other);
+            }
+
+            return;
+        }
+
+        using var listed = JsonDocument.Parse(await Flyctl.RunAsync("machine", "list", "--app", Disposable.App, "--json"));
+        var ips = listed.RootElement.EnumerateArray().ToDictionary(machine => machine.GetProperty("id").GetString()!, machine => machine.GetProperty("private_ip").GetString()!);
+        foreach (var other in others)
+        {
+            await DropAsync(region, ips[Disposable.Machines[other]]);
+            await DropAsync(other, ips[Disposable.Machines[region]]);
+        }
+
+        Task DropAsync(string on, string peer)
+        {
+            return FlySshAsync(on, $"ip6tables -A INPUT -s {peer} -j DROP && ip6tables -A OUTPUT -d {peer} -j DROP");
+        }
+    }
+
+    /// <summary>Undoes every <see cref="IsolateAsync"/> and <see cref="Partition"/>: local links come back, Fly rules are flushed.</summary>
+    public async Task HealAllAsync()
+    {
+        if (_local is not null)
+        {
+            _local.Heal();
+            return;
+        }
+
+        foreach (var region in Regions)
+        {
+            await FlySshAsync(region, "ip6tables -F INPUT && ip6tables -F OUTPUT");
+        }
+    }
+
+    /// <summary>Fly only: SIGKILLs <paramref name="region"/>'s machine (<c>flyctl machine kill</c>); <see cref="StartAgainAsync"/> brings it back.</summary>
+    public Task KillAsync(string region) => _local is null
+        ? Flyctl.RunAsync("machine", "kill", Disposable.Machines[region], "--app", Disposable.App)
+        : throw new NotSupportedException("a local SIGKILL needs separate processes (RegionProcesses)");
+
+    private Task<string> FlySshAsync(string region, string command) =>
+        Flyctl.RunAsync("ssh", "console", "--app", Disposable.App, "--machine", Disposable.Machines[region], "-C", $"sh -c '{command}'");
+
     public async ValueTask DisposeAsync()
     {
         await _release();
