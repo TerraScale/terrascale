@@ -75,9 +75,9 @@
 }
 
 .ts-idp-chip-on {
-  border-color: color-mix(in oklab, var(--tone) 30%, transparent);
+  border-color: color-mix(in oklab, var(--ts-ink-2) 30%, transparent);
   background: var(--ts-surface-3);
-  color: color-mix(in oklab, var(--tone) 75%, var(--ts-ink));
+  color: color-mix(in oklab, var(--ts-ink-2) 75%, var(--ts-ink));
 }
 
 .ts-idp-callback {
@@ -214,7 +214,7 @@ button.ts-idp-provider {
 }
 
 button.ts-idp-provider:hover {
-  border-color: color-mix(in oklab, var(--tone) 45%, transparent);
+  border-color: color-mix(in oklab, var(--ts-ink-2) 45%, transparent);
   background: var(--ts-surface-2);
 }
 
@@ -276,7 +276,7 @@ button.ts-idp-provider:focus-visible {
 }
 
 .ts-idp-progress-done {
-  background: var(--tone);
+  background: var(--ts-ink-2);
 }
 
 .ts-idp-checklist {
@@ -338,9 +338,9 @@ button.ts-idp-provider:focus-visible {
   place-items: center;
   width: 28px;
   height: 28px;
-  border: 1px solid color-mix(in oklab, var(--tone) 45%, transparent);
+  border: 1px solid color-mix(in oklab, var(--ts-ink-2) 45%, transparent);
   border-radius: 50%;
-  color: var(--tone);
+  color: var(--ts-ink-2);
   font-size: var(--ts-fs-sm);
   font-weight: 700;
 }
@@ -645,24 +645,27 @@ button.ts-idp-provider:focus-visible {
   color: var(--ts-danger);
 }
 
-@media (max-width: 767px) {
+.ts-idp-mobile-nav {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .ts-idp-mobile-nav {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-s2);
+  }
+
+  .ts-idp-mobile-nav .ts-select {
+    flex: 1;
+    min-width: 0;
+  }
+
   .ts-idp-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .ts-idp-layout > nav {
-    display: flex;
-    max-width: 100%;
-    overflow-x: auto;
-    border-bottom: 1px solid var(--ts-line);
-    padding-bottom: var(--ts-s2);
-  }
-
-  .ts-idp-layout > nav .ts-nav-group {
-    flex: none;
-  }
-
-  .ts-idp-layout > nav .ts-nav {
-    display: flex;
+    display: none;
   }
 }

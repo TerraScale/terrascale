@@ -15,7 +15,13 @@ public static class AuthenticationConsole
     {
         foreach (var prefix in new[] { "/auth", "/authentication" })
         {
-            endpoints.MapGet(prefix, async (HttpContext http, DashboardSessions sessions, AccountService accounts) => await PageAsync(http, sessions, accounts, "overview"));
+            endpoints.MapGet(prefix, async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
+            {
+                var section = http.Request.Query["section"].ToString();
+                return AuthenticationSection.Find(section) is not null
+                    ? AuthEndpoints.SeeOther(prefix + "/" + Uri.EscapeDataString(section))
+                    : await PageAsync(http, sessions, accounts, "overview");
+            });
             endpoints.MapGet(prefix + "/{section}", async (HttpContext http, string section, DashboardSessions sessions, AccountService accounts) => await PageAsync(http, sessions, accounts, section));
             endpoints.MapGet(prefix + "/emails/preview", async (HttpContext http, DashboardSessions sessions, AccountService accounts) => await PageAsync(http, sessions, accounts, "emails"));
         }

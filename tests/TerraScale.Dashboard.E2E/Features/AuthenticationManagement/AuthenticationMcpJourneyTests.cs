@@ -35,6 +35,9 @@ public sealed class AuthenticationMcpJourneyTests(DashboardRootFixture fixture)
         using var browser = scenario.CreateClient();
         using var login = await HttpJourney.LoginAsync(browser, returnTo: "/api/v1/auth/me");
         Check(login.StatusCode == HttpStatusCode.SeeOther, "A signed-in user opens the authentication console");
+        using var selected = await browser.GetAsync("/auth?section=danger");
+        Check(selected.StatusCode == HttpStatusCode.SeeOther && selected.Headers.Location?.OriginalString == "/auth/danger",
+            "The mobile section selector redirects to the existing section route");
         using var response = await browser.GetAsync("/auth/danger");
         var html = await response.Content.ReadAsStringAsync();
         Check(response.StatusCode == HttpStatusCode.ServiceUnavailable, "The danger zone route answers 503 while ts-auth management is unavailable");
