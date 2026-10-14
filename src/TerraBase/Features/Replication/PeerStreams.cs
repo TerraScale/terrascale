@@ -653,6 +653,22 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             (cursor.Acked, cursor.Live) = (inFlight, null);
         }
 
+        // Shape reads publish from the same proof, whether or not a client write still waits for it. Proved before the ack is
+        // recorded, which cuts the change log down to the frontier this moves (FR-25); ProveAsync checks the incarnation itself.
+        // A failure only delays publication until the next ack of the run, which covers the same range: it never fails the stream.
+        if (live && (await PlacementAsync(database, cancellationToken).ConfigureAwait(false))?.Includes(link.Peer.Region) == true)
+        {
+            try
+            {
+                var held = await HeldOriginsAsync(database, cancellationToken).ConfigureAwait(false);
+                _ = await _source.ProveAsync(database, incarnation, from, (long)ack.ChangeId, held, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.ZLogWarning(error, $"Recording a remote durable proof for shape reads failed; the next ack retries");
+            }
+        }
+
         // Recorded only while the copy in place is still the one the batch came from; otherwise the cursor starts over.
         if (!await _source.AckAsync(database, incarnation, peer, (long)ack.ChangeId, new Hlc(ack.Stable), cancellationToken).ConfigureAwait(false))
         {
@@ -673,17 +689,6 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         if (live && (await PlacementAsync(database, cancellationToken).ConfigureAwait(false))?.Includes(link.Peer.Region) == true)
         {
             _acks.Acked(database, incarnation, from, (long)ack.ChangeId);
-            // Shape reads publish from the same proof, whether or not a client write still waits for it. A failure only delays
-            // publication until the next ack of the run, which covers the same range: it never fails the stream.
-            try
-            {
-                var held = await HeldOriginsAsync(database, cancellationToken).ConfigureAwait(false);
-                _ = await _source.ProveAsync(database, incarnation, from, (long)ack.ChangeId, held, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
-            {
-                _logger.ZLogWarning(error, $"Recording a remote durable proof for shape reads failed; the next ack retries");
-            }
         }
     }
 

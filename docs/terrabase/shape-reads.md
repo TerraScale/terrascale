@@ -368,29 +368,39 @@ lands after #211. There is no runtime switch. Until then, every resume answers `
 - **Retention.** Three paths apply the hold: the replication tailer's trim, the continuous-backup tap's truncate, and the
   peer-ack path. Each keeps every row after the walked point while the first unwalked row is younger than 24 hours, once
   any peer has been heard from (`_tb_peers.seen > 0`), else 60 seconds. The hold also ends if the unwalked
-  backlog exceeds 65,536 rows or 1 GiB of after-images. Each measurement streams only image sizes (`octet_length`), at
-  most 65,537 rows, and stops at the first row past either bound. These bounds
+  backlog exceeds 65,536 rows or 1 GiB of after-images, and when the first unwalked feed seq is not `F + 1` (a copy's or
+  a restore's feed), which the walk can never pass. Each measurement streams only image sizes (`octet_length`), at
+  most 65,537 rows, and stops at the first row past either bound; the feed seq check then reads only the first 128 bytes
+  of one feed row's image (its record header and seq). A live ack is proved before it is recorded, so the cut it makes
+  already sees the frontier its proof moved. The tailer's trim resolves the remote durability service when the pass
+  runs (the peer streams depend on the tailer, so it is not a constructor dependency) and walks with the origins held at
+  that moment, so a replica that only joins another region's writes releases them without an ack of its own. These bounds
   constrain this hold; other retention anchors can still retain more capture. Expiration or eviction can make an
   unproven prefix permanently unavailable; it never certifies it.
 - **Fail closed.** For this incarnation, the walk stops and holds `F` where it is. Exact cases:
   - **Own commit, no proof.** An own commit advances only from a live acknowledgement range `(From, To]` whose
-    `ProveAsync` commits. A range goes unproven when: the process crashes after the ack is recorded and before the proof
-    transaction commits; `ProveAsync` throws (logged, and the next ack of the run covers the same range); or the placement
-    recheck after the ack fails (no proof is sent). Refill and non-live acks never prove. A range whose proof
+    `ProveAsync` commits. `ProveAsync` runs before `AckAsync` records the ack, and checks the incarnation under the writer
+    itself. A range goes unproven when: the process crashes after the ack is received and before the proof transaction
+    commits (the ack is not recorded either, so the batch is sent and acknowledged again); `ProveAsync` throws (logged; the
+    ack is still recorded, and the next ack of the run covers the same range); or the placement check before recording
+    fails (no proof is sent). A proof whose ack recording is then refused (the copy in place changed) names the
+    incarnation it checked, so it never proves another file. Refill and non-live acks never prove. A range whose proof
     transaction committed survives a crash or restart in the sentinel, whether or not `F` moved, unless the 16-range
     bound dropped it.
   - **Origin-0 repair or delete-only commit.** Not held, so the walk stops there. Retention runs the walk before it trims,
-    but it cannot pass an unheld commit. If retention then trims rows past the stop, the gap is unprovable and the stop is
+    with the origins held when the pass starts, but it cannot pass an unheld commit. If retention then trims rows past the
+    stop, the gap is unprovable and the stop is
     permanent for this incarnation.
   - **Unknown origin.** A state row whose origin is not a held origin stops the walk: another machine of this region, an
     old epoch of a held machine, or an id that no live link of another region welcomed. It proves nothing about a second
-    region.
+    region. Held origins are read again by every ack's proof, every seal or snapshot request and every retention pass (5 s),
+    so a stall moves once a link to that origin connects; meanwhile the hold keeps the rows within its bounds.
   - **Missing capture.** No `turso_cdc` table: no advance. Rows after the walked point trimmed (`oldest > scanned + 1`):
     permanent stop for this incarnation.
   - **Corrupt capture.** A damaged change-log row, or a captured state or feed row whose columns do not decode, holds `F`
     at that row and retries it on each pass. Seals wait for the frontier and snapshots remain unpublished.
   - **Feed seq gap.** A seq that does not continue `F + 1`, as with a copied or restored feed whose capture does not
-    continue from `F`.
+    continue from `F`. Permanent for this incarnation, so retention holds nothing for it.
 - **Starvation.** A head ahead of `F` is never persisted. In a cell, a seal waits for `F` to cover the head it
   materializes at, and a snapshot publishes only when `F ≥ S`. While any case above holds `F`, seals and snapshot
   publication wait. `-1` keeps answering the newest published snapshot, and a snapshot request with no published

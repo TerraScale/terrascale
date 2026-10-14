@@ -430,7 +430,7 @@ internal sealed class TursoChangeTap : IWalTap
         {
             var now = _time.GetUtcNow().ToUnixTimeSeconds();
             // Nor the rows the shape frontier has not walked yet, for a bounded time (FR-25).
-            var hold = _store.Member is not null ? SqliteStorageTransaction.ShapeFrontierHold(writer.Connection, null, now) : null;
+            var hold = _store.RequiresRemoteProof ? SqliteStorageTransaction.ShapeFrontierHold(writer.Connection, null, now) : null;
             command.CommandText = SqliteStorageTransaction.Retention;
             command.Parameters.AddWithValue("$below", Math.Min(_anchor, hold ?? long.MaxValue));
             command.Parameters.AddWithValue("$now", now);

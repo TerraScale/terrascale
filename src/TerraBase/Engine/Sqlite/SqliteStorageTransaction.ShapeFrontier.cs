@@ -64,7 +64,7 @@ internal sealed partial class SqliteStorageTransaction
 
     /// <summary>See <see cref="ShapeFrontierHold"/>.</summary>
     internal ValueTask<long?> ShapeFrontierHoldAsync(long now, CancellationToken cancellationToken) =>
-        RunAsync(() => store.IsSystem ? null : ShapeFrontierHold(session.Connection, transaction, now), cancellationToken);
+        RunAsync(() => !store.RequiresRemoteProof || store.IsSystem ? null : ShapeFrontierHold(session.Connection, transaction, now), cancellationToken);
 
     // Worker-only.
     private long ShapeFrontierOrHead(bool remote) => remote ? ShapeFrontier()?.Frontier ?? 0 : ShapeFeedHead();
@@ -329,8 +329,8 @@ internal sealed partial class SqliteStorageTransaction
     /// after the walked prefix is younger than 24 h when any peer has been heard from, else 60 s (a peer
     /// whose stream has not arrived yet), and while the unwalked rows stay within both the far-behind row and byte bounds.
     /// The measurement reads at most one row beyond the row bound. Past either bound, or once
-    /// the walk can no longer go on, retention is unchanged and the frontier stops for good. Shared by the tailer's trim and
-    /// the backup tap.
+    /// the walk can no longer go on (rows past it trimmed, or a first unwalked feed seq other than F + 1), retention is
+    /// unchanged and the frontier stops for good. Shared by the tailer's trim, the peer-ack path and the backup tap.
     /// </summary>
     internal static long? ShapeFrontierHold(SqliteConnection connection, SqliteTransaction? transaction, long now)
     {
@@ -342,7 +342,7 @@ internal sealed partial class SqliteStorageTransaction
             return null;
         }
 
-        var scanned = ReadShapeFrontier(connection, transaction)?.Scanned ?? 0;
+        var (frontier, scanned, _) = ReadShapeFrontier(connection, transaction) ?? (0, 0, []);
         command.CommandText = """
             SELECT (SELECT min(change_id) FROM turso_cdc),
                 (SELECT change_time FROM turso_cdc WHERE change_id > $scanned ORDER BY change_id LIMIT 1),
@@ -374,8 +374,36 @@ internal sealed partial class SqliteStorageTransaction
             }
         }
 
-        return scanned;
+        measured.Close();
+        // The walk passes a feed row only at F + 1, and only the walk moves F: a first unwalked feed seq past it (a copy's or a
+        // restore's feed) stops the walk for good, so there is nothing to hold for. Within the row bound just measured. Only
+        // the image's bounded prefix is read (nullness tested in SQL): it holds the record header and the seq.
+        command.CommandText = """
+            SELECT substr(after, 1, $prefix) FROM turso_cdc
+            WHERE change_id > $scanned AND table_name = '_tb_feed' AND change_type = 1 AND after IS NOT NULL ORDER BY change_id LIMIT 1;
+            """;
+        command.Parameters.Clear();
+        command.Parameters.AddWithValue("$scanned", scanned);
+        command.Parameters.AddWithValue("$prefix", FeedSeqPrefixBytes);
+        using var feed = command.ExecuteReader();
+        if (!feed.Read())
+        {
+            return scanned;
+        }
+
+        try
+        {
+            return SqliteRecord.Decode(SqliteSession.Bytes(feed, 0), 1) is [long seq] && seq != frontier + 1 ? null : scanned;
+        }
+        catch (InvalidDataException)
+        {
+            // A damaged row holds the walk, which retries it (section 7): the hold stays.
+            return scanned;
+        }
     }
+
+    // A feed row's header (seven serial types of at most 9 bytes, and its size) and its seq fit in this.
+    private const int FeedSeqPrefixBytes = 128;
 
     // One captured transaction while the frontier walks it.
     private sealed class FrontierCommit

@@ -161,7 +161,7 @@ internal sealed class ShapeSealer(
         {
             var shapes = (IShapeStorageTransaction)transaction;
             var chunk = await shapes.ReadShapeChunkAsync(handle, offset, memory, cancellationToken).ConfigureAwait(false);
-            // Read in the same transaction: the frontier only rises, so a chunk once served stays servable.
+            // Read in the same transaction: valid proof only advances; missing or damaged proof refuses the chunk.
             if (chunk is not null && await shapes.ReadShapeFrontierAsync(durability.Confirms, cancellationToken).ConfigureAwait(false)
                 < Math.Max(chunk.EndOffset, chunk.ValuesAt))
             {

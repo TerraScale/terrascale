@@ -27,6 +27,9 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     private readonly ILogger<TursoChangeGroupSource> _logger;
     private readonly SqliteStorageEngine _engine;
 
+    // Resolved per pass: the peer streams behind it read this source, so it cannot be a constructor dependency.
+    private readonly Func<IRemoteDurability?>? _durability;
+
     // Per database file, the CDC rows its last acknowledgement left; and when its oldest local commit that some peer has
     // not acknowledged committed (Unix seconds), with when that was last looked at (host-clock ticks).
     private readonly ConcurrentDictionary<Ulid, long> _backlog = new();
@@ -37,9 +40,10 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     private readonly ConcurrentDictionary<Ulid, TenantContext> _tracked = new();
     private static readonly TimeSpan TailRefresh = TimeSpan.FromSeconds(5);
 
-    public TursoChangeGroupSource(SqliteStorageEngine engine, IMeterFactory meters, ILogger<TursoChangeGroupSource> logger)
+    public TursoChangeGroupSource(SqliteStorageEngine engine, IMeterFactory meters, ILogger<TursoChangeGroupSource> logger, Func<IRemoteDurability?>? durability = null)
     {
         _engine = engine;
+        _durability = durability;
         _logger = logger;
         meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.replication.cdc_backlog", Backlog, null,
             "CDC rows kept because some peer has not acknowledged them, as of each database's last acknowledgement.");
@@ -425,14 +429,19 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     internal async Task TrimAsync(SqliteDatabaseStore store, CancellationToken cancellationToken)
     {
         long? floor;
+        // Read before the writer is taken: joined commits of a held origin pass the frontier before the cut, so a replica that
+        // only joins remote writes is not held for 24 h waiting for an ack it never gets.
+        var held = store.RequiresRemoteProof && store.Tenant is { } tenant && _durability?.Invoke() is { } durability
+            ? await durability.HeldOriginsAsync(tenant, cancellationToken).ConfigureAwait(false)
+            : FrozenSet<ReplicaId>.Empty;
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             // The file this transaction holds, which a reopen may have made another than the store's cached one.
             var incarnation = await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false);
-            // Before the cut: commits that need no new proof pass the shape frontier while capture still holds them. No held
-            // origins here (the source knows no links): joined commits wait for a proof or a seal request that names them.
-            var moved = await transaction.AdvanceShapeFrontierAsync(_engine.ReplicaId, null, FrozenSet<ReplicaId>.Empty, cancellationToken).ConfigureAwait(false);
+            // Before the cut: commits that need no new proof pass the shape frontier while capture still holds them, joined
+            // ones of an origin held now included.
+            var moved = store.RequiresRemoteProof && await transaction.AdvanceShapeFrontierAsync(_engine.ReplicaId, null, held, cancellationToken).ConfigureAwait(false);
             var now = _engine.HostTime.GetUtcNow();
             // The cut keeps what the frontier has not walked yet, for a bounded time (a pass's budget, or a proof to come).
             var below = await transaction.ShapeFrontierHoldAsync(now.ToUnixTimeSeconds(), cancellationToken).ConfigureAwait(false) is { } hold

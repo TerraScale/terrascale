@@ -227,6 +227,8 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>What this database's local writes mint their stamps with.</summary>
     internal LocalReplica? Member { get; init; }
 
+    internal bool RequiresRemoteProof { get; init; }
+
     public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken) =>
         await BeginAsync(write, durable: false, cancellationToken).ConfigureAwait(false);
 
