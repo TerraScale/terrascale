@@ -44,7 +44,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test handoff-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
-	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-replication-matrix terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
+	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-replication-matrix terrabase-e2e-local terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local benchmark-repl-fly
 
 # Global: the whole solution.
@@ -179,6 +179,16 @@ terrabase-test-slow: terrabase-build
 # CI's required TerraBase test stage runs it locally; the deploy E2E job runs the same non-outage tests on Fly.
 terrabase-replication-matrix: terrabase-build
 	dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/*/*[Category=replication-matrix]' --minimum-expected-tests 16 --output detailed --no-ansi $(TEST_ARGS)
+
+# The local-only category: scenarios that only local nodes may run (every node stopped at once, whole databases created
+# and restored, a cursor's issuer stopped under the local stand-in for Fly's proxy) and the proxy/pin harness checks.
+# CI's required TerraBase test stage runs it; the deploy E2E job excludes the category with a visible filter. Exactly
+# $(E2E_LOCAL_TESTS) tests, each an actual pass or a harness check: a skip, a failure or a missing test fails the target.
+E2E_LOCAL_TESTS := 26
+terrabase-e2e-local: terrabase-build
+	rm -f "$(E2E_RESULTS)"
+	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL -u TERRABASE_E2E_FLY_URL TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/*/*[Category=local-only]' --minimum-expected-tests $(E2E_LOCAL_TESTS) --output detailed --no-ansi $(TEST_ARGS)
+	jq -se 'length == $(E2E_LOCAL_TESTS) and all(.[]; .category == "pass" or .category == "harness")' "$(E2E_RESULTS)"
 
 # End-to-end replication (tests/TerraBase.E2E): leaderless writes between gru, sjc and fra, every pair and three-way, with
 # partitions, restarts, a region down, backlog and clock skew. Local by default (in-process nodes); tests/TerraBase.E2E/Gaps.cs

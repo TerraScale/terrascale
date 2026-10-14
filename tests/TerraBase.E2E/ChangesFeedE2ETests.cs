@@ -6,35 +6,86 @@ namespace TerraBase.E2E;
 
 /// <summary>
 /// The changes feed across regions (docs/terrabase/multi-region-replication.md section 14, slice R8): a cursor taken from
-/// sjc's feed resumes on fra after sjc goes away, with every later write of gru and sjc exactly once and each origin's
-/// events in its write order. Once with in-process nodes (or Fly), once with regions as separate OS processes and a
-/// SIGKILL.
+/// sjc's feed resumes through fra with every later write of gru and sjc exactly once and each origin's events in its write
+/// order: answered by sjc, its issuer, while sjc is up (locally and on Fly); answered by fra once sjc is stopped (in-process
+/// nodes, and a pinned disposable app's sjc machine in the fly-outage run) or SIGKILLed (separate OS processes).
 /// </summary>
 public sealed class ChangesFeedE2ETests
 {
     private const int Writes = 10;
 
+    // sjc, the cursor's issuer, stops: fra's replay to it fails, and fra must serve the resume itself on its own prefix proof.
+    // Local nodes only: the deploy run never stops a machine; on Fly this is the fly-outage scenario below.
     [Test]
+    [Category("local-only")]
+    [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task A_cursor_from_sjc_resumes_on_fra_after_sjc_stops_with_every_later_write_once_in_order()
     {
+        // Before the cluster starts: an unfiltered Fly run must fail here, never stop a machine or skip as if it passed.
+        if (Cluster.FlyRequested)
+        {
+            throw new InvalidOperationException("stops the cursor's issuer: local nodes only; on Fly this is the fly-outage scenario");
+        }
+
         await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
-        // Fly has no stop switch outside the fly-outage category: there sjc stays up and the cursor still moves to fra.
-        await ResumeElsewhereAsync(region => cluster[region], cluster.DatabasePath, cluster.Collection, cluster.Document,
-            Cluster.FlyRequested ? null : () => cluster.StopAsync(Cluster.Sjc));
+        using var fra = await cluster.ViaAsync(Cluster.Fra, Cluster.Fra);
+        await ResumeElsewhereAsync(region => cluster[region], fra, cluster.DatabasePath, cluster.Collection, cluster.Document, () => cluster.StopAsync(Cluster.Sjc));
+        Expected.Check(cluster.Replays.Any(replay => replay is { Edge: Cluster.Fra, Target: Cluster.Sjc, FellBack: true } && replay.PathAndQuery.Contains("cursor=", StringComparison.Ordinal)),
+            $"fra replayed the resume to sjc, its issuer, and served it after the replay failed; replays: {string.Join("; ", cluster.Replays)}");
+    }
+
+    // sjc, the cursor's issuer, stays up: the resume presented in fra is replayed to sjc (issuer routing), and only sjc's
+    // answer counts. Locally and on Fly.
+    [Test]
+    [Scenario(Nodes.InProcess)]
+    public async Task A_cursor_from_sjc_presented_in_fra_is_replayed_to_sjc_with_every_later_write_once_in_order()
+    {
+        await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
+        using var resume = await cluster.ViaAsync(Cluster.Fra, Cluster.Sjc);
+        await ResumeElsewhereAsync(region => cluster[region], resume, cluster.DatabasePath, cluster.Collection, cluster.Document, stopSjc: null);
+    }
+
+    // The issuer-stop scenario on a pinned disposable app: the sjc machine is stopped, and the fra machine (MachinePin) must
+    // answer the resume itself. It stops a machine, so it runs only in make terrabase-e2e-fly-outage.
+    [Test]
+    [Category("fly-outage")]
+    [Scenario(Nodes.InProcess, Faults.NodeStop)]
+    public async Task Fly_a_cursor_from_sjc_resumes_on_fra_after_the_sjc_machine_stops_with_every_later_write_once_in_order()
+    {
+        Skip.Unless(Cluster.FlyRequested && Cluster.FlyMachineFaults,
+            "Fly outage test: a pinned disposable app (TERRABASE_E2E_FLY_URL, TERRABASE_E2E_FLY_APP, TERRABASE_E2E_FLY_REVISION) and TERRABASE_E2E_FLY_OUTAGE=1");
+        await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
+        var stopped = false;
+        try
+        {
+            await ResumeElsewhereAsync(region => cluster[region], cluster[Cluster.Fra], cluster.DatabasePath, cluster.Collection, cluster.Document, async () =>
+            {
+                await cluster.StopAsync(Cluster.Sjc);
+                stopped = true;
+            });
+        }
+        finally
+        {
+            if (stopped)
+            {
+                await cluster.StartAgainAsync(Cluster.Sjc);
+            }
+        }
     }
 
     [Test]
+    [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Separate_processes_a_cursor_from_sjc_resumes_on_fra_after_sjc_is_killed_with_every_later_write_once_in_order()
     {
         Skip.When(Cluster.FlyRequested, "runs local node processes");
         await using var regions = await RegionProcesses.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
         // The database is this test's own, so the feed needs no collection filter.
-        await ResumeElsewhereAsync(region => regions[region], regions.DatabasePath, collection: null, regions.Document, () => regions.KillAsync(Cluster.Sjc));
+        await ResumeElsewhereAsync(region => regions[region], regions[Cluster.Fra], regions.DatabasePath, collection: null, regions.Document, () => regions.KillAsync(Cluster.Sjc));
     }
 
     // gru and sjc write; a consumer reads sjc's feed and keeps the cursor; gru and sjc write more, which reaches fra; sjc goes
-    // away and gru writes again; the consumer resumes on fra from the cursor.
-    private static async Task ResumeElsewhereAsync(Func<string, HttpClient> client, string databasePath, string? collection, Func<string, Uri> document, Func<Task>? stopSjc)
+    // away (`stopSjc`, when given) and gru writes again; the consumer resumes through `resume` from the cursor.
+    private static async Task ResumeElsewhereAsync(Func<string, HttpClient> client, HttpClient resume, string databasePath, string? collection, Func<string, Uri> document, Func<Task>? stopSjc)
     {
         var before = await WriteAsync(client, document, 0, Writes, Cluster.Gru, Cluster.Sjc);
         var changes = $"{databasePath}/changes" + (collection is null ? "" : $"?collections={collection}");
@@ -62,7 +113,7 @@ public sealed class ChangesFeedE2ETests
             after[id] = write;
         }
 
-        using var fra = await Feed.OpenAsync(client(Cluster.Fra), changes + (collection is null ? "?" : "&") + $"cursor={Uri.EscapeDataString(cursor)}");
+        using var fra = await Feed.OpenAsync(resume, changes + (collection is null ? "?" : "&") + $"cursor={Uri.EscapeDataString(cursor)}");
         var resumed = await fra.UntilAsync(events => after.Keys.All(id => events.Any(change => change.DocumentId == id)));
         // The next heartbeat follows the page that held them: nothing else was waiting.
         var trailing = await fra.UntilHeartbeatAsync();

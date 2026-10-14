@@ -39,12 +39,16 @@ public sealed class Cluster : IAsyncDisposable
     private readonly Local? _local;
     private readonly Dictionary<string, string>? _identities;
     private readonly Func<Task> _release;
+    private readonly Func<string, string, Task<HttpClient>> _via;
+    private readonly Func<string, HttpClient> _sql;
     private DisposableTarget.Target? FlyTarget { get; }
 
     private Cluster(
         string projectPath, string databasePath, string collection, Dictionary<string, HttpClient> clients, Local? local, Dictionary<string, string>? identities,
-        Func<Task> release, DisposableTarget.Target? flyTarget = null, string? organization = null)
+        Func<Task> release, Func<string, string, Task<HttpClient>> via, Func<string, HttpClient> sql, DisposableTarget.Target? flyTarget = null, string? organization = null)
     {
+        _via = via;
+        _sql = sql;
         FlyTarget = flyTarget;
         OrganizationId = local?.OrganizationId ?? organization;
         ProjectPath = projectPath;
@@ -93,6 +97,26 @@ public sealed class Cluster : IAsyncDisposable
     public HttpClient this[string region] => _clients.TryGetValue(region, out var client)
         ? client
         : throw new ArgumentOutOfRangeException(nameof(region), region, "not a region of this cluster");
+
+    /// <summary>
+    /// A client entering at <paramref name="edge"/> whose answers must come from <paramref name="served"/>: a changes-feed
+    /// resume, which TerraBase replays to its cursor's issuing machine, or serves itself when that machine is down
+    /// (docs/terrabase/multi-region-replication.md, issuer routing). On Fly the request is forced onto the edge's machine (the
+    /// pinned one, or the one that answers the edge's <c>/healthz</c> as itself), so Fly cannot fall back to another region and
+    /// pass a direct answer off as a replay; the answer must name <paramref name="served"/> (and its pinned machine). The
+    /// caller disposes it.
+    /// </summary>
+    public Task<HttpClient> ViaAsync(string edge, string served) => _via(edge, served);
+
+    /// <summary>
+    /// A client of <paramref name="region"/> for <c>/sql</c>, which takes a ts-auth project token, never an API key: locally the
+    /// nodes' project token; on Fly the existing <c>TERRABASE_E2E_FLY_PROJECT_TOKEN</c>, required (nothing is minted). Pinned
+    /// like <see cref="this[string]"/>; the caller disposes it.
+    /// </summary>
+    public HttpClient Sql(string region) => _sql(region);
+
+    /// <summary>Local nodes only: every <c>fly-replay</c> the local stand-in for Fly's proxy followed, in order.</summary>
+    internal IReadOnlyCollection<LocalFlyProxy.Replay> Replays => RequireLocal().Replays;
 
     /// <summary>The document with <paramref name="id"/> in this test's collection.</summary>
     public Uri Document(string id) => new($"{DatabasePath}/collections/{Collection}/documents/by-key?id={Uri.EscapeDataString(id)}", UriKind.Relative);
@@ -235,7 +259,7 @@ public sealed class Cluster : IAsyncDisposable
                 }
 
                 await local.DisposeAsync();
-            });
+            }, (edge, served) => Task.FromResult(local.Via(edge, served)), local.Client);
         }
         catch
         {
@@ -359,7 +383,8 @@ public sealed class Cluster : IAsyncDisposable
                     client.Dispose();
                 }
             }
-        }, target, organization);
+        }, async (edge, served) => FlyClient(url, key, edge, machines[edge] ?? await EdgeMachineAsync(clients[edge], edge, TUnit.Core.TestContext.Current!.Execution.CancellationToken), served, machines[served]),
+            region => FlyClient(url, Required("TERRABASE_E2E_FLY_PROJECT_TOKEN"), region, machines[region]), target, organization);
     }
 
     // Creates the collection in gru and waits until every other region serves it, so every test starts from a replicated database.
@@ -407,16 +432,32 @@ public sealed class Cluster : IAsyncDisposable
                     $"{region}'s machine {machines[region]} must run {revision}; /healthz answered region {served ?? "(none)"}, machine {machine ?? "(none)"}, revision {built ?? "(none)"}");
             }
         }
-
-        static string? Text(JsonDocument body, string name)
-        {
-            return body.RootElement.TryGetProperty(name, out var value) ? value.GetString() : null;
-        }
     }
 
-    private static HttpClient FlyClient(Uri url, string key, string region, string? machine)
+    // An unpinned run's edge machine for ViaAsync: the one that answers /healthz through the region's pinned client (RegionPin
+    // refuses another region) naming the region and itself in both the body and X-TerraBase-Machine. Any other answer stops the
+    // test; nothing is retried.
+    internal static async Task<string> EdgeMachineAsync(HttpClient client, string region, CancellationToken cancellationToken = default)
     {
-        DelegatingHandler pin = machine is null ? new RegionPin(region) : new MachinePin(region, machine);
+        using var health = await client.GetAsync(new Uri("/healthz", UriKind.Relative), cancellationToken);
+        await Docs.EnsureSuccessAsync(health);
+        using var body = JsonDocument.Parse(await health.Content.ReadAsStringAsync(cancellationToken));
+        var (served, machine) = (Text(body, "region"), Text(body, "machine"));
+        var header = health.Headers.TryGetValues("X-TerraBase-Machine", out var values) ? string.Join(',', values) : null;
+        return served == region && machine is { Length: > 0 } && machine == header
+            ? machine
+            : throw new InvalidOperationException(
+                $"{region}'s /healthz must name {region} and the answering machine; it answered region {served ?? "(none)"}, machine {machine ?? "(none)"}, X-TerraBase-Machine {header ?? "(none)"}");
+    }
+
+    private static string? Text(JsonDocument body, string name) =>
+        body.RootElement.TryGetProperty(name, out var value) ? value.GetString() : null;
+
+    private static HttpClient FlyClient(Uri url, string key, string region, string? machine, string? served = null, string? servedMachine = null)
+    {
+        DelegatingHandler pin = machine is null
+            ? new RegionPin(region)
+            : new MachinePin(region, machine, served is null ? null : (served, servedMachine));
         pin.InnerHandler = new SocketsHttpHandler();
         var client = new HttpClient(pin) { BaseAddress = url, Timeout = Timeout.InfiniteTimeSpan };
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key);
@@ -434,6 +475,8 @@ public sealed class Cluster : IAsyncDisposable
     {
         private readonly FakeMemberStore _machines = new();
         private readonly Dictionary<string, Node> _nodes = [with(StringComparer.Ordinal)];
+        private readonly System.Collections.Concurrent.ConcurrentQueue<LocalFlyProxy.Replay> _replays = new();
+        public IReadOnlyCollection<LocalFlyProxy.Replay> Replays => _replays;
         public string OrganizationId { get; } = EntityIds.New().ToString();
         private readonly string _user = EntityIds.New().ToString();
         private readonly string _project = EntityIds.New().ToString();
@@ -580,14 +623,16 @@ public sealed class Cluster : IAsyncDisposable
         }
 
         // A region's client through the local stand-in for Fly's proxy; it finds the region's current node per request.
-        public HttpClient Client(string region) =>
-            new(new LocalFlyProxy(region, target => _nodes.TryGetValue(target, out var node) && node.Project is { } project
+        public HttpClient Client(string region) => new(Proxy(region)) { BaseAddress = new Uri("https://localhost/"), Timeout = Timeout.InfiniteTimeSpan };
+
+        // Cluster.Via: the edge's proxy, refusing an answer from any node but served's.
+        public HttpClient Via(string edge, string served) =>
+            new(new RegionPin(edge, served) { InnerHandler = Proxy(edge) }) { BaseAddress = new Uri("https://localhost/"), Timeout = Timeout.InfiniteTimeSpan };
+
+        private LocalFlyProxy Proxy(string region) =>
+            new(region, target => _nodes.TryGetValue(target, out var node) && node.Project is { } project
                 ? project
-                : throw new HttpRequestException($"{target} is down", null, HttpStatusCode.ServiceUnavailable)))
-            {
-                BaseAddress = new Uri("https://localhost/"),
-                Timeout = Timeout.InfiniteTimeSpan,
-            };
+                : throw new HttpRequestException($"{target} is down", null, HttpStatusCode.ServiceUnavailable), Region, _replays.Enqueue);
 
         public (Uri Address, string Token, string DataDirectory) Endpoint(string region)
         {

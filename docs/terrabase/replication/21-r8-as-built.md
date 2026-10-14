@@ -107,8 +107,18 @@
   other documents advance past it and a feed cursor cannot skip them because their stamps went backwards.
 - Metrics: `terrabase.changes.streams` (open streams).
 - Tests: Fast `DatabaseChangesTests` (events, `cursor=now`, `Last-Event-ID`, filter, joined remote writes under their
-  origin, 410 at retention, limits, heartbeat, errors); e2e `ChangesFeedE2ETests` (gru and sjc write, a cursor from
-  sjc's feed resumes on fra after sjc stops or is SIGKILLed, in-process and as separate OS processes) and E10.
+  origin, 410 at retention, limits, heartbeat, errors); e2e `ChangesFeedE2ETests` and E10, each in two cases through the
+  client listener. Issuer stopped (the `local-only` category, in CI's required stage): sjc (E10: gru) stops, and fra
+  (E10: sjc) must answer the resume itself with every later write once in per-origin order, after the local stand-in
+  for Fly's proxy recorded the replay to the stopped issuer and its `fly-replay-failed` fallback. Issuer up (locally and
+  in the deploy run on Fly): the resume entering at fra (E10: sjc) must be answered by sjc (E10: gru), the issuer. On
+  Fly the resume is forced (`fly-force-instance-id`) onto the edge's machine, the pinned one or, unpinned, the one that
+  answered the edge's `/healthz` as itself, so a Fly fallback to the issuer's region cannot pass for a replay; the
+  issuer-stopped cases refuse to start against Fly.
+  Separate OS processes repeat the stopped case with a SIGKILL, read through the internal listener, which never
+  replays. On a pinned disposable app, the fly-outage run stops the sjc machine and requires the fra machine to answer
+  (docs/terrabase/e2e-disposable-app.md); it has not run, so Fly's handling of the instance replay from a
+  `fly-force-instance-id` request is unproven.
 
 R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
 table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables). The engine swap (1b, PR #21) lands separately: on Turso,

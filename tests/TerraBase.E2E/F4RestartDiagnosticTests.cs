@@ -6,7 +6,10 @@ namespace TerraBase.E2E;
 
 public sealed class F4RestartDiagnosticTests
 {
+    // Stops every region's node at once: in-process only, so the deploy run excludes the local-only category.
     [Test]
+    [Category("local-only")]
+    [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task All_three_nodes_restart_together_and_accept_a_write()
     {
         if (Cluster.FlyRequested)

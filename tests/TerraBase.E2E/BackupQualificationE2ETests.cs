@@ -5,7 +5,10 @@ namespace TerraBase.E2E;
 
 public sealed class BackupQualificationE2ETests
 {
+    // Creates and restores whole databases: the required local stage runs it, and on Fly only a pinned run of the approved
+    // disposable app does (Cluster.StartBackupAsync refuses any other target); the deploy run excludes the local-only category.
     [Test]
+    [Category("local-only")]
     [Scenario(Nodes.InProcess)]
     public async Task Acknowledged_three_region_writes_survive_snapshot_and_point_in_time_restores()
     {

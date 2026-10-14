@@ -49,9 +49,18 @@ E13 (live move, R11) and E14 (GC, R7 #120: no tombstone of a deleted document is
 passes fails the test with a message to remove its row; one that fails any other way fails it too. Every other scenario,
 `Concurrent_writes_to_different_fields_both_survive` (per-field lattice) included, runs as a plain assertion.
 
+E11's SQL statements go to `/sql`, which takes a ts-auth project token (`databases:read`), never the documents API key.
+On Fly it uses the existing `TERRABASE_E2E_FLY_PROJECT_TOKEN` (nothing is minted) and fails without it; the deploy job
+does not set it, and the app does not yet trust a project-token issuer, so E11 stays a failure on Fly until a narrow
+project token and the platform issuer trust are approved.
+
 ## CI
 
-Run `make terrabase-e2e` with the `TERRABASE_E2E_FLY_*` variables from CI secrets after the `sjc` deploy. Replication needs
+Run `make terrabase-e2e` with the `TERRABASE_E2E_FLY_*` variables from CI secrets after the `sjc` deploy. The deploy job passes
+`--treenode-filter "/*/*/*/*[Category!=local-only]" --minimum-expected-tests 139` (every test case but the local-only
+ones): the `local-only` category (whole-database backups, every node
+stopped, a changes-feed issuer stopped, the proxy and pin harness) runs instead in CI's required `test-terrabase` stage
+with `make terrabase-e2e-local`, which requires all 26 tests to pass with no skip. Replication needs
 both regions live, so a run after the `gru` deploy alone cannot check it. Do not set `TERRABASE_E2E_FLY_OUTAGE` in CI.
 The suite is not part of `make check`.
 

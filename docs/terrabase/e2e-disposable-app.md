@@ -126,6 +126,12 @@ into the disposable app's machines, and root firewall changes inside them. Nothi
 (clean), on one region's machine while the other two write; then convergence, per-region counts and digests, and the
 restarted machine's `/catalog-gate` (it opens by pulling from its trusted peers). Disposable app only.
 
+Changes-feed issuer stop (`ChangesFeedE2ETests`, fly-outage category, `make terrabase-e2e-fly-outage`): a cursor taken
+from sjc's feed, then `flyctl machine stop` of the sjc machine, then the resume entering at the fra machine
+(`fly-force-instance-id`, `MachinePin`) must be answered by fra itself, with every later write once in per-origin order.
+Whether Fly follows TerraBase's `fly-replay: instance=…;fallback=force_self` from a force-instance request, and falls back
+to fra when sjc is stopped, has no live evidence yet: this run is that evidence, and it has not run.
+
 ## Backup (A7YES)
 
 Invariant: a backup at time T contains every write acknowledged before T, or the restore answers a typed refusal; never
@@ -180,6 +186,11 @@ database scopes. `TERRABASE_E2E_FLY_ORGANIZATION` supplies that project's TerraB
 scope check; a wrong id fails against the real source acknowledgement ETags. A missing token or organization id, unpinned run, missing backup window, failed backup, refused supported cut or wrong
 restore fails; none is converted into a skip or expected failure. The source and every restore are cleaned up,
 including failed-cut database names. Production apps and `ts-pr-*` remain refused.
+
+The scenario is in the `local-only` category: CI's required `test-terrabase` stage runs it on local nodes
+(`make terrabase-e2e-local`, which fails on any skip), and the deploy job's run against production excludes the
+category with `--treenode-filter "/*/*/*/*[Category!=local-only]"`, so production never creates or restores a
+database. A pinned disposable-app run selects it by name, as above.
 
 Set `TERRABASE_E2E_RESULTS` (the make target does this) to retain the frozen plan, actual restore contents/refusals and
 judge failures in the normal per-test JSONL evidence. Per-cut console records also include the requested timestamp

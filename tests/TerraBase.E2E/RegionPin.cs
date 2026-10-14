@@ -5,22 +5,23 @@ namespace TerraBase.E2E;
 /// Fly falls back to another region when the preferred one is unavailable; without this check a write meant for sjc
 /// could land in gru and the test would pass without exercising sjc. The serving node names its region in the
 /// <c>X-TerraBase-Region</c> response header; Fly's proxy sends no <c>fly-region</c> header on responses (checked against
-/// ts-terrabase on 2026-10-12).
+/// ts-terrabase on 2026-10-12). <c>served</c> names another region only where TerraBase itself replays the
+/// request there (a changes-feed resume goes to its cursor's issuing machine): the answer must then come from exactly it.
 /// </summary>
-internal sealed class RegionPin(string region) : DelegatingHandler
+internal sealed class RegionPin(string region, string? served = null) : DelegatingHandler
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         request.Headers.Add("fly-prefer-region", region);
         var response = await base.SendAsync(request, cancellationToken);
-        var served = response.Headers.TryGetValues("X-TerraBase-Region", out var values) ? string.Join(',', values) : "(no X-TerraBase-Region header)";
-        if (served == region)
+        var answered = response.Headers.TryGetValues("X-TerraBase-Region", out var values) ? string.Join(',', values) : "(no X-TerraBase-Region header)";
+        if (answered == (served ?? region))
         {
             return response;
         }
 
         response.Dispose();
-        throw new RegionMismatchException(region, served, request.Method, request.RequestUri);
+        throw new RegionMismatchException(served is null ? region : $"{region}, answered by {served}", answered, request.Method, request.RequestUri);
     }
 }
 
@@ -32,22 +33,26 @@ internal sealed class RegionMismatchException(string pinned, string served, Http
 /// Pins every request to one Fly machine with <c>fly-force-instance-id</c>, which Fly routes to that machine or fails (it
 /// never answers from another), and refuses an answer that does not name that machine and its region
 /// (<c>X-TerraBase-Machine</c>, <c>X-TerraBase-Region</c>): the identity of every edge a disposable-app run records.
+/// <c>served</c> is the region (and, when known, the machine) TerraBase replays the request to, as for <see cref="RegionPin"/>:
+/// the forced machine cannot answer as another region, so an answer from <c>served</c> is the replay's.
 /// </summary>
-internal sealed class MachinePin(string region, string machine) : DelegatingHandler
+internal sealed class MachinePin(string region, string machine, (string Region, string? Machine)? served = null) : DelegatingHandler
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         request.Headers.Add("fly-force-instance-id", machine);
         var response = await base.SendAsync(request, cancellationToken);
         // Fly's own errors carry no TerraBase headers: the status says what answered instead.
-        var served = $"{Header(response, "X-TerraBase-Region")}/{Header(response, "X-TerraBase-Machine")} (HTTP {(int)response.StatusCode})";
-        if (Header(response, "X-TerraBase-Region") == region && Header(response, "X-TerraBase-Machine") == machine)
+        var answered = $"{Header(response, "X-TerraBase-Region")}/{Header(response, "X-TerraBase-Machine")} (HTTP {(int)response.StatusCode})";
+        var (expectedRegion, expectedMachine) = served ?? (region, machine);
+        if (Header(response, "X-TerraBase-Region") == expectedRegion && (expectedMachine is null || Header(response, "X-TerraBase-Machine") == expectedMachine))
         {
             return response;
         }
 
         response.Dispose();
-        throw new RegionMismatchException($"{region}/{machine}", served, request.Method, request.RequestUri);
+        throw new RegionMismatchException(
+            served is null ? $"{region}/{machine}" : $"{region}/{machine}, answered by {expectedRegion}/{expectedMachine ?? "any machine"}", answered, request.Method, request.RequestUri);
     }
 
     private static string Header(HttpResponseMessage response, string name) =>

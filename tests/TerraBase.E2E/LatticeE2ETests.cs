@@ -49,34 +49,79 @@ public sealed class LatticeE2ETests
         });
     }
 
+    // gru, the cursor's issuer, stops: sjc's replay to it fails and sjc must serve the resume itself, from its own copy of
+    // gru's writes (the cross-region proof). Local nodes only: the deploy run never stops a machine; the Fly run with a
+    // stopped issuer is ChangesFeedE2ETests' fly-outage scenario.
+    [Test]
+    [Category("local-only")]
+    [Scenario(Nodes.InProcess, Faults.NodeStop)]
+    public async Task E10_feed_cursor_from_gru_resumes_in_sjc_with_no_missing_event_in_per_origin_order()
+    {
+        // Before the cluster starts: an unfiltered Fly run must fail here, never stop a machine or skip as if it passed.
+        if (Cluster.FlyRequested)
+        {
+            throw new InvalidOperationException("stops the cursor's issuer: local nodes only; on Fly this is ChangesFeedE2ETests' fly-outage scenario");
+        }
+
+        await Gaps.RunAsync("E10", async () =>
+        {
+            await using var cluster = await Cluster.StartAsync();
+            var (cursor, position) = await CursorThenWritesAsync(cluster);
+            foreach (var id in position.Keys)
+            {
+                _ = await Converge.UntilAsync(() => Docs.ReadAsync(cluster[Cluster.Sjc], cluster.Document(id)), body => body is not null, "every write on sjc before gru stops");
+            }
+
+            await cluster.StopAsync(Cluster.Gru);
+            using var sjc = await cluster.ViaAsync(Cluster.Sjc, Cluster.Sjc);
+            await ResumedInOrderAsync(sjc, cluster, cursor, position);
+            Expected.Check(cluster.Replays.Any(replay => replay is { Edge: Cluster.Sjc, Target: Cluster.Gru, FellBack: true } && replay.PathAndQuery.Contains("cursor=", StringComparison.Ordinal)),
+                $"sjc replayed the resume to gru, its issuer, and served it after the replay failed; replays: {string.Join("; ", cluster.Replays)}");
+        });
+    }
+
+    // gru, the cursor's issuer, stays up: the resume presented in sjc is replayed to gru (issuer routing), and only gru's
+    // answer counts. On Fly too, where no machine stops in the deploy run.
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E10_feed_cursor_from_gru_resumes_in_sjc_with_no_missing_event_in_per_origin_order()
+    public async Task E10_feed_cursor_from_gru_presented_in_sjc_is_replayed_to_gru_with_no_missing_event_in_per_origin_order()
     {
         await Gaps.RunAsync("E10", async () =>
         {
             await using var cluster = await Cluster.StartAsync();
-            var first = EntityIds.New().ToString();
-            await Docs.PutAsync(cluster[Cluster.Gru], cluster.Document(first), new JsonObject { ["step"] = 0 });
-            var head = await ChangesAsync(cluster[Cluster.Gru], cluster, cursor: null, events => events.Any(change => Id(change) == first));
-            var cursor = head.First(change => Id(change.Event) == first).Cursor;
-            // Ten writes after the cursor, alternating regions; each region writes its own in order.
-            var writes = Enumerable.Range(1, 10).Select(step => (Id: EntityIds.New().ToString(), Region: step % 2 == 0 ? Cluster.Gru : Cluster.Sjc, Step: step)).ToArray();
-            foreach (var write in writes)
-            {
-                await Docs.PutAsync(cluster[write.Region], cluster.Document(write.Id), new JsonObject { ["step"] = write.Step });
-            }
-
-            var position = writes.Select((write, index) => (write.Id, index)).ToDictionary(pair => pair.Id, pair => pair.index);
-            var resumed = await ChangesAsync(cluster[Cluster.Sjc], cluster, cursor, events => position.Keys.All(id => events.Any(change => Id(change) == id)));
-            var ours = resumed.Select(change => change.Event).Where(change => position.ContainsKey(Id(change))).ToArray();
-            Expected.Check(position.Keys.All(id => ours.Any(change => Id(change) == id)), "every write after the cursor is in sjc's feed");
-            foreach (var origin in ours.GroupBy(change => change["origin"]?.ToJsonString()))
-            {
-                var order = origin.Select(change => position[Id(change)]).Distinct().ToArray();
-                Expected.Check(order.SequenceEqual(order.Order()), $"origin {origin.Key} in write order; got {string.Join(',', order)}");
-            }
+            var (cursor, position) = await CursorThenWritesAsync(cluster);
+            using var sjc = await cluster.ViaAsync(Cluster.Sjc, Cluster.Gru);
+            await ResumedInOrderAsync(sjc, cluster, cursor, position);
         });
+    }
+
+    // A cursor from gru's feed, then ten writes after it alternating regions (each region writes its own in order); returns
+    // the cursor and each write's position.
+    private static async Task<(string Cursor, Dictionary<string, int> Position)> CursorThenWritesAsync(Cluster cluster)
+    {
+        var first = EntityIds.New().ToString();
+        await Docs.PutAsync(cluster[Cluster.Gru], cluster.Document(first), new JsonObject { ["step"] = 0 });
+        var head = await ChangesAsync(cluster[Cluster.Gru], cluster, cursor: null, events => events.Any(change => Id(change) == first));
+        var cursor = head.First(change => Id(change.Event) == first).Cursor;
+        var writes = Enumerable.Range(1, 10).Select(step => (Id: EntityIds.New().ToString(), Region: step % 2 == 0 ? Cluster.Gru : Cluster.Sjc, Step: step)).ToArray();
+        foreach (var write in writes)
+        {
+            await Docs.PutAsync(cluster[write.Region], cluster.Document(write.Id), new JsonObject { ["step"] = write.Step });
+        }
+
+        return (cursor, writes.Select((write, index) => (write.Id, index)).ToDictionary(pair => pair.Id, pair => pair.index));
+    }
+
+    private static async Task ResumedInOrderAsync(HttpClient resume, Cluster cluster, string cursor, Dictionary<string, int> position)
+    {
+        var resumed = await ChangesAsync(resume, cluster, cursor, events => position.Keys.All(id => events.Any(change => Id(change) == id)));
+        var ours = resumed.Select(change => change.Event).Where(change => position.ContainsKey(Id(change))).ToArray();
+        Expected.Check(position.Keys.All(id => ours.Any(change => Id(change) == id)), "every write after the cursor is in the resumed feed");
+        foreach (var origin in ours.GroupBy(change => change["origin"]?.ToJsonString()))
+        {
+            var order = origin.Select(change => position[Id(change)]).Distinct().ToArray();
+            Expected.Check(order.SequenceEqual(order.Order()), $"origin {origin.Key} in write order; got {string.Join(',', order)}");
+        }
     }
 
     [Test]
@@ -90,12 +135,12 @@ public sealed class LatticeE2ETests
             var uri = cluster.Document(id);
             await Converge.SeedAsync(cluster, uri, new JsonObject { ["a"] = "base", ["b"] = "base", ["n"] = 0 });
             await Task.WhenAll(
-                SqlAsync(cluster[Cluster.Gru], cluster, $"""UPDATE "{cluster.Collection}" SET a = 'gru' WHERE _id = '{id}'"""),
+                SqlAsync(cluster, Cluster.Gru, $"""UPDATE "{cluster.Collection}" SET a = 'gru' WHERE _id = '{id}'"""),
                 Docs.PatchAsync(cluster[Cluster.Sjc], uri, new JsonObject { ["b"] = "sjc" }));
             var both = await SettledAsync(cluster, uri, "SQL update versus patch");
             Expected.Check(both.Gru!["a"]?.GetValue<string>() == "gru" && both.Gru["b"]?.GetValue<string>() == "sjc", $"both edits survive; {both}");
             var increment = $"""UPDATE "{cluster.Collection}" SET n = n + 1 WHERE _id = '{id}'""";
-            await Task.WhenAll(SqlAsync(cluster[Cluster.Gru], cluster, increment), SqlAsync(cluster[Cluster.Sjc], cluster, increment));
+            await Task.WhenAll(SqlAsync(cluster, Cluster.Gru, increment), SqlAsync(cluster, Cluster.Sjc, increment));
             var added = await SettledAsync(cluster, uri, "SQL increments");
             Expected.Check(added.Gru!["n"]?.ToJsonString() == "2", $"n = n + 1 in both regions gives 2; {added}");
         });
@@ -201,8 +246,12 @@ public sealed class LatticeE2ETests
         return tombstones;
     }
 
-    private static Task<JsonNode?> SqlAsync(HttpClient client, Cluster cluster, string sql) =>
-        Docs.PostAsync(client, new Uri($"{cluster.DatabasePath}/sql", UriKind.Relative), new JsonObject { ["sql"] = sql });
+    // /sql takes a project token (databases:read), never the documents API key: Cluster.Sql.
+    private static async Task<JsonNode?> SqlAsync(Cluster cluster, string region, string sql)
+    {
+        using var client = cluster.Sql(region);
+        return await Docs.PostAsync(client, new Uri($"{cluster.DatabasePath}/sql", UriKind.Relative), new JsonObject { ["sql"] = sql });
+    }
 
     // An op of section 13: inc takes "by", the others "value".
     private static JsonObject Op(string op, string field, JsonNode value) =>
