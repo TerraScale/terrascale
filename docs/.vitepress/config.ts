@@ -542,6 +542,19 @@ export default defineConfig({
   description:
     'TerraScale developer documentation: TerraBase SDK installation, document CRUD, queries, authentication and service limits.',
   appearance: 'dark',
+  markdown: {
+    config(md) {
+      const renderCode = md.renderer.rules.code_inline!
+      md.renderer.rules.code_inline = (tokens, index, options, env, renderer) => {
+        const method = tokens[index].content.match(/^(GET|POST|PUT|PATCH|DELETE)(?:\s|$)/)?.[1]
+        if (method) {
+          tokens[index].attrJoin('class', 'docs-method')
+          tokens[index].attrSet('data-method', method)
+        }
+        return renderCode(tokens, index, options, env, renderer)
+      }
+    },
+  },
   lastUpdated: true,
   srcDir: '.',
   head: [['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }], ['link', { rel: 'preload', href: '/fonts/geist-variable.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }]],

@@ -4,6 +4,8 @@ import DocsHome from './DocsHome.vue'
 import './dashboard-tokens.css'
 import './style.css'
 import './shell-v3.css'
+import './prose-v3.css'
+import './home-v3.css'
 
 export default {
   extends: DefaultTheme,
