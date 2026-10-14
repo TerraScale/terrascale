@@ -24,7 +24,8 @@ public sealed class StripeKeyModeJourneyTests(DashboardRootFixture fixture)
             [DashboardIdentity.AuthClientSecretName] = "test-dashboard-client-secret-0123456789abcdef",
             [DashboardIdentity.SessionEncryptionKeyName] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
             [DashboardIdentity.StripeSecretKeyName] = key,
-            [DashboardIdentity.StripeWebhookSecretName] = "whsec_fixture"
+            [DashboardIdentity.StripeWebhookSecretName] = "whsec_fixture",
+            [DashboardIdentity.TerraBasePeerSecretName] = TestIdentity.PeerSecret
         };
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();

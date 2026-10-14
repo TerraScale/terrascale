@@ -34,6 +34,7 @@ internal static class StripeAuditCliEntryPoint
                 DashboardIdentity.SessionEncryptionKeyName => credentials.SessionEncryptionKey,
                 DashboardIdentity.StripeSecretKeyName => credentials.Stripe?.SecretKey,
                 DashboardIdentity.StripeWebhookSecretName => credentials.Stripe?.WebhookSecret,
+                DashboardIdentity.TerraBasePeerSecretName => credentials.TerraBasePeerSecret,
                 _ => null
             });
             StripeClient CreateClient(string key)

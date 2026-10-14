@@ -82,7 +82,7 @@ public sealed class StripeAuditScenario : IAsyncDisposable
     private string Proxy => "http://127.0.0.1:" + ((IPEndPoint)listener.LocalEndpoint).Port;
 
     public DashboardCredentials Identity(string? key = null) => new("test-dashboard-client-secret-0123456789abcdef",
-        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new(key ?? Secret, "whsec_STRIPE_AUDIT_PRIVATE"));
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new(key ?? Secret, "whsec_STRIPE_AUDIT_PRIVATE"), TestIdentity.PeerSecret);
 
     public async Task<Result> RunAsync(string[]? arguments = null, DashboardCredentials? identity = null)
     {

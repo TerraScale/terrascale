@@ -68,6 +68,10 @@ public static class DashboardApplication
         builder.Services.AddDashboardContracts();
         builder.Services.AddHttpClient("platform", client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler);
+        builder.Services.AddTransient<TerraBasePeerCredential>();
+        builder.Services.AddHttpClient(TerraBaseDashboardState.ClientName, client => client.Timeout = TimeSpan.FromSeconds(30))
+            .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
+            .AddHttpMessageHandler<TerraBasePeerCredential>();
         configureTestHost?.Invoke(builder);
         var app = builder.Build();
 

@@ -1,4 +1,4 @@
-# Independent Slow results gate production deployment and receive an issue report on failure.
+# Independent, non-blocking Slow results receive an issue report on failure.
 name: Slow
 
 on:

@@ -37,6 +37,9 @@ public sealed class StateSdkScenario : IAsyncDisposable
     public Uri Origin { get; private set; } = null!;
     public Uri ReplicaOrigin { get; private set; } = null!;
     public string? StartupError { get; private set; }
+    // Requests to any destination other than the state listener that carried the peer credential.
+    public int ForeignCredentials => foreignCredentials;
+    private int foreignCredentials;
 
     private StateSdkScenario(string root) => this.root = root;
 
@@ -99,13 +102,33 @@ public sealed class StateSdkScenario : IAsyncDisposable
         var previousIdentity = (IDashboardIdentity)builder.Services.Last(service => service.ServiceType == typeof(IDashboardIdentity)).ImplementationInstance!;
         identity ??= new(previousIdentity, protocol);
         var fallback = (IHttpClientFactory)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
-        var transport = new StateTransport(ProviderOrigin, fallback);
+        var transport = new StateTransport(ProviderOrigin, fallback, this);
         transports.Add(transport);
         builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
-        builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new StateFactory(transport)));
+        // Only the network hop is replaced: the state client keeps its production handler pipeline (TerraBasePeerCredential).
+        builder.Services.AddHttpClient(TerraBaseDashboardState.ClientName).ConfigurePrimaryHttpMessageHandler(() => new StateTransport(ProviderOrigin, fallback, this));
+        builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(services => new StateFactory(transport, services.GetRequiredService<IHttpMessageHandlerFactory>())));
         builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState, TerraBaseDashboardState>());
         builder.Services.Replace(ServiceDescriptor.Singleton<IAuthAttemptBudget, AuthAttemptBudget>());
     });
+
+    // Sends through the running host's credentialed state client to a destination other than the state listener.
+    public async Task<string?> SendStateClientElsewhereAsync(Uri destination)
+    {
+        using var client = first!.Services.GetRequiredService<IHttpClientFactory>().CreateClient(TerraBaseDashboardState.ClientName);
+        try { using var response = await client.GetAsync(destination); return null; }
+        catch (HttpRequestException error) { return error.GetType().Name; }
+    }
+
+    // The handler chain production builds for the state client, without any test transport.
+    public (string[] Handlers, bool FollowsRedirects) ProductionStateHandlers()
+    {
+        using var app = new DemoEnvironment().CreateHost(root, 0, "http://127.0.0.1");
+        var handlers = new List<string>();
+        HttpMessageHandler? handler = app.Services.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(TerraBaseDashboardState.ClientName);
+        for (; handler is DelegatingHandler delegating; handler = delegating.InnerHandler) handlers.Add(delegating.GetType().Name);
+        return ([.. handlers], handler is not SocketsHttpHandler { AllowAutoRedirect: false });
+    }
 
     private async Task StopHostsAsync()
     {
@@ -125,17 +148,25 @@ public sealed class StateSdkScenario : IAsyncDisposable
         transports.Clear();
     }
 
-    private sealed class StateFactory(StateTransport transport) : IHttpClientFactory
-    { public HttpClient CreateClient(string name) => new(transport, disposeHandler: false); }
+    private sealed class StateFactory(StateTransport transport, IHttpMessageHandlerFactory handlers) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => name == TerraBaseDashboardState.ClientName
+            ? new(handlers.CreateHandler(name), disposeHandler: false) : new(transport, disposeHandler: false);
+    }
 
-    private sealed class StateTransport(Uri origin, IHttpClientFactory fallback) : HttpMessageHandler
+    private sealed class StateTransport(Uri origin, IHttpClientFactory fallback, StateSdkScenario owner) : HttpMessageHandler
     {
         private readonly HttpClient local = new(new HttpClientHandler { AllowAutoRedirect = false });
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri!;
-            // Off Fly, Development reaches TerraBase's private listener on loopback port 8081: cleartext HTTP/2, no credential.
+            // Off Fly, Development reaches TerraBase's private listener on loopback port 8081: cleartext HTTP/2 with the peer credential.
             var stateRequest = uri.Host == "127.0.0.1" && uri.Port == 8081;
+            if (!stateRequest && request.Headers.Contains(TerraBasePeerCredential.Header))
+            {
+                Interlocked.Increment(ref owner.foreignCredentials);
+                throw new HttpRequestException("The peer credential left for a destination other than the state listener.");
+            }
             if (stateRequest && (uri.Scheme != "http" || uri.UserInfo.Length != 0 || request.Version != HttpVersion.Version20 ||
                 request.VersionPolicy != HttpVersionPolicy.RequestVersionExact || request.Headers.Authorization is not null))
                 throw new HttpRequestException("Invalid private-listener request in the state SDK protocol fixture.");
@@ -165,6 +196,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
             if (protocol.Mode == "fly-secrets-unavailable") throw new IOException("The test-only secret delivery is unavailable.");
             if (protocol.Mode == "invalid-auth-client-secret") value = value with { AuthClientSecret = "" };
             if (protocol.Mode == "invalid-session-key") value = value with { SessionEncryptionKey = "invalid" };
+            if (protocol.Mode == "invalid-peer-secret") value = value with { TerraBasePeerSecret = value.TerraBasePeerSecret[..63] + "g" };
             value.Validate();
             return value;
         }
@@ -188,6 +220,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
         private int documentWrites;
         private int preconditionFailures;
         private int privateRequests;
+        private int redirectTargetRequests;
         private long offset;
         private readonly string? databaseId = "00000000000000000000000004";
         private string mode = "";
@@ -201,7 +234,11 @@ public sealed class StateSdkScenario : IAsyncDisposable
                 var path = http.Request.Path.Value!;
                 if (path == "/__test/observations") return Observe();
                 if (path == "/__test/control") return await ControlAsync(http);
+                if (path == "/__test/redirected") { Interlocked.Increment(ref redirectTargetRequests); return Results.NoContent(); }
                 Require(http.Request.Host.Host == "127.0.0.1" && http.Request.Host.Port == 8081, "The state SDK must use the private listener origin.");
+                Require(http.Request.Headers.TryGetValue(TerraBasePeerCredential.Header, out var peer) && peer.Count == 1 && peer[0] == TestIdentity.PeerSecret,
+                    "Every private-listener request carries exactly one delivered peer credential.");
+                if (Mode == "redirect") return Results.Redirect("http://127.0.0.1:" + http.Connection.LocalPort + "/__test/redirected", preserveMethod: true);
                 http.Response.Headers["X-TerraBase-Region"] = "gru";
                 if (Mode == "region-unavailable") return Error(503, "region_unavailable");
                 if (Mode == "authorization") return Error(401, "unauthorized");
@@ -324,6 +361,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
                 pausedCreates,
                 pausedWrites,
                 privateRequests,
+                redirectTargetRequests,
                 failures = failures.ToArray(),
                 collections = collections.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => new
                 { name = item.Key, id = item.Value.Id, createdAt = item.Value.CreatedAt, documents = item.Value.Documents.Count(entry => !entry.Value.Deleted) }).ToArray(),

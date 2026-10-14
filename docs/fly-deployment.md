@@ -1,6 +1,7 @@
 # Dashboard production rollout
 
-CI and Slow must both pass for the current main commit. CI builds the image
+CI must pass for the current main commit. Slow runs independently, reports
+failures, and does not block deployment. CI builds the image
 once, publishes `registry.fly.io/ts-dashboard:<commit>`, and retains Docker,
 NuGet and npm caches. Deployment starts from workflow completion events rather
 than polling or sleeping. A newer main commit supersedes an older candidate.
@@ -23,7 +24,8 @@ TerraScale organization, its owner and the two project identities.
 First-party secrets are generated directly into Fly and GitHub secrets without
 printing their values. GitHub holds an app-scoped `FLY_API_TOKEN`. Stripe issues
 `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`; generated placeholders cannot
-replace them. See [identity-descriptor.md](identity-descriptor.md).
+replace them. `TERRABASE_PEER_SECRET` must equal the value on `ts-terrabase`
+and `ts-auth`; the dashboard does not start without it. See [identity-descriptor.md](identity-descriptor.md).
 
 ## Timing and proof
 

@@ -23,6 +23,7 @@ invalid) and on each use, and never logs them.
 | `TS_DASHBOARD_SESSION_ENCRYPTION_KEY` | base64 of exactly 32 bytes | AES-GCM for browser sessions, refresh credentials and pending OIDC and sign-up flows. Replacing it makes all of those unreadable | generated once |
 | `STRIPE_SECRET_KEY` | `sk_test_`, `sk_live_`, `rk_test_` or `rk_live_` prefix | Stripe API (Stripe.net) | Stripe (vendor) |
 | `STRIPE_WEBHOOK_SECRET` | starts with `whsec_` | Verifies the Stripe webhook routes | Stripe (vendor) |
+| `TERRABASE_PEER_SECRET` | exactly 64 hexadecimal characters | `X-TerraBase-Peer-Credential` on state requests to TerraBase's internal listener. `ts-terrabase` and `ts-auth` hold the same value (terrascale `docs/terrabase/peer-authentication.md`) | generated once, shared |
 
 Fixed in code, not delivered: the ts-auth tenant `terrascale`, its issuer
 `https://auth.terrascale.tech/terrascale` and the dashboard client id
@@ -105,9 +106,13 @@ the invitations the dashboard sends. ts-auth does not enforce it.
 The dashboard keeps its own state in the `ts-dashboard` database of the
 ts-dashboard project `00000000000000000000000005`, which TerraBase seeds on every
 start (terrascale `PlatformDatabases.cs`). It reaches TerraBase's private
-listener with no credential: `http://gru.ts-terrabase.internal:8081` on Fly,
+listener at `http://gru.ts-terrabase.internal:8081` on Fly and
 `http://127.0.0.1:8081` only in Development off Fly; Production off Fly refuses
-to start. gru stays the single home until cross-region conditional writes are
+to start. Only the `terrabase-state` HTTP client sends
+`X-TerraBase-Peer-Credential`, and only to that origin: its handler
+(`TerraBasePeerCredential`) refuses any other destination and its primary
+handler follows no redirects. The shared `platform` client (ts-auth, the public
+TerraBase API, Stripe, status) never carries it. gru stays the single home until cross-region conditional writes are
 proven. Startup creates missing collections (`409 name_taken` counts as
 created) and never creates or replaces the database. The platform project has
 no customer members or keys; no customer token reaches this database.

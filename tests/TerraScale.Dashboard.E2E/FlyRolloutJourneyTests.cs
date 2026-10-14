@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E;
@@ -7,6 +8,58 @@ namespace TerraScale.Dashboard.E2E;
 public sealed class FlyRolloutJourneyTests(DashboardRootFixture fixture)
 {
     private const string Sha = "1234567890123456789012345678901234567890";
+
+    [Test]
+    [Arguments("slow-failed", true)]
+    [Arguments("slow-running", true)]
+    [Arguments("slow-absent", true)]
+    [Arguments("ci-failed", false)]
+    [Arguments("newer-ci-failed", false)]
+    [Arguments("stale-main", false)]
+    [Arguments("pull-request", false)]
+    [Arguments("slow-trigger", false)]
+    [Arguments("already-deployed", false)]
+    public async Task OnlySuccessfulCurrentMainCiReleasesDeployment(string scenario, bool deploy)
+    {
+        var workflow = await File.ReadAllTextAsync(Path.Combine(fixture.Root, ".github/workflows/deploy.yml"));
+        await Assert.That(workflow).Contains("workflows: [CI]");
+        var script = workflow.Split("script: |\n", 2)[1].Split("\n  rollout:", 2)[0];
+        var info = new ProcessStartInfo("node") { RedirectStandardOutput = true, RedirectStandardError = true };
+        info.ArgumentList.Add("--input-type=module");
+        info.ArgumentList.Add("-e");
+        info.ArgumentList.Add("""
+            const scenario = SCENARIO;
+            const sha = 'tested-head';
+            const ci = {id: 1, name: 'CI', event: 'push', head_branch: 'main', head_sha: sha, conclusion: 'success'};
+            const run = {...ci};
+            if (scenario === 'ci-failed') run.conclusion = ci.conclusion = 'failure';
+            if (scenario === 'pull-request') run.event = 'pull_request';
+            if (scenario === 'slow-trigger') run.name = 'Slow';
+            const runs = [ci];
+            if (scenario === 'slow-failed') runs.push({id: 2, name: 'Slow', event: 'push', conclusion: 'failure'});
+            if (scenario === 'slow-running') runs.push({id: 2, name: 'Slow', event: 'push', conclusion: null});
+            if (scenario === 'newer-ci-failed') runs.push({...ci, id: 3, conclusion: 'failure'});
+            if (scenario === 'already-deployed') runs.push({id: 4, name: 'Deploy', conclusion: 'success'});
+            const context = {payload: {workflow_run: run}, repo: {owner: 'TerraScale', repo: 'ts-dashboard'}};
+            let output = null;
+            const core = {setOutput: (name, value) => { if (name === 'sha') output = value; }};
+            const github = {rest: {
+              repos: {getBranch: async () => ({data: {commit: {sha: scenario === 'stale-main' ? 'new-main' : sha}}})},
+              actions: {
+                listWorkflowRunsForRepo: async () => ({data: {workflow_runs: runs}}),
+                listJobsForWorkflowRun: async () => ({data: {jobs: [{name: 'rollout', conclusion: 'success'}]}})
+              }
+            }};
+            await (async () => { SCRIPT })();
+            process.stdout.write(output === sha ? 'deploy' : 'hold');
+            """.Replace("SCENARIO", JsonSerializer.Serialize(scenario), StringComparison.Ordinal).Replace("SCRIPT", script, StringComparison.Ordinal));
+        using var process = Process.Start(info)!;
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        await Assert.That(process.ExitCode).IsEqualTo(0).Because(await error);
+        await Assert.That(await output).IsEqualTo(deploy ? "deploy" : "hold");
+    }
 
     [Test]
     public async Task OneImageRollsOutInOrderAndRecordsAllThreeRegionalTimes()

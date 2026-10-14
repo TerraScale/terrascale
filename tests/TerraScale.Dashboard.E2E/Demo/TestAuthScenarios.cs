@@ -162,7 +162,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
     private sealed class ScenarioIdentity : IDashboardIdentity
     {
         private readonly DashboardCredentials identity = new("test-dashboard-client-secret-0123456789abcdef",
-            Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new("sk_test_demo", "whsec_demo"));
+            Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new("sk_test_demo", "whsec_demo"), TestIdentity.PeerSecret);
         public Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken) => Task.FromResult(identity);
     }
 

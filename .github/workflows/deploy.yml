@@ -2,14 +2,14 @@ name: Deploy
 
 on:
   workflow_run:
-    workflows: [CI, Slow]
+    workflows: [CI]
     types: [completed]
 
 permissions:
   contents: read
   actions: read
 
-# Completion of either suite wakes this workflow; the second green suite releases the rollout.
+# Successful CI releases the tested image; Slow reports independently.
 concurrency:
   group: dashboard-production
   cancel-in-progress: false
@@ -25,15 +25,13 @@ jobs:
         with:
           script: |
             const run = context.payload.workflow_run;
-            if (run.event !== 'push' || run.head_branch !== 'main' || run.conclusion !== 'success') return;
+            if (run.name !== 'CI' || run.event !== 'push' || run.head_branch !== 'main' || run.conclusion !== 'success') return;
             const repo = context.repo;
             const main = await github.rest.repos.getBranch({...repo, branch: 'main'});
             if (main.data.commit.sha !== run.head_sha) return;
             const runs = await github.rest.actions.listWorkflowRunsForRepo({...repo, head_sha: run.head_sha, per_page: 100});
-            for (const name of ['CI', 'Slow']) {
-              const latest = runs.data.workflow_runs.filter(r => r.name === name && r.event === 'push').sort((a,b) => b.id - a.id)[0];
-              if (latest?.conclusion !== 'success') return;
-            }
+            const latest = runs.data.workflow_runs.filter(r => r.name === 'CI' && r.event === 'push').sort((a,b) => b.id - a.id)[0];
+            if (latest?.conclusion !== 'success') return;
             for (const prior of runs.data.workflow_runs.filter(r => r.name === 'Deploy' && r.conclusion === 'success')) {
               const jobs = await github.rest.actions.listJobsForWorkflowRun({...repo, run_id: prior.id});
               if (jobs.data.jobs.some(j => j.name === 'rollout' && j.conclusion === 'success')) return;
