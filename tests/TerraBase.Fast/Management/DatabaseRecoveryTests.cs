@@ -1770,7 +1770,7 @@ public sealed class DatabaseRecoveryTests
             await state.SeedAsync(api);
             using var owner = api.As(state.User);
             // Use a separate tenant so its last database can disappear without removing the seeded data.
-            organization = await api.CreateOrganizationAsync(state.Faker.Company.CompanyName(), owner);
+            organization = await api.CreateOrganizationAsync("Recovery " + state.Faker.Company.CompanyName(), owner);
             project = await api.CreateProjectAsync(organization, "Project " + state.Faker.Random.AlphaNumeric(8), owner);
             organizationDirectory = System.IO.Path.Combine(state.Directory, organization);
             projectDirectory = System.IO.Path.Combine(organizationDirectory, project);
@@ -2351,7 +2351,7 @@ public sealed class DatabaseRecoveryTests
         public async Task SeedAsync(ManagementApi api)
         {
             using var owner = api.As(User);
-            Organization = await api.CreateOrganizationAsync(Faker.Company.CompanyName(), owner);
+            Organization = await api.CreateOrganizationAsync("Seed " + Faker.Company.CompanyName(), owner);
             Project = await api.CreateProjectAsync(Organization, "Project " + Faker.Random.AlphaNumeric(8), owner);
             Source = await api.CreateDatabaseAsync(Organization, Project, "source", owner);
             Neighbor = await api.CreateDatabaseAsync(Organization, Project, "neighbor", owner);

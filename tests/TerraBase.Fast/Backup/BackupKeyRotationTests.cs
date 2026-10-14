@@ -388,7 +388,9 @@ public sealed class BackupKeyRotationTests
     }
 
     [Test]
-    public async Task A_live_node_refreshes_its_unexpired_current_key_after_a_peer_rotates_it()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_live_node_refreshes_its_unexpired_current_key_after_a_peer_rotates_it(bool discoverPeerAfterStartup)
     {
         var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
@@ -442,7 +444,23 @@ public sealed class BackupKeyRotationTests
             await Assert.That(priorSegments.All(key => KeyId(s3.Objects[key]) == oldKey[keys.Length..])).IsTrue();
             // Advance only the live node during refresh assertions; an unrelated peer pass must not enter its LIST totals.
             var peerTime = new FakeTimeProvider(time.GetUtcNow());
+            var liveMember = new ClusterMember(Path.GetFileName(directory), live.Server.BaseAddress.ToString(), "local", "");
+            if (discoverPeerAfterStartup)
+            {
+                members.Leave(liveMember.Name);
+            }
+
             await using var peer = await StartAsync(s3, peerTime, peerDirectory, members: members);
+            var gate = (CatalogGate)peer.Server.Services.GetRequiredService<ICatalogGate>();
+            if (discoverPeerAfterStartup)
+            {
+                await Assert.That(gate.IsOpen).IsFalse();
+                members.Join(liveMember);
+            }
+
+            // A frozen clock cannot trigger the retry when startup finishes closed. Complete the real trusted-peer pass
+            // before expecting backup work, including when discovery becomes available only after startup.
+            await Assert.That(await gate.VerifyAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken)).IsTrue();
             await peer.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var newest = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal) && key != oldKey);
             var newRequests = s3.ObserveKey(newest);

@@ -2,6 +2,8 @@
 
 Every server starts closed before cleanup or seeding: an old `_system.db` can revive revoked keys, removed members and deleted databases. Catalog authorization, management, readiness and backup shipping wait for verification; probes and recovery receivers stay available.
 
+Genesis verification reads all catalog buckets as one bounded indexed page per cursor, including retained deletions; it does not issue a query for every empty bucket. The five-second initial verification budget and fail-closed behavior are unchanged.
+
 A fresh empty cluster initializes automatically. A fresh replacement pulls every listed trusted peer, ignoring destroyed historical members. Existing catalogs require trusted-peer pulls and/or an encrypted Tigris anchor at `catalog-anchor/<machine-id>` (format 1: incarnation, CDC head, UTC time). Snapshot and replay copies receive new incarnations. An unreadable anchor, older head, different incarnation or missing non-genesis anchor cannot establish trust; restored peers cannot export system replication state or verify each other.
 
 An existing machine waits for all recorded/listed peers, or a trusted majority when its own anchor proves it was not restored. A catalog proven stale stays closed for reviewed recovery without a bypass. Recreate a lost region with a fresh catalog from healthy peers, then restore tenant databases. Cleanup skipped while closed runs at the next verified restart.
