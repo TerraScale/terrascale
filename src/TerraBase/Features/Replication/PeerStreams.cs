@@ -569,18 +569,18 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     continue;
                 }
 
-                var resume = retains is true ? acked : head;
+                var refillResume = retains is true ? acked : head;
                 var horizon = await _states.HorizonAsync(database, cancellationToken).ConfigureAwait(false);
                 await stream.ReserveAsync().ConfigureAwait(false);
                 lock (link.Gate)
                 {
                     cursor.BehindSince ??= _time.GetTimestamp();
-                    (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (resume, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true);
+                    (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (refillResume, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true);
                     cursor.ResponseReceived = false;
                 }
                 await stream.WriteAsync(new PushFrame
                 {
-                    Refill = new Refill { Database = ChangeGroups.Wire(database, incarnation), ChangeId = checked((ulong)resume), Horizon = horizon.Value },
+                    Refill = new Refill { Database = ChangeGroups.Wire(database, incarnation), ChangeId = checked((ulong)refillResume), Horizon = horizon.Value },
                 }, cancellationToken).ConfigureAwait(false);
 
                 sent = true;
