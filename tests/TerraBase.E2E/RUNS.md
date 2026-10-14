@@ -516,3 +516,28 @@ E2E run (local), 2026-10-14T08:22Z on delta
 | `An_unacknowledged_origin_write_is_never_read_from_a_sealed_chunk_and_dies_with_its_origin` | actual pass | separate OS processes | ProcessKill |  |
 | `The_remote_durable_frontier_survives_the_origins_SIGKILL` | actual pass | separate OS processes | ProcessKill |  |
 <!-- /e2e-summary -->
+
+
+## FR-25 process durability after test isolation (committed tree)
+
+<!-- e2e-summary -->
+E2E run (local), 2026-10-14T08:29Z on delta
+
+- Commit: `89f54c3e5f94f414b94fcf8e83b1c223888061c7`; working tree: clean
+- Stacked on: none (merge base with origin/main `0eac37a89c7217d75275bfb543ef92d4680939b7`)
+
+| Category | Tests |
+| --- | ---: |
+| actual pass | 2 |
+| harness check | 0 |
+| expected failure | 0 |
+| not supported | 0 |
+| skip | 0 |
+| fail | 0 |
+| total | 2 |
+
+| Test | Outcome | Nodes | Faults | Waits on / reason |
+| --- | --- | --- | --- | --- |
+| `An_unacknowledged_origin_write_is_never_read_from_a_sealed_chunk_and_dies_with_its_origin` | actual pass | separate OS processes | ProcessKill |  |
+| `The_remote_durable_frontier_survives_the_origins_SIGKILL` | actual pass | separate OS processes | ProcessKill |  |
+<!-- /e2e-summary -->
