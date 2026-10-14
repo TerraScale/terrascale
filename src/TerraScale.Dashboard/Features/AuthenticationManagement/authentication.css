@@ -1,8 +1,16 @@
-/* Authentication console (ts-idp-*): colored tiles and avatars, record tables, the
+/* Authentication console (ts-idp-*): graphite tiles and avatars, record tables, the
    provider gallery, strategy switches, the setup checklist, and the hosted
-   sign-in preview. Colors come from [data-tone] (tokens.css). */
+   sign-in preview. Category glyphs and fills remain neutral. */
 
-/* Icon tiles and avatars carry their own tone. */
+.ts-idp-title {
+  margin: 0;
+  font-size: var(--ts-fs-3xl);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+/* Neutral icon tiles and avatars. */
 .ts-idp-tile {
   display: inline-grid;
   flex: none;
@@ -10,8 +18,8 @@
   width: 32px;
   height: 32px;
   border-radius: var(--ts-radius);
-  background: color-mix(in oklab, var(--tone) 16%, transparent);
-  color: var(--tone);
+  background: var(--ts-surface-3);
+  color: var(--ts-ink-2);
 }
 
 .ts-idp-avatar {
@@ -21,8 +29,8 @@
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: color-mix(in oklab, var(--tone) 22%, var(--ts-surface-2));
-  color: color-mix(in oklab, var(--tone) 70%, var(--ts-ink));
+  background: var(--ts-surface-3);
+  color: var(--ts-ink-2);
   font-size: var(--ts-fs-xs);
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -68,7 +76,7 @@
 
 .ts-idp-chip-on {
   border-color: color-mix(in oklab, var(--tone) 30%, transparent);
-  background: color-mix(in oklab, var(--tone) 12%, transparent);
+  background: var(--ts-surface-3);
   color: color-mix(in oklab, var(--tone) 75%, var(--ts-ink));
 }
 
@@ -207,7 +215,7 @@ button.ts-idp-provider {
 
 button.ts-idp-provider:hover {
   border-color: color-mix(in oklab, var(--tone) 45%, transparent);
-  background: color-mix(in oklab, var(--tone) 6%, transparent);
+  background: var(--ts-surface-2);
 }
 
 button.ts-idp-provider:focus-visible {
@@ -363,14 +371,18 @@ button.ts-idp-provider:focus-visible {
 /* Branding form beside the hosted sign-in preview. */
 .ts-idp-branding {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 360px);
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
   align-items: start;
-  gap: var(--ts-s8);
+  gap: var(--ts-s6);
 }
 
-@media (max-width: 63.99rem) {
+@media (max-width: 79.99rem) {
   .ts-idp-branding {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-idp-branding > .ts-idp-preview {
+    position: static;
   }
 }
 
@@ -385,6 +397,8 @@ button.ts-idp-provider:focus-visible {
 }
 
 .ts-idp-preview {
+  position: sticky;
+  top: var(--ts-s6);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
@@ -599,4 +613,56 @@ button.ts-idp-provider:focus-visible {
 
 .ts-idp-email-preview:has(input[value="dark"]:checked) iframe {
   background: #09090b;
+}
+
+/* Danger zone: its own last tab; each card is a red-bordered row. */
+.ts-idp-danger {
+  border: 1px solid color-mix(in oklab, var(--ts-danger) 45%, transparent);
+  border-radius: var(--ts-radius-lg);
+}
+
+.ts-idp-danger .ts-card-title {
+  color: var(--ts-danger);
+}
+
+.ts-idp-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ts-s6);
+}
+
+.ts-idp-layout > nav {
+  display: grid;
+  gap: var(--ts-s4);
+}
+
+.ts-idp-layout > nav .ts-nav-link {
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-idp-layout > nav a[href="/auth/danger"] {
+  color: var(--ts-danger);
+}
+
+@media (max-width: 767px) {
+  .ts-idp-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-idp-layout > nav {
+    display: flex;
+    max-width: 100%;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--ts-line);
+    padding-bottom: var(--ts-s2);
+  }
+
+  .ts-idp-layout > nav .ts-nav-group {
+    flex: none;
+  }
+
+  .ts-idp-layout > nav .ts-nav {
+    display: flex;
+  }
 }
