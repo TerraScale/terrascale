@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Tenancy;
@@ -62,9 +63,13 @@ public sealed class AbandonedStatementTests
                 {
                     using (answer)
                     {
-                        if (answer.StatusCode != HttpStatusCode.InternalServerError)
+                        // A native failure during the commit path is outcome unknown, never a safe-to-retry refusal.
+                        var body = await answer.Content.ReadFromJsonAsync<JsonElement>();
+                        var code = body.GetProperty("error").GetProperty("code").GetString();
+                        if (answer.StatusCode != HttpStatusCode.ServiceUnavailable || code != "write_outcome_unknown"
+                            || answer.Headers.RetryAfter is not null)
                         {
-                            unexpected.Add($"round {round}: a failing write answered {answer.StatusCode}");
+                            unexpected.Add($"round {round}: a failing write answered {answer.StatusCode} {code}, Retry-After: {answer.Headers.RetryAfter}");
                         }
                     }
                 }
