@@ -1,0 +1,38 @@
+{
+  "label": "before",
+  "captured_utc": "2026-10-14T07:35:51Z",
+  "measured_commit": "a2a7ed906d5bd6a615e5e0997b604cbd859a7091",
+  "working_tree_changes": 0,
+  "ts_dotnet_commit": "bcd20603f11f3aa54dc54cec6e410b4fe9e24151",
+  "host": "delta",
+  "kernel": "7.2.10",
+  "cpu_model": "13th Gen Intel(R) Core(TM) i7-13620H",
+  "logical_cpus": 16,
+  "mem_total_bytes": 33335537664,
+  "mem_available_bytes": 18111537152,
+  "loadavg_1_5_15": "35.70 29.44 21.95",
+  "go": "go version go1.25.0 linux/amd64",
+  "dotnet_sdk": "11.0.100-rc.1.26425.128",
+  "top_cpu_processes": [
+    {
+      "pcpu": 502.0,
+      "command": "VBCSCompiler"
+    },
+    {
+      "pcpu": 400.0,
+      "command": "mise"
+    },
+    {
+      "pcpu": 285.0,
+      "command": "VBCSCompiler <defunct>"
+    },
+    {
+      "pcpu": 200.0,
+      "command": "ps"
+    },
+    {
+      "pcpu": 178.0,
+      "command": "TerraBase.Fast"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "label": "before",
+  "captured_utc": "2026-10-14T06:47:03.608590186Z",
+  "measured_commit": "ca231cfa13a47f14957794e4e55cdd4e6fc87370",
+  "working_tree_changes": 0,
+  "ts_dotnet_commit": "bcd20603f11f3aa54dc54cec6e410b4fe9e24151",
+  "host": "delta",
+  "kernel": "Linux 7.2.10",
+  "cpu_model": "13th Gen Intel(R) Core(TM) i7-13620H",
+  "logical_cpus": 16,
+  "mem_total_bytes": 33335537664,
+  "mem_available_bytes": 22475816960,
+  "loadavg_1_5_15": "6.61 11.77 13.54",
+  "go": "go1.25.0",
+  "dotnet_sdk": "11.0.100-rc.1.26425.128",
+  "top_cpu_processes": [
+    {
+      "pcpu": 295,
+      "command": "/home/mariogk/.local/share/mise/dotnet-root/sdk/11.0.100-rc.1.26425.128/Roslyn/bincore/VBCSCompiler -pipename:57+q0mLd33KbVq6otkMtMXUKOzpNlAi+X8DTMdIowiQ"
+    },
+    {
+      "pcpu": 96.7,
+      "command": "/tmp/go-build2403132683/b220/bench-runner.test -test.testlogfile=/tmp/go-build2403132683/b220/testlog.txt -test.paniconexit0 -test.timeout=10m0s"
+    },
+    {
+      "pcpu": 89.1,
+      "command": "/tmp/go-build2403132683/b244/replbench.test -test.testlogfile=/tmp/go-build2403132683/b244/testlog.txt -test.paniconexit0 -test.timeout=10m0s"
+    },
+    {
+      "pcpu": 50.4,
+      "command": "/tmp/go-build2403132683/b241/pitrbench.test -test.testlogfile=/tmp/go-build2403132683/b241/testlog.txt -test.paniconexit0 -test.timeout=10m0s"
+    },
+    {
+      "pcpu": 21.9,
+      "command": "/home/mariogk/.local/share/mise/installs/go/1.25.0/bin/go test -race ./..."
+    },
+    {
+      "pcpu": 18.1,
+      "command": "/home/mariogk/.local/share/mise/installs/npm-t3/0.0.46-nightly.20261013.3066/lib/node_modules/t3/node_modules/@t3code/t3-linux-x64/t3 serve /home/mariogk/Projec"
+    },
+    {
+      "pcpu": 16.6,
+      "command": "[VBCSCompiler] <defunct>"
+    }
+  ],
+  "go_run_toolchain": "go1.25.0",
+  "go_run_goroot": "/home/mariogk/.local/share/mise/installs/go/1.25.0/bin/go",
+  "toolchain_note": "go and go_run_toolchain come from benchmark/ (go.mod go 1.25.0), the directory shape-bench runs in; the first capture ran from repo root and wrongly recorded go1.27.2"
+}

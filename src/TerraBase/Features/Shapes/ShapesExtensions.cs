@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Microsoft.OpenApi;
+using TerraBase.Engine;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 
@@ -26,7 +27,7 @@ public static class ShapesExtensions
             $$$"""{"error":{"code":"must_refetch","message":"shape lineage changed","handle":"{{{Handle}}}"}}""", ["TB-Shape-Handle"]),
         ["414"] = ("Error codes: uri_too_long.", Error("uri_too_long", "the continuation URL would not fit the 8 KiB request line"), []),
         ["429"] = ("Error codes: shape_busy. Keep state and retry with backoff.", Error("shape_busy", "too many shape flights"), []),
-        ["503"] = ("Error codes: unavailable, shape_too_large. Keep state and retry with backoff.", Error("unavailable", "shape reads are not served yet"), []),
+        ["503"] = ("Error codes: unavailable, shape_too_large. Keep state and retry with backoff.", Error("unavailable", "shape storage changed or is busy; retry later"), []),
     };
 
     private static readonly Dictionary<string, string> Headers = new(StringComparer.Ordinal)
@@ -68,12 +69,25 @@ public static class ShapesExtensions
 
                 return Task.CompletedTask;
             }))
-            .AddSingleton<UnavailableShapes>()
-            .AddSingleton<IShapeLineages>(provider => provider.GetRequiredService<UnavailableShapes>())
-            .AddSingleton<IShapeSnapshots>(provider => provider.GetRequiredService<UnavailableShapes>())
-            .AddSingleton<IShapeChunks>(provider => provider.GetRequiredService<UnavailableShapes>())
-            .AddSingleton<IShapeLiveTail>(provider => provider.GetRequiredService<UnavailableShapes>())
-            .AddSingleton<IShapeResume>(provider => provider.GetRequiredService<UnavailableShapes>())
+            .AddSingleton<ShapeRegistry>()
+            .AddSingleton<IShapeFlightSealer>(provider => provider.GetRequiredService<ShapeRegistry>())
+            .AddSingleton<ShapeLiveGate>()
+            .AddSingleton<IShapeMetrics, ShapeMetrics>()
+            .AddSingleton<IShapeSealer>(provider => new ShapeSealer(provider.GetRequiredService<IMemoryBudget>(),
+                provider.GetRequiredService<ILogger<ShapeSealer>>(), provider.GetRequiredService<IShapeStorage>(), provider.GetRequiredService<IShapeMetrics>()))
+            .AddSingleton<IShapeSnapshotSealer>(provider => new ShapeSnapshots(provider.GetRequiredService<IMemoryBudget>(),
+                provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IShapeSnapshotTransactions>(), provider.GetRequiredService<IShapeMetrics>()))
+            .AddSingleton<IShapeRetention>(provider => new ShapeRetention(provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IShapeStorage>()))
+            .AddSingleton<IShapeFilterRegistry>(provider => new ShapeFilterRegistry(provider.GetRequiredService<IMemoryBudget>()))
+            .AddSingleton<IShapeFlights<ShapeRead>>(provider => new ShapeFlights<ShapeRead>(provider.GetRequiredService<IStorageEngine>(),
+                provider.GetRequiredService<IShapeFlightSealer>(), provider.GetRequiredService<IMemoryBudget>(),
+                provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IHostApplicationLifetime>(), provider.GetRequiredService<IShapeMetrics>()))
+            .AddSingleton<ShapeService>()
+            .AddSingleton<IShapeLineages>(provider => provider.GetRequiredService<ShapeService>())
+            .AddSingleton<IShapeSnapshots>(provider => provider.GetRequiredService<ShapeService>())
+            .AddSingleton<IShapeChunks>(provider => provider.GetRequiredService<ShapeService>())
+            .AddSingleton<IShapeLiveTail>(provider => provider.GetRequiredService<ShapeService>())
+            .AddSingleton<IShapeResume>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeKeyRetention, NoShapeKeyRetention>()
             .AddSingleton<IShapeCrypto>(provider => new ShapeCrypto(provider.GetService<DataKeys>(),
                 provider.GetRequiredService<IShapeKeyRetention>(), provider.GetRequiredService<IMemoryBudget>(),

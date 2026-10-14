@@ -32,6 +32,21 @@ public sealed class ShapeSnapshotTests
     private static readonly string[] Envelope =
         ["shape_id", "handle", "offset", "next_offset", "covered_offset", "values_at", "up_to_date", "cursor_resume", "changes"];
 
+    [Test]
+    public async Task A_snapshot_definition_cannot_read_a_recreated_collection_under_its_old_handle()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await using var fixture = await Fixture.OpenAsync(api);
+        var shape = await ShapeAsync(fixture.Store);
+        await api.SendAsync(HttpMethod.Delete, api.Collections + "/" + DocumentApi.Collection);
+        await api.SendAsync(HttpMethod.Post, api.Collections, new { name = DocumentApi.Collection });
+        await api.PutAsync(DocumentApi.NewId(), new { status = "open" });
+
+        await Assert.That(async () => await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None))
+            .Throws<ShapeSealOffsetException>();
+        await Assert.That(await fixture.Snapshots.NewestAsync(fixture.Store, shape.Handle, CancellationToken.None)).IsNull();
+    }
+
     // The gate for snapshot isolation on Turso: a read transaction keeps its feed head and row values while HTTP writes commit.
     [Test]
     public async Task A_read_transaction_keeps_its_feed_head_and_page_bytes_while_http_writes_commit()
@@ -41,7 +56,7 @@ public sealed class ShapeSnapshotTests
         var ids = Ids(5);
         var model = Model();
         _ = await WriteAsync(api, model, [.. ids.Select((id, n) => (id, (JsonObject?)Doc(n)))]);
-        var shape = Shape();
+        var shape = await ShapeAsync(fixture.Store);
         var transactions = fixture.Transactions;
 
         long head;
@@ -92,7 +107,7 @@ public sealed class ShapeSnapshotTests
 
         using var release = new ManualResetEventSlim();
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var shape = Shape(document =>
+        var shape = await ShapeAsync(fixture.Store, document =>
         {
             if (started.TrySetResult())
             {
@@ -107,7 +122,7 @@ public sealed class ShapeSnapshotTests
         try
         {
             await started.Task.WaitAsync(Wait);
-            await Assert.That(async () => await fixture.Snapshots.SealIfDueAsync(fixture.Store, Shape(), CancellationToken.None))
+            await Assert.That(async () => await fixture.Snapshots.SealIfDueAsync(fixture.Store, await ShapeAsync(fixture.Store), CancellationToken.None))
                 .Throws<StorageBusyException>().Because("one seal is admitted at a time");
 
             // Updates at both ends and the middle, deletes, an id inside the keyset range and one after it, all while page 0 scans.
@@ -174,7 +189,7 @@ public sealed class ShapeSnapshotTests
         _ = await WriteAsync(api, model, [.. ids.Select((id, n) => (id, (JsonObject?)Doc(n)))]);
         _ = await WriteAsync(api, model, (ids[0], Doc(10)), (ids[1], Doc(11)), (ids[2], null));
         await Assert.That((await api.TransactAsync(new { op = "put", collection = "other", id = ids[3], document = Doc(99) })).Status).IsEqualTo(HttpStatusCode.OK);
-        var shape = Shape();
+        var shape = await ShapeAsync(fixture.Store);
         var first = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         var firstModel = Model(model);
         var sealer = new ShapeSealer(fixture.Memory, NullLogger<ShapeSealer>.Instance, new SqliteShapeStorage(api.Server.Services.GetRequiredService<SqliteStorageEngine>()));
@@ -224,7 +239,7 @@ public sealed class ShapeSnapshotTests
     {
         await using var api = await DocumentApi.StartAsync();
         await using var fixture = await Fixture.OpenAsync(api);
-        var shape = Shape();
+        var shape = await ShapeAsync(fixture.Store);
 
         var snapshot = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         await Assert.That(snapshot.Offset).IsEqualTo(await CounterAsync(fixture.Raw));
@@ -251,7 +266,7 @@ public sealed class ShapeSnapshotTests
         var ids = Ids(ShapeSnapshots.PageExamined + 1);
         _ = await WriteAsync(api, Model(), [.. ids.Select((id, n) => (id, (JsonObject?)Doc(n)))]);
 
-        var shape = Shape(document => document.Id == ids[^1]);
+        var shape = await ShapeAsync(fixture.Store, document => document.Id == ids[^1]);
         var snapshot = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         var (pages, nextIds) = await PagesAsync(fixture.Snapshots, fixture.Store, shape.Handle, snapshot.Offset);
 
@@ -274,7 +289,7 @@ public sealed class ShapeSnapshotTests
         using var cancel = new CancellationTokenSource();
         var calls = 0;
         // Page 0 sees documents 0 and 1 (1 does not fit); the third call is page 1, after page 0 is stored.
-        var shape = Shape(document =>
+        var shape = await ShapeAsync(fixture.Store, document =>
         {
             if (Interlocked.Increment(ref calls) == 3)
             {
@@ -309,7 +324,7 @@ public sealed class ShapeSnapshotTests
         // A Hobby tenant gets 1/16 of 64 MiB: the seal's small admissions fit, the 8 MiB page workspace does not.
         await using var fixture = await Fixture.OpenAsync(api, limit: 64L * 1024 * 1024);
         _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(1)));
-        var shape = Shape();
+        var shape = await ShapeAsync(fixture.Store);
 
         await Assert.That(async () => await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None)).Throws<StorageBusyException>();
         await Assert.That(async () => await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, new CancellationToken(canceled: true)))
@@ -327,7 +342,7 @@ public sealed class ShapeSnapshotTests
         await using var api = await DocumentApi.StartAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(1, new string('y', 64 * 1024))));
-        var shape = Shape();
+        var shape = await ShapeAsync(fixture.Store);
         var snapshot = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
 
         using (var page = await fixture.Snapshots.ReadPageAsync(fixture.Store, shape.Handle, snapshot.Offset, null, CancellationToken.None))
@@ -349,7 +364,7 @@ public sealed class ShapeSnapshotTests
         var ids = Ids(ShapeSnapshots.PageDocuments + 1);
         var model = Model();
         _ = await WriteAsync(api, model, [.. ids.Select((id, n) => (id, (JsonObject?)Doc(n)))]);
-        var shape = Shape();
+        var shape = await ShapeAsync(fixture.Store);
 
         var snapshot = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         var (pages, nextIds) = await PagesAsync(fixture.Snapshots, fixture.Store, shape.Handle, snapshot.Offset);
@@ -368,7 +383,7 @@ public sealed class ShapeSnapshotTests
         var excluded = ids[1] + new string('b', 200);
         var model = Model();
         _ = await WriteAsync(api, model, (ids[0], Doc(0, "")), (excluded, Doc(1)), (ids[2], Doc(2)));
-        var shape = Shape(document => document.Id != excluded);
+        var shape = await ShapeAsync(fixture.Store, document => document.Id != excluded);
         int framing;
         await using (var reader = await fixture.Transactions.BeginAsync(fixture.Store, write: false, CancellationToken.None))
         {
@@ -400,7 +415,7 @@ public sealed class ShapeSnapshotTests
         var ids = Ids(3);
         var model = Model();
         _ = await WriteAsync(api, model, (ids[0], Doc(0)), (ids[1], Doc(1, new string('z', ShapeSnapshots.PageBytes - 256))), (ids[2], Doc(2)));
-        var shape = Shape();
+        var shape = await ShapeAsync(fixture.Store);
 
         var snapshot = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         var (pages, _) = await PagesAsync(fixture.Snapshots, fixture.Store, shape.Handle, snapshot.Offset);
@@ -419,7 +434,7 @@ public sealed class ShapeSnapshotTests
         var model = Model();
         _ = await WriteAsync(api, model, [.. ids.Select((id, n) => (id, (JsonObject?)Doc(n)))]);
         // The scan of ids[1] uses up the deadline, so page 0 stops before ids[2]. Each id is examined once.
-        var shape = Shape(document =>
+        var shape = await ShapeAsync(fixture.Store, document =>
         {
             if (document.Id == ids[1])
             {
@@ -451,7 +466,7 @@ public sealed class ShapeSnapshotTests
         await RawWriteAsync(fixture.Raw, $"UPDATE \"{DocumentApi.Collection}\" SET doc = X'{damaged}' WHERE id = '{ids[1]}';");
         await Assert.That(await ScalarAsync(fixture.Raw, $"SELECT hex(CAST(doc AS BLOB)) = '{damaged}' FROM \"{DocumentApi.Collection}\" WHERE id = '{ids[1]}';"))
             .IsEqualTo(1L).Because("the stored damage must reach the snapshot validator unchanged");
-        var shape = Shape();
+        var shape = await ShapeAsync(fixture.Store);
 
         await Assert.That(async () => await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None)).Throws<InvalidDataException>();
         await Assert.That(await fixture.Snapshots.NewestAsync(fixture.Store, shape.Handle, CancellationToken.None)).IsNull();
@@ -465,7 +480,7 @@ public sealed class ShapeSnapshotTests
         await using var api = await DocumentApi.StartAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(1)));
-        var shape = Shape();
+        var shape = await ShapeAsync(fixture.Store);
         var first = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         await Assert.That(first.Offset).IsGreaterThan(0L);
 
@@ -492,7 +507,7 @@ public sealed class ShapeSnapshotTests
         await using var api = await DocumentApi.StartAsync();
         await using var fixture = await Fixture.OpenAsync(api);
         _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(1)));
-        var shape = Shape();
+        var shape = await ShapeAsync(fixture.Store);
         var first = await fixture.Snapshots.SealIfDueAsync(fixture.Store, shape, CancellationToken.None);
         _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(2)));
 
@@ -553,9 +568,15 @@ public sealed class ShapeSnapshotTests
         }
     }
 
-    private static ShapeSnapshotDefinition Shape(Func<StoredDocument, bool>? predicate = null) => new(
-        "h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)),
-        DocumentApi.Collection, RandomNumberGenerator.GetBytes(16), predicate);
+    private static async Task<ShapeSnapshotDefinition> ShapeAsync(IDatabaseStore store, Func<StoredDocument, bool>? predicate = null)
+    {
+        await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        var collection = await transaction.GetCollectionAsync(DocumentApi.Collection, CancellationToken.None)
+            ?? throw new InvalidOperationException("the collection is missing");
+        return new ShapeSnapshotDefinition(
+            "h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)),
+            DocumentApi.Collection, collection.Id, RandomNumberGenerator.GetBytes(16), predicate);
+    }
 
     /// <summary>The FR-12 chunk shape with the snapshot's identity, bound to the collection's current generation.</summary>
     private static async Task<ShapeSealDefinition> ChunkShapeAsync(IDatabaseStore store, ShapeSnapshotDefinition shape)

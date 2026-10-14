@@ -30,12 +30,12 @@ public sealed class ShapeRetentionTests
     [Test]
     public async Task A_request_below_the_floor_answers_409_must_refetch_over_the_real_listener()
     {
-        var probe = new RetentionProbe(new ShapeRetention(new FakeTimeProvider(Now)));
         await using var api = await DocumentApi.StartAsync(services: services =>
         {
-            services.AddSingleton(probe);
+            services.AddSingleton(provider => new RetentionProbe(new ShapeRetention(new FakeTimeProvider(Now), provider.GetRequiredService<IShapeStorage>())));
             services.AddTerraScaleEndpoints([EndpointRegistration.Create<RetentionProbeEndpoint>()]);
         });
+        var probe = api.Server.Services.GetRequiredService<RetentionProbe>();
         probe.Store = await StoreAsync(api.Server, await api.TenantOfAsync());
         await WriteAsync(probe.Store, connection => Chunk(connection, H1, 0, 10, Now.AddDays(-8)));
         _ = await probe.Retention.RunPassAsync(probe.Store, H1, CancellationToken.None);
@@ -54,17 +54,19 @@ public sealed class ShapeRetentionTests
         try
         {
             TenantContext tenant;
-            var retention = new ShapeRetention(new FakeTimeProvider(Now));
+            var clock = new FakeTimeProvider(Now);
             await using (var api = await DocumentApi.StartAsync(settings => settings["data-directory"] = directory))
             {
                 tenant = await api.TenantOfAsync();
                 var store = await StoreAsync(api.Server, tenant);
+                var first = Retention(api.Server, clock);
                 await WriteAsync(store, connection => Chunk(connection, H1, 0, 10, Now.AddDays(-8)));
-                await Assert.That(await retention.RunPassAsync(store, H1, CancellationToken.None)).IsEqualTo(1);
+                await Assert.That(await first.RunPassAsync(store, H1, CancellationToken.None)).IsEqualTo(1);
                 await Assert.That(await OffsetsAsync(store, H1)).IsEmpty();
             }
 
             await using var restarted = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = directory);
+            var retention = Retention(restarted, clock);
             var reopened = await StoreAsync(restarted, tenant);
             await Assert.That(await retention.GetFloorAsync(reopened, H1, CancellationToken.None)).IsEqualTo(10L);
             await Assert.That(await retention.CheckOffsetAsync(reopened, H1, 9, CancellationToken.None)).IsNotNull();
@@ -81,7 +83,7 @@ public sealed class ShapeRetentionTests
     {
         await using var api = await DocumentApi.StartAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
-        var retention = new ShapeRetention(new FakeTimeProvider(Now));
+        var retention = Retention(api.Server, new FakeTimeProvider(Now));
         for (var i = 0; i < 4; i++)
         {
             _ = await api.PutAsync(DocumentApi.NewId(), new { n = i });
@@ -115,7 +117,7 @@ public sealed class ShapeRetentionTests
         await using var api = await DocumentApi.StartAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var time = new FakeTimeProvider(Now);
-        var retention = new ShapeRetention(time);
+        var retention = Retention(api.Server, time);
         await WriteAsync(store, connection => Chunk(connection, H1, 0, 10, Now));
         time.Advance(TimeSpan.FromDays(7));
         await Assert.That(await retention.RunPassAsync(store, H1, CancellationToken.None)).IsEqualTo(0);
@@ -128,7 +130,7 @@ public sealed class ShapeRetentionTests
     {
         await using var api = await DocumentApi.StartAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
-        var retention = new ShapeRetention(new FakeTimeProvider(Now));
+        var retention = Retention(api.Server, new FakeTimeProvider(Now));
         await WriteAsync(store, connection => Chunk(connection, H1, 0, 10, Now.AddDays(-8), 8 * Mi + 1));
         await Assert.That(async () => await retention.RunPassAsync(store, H1, CancellationToken.None)).Throws<InvalidDataException>();
         await Assert.That(async () => await retention.DropHandleAsync(store, H1, CancellationToken.None)).Throws<InvalidDataException>();
@@ -141,7 +143,7 @@ public sealed class ShapeRetentionTests
     {
         await using var api = await DocumentApi.StartAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
-        var retention = new ShapeRetention(new FakeTimeProvider(Now));
+        var retention = Retention(api.Server, new FakeTimeProvider(Now));
         await WriteAsync(store, connection =>
         {
             Chunk(connection, H1, 0, 10, Now.AddDays(-8));
@@ -166,7 +168,7 @@ public sealed class ShapeRetentionTests
         await using var api = await DocumentApi.StartAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var time = new FakeTimeProvider(Now);
-        var retention = new ShapeRetention(time);
+        var retention = Retention(api.Server, time);
         await WriteAsync(store, connection =>
         {
             Chunk(connection, H1, 0, 10, Ago(time, TimeSpan.FromDays(7) + TimeSpan.FromMilliseconds(1)));
@@ -206,7 +208,7 @@ public sealed class ShapeRetentionTests
         await using var api = await DocumentApi.StartAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var time = new FakeTimeProvider(Now);
-        var retention = new ShapeRetention(time);
+        var retention = Retention(api.Server, time);
         await WriteAsync(store, connection =>
         {
             Chunk(connection, H1, 0, 50, Ago(time, TimeSpan.FromDays(8)));
@@ -233,7 +235,7 @@ public sealed class ShapeRetentionTests
         await using var api = await DocumentApi.StartAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var time = new FakeTimeProvider(Now);
-        var retention = new ShapeRetention(time);
+        var retention = Retention(api.Server, time);
         await WriteAsync(store, connection =>
         {
             Chunk(connection, H1, 0, 10, Ago(time, TimeSpan.FromDays(8)));
@@ -269,7 +271,7 @@ public sealed class ShapeRetentionTests
         await using var api = await DocumentApi.StartAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var time = new FakeTimeProvider(Now);
-        var retention = new ShapeRetention(time);
+        var retention = Retention(api.Server, time);
         await WriteAsync(store, connection =>
         {
             // 700 expired chunks end at 7000; 401 old snapshots sit below it, and the newest (offset 4000) is kept: 1100 eligible.
@@ -304,7 +306,7 @@ public sealed class ShapeRetentionTests
         await using var api = await DocumentApi.StartAsync();
         var store = await StoreAsync(api.Server, await api.TenantOfAsync());
         var time = new FakeTimeProvider(Now);
-        var retention = new ShapeRetention(time);
+        var retention = Retention(api.Server, time);
         await WriteAsync(store, connection =>
         {
             Chunk(connection, H1, 0, 10, Ago(time, TimeSpan.FromDays(8)), 4 * Mi);
@@ -332,6 +334,9 @@ public sealed class ShapeRetentionTests
     }
 
     private static DateTimeOffset Ago(TimeProvider time, TimeSpan age) => time.GetUtcNow() - age;
+
+    private static ShapeRetention Retention(TerraBaseTestServer server, TimeProvider time) =>
+        new(time, new SqliteShapeStorage(server.Services.GetRequiredService<SqliteStorageEngine>()));
 
     private static async Task<SqliteDatabaseStore> StoreAsync(TerraBaseTestServer server, TenantContext tenant) =>
         (SqliteDatabaseStore)(await server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;

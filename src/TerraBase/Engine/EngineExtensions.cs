@@ -4,6 +4,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
+using TerraBase.Features.Shapes;
 using TerraBase.Hosting;
 
 namespace TerraBase.Engine;
@@ -54,6 +55,9 @@ public static class EngineExtensions
         // The changes feed's 7-day retention.
         services.AddSingleton(provider => new FeedRetention(provider.GetRequiredService<SqliteStorageEngine>(), provider.GetRequiredService<ILogger<FeedRetention>>()));
         services.AddHostedService(provider => provider.GetRequiredService<FeedRetention>());
+        // Shape sealing and snapshots open their derived-data transactions through the SQLite engine.
+        services.AddSingleton<IShapeStorage>(provider => new SqliteShapeStorage(provider.GetRequiredService<SqliteStorageEngine>()));
+        services.AddSingleton<IShapeSnapshotTransactions>(provider => new SqliteShapeSnapshotTransactions(provider.GetRequiredService<SqliteStorageEngine>()));
         services.AddSingleton(provider => new StampingStorageEngine(provider.GetRequiredService<SqliteStorageEngine>()));
         services.AddSingleton<IStorageEngine>(provider => provider.GetRequiredService<StampingStorageEngine>());
         return services.AddSingleton<IWriteStamps>(provider => provider.GetRequiredService<StampingStorageEngine>());

@@ -25,7 +25,8 @@ internal readonly union ShapeFlightSealResult(Done, Unavailable);
 /// <param name="Offset">The offset exactly as requested.</param>
 /// <param name="Live">Whether the request may wait at the sealed head.</param>
 /// <param name="Cursor">The input live bucket; null without one. Ignored without <paramref name="Live"/>.</param>
-internal sealed record ShapeFlightRequest(TenantContext Database, string Handle, string Offset, bool Live, long? Cursor);
+/// <param name="OnAdmitted">Called after the request joins a bounded flight.</param>
+internal sealed record ShapeFlightRequest(TenantContext Database, string Handle, string Offset, bool Live, long? Cursor, Action? OnAdmitted = null);
 
 /// <summary>Whether the request's offset is the sealed head, from sealed state only and without reading a payload.</summary>
 internal delegate ValueTask<bool> ShapeHeadProbe(IDatabaseStore store, CancellationToken cancellationToken);
@@ -64,6 +65,8 @@ internal interface IShapeFlights<T>
 /// cursor), at most <see cref="MaxFlights"/> running and <see cref="MaxRequesters"/> joined, without a queue.
 /// </summary>
 /// <remarks>
+/// Each organization holds at most <see cref="MaxFlightsPerOrganization"/> running flights and
+/// <see cref="MaxRequestersPerOrganization"/> joined requesters, inside the machine caps, so one tenant cannot fill them.
 /// A flight runs on its own token: a requester leaving cancels only its own wait, the last one cancels the flight,
 /// and application stop cancels every flight. An abandoned flight keeps its running slot until its work ends.
 /// A live flight probes once; at the sealed head it waits up to <see cref="LiveTimeout"/> for a commit, and on wake
@@ -78,6 +81,8 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
     internal const long LiveBucketSeconds = 20;
     internal const int MaxFlights = 32;
     internal const int MaxRequesters = 256;
+    internal const int MaxFlightsPerOrganization = 8;
+    internal const int MaxRequestersPerOrganization = 64;
 
     // Admission for a flight's bookkeeping and for each requester's hold; result bytes are reserved by the reader.
     internal const long FlightBytes = 4 * 1024;
@@ -90,17 +95,22 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
     private readonly Dictionary<FlightKey, Flight> _flights = [];
     // One entry per database with a running flight, so at most MaxFlights.
     private readonly Dictionary<DatabaseKey, DatabaseState> _databases = [];
+    // One entry per organization with a running flight or a joined requester, so the sums stay within the machine caps.
+    private readonly Dictionary<string, OrganizationState> _organizations = [];
     private readonly IStorageEngine _engine;
     private readonly IShapeFlightSealer _sealer;
     private readonly IMemoryBudget _budget;
     private readonly TimeProvider _time;
     private readonly CancellationToken _stopping;
+    private readonly IShapeMetrics? _metrics;
     private int _running;
     private int _requesters;
 
-    public ShapeFlights(IStorageEngine engine, IShapeFlightSealer sealer, IMemoryBudget budget, TimeProvider time, IHostApplicationLifetime lifetime)
+    public ShapeFlights(IStorageEngine engine, IShapeFlightSealer sealer, IMemoryBudget budget, TimeProvider time, IHostApplicationLifetime lifetime,
+        IShapeMetrics? metrics = null)
     {
         ArgumentNullException.ThrowIfNull(lifetime);
+        _metrics = metrics;
         _engine = engine;
         _sealer = sealer;
         _budget = budget;
@@ -125,7 +135,8 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
         var hold = new QosContext.ResultMemory(_budget);
         lock (_gate)
         {
-            if (_requesters >= MaxRequesters || !TryReserve(hold, RequesterBytes, tenant))
+            var organization = _organizations.GetValueOrDefault(tenant.OrganizationId) ?? new OrganizationState();
+            if (_requesters >= MaxRequesters || organization.Requesters >= MaxRequestersPerOrganization || !TryReserve(hold, RequesterBytes, tenant))
             {
                 hold.Dispose();
                 return Busy;
@@ -134,7 +145,7 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
             if (!_flights.TryGetValue(key, out flight))
             {
                 var memory = new QosContext.ResultMemory(_budget);
-                if (_running >= MaxFlights || !TryReserve(memory, FlightBytes, tenant))
+                if (_running >= MaxFlights || organization.Flights >= MaxFlightsPerOrganization || !TryReserve(memory, FlightBytes, tenant))
                 {
                     memory.Dispose();
                     hold.Dispose();
@@ -148,7 +159,9 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
                 }
 
                 state.Flights++;
+                organization.Flights++;
                 _running++;
+                _metrics?.ChangeFlights(1);
                 flight = new Flight(memory, state);
                 _flights[key] = flight;
                 start = true;
@@ -157,7 +170,9 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
             // In the table, the flight still owns its memory, so this attach cannot see it released.
             hold.Attach(flight.Memory);
             flight.Requesters++;
+            organization.Requesters++;
             _requesters++;
+            _organizations[tenant.OrganizationId] = organization;
         }
 
         if (start)
@@ -167,6 +182,7 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
 
         try
         {
+            request.OnAdmitted?.Invoke();
             var answer = await flight.Result.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             if (answer.Missing is { } missing)
             {
@@ -207,12 +223,23 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
         }
     }
 
+    // Drops an organization's entry once it holds no running flight and no joined requester, so the table stays bounded.
+    private void Settle(string organization)
+    {
+        if (_organizations[organization] is { Flights: 0, Requesters: 0 })
+        {
+            _organizations.Remove(organization);
+        }
+    }
+
     // The last requester to leave an unfinished flight cancels it; a finished flight is already gone.
     private void Leave(FlightKey key, Flight flight)
     {
         lock (_gate)
         {
             _requesters--;
+            _organizations[key.Database.OrganizationId].Requesters--;
+            Settle(key.Database.OrganizationId);
             if (--flight.Requesters > 0 || !_flights.TryGetValue(key, out var current) || current != flight)
             {
                 return;
@@ -253,6 +280,9 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
             }
 
             _running--;
+            _metrics?.ChangeFlights(-1);
+            _organizations[key.Database.OrganizationId].Flights--;
+            Settle(key.Database.OrganizationId);
         }
 
         // Slot and owner reference go before any requester sees the answer, so the last requester's dispose
@@ -472,6 +502,13 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
 
         // Never disposed: it has no timer, and a late Cancel must not throw.
         public CancellationTokenSource Cancel { get; } = new();
+
+        public int Requesters { get; set; }
+    }
+
+    private sealed class OrganizationState
+    {
+        public int Flights { get; set; }
 
         public int Requesters { get; set; }
     }

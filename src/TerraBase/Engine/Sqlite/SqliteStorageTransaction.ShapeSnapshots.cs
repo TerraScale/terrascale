@@ -23,6 +23,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
     {
         var command = Command(CompleteSnapshot);
         command.Parameters.AddWithValue("$handle", handle);
+        CountRead("shape");
         using var reader = command.ExecuteReader();
         return reader.Read() ? new ShapeSnapshot(reader.GetInt64(0), reader.GetInt64(1)) : null;
     }
@@ -31,11 +32,13 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
         RunAsync(() =>
         {
             var latest = NewestShapeSnapshot(handle);
-            if (latest is null)
+            // A snapshot below the retention floor is never a bootstrap answer: reseal at the head.
+            if (latest is null || latest.Offset < ShapeFloor(handle))
             {
                 return true;
             }
 
+            CountRead("shape");
             if ((long)Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar()! == latest.Offset)
             {
                 return false;
@@ -52,6 +55,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
                 """);
             command.Parameters.AddWithValue("$handle", handle);
             command.Parameters.AddWithValue("$offset", latest.Offset);
+            CountRead("shape");
             return (long)command.ExecuteScalar()! >= ShapeSnapshots.ResealChunks;
         }, cancellationToken);
 
@@ -59,10 +63,12 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
         ReadOnlyMemory<byte> resumeScope, DateTimeOffset now, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
+            CountRead("shape");
             var offset = (long)Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar()!;
             Dictionary<ReplicaId, Hlc> stamps = [];
             Dictionary<ReplicaId, FeedPrefix> prefixes = [];
             List<(ReplicaId Origin, Hlc Floor)> floors = [];
+            CountRead("shape");
             using (var reader = Command("SELECT origin, stamp FROM _tb_feed_floor LIMIT 257;").ExecuteReader())
             {
                 while (reader.Read())
@@ -81,6 +87,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
                 cancellationToken.ThrowIfCancellationRequested();
                 var command = Command(FeedHead);
                 command.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
+                CountRead("shape");
                 if (command.ExecuteScalar() is not long stamp)
                 {
                     continue;
@@ -88,7 +95,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
 
                 var at = new Hlc((ulong)stamp);
                 stamps[origin] = at;
-                prefixes[origin] = PrefixThrough(origin, floor, at, cancellationToken);
+                prefixes[origin] = PrefixThrough(origin, floor, at, cancellationToken, "shape");
             }
 
             var cursor = ChangeCursor.Encode(new FeedCursor(stamps, FeedCursor.At(now)) { Issuer = Member.Id, Prefixes = prefixes });
@@ -109,9 +116,15 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
         ShapeSnapshotDefinition shape, long offset, string? afterId, string cursor, IMemoryBudget memory, TimeProvider time,
         CancellationToken cancellationToken)
     {
-        if (store.IsSystem || !HasTable(shape.Collection))
+        if (store.IsSystem)
         {
             throw new InvalidDataException("a shape snapshot requires an existing client collection");
+        }
+        CountRead("shape");
+        if (Command("SELECT entity_id FROM collections WHERE name = $collection;", shape.Collection).ExecuteScalar()
+            is not string generation || generation != shape.CollectionGeneration)
+        {
+            throw new ShapeSealOffsetException();
         }
 
         // Ops, serialized response, growth/copies and framing are admitted before any row is materialized.
@@ -150,6 +163,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
                     using var rowMemory = memory.TryReserve(MemoryLane.Bulk, checked(size * 8 + 32 * 1024), store.Tenant) ?? throw new StorageBusyException();
                     var bodyQuery = TableCommand("SELECT CAST(doc AS BLOB) FROM {0} WHERE id = $id;", shape.Collection, id);
                     StoredDocument document;
+                    CountRead("shape");
                     using (var bodyReader = bodyQuery.ExecuteReader())
                     {
                         if (!bodyReader.Read())
@@ -249,6 +263,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
         }
 
         List<(string, long, long)> batch = [];
+        CountRead("shape");
         using var reader = rows.ExecuteReader();
         while (reader.Read())
         {
@@ -330,6 +345,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
             int page;
             long bytes;
             string? next;
+            CountRead("shape");
             using (var reader = command.ExecuteReader())
             {
                 if (!reader.Read())
@@ -359,6 +375,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
                 body.Parameters.AddWithValue("$handle", handle);
                 body.Parameters.AddWithValue("$offset", offset);
                 body.Parameters.AddWithValue("$page", page);
+                CountRead("shape_body");
                 using var reader = body.ExecuteReader();
                 reader.Read();
                 return new ShapeSnapshotPage(SqliteSession.Bytes(reader, 0), next, reservation);
@@ -380,7 +397,7 @@ internal sealed class SqliteShapeSnapshotTransactions(SqliteStorageEngine engine
             : throw new InvalidOperationException("shapes belong to client databases");
         if (underlying is null || underlying.Incarnation != store.Incarnation || store.IsClosed)
         {
-            throw new InvalidOperationException("the shape database incarnation is no longer available");
+            throw new ShapeSealOffsetException();
         }
 
         return await underlying.BeginTransactionAsync(write, cancellationToken).ConfigureAwait(false);

@@ -10,25 +10,32 @@ namespace TerraBase.Features.Shapes;
 /// <param name="Database">The resolved tenant database.</param>
 /// <param name="Collection">The collection; its id is the collection generation.</param>
 /// <param name="CanonicalFilter">The compact JSON of <c>where</c>; empty when absent.</param>
-/// <param name="Filter">The parsed filter; null when absent.</param>
-internal sealed record ShapeScope(TenantContext Database, CollectionInfo Collection, string CanonicalFilter, DocumentFilter? Filter);
+/// <param name="Filter">The parsed filter; <see cref="ShapeFilter.All"/> when absent.</param>
+/// <param name="Bootstrap">Whether the request is an <c>offset=-1</c> bootstrap, which admits a filtered shape; continuations must find it.</param>
+internal sealed record ShapeScope(TenantContext Database, CollectionInfo Collection, string CanonicalFilter, ShapeFilter Filter, bool Bootstrap = false);
+
+/// <summary>A filtered shape evicted from its database's admitted set: continuations refetch (shape-reads section 8).</summary>
+internal sealed record Evicted(ShapeLineage Lineage);
 
 /// <summary>One machine's feed of one shape: its shape id and handle (section 5).</summary>
 internal sealed record ShapeLineage(string ShapeId, string Handle);
 
-/// <summary>A servable response: its exact body bytes, which the <c>ETag</c> hashes, and the headers they carry.</summary>
-internal sealed record ShapeBody(ReadOnlyMemory<byte> Json, string NextOffset, bool UpToDate);
+/// <summary>
+/// A servable response: its exact body bytes, which the <c>ETag</c> hashes. <see cref="Lease"/> holds the admission of
+/// those bytes until the response is sent (or the request ends), and is null for bytes the caller already owns.
+/// </summary>
+internal sealed record ShapeBody(ReadOnlyMemory<byte> Json, string NextOffset, bool UpToDate, IDisposable? Lease = null);
 
 /// <summary>The client's state cannot continue on this lineage: <c>409 must_refetch</c> (section 8).</summary>
-internal sealed record MustRefetch(string Message);
+internal sealed record MustRefetch(string Message, ShapeLineage? Lineage = null);
 
-internal readonly union LineageResult(ShapeLineage, Unavailable);
+internal readonly union LineageResult(ShapeLineage, QuotaExceeded, Evicted, NotFound, Unavailable);
 
 /// <summary>The newest published snapshot's offset <c>S</c>, or why there is none.</summary>
-internal readonly union SnapshotResult(long, MustRefetch, Unavailable);
+internal readonly union SnapshotResult(long, MustRefetch, QuotaExceeded, NotFound, Unavailable);
 
 /// <summary>A sealed object or fresh body, or why it is not served (<c>shape_busy</c>, <c>shape_too_large</c>, <c>unavailable</c>).</summary>
-internal readonly union ShapeRead(ShapeBody, MustRefetch, QuotaExceeded, Unavailable);
+internal readonly union ShapeRead(ShapeBody, MustRefetch, QuotaExceeded, NotFound, Unavailable);
 
 /// <summary>The local commit boundary a proven resume redirects to, or why the resume is refused.</summary>
 internal readonly union ResumeResult(long, MustRefetch, Unavailable);
@@ -37,6 +44,9 @@ internal readonly union ResumeResult(long, MustRefetch, Unavailable);
 internal interface IShapeLineages
 {
     ValueTask<LineageResult> ResolveAsync(ShapeScope scope, CancellationToken cancellationToken);
+
+    /// <summary>The current lineage a handle names: its filtered shape when still admitted and current, else the unfiltered lineage.</summary>
+    ValueTask<LineageResult> ResolveHandleAsync(TenantContext database, CollectionInfo collection, string handle, CancellationToken cancellationToken);
 }
 
 /// <summary>Sealed snapshots.</summary>
@@ -67,33 +77,6 @@ internal interface IShapeResume
 {
     /// <summary>Checks a resume envelope's 16-byte scope and inner changes cursor against this machine.</summary>
     ValueTask<ResumeResult> ResolveAsync(ShapeScope scope, ShapeLineage lineage, ReadOnlyMemory<byte> scope16, FeedCursor cursor, CancellationToken cancellationToken);
-}
-
-/// <summary>
-/// The shape services until the real components are connected: nothing is served, and every resume is unproven, as the
-/// protocol requires until resume proofs land (section 9, planned gate).
-/// </summary>
-internal sealed class UnavailableShapes : IShapeLineages, IShapeSnapshots, IShapeChunks, IShapeLiveTail, IShapeResume
-{
-    private static readonly Unavailable NotServed = new("shape reads are not served yet");
-
-    public ValueTask<LineageResult> ResolveAsync(ShapeScope scope, CancellationToken cancellationToken) => ValueTask.FromResult<LineageResult>(NotServed);
-
-    public ValueTask<SnapshotResult> NewestAsync(ShapeScope scope, ShapeLineage lineage, CancellationToken cancellationToken) =>
-        ValueTask.FromResult<SnapshotResult>(NotServed);
-
-    public ValueTask<ShapeRead> PageAsync(ShapeScope scope, ShapeLineage lineage, long snapshot, string? afterId, CancellationToken cancellationToken) =>
-        ValueTask.FromResult<ShapeRead>(NotServed);
-
-    public ValueTask<ShapeRead> ReadAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken) =>
-        ValueTask.FromResult<ShapeRead>(NotServed);
-
-    public ValueTask<ShapeRead> WaitAsync(ShapeScope scope, ShapeLineage lineage, long offset, long? cursor, CancellationToken cancellationToken) =>
-        ValueTask.FromResult<ShapeRead>(NotServed);
-
-    public ValueTask<ResumeResult> ResolveAsync(
-        ShapeScope scope, ShapeLineage lineage, ReadOnlyMemory<byte> scope16, FeedCursor cursor, CancellationToken cancellationToken) =>
-        ValueTask.FromResult<ResumeResult>(new MustRefetch("resume prefix cannot be proven"));
 }
 
 /// <summary>A shape response body (section 6), documented for OpenAPI; served bodies are the sealed bytes, never re-serialized.</summary>

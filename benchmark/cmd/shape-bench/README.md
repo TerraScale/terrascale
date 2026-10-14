@@ -1,14 +1,20 @@
 # shape-bench
 
-Fan-out of the changes feed on one of two local TerraBase nodes. A writer PUTs 20 documents/s (256 bytes, open loop) into one
-collection while N = 1, 10, 100 and 1000 followers read the same database's `GET …/changes?cursor=now` SSE stream,
-one N per step (5 s warmup, 30 s recorded, 5 s delivery grace). A step first opens its followers one at a time at
-20/s, each awaiting admission or rejection (the local tenant is on the Hobby QoS plan, which refuses bursts; at most
-2 minutes), then every admitted stream reads through the window together. It takes no flags: the target list
-(`targets` in `main.go`, today only `changes.fanout`) and the follower counts are fixed in code.
+Fan-out on one of two local TerraBase nodes, for two targets run at every N. A writer PUTs 20 documents/s (256 bytes,
+open loop) into one collection while N = 1, 10, 100 and 1000 followers read it, one N per step (5 s warmup, 30 s
+recorded, 5 s delivery grace):
 
-A later shape target registers its endpoint, follower decoder and readiness check in `targets`. The writer,
-measurement window, delivery aggregation, resource sampling and reporting remain on the same path.
+- `changes.fanout`: `GET …/changes?cursor=now` SSE stream (the feed).
+- `shape.fanout`: `GET …/shape` (shape reads v1). Each follower bootstraps at `offset=-1` (a 307 to the newest
+  snapshot's first page), pages the snapshot, catches up through chunks, then long-polls live at the sealed head with
+  the bucket the last answer named. Its JSON bodies are decoded in `shape.go`.
+
+A step first opens its followers one at a time at 20/s, each awaiting admission or rejection (the local tenant is on
+the Hobby QoS plan, which refuses bursts; at most 2 minutes), then every admitted follower reads through the window
+together. A shape step also waits until every admitted follower has sent its first live long-poll and the node's
+`terrabase.shape.requests.waiting` gauge has held still for 1 s at one or more, before the window opens. The gauge is the
+node's own count of parked requesters, so it can be below the admitted count (see the admission note below). It takes no flags: the target list (`targets` in `main.go`) and the follower counts are fixed in code. The
+writer, measurement window, delivery aggregation, resource sampling and reporting are shared by both targets.
 
 ## Run
 
@@ -27,17 +33,32 @@ the targets file at the end stops the host.
 
 ## What it records
 
-- Requested N, admitted and rejected (`changes_busy`) followers. The server admits 32 streams per database and 1024 per
-  machine; above 32 only admitted followers are measured, so deliveries/s and bytes do not grow with requested N.
+- Requested N, admitted and rejected followers, with each rejection's code. changes.fanout: `changes_busy`; the server
+  admits 32 streams per database and 1024 per machine, and above 32 only admitted followers are measured, so
+  deliveries/s and bytes do not grow with requested N. shape.fanout: `shape_busy` (32 running flights per machine and 8 per
+  organization, no queue) and `shape_too_large`; concurrent identical live polls join one flight. Live requesters are capped at 256 per
+  machine and 64 per organization across all flights, so a live poll beyond that is `shape_busy` and retried. At N above 256 only the parked
+  requesters receive writes; `server_at_ready` reports how many were parked when the step became ready.
 - Delivery lag (p50 … max): the write's send time, stored in the document, to the follower reading its change event.
-- Missed deliveries of in-window writes to admitted followers, and SSE response body bytes of admitted streams.
+- Missed deliveries of in-window writes to admitted followers, and response body bytes read by admitted followers: SSE
+  stream bytes for changes.fanout, JSON response bodies for shape.fanout.
 - CPU and RSS of the combined host process from `/proc/<pid>` (both nodes, replication work, ts-auth stand-in and test runner).
-- `storage_reads_delta` (primary): `terrabase.storage.reads{path="feed"}` (Prometheus `terrabase_storage_reads_total`)
-  after minus before the step, from the same gru scrape. It counts every physical backend SELECT the feed runs on that
-  node: head, floor, prefix and retention reads, and each document body, including zero-row reads and misses. Page
-  cache hits count; this is not disk I/O. The harness reads the counter's `path` label only and accepts `point`,
-  `query`, `feed` and `shape`; any other label, a repeated path, a missing feed series or a fallen counter fails the
-  step. The counter carries no tenant label.
+- Storage reads (primary, measured): `terrabase.storage.reads{path}` (Prometheus `terrabase_storage_reads_total`) after
+  minus before the step, from the same gru scrape. Each target names its paths:
+  - `changes.fanout`: `path="feed"` (`storage_reads_delta`): head, floor, prefix and retention reads, and each document
+    body, including zero-row reads and misses.
+  - `shape.fanout`: `path="shape"` (`storage_reads_delta_shape`, metadata SQL), `path="shape_body"`
+    (`storage_reads_delta_shape_body`, payload-body SELECTs) and `path="point"` (`storage_reads_delta_point`, document
+    checks made on each HTTP shape request). They are three separate deltas and the report never sums them. The point
+    delta is node-wide: it also counts the writer's point reads during the step, so it is not attributable to shape
+    followers alone.
+  Page cache hits count; this is not disk I/O. The harness reads the counter's `path` label only and accepts `point`,
+  `query`, `feed`, `shape` and `shape_body`; any other label or a repeated path fails the step. A path absent before the
+  step counts as zero (its counter starts at zero in each process); a path absent after it, or a fallen counter, fails
+  the step. The counter carries no tenant label.
+- Shape retries: a request refused with `429 shape_busy` or `503` (`unavailable`, `shape_too_large`) after admission is
+  repeated with its state kept, after 200 ms, and counted in the status `retries`. Neither a retry nor a rejection
+  before admission counts as delivered or missed.
 - The step's window opens before admission and closes after the 5 s grace and a 6 s settle. The delta therefore
   includes admission, warmup and grace reads, not the 30 s measured window alone.
 - `accounting_reads_delta` (secondary): `terrabase.stats.operations{kind="read"}` after minus before the step, from the
@@ -49,12 +70,21 @@ the targets file at the end stops the host.
 
 ## Limits
 
-- `inferred_min_doc_selects` (secondary) is inferred from `SqliteStorageTransaction.Feed.cs` (one document SELECT per
+- `inferred_min_doc_selects` (secondary, changes target only; the shape target reports `n/a`) is inferred from `SqliteStorageTransaction.Feed.cs` (one document SELECT per
   received upsert of an in-window write per stream, including redeliveries through grace), not measured. It excludes
   warmup writes and other storage work. Compare it with `storage_reads_delta`, which is measured.
 - Two regions are required for database placement. All client traffic targets gru; sjc replicates in the same process.
   Both nodes use loopback: no WAN, Fly Proxy or TLS.
-- A step stops the run with an error when a measurement is invalid: a follower refused other than by `changes_busy`
-  (for example `tenant_memory` or a QoS 429), a stream that ends early, a failed write or one unanswered at the end of
-  the grace, a node stream count that disagrees with the admitted followers, or a window without writes or deliveries.
-  The report is still written with the completed steps and the error.
+- A step stops the run with an error when a measurement is invalid: a follower refused other than by its cap
+  (`changes_busy`, `shape_busy`, `shape_too_large` before admission) or a retry the protocol allows (a QoS 429 is
+  repeated, never an error), a stream that ends early, a failed write or one unanswered at the end of the grace, a node
+  stream count that disagrees with the admitted followers, a metrics read that fails, or a window without writes. The
+  report is still written with the completed steps and the error.
+- A step that reaches a capacity limit is a row, not an error, so every requested N is in the report. Its `stopped`
+  column names the limit: no follower admitted (all refused by a cap), the 2 minute admission deadline (with
+  `unresolved` followers counted), a readiness timeout after admission (60 s), or no delivery of the expected count in
+  the window (measured, so its figures are reported, except latency: no delivery was measured, so latency is `n/a`
+  on that row). A row that stopped before its window has `n/a` for writes,
+  deliveries, storage reads and accounting reads, and its raw metric lines are not printed. Its counts (`admitted`,
+  rejections, `qos_busy_followers`, `retries`) are kept. The shared apibench table prints zeros for latency and
+  requests/s on those rows because its format has no empty value; the notes table here is the measured view.

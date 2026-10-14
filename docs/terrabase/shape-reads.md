@@ -175,13 +175,18 @@ A live request behind the sealed head returns the closed chunk at once **(TS-474
 - **Seal-on-wake:** a woken flight asks the sealer to advance up to the committed head, then answers. A fresh body
   covers `(O, next_offset]` under the chunk bounds of section 3.3. `up_to_date` is `true` only when `next_offset` is
   the sealed head. It carries a fresh `values_at` and a fresh `cursor_resume`.
+  Re-framed sealed changes retain their materializing read's `values_at`; the reached cursor is rebuilt for the covered offset.
 - On timeout the body is `200`, with no changes, `next_offset = O` and `up_to_date: true`.
 - `TB-Shape-Cursor` = `max(floor(unix_seconds / 20), input cursor + 1)`, or the current bucket without an input. An
   input of `9223372036854775807` is `400 invalid_request` **(TS-474)**.
-- One flight per `(handle, offset, live, cursor)`. At most 32 running flights and 256 joined requests. A new flight
+- One flight per `(handle, offset, live, cursor)`. At most 32 running flights and 256 joined requests per machine. A new flight
   beyond 32 answers `429 shape_busy` with `no-store`. There is no queue. An abandoned flight keeps its slot until its
   work ends. A disconnecting client cancels only its own wait. The last requester to leave cancels the flight.
   Application stop cancels every flight **(TS-474)**.
+  Within the machine limit, one organization can hold at most eight running flights and 64 joined requesters;
+  crossing either share returns the same `429 shape_busy` response.
+- Validated live decimal-offset requests release the organization's ordinary concurrent-request slot before joining
+  the bounded flight. They still use normal request-rate admission; parked readers do not prevent writes.
 - Every seal, page, fresh body and flight reserves memory through `IMemoryBudget` (FR-17).
 
 ## 5. Identity
@@ -438,10 +443,12 @@ project data-key id. It always selects the current epoch; callers cannot supply 
 `CurrentEpoch` and `CurrentKeyAsync` expose the current epoch and its handle-scoped key. Keys reuse the platform backup
 `DataKeys` and `BackupLayout.KeyScope`; a development host without that key store answers `503 unavailable`.
 
-The key endpoint uses `IShapeLineages` to validate the collection's current handle. Until FR-20 connects filtered
-lineage lookup, only the unfiltered lineage is resolvable. Historical `(epoch, key_id)` pairs require
-`IShapeKeyRetention.HasObjectAsync` proof from the retained T1 objects; FR-22 supplies that proof. Before T1 objects
-exist the default refuses historical pairs with `409 must_refetch`, rather than releasing unproven keys.
+The key endpoint uses `IShapeLineages` to validate the collection's current handle. Filtered handles resolve through
+the bounded shape registry and require current filter admission and collection lineage. The registry is in memory, so a
+filtered handle it no longer tracks (LRU eviction or a restart) answers `409 must_refetch` until a shape read tracks it
+again. Historical `(epoch, key_id)` pairs require `IShapeKeyRetention.HasObjectAsync` proof from the retained T1
+objects; FR-22 supplies that proof. Before T1 objects exist the default refuses historical pairs with
+`409 must_refetch`, rather than releasing unproven keys.
 
 ## 14. Manifest (presigned, D2)
 

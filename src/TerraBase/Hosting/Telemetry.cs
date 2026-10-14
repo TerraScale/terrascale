@@ -130,7 +130,9 @@ public static class Telemetry
                         or "terrabase_pressure_listener_requests" or "terrabase.document_cache.evictions" or "terrabase.stats.dropped"
                         or "terrabase.stats.rollups"
                         => new MetricStreamConfiguration { CardinalityLimit = 3 },
-                    "terrabase.document_cache.lookups" or "terrabase.storage.reads" => new MetricStreamConfiguration { CardinalityLimit = 4 },
+                    "terrabase.document_cache.lookups" => new MetricStreamConfiguration { CardinalityLimit = 4 },
+                    // Five bounded storage paths plus the exporter's reserved overflow series.
+                    "terrabase.storage.reads" => new MetricStreamConfiguration { CardinalityLimit = 6 },
                     "terrabase.query_shapes.dropped" => new MetricStreamConfiguration { CardinalityLimit = 7 },
                     "terrabase_pressure_top_tenant_request_rate" or "terrabase_pressure_top_tenant_storage_bytes"
                         or "terrabase.stats.top.replication" or "terrabase.stats.top.operations"

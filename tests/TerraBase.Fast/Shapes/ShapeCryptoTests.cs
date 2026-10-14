@@ -8,6 +8,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
@@ -57,6 +58,43 @@ public sealed class ShapeCryptoTests
             .IsEqualTo(Convert.ToHexStringLower(Client.EpochKey(host.DataKey, host.Handle, host.Epoch)));
         // K_e, never K_d.
         await Assert.That(released).IsNotEqualTo(Base64Url.EncodeToString(host.DataKey));
+    }
+
+    [Test]
+    public async Task A_filtered_handle_releases_its_epoch_key_until_its_collection_is_recreated()
+    {
+        const string where = """{"eq":["/status","open"]}""";
+        // The real lineage resolves the filtered handle, so the key endpoint needs its registry entry and filter admission.
+        await using var host = await CryptoHost.StartAsync(services: collection =>
+            collection.AddSingleton<IShapeLineages>(provider => provider.GetRequiredService<ShapeService>()));
+        await Assert.That((await host.Api.PutAsync(DocumentApi.NewId(), new { status = "open" })).Status).IsEqualTo(HttpStatusCode.Created);
+
+        using var bootstrap = await host.Api.Client.GetAsync(new Uri(
+            $"{host.Api.Collections}/{DocumentApi.Collection}/shape?offset=-1&where={Uri.EscapeDataString(where)}", UriKind.Relative));
+        await Assert.That(bootstrap.StatusCode).IsEqualTo(HttpStatusCode.TemporaryRedirect);
+        var handle = bootstrap.Headers.GetValues("TB-Shape-Handle").Single();
+        await Assert.That(handle).IsNotEqualTo(host.Handle);
+
+        using var released = await host.GetKeyAsync(host.Api.Client, handle, host.Epoch, host.KeyId);
+        await Assert.That(released.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var key = Base64Url.DecodeFromChars((await released.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("key").GetString()!);
+        await Assert.That(key.AsSpan().SequenceEqual(Client.EpochKey(host.DataKey, handle, host.Epoch))).IsTrue();
+
+        var plain = _faker.Random.Bytes(64);
+        using var sealedObject = await host.Crypto.EncryptAsync(await host.Api.TenantOfAsync(), handle, "2", plain, CancellationToken.None);
+        await Assert.That(Client.Open(sealedObject.Bytes.ToArray(), handle, "2", host.Epoch, host.KeyId, key)?.AsSpan().SequenceEqual(plain)).IsTrue();
+
+        await Assert.That((await host.Api.SendAsync(HttpMethod.Delete, host.Api.Collections + "/" + DocumentApi.Collection)).Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await host.Api.SendAsync(HttpMethod.Post, host.Api.Collections, new { name = DocumentApi.Collection })).Status).IsEqualTo(HttpStatusCode.Created);
+
+        using var stale = await host.GetKeyAsync(host.Api.Client, handle, host.Epoch, host.KeyId);
+        await Assert.That(stale.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(stale.Headers.CacheControl?.NoStore).IsTrue();
+        var refusal = await stale.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(refusal.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("must_refetch");
+        var current = stale.Headers.GetValues("TB-Shape-Handle").Single();
+        await Assert.That(current).IsNotEqualTo(handle);
+        await Assert.That(refusal.GetProperty("error").GetProperty("handle").GetString()).IsEqualTo(current);
     }
 
     [Test]
@@ -690,6 +728,9 @@ public sealed class ShapeCryptoTests
     private sealed class FixedLineage(ShapeLineage lineage) : IShapeLineages
     {
         public ValueTask<LineageResult> ResolveAsync(ShapeScope scope, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<LineageResult>(lineage);
+
+        ValueTask<LineageResult> IShapeLineages.ResolveHandleAsync(TenantContext database, CollectionInfo collection, string handle, CancellationToken cancellationToken) =>
             ValueTask.FromResult<LineageResult>(lineage);
     }
 

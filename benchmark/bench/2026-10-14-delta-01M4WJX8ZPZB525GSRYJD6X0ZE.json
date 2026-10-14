@@ -1,0 +1,224 @@
+{
+  "id": "01M4WJX8ZPZB525GSRYJD6X0ZE",
+  "host": "delta",
+  "cluster_state": "local-gru,sjc",
+  "endpoint": "http://127.0.0.1:41355/",
+  "start": "2026-10-14T06:47:04.257766261Z",
+  "end": "2026-10-14T06:52:00.374342735Z",
+  "probe": {
+    "tcp_connect_ms": {
+      "min": 0,
+      "median": 0
+    },
+    "tls_handshake_ms": {
+      "min": 0,
+      "median": 0
+    },
+    "healthz_ms": {
+      "min": 0,
+      "median": 0
+    }
+  },
+  "startup": [
+    {
+      "client": "local terrabase host (1 launch)",
+      "wall_ms": {
+        "min": 7028,
+        "median": 7028
+      },
+      "init_ms": {
+        "min": 7028,
+        "median": 7028
+      },
+      "max_rss_mb": {
+        "min": 0,
+        "median": 0
+      }
+    }
+  ],
+  "clients": [
+    {
+      "client": "shape-bench",
+      "ready": {
+        "type": "",
+        "client": "shape-bench",
+        "sdk": "raw HTTP/1.1 (SSE and JSON long-poll)",
+        "sdk_version": "-",
+        "runtime": "go1.25.0",
+        "database": "canary",
+        "setup_ms": 89,
+        "auth_ms": 0
+      },
+      "results": [
+        {
+          "type": "result",
+          "scenario": "changes.fanout",
+          "transport": "sse-http1",
+          "payload_bytes": 256,
+          "mode": "open",
+          "concurrency": 1,
+          "rate": 20,
+          "start": "2026-10-14T06:47:16.588407816Z",
+          "duration_s": 30,
+          "ops": 600,
+          "ok": 600,
+          "errors": 0,
+          "error_rate": 0,
+          "rps": 20,
+          "status": {
+            "accounting_reads_delta": 0,
+            "admitted": 1,
+            "inferred_min_doc_selects": 600,
+            "qos_busy_followers": 0,
+            "qos_busy_writes": 0,
+            "retries": 0,
+            "server_at_ready": 1,
+            "storage_reads_delta": 2106,
+            "writes": 600
+          },
+          "latency_us": {
+            "p50": 12263,
+            "p90": 15647,
+            "p99": 21151,
+            "p999": 74879,
+            "max": 116799,
+            "mean": 12296.04
+          },
+          "bytes_out": 0,
+          "bytes_in": 329872,
+          "cpu_s": 21.330946449400123,
+          "rss_mb": 256.28515625,
+          "stopped": ""
+        },
+        {
+          "type": "result",
+          "scenario": "changes.fanout",
+          "transport": "sse-http1",
+          "payload_bytes": 256,
+          "mode": "open",
+          "concurrency": 10,
+          "rate": 20,
+          "start": "2026-10-14T06:48:03.118891175Z",
+          "duration_s": 30,
+          "ops": 6000,
+          "ok": 6000,
+          "errors": 0,
+          "error_rate": 0,
+          "rps": 200,
+          "status": {
+            "accounting_reads_delta": 0,
+            "admitted": 10,
+            "inferred_min_doc_selects": 6000,
+            "qos_busy_followers": 0,
+            "qos_busy_writes": 0,
+            "retries": 0,
+            "server_at_ready": 10,
+            "storage_reads_delta": 21120,
+            "writes": 600
+          },
+          "latency_us": {
+            "p50": 12327,
+            "p90": 17887,
+            "p99": 20767,
+            "p999": 87999,
+            "max": 88639,
+            "mean": 12663.779333333334
+          },
+          "bytes_out": 0,
+          "bytes_in": 3298720,
+          "cpu_s": 21.12881668382038,
+          "rss_mb": 253.1328125,
+          "stopped": ""
+        },
+        {
+          "type": "result",
+          "scenario": "changes.fanout",
+          "transport": "sse-http1",
+          "payload_bytes": 256,
+          "mode": "open",
+          "concurrency": 100,
+          "rate": 20,
+          "start": "2026-10-14T06:48:54.127838015Z",
+          "duration_s": 30,
+          "ops": 19200,
+          "ok": 19200,
+          "errors": 0,
+          "error_rate": 0,
+          "rps": 640,
+          "status": {
+            "accounting_reads_delta": 0,
+            "admitted": 32,
+            "inferred_min_doc_selects": 19200,
+            "qos_busy_followers": 0,
+            "qos_busy_writes": 0,
+            "rejected_changes_busy": 68,
+            "retries": 0,
+            "server_at_ready": 32,
+            "storage_reads_delta": 67172,
+            "writes": 600
+          },
+          "latency_us": {
+            "p50": 22335,
+            "p90": 53823,
+            "p99": 224383,
+            "p999": 471551,
+            "max": 474111,
+            "mean": 31052.408854166668
+          },
+          "bytes_out": 0,
+          "bytes_in": 10555904,
+          "cpu_s": 31.882526366737757,
+          "rss_mb": 282.765625,
+          "stopped": ""
+        },
+        {
+          "type": "result",
+          "scenario": "changes.fanout",
+          "transport": "sse-http1",
+          "payload_bytes": 256,
+          "mode": "open",
+          "concurrency": 1000,
+          "rate": 20,
+          "start": "2026-10-14T06:50:30.154678459Z",
+          "duration_s": 30,
+          "ops": 19200,
+          "ok": 19200,
+          "errors": 0,
+          "error_rate": 0,
+          "rps": 640,
+          "status": {
+            "accounting_reads_delta": 0,
+            "admitted": 32,
+            "inferred_min_doc_selects": 19200,
+            "qos_busy_followers": 0,
+            "qos_busy_writes": 0,
+            "rejected_changes_busy": 968,
+            "retries": 0,
+            "server_at_ready": 32,
+            "storage_reads_delta": 68000,
+            "writes": 600
+          },
+          "latency_us": {
+            "p50": 21919,
+            "p90": 31727,
+            "p99": 40639,
+            "p999": 61727,
+            "max": 68671,
+            "mean": 22464.99135416667
+          },
+          "bytes_out": 0,
+          "bytes_in": 10555904,
+          "cpu_s": 42.67150341092318,
+          "rss_mb": 263.6640625,
+          "stopped": ""
+        }
+      ],
+      "done": {
+        "type": "done",
+        "cleanup": true,
+        "cleanup_error": ""
+      },
+      "error": "shape.fanout N=1: metrics: terrabase_storage_reads sample without a bounded path label: \"terrabase_storage_reads_total{otel_scope_name=\\\"TerraScale.TerraBase\\\",otel_metric_overflow=\\\"true\\\"} 119\""
+    }
+  ]
+}

@@ -2,14 +2,13 @@ using System.Buffers.Text;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Encodings.Web;
-using System.Text.Json;
 using Microsoft.Net.Http.Headers;
 using Microsoft.OpenApi;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -19,7 +18,7 @@ namespace TerraBase.Features.Shapes;
 /// <summary><c>GET …/collections/{collection}/shape</c>: a collection's shape as snapshot pages, chunks and a live tail (shape reads v1).</summary>
 internal sealed class GetShapeEndpoint(
     IDocumentService documents, ITenantDirectory tenants, IShapeLineages lineages, IShapeSnapshots snapshots, IShapeChunks chunks, IShapeLiveTail live,
-    IShapeResume resumes, TimeProvider time) : EndpointWithoutRequest<IResult>
+    IShapeResume resumes, IShapeMetrics metrics, IShapeFlights<ShapeRead> flights) : EndpointWithoutRequest<IResult>
 {
     private const string ResumeHeader = "TB-Shape-Resume";
     private const string CachePrivate = "private, max-age=0, must-revalidate";
@@ -36,7 +35,6 @@ internal sealed class GetShapeEndpoint(
     private static readonly int MaxResume = Base64Url.GetEncodedLength(1 + ResumeScopeBytes + 17 + (56 * ChangeCursor.MaxOrigins));
 
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
-    private static readonly JsonWriterOptions CanonicalWriter = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     private static readonly Validation BadOffset = new("offset must be -1, snap.<S>.<P> or a decimal commit boundary");
     private static readonly Validation BadResume = new("resume cursor is malformed");
 
@@ -120,6 +118,9 @@ internal sealed class GetShapeEndpoint(
         {
             return resolved switch
             {
+                Evicted evicted => Refetch(evicted.Lineage, "shape lineage changed or filter evicted"),
+                QuotaExceeded error => ErrorResponse.From(error),
+                NotFound missing => ErrorResponse.From(missing),
                 Unavailable error => ErrorResponse.From(error),
                 ShapeLineage => throw new System.Diagnostics.UnreachableException(),
             };
@@ -138,18 +139,26 @@ internal sealed class GetShapeEndpoint(
             }
         }
 
+        if (request.Live && request.Offset is DecimalOffset)
+        {
+            // Long polls use the flight's bounded admission, freeing the organization's request slots for writes.
+            HttpContext.Features.Get<QosRequestLease>()?.Lease.Dispose();
+        }
+
         return request.Offset switch
         {
             Bootstrap when request.Resume is { } resume => await resumes.ResolveAsync(request.Scope, lineage, resume.Scope, resume.Cursor, cancellationToken) switch
             {
                 long target => Redirect(request, lineage, DocumentRoute.Decimal(target), "no-store"),
-                MustRefetch refetch => Refetch(lineage, refetch.Message),
+                MustRefetch refetch => Refetch(refetch.Lineage ?? lineage, refetch.Message),
                 Unavailable error => ErrorResponse.From(error),
             },
             Bootstrap => await snapshots.NewestAsync(request.Scope, lineage, cancellationToken) switch
             {
                 long snapshot => Redirect(request, lineage, $"snap.{DocumentRoute.Decimal(snapshot)}.0", CachePrivate),
-                MustRefetch refetch => Refetch(lineage, refetch.Message),
+                MustRefetch refetch => Refetch(refetch.Lineage ?? lineage, refetch.Message),
+                QuotaExceeded error => ErrorResponse.From(error),
+                NotFound missing => ErrorResponse.From(missing),
                 Unavailable error => ErrorResponse.From(error),
             },
             SnapshotOffset page => Answer(request, lineage, await snapshots.PageAsync(request.Scope, lineage, page.Snapshot, page.AfterId, cancellationToken)),
@@ -165,17 +174,24 @@ internal sealed class GetShapeEndpoint(
         {
             return read switch
             {
-                MustRefetch refetch => Refetch(lineage, refetch.Message),
+                MustRefetch refetch => Refetch(refetch.Lineage ?? lineage, refetch.Message),
                 QuotaExceeded error => ErrorResponse.From(error),
+                NotFound missing => ErrorResponse.From(missing),
                 Unavailable error => ErrorResponse.From(error),
                 ShapeBody => throw new System.Diagnostics.UnreachableException(),
             };
+        }
+
+        if (body.Lease is { } lease)
+        {
+            HttpContext.Response.RegisterForDispose(lease);
         }
 
         var digest = Convert.ToHexStringLower(SHA256.HashData(body.Json.Span).AsSpan(0, 8));
         var tag = $"{lineage.ShapeId}:{lineage.Handle}:{request.OffsetText}:{body.NextOffset}:{digest}";
         if (CheckNotModified(tag) is not bool notModified)
         {
+            body.Lease?.Dispose();
             return ErrorResponse.From(new Validation("If-None-Match must be * or a list of entity tags"));
         }
 
@@ -189,12 +205,18 @@ internal sealed class GetShapeEndpoint(
         if (request.Live)
         {
             // Strictly increasing per client even when the clock steps back; the input is below long.MaxValue.
-            var bucket = Math.Max(time.GetUtcNow().ToUnixTimeSeconds() / 20, (request.Cursor ?? -1) + 1);
-            headers["TB-Shape-Cursor"] = DocumentRoute.Decimal(bucket);
+            headers["TB-Shape-Cursor"] = DocumentRoute.Decimal(flights.NextCursor(request.Cursor));
         }
 
+        metrics.RecordRead();
         HttpContext.Response.ContentType = DocumentRoute.JsonMediaType;
-        return notModified ? TypedResults.StatusCode(StatusCodes.Status304NotModified) : TypedResults.Bytes(body.Json, DocumentRoute.JsonMediaType);
+        if (notModified)
+        {
+            body.Lease?.Dispose();
+            return TypedResults.StatusCode(StatusCodes.Status304NotModified);
+        }
+
+        return new ShapeBytes(body.Json, body.Lease);
     }
 
     // If-None-Match only, with the strict list parser of document reads: weak tags and a bare * match; a quoted "*" is an
@@ -222,6 +244,7 @@ internal sealed class GetShapeEndpoint(
         headers.Vary = "Authorization";
         headers["TB-Shape-Handle"] = lineage.Handle;
         HttpContext.Response.ContentType = DocumentRoute.JsonMediaType;
+        metrics.RecordRedirect();
         return TypedResults.Redirect(Location(request, lineage.Handle.Length, offset, lineage.Handle), permanent: false, preserveMethod: true);
     }
 
@@ -258,15 +281,16 @@ internal sealed class GetShapeEndpoint(
             return BadOffset;
         }
 
-        var (canonical, filter) = (string.Empty, (DocumentFilter?)null);
+        // The FR-15 canonical form: the identity and the continuation's where are its bytes.
+        var filter = ShapeFilter.All;
         if (Parameter("where") is { } where)
         {
-            switch (CheckWhere(where))
+            switch (ShapeFilter.Parse(where))
             {
                 case Validation error:
                     return error;
-                case Where parsed:
-                    (canonical, filter) = (parsed.Canonical, parsed.Filter);
+                case ShapeFilter parsed:
+                    filter = parsed;
                     break;
             }
         }
@@ -334,7 +358,7 @@ internal sealed class GetShapeEndpoint(
             return new Validation("cursor requires live=true or a resume");
         }
 
-        return new ShapeRequest(new ShapeScope(database, collection, canonical, filter), offset, offsetText, handle, isLive, cursor, resume);
+        return new ShapeRequest(new ShapeScope(database, collection, filter.Canonical, filter, Bootstrap: offset is Bootstrap), offset, offsetText, handle, isLive, cursor, resume);
     }
 
     // Canonical decimals: no sign, no leading zeros, at most long.MaxValue.
@@ -389,37 +413,6 @@ internal sealed class GetShapeEndpoint(
         }
     }
 
-    // The filter grammar of POST …/query; its canonical form is the compact JSON with member order kept and relaxed escaping.
-    private static Valid<Where> CheckWhere(string where)
-    {
-        const string Code = "invalid_query";
-        try
-        {
-            using var json = JsonDocument.Parse(where);
-            return QueryParser.CheckFilter(json.RootElement, Code) switch
-            {
-                Validation error => error,
-                DocumentFilter filter => new Where(Canonical(json.RootElement), filter),
-            };
-        }
-        // JsonElement.GetString rejects lone surrogate escapes with InvalidOperationException.
-        catch (Exception error) when (error is JsonException or InvalidOperationException)
-        {
-            return new Validation("where must be a JSON filter", Code);
-        }
-    }
-
-    private static string Canonical(JsonElement filter)
-    {
-        using var buffer = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(buffer, CanonicalWriter))
-        {
-            filter.WriteTo(writer);
-        }
-
-        return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
-    }
-
     // base64url(0x01 ‖ resume_scope16 ‖ R8), canonical, with R8 a changes feed cursor (section 9).
     private static Resume? CheckResume(string token)
     {
@@ -443,8 +436,6 @@ internal sealed class GetShapeEndpoint(
 
     private sealed record Resume(ReadOnlyMemory<byte> Scope, FeedCursor Cursor);
 
-    private sealed record Where(string Canonical, DocumentFilter Filter);
-
     private abstract record Offset;
 
     private sealed record Bootstrap : Offset;
@@ -452,6 +443,19 @@ internal sealed class GetShapeEndpoint(
     private sealed record SnapshotOffset(long Snapshot, string? AfterId) : Offset;
 
     private sealed record DecimalOffset(long Value) : Offset;
+
+    // Writes the body, then releases its admission: the bytes are referenced until the response is sent.
+    private sealed class ShapeBytes(ReadOnlyMemory<byte> json, IDisposable? lease) : IResult
+    {
+        public async Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.ContentLength = json.Length;
+            using (lease)
+            {
+                await httpContext.Response.Body.WriteAsync(json, httpContext.RequestAborted);
+            }
+        }
+    }
 
     private sealed class UriTooLong : IResult
     {

@@ -16,10 +16,18 @@ internal readonly record struct ShapeHandle(string Handle, string ShapeId, strin
     /// Computes both identities from the current store and collection metadata. The caller validates the filter using
     /// the query grammar and reads the collection in the same transaction used to serve the shape.
     /// </summary>
-    public static ShapeHandle Compute(IDatabaseStore store, ReplicaId replica, CollectionInfo collection, JsonElement? where = null)
+    public static ShapeHandle Compute(IDatabaseStore store, ReplicaId replica, CollectionInfo collection, JsonElement? where = null) =>
+        ComputeCanonical(store, replica, collection, where is null or { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined } ? string.Empty : Canonicalize(where.Value));
+
+    /// <summary>
+    /// Computes both identities from a filter that is already canonical (<see cref="ShapeFilter.Canonical"/>), hashed verbatim
+    /// so the identity and the continuation <c>where</c> are the same bytes.
+    /// </summary>
+    public static ShapeHandle ComputeCanonical(IDatabaseStore store, ReplicaId replica, CollectionInfo collection, string canonicalFilter)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(collection);
+        ArgumentNullException.ThrowIfNull(canonicalFilter);
         ObjectDisposedException.ThrowIf(store.IsClosed, store);
         var tenant = store.Tenant ?? throw new InvalidOperationException("a shape requires a tenant database");
         ArgumentException.ThrowIfNullOrEmpty(tenant.OrganizationId);
@@ -27,12 +35,11 @@ internal readonly record struct ShapeHandle(string Handle, string ShapeId, strin
         ArgumentException.ThrowIfNullOrEmpty(tenant.DatabaseId);
         ArgumentException.ThrowIfNullOrEmpty(collection.Id);
 
-        var filter = where is null or { ValueKind: JsonValueKind.Null or JsonValueKind.Undefined } ? string.Empty : Canonicalize(where.Value);
         var fields = string.Join('\0', tenant.OrganizationId, tenant.ProjectId, tenant.DatabaseId, store.Incarnation.ToString(),
             replica.Value.ToString(CultureInfo.InvariantCulture), replica.Epoch.ToString(CultureInfo.InvariantCulture),
-            collection.Name, collection.Id, filter, "1");
+            collection.Name, collection.Id, canonicalFilter, "1");
 
-        return new ShapeHandle("h1-" + Digest("TB-SHAPE-HANDLE-V1", fields, 8), Digest("TB-SHAPE-V1", fields, 16), filter);
+        return new ShapeHandle("h1-" + Digest("TB-SHAPE-HANDLE-V1", fields, 8), Digest("TB-SHAPE-V1", fields, 16), canonicalFilter);
     }
 
     /// <summary>Checks a continuation against an identity freshly computed from the serving transaction's lineage.</summary>

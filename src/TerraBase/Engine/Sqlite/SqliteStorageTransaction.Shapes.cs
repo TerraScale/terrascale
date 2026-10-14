@@ -26,7 +26,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
     // JsonDocument uses 12 bytes per token; three capacities can coexist while its metadata buffer grows.
     private const int ShapeCaptureMemoryPerToken = 12 * 3;
 
-    public async ValueTask<(long Offset, long Head)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through,
+    public async ValueTask<(long Offset, long Head, long PublishedBytes)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through,
         IMemoryBudget memory, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
@@ -41,9 +41,10 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             mutation: true).ConfigureAwait(false);
     }
 
-    private (long Offset, long Head) SealShapeChunk(ShapeSealDefinition shape, long offset, long? through,
+    private (long Offset, long Head, long PublishedBytes) SealShapeChunk(ShapeSealDefinition shape, long offset, long? through,
         IMemoryBudget memory, CancellationToken cancellationToken)
     {
+        CountRead("shape");
         if (Command("SELECT entity_id FROM collections WHERE name = $collection;", shape.Collection).ExecuteScalar()
             is not string generation || generation != shape.CollectionGeneration)
         {
@@ -57,11 +58,11 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         CountRead("shape");
         if (stored.ExecuteScalar() is long existing)
         {
-            return (existing, head);
+            return (existing, head, 0);
         }
         if (offset == head)
         {
-            return (offset, head);
+            return (offset, head, 0);
         }
 
         var end = Math.Min(through ?? head, head);
@@ -144,7 +145,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         insert.Parameters.AddWithValue("$at", store.Time.GetUtcNow().ToUnixTimeMilliseconds());
         insert.ExecuteNonQuery();
         insert.Parameters.Clear();
-        return (covered, head);
+        return (covered, head, body.Length);
     }
 
     private bool ShapeBoundary(long offset)
@@ -299,7 +300,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             reader.Read();
             bytes = checked(reader.GetInt64(0) * ShapeIdMemoryPerByte + reader.GetInt64(1) * 1024);
         }
-        if (HasTable(collection))
+        if (HasTable(collection, "shape"))
         {
             var bodies = TableCommand("""
                 SELECT coalesce(sum(octet_length(doc)), 0), coalesce(max(octet_length(doc)), 0) FROM {0}
@@ -325,7 +326,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
 
     private StoredDocument? ReadShapeDocument(string collection, string id)
     {
-        if (!HasTable(collection))
+        if (!HasTable(collection, "shape"))
         {
             return null;
         }
@@ -338,7 +339,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
     }
 
     private static byte[] ShapeEnvelope(ShapeSealDefinition shape, long offset, long covered, long head, string resume,
-        ReadOnlySpan<byte> changes)
+        ReadOnlySpan<byte> changes, bool upToDate = false)
     {
         var buffer = new ArrayBufferWriter<byte>();
         using var writer = new Utf8JsonWriter(buffer);
@@ -349,7 +350,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         writer.WriteString("next_offset", ShapeNumber(covered));
         writer.WriteString("covered_offset", ShapeNumber(covered));
         writer.WriteString("values_at", ShapeNumber(head));
-        writer.WriteBoolean("up_to_date", false);
+        writer.WriteBoolean("up_to_date", upToDate);
         writer.WriteString("cursor_resume", resume);
         writer.WriteStartArray("changes");
         writer.Flush();
@@ -433,16 +434,19 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
 
     private void ValidateShapeCapture(IMemoryBudget memory, CancellationToken cancellationToken)
     {
+        CountRead("shape");
         if (Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null)
         {
             return;
         }
+        CountRead("shape");
         var head = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long last ? last : 0;
         for (var after = 0L; after < head;)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var boundary = Command("SELECT min(change_id) FROM turso_cdc WHERE change_id > $after AND change_type = 2;");
             boundary.Parameters.AddWithValue("$after", after);
+            CountRead("shape");
             if (boundary.ExecuteScalar() is not long end)
             {
                 throw new InvalidDataException("a captured transaction has no intact commit boundary");
@@ -458,6 +462,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             size.Parameters.AddWithValue("$stateMemory", ShapeCaptureStateMemoryPerByte);
             size.Parameters.AddWithValue("$imageMemory", ShapeCaptureMemoryPerByte);
             long bytes;
+            CountRead("shape");
             using (var reader = size.ExecuteReader())
             {
                 reader.Read();
@@ -477,6 +482,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
                 """);
             rows.Parameters.AddWithValue("$after", after);
             rows.Parameters.AddWithValue("$end", end);
+            CountRead("shape");
             using (var reader = rows.ExecuteReader())
             {
                 while (reader.Read())
@@ -641,7 +647,8 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             var command = Command("SELECT end_offset, body FROM _tb_shape_chunk WHERE handle = $handle AND offset = $offset;");
             command.Parameters.AddWithValue("$handle", handle);
             command.Parameters.AddWithValue("$offset", offset);
-            CountRead("shape");
+            // The payload read: the one SELECT a served chunk costs, counted apart from the size probe and other shape SQL.
+            CountRead("shape_body");
             using var reader = command.ExecuteReader();
             if (!reader.Read())
             {
