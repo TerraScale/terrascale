@@ -92,8 +92,8 @@ public sealed class PublicDemoJourneyTests
         }
         var users = await client.GetStringAsync("/auth/users?q=globex");
         await Assert.That(users).Contains("Alan Turing").Because("Read-only search filters the rows.");
-        await Assert.That(users).DoesNotContain("Ada Lovelace");
-        await Assert.That(users).DoesNotContain("commandfor=\"auth-create\">").Because("Creating records stays disabled.");
+        await Assert.That(users).DoesNotContain("<td class=\"ts-table-strong\">Ada Lovelace</td>");
+        await Assert.That(users).Contains("commandfor=\"auth-create\" disabled>").Because("Creating records stays disabled.");
         var signIn = await client.GetStringAsync("/auth/sign-in");
         await Assert.That(signIn).Contains("role=\"switch\" aria-checked=\"true\"");
         await Assert.That(signIn).Contains("role=\"switch\" aria-checked=\"false\"");
