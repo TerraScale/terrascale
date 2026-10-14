@@ -166,7 +166,9 @@
 
   .ts-header__inner {
     padding: 0 clamp(16px, 2.5vw, 40px);
-    display: flex;
+    /* Equal side tracks keep the nav on the viewport center, not between brand and actions. */
+    display: grid;
+    grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
     align-items: center;
     height: 60px;
     gap: 24px;
@@ -177,6 +179,7 @@
     align-items: center;
     gap: 10px;
     flex-shrink: 0;
+    justify-self: start;
     color: var(--ts-text);
     text-decoration: none;
   }
@@ -201,7 +204,6 @@
     align-items: center;
     justify-content: center;
     gap: 4px;
-    margin: 0 auto;
   }
 
   :global(.ts-nav__link),
@@ -362,6 +364,7 @@
 
   @media (max-width: 1240px) {
     .ts-header__inner {
+      display: flex;
       gap: 8px;
     }
     :global(.ts-header__mobile-cta) {
