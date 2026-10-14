@@ -10,16 +10,16 @@
 
 <section class="cta">
   <div class="cta__inner">
-    <div class="cta__card ts-glass">
+    <div class="cta__card">
       <h2 class="cta__headline">
-        {$dict.cta.headlineLead} <span class="ts-text-gradient">{$dict.cta.headlineAccent}</span>
+        {$dict.cta.headlineLead} <span class="cta__accent">{$dict.cta.headlineAccent}</span>
       </h2>
       <p class="cta__text">
         {$dict.cta.text}
       </p>
 
       <div class="cta__actions">
-        <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine cta__primary">
+        <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta__primary">
           {launchPhase === 'public-alpha' ? $dict.cta.ctaPrimary : $dict.cta.ctaPrelaunch}
           <Icon name="arrowRight" className="cta__icon" />
         </ExternalLink>
@@ -43,70 +43,60 @@
 
 <style>
   .cta {
-    position: relative;
-    padding: 84px 0 112px;
-    overflow: hidden;
+    padding: 80px 0;
+    border-top: 1px solid var(--ts-divider);
+  }
+
+  .cta__accent {
+    color: var(--ts-primary);
   }
 
   .cta__inner {
-    position: relative;
-    max-width: 960px;
-    margin: 0 auto;
-    padding: 0 40px;
+    padding: 0 clamp(16px, 2.5vw, 40px);
   }
 
   .cta__card {
-    position: relative;
-    border-radius: 16px;
-    padding: 48px 40px 40px;
+    display: grid;
+    justify-items: center;
+    gap: 20px;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 64px 32px;
+    border: 1px solid var(--ts-divider);
+    border-radius: 14px;
+    background: var(--ts-bg-surface);
     text-align: center;
-    overflow: hidden;
-    background:
-      radial-gradient(
-        ellipse 60% 100% at 50% 0%,
-        rgba(var(--ts-primary-rgb), 0.18),
-        transparent 70%
-      ),
-      var(--ts-glass-bg);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.28);
-    box-shadow:
-      0 18px 48px rgba(var(--ts-primary-rgb), 0.16),
-      inset 0 1px 0 rgba(255, 255, 255, 0.05);
   }
 
   .cta__headline {
-    font-size: clamp(2rem, 3vw + 0.5rem, 3.2rem);
-    font-weight: 700;
+    font-size: clamp(30px, 3.2vw, 48px);
+    font-weight: 600;
     color: var(--ts-text);
-    line-height: 1.12;
-    letter-spacing: -0.025em;
-    margin: 0 0 16px;
+    line-height: 1.08;
+    letter-spacing: -0.035em;
+    margin: 0;
   }
 
   .cta__text {
-    font-family: var(--ts-font-accent);
     font-size: 16px;
     color: var(--ts-text-muted);
-    line-height: 1.6;
-    max-width: 560px;
-    margin: 0 auto 28px;
+    line-height: 1.7;
+    max-width: 52ch;
+    margin: 0;
   }
 
   .cta__actions {
     display: flex;
     justify-content: center;
-    gap: 12px;
     flex-wrap: wrap;
-    margin-bottom: 24px;
+    gap: 12px;
   }
 
-  :global(.cta__primary) {
-    padding: 15px 30px;
-    box-shadow: 0 8px 24px rgba(var(--ts-primary-rgb), 0.48);
-  }
-
+  :global(.cta__primary),
   :global(.cta__secondary) {
-    padding: 15px 28px;
+    height: 40px;
+    padding: 0 clamp(16px, 2.5vw, 40px);
+    font-size: 14px;
   }
 
   :global(.cta__icon) {
@@ -120,40 +110,40 @@
     padding: 0;
     display: flex;
     justify-content: center;
-    gap: 22px;
     flex-wrap: wrap;
-    font-family: var(--ts-font-accent);
-    font-size: 12px;
+    gap: 20px;
     color: var(--ts-text-muted);
+    font-size: 13px;
   }
 
   .cta__perks li {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
+    gap: 8px;
   }
 
   :global(.cta__perk-icon) {
     width: 14px;
     height: 14px;
-    color: var(--ts-secondary);
+    color: #6bca92;
   }
 
   @media (max-width: 640px) {
     .cta {
-      padding: 48px 0 72px;
+      padding: 64px 0;
     }
     .cta__inner {
-      padding: 0 16px;
+      padding: 0 clamp(16px, 2.5vw, 40px);
     }
     .cta__card {
-      padding: 36px 24px 28px;
+      padding: 40px 20px;
     }
-    .cta__perks {
-      gap: 12px;
-      font-size: 11px;
+    .cta__actions {
+      width: 100%;
+    }
+    :global(.cta__primary),
+    :global(.cta__secondary) {
+      width: 100%;
     }
   }
 </style>
