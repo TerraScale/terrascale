@@ -14,11 +14,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Self-hosted alpha runners only (HomeLab services/ci-runner.md): NuGet and the .NET SDKs persist in alpha's local
-# caches, so no GitHub cache step and no paid hosted fallback.
 jobs:
   test:
-    runs-on: alpha
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
