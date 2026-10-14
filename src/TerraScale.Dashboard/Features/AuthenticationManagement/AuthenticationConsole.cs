@@ -10,6 +10,7 @@ namespace TerraScale.Dashboard.Features.AuthenticationManagement;
 public static class AuthenticationConsole
 {
     public const string Unavailable = "Authentication management is unavailable for this project. ts-auth has a project-scoped tenant, but its customer management API and matching project credential binding are unavailable to the dashboard.";
+    public const string ReadOnly = "Changes are disabled in this read-only view.";
 
     public static IEndpointRouteBuilder MapAuthenticationManagement(this IEndpointRouteBuilder endpoints)
     {
@@ -46,13 +47,25 @@ public static class AuthenticationConsole
         var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
         if (context is null) return AccountEndpoints.LoginRedirect(http);
         if (context.Project is null) return AuthEndpoints.SeeOther("/");
-        var page = AuthenticationView.Create(new(ShellModel.For(http, context, key == "overview" ? "Authentication" : "Authentication · " + section.Title), section, http.Request.Query["q"].ToString()));
-        page.StatusCode = 503;
+        // Only the public demo registers this; production has no binding and keeps the 503 unavailable page.
+        var data = http.RequestServices.GetService<IAuthenticationDemoData>()?.Snapshot;
+        var page = AuthenticationView.Create(new(ShellModel.For(http, context, key == "overview" ? "Authentication" : "Authentication · " + section.Title), section, http.Request.Query["q"].ToString(), data));
+        if (data is null) page.StatusCode = 503;
         return page;
     }
 }
 
-public sealed record AuthenticationPage(ShellModel Shell, AuthenticationSection Section, string Search = "")
+// Read-only synthetic tenant for the public demo (DEMO=true). Never registered in production.
+public interface IAuthenticationDemoData
+{
+    AuthenticationSnapshot Snapshot { get; }
+}
+public sealed record AuthenticationRow(string[] Cells, string Status = "", string Tone = "neutral");
+public sealed record AuthenticationTable(string[] Columns, AuthenticationRow[] Rows);
+public sealed record AuthenticationSnapshot(string Issuer, string ClientId, string Sso, IReadOnlySet<string> Enabled,
+    IReadOnlyDictionary<string, AuthenticationTable> Tables, AuthenticationBranding Branding, AuthenticationEmailBranding EmailBranding);
+
+public sealed record AuthenticationPage(ShellModel Shell, AuthenticationSection Section, string Search = "", AuthenticationSnapshot? Data = null)
 {
     public AccountContext Context => Shell.Context;
     public string Heading => Section.Key == "overview" ? "Authentication" : "Authentication: " + Section.Title;

@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
+using TerraScale.Dashboard.Features.AuthenticationManagement;
 
 namespace TerraScale.Dashboard.E2E.Platform;
 
@@ -63,6 +65,45 @@ public sealed class PublicDemoJourneyTests
         }
         using var portal = await client.GetAsync("/__test/portal");
         await Assert.That(portal.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("The fake Stripe portal stays reachable for the billing walkthrough.");
+    }
+
+    [Test]
+    public async Task AuthenticationConsoleRendersEverySectionReadOnlyFromSyntheticData()
+    {
+        await using var demo = await StartAsync();
+        using var client = demo.Client();
+        using (var anonymous = await client.GetAsync("/auth/users"))
+        {
+            await Assert.That(anonymous.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
+            await Assert.That(anonymous.Headers.Location?.OriginalString).IsEqualTo("/login?returnTo=%2Fauth%2Fusers").Because("Signed-out visitors still sign in first.");
+        }
+        using (var login = await HttpJourney.LoginAsync(client))
+            await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        foreach (var section in AuthenticationSection.All)
+        {
+            using var response = await client.GetAsync("/auth/" + section.Key);
+            var html = await response.Content.ReadAsStringAsync();
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(section.Key);
+            await Assert.That(html).Contains($"data-auth-section=\"{section.Key}\"");
+            await Assert.That(html).DoesNotContain(AuthenticationConsole.Unavailable).Because($"{section.Key} shows synthetic data, not the unavailable state.");
+            await Assert.That(html).DoesNotContain("unavailable</p>").Because(section.Key);
+            if (section.Fields is not null || section.Key is "overview" or "sessions" or "audit" or "emails")
+                await Assert.That(Regex.IsMatch(html, @"<tbody>\s*<tr>")).IsTrue().Because($"{section.Key} lists fixture rows.");
+        }
+        var users = await client.GetStringAsync("/auth/users?q=globex");
+        await Assert.That(users).Contains("Alan Turing").Because("Read-only search filters the rows.");
+        await Assert.That(users).DoesNotContain("<td class=\"ts-table-strong\">Ada Lovelace</td>");
+        await Assert.That(users).Contains("commandfor=\"auth-create\" disabled>").Because("Creating records stays disabled.");
+        var signIn = await client.GetStringAsync("/auth/sign-in");
+        await Assert.That(signIn).Contains("role=\"switch\" aria-checked=\"true\"");
+        await Assert.That(signIn).Contains("role=\"switch\" aria-checked=\"false\"");
+        foreach (var path in new[] { "/api/v1/auth-management/users", "/api/v1/auth-management/settings", "/api/v1/auth-management/instance" })
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["name"] = "x" }) };
+            request.Headers.Add("Origin", demo.Origin.GetLeftPart(UriPartial.Authority));
+            using var response = await client.SendAsync(request);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Forbidden).Because($"POST {path} stays blocked in the public demo.");
+        }
     }
 
     private static async Task AssertUnlabelledAsync(HttpClient client, string path)
