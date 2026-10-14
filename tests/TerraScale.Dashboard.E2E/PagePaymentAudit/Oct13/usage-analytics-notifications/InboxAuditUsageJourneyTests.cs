@@ -131,11 +131,14 @@ public sealed class InboxAuditUsageJourneyTests(DashboardRootFixture fixture)
         var html = WebUtility.HtmlDecode(await client.GetStringAsync("/usage?range=30d&database=" + id));
         await Assert.That(html).Contains("value=\"30d\" selected=\"selected\"");
         await Assert.That(html).Contains("value=\"" + id + "\" selected=\"selected\"");
-        var settings = Regex.Match(html, "<a class=\"ts-tab\" href=\"([^\"]+)\"[^>]*><span>Spending controls</span>").Groups[1].Value;
+        var settings = Regex.Match(html, "<a class=\"ts-tab\" href=\"([^\"]+)\"[^>]*>(?:<svg\\b[^>]*>(?:(?!</svg>).)*</svg>)?<span>Spending controls</span>", RegexOptions.Singleline).Groups[1].Value;
         await Assert.That(settings.Length).IsGreaterThan(0);
         var query = QueryHelpers.ParseQuery(new Uri(client.BaseAddress!, settings).Query);
+        await Assert.That(query["tab"].ToString()).IsEqualTo("settings");
         var spending = WebUtility.HtmlDecode(await client.GetStringAsync(settings));
-        var overview = Regex.Match(spending, "<a class=\"ts-tab\" href=\"([^\"]+)\"[^>]*><span>Overview</span>").Groups[1].Value;
+        var overview = Regex.Match(spending, "<a class=\"ts-tab\" href=\"([^\"]+)\"[^>]*>(?:<svg\\b[^>]*>(?:(?!</svg>).)*</svg>)?<span>Overview</span>", RegexOptions.Singleline).Groups[1].Value;
+        await Assert.That(overview.Length).IsGreaterThan(0);
+        await Assert.That(QueryHelpers.ParseQuery(new Uri(client.BaseAddress!, overview).Query)["tab"].ToString()).IsEqualTo("overview");
         var restored = await client.GetStringAsync(overview);
         var directory = Path.Combine(fixture.Root, "docs/reviews/2026-10-13/usage-analytics-notifications/obj/runtime-evidence");
         Directory.CreateDirectory(directory);

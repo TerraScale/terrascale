@@ -36,9 +36,16 @@ public sealed class UsageNavigationJourneyTests(DashboardRootFixture fixture)
         await Assert.That(project.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
 
         var initial = await PageAsync("/usage?range=30d&database=" + databaseId);
+        var rangeLink = Link(initial, "24h");
+        var rangeQuery = QueryHelpers.ParseQuery(new Uri(client.BaseAddress!, rangeLink).Query);
+        await Assert.That(rangeQuery["range"].ToString()).IsEqualTo("24h");
+        await Assert.That(rangeQuery["project"].ToString()).IsEqualTo(projectId);
+        await Assert.That(rangeQuery["database"].ToString()).IsEqualTo(databaseId);
         var settings = Link(initial, "Spending controls");
+        await Assert.That(QueryHelpers.ParseQuery(new Uri(client.BaseAddress!, settings).Query)["tab"].ToString()).IsEqualTo("settings");
         await AssertSelectionAsync(settings, projectId, databaseId);
         var overview = Link(await PageAsync(settings), "Overview");
+        await Assert.That(QueryHelpers.ParseQuery(new Uri(client.BaseAddress!, overview).Query)["tab"].ToString()).IsEqualTo("overview");
         await AssertSelectionAsync(overview, projectId, databaseId);
         var restored = await PageAsync(overview);
         await Assert.That(restored).Contains("value=\"30d\" selected=\"selected\"");
@@ -79,7 +86,7 @@ public sealed class UsageNavigationJourneyTests(DashboardRootFixture fixture)
 
     private static string Link(string html, string label)
     {
-        var match = Regex.Match(html, "<a[^>]*href=\"([^\"]+)\"[^>]*>(?:<span>)?" + Regex.Escape(label) + "(?:</span>)?</a>", RegexOptions.CultureInvariant);
+        var match = Regex.Match(html, "<a[^>]*href=\"([^\"]+)\"[^>]*>(?:<svg\\b[^>]*>(?:(?!</svg>).)*</svg>)?(?:<span>)?" + Regex.Escape(label) + "(?:</span>)?</a>", RegexOptions.Singleline | RegexOptions.CultureInvariant);
         return match.Success ? match.Groups[1].Value : throw new InvalidOperationException("Missing usage link: " + label);
     }
 }
