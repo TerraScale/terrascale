@@ -234,20 +234,38 @@ internal sealed partial class SqliteStorageTransaction(
     {
         ThrowIfReadOnly();
         var body = Admit(json);
-        using var schemaReservation = IsClient ? ReserveCollectionMetadata(collection) : null;
-        if (IsClient && ReadCollectionSchema(collection) is { } schema)
+        long? metadataBytes = null;
+        using var schemaReservation = IsClient ? ReserveCollectionMetadata(collection, out metadataBytes) : null;
+        var exists = HasTable(collection);
+        if (IsClient && exists && metadataBytes is { } bytes)
+        {
+            ReserveJson(bytes);
+        }
+
+        // Schema admission and the drop barrier share the same collection state and JSON lookup.
+        var metadata = IsClient && exists ? CollectionState(collection) : DocumentState.Bottom;
+        if (exists && metadataBytes is not null && metadata.Equals(DocumentState.Bottom))
+        {
+            throw new InvalidDataException("collection metadata has no stored state");
+        }
+
+        if (IsClient && ReadCollectionSchema(metadata) is { } schema)
         {
             CollectionSchemaValidation.Validate(schema, json, cancellationToken, store.SchemaMemory, store.SchemaEvaluations);
         }
 
         Reserve(id, json.Length);
-        if (!HasTable(collection))
+        if (!exists)
         {
             // An implicit collection carries the same captured identity metadata as an explicit creation.
             CreateCollection(new CollectionInfo(collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), cancellationToken);
+            if (IsClient)
+            {
+                metadata = CollectionState(collection);
+            }
         }
 
-        var (state, at) = BeginDocument(collection, id);
+        var (state, at) = BeginDocument(collection, id, metadata.Clear is { Deleted: true } drop ? drop : null);
         DocumentState next;
         if (patch is not null)
         {
@@ -291,7 +309,7 @@ internal sealed partial class SqliteStorageTransaction(
             ClearUniqueConflict(collection, id);
             cancellationToken.ThrowIfCancellationRequested();
             Offset();
-            var (state, at) = BeginDocument(collection, id);
+            var (state, at) = BeginDocument(collection, id, IsClient ? CollectionDrop(collection) : null);
             var written = Store(collection, id, state.Delete(at), at, null);
             ReconcileUnique(collection, affected, cancellationToken);
             return written;
@@ -299,15 +317,16 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     // Client commits keep per-commit limits and metadata documents; _system is never a client database.
-    private ClearEntry? CollectionDrop(string name) =>
-        (_pending.TryGetValue((DocumentDelta.Collections, name), out var pending) ? pending.State : ReadState(DocumentDelta.Collections, name))
-        .Clear is { Deleted: true } drop ? drop : null;
+    private DocumentState CollectionState(string name) =>
+        _pending.TryGetValue((DocumentDelta.Collections, name), out var pending) ? pending.State : ReadState(DocumentDelta.Collections, name);
+
+    private ClearEntry? CollectionDrop(string name) => CollectionState(name).Clear is { Deleted: true } drop ? drop : null;
 
     // Local writes keep the collection clear and mint above it even when observing a remote clock was capped.
-    private (DocumentState State, EntryVersion At) BeginDocument(string collection, string id)
+    private (DocumentState State, EntryVersion At) BeginDocument(string collection, string id, ClearEntry? collectionDrop)
     {
         var (state, at) = Begin(collection, id);
-        if (IsClient && CollectionDrop(collection) is { } drop)
+        if (collectionDrop is { } drop)
         {
             state = state.Join(new DocumentState(drop, DocumentState.Bottom.Fields));
             if (at.Stamp.Value <= drop.Version.Stamp.Value)

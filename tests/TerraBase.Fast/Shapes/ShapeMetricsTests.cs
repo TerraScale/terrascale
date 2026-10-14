@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net;
+using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -13,6 +14,7 @@ using TerraBase.Features.Shapes;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Fast.Shapes;
 
@@ -326,6 +328,53 @@ public sealed class ShapeMetricsTests
         await transaction.PutAsync(DocumentApi.Collection, id, "{\"a\":3}"u8.ToArray(), token);
         // The next mutation uses pending state; only the collection-metadata document is read again.
         await Assert.That(PointReads(await ScrapeAsync(api.Server)) - afterFirst).IsEqualTo(1d);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Pending_collection_schema_is_enforced_after_a_schema_change_or_recreation(bool recreate)
+    {
+        await using var api = await DocumentApi.StartAsync();
+        if (recreate)
+        {
+            await Assert.That((await api.SendAsync(HttpMethod.Delete, $"{api.Collections}/{DocumentApi.Collection}")).Status)
+                .IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
+        await using var transaction = await store.BeginTransactionAsync(write: true, token);
+        if (recreate)
+        {
+            await Assert.That(await transaction.CreateCollectionAsync(new CollectionInfo(DocumentApi.Collection, 0), token)).IsTrue();
+        }
+
+        using var schema = JsonDocument.Parse("""{"type":"object","required":["name"]}""");
+        await Assert.That(await transaction.SetCollectionSchemaAsync(DocumentApi.Collection, schema.RootElement, token)).IsTrue();
+        await Assert.That(async () => await transaction.PutAsync(DocumentApi.Collection, DocumentApi.NewId(), "{}"u8.ToArray(), token))
+            .Throws<CollectionSchemaException>();
+    }
+
+    [Test]
+    public async Task A_collection_metadata_body_without_its_state_refuses_document_writes()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
+        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync())))
+        {
+            await connection.OpenAsync(token);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM _tb_state WHERE collection = $collection AND id = $id;";
+            command.Parameters.AddWithValue("$collection", DocumentDelta.Collections);
+            command.Parameters.AddWithValue("$id", DocumentApi.Collection);
+            await Assert.That(await command.ExecuteNonQueryAsync(token)).IsEqualTo(1);
+        }
+
+        await using var transaction = await store.BeginTransactionAsync(write: true, token);
+        await Assert.That(async () => await transaction.PutAsync(DocumentApi.Collection, DocumentApi.NewId(), "{}"u8.ToArray(), token))
+            .Throws<InvalidDataException>();
     }
 
     [Test]
