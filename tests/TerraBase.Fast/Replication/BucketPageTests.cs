@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Replication;
@@ -38,11 +39,13 @@ public sealed class BucketPageTests
             .OrderBy(state => SqliteStorageTransaction.Bucket(state.Collection, state.Id)).ThenBy(state => state.Collection, StringComparer.Ordinal)
             .ThenBy(state => state.Id, StringComparer.Ordinal).ToArray();
         var states = api.Server.Services.GetRequiredService<IReplicaStates>();
+        var incarnation = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, token))!.Incarnation;
         List<RepairState> actual = [];
         BucketCursor? cursor = null;
         do
         {
-            var (page, next) = await states.ReadBucketsAsync(database, [.. selected.Reverse(), .. selected], cursor, 2, maxBytes, token);
+            var (page, next) = await states.ReadBucketsAsync(database, incarnation, [.. selected.Reverse(), .. selected], cursor, 2, maxBytes, token)
+                ?? throw new InvalidOperationException("the database incarnation is not held");
             await Assert.That(page.Count).IsBetween(1, maxBytes == 1 ? 1 : 2);
             actual.AddRange(page);
             await Assert.That(actual.Count).IsLessThanOrEqualTo(expected.Length);
@@ -59,10 +62,12 @@ public sealed class BucketPageTests
         await Assert.That(actual).IsEquivalentTo(expected);
         await Assert.That(actual.Select(state => state.Id).SequenceEqual(expected.Select(state => state.Id))).IsTrue();
         await Assert.That(actual.Single(state => state.Id == collision[0]).State.Exists).IsFalse();
-        var (empty, end) = await states.ReadBucketsAsync(database, [], null, 2, maxBytes, token);
+        var (empty, end) = await states.ReadBucketsAsync(database, incarnation, [], null, 2, maxBytes, token)
+            ?? throw new InvalidOperationException("the database incarnation is not held");
         await Assert.That(empty).IsEmpty();
         await Assert.That(end).IsNull();
-        var (pastEnd, pastCursor) = await states.ReadBucketsAsync(database, selected, new BucketCursor(4096, "", ""), 2, maxBytes, token);
+        var (pastEnd, pastCursor) = await states.ReadBucketsAsync(database, incarnation, selected, new BucketCursor(4096, "", ""), 2, maxBytes, token)
+            ?? throw new InvalidOperationException("the database incarnation is not held");
         await Assert.That(pastEnd).IsEmpty();
         await Assert.That(pastCursor).IsNull();
     }
