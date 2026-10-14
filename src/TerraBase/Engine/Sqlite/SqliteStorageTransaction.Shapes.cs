@@ -150,7 +150,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         insert.Parameters.AddWithValue("$offset", offset);
         insert.Parameters.AddWithValue("$end", covered);
         insert.Parameters.AddWithValue("$body", body);
-        insert.Parameters.AddWithValue("$at", store.Time.GetUtcNow().ToUnixTimeMilliseconds());
+        insert.Parameters.AddWithValue("$at", Member.Clock.UtcNow.ToUnixTimeMilliseconds());
         insert.ExecuteNonQuery();
         insert.Parameters.Clear();
         return (covered, head, body.Length);
@@ -400,7 +400,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             }
             return ShapePrefix(pair.Key, floor, pair.Value, covered, cancellationToken);
         });
-        var cursor = new FeedCursor(stamps, FeedCursor.At(store.Time.GetUtcNow())) { Issuer = Member.Id, Prefixes = prefixes };
+        var cursor = new FeedCursor(stamps, FeedCursor.At(Member.Clock.UtcNow)) { Issuer = Member.Id, Prefixes = prefixes };
         var r8 = Base64Url.DecodeFromChars(ChangeCursor.Encode(cursor));
         var bytes = new byte[17 + r8.Length];
         bytes[0] = 1;

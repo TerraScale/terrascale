@@ -2,6 +2,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Shapes;
 
@@ -20,7 +21,7 @@ internal interface IShapeResumeStorage
 /// Cross-machine resumes (shape-reads section 9, FR-23): proves the cursor's prefix on this machine and redirects to the local
 /// commit boundary before the first row it does not cover. Delivery is at least once; nothing is skipped on a stamp alone.
 /// </summary>
-internal sealed class ShapeResume(IStorageEngine engine, IShapeStorage storage, IShapeRetention retention, TimeProvider time) : IShapeResume
+internal sealed class ShapeResume(IStorageEngine engine, IShapeStorage storage, IShapeRetention retention, IRemoteDurability durability, TimeProvider time) : IShapeResume
 {
     /// <inheritdoc />
     public async ValueTask<ResumeResult> ResolveAsync(ShapeScope scope, ShapeLineage lineage, ReadOnlyMemory<byte> scope16, FeedCursor cursor,
@@ -73,7 +74,7 @@ internal sealed class ShapeResume(IStorageEngine engine, IShapeStorage storage, 
                 }
 
                 // Rules 3 and 4.
-                head = await ((IShapeFreshStorage)transaction).ReadShapeHeadAsync(cancellationToken).ConfigureAwait(false);
+                head = await ((IShapeStorageTransaction)transaction).ReadShapeFrontierAsync(durability.Confirms, cancellationToken).ConfigureAwait(false);
                 target = await ((IShapeResumeStorage)transaction).ReadShapeResumeTargetAsync(scope.Collection.Name, cursor.Stamps, cursor.Prefixes, head,
                     cancellationToken).ConfigureAwait(false);
             }

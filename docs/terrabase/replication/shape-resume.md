@@ -18,10 +18,9 @@ responses in order; delivery is at least once.
 
 The merge prerequisite is #211's persisted feed proofs. Its issuing-machine routing applies to the SSE feed.
 Shape resumes verify proofs on the destination and fail closed when those proofs cannot be verified there.
-An origin the destination forgot counts as behind. No storage format is added here.
+An origin the destination forgot counts as behind. Cursor issue and seal stamps use the host wall clock.
 
 `ShapeResumeExtensions` registers `IShapeResume` after `ShapesExtensions`, replacing the old gate's registration.
-The old implementation and planned-gate paragraph can be removed when the shared Shapes lane is free.
 
 Fast HTTP coverage lives in `ShapeResumeTests.cs`; the second stack layer adds `ShapeResumeRegionTests.cs`
 for gru-to-sjc failover with a deterministic covered-row replay and a third region confirming writes during restarts.

@@ -27,6 +27,9 @@ internal sealed class MemberClock
             "terrabase.clock.skew_capped", "{stamp}", "Replicated stamps further ahead of this member's physical clock than the 1 s skew bound.");
     }
 
+    /// <summary>The host wall clock, independent of query deadlines and HLC logical counters.</summary>
+    public DateTimeOffset UtcNow => _time.GetUtcNow();
+
     /// <summary>A local stamp after every previous mint and the state this write replaces, without a skew cap.</summary>
     public Hlc Tick(Hlc floor = default)
     {

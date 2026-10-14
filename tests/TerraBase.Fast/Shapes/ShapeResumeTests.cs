@@ -22,7 +22,8 @@ public sealed partial class ShapeResumeTests
     [Test]
     public async Task A_resume_redirects_to_the_boundary_before_the_first_uncovered_commit_and_refuses_what_it_cannot_prove()
     {
-        await using var api = await DocumentApi.StartAsync();
+        var wall = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(wall));
         var path = $"{api.Collections}/{DocumentApi.Collection}/shape";
         for (var index = 0; index < 3; index++)
         {
@@ -31,6 +32,8 @@ public sealed partial class ShapeResumeTests
 
         Dictionary<string, string> state = [];
         var synced = await SyncAsync(api.Client, path, null, state);
+        var cursor = ChangeCursor.Decode(Base64Url.EncodeToString(Base64Url.DecodeFromChars(synced.Cursor).AsSpan(17)))!;
+        await Assert.That(cursor.Issued.Value).IsEqualTo(FeedCursor.At(wall.GetUtcNow()).Value);
 
         // Rules 3 and 4: every row is covered, so the target is the sealed head; both transports answer the same.
         foreach (var header in new[] { false, true })
