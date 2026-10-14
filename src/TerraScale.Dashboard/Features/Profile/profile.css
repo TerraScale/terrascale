@@ -28,3 +28,32 @@
 .ts-profile-posture {
   align-items: center;
 }
+
+/* Settings rows: title and help on the left third, controls on the right, hairline between rows. */
+.ts-profile-settings {
+  display: grid;
+  min-width: 0;
+}
+
+.ts-profile-settings > .ts-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 0 var(--ts-s10);
+  padding: var(--ts-s8) 0;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-profile-settings > .ts-card:first-child {
+  padding-top: 0;
+}
+
+.ts-profile-settings > .ts-card:last-child {
+  border-bottom: 0;
+}
+
+@media (max-width: 899.98px) {
+  .ts-profile-settings > .ts-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-s4);
+  }
+}
