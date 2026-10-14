@@ -102,9 +102,13 @@ jobs:
 
   libs:
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.libs == 'true'
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && (github.event_name != 'pull_request' || needs.changes.outputs.libs == 'true')
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - &checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -165,9 +169,13 @@ jobs:
 
   auth:
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.auth == 'true'
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && (github.event_name != 'pull_request' || needs.changes.outputs.auth == 'true')
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - *checkout
       - *checkout-ts-dotnet
@@ -177,9 +185,13 @@ jobs:
 
   terrabase:
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.terrabase == 'true'
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && (github.event_name != 'pull_request' || needs.changes.outputs.terrabase == 'true')
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - *checkout
       - *checkout-ts-dotnet
@@ -196,6 +208,11 @@ jobs:
       contents: read
       pull-requests: read
     steps:
+      - name: Fork PRs cannot qualify without Fast
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo 'Fast requires the private SDK checkout; fork PRs cannot receive its deploy key. Qualify the changes on a branch in this repository.' >&2
+          exit 1
       - name: Every area that ran passed
         run: '! grep -qE "failure|cancelled" <<< "${{ join(needs.*.result, '' '') }}"'
       - *checkout
@@ -221,7 +238,8 @@ jobs:
   slow:
     needs: [changes, auth, terrabase]
     if: >-
-      !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+      !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
       || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     continue-on-error: true
     strategy:
@@ -484,7 +502,7 @@ jobs:
 
   e2e:
     needs: deploy
-    if: needs.deploy.outputs.deployed == 'true'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.deploy.outputs.deployed == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     # id-token: the GitHub OIDC token each Fly step exchanges at ts-auth for a 15-minute token of the bound e2e project
