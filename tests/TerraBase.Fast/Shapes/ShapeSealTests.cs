@@ -831,7 +831,7 @@ public sealed class ShapeSealTests
         public async Task<long> HoldCdcAsync()
         {
             _ = await Groups.AckedAsync(tenant, ReplicaId.Of(99, 1, 0), CancellationToken.None);
-            return await Groups.HeadAsync(tenant, CancellationToken.None);
+            return await Groups.HeadAsync(tenant, sqlite.Incarnation, CancellationToken.None) ?? throw new InvalidOperationException("the copy refused its own incarnation");
         }
 
         public async Task ReplaceCapturedDocumentAsync(long after, string document, string table)
