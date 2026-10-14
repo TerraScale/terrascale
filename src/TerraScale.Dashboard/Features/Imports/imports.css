@@ -34,7 +34,30 @@
 }
 
 .ts-import-outline {
-  padding-left: var(--ts-s5);
+  padding: 0;
+  list-style: none;
+  counter-reset: import-step;
+}
+
+.ts-import-outline > li {
+  display: flex;
+  align-items: start;
+  gap: var(--ts-s3);
+  counter-increment: import-step;
+}
+
+.ts-import-outline > li::before {
+  content: counter(import-step);
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface-2);
+  color: var(--ts-ink-2);
+  font-family: var(--ts-font-mono);
 }
 
 .ts-import-issues {
@@ -53,3 +76,36 @@
 .ts-import-skipped > summary {
   cursor: pointer;
 }
+
+/* Import pages: full-width cards; code samples and upload fields never push past the viewport. */
+.ts-imports .ts-card {
+  min-width: 0;
+}
+
+.ts-imports .ts-code {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.ts-imports .ts-form input[type="file"],
+.ts-imports .ts-form .ts-input {
+  max-width: 100%;
+}
+
+@media (max-width: 47.99rem) {
+  .ts-imports .ts-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ts-import-formats > .ts-check {
+  padding: var(--ts-s3);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+}
+.ts-import-formats > .ts-check:has(input:checked) { border-color: var(--ts-accent); }
+.ts-imports .ts-badge-tone[data-tone="emerald"] { --tone: var(--ts-success); }
+.ts-imports .ts-badge-tone[data-tone="rose"] { --tone: var(--ts-danger); }
+.ts-imports .ts-badge-tone[data-tone="amber"] { --tone: var(--ts-warning); }
+.ts-imports [data-import-issues="blocking"] { color: var(--ts-danger); }
+.ts-imports [data-import-issues="warning"] { color: var(--ts-warning); }
