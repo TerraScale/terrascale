@@ -699,7 +699,7 @@ convergence deadline).
 | E4 | concurrent writes, different fields → both survive | `Concurrent_writes_to_different_fields_both_survive_expected_to_fail…` (flip) |
 | E5 | delete in one region, edit in the other → same state | `Delete_in_one_region_and_edit_in_the_other…` |
 | E6 | bulk: 1000 documents split across regions, counts and checksums match | `Bulk_1000_documents…` |
-| E7 | sjc machine stopped, writes in gru, started → catches up | `FlyOutageE2ETests.Sjc_machine_stopped_then_started…` |
+| E7 | each region's machine stopped in turn, writes, deletes and conflicts in both others, started → catches up | `FlyOutageE2ETests.Each_region_machine_stopped_then_started…` |
 | E8 | concurrent `inc` in both regions → sum; `set 0` resets | new |
 | E9 | concurrent `add` and `remove` of one element → add wins | new |
 | E10 | changes feed: cursor taken in gru, resumed in sjc → no missing event, per-origin order | new |
@@ -716,7 +716,9 @@ six delete directions, a three-region same-field conflict, and each region stopp
 on its existing data. Every local case owns three real application nodes, ephemeral listeners and
 storage directories; TUnit runs them in parallel. Catch-up includes writes from both surviving
 regions, conflicts and deletes of documents that the stopped region still holds. Local delete
-cases also inspect the persisted tombstones. No matrix case is an expected failure.
+cases also inspect the persisted tombstones. Every delete case, local and live, reads the deleted document in every
+region: each answers 404 with the same non-empty ETag of its retained tombstone (a never-written or collected document
+has none). No matrix case is an expected failure.
 
 The required CI TerraBase test stage runs this local matrix. The post-deploy `e2e` job first
 selects `Category=replication-matrix-live`: 13 write, conflict and delete cases against gru, sjc
@@ -729,7 +731,9 @@ Publish measured results in `benchmark/bench/`, distinguishing local results fro
 
 Local outage cases skip on Fly because parallel tests cannot each own a production machine.
 Live outage proof uses `make terrabase-e2e-fly-outage` on a pinned disposable three-region app
-(see [the disposable-app runbook](e2e-disposable-app.md)); its result must be reported separately.
+(see [the disposable-app runbook](e2e-disposable-app.md)); its result must be reported separately. It runs the local
+outage proof for gru, sjc and fra in turn, each on a collection of its own, and reports six rejoin latencies (two
+survivors per stopped region). The target fails unless that test is an actual pass. No live run is recorded yet.
 A skipped outage is never live catch-up evidence. The post-deploy job preserves the matrix and
 broader suite logs and per-test outcomes as the `replication-e2e-<commit>` artifact. Each write direction reports ten
 samples with minimum, median, p95 (nearest rank) and maximum latency.
