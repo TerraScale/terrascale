@@ -346,6 +346,26 @@ public sealed class ShapeLiveTests
     }
 
     [Test]
+    public async Task Failed_read_releases_its_partial_reservations_before_the_requester_sees_the_error()
+    {
+        await using var api = await StartAsync(new FakeTimeProvider(Start), new FakeSealer());
+        var flights = Flights(api);
+        var database = await api.TenantOfAsync();
+        var before = await api.ReservedBytesAsync();
+        var shape = new FakeShape(Sealer(api), StaleHead);
+        var failure = new InvalidDataException(new Faker().Lorem.Sentence());
+
+        var failing = flights.ReadAsync(LiveRequest(database), shape.Probe, (_, _) =>
+        {
+            QosContext.ReserveResult(1 << 20);
+            throw failure;
+        }, CancellationToken.None).AsTask();
+
+        await Assert.That(async () => await failing.WaitAsync(Deadline)).Throws<InvalidDataException>();
+        await Assert.That(await api.ReservedBytesAsync()).IsEqualTo(before).Because("the failed flight released every byte before the error surfaced");
+    }
+
+    [Test]
     public async Task Memory_refusal_returns_shape_busy_and_admission_recovers_after_release()
     {
         await using var api = await StartAsync(new FakeTimeProvider(Start), new FakeSealer());
