@@ -383,7 +383,7 @@ public sealed class ChangeLogAgeTests
         }
 
         // One retention pass, as the tailer's 5 s pass runs it.
-        public async Task TrimAsync() => await ((TursoChangeGroupSource)Groups).TrimAsync(await StoreAsync(), CancellationToken.None);
+        public async Task TrimAsync() => await Api.Server.Services.GetRequiredService<TursoChangeGroupSource>().TrimAsync(await StoreAsync(), CancellationToken.None);
 
         public async Task<long?> FloorAsync(DateTimeOffset now)
         {
