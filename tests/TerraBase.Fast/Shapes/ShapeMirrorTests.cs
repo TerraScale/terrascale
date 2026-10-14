@@ -12,6 +12,7 @@ using TerraBase.Engine.Sqlite;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
 using TerraBase.Fast.Documents;
 using TerraBase.Primitives;
@@ -834,7 +835,8 @@ public sealed class ShapeMirrorTests
     {
         public IDatabaseStore Store { get; } = store;
 
-        public IShapeSealer Sealer => server.Services.GetRequiredService<IShapeSealer>();
+        public ShapeSealer Sealer => new(server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance,
+            new SqliteShapeStorage(server.Services.GetRequiredService<SqliteStorageEngine>()), server.Services.GetRequiredService<IRemoteDurability>());
 
         public static async Task<Database> OpenAsync(TerraBaseTestServer server, TenantContext tenant)
         {
