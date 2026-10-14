@@ -8,7 +8,7 @@ name: CI
 # - preview (pull requests): TerraBase + ts-auth on one machine at https://ts-pr-<n>.fly.dev (scripts/fly/preview.sh);
 #   previews.yml deletes it when the PR closes or after 24 hours.
 # - deploy (main): the Dockerfile's chiseled images to Fly, TerraBase then ts-auth, each gru -> sjc -> fra with a live
-#   check after each region (scripts/fly/deploy.sh), one deploy at a time in push order; ts-auth's image builds after
+#   check after each region (scripts/fly/deploy.sh), only for the newest main; ts-auth's image builds after
 #   TerraBase's rollout. Before the rollout, scripts/fly/fast-gate.sh requires a passed `test` for this exact tree: the
 #   merged pull request's head when the merge kept its tree (rebased before merging), else main's own `test`.
 # After it:
@@ -25,11 +25,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# A newer push supersedes a running check of the same branch. Every main push runs at once (its own group) and finishes;
-# the deploy jobs queue per app instead, so a merge never waits behind the previous run's tests.
+# A newer push cancels obsolete tests and rollouts; manual test runs cannot cancel the push's deployment.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -191,6 +190,7 @@ jobs:
         run: |
           python3 terrascale/scripts/ci/slow-report-test.py
           python3 terrascale/scripts/ci/e2e-status-test.py
+          python3 terrascale/scripts/ci/latest-main-test.py
           bash terrascale/scripts/fly/deploy-test.sh
           bash terrascale/scripts/fly/preview-test.sh
           bash terrascale/scripts/fly/volume-reset-test.sh
@@ -356,8 +356,8 @@ jobs:
           gh pr comment ${{ github.event.pull_request.number }} -R "$GITHUB_REPOSITORY" --edit-last --create-if-none
           --body "Preview: https://$APP.fly.dev (TerraBase + ts-auth at ${{ github.sha }}; stops when idle, deleted on close or after 24 h)"
 
-  # One job, no `needs`: it joins the `deploy` queue when the run starts, so queued deploys keep push order and a newer
-  # pending deploy replaces an older one (never the reverse). ts-auth keeps its data in TerraBase, so it rolls out after.
+  # No `needs`: an already-green PR tree can deploy immediately. Superseded main runs cancel, including rollout.
+  # The shared deploy group prevents overlapping rollouts; ts-auth rolls out after TerraBase.
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: alpha
@@ -369,22 +369,32 @@ jobs:
       contents: read
       checks: read
       pull-requests: read
+    outputs:
+      deployed: ${{ steps.deploy-auth.outcome == 'success' }}
     steps:
       - *checkout
+      - name: Skip a superseded main before building
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: terrascale/scripts/fly/current-main.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
       - *checkout-ts-dotnet
       - *setup-flyctl
       - uses: docker/setup-buildx-action@v3
+        if: steps.current.outputs.current == 'true'
         with:
           # On alpha, build on the shared persistent BuildKit daemon (layer + cache-mount reuse).
           driver: ${{ vars.CI_RUNNER && 'remote' || 'docker-container' }}
           endpoint: ${{ vars.CI_RUNNER && 'unix:///run/buildkit/buildkitd.sock' || '' }}
       # One deploy token per app; each can push only to its own app's repository.
       - uses: docker/login-action@v3
+        if: steps.current.outputs.current == 'true'
         with:
           registry: registry.fly.io
           username: x
           password: ${{ secrets.FLY_TOKEN_TS_TERRABASE }}
       - uses: docker/build-push-action@v6
+        if: steps.current.outputs.current == 'true'
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -396,21 +406,28 @@ jobs:
           push: true
       # Fast must cover the exact tree being deployed (AGENTS.md): instant for a rebased, squash-merged pull request.
       - name: Wait for Fast on this tree
+        id: qualified
+        if: steps.current.outputs.current == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: terrascale/scripts/fly/fast-gate.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+        run: |
+          terrascale/scripts/fly/fast-gate.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+          terrascale/scripts/fly/current-main.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
       - name: Deploy TerraBase (gru, sjc, fra)
+        if: steps.qualified.outputs.current == 'true'
         working-directory: terrascale
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_TS_TERRABASE }}
         run: scripts/fly/deploy.sh ts-terrabase src/TerraBase/fly.toml registry.fly.io/ts-terrabase:${{ github.sha }}
       # Built after TerraBase's rollout so gru gets TerraBase as early as possible.
       - uses: docker/login-action@v3
+        if: steps.qualified.outputs.current == 'true'
         with:
           registry: registry.fly.io
           username: x
           password: ${{ secrets.FLY_TOKEN_TS_AUTH }}
       - uses: docker/build-push-action@v6
+        if: steps.qualified.outputs.current == 'true'
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -422,6 +439,8 @@ jobs:
           build-args: TS_AUTH_REVISION=${{ github.sha }}
           push: true
       - name: Deploy ts-auth (gru, sjc, fra)
+        id: deploy-auth
+        if: steps.qualified.outputs.current == 'true'
         working-directory: terrascale
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_TS_AUTH }}
@@ -429,6 +448,7 @@ jobs:
 
   e2e:
     needs: deploy
+    if: needs.deploy.outputs.deployed == 'true'
     runs-on: alpha
     timeout-minutes: 30
     env:
