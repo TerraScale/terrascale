@@ -1,6 +1,74 @@
 # TerraBase V3 shape load — 2026-10-14
 
-## 1. Result
+## 0. Current result: rerun at `7bf8dd3a` (run live6)
+
+- **V3: FAIL. Still BLOCKED on FR-22 (PR #283, open) and FR-24 (not written).** ts-vtest-tb ran `7bf8dd3a`
+  (`fix/shape-frontier-stuck-vtest`: PR #307 memory fix + PR #309 frontier fix). The cluster was not redeployed.
+- **Readers are now admitted:** 1 of 1, 100 of 100, 875 of 1,000, 1,489 of 10,000.
+- **Deliveries:** N = 1 and N = 100 delivered every in-window write (600 and 60,000; 0 missed). At N = 1,000, 875
+  readers were admitted but only 11,373 of 379,750 expected deliveries arrived. At N = 10,000 nothing was delivered.
+- **Two nodes crashed under the 10,000-reader step.** fra (`48e4967a225338`) exited at 18:58:37.6Z and sjc
+  (`6835466b44e258`) at 18:58:47.3Z, both with exit code 134 (SIGABRT, `restarting: true`, `restart_count: 1`), about
+  45 s into the N = 10,000 ramp. Fly did not report OOM. The node logs (last 100 lines) do not reach back to the crash,
+  so the cause is not captured. gru did not restart. Both nodes were back by 18:58:48Z.
+- **Bound broken on every node at every measured step.** Reads per sealed object per node: 171 to 167,813 (bound: 1).
+- **Refused requests still cost storage reads.** At `a439e1d1`, every request was refused and the nodes made about
+  2.1 `shape` reads per request (N = 1,000: 354,795 reads over 171,191 refusals). At `7bf8dd3a`, N = 1,000 made about
+  2.0 `shape` + `shape_body` reads per request (493,293 over 246,345 requests, 189,731 of them 429). Served and refused
+  requests share the counter, so this is an upper bound per refusal, not an isolated cost. The PR #307 pre-check did not
+  visibly lower reads per request.
+
+### Live run at `7bf8dd3a` (live6), per step
+
+| N | admitted | rejected | writes | delivered | missed | p50 ms | p99 ms | statuses | load CPU % gru/sjc/fra | load RSS MB gru/sjc/fra |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | 0 | 600 | 600 | 0 | 15,770 | 30,409 | 200: 8, 307: 1, 503: 1 | 1 / 0 / 0 | 12 / 6 / 6 |
+| 100 | 100 | 0 | 600 | 60,000 | 0 | 374 | 29,950 | 200: 11,438, 307: 100, 503: 34 | 1 / 3 / 3 | 15 / 14 / 14 |
+| 1,000 | 875 | 125 | 434 | 11,373 | 368,377 | 1,561 | 15,483 | 200: 55,550, 307: 1,000, 429: 189,731, 503: 64 | 17 / 20 / 1 | 33 / 27 / 29 |
+| 10,000 | 1,489 | 8,511 | 0 | 0 | n/a | n/a | n/a | 200: 4,032, 307: 3,177, 429: 120,729, 500: 104, 503: 4,134 | 1 / 0 / 0 | 86 / 16 / 17 |
+
+Refusal reasons:
+- 503 unavailable, "the shape head is not remote durable yet": 1 at N = 1, 34 at N = 100, 64 at N = 1,000.
+- At N = 10,000, 61 × `503 unavailable` carry no message.
+- 429 shape_busy, "shape reads are at capacity": 189,731 at N = 1,000 and 120,729 at N = 10,000.
+- At N = 10,000: 4,034 × `503 storage_busy`, 104 × `500 internal_error` with no message, and 39 × `503 unavailable`
+  ("shape storage changed or is busy").
+
+Other notes:
+- At N = 1,000 the writer failed with `503 write_outcome_unknown` ("no other region confirmed the write within 10 s"),
+  so only 434 writes landed in the window.
+- At N = 10,000 there were no in-window writes, so missed and latency are n/a.
+- At N = 1, the p50 of 15.8 s comes from a single reader. That reader got one `503 unavailable` (head not remote
+  durable). This run does not show whether that 503 caused the lag.
+
+| N | node | sealed objects | `shape` reads | `shape_body` reads | `point` reads | reads per object per location | parked | node CPU % | node RSS MB |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | gru | 3 | 14,752 | 3 | 5,198 | 4,918 | 1 | 40 | 331 |
+| 1 | sjc | 0 | 171 | 0 | 4,647 | 171 | 0 | 16 | 347 |
+| 1 | fra | 0 | 173 | 0 | 4,684 | 173 | 0 | 21 | 348 |
+| 100 | gru | 2 | 16,805 | 104 | 5,703 | 8,455 | 34 | 39 | 340 |
+| 100 | sjc | 179 | 67,992 | 211 | 7,689 | 381 | 33 | 64 | 340 |
+| 100 | fra | 152 | 52,135 | 184 | 7,422 | 344 | 33 | 81 | 338 |
+| 1,000 | gru | 0 | 21,653 | 608 | 7,824 | 22,261 | 64 | 77 | 343 |
+| 1,000 | sjc | 65 | 281,391 | 21,828 | 9,918 | 4,665 | 0 | 122 | 307 |
+| 1,000 | fra | 1 | 155,214 | 12,599 | 12,061 | 167,813 | 58 | 19 | 347 |
+| 10,000 | gru | 1 | 40,134 | 500 | 33,545 | 40,634 | 0 | 24 | 377 |
+| 10,000 | sjc | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| 10,000 | fra | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+
+- At N = 10,000, sjc and fra have no row: they restarted mid-step, so their scrapes failed. The merged JSON shows
+  zeros for them, which are not measurements.
+- The machines are shared-cpu-2x with 512 MB. The largest window-end RSS was 377 MB, on gru at N = 10,000. Node CPU
+  above 100 % (sjc, 122 %) means both vCPUs were in use.
+- Load machines `86540d2be19418` (gru), `48e1405b501e98` (sjc) and `080ee129c32558` (fra) ran image
+  `registry.fly.io/ts-vtest-load:v3-20261014184724@sha256:08ffe35d6484da843b7b16cf217639b8807bc6b3850778b7fe82abf3a636eb11`,
+  with the harness binary from `3f5d1c6a`.
+- Timeline: start 18:51:53Z, end 19:01:57Z. The tenant (organization `01M4XVTTT3TRT18YKB6QFTP0R9`) and key
+  `01M4XVV4ACCRG6M76T1SGNBJ3N` were deleted and revoked. App `ts-vtest-load` was destroyed at 19:02:31Z.
+- Evidence: `2026-10-14-replication-v3/evidence/live6/`. It holds the shard records, load and merge logs, the ledger,
+  ts-vtest-tb machine JSON before and after (with the exit events), and the node log tails.
+
+## 1. History: result at `a439e1d1` (runs live4, live5)
 
 - **V3: FAIL. BLOCKED on the shape memory-budget fix (F-V2-1), FR-22 (PR #283, open) and FR-24 (not written).** No PASS
   claim is possible until all three are merged and live.
@@ -98,6 +166,8 @@ All in org terrascale-previews-515. ts-vtest-tb was read and used, never changed
 | resource | created | final state |
 | --- | --- | --- |
 | App `ts-vtest-load` | 17:21:43Z | destroyed 17:58:08Z (with its images and the staged secret) |
+| App `ts-vtest-load` (live6, recreated) | 18:47:21Z | destroyed 19:02:31Z; machines `86540d2be19418`, `48e1405b501e98`, `080ee129c32558` destroyed 19:01:56Z |
+| live6 tenant (org `01M4XVTTT3TRT18YKB6QFTP0R9`, database `01M4XVTTTRP6BTKGNKK0CPAW2E`) and key `01M4XVV4ACCRG6M76T1SGNBJ3N` | 18:47:17Z | deleted and revoked 19:01:57Z |
 | Load machines: `e82794da120d48` (live1), `287e354c736e98` (probe), live4 ×3, live5 ×3 (ids above) | 17:23 to 17:50Z | all destroyed (ledgers in `evidence/live*`) |
 | Tenants on ts-vtest-tb, one per attempt live1 to live5: organization, project, database `v3` (gru + sjc, fra) | 17:21 to 17:49Z | all databases, projects and organizations deleted |
 | API keys `01M4XPYAXTBAG3X8W3TQ6HHTJH`, `01M4XQ45XY6JMSWHZZ5DW546BF`, `01M4XQF5YR2SQJVDAA387BV0GF`, `01M4XQMXADF78M833NJ1P0FCXQ`, `01M4XRHHQ84VG4R92VPQ7AXDGF` (documents read/write, one database, 6 h) | per attempt | all revoked. Live2's key was revoked by hand after its secret import failed |
