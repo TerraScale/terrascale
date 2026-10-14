@@ -176,10 +176,27 @@ public sealed class PlatformDatabasesTests
     [Test]
     public async Task Global_issuer_project_tokens_resolve_their_seeded_database_without_auth_enrollment()
     {
+        const string ChildFlag = "TERRABASE_TEST_PLATFORM_AUTH_DEFAULTS_CHILD";
+        if (Environment.GetEnvironmentVariable(ChildFlag) != "1")
+        {
+            // Fly identity is process-wide; isolate this server from the parallel suite.
+            await IsolatedTestChild.RunAsync(typeof(PlatformDatabasesTests), nameof(Global_issuer_project_tokens_resolve_their_seeded_database_without_auth_enrollment), ChildFlag);
+            return;
+        }
+
+        Environment.SetEnvironmentVariable("FLY_REGION", "gru");
+        Environment.SetEnvironmentVariable("FLY_MACHINE_ID", "platform-test");
+        Environment.SetEnvironmentVariable("FLY_APP_NAME", "ts-terrabase");
+        var production = TerraBaseOptions.FromValues(new Dictionary<string, string>());
+        // Exercise the parsed production trust pair over real local listeners without requiring Fly's private DNS.
+        Environment.SetEnvironmentVariable("FLY_REGION", null);
+        Environment.SetEnvironmentVariable("FLY_MACHINE_ID", null);
+        Environment.SetEnvironmentVariable("FLY_APP_NAME", null);
         await using var api = await ManagementApi.StartAsync(settings =>
         {
             Seeding(settings);
-            settings["auth-issuer"] = TerraBaseOptions.PlatformAuthIssuer;
+            settings["auth-issuer"] = production.AuthIssuer ?? string.Empty;
+            settings["auth-audience"] = string.Join(',', production.AuthAudiences);
         }, services => services.AddHttpClient("ts-auth").AddHttpMessageHandler(() => new GlobalIssuerRoute()));
         await SeededAsync(api.Server);
         foreach (var (name, database) in PlatformDatabases.Databases)
@@ -187,6 +204,7 @@ public sealed class PlatformDatabasesTests
             using var client = api.WithToken(api.Issuer.Mint(api.User, token =>
             {
                 token.Issuer = TerraBaseOptions.PlatformAuthIssuer;
+                token.Audience = TerraBaseOptions.PlatformAuthAudience;
                 token.Claims["project_id"] = database.ProjectId;
                 token.Claims["database"] = name;
                 token.Claims["scope"] = "databases:read documents:read";
@@ -195,6 +213,19 @@ public sealed class PlatformDatabasesTests
             using var other = await client.GetAsync(ManagementApi.Uri(name == PlatformDatabases.Auth ? Dashboard + "/collections" : Auth + "/collections"));
             await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(other.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+
+        foreach (var mismatch in new[] { "issuer", "audience" })
+        {
+            using var rejected = api.WithToken(api.Issuer.Mint(api.User, token =>
+            {
+                token.Issuer = mismatch == "issuer" ? TestIssuer.Issuer : TerraBaseOptions.PlatformAuthIssuer;
+                token.Audience = mismatch == "audience" ? TestIssuer.Audience : TerraBaseOptions.PlatformAuthAudience;
+                token.Claims["project_id"] = PlatformDatabases.AuthProjectId;
+                token.Claims["scope"] = "databases:read documents:read";
+            }));
+            using var response = await rejected.GetAsync(ManagementApi.Uri(Auth + "/collections"));
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         }
 
         await Assert.That(api.Issuer.ProjectFetches).IsEqualTo(0);
