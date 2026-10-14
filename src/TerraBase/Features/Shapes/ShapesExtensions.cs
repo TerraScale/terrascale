@@ -1,5 +1,7 @@
 using System.Text.Json.Nodes;
 using Microsoft.OpenApi;
+using TerraBase.Features.Backup;
+using TerraBase.Features.Memory;
 
 namespace TerraBase.Features.Shapes;
 
@@ -39,13 +41,29 @@ public static class ShapesExtensions
 
     /// <summary>Registers the shape services behind <c>GET …/collections/{collection}/shape</c>, their JSON metadata and examples.</summary>
     public static IServiceCollection AddTerraBaseShapes(this IServiceCollection services) =>
-        services.ConfigureHttpJsonOptions(json => json.SerializerOptions.TypeInfoResolverChain.Insert(0, ShapeJsonContext.Default))
+        services.ConfigureHttpJsonOptions(json =>
+            {
+                json.SerializerOptions.TypeInfoResolverChain.Insert(0, ShapeJsonContext.Default);
+                json.SerializerOptions.TypeInfoResolverChain.Insert(0, ShapeKeyJsonContext.Default);
+            })
             // Runs after the generic examples, which do not know the shape protocol's bodies, headers and codes.
             .AddOpenApi("v1", options => options.AddOperationTransformer((operation, _, _) =>
             {
                 if (operation.OperationId == "getShape")
                 {
                     Document(operation);
+                }
+                else if (operation.OperationId == "getShapeKey" && operation.Responses is { } responses)
+                {
+                    foreach (var response in responses.Values.OfType<OpenApiResponse>())
+                    {
+                        response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal);
+                        response.Headers["Cache-Control"] = new OpenApiHeader
+                        {
+                            Description = "private, no-store; a shape key must never be cached.",
+                            Schema = new OpenApiSchema { Type = JsonSchemaType.String },
+                        };
+                    }
                 }
 
                 return Task.CompletedTask;
@@ -55,7 +73,11 @@ public static class ShapesExtensions
             .AddSingleton<IShapeSnapshots>(provider => provider.GetRequiredService<UnavailableShapes>())
             .AddSingleton<IShapeChunks>(provider => provider.GetRequiredService<UnavailableShapes>())
             .AddSingleton<IShapeLiveTail>(provider => provider.GetRequiredService<UnavailableShapes>())
-            .AddSingleton<IShapeResume>(provider => provider.GetRequiredService<UnavailableShapes>());
+            .AddSingleton<IShapeResume>(provider => provider.GetRequiredService<UnavailableShapes>())
+            .AddSingleton<IShapeKeyRetention, NoShapeKeyRetention>()
+            .AddSingleton<IShapeCrypto>(provider => new ShapeCrypto(provider.GetService<DataKeys>(),
+                provider.GetRequiredService<IShapeKeyRetention>(), provider.GetRequiredService<IMemoryBudget>(),
+                provider.GetRequiredService<TimeProvider>()));
 
     private static void Document(OpenApiOperation operation)
     {
