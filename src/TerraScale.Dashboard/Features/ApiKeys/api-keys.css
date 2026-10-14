@@ -29,7 +29,7 @@
 }
 
 /* Narrow screens: the create action drops under the title, aligned with it. */
-@media (max-width: 47.99rem) {
+@media (max-width: 767px) {
   .ts-apikeys-header > .ts-page-actions {
     margin-left: 0;
     justify-content: flex-start;
@@ -210,6 +210,7 @@ dialog.ts-credential-dialog {
   /* Filters stack full width, one control per row. */
   .ts-apikeys-page .ts-card-actions > .ts-apikeys-filters {
     flex-basis: 100%;
+    flex-wrap: wrap;
   }
 
   .ts-apikeys-filters > .ts-input,
@@ -226,11 +227,15 @@ dialog.ts-credential-dialog {
 
 .ts-apikeys-kinds .ts-tab {
   padding: var(--ts-s1) var(--ts-s2);
-  border-radius: var(--ts-radius);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
   font-size: var(--ts-fs-sm);
 }
 
-.ts-apikeys-kinds .ts-tab[aria-current="page"] {
+.ts-apikeys-kinds .ts-tab[aria-current="page"],
+.ts-apikeys-kinds .ts-tab[aria-pressed="true"] {
   background: color-mix(in oklab, white 8%, transparent);
 }
 

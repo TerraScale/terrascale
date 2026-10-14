@@ -100,6 +100,13 @@ public sealed class DashboardBrowserJourneyTests(DashboardE2EFixture fixture)
                 await page.Locator("#key-name").FillAsync(name);
                 await page.Locator("#key-database").SelectOptionAsync(databaseId!);
                 await page.Locator("#key-access-write").CheckAsync();
+                await page.Locator("#create-key").GetByRole(AriaRole.Button, new() { Name = "M2M client", Exact = true }).ClickAsync();
+                await page.Locator("#create-m2m[open]").WaitForAsync();
+                await page.Locator("#create-m2m").GetByRole(AriaRole.Button, new() { Name = "API key", Exact = true }).ClickAsync();
+                await page.Locator("#create-key[open]").WaitForAsync();
+                await Assert.That(await page.Locator("#key-name").InputValueAsync()).IsEqualTo(name);
+                await Assert.That(await page.Locator("#key-database").InputValueAsync()).IsEqualTo(databaseId);
+                await Assert.That(await page.Locator("#key-access-write").IsCheckedAsync()).IsTrue();
                 await SubmitAsync("#create-key form", "Create key");
                 var keySecret = page.Locator(".ts-apikeys-secret-value");
                 await keySecret.WaitForAsync();
