@@ -13,6 +13,10 @@ const home = computed(() => localeIndex.value === 'root' ? '/' : `/${localeIndex
 
 <template>
   <Layout>
+    <template #nav-bar-title-before>
+      <img class="docs-brand-mark" src="/favicon.svg" alt="" aria-hidden="true" />
+      <strong class="docs-brand-word">TerraScale</strong>
+    </template>
     <template #doc-before>
       <nav v-if="group" class="docs-breadcrumb" aria-label="Breadcrumb">
         <a :href="home">Docs</a><span aria-hidden="true">/</span>
