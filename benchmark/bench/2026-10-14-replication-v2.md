@@ -9,6 +9,25 @@ restarts at `-1` (no resume until FR-23); `429`/`503` keep the view and retry; `
 `ShapeConvergenceE2ETests` keeps one reader per region and, after each fault, waits until **every region's view equals
 the documents that region lists** and every region lists the expected digest.
 
+## Rerun at `7bf8dd3a` (2026-10-14 18:44Z): S1 and S2 PASS on Fly
+
+`ts-vtest-tb` redeployed by the V-wave owner (not by this lane) at `7bf8dd3a2a845240aa74e675eda23457adc67e56`
+(temp branch `fix/shape-frontier-stuck-vtest` = #307 shape memory fix + #309 stuck-frontier fix + vtest scripts), image
+`sha256:b968b9965c7dc30a0a90a1f8fe8d3f9bdfcc78a0cfa6cfceff0c163f2d09ceb6`, same three machines. Harness
+`6f16344a` (this branch), pinned run from beta, faults with `TERRABASE_E2E_FLY_OUTAGE=1`. After the run `ip6tables -S`
+on all three machines shows only the ACCEPT policies (healed).
+
+| Row | Scenario | Where | Result | Numbers | Run (UTC) | Raw log (sha256) |
+| --- | --- | --- | --- | --- | --- | --- |
+| S1 | Partition (ip6tables fra–gru cut, both write, shared document edited on both sides), heal | Fly @ `7bf8dd3a` | **PASS** | seed: 30 docs, views = listings in 1,574 ms; after heal: 71 docs (`401595D1…`) views = listings in all 3 in 3,942 ms; 0 refetches; 9–10 responses per reader | 18:44:33Z | `2026-10-14-replication-vtest/evidence/raw/7bf8dd3a-ShapeConvergenceE2ETests-Shape_clients_in_every_region_converge_after_a_partition_heals.txt` (`e1d8173b…`) |
+| S2 | Collection drop and re-create | Fly @ `7bf8dd3a` | **PASS** | before: 30 docs in 1,583 ms; after drop: 0 in 582 ms; after re-create: 30 docs (`07985613…`) in 1,562 ms; 0 refetches | 18:44:16Z | `2026-10-14-replication-vtest/evidence/raw/7bf8dd3a-ShapeConvergenceE2ETests-Shape_clients_follow_a_collection_drop_and_re_create.txt` (`1d6dd896…`) |
+| V5 R1 (regression check) | 201 `remote_durable`, another region serves the first read | Fly @ `7bf8dd3a` | PASS 3/3 | ack gru 266 / sjc 398 / fra 474 ms; both other regions held it on the first read (716–797 ms after send) | 18:45:34Z | `2026-10-14-replication-vtest/evidence/raw/7bf8dd3a-WaveAE2ETests-A_201_is_remote_durable.txt` (`82a40986…`) |
+
+S3 (repair) and S4 (skew) stay BLOCKED on Fly (harness), S5 on FR-23. The `a439e1d1` rows below are kept as history:
+F-V2-1 (`429 shape_busy`) is fixed by #307/#309 on this candidate; it is fixed on main only once both merge.
+
+## History at `a439e1d1`
+
 | Row | Scenario | Where | Result | Numbers | Harness commit / run (UTC) | Raw log (sha256) |
 | --- | --- | --- | --- | --- | --- | --- |
 | S1 | Partition (fra–gru direct link cut, both write, shared document edited on both sides), heal | local | PASS | 71 docs, views = listings in all 3 (`5EFF6C94…`) 132 ms after the shared document settled; 0 refetches | `bba212ff` 17:14Z | beta `/tmp/v2v5-local-5/ShapeConvergenceE2ETests.log` (`e754dca3…`) |
