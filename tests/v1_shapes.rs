@@ -8,12 +8,15 @@ use futures_util::{pin_mut, StreamExt};
 use http_body_util::Full;
 use hyper::{service::service_fn, HeaderMap, Request, Response};
 use hyper_util::rt::TokioIo;
+use ring::{aead, hkdf};
 use serde_json::{json, Value};
 use terrascale::v1::{Client, RetryPolicy};
 
 const PROJECT: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const ID0: &str = "01ARZ3NDEKTSV4RRFFQ69G5FB0";
 const ID1: &str = "01ARZ3NDEKTSV4RRFFQ69G5FB1";
+const OTHER_HANDLE: &str = "h1-d90dddd41bd8282d";
+const OTHER_KEY_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FC1";
 
 fn vectors() -> Value {
     serde_json::from_str(include_str!("fixtures/shape-vectors.json")).unwrap()
@@ -847,5 +850,291 @@ async fn epoch_key_is_no_store_rotates_and_binds_decryption_to_authorized_offset
         .await
         .is_err());
     assert_eq!(fixture.query(0)["epoch"], "101");
+    fixture.assert_auth();
+}
+
+fn current_epoch() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        / 600
+}
+
+fn key_reply(handle: &str, epoch: u64, key_id: &str, key: &[u8]) -> Reply {
+    use base64::Engine as _;
+    let mut reply = Reply::vector("epoch-key");
+    reply.body = json!({
+        "handle": handle,
+        "epoch": epoch.to_string(),
+        "key_id": key_id,
+        "key": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key),
+    })
+    .to_string()
+    .into_bytes();
+    reply
+}
+
+/// Test-only sealing of one single-frame TBS1 object (section 12).
+fn seal(
+    epoch: u64,
+    key_id: &str,
+    handle: &str,
+    offset: &str,
+    epoch_key: &[u8],
+    salt: &[u8],
+    plaintext: &[u8],
+) -> Vec<u8> {
+    let mut header = b"TBS1".to_vec();
+    header.extend_from_slice(&epoch.to_be_bytes());
+    header.extend_from_slice(key_id.as_bytes());
+    header.extend_from_slice(salt);
+    let mut binding = handle.as_bytes().to_vec();
+    binding.push(0);
+    binding.extend_from_slice(offset.as_bytes());
+    let mut object_key = [0u8; 32];
+    hkdf::Salt::new(hkdf::HKDF_SHA256, salt)
+        .extract(epoch_key)
+        .expand(
+            &[&b"TBS1 object\0"[..], binding.as_slice()],
+            hkdf::HKDF_SHA256,
+        )
+        .and_then(|okm| okm.fill(&mut object_key))
+        .unwrap();
+    let word = plaintext.len() as u32 | (1 << 31);
+    let mut aad = header.clone();
+    aad.extend_from_slice(&0u64.to_be_bytes());
+    aad.extend_from_slice(&word.to_be_bytes());
+    let key =
+        aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_256_GCM, &object_key).unwrap());
+    let mut body = plaintext.to_vec();
+    key.seal_in_place_append_tag(
+        aead::Nonce::assume_unique_for_key([0u8; 12]),
+        aead::Aad::from(aad.as_slice()),
+        &mut body,
+    )
+    .unwrap();
+    let mut object = header;
+    object.extend_from_slice(&word.to_be_bytes());
+    object.extend_from_slice(&body);
+    object
+}
+
+#[tokio::test]
+async fn current_epoch_key_is_fetched_once_for_clones_and_all_offsets() {
+    use base64::Engine as _;
+    let v = vectors();
+    let crypto = &v["tbs1_vectors"][0];
+    let handle = crypto["handle"].as_str().unwrap();
+    let key_id = crypto["key_id"].as_str().unwrap();
+    let epoch_key = unhex(crypto["epoch_key_hex"].as_str().unwrap());
+    let salt = unhex(crypto["object_salt_hex"].as_str().unwrap());
+    let plaintext = crypto["plaintext_utf8"].as_str().unwrap().as_bytes();
+    // The helper reproduces the pinned epoch-100 object, so its sealing matches section 12.
+    assert_eq!(
+        seal(100, key_id, handle, "2", &epoch_key, &salt, plaintext),
+        unhex(crypto["tbs1_hex"].as_str().unwrap())
+    );
+
+    let epoch = current_epoch();
+    let at_two = seal(epoch, key_id, handle, "2", &epoch_key, &salt, plaintext);
+    let at_four = seal(
+        epoch,
+        key_id,
+        handle,
+        "4",
+        &epoch_key,
+        &[0x44; 32],
+        plaintext,
+    );
+    let fixture = Fixture::new(vec![
+        key_reply(handle, epoch, key_id, &epoch_key),
+        key_reply(handle, epoch, key_id, &epoch_key),
+    ])
+    .await;
+    let client = fixture.client();
+    let shape = client.database("demo").collection("notes").shape();
+    let (two, four) = tokio::join!(
+        shape.decrypt_sealed(&at_two, handle, "2", epoch, key_id),
+        shape.decrypt_sealed(&at_four, handle, "4", epoch, key_id),
+    );
+    assert_eq!(two.unwrap(), plaintext);
+    assert_eq!(four.unwrap(), plaintext);
+    let cloned = client.clone().database("demo").collection("notes").shape();
+    assert_eq!(
+        cloned
+            .decrypt_sealed(&at_two, handle, "2", epoch, key_id)
+            .await
+            .unwrap(),
+        plaintext
+    );
+    // The cached key opens only the object whose binding it was sealed for.
+    assert!(shape
+        .decrypt_sealed(&at_four, handle, "2", epoch, key_id)
+        .await
+        .is_err());
+    let key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(epoch_key.as_slice());
+    assert!(!format!("{client:?}{shape:?}").contains(&key_b64));
+    assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+    // A separate credential-bearing client must authorize its own key fetch.
+    let separate = fixture
+        .client()
+        .database("demo")
+        .collection("notes")
+        .shape();
+    assert_eq!(
+        separate
+            .decrypt_sealed(&at_two, handle, "2", epoch, key_id)
+            .await
+            .unwrap(),
+        plaintext
+    );
+    assert_eq!(fixture.requests.lock().unwrap().len(), 2);
+    fixture.assert_auth();
+}
+
+#[tokio::test]
+async fn cached_keys_are_separated_by_handle_epoch_and_key_id() {
+    let v = vectors();
+    let crypto = &v["tbs1_vectors"][0];
+    let handle = crypto["handle"].as_str().unwrap();
+    let key_id = crypto["key_id"].as_str().unwrap();
+    let epoch_key = unhex(crypto["epoch_key_hex"].as_str().unwrap());
+    let salt = unhex(crypto["object_salt_hex"].as_str().unwrap());
+    let plaintext = crypto["plaintext_utf8"].as_str().unwrap().as_bytes();
+    let epoch = current_epoch();
+    let at_two = seal(epoch, key_id, handle, "2", &epoch_key, &salt, plaintext);
+    let other_handle = seal(
+        epoch,
+        key_id,
+        OTHER_HANDLE,
+        "2",
+        &epoch_key,
+        &salt,
+        plaintext,
+    );
+    let other_key_id = seal(
+        epoch,
+        OTHER_KEY_ID,
+        handle,
+        "2",
+        &epoch_key,
+        &salt,
+        plaintext,
+    );
+    let fixture = Fixture::new(vec![
+        key_reply(handle, epoch, key_id, &epoch_key),
+        key_reply(OTHER_HANDLE, epoch, key_id, &epoch_key),
+        key_reply(handle, epoch, OTHER_KEY_ID, &epoch_key),
+    ])
+    .await;
+    let client = fixture.client();
+    let shape = client.database("demo").collection("notes").shape();
+    shape
+        .decrypt_sealed(&at_two, handle, "2", epoch, key_id)
+        .await
+        .unwrap();
+    shape
+        .decrypt_sealed(&other_handle, OTHER_HANDLE, "2", epoch, key_id)
+        .await
+        .unwrap();
+    shape
+        .decrypt_sealed(&other_key_id, handle, "2", epoch, OTHER_KEY_ID)
+        .await
+        .unwrap();
+    // The original tuple is still cached after the other two were added.
+    assert_eq!(
+        shape
+            .decrypt_sealed(&at_two, handle, "2", epoch, key_id)
+            .await
+            .unwrap(),
+        plaintext
+    );
+    assert_eq!(fixture.requests.lock().unwrap().len(), 3);
+    assert_eq!(fixture.query(1)["handle"], OTHER_HANDLE);
+    assert_eq!(fixture.query(2)["key_id"], OTHER_KEY_ID);
+    fixture.assert_auth();
+}
+
+#[tokio::test]
+async fn key_endpoint_conflict_evicts_every_cached_key() {
+    let v = vectors();
+    let crypto = &v["tbs1_vectors"][0];
+    let handle = crypto["handle"].as_str().unwrap();
+    let key_id = crypto["key_id"].as_str().unwrap();
+    let epoch_key = unhex(crypto["epoch_key_hex"].as_str().unwrap());
+    let salt = unhex(crypto["object_salt_hex"].as_str().unwrap());
+    let plaintext = crypto["plaintext_utf8"].as_str().unwrap().as_bytes();
+    let epoch = current_epoch();
+    let at_two = seal(epoch, key_id, handle, "2", &epoch_key, &salt, plaintext);
+    let mut conflict = Reply::body(json!({"error":{"code":"must_refetch"}}));
+    conflict.status = 409;
+    let fixture = Fixture::new(vec![
+        key_reply(handle, epoch, key_id, &epoch_key),
+        conflict,
+        key_reply(handle, epoch, key_id, &epoch_key),
+    ])
+    .await;
+    let client = fixture.client();
+    let shape = client.database("demo").collection("notes").shape();
+    shape
+        .decrypt_sealed(&at_two, handle, "2", epoch, key_id)
+        .await
+        .unwrap();
+    let error = shape
+        .decrypt_sealed(&at_two, handle, "2", epoch, OTHER_KEY_ID)
+        .await
+        .unwrap_err();
+    assert_eq!(error.status(), Some(409));
+    assert_eq!(
+        shape
+            .decrypt_sealed(&at_two, handle, "2", epoch, key_id)
+            .await
+            .unwrap(),
+        plaintext
+    );
+    assert_eq!(fixture.requests.lock().unwrap().len(), 3);
+    assert_eq!(fixture.query(2)["key_id"], key_id);
+    fixture.assert_auth();
+}
+
+#[tokio::test]
+async fn stream_conflict_evicts_cached_keys_on_the_same_client() {
+    let v = vectors();
+    let crypto = &v["tbs1_vectors"][0];
+    let handle = crypto["handle"].as_str().unwrap();
+    let key_id = crypto["key_id"].as_str().unwrap();
+    let epoch_key = unhex(crypto["epoch_key_hex"].as_str().unwrap());
+    let salt = unhex(crypto["object_salt_hex"].as_str().unwrap());
+    let plaintext = crypto["plaintext_utf8"].as_str().unwrap().as_bytes();
+    let epoch = current_epoch();
+    let at_two = seal(epoch, key_id, handle, "2", &epoch_key, &salt, plaintext);
+    let mut replies = vec![key_reply(handle, epoch, key_id, &epoch_key)];
+    replies.extend(snapshot());
+    replies.push(Reply::vector("expired-offset"));
+    replies.extend(snapshot());
+    replies.push(key_reply(handle, epoch, key_id, &epoch_key));
+    let fixture = Fixture::new(replies).await;
+    let client = fixture.client();
+    let shape = client.database("demo").collection("notes").shape();
+    shape
+        .decrypt_sealed(&at_two, handle, "2", epoch, key_id)
+        .await
+        .unwrap();
+    let stream = client.database("demo").collection("notes").shape().stream();
+    pin_mut!(stream);
+    // Snapshot, then the 409 restarts it: two updates each.
+    for _ in 0..4 {
+        stream.next().await.unwrap().unwrap();
+    }
+    assert_eq!(
+        shape
+            .decrypt_sealed(&at_two, handle, "2", epoch, key_id)
+            .await
+            .unwrap(),
+        plaintext
+    );
+    assert_eq!(fixture.requests.lock().unwrap().len(), 9);
+    assert_eq!(fixture.query(8)["epoch"], epoch.to_string());
     fixture.assert_auth();
 }

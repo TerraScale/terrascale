@@ -304,6 +304,7 @@ impl ClientBuilder {
                 project: self.project,
                 atlas,
                 region_pin: self.region_pin,
+                shape_keys: Default::default(),
             }),
         })
     }
@@ -390,6 +391,7 @@ struct Inner {
     project: Option<String>,
     atlas: Option<AtlasResolver>,
     region_pin: Option<String>,
+    shape_keys: tokio::sync::Mutex<super::shapes::EpochKeys>,
 }
 
 /// A v1 client for one key. Cheap to clone; safe for concurrent use.
@@ -408,6 +410,10 @@ impl fmt::Debug for Client {
 }
 
 impl Client {
+    pub(crate) fn shape_keys(&self) -> &tokio::sync::Mutex<super::shapes::EpochKeys> {
+        &self.inner.shape_keys
+    }
+
     /// Builds a project-scoped C# TerraBase client using Atlas by default.
     /// Supply a ts-auth access token obtained through the authentication SDK.
     /// Use [`ClientBuilder::endpoint`] for an explicit static override.

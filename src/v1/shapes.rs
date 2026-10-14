@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use futures_util::{stream, Stream};
@@ -29,6 +30,20 @@ const MAX_WHERE_BYTES: usize = 8 << 10;
 const MAX_REQUEST_TARGET: usize = (8 << 10) - 64;
 /// Redirects, must-refetch resumes and shape-busy retries share this bound.
 const MAX_RESTARTS: u32 = 3;
+
+pub(crate) type EpochKeys = BTreeMap<(String, u64, String), zeroize::Zeroizing<[u8; 32]>>;
+
+fn current_epoch() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / 600
+}
+
+fn retain_epoch(keys: &mut EpochKeys, epoch: u64) {
+    keys.retain(|(_, saved_epoch, _), _| *saved_epoch == epoch);
+}
 
 /// One collection, optionally filtered. Performs no I/O until [`Shape::stream`].
 #[derive(Debug, Clone)]
@@ -82,7 +97,8 @@ impl Shape {
     }
 
     /// Decrypts one sealed TBS1 object (section 12) for `handle` at
-    /// `request_offset`. The epoch key is fetched per call and never cached.
+    /// `request_offset`. Epoch keys are cached only in this client's process
+    /// memory for the current epoch, keyed by handle, epoch and key id.
     /// A rejected object yields no plaintext.
     pub async fn decrypt_sealed(
         &self,
@@ -111,6 +127,13 @@ impl Shape {
     ) -> Result<zeroize::Zeroizing<[u8; 32]>> {
         let database = self.collection.database();
         let client = database.client();
+        // Serialize lookup and fetch so conflicts cannot race cache insertion.
+        let mut keys = client.shape_keys().lock().await;
+        retain_epoch(&mut keys, current_epoch());
+        let identity = (handle.to_owned(), epoch, key_id.to_owned());
+        if let Some(key) = keys.get(&identity) {
+            return Ok(key.clone());
+        }
         let (base, region) = client.shape_endpoint(database.name(), false).await?;
         let query = [
             ("handle", handle.to_owned()),
@@ -131,6 +154,9 @@ impl Shape {
                 &[("Cache-Control", "no-store".into())],
             )
             .await?;
+        if resp.status == StatusCode::CONFLICT {
+            keys.clear();
+        }
         resp.check_status(&[StatusCode::OK])?;
         // Clear key-bearing buffers on every exit and exclude them from diagnostics.
         let raw = zeroize::Zeroizing::new(std::mem::take(&mut resp.body));
@@ -149,6 +175,11 @@ impl Shape {
             return Err(resp.invalid("shape key is not 32 bytes".into()));
         }
         key.copy_from_slice(&bytes);
+        let now = current_epoch();
+        retain_epoch(&mut keys, now);
+        if epoch == now {
+            keys.insert(identity, key.clone());
+        }
         Ok(key)
     }
 }
@@ -334,6 +365,7 @@ impl ShapeSync {
     async fn step(&mut self) -> Result<ShapeUpdate> {
         super::ids::check_name("database", &self.database)?;
         super::ids::check_name("collection", &self.collection)?;
+        retain_epoch(&mut *self.client.shape_keys().lock().await, current_epoch());
         let mut restarts = 0;
         'restart: loop {
             let mut target = self.target();
@@ -372,6 +404,7 @@ impl ShapeSync {
                         return self.apply(handle, offset, *live, bucket.as_deref(), &resp);
                     }
                     StatusCode::CONFLICT => {
+                        self.client.shape_keys().lock().await.clear();
                         let error = resp.check_status(&[StatusCode::OK]).unwrap_err();
                         if error.code() != Some("must_refetch") {
                             return Err(error);
@@ -921,6 +954,21 @@ mod tests {
 
     fn vectors() -> Value {
         serde_json::from_str(include_str!("../../tests/fixtures/shape-vectors.json")).unwrap()
+    }
+
+    #[test]
+    fn epoch_key_cache_evicts_past_epochs_before_lookup() {
+        let mut keys = EpochKeys::new();
+        let past = ("h1-f3171a2230109328".to_owned(), 100, "old".to_owned());
+        let current = ("h1-f3171a2230109328".to_owned(), 101, "new".to_owned());
+        keys.insert(past.clone(), zeroize::Zeroizing::new([1; 32]));
+        keys.insert(current.clone(), zeroize::Zeroizing::new([2; 32]));
+        retain_epoch(&mut keys, 101);
+        assert!(!keys.contains_key(&past));
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[&current].as_ref(), &[2; 32]);
+        retain_epoch(&mut keys, 102);
+        assert!(keys.is_empty());
     }
 
     #[test]

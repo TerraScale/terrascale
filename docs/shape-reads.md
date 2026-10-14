@@ -62,9 +62,13 @@ offset while the existing client retry policy applies. Caller cancellation
 stops the pending request; no background subscription is spawned.
 
 TBS1 uses the existing `ring` dependency for HKDF-SHA256 and AES-256-GCM. An
-object is authenticated in full before any plaintext is returned. `Shape::decrypt_sealed` fetches the requested epoch key from the authorized
-`shape/keys` route with `Cache-Control: no-store` on every call. Keys are used
-only in memory and are never reused across epoch or data-key rotations.
+object is authenticated in full before any plaintext is returned. `Shape::decrypt_sealed` fetches missing epoch keys from the authorized
+`shape/keys` route with `Cache-Control: no-store`. Keys are cached only in process
+memory by `(handle, epoch, key_id)`, shared by clones of the same client.
+Before each shape read or decryption, past epochs are evicted; historical
+objects fetch an authorized key without retaining it. Any shape or key-endpoint
+`409` clears the client's key cache. Different credentials never share a cache,
+and no key is persisted or reused across handle, epoch or data-key rotations.
 Key material must never be logged or persisted. An old object retains its
 original epoch and data-key id; new epochs fetch their own keys.
 The existing `zeroize` dependency clears owned key buffers on drop, and
