@@ -38,7 +38,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       sha256: ${{ steps.pack.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -49,7 +49,7 @@ jobs:
             echo "NUGET_PACKAGES=$RUNNER_TEMP/nuget-packages"
             echo "NUGET_HTTP_CACHE_PATH=$RUNNER_TEMP/nuget-http"
           } >> "$GITHUB_ENV"
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
           dotnet-version: |
             10.0.401
@@ -74,7 +74,7 @@ jobs:
           package="$RUNNER_TEMP/qualified-package/TerraScale.DotNet.$VERSION.nupkg"
           unzip -p "$package" TerraScale.DotNet.nuspec | grep -F "commit=\"$GITHUB_SHA\""
           echo "sha256=$(sha256sum "$package" | cut -d' ' -f1)" | tee -a "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: package
           path: |
@@ -90,11 +90,11 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: package
       - run: printf 'DOTNET_INSTALL_DIR=%s/dotnet\nNUGET_HTTP_CACHE_PATH=%s/nuget-http\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
           dotnet-version: 10.0.401
       - env:
@@ -117,12 +117,12 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           sparse-checkout: tests/TerraScale.DotNet.PackageConsumer
       - run: echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet" >> "$GITHUB_ENV"
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
           dotnet-version: |
             10.0.401
@@ -170,7 +170,7 @@ jobs:
           gh api orgs/TerraScale/packages/nuget/TerraScale.DotNet --jq '{name, visibility, repository: .repository.full_name, html_url}' \
             || echo "::warning::GitHub Packages metadata is not readable with the job token."
       - if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: restored-package
           path: ${{ runner.temp }}/nuget-packages/terrascale.dotnet/*/terrascale.dotnet.*.nupkg
@@ -186,11 +186,11 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: restored-package
       - run: printf 'DOTNET_INSTALL_DIR=%s/dotnet\nNUGET_HTTP_CACHE_PATH=%s/nuget-http\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
         with:
           dotnet-version: 10.0.401
       - env:
