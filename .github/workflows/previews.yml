@@ -19,15 +19,15 @@ permissions:
 
 jobs:
   cleanup:
-    runs-on: alpha
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_PREVIEWS }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
       - if: github.event_name == 'pull_request'
         run: scripts/fly/preview.sh destroy ${{ github.event.pull_request.number }}
       - if: github.event_name != 'pull_request'

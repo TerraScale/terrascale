@@ -41,7 +41,7 @@ case ${1:-} in
     # TerraBase refuses to start without backup: each preview gets its own Tigris bucket and master key.
     secrets=$(flyctl secrets list -a "$app" --json | jq -r '.[].name')
     if ! grep -qx BUCKET_NAME <<<"$secrets"; then
-      flyctl storage create -a "$app" -n "terrascale-$app" --yes
+      flyctl storage create -a "$app" -n "terrascale-$app" --yes > /dev/null
     fi
     if ! grep -qx TERRABASE_MASTER_KEY <<<"$secrets"; then
       flyctl secrets set -a "$app" --stage TERRABASE_MASTER_KEY="$(openssl rand -base64 32)"
