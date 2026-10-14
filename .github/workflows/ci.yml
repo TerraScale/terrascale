@@ -1,7 +1,7 @@
 name: CI
 
 # One required check: "test". It passes when every area job that ran passed. The area jobs run in parallel, each
-# building one Dockerfile stage on a CPU-limited alpha runner (format, Release build with analyzers as errors, the area's checks and Fast
+# building one Dockerfile stage on a GitHub-hosted runner (format, Release build with analyzers as errors, the area's checks and Fast
 # suite, plus the local three-node replication matrix and the local-only e2e category for TerraBase): test-libs, test-auth, test-terrabase. On pull requests an area runs only when its files or the shared files
 # changed (`changes`); libs changes run every area. Pushes to main run every area. `make docker-test` runs all three.
 # Next to it, without waiting for it:
@@ -52,7 +52,7 @@ jobs:
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
           filters: |
             shared: &shared
@@ -107,12 +107,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - &checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           path: terrascale
           persist-credentials: false
       - &checkout-ts-dotnet
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: TerraScale/ts-dotnet
           ref: ${{ env.TS_DOTNET_REV }}
@@ -120,23 +120,21 @@ jobs:
           path: ts-dotnet
           persist-credentials: false
       - name: Check out the path-filter matcher for regression fixtures
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: dorny/paths-filter
-          ref: v3
+          ref: 0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
           path: path-filter-action
           persist-credentials: false
       - name: Verify CI path filters
         run: python3 terrascale/scripts/ci/path-filter-test.py terrascale/.github/workflows/ci.yml path-filter-action/dist/index.js
       - &setup-builder
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
-          # On alpha, build on the shared persistent BuildKit daemon (layer + cache-mount reuse).
-          driver: ${{ vars.CI_RUNNER && 'remote' || 'docker-container' }}
-          endpoint: ${{ vars.CI_RUNNER && 'unix:///run/buildkit/buildkitd.sock' || '' }}
+          driver: docker-container
       # Only this step writes the area's build cache; consumers never overwrite it with test results.
       - &build-stage
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -148,10 +146,10 @@ jobs:
             DOTNET_PROCESSOR_COUNT=8
             DOTNET_GCHeapCount=8
           push: false
-          cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope={0}', github.job) || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && format('type=gha,mode=max,scope={0}', github.job) || '' }}
+          cache-from: ${{ format('type=gha,scope={0}', github.job) }}
+          cache-to: ${{ format('type=gha,mode=max,scope={0}', github.job) }}
       - &build-area
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -163,7 +161,7 @@ jobs:
           no-cache-filters: test-${{ github.job }}
           push: false
           # Per-job layer cache: the base stage (apt, Playwright Chromium, ts-dotnet) is rebuilt only when it changes.
-          cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope={0}', github.job) || '' }}
+          cache-from: ${{ format('type=gha,scope={0}', github.job) }}
 
   auth:
     needs: changes
@@ -249,7 +247,7 @@ jobs:
           [[ -n $TIGRIS_CI_CREDENTIALS ]] || { echo 'TIGRIS_CI_CREDENTIALS is required' >&2; exit 1; }
           umask 077
           printf '%s\n' "$TIGRIS_CI_CREDENTIALS" > "$RUNNER_TEMP/tigris-ci.env"
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -260,7 +258,7 @@ jobs:
           # A rerun of the same commit runs the suites again instead of reusing the stored result.
           no-cache-filters: slow-${{ matrix.area }}-run
           outputs: type=local,dest=slow
-          cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope={0}', matrix.area) || '' }}
+          cache-from: ${{ format('type=gha,scope={0}', matrix.area) }}
       - name: Remove the CI credential file
         if: ${{ always() && matrix.area == 'terrabase' }}
         run: rm -f "$RUNNER_TEMP/tigris-ci.env"
@@ -300,7 +298,7 @@ jobs:
             case $target in *TerraBase.Slow*) target="terrabase-test-slow" ;; *Authentication.Slow*) target="auth-test-slow" ;; *) target="test-slow" ;; esac
             body=$(printf '%s\n' \
               "Failed on \`$GITHUB_SHA\` in the Slow job: $RUN_URL" "" \
-              "Environment: \`slow (${{ matrix.area }})\` job on alpha, Dockerfile stage \`test-slow-${{ matrix.area }}\`, Release build." \
+              "Environment: \`slow (${{ matrix.area }})\` job on GitHub-hosted runner, Dockerfile stage \`test-slow-${{ matrix.area }}\`, Release build." \
               "Reproduce: \`nice -n 19 make $target TEST_ARGS=\"--treenode-filter '/*/*/*/${test%%(*}'\"\`" \
               "Expected: the test passes. Actual:" "" '```' "${excerpt:-see the run log}" '```')
             number=$(jq -r --arg t "$title" "first(.[] | select(.title == \$t) | .number) // empty" <<< "$open")
@@ -340,19 +338,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: terrascale/scripts/fly/current-main.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
       - *checkout-ts-dotnet
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         if: steps.current.outputs.current == 'true'
         with:
-          # On alpha, build on the shared persistent BuildKit daemon (layer + cache-mount reuse).
-          driver: ${{ vars.CI_RUNNER && 'remote' || 'docker-container' }}
-          endpoint: ${{ vars.CI_RUNNER && 'unix:///run/buildkit/buildkitd.sock' || '' }}
-      - uses: docker/login-action@v3
+          driver: docker-container
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         if: steps.current.outputs.current == 'true'
         with:
           registry: registry.fly.io
           username: x
           password: ${{ secrets[matrix.token] }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         if: steps.current.outputs.current == 'true'
         with:
           context: terrascale
@@ -360,7 +356,7 @@ jobs:
           build-contexts: ts-dotnet=ts-dotnet
           target: ${{ matrix.target }}
           tags: registry.fly.io/${{ matrix.app }}:${{ github.sha }}
-          cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope={0}', matrix.area) || '' }}
+          cache-from: ${{ format('type=gha,scope={0}', matrix.area) }}
           build-args: *build-args
           push: true
 
@@ -381,33 +377,33 @@ jobs:
       - *checkout
       - *checkout-ts-dotnet
       - &setup-flyctl
-        uses: superfly/flyctl-actions/setup-flyctl@master
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
       - name: Create the preview app
         run: terrascale/scripts/fly/preview.sh app ${{ github.event.pull_request.number }}
       - *setup-builder
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: registry.fly.io
           username: x
           password: ${{ secrets.FLY_TOKEN_PREVIEWS }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
           target: terrabase
           tags: registry.fly.io/${{ env.APP }}:terrabase-${{ github.sha }}
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=terrabase' || '' }}
+          cache-from: type=gha,scope=terrabase
           build-args: *build-args
           push: true
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
           target: ts-auth
           tags: registry.fly.io/${{ env.APP }}:ts-auth-${{ github.sha }}
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=auth' || '' }}
+          cache-from: type=gha,scope=auth
           build-args: *build-args
           push: true
       - name: Start or update the preview machine
@@ -432,8 +428,6 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
-      checks: read
-      pull-requests: read
     outputs:
       deployed: ${{ steps.deploy-auth.outcome == 'success' }}
     steps:
@@ -445,7 +439,7 @@ jobs:
         run: terrascale/scripts/fly/current-main.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
       - *setup-flyctl
       # TerraBase's storage-format inspection pulls the published image with its scoped token.
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         if: steps.current.outputs.current == 'true'
         with:
           registry: registry.fly.io
@@ -503,7 +497,7 @@ jobs:
     steps:
       - *checkout
       - *checkout-ts-dotnet
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: terrascale/global.json
           cache: true
@@ -534,7 +528,7 @@ jobs:
           make -o terrabase-build terrabase-e2e E2E_LABEL=fly TEST_ARGS='-- --treenode-filter "/*/*/*/*[Category!=local-only]" --minimum-expected-tests 138 --output detailed --no-ansi' 2>&1 | tee replication-e2e.log
       - name: Preserve replication proof and per-direction lag
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: replication-e2e-${{ github.sha }}
           path: |
