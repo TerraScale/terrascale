@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Rolls one Fly app out region by region: gru, sjc, fra, each followed by a live check of its new machine. A failed
-# check stops the rollout (fix forward). For TerraBase a gate first compares the region's on-disk storage format with
-# the new image's and, when they differ, resets the region's volume as one planned step (volume-reset.sh --image). Each region runs one always-on machine, created by a human (never by CI). Prints
+# check stops the rollout (fix forward). TerraBase's storage-format preflight checks every serving region before any
+# mutation; a mismatch requires a coordinated, approved reset by one executor. Deployment never wipes volumes.
+# Each region runs one always-on machine, created by a human (never by CI). Prints
 # how long each region took (and appends it to the GitHub job summary in CI).
 #
 #   FLY_API_TOKEN=<deploy token> scripts/fly/deploy.sh <app> <fly.toml> <image>
@@ -59,6 +60,15 @@ if [[ $app == ts-terrabase ]]; then
   format=$(docker run --rm "$image" --storage-format) && [[ -n $format ]] \
     || { echo "could not read the storage format of $image" >&2; exit 1; }
   echo "$image writes storage format $format"
+  # Check the whole cluster before updating even the first region: a regional wipe could refill from old peers.
+  for region in gru sjc fra; do
+    running=$(running_format "$region")
+    if [[ -n $running && $running != "$format" ]]; then
+      echo "$app $region stores format $running, $image writes $format: rollout refused before mutation." >&2
+      echo 'A single reset executor must isolate old peers, stage every old machine on the target image, and complete the approved cluster reset before retrying deployment.' >&2
+      exit 1
+    fi
+  done
 fi
 
 for region in gru sjc fra; do
@@ -73,16 +83,11 @@ for region in gru sjc fra; do
       "flyctl scale count 1 -a $app -c $config --region $region) and reruns this deploy." >&2
     exit 1
   fi
-  if [[ $app == ts-terrabase ]] && running=$(running_format "$region") && [[ -n $running && $running != "$format" ]]; then
-    echo "$app $region stores format $running, $image writes $format: planned volume reset"
-    "$(dirname "$0")/volume-reset.sh" "$app" "$region" --image "$image" || exit 1
-  fi
-  # --ha=false: a deploy never adds Fly's default second machine. A storage-format refusal can fail the deploy or only
-  # the live checks after it (the machine starts, then exits): either way the reset moves the region onto a fresh volume
-  # (only while TerraBase holds no customer data) and the checks run again; any other failure, or a refused reset, stops
-  # the rollout.
+  # --ha=false: a deploy never adds Fly's default second machine. An unavailable region can be repaired by its new
+  # image, but any deployment or live-check failure stops here. Storage-format recovery never wipes data automatically.
   if ! { flyctl deploy -a "$app" -c "$config" --image "$image" --regions "$region" --ha=false --yes --wait-timeout 3m && live; }; then
-    { [[ $app == ts-terrabase ]] && "$(dirname "$0")/volume-reset.sh" "$app" "$region" && live; } || exit 1
+    echo "$app $region rollout failed; no automatic volume reset was attempted." >&2
+    exit 1
   fi
   completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   line="$started_at -> $completed_at: $app $region ($id) runs ${image##*:}${format:+, storage format $format}: live $((SECONDS - start)) s after its deploy started"

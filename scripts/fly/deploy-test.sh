@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Self-check for scripts/fly/deploy.sh against a fake flyctl, docker, curl and volume-reset.sh; CI runs it in the `test`
-# job. The storage-format gate: equal formats roll out normally, a different format is reset as a planned step, a machine
-# that does not answer rolls out and a refusal after it is reset, and any other failure stops the rollout.
+# job. Equal formats roll out normally. A different format anywhere fails before mutation; a machine that does not
+# answer can roll out, but any failure stops the rollout. Deployment must never invoke a volume reset.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
-# One machine m-<region> per region, running $IMAGE; a reset region's clone pins it by digest, as Fly does. start-* setups
+# One machine m-<region> per region, running $IMAGE. start-* setups
 # make gru initially stopped; a start attempt sets its listed state (or makes the subsequent lookup fail).
 cat >"$tmp/bin/flyctl" <<'FAKE'
 #!/usr/bin/env bash
@@ -16,6 +16,8 @@ echo "$*" >>"$STATE/calls"
 case "$1 $2" in
   "machine list")
     state=started
+    image=$IMAGE
+    [[ ! -e $STATE/digest ]] || image="$IMAGE@sha256:0f"
     for setup in "$STATE"/start-*; do
       [[ -e $setup ]] || continue
       state=stopped
@@ -24,15 +26,15 @@ case "$1 $2" in
         [[ $state != lookup-failed ]] || exit 1
       fi
     done
-    jq -cn --arg image "$IMAGE" --arg state "$state" --arg files "$(ls "$STATE")" \
+    jq -cn --arg image "$image" --arg state "$state" \
       '[("gru", "sjc", "fra") as $r | select($r != "gru" or $state != "missing") | {id: "m-\($r)", region: $r,
         state: (if $r == "gru" then $state else "started" end),
-        config: {image: (if any($files | split("\n")[]; . == "reset-" + $r) then "\($image)@sha256:0f" else $image end)}}]' ;;
+        config: {image: $image}}]' ;;
   "machine start")
     touch "$STATE/attempted-start"
     [[ -e $STATE/start-normal ]] && { mv "$STATE/start-normal" "$STATE/started-normally"; exit 0; }
     echo "fake flyctl: start rejected" >&2; exit 1 ;;
-  "deploy -a") ;;
+  "deploy -a") [[ ! -e $STATE/fail-deploy ]] ;;
   *) echo "fake flyctl: unexpected $*" >&2; exit 1 ;;
 esac
 FAKE
@@ -42,23 +44,22 @@ cat >"$tmp/bin/docker" <<'FAKE'
 echo "docker $*" >>"$STATE/calls"
 [[ ! -e $STATE/no-docker ]] && echo 2-new
 FAKE
-# A region serves the format in $STATE/format-<region> (2-new when absent) until it is reset. The machines named in
-# $STATE/down time out (exit 28, like the 02:45Z gru run) until their region is reset.
+# A region serves the format in $STATE/format-<region> (2-new when absent). Machines named in $STATE/down time out.
 cat >"$tmp/bin/curl" <<'FAKE'
 #!/usr/bin/env bash
 id=$(grep -oE 'fly-force-instance-id: m-[a-z]+' <<<"$*" | cut -d' ' -f2)
 region=${id#m-}
 echo "curl $id" >>"$STATE/calls"
-if grep -qx "$id" "$STATE/down" && [[ ! -e $STATE/reset-$region ]]; then exit 28; fi
+if grep -qx "$id" "$STATE/down"; then exit 28; fi
 format=2-new
-if [[ -e $STATE/format-$region && ! -e $STATE/reset-$region ]]; then format=$(cat "$STATE/format-$region"); fi
+if [[ -e $STATE/format-$region ]]; then format=$(cat "$STATE/format-$region"); fi
 jq -cn --arg r "$region" --arg f "$format" '{status: "ok", region: $r, storageFormat: $f}'
 FAKE
 chmod +x "$tmp/bin/flyctl" "$tmp/bin/docker" "$tmp/bin/curl"
 export PATH="$tmp/bin:$PATH" IMAGE=registry.fly.io/ts-terrabase:abc
 
 # run <name> <app> <down machines> <setup...>: deploy.sh from a repo copy with a fake volume-reset.sh; returns its exit
-# code. Setup words: refuse (the reset refuses), no-docker, <region>=<format> (the format the region serves),
+# code. Setup words: no-docker, <region>=<format> (the format the region serves),
 # start-normal (an explicit start succeeds), start-<state> (the start fails, then lists that state for gru).
 run() {
   export STATE=$tmp/$1
@@ -69,8 +70,8 @@ run() {
   cat >"$STATE/repo/scripts/fly/volume-reset.sh" <<'FAKE'
 #!/usr/bin/env bash
 echo "reset $2${3:+ $3}" >>"$STATE/calls"
-[[ -e $STATE/refuse ]] && exit 1
-touch "$STATE/reset-$2"
+echo 'ERROR: automatic volume reset invoked' >&2
+exit 97
 FAKE
   chmod +x "$STATE/repo/scripts/fly/volume-reset.sh"
   tr ' ' '\n' <<<"$down" >"$STATE/down"
@@ -89,23 +90,27 @@ steps() { grep -oE "^deploy .*--regions [a-z]+|^reset [a-z]+( --image)?" "$tmp/$
 run equal ts-terrabase "" || fail "equal formats failed: $(cat "$tmp/equal/out")"
 [[ $(steps equal) == "deploy gru,deploy sjc,deploy fra" ]] || fail "equal: $(steps equal)"
 grep -q "runs abc, storage format 2-new" "$tmp/equal/out" || fail "equal recorded: $(cat "$tmp/equal/out")"
+run digest ts-terrabase "" digest || fail "reset clone's digest-pinned image failed normal retry"
+[[ $(steps digest) == "deploy gru,deploy sjc,deploy fra" ]] || fail "digest retry changed rollout order"
 
-run different ts-terrabase "" sjc=1-old fra=unversioned || fail "different formats failed: $(cat "$tmp/different/out")"
-[[ $(steps different) == "deploy gru,reset sjc --image,deploy sjc,reset fra --image,deploy fra" ]] \
-  || fail "different: $(steps different)"
+for region in gru sjc fra; do
+  ! run "different-$region" ts-terrabase "" "$region=1-old" || fail "accepted different $region format"
+  ! grep -qE '^(deploy|machine (start|stop|update|clone|destroy)|reset) ' "$tmp/different-$region/calls" \
+    || fail "different $region mutated the cluster before refusal"
+  grep -q 'rollout refused before mutation' "$tmp/different-$region/out" || fail "missing format refusal diagnostic"
+done
+! run unversioned ts-terrabase "" fra=unversioned || fail "accepted an unversioned region"
+[[ -z $(steps unversioned) ]] || fail "unversioned: $(steps unversioned)"
 
-# The 02:45Z failure: gru does not answer (no format to compare), its deploy passes and the live check keeps polling
-# until it times out; the logs show the refusal, so the reset runs and the checks pass after it.
-run timeout ts-terrabase "m-gru" || fail "a refused gru was not reset: $(cat "$tmp/timeout/out")"
-[[ $(steps timeout) == "deploy gru,reset gru,deploy sjc,deploy fra" ]] || fail "timeout: $(steps timeout)"
+# An unavailable gru can be repaired by deployment, but failed health must never trigger a reset.
+! run timeout ts-terrabase "m-gru" || fail "continued after gru health failed"
+[[ $(steps timeout) == "deploy gru" ]] || fail "timeout: $(steps timeout)"
 
-# Unknown failure: sjc does not answer and its logs hold no refusal (the reset refuses): the rollout stops at sjc.
-! run unknown ts-terrabase "m-sjc" refuse || fail "kept rolling out after an unknown failure"
-[[ $(steps unknown) == "deploy gru,deploy sjc,reset sjc" ]] || fail "unknown: $(steps unknown)"
-
-# A planned reset that fails stops the rollout before the region's deploy.
-! run planned-refused ts-terrabase "" sjc=1-old refuse || fail "kept rolling out after a failed planned reset"
-[[ $(steps planned-refused) == "deploy gru,reset sjc --image" ]] || fail "planned-refused: $(steps planned-refused)"
+# Unknown failure in sjc stops before fra, without invoking reset recovery.
+! run unknown ts-terrabase "m-sjc" || fail "kept rolling out after an unknown failure"
+[[ $(steps unknown) == "deploy gru,deploy sjc" ]] || fail "unknown: $(steps unknown)"
+! run deploy-failed ts-terrabase "" fail-deploy || fail "continued after Fly deploy failed"
+[[ $(steps deploy-failed) == "deploy gru" ]] || fail "failed deploy: $(steps deploy-failed)"
 
 ! run no-docker ts-terrabase "" no-docker || fail "rolled out without the new image's format"
 [[ -z $(steps no-docker) ]] || fail "no-docker: $(steps no-docker)"
@@ -138,4 +143,5 @@ for state in stopped crashed missing lookup-failed; do
   [[ $(steps "start-$state") == "deploy gru" ]] || fail "failed $state start continued the rollout"
   ! grep -q '^curl' "$tmp/start-$state/calls" || fail "failed $state start reached the health check"
 done
+! grep -q '^reset ' "$tmp"/*/calls || fail "an automatic rollout attempted a volume reset"
 echo "deploy: all checks passed"

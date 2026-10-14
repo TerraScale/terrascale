@@ -23,23 +23,28 @@ TerraBase never migrates a data directory: a build refuses a directory written b
 first 12 hex digits of the schema digest. A directory records it in its lock file on create; `/healthz`, `/readyz` and
 `/backupz` report it as `storageFormat`, and `terrabase --storage-format` prints the format an image writes.
 
-- Rollout gate: before switching a region, `scripts/fly/deploy.sh` compares the format the region's machine serves (its
-  `/healthz`, pinned with `fly-force-instance-id`, answered by that region) with the new image's. Equal: normal rollout.
-  Different: `scripts/fly/volume-reset.sh --image` resets the region as one planned step (stop, snapshot and wait for it,
-  switch the stopped machine to the new image, clone it onto a fresh volume, check the clone, destroy the old machine,
-  delete the old volume), then the normal rollout and live checks run. A machine that does not answer rolls out normally;
-  if it then fails, its logs are checked for the refusal (reset) and anything else stops the rollout. Resets only run
-  while `ops/fly/greenfield-no-customer-data` contains `storage-format=<StorageFormat.Id>` matching the target image's
-  executable. A later version or schema digest refuses before any Fly mutation and needs separate approval. Remove the
-  marker only after gru, sjc and fra have all completed the approved reset. Each reset is listed in the deploy job
-  summary with its snapshot ID.
+- Rollout gate: before any update, `scripts/fly/deploy.sh` compares the new image's format with every serving region's
+  `/healthz`, pinned with `fly-force-instance-id`. Any different or unversioned format fails before mutation. Equal
+  formats roll out automatically. An unavailable region can still be repaired by its new image, but a failed deploy or
+  live check stops the rollout. Automatic deployment never invokes `volume-reset.sh` or wipes data.
+- Approved cluster reset: one executor first waits for the format-changing main push run to complete and verifies its
+  format refusal caused no deployment. Hold all main merges and push-run retries until recovery completes; check that
+  no main CI push run is queued or running before each regional reset. Stop auth writers and all old TerraBase machines,
+  then stage **every** old TerraBase machine on the approved image with `--skip-start` before starting any new-volume
+  clone. The target executable refuses old-format volumes even if Fly autostarts an old machine, preventing old-peer
+  refill. The sole executor runs `scripts/fly/volume-reset.sh <app> <region> --image <target>` in gru, sjc and fra, with
+  snapshots and pinned health/readiness/backup checks. After all three reset regions are healthy, retry that same run's
+  failed deploy job so normal deployment, auth and E2E finish. This retains automatic deployment without a deploy switch.
+  The marker `ops/fly/greenfield-no-customer-data` must contain `storage-format=<StorageFormat.Id>` matching the target
+  executable; another version or schema digest needs separate approval. Remove the marker only after gru, sjc and fra
+  have all completed the approved reset and the normal rollout passes. Each regional reset records its snapshot ID.
 - Formats: 2 was SQLite (Microsoft.Data.Sqlite); 3 is Turso (T1); 4 drops the change feed and history tables (R2c-2). A format-3 build refuses a format-2 data directory at
   start with `data directory has storage format 2-…; this build writes 3-…`; there is no conversion.
 - Storage train: a pull request that changes what is on disk bumps `StorageFormat.Version` and carries the label
   `storage-format`. One that touches a storage file without changing what is on disk carries `storage-format-unchanged`.
   The `test` job enforces this (`scripts/terrabase/storage-format-check.sh`, which also holds the storage file list kept by
   the storage owners); it reads the labels live, so after labelling re-run the failed job (`gh run rerun <run> --failed`).
-- When several `storage-format` pull requests are in flight, merge them back to back. Deploy jobs share one concurrency
-  group to prevent overlap. A new main push cancels the superseded workflow, including an active rollout, and only the
+- Batch approved storage changes into one format bump before a coordinated cluster reset. Hold main merges and retries
+  during that reset. Deploy jobs share one concurrency group to prevent overlap. A new main push cancels the superseded workflow, including an active rollout, and only the
   newest exact-tree Fast-qualified main starts the replacement. Already-issued Fly operations can finish during
   cancellation; the replacement fixes forward through every region with the same storage and live-health gates.
