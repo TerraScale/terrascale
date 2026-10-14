@@ -142,7 +142,7 @@ case ${1:-} in
           "AWS_ENDPOINT_URL_S3", "AWS_REGION", "BUCKET_NAME", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "TERRABASE_MASTER_KEY", "TERRABASE_PEER_SECRET"
         ] | map({env_var: ., name: .}))} as $terrabase_container
         | if $region == "gru" then {
-          guest: {cpu_kind: "shared", cpus: 1, memory_mb: 1024},
+          guest: {cpu_kind: "shared", cpus: 2, memory_mb: 1024},
           mounts: [{volume: $volume, path: "/data"}],
           containers: [
             $terrabase_container,

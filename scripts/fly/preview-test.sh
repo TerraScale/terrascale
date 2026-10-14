@@ -145,7 +145,7 @@ test ! -e "$(cat "$state/peer-file")"
 rm "$state/fail-secret"
 
 gru_config='
-  .config.guest == {cpu_kind: "shared", cpus: 1, memory_mb: 1024}
+  .config.guest == {cpu_kind: "shared", cpus: 2, memory_mb: 1024}
   and .config.mounts == [{volume: "vol-gru", path: "/data"}]
   and (.config.containers | map(.name)) == ["terrabase", "ts-auth"]
   and (.config.containers[] | select(.name == "ts-auth") |
