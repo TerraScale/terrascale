@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
-  import SectionHeader from '@/components/sections/SectionHeader.svelte'
+  import RegionFlag from '@/components/RegionFlag.svelte'
   import type { AppIconName } from '@/lib/icons'
   import { dict } from '@/lib/i18n'
 
@@ -13,19 +13,18 @@
 
 <section class="features" id="features">
   <div class="features__inner">
-    <SectionHeader
-      eyebrow={$dict.features.eyebrow}
-      subtitle={$dict.features.subtitle}
-    >
-      <svelte:fragment slot="title">
+    <div class="features__head">
+      <span class="ts-eyebrow">{$dict.features.eyebrow}</span>
+      <h2 class="features__title">
         {$dict.features.titleLead}<br />
-        <span class="ts-text-gradient">{$dict.features.titleAccent}</span>
-      </svelte:fragment>
-    </SectionHeader>
+        <span class="features__accent">{$dict.features.titleAccent}</span>
+      </h2>
+      <p class="features__subtitle">{$dict.features.subtitle}</p>
+    </div>
 
     <div class="features__grid">
       {#each features as feature (feature.title)}
-        <article class="feature-card ts-glass">
+        <article class="feature-card">
           <div class="feature-card__head">
             <div class="feature-card__icon">
               <Icon name={feature.icon} className="feature-card__icon-svg" />
@@ -36,10 +35,11 @@
           <p class="feature-card__text">{feature.text}</p>
           <div class="feature-card__bullets">
             {#each feature.bullets as bullet (bullet)}
-              <span class="feature-card__bullet">
-                <span class="feature-card__bullet-dot"></span>
-                {bullet}
-              </span>
+              {#if bullet === 'gru' || bullet === 'sjc'}
+                <RegionFlag code={bullet} />
+              {:else}
+                <span class="feature-card__bullet">{bullet}</span>
+              {/if}
             {/each}
           </div>
         </article>
@@ -51,136 +51,146 @@
 <style>
   .features {
     padding: 80px 0;
-    position: relative;
+    border-top: 1px solid var(--ts-divider);
   }
 
   .features__inner {
-    position: relative;
-    max-width: 1240px;
-    margin: 0 auto;
-    padding: 0 40px;
+    padding: 0 clamp(16px, 2.5vw, 40px);
+  }
+
+  .features__head {
+    display: grid;
+    justify-items: center;
+    gap: 16px;
+    max-width: 760px;
+    margin: 0 auto 48px;
+    text-align: center;
+  }
+
+  .features__title {
+    font-size: clamp(30px, 3.2vw, 48px);
+    font-weight: 600;
+    color: var(--ts-text);
+    line-height: 1.08;
+    letter-spacing: -0.035em;
+    margin: 0;
+  }
+
+  .features__accent {
+    color: var(--ts-primary);
+  }
+
+  .features__subtitle {
+    font-size: 16px;
+    color: var(--ts-text-muted);
+    line-height: 1.7;
+    max-width: 56ch;
+    margin: 0;
   }
 
   .features__grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 18px;
-    margin-top: 48px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
   }
 
   .feature-card {
-    position: relative;
-    overflow: hidden;
-    border-radius: 12px;
-    padding: 28px;
-    transition:
-      transform 250ms ease,
-      box-shadow 250ms ease,
-      border-color 250ms ease;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    gap: 16px;
+    padding: 32px;
+    border: 1px solid var(--ts-divider);
+    border-radius: 10px;
+    background: var(--ts-bg-surface);
+    transition: border-color 150ms ease;
   }
 
   .feature-card:hover {
-    transform: translateY(-2px);
-    box-shadow:
-      0 10px 28px rgba(var(--ts-primary-rgb), 0.18),
-      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    border-color: var(--ts-glass-border);
   }
 
   .feature-card__head {
     display: flex;
     align-items: center;
-    gap: 14px;
-    margin-bottom: 14px;
+    gap: 12px;
   }
 
   .feature-card__icon {
     flex-shrink: 0;
-    width: 42px;
-    height: 42px;
-    border-radius: 8px;
-    background: rgba(var(--ts-primary-rgb), 0.14);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.3);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition:
-      background 260ms ease,
-      border-color 260ms ease,
-      box-shadow 260ms ease;
-    color: var(--ts-primary-light);
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: color-mix(in oklab, var(--hue) 16%, transparent);
+    color: var(--hue);
+    display: grid;
+    place-items: center;
   }
 
-  .feature-card:hover .feature-card__icon {
-    background: rgba(var(--ts-primary-rgb), 0.22);
-    border-color: rgba(var(--ts-primary-rgb), 0.55);
-    box-shadow:
-      0 0 0 3px rgba(var(--ts-primary-rgb), 0.12),
-      0 6px 16px rgba(var(--ts-primary-rgb), 0.25);
-  }
+  /* Non-semantic icon hues (dark chart series 1 to 4); status colours are reserved for status. */
+  .feature-card:nth-child(1) { --hue: #4797e4; }
+  .feature-card:nth-child(2) { --hue: #925086; }
+  .feature-card:nth-child(3) { --hue: #00a1dd; }
+  .feature-card:nth-child(4) { --hue: #7f5794; }
 
   :global(.feature-card__icon-svg) {
-    width: 20px;
-    height: 20px;
-    color: var(--ts-primary-light);
+    width: 16px;
+    height: 16px;
   }
 
   .feature-card__title {
-    font-size: 19px;
-    font-weight: 700;
+    font-size: 20px;
+    font-weight: 600;
     color: var(--ts-text);
+    letter-spacing: -0.015em;
     margin: 0;
-    letter-spacing: -0.01em;
   }
 
   .feature-card__text {
-    font-size: 14.5px;
+    font-size: 14px;
     color: var(--ts-text-muted);
-    line-height: 1.6;
-    margin: 0 0 18px;
+    line-height: 1.7;
+    max-width: 64ch;
+    margin: 0;
   }
 
   .feature-card__bullets {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    align-content: flex-start;
+    gap: 8px;
   }
 
   .feature-card__bullet {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    padding: 3px 8px;
+    height: 26px;
+    padding: 0 8px;
+    border: 1px solid var(--ts-divider);
     border-radius: 4px;
-    background: rgba(var(--ts-primary-rgb), 0.08);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.18);
-    color: var(--ts-primary-light);
+    color: var(--ts-text-muted);
     font-family: var(--ts-font-mono);
-    font-size: 10.5px;
-    font-weight: 600;
+    font-size: 12px;
+    line-height: 1;
   }
 
-  .feature-card__bullet-dot {
-    width: 4px;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--ts-primary);
+  @media (max-width: 900px) {
+    .features__grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
   @media (max-width: 640px) {
     .features {
-      padding: 60px 0;
-    }
-    .features__grid {
-      grid-template-columns: 1fr;
-      gap: 14px;
-      margin-top: 36px;
+      padding: 64px 0;
     }
     .features__inner {
-      padding: 0 20px;
+      padding: 0 clamp(16px, 2.5vw, 40px);
+    }
+    .features__head {
+      margin-bottom: 32px;
     }
     .feature-card {
-      padding: 22px;
+      padding: 20px;
     }
   }
 </style>
