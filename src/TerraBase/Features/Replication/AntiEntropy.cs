@@ -23,7 +23,7 @@ namespace TerraBase.Features.Replication;
 /// Without garbage collection (R7) a repair merges old state safely. Once tombstones are collected, a machine away past the
 /// GC horizon must refill by copying instead of merging (section 10), or it would bring collected deletions back.
 /// </remarks>
-internal sealed class AntiEntropy : BackgroundService
+internal sealed class AntiEntropy : BackgroundService, ICatalogFreshness
 {
     internal static readonly TimeSpan Round = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan DigestTimeout = TimeSpan.FromSeconds(30);
@@ -41,8 +41,11 @@ internal sealed class AntiEntropy : BackgroundService
     private readonly ILogger<AntiEntropy> _logger;
     private readonly Counter<long> _repairs;
 
-    // Per (database, peer machine): the buckets that differed in the last round.
-    private readonly ConcurrentDictionary<(TenantContext Database, string Peer), HashSet<int>> _differed = new();
+    // Per (database, peer machine): the buckets that differed in the last round, and when that round began.
+    private readonly ConcurrentDictionary<(TenantContext Database, string Peer), (HashSet<int> Buckets, long At)> _differed = new();
+
+    // Per peer machine: the timestamp as of which its system catalog was last proved held here.
+    private readonly ConcurrentDictionary<string, long> _catalogHeld = new(StringComparer.Ordinal);
 
     public AntiEntropy(
         IMembership membership, IChangeGroupSource source, IReplicaStates states, IChangeGroupSink sink, ITenantDirectory tenants, TimeProvider time,
@@ -124,6 +127,19 @@ internal sealed class AntiEntropy : BackgroundService
     internal Task<int?> PullAsync(TenantContext database, ClusterMember peer, CancellationToken cancellationToken) =>
         CompareAsync(database, peer, force: true, cancellationToken);
 
+    public async ValueTask<bool> IsFreshAsync(TimeSpan window, CancellationToken cancellationToken) =>
+        Peers(await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false))
+            .All(peer => _catalogHeld.TryGetValue(peer.Name, out var at) && _time.GetElapsedTime(at) < window);
+
+    // Monotonic: a slow comparison that began earlier never moves a peer's proof back.
+    private void CatalogHeld(TenantContext database, ClusterMember peer, long? at)
+    {
+        if (database == ChangeGroups.System && at is { } began)
+        {
+            _ = _catalogHeld.AddOrUpdate(peer.Name, began, (_, known) => Math.Max(known, began));
+        }
+    }
+
     private List<ClusterMember> Peers(ClusterView view) =>
         [.. view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Where(member => member.Name != _membership.Self.Name && member.PeerAddress.Length > 0)];
 
@@ -135,6 +151,8 @@ internal sealed class AntiEntropy : BackgroundService
     private async Task<int?> CompareAsync(
         TenantContext database, ClusterMember peer, bool force, CancellationToken cancellationToken, Hlc? horizon = null, Ulid? incarnation = null)
     {
+        // Taken before either digest: whatever the peer held when this began is held here once the comparison completes.
+        var began = _time.GetTimestamp();
         if (await _states.DigestAsync(database, expected: null, cancellationToken).ConfigureAwait(false) is not { } local)
         {
             return null;
@@ -167,13 +185,21 @@ internal sealed class AntiEntropy : BackgroundService
         }
 
         var differing = Enumerable.Range(0, 4096).Where(bucket => !ours.AsSpan(bucket * 16, 16).SequenceEqual(theirs.AsSpan(bucket * 16, 16))).ToHashSet();
-        var previous = _differed.GetValueOrDefault((database, peer.Name)) ?? [];
-        _differed[(database, peer.Name)] = differing;
-        var repair = force ? differing : [.. differing.Where(previous.Contains)];
+        var compared = _differed.TryGetValue((database, peer.Name), out var previous);
+        _differed[(database, peer.Name)] = (differing, began);
+        HashSet<int> repair = force ? differing : compared ? [.. differing.Where(previous.Buckets.Contains)] : [];
+        // A bucket left for the next round differs only since the last one began, when it matched: held as of then.
+        long? held = repair.Count == differing.Count ? began : compared ? previous.At : null;
         if (repair.Count == 0)
         {
             // Covered only if the copy compared is still the one in place: a copy recreated meanwhile was never compared.
-            return await LocalHeldAsync(database, local.Incarnation, cancellationToken).ConfigureAwait(false) ? 0 : null;
+            if (!await LocalHeldAsync(database, local.Incarnation, cancellationToken).ConfigureAwait(false))
+            {
+                return null;
+            }
+
+            CatalogHeld(database, peer, held);
+            return 0;
         }
 
         var request = new BucketRequest { Database = ChangeGroups.Wire(database, source) };
@@ -230,6 +256,7 @@ internal sealed class AntiEntropy : BackgroundService
         }
 
         _repairs.Add(changed, new KeyValuePair<string, object?>("peer_region", peer.Region));
+        CatalogHeld(database, peer, held);
         return changed;
     }
 

@@ -9,9 +9,11 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
 using TerraBase.Fast.Documents;
 using TerraBase.Tenancy;
@@ -326,6 +328,48 @@ public sealed class ShapeCryptoTests
     }
 
     [Test]
+    public async Task A_machine_whose_catalog_is_unproven_for_an_epoch_withholds_keys_until_anti_entropy_proves_it_again()
+    {
+        // A partition can hold back a revocation committed on another machine: a after b is cut off from it.
+        var members = new FakeMemberStore();
+        await using var host = await CryptoHost.StartAsync(services: collection => collection.AddSingleton<IMemberDirectory>(members),
+            configure: settings =>
+            {
+                settings["node-name"] = "a";
+                settings["region"] = "gru";
+            });
+        await using var peer = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            host.S3.Configure(settings);
+            settings["node-name"] = "b";
+            settings["region"] = "sjc";
+        }, services =>
+        {
+            host.S3.Route(services);
+            ManualBackupHosting.Configure(services);
+            services.AddSingleton<IMemberDirectory>(members);
+        });
+
+        // Past a membership heartbeat, a lists b, which no comparison has proved yet.
+        host.Time.Advance(TimeSpan.FromSeconds(6));
+        await AssertCatalogStaleAsync(await host.GetKeyAsync(host.Api.Client, host.Handle, host.Crypto.CurrentEpoch, host.KeyId));
+        await AssertReleasedAsync(host, await UntilReleasedAsync(host));
+
+        members.Map = (viewer, member) => viewer == "a" && member.Name == "b" ? member with { PeerAddress = "http://127.0.0.1:9/" } : member;
+        // The last proof began at most a round before the cut, so eight minutes on it still holds and eleven it does not.
+        host.Time.Advance(TimeSpan.FromMinutes(8));
+        await AssertReleasedAsync(host, await host.GetKeyAsync(host.Api.Client, host.Handle, host.Crypto.CurrentEpoch, host.KeyId));
+        host.Time.Advance(TimeSpan.FromMinutes(3));
+        await AssertCatalogStaleAsync(await host.GetKeyAsync(host.Api.Client, host.Handle, host.Crypto.CurrentEpoch, host.KeyId));
+        // Refused before the tenancy checks, so a stale machine reveals nothing about collections either.
+        await AssertCatalogStaleAsync(await host.Api.Client.GetAsync(new Uri(
+            $"{host.Api.Collections}/missing/shape/keys?handle={host.Handle}&epoch={Decimal(host.Crypto.CurrentEpoch)}&key_id={host.KeyId}", UriKind.Relative)));
+
+        members.Map = null;
+        await AssertReleasedAsync(host, await UntilReleasedAsync(host));
+    }
+
+    [Test]
     public async Task A_historic_pair_is_released_only_with_a_retained_object_proof_and_an_unproven_key_is_never_read()
     {
         var retention = new ProvenPairs();
@@ -597,6 +641,53 @@ public sealed class ShapeCryptoTests
         var error = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
         await Assert.That(error.GetProperty("handle").GetString()).IsEqualTo(current);
         await Assert.That(error.TryGetProperty("key", out _)).IsFalse();
+    }
+
+    // Advances a round at a time until anti-entropy has compared the catalog with every listed machine (a bucket still
+    // settling waits a second round) and the key is released.
+    private static async Task<HttpResponseMessage> UntilReleasedAsync(CryptoHost host)
+    {
+        for (var round = 0; round < 10; round++)
+        {
+            host.Time.Advance(AntiEntropy.Round);
+            var polling = System.Diagnostics.Stopwatch.StartNew();
+            while (polling.Elapsed < TimeSpan.FromSeconds(5))
+            {
+                var response = await host.GetKeyAsync(host.Api.Client, host.Handle, host.Crypto.CurrentEpoch, host.KeyId);
+                if (response.StatusCode == HttpStatusCode.OK)
+                {
+                    return response;
+                }
+
+                response.Dispose();
+                await Task.Delay(50);
+            }
+        }
+
+        throw new TimeoutException("anti-entropy never proved the catalog current");
+    }
+
+    private static async Task AssertReleasedAsync(CryptoHost host, HttpResponseMessage response)
+    {
+        using (response)
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(response.Headers.CacheControl?.NoStore).IsTrue();
+            var key = Base64Url.DecodeFromChars((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("key").GetString()!);
+            await Assert.That(key.AsSpan().SequenceEqual(Client.EpochKey(host.DataKey, host.Handle, host.Crypto.CurrentEpoch))).IsTrue();
+        }
+    }
+
+    private static async Task AssertCatalogStaleAsync(HttpResponseMessage response)
+    {
+        using (response)
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(await CodeAsync(response)).IsEqualTo("catalog_stale");
+            await Assert.That(response.Headers.RetryAfter).IsNotNull();
+            await Assert.That(response.Headers.CacheControl?.NoStore).IsTrue();
+            await Assert.That((await response.Content.ReadAsStringAsync()).Contains("\"key\"", StringComparison.Ordinal)).IsFalse();
+        }
     }
 
     private static async Task<string?> CodeAsync(HttpResponseMessage response)

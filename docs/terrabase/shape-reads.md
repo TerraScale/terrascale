@@ -517,7 +517,20 @@ from the object. A mismatched object fails its tags. Reject the whole object, ap
 
 **Revocation bound.** A key is released only to a credential accepted at that moment.
 
-- **API key:** once its revocation reaches the serving machine, no key is released for any epoch.
+- **API key:** once its revocation reaches the serving machine, no key is released for any epoch. Peer streams
+  usually deliver it in about a second, but a partition can hold it back. So the endpoint also releases keys only
+  while this machine's catalog was proved, less than one epoch (600 s, `ShapeCrypto.EpochSeconds`) ago, to hold the
+  catalog of every machine the directory lists. Only a completed anti-entropy comparison of the system database counts
+  as proof, timed from when it began. Otherwise it answers `503 catalog_stale` with `Retry-After` and `private,
+  no-store`, before any tenancy check, and releases nothing.
+  - Bound: a revocation committed at `R` is held by the serving machine, or that machine stops releasing keys before
+    `R + 600 s`. The last released key opens objects sealed until the end of its epoch, so a revoked API key gets no
+    object sealed after `R + 600 s + the rest of that epoch`, under 20 minutes, partition included. The bound uses
+    only the serving machine's monotonic clock.
+  - Availability: one listed machine unreachable for an epoch stops key release on every machine that cannot reach
+    it. Shape reads continue; clients keep their keys and retry.
+  - Limit: a machine that leaves the directory (stopped or destroyed) no longer counts. A revocation committed only
+    there and never streamed out before it left is not covered.
 - **JWT:** TerraBase validates ts-auth JWTs offline, so an upstream-revoked token is accepted until it expires plus the
   allowed clock skew (30 s, `UserAuthenticationHandler.ClockSkew`). Its holder may already hold the current `K_e`, which
   opens objects sealed in the rest of that epoch. The worst case from upstream revocation is: remaining token lifetime +

@@ -10,6 +10,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -19,8 +20,13 @@ namespace TerraBase.Features.Shapes;
 
 /// <summary>Releases only a shape's handle and epoch key to an authorized reader.</summary>
 internal sealed class GetShapeKeyEndpoint(
-    IDocumentService documents, ITenantDirectory tenants, IShapeLineages lineages, IShapeCrypto crypto, TimeProvider time) : EndpointWithoutRequest<IResult>
+    IDocumentService documents, ITenantDirectory tenants, IShapeLineages lineages, IShapeCrypto crypto, ICatalogFreshness catalog, TimeProvider time)
+    : EndpointWithoutRequest<IResult>
 {
+    // One epoch: a revocation this machine cannot have seen stops key release within it, so a revoked credential reads
+    // nothing sealed after the epoch that follows (docs/terrabase/shape-reads.md, revocation bound).
+    private static readonly TimeSpan CatalogWindow = TimeSpan.FromSeconds(ShapeCrypto.EpochSeconds);
+
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
 
     /// <inheritdoc />
@@ -29,7 +35,7 @@ internal sealed class GetShapeKeyEndpoint(
         Get(DocumentRoute.Collections + "/{collection}/shape/keys");
         Name("getShapeKey");
         Summary("Gets a shape epoch key");
-        Description("Requires documents:read. Releases the AES-256 epoch key for the current handle and a served epoch/key_id pair. The key opens only that handle and epoch. Epochs last 10 minutes. Future epochs are refused; stale handles and unretained pairs answer 409 must_refetch. Responses are private, no-store. API key revocation prevents further key release; offline JWT acceptance lasts until expiry plus clock skew. Previously released keys and read data remain usable.");
+        Description("Requires documents:read. Releases the AES-256 epoch key for the current handle and a served epoch/key_id pair. The key opens only that handle and epoch. Epochs last 10 minutes. Future epochs are refused; stale handles and unretained pairs answer 409 must_refetch. Responses are private, no-store. API key revocation prevents further key release; offline JWT acceptance lasts until expiry plus clock skew. When this machine's catalog was not proved current against every listed machine within one epoch (a partition), it answers 503 catalog_stale with Retry-After and releases nothing. Previously released keys and read data remain usable.");
         Tags("Live");
         Produces<ShapeKeyResponse>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -58,6 +64,11 @@ internal sealed class GetShapeKeyEndpoint(
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         HttpContext.Response.Headers.CacheControl = "private, no-store";
+        if (!await catalog.IsFreshAsync(CatalogWindow, cancellationToken))
+        {
+            return ErrorResponse.From(new Unavailable("this machine cannot confirm current credentials; retry later", "catalog_stale"));
+        }
+
         return await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
         {
             Validation error => ErrorResponse.From(error),

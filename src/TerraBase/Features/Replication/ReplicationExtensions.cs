@@ -21,6 +21,7 @@ public static class ReplicationExtensions
         builder.Services.Insert(0, ServiceDescriptor.Singleton<IHostedService>(provider => provider.GetRequiredService<CatalogGate>()));
         builder.Services.AddSingleton<AntiEntropy>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<AntiEntropy>());
+        builder.Services.AddSingleton<ICatalogFreshness>(provider => provider.GetRequiredService<AntiEntropy>());
         builder.Services.AddSingleton<RemoteAckWaiter>();
         builder.Services.AddSingleton<PeerStreams>();
         builder.Services.AddSingleton<IReplicationStatus>(provider => provider.GetRequiredService<PeerStreams>());
