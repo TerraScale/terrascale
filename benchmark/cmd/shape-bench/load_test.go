@@ -74,6 +74,38 @@ func TestMergeReportSumsShardsAndFailsOverBound(t *testing.T) {
 	}
 }
 
+// After admission, a live-load reader answered 409 must_refetch bootstraps again at offset=-1 instead of failing.
+func TestFollowShapeRefetchesAfterMustRefetch(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var bootstraps atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch q := r.URL.Query(); {
+		case q.Get("offset") == "-1":
+			if bootstraps.Add(1) == 2 {
+				cancel()
+			}
+			w.Header().Set("TB-Shape-Handle", testHandle)
+			w.Header().Set("Location", "/v1/projects/p/databases/d/collections/c/shape?handle="+testHandle+"&offset=snap.5.0")
+			w.WriteHeader(http.StatusTemporaryRedirect)
+		case q.Get("offset") == "snap.5.0":
+			fmt.Fprint(w, shapeReply("5", false, ""))
+		default:
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprint(w, `{"error":{"code":"must_refetch","message":"below the floor","handle":"`+testHandle+`"}}`)
+		}
+	}))
+	defer srv.Close()
+	b := testBench(srv.URL)
+	b.admitBy = time.Now()
+	m := &measure{hist: hdrhistogram.New(1, 60_000_000, 3)}
+	b.followShape(ctx, m, make(chan string, 1))
+	if bootstraps.Load() < 2 || m.failures.Load() != 0 || m.codes[409].Load() == 0 {
+		t.Fatalf("bootstraps %d, failures %d (%v), 409s %d", bootstraps.Load(), m.failures.Load(), m.firstErr(), m.codes[409].Load())
+	}
+}
+
 // Before admitBy, a live-load reader repeats a shape_busy refusal instead of giving up, and counts each repeat.
 func TestFollowShapeRepeatsRefusalUntilAdmitBy(t *testing.T) {
 	t.Parallel()

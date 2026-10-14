@@ -133,6 +133,11 @@ func (b *bench) followShape(ctx context.Context, m *measure, outcomes chan<- str
 				}
 				continue
 			}
+			if admitted && !b.admitBy.IsZero() && resp.status == http.StatusConflict && code == "must_refetch" {
+				// The live load restarts at offset=-1 as a client does (shape-reads.md); the 409 stays in m.codes.
+				redirected, handle, bucket, target = false, "", "", b.shapeURL(url.Values{"offset": {"-1"}})
+				continue
+			}
 			if !admitted && (resp.status == http.StatusTooManyRequests && code == "shape_busy" || resp.status == http.StatusServiceUnavailable && code == "shape_too_large") {
 				// The live load (load.go) repeats a refusal until b.admitBy, as a client would; B2 leaves admitBy zero.
 				if time.Now().Before(b.admitBy) {

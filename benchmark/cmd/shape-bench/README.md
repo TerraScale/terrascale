@@ -94,7 +94,8 @@ the targets file at the end stops the host.
 `shape-bench load` drives many readers of one shape, step by step on a shared wall clock (`-steps`, default
 1, 100, 1000 and 10000 readers in total), and `shape-bench merge` joins the load processes into one report. Each step
 is 120 s from `-start`: readers open evenly over 60 s and repeat a `shape_busy` or `shape_too_large` refusal (counted as
-`refused`) until 70 s, as a client would; the writer then sends 20 documents/s, the 30 s window opens after a 5 s warmup,
+`refused`) until 70 s, as a client would (an admitted reader answered `409 must_refetch` restarts at `offset=-1`; the 409 stays
+in the status counts); the writer then sends 20 documents/s, the 30 s window opens after a 5 s warmup,
 deliveries count through a 5 s grace, and the after scrape follows a 6 s settle.
 
 - On Fly (`-app <terrabase app>`, one process per load machine, `-shard i -shards k`): readers use the node of their own
