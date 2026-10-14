@@ -45,7 +45,7 @@ public sealed class WriterResetTests
         await Assert.That(await PutAsync(data, managed, EntityIds.New().ToString(), 0)).IsEqualTo(HttpStatusCode.Created);
         var session = store.CurrentWriter() ?? throw new InvalidOperationException("no writer session after a write");
         var incarnation = store.Incarnation;
-        var head = await source.HeadAsync(tenant, CancellationToken.None);
+        var head = await source.HeadAsync(tenant, incarnation, CancellationToken.None) ?? throw new InvalidOperationException("the copy refused its own incarnation");
 
         // Every reset of this database's writer fails while armed: the write after it committed is still answered as written.
         var written = EntityIds.New().ToString();
@@ -60,16 +60,16 @@ public sealed class WriterResetTests
 
         // The commit is visible to reads and reached the change capture the peer streams ship from.
         await Assert.That(await GetAsync(data, managed, written)).IsEqualTo("""{"n":1}""");
-        var after = await source.HeadAsync(tenant, CancellationToken.None);
+        var after = await source.HeadAsync(tenant, incarnation, CancellationToken.None) ?? throw new InvalidOperationException("the copy refused its own incarnation");
         await Assert.That(after).IsGreaterThan(head);
-        await Assert.That(await ShippedAsync(source, tenant, head, written)).IsTrue();
+        await Assert.That(await ShippedAsync(source, tenant, incarnation, head, written)).IsTrue();
 
         // The next write opens a fresh session, with capture on.
         var next = EntityIds.New().ToString();
         await Assert.That(await PutAsync(data, managed, next, 2)).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(store.CurrentWriter()).IsNotNull();
         await Assert.That(store.CurrentWriter()).IsNotSameReferenceAs(session);
-        await Assert.That(await ShippedAsync(source, tenant, after, next)).IsTrue();
+        await Assert.That(await ShippedAsync(source, tenant, incarnation, after, next)).IsTrue();
 
         // A transaction that did not commit still fails when its reset fails, and leaves nothing.
         var rolledBack = EntityIds.New().ToString();
@@ -100,7 +100,8 @@ public sealed class WriterResetTests
     }
 
     // Whether the document's write is in this machine's change groups after `after`: what the peer streams send.
-    private static async Task<bool> ShippedAsync(IChangeGroupSource source, TenantContext database, long after, string id) =>
-        (await source.ReadAsync(database, after, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None))
+    private static async Task<bool> ShippedAsync(IChangeGroupSource source, TenantContext database, Ulid incarnation, long after, string id) =>
+        (await source.ReadAsync(database, incarnation, after, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)
+            ?? throw new InvalidOperationException("the copy refused its own incarnation")).Groups
             .SelectMany(group => group.Deltas).Any(delta => delta.Id == id);
 }

@@ -151,8 +151,8 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     public IReadOnlyList<string> Waiting => Pending;
 
     public async Task<string?> DigestAsync(CancellationToken cancellationToken) =>
-        _engine.SystemDatabaseExists && await _states.DigestAsync(ChangeGroups.System, cancellationToken).ConfigureAwait(false) is { } buckets
-            ? Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(buckets))
+        _engine.SystemDatabaseExists && await _states.DigestAsync(ChangeGroups.System, expected: null, cancellationToken).ConfigureAwait(false) is { } digest
+            ? Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(digest.Buckets))
             : null;
 
     /// <summary>What the gate still waits for, as of the last pass: machine ids, and the restore anchor's verdict.</summary>
@@ -161,10 +161,21 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
         _fresh = !_engine.SystemDatabaseExists;
-        _startHead = _engine.SystemDatabaseExists ? await _source.HeadAsync(ChangeGroups.System, cancellationToken).ConfigureAwait(false) : 0;
-        _startIncarnation = _engine.SystemDatabaseExists
-            ? (await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).Incarnation
-            : Ulid.Empty;
+        // The head is read pinned to the identity found here: a head of another copy never comes back.
+        if (_fresh)
+        {
+            (_startHead, _startIncarnation) = (0, Ulid.Empty);
+        }
+        else
+        {
+            var incarnation = (await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).Incarnation;
+            if (await _source.HeadAsync(ChangeGroups.System, incarnation, cancellationToken).ConfigureAwait(false) is not { } head)
+            {
+                throw new InvalidOperationException("the catalog exists but its head could not be read; the catalog gate stays closed");
+            }
+
+            (_startHead, _startIncarnation) = (head, incarnation);
+        }
 
         // A machine of a cluster records itself; a single machine by configuration leaves its catalog uncreated until used.
         if (_directory is not null || await ListedAsync(cancellationToken).ConfigureAwait(false) is { Count: > 0 })
@@ -319,22 +330,43 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
         }
     }
 
-    // Only catalog metadata and membership may exist; retained deletions count as application state.
+    // Only catalog metadata and membership may exist; retained deletions count as application state. Every page reads the
+    // copy the gate started on (a catalog created since then: the one in place at the first page); any other fails closed.
     private async Task<bool> GenesisAsync(CancellationToken cancellationToken)
     {
+        Ulid incarnation;
+        if (_startIncarnation != Ulid.Empty)
+        {
+            incarnation = _startIncarnation;
+        }
+        else if (!_engine.SystemDatabaseExists)
+        {
+            // No catalog at all holds nothing but genesis.
+            return true;
+        }
+        else
+        {
+            incarnation = (await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).Incarnation;
+        }
+
         var buckets = Enumerable.Range(0, 4096).ToList();
         BucketCursor? after = null;
         do
         {
-            (var states, after) = await _states.ReadBucketsAsync(ChangeGroups.System, buckets, after, 1024, ChangeGroups.MaxBatchBytes, cancellationToken)
-                .ConfigureAwait(false);
+            if (await _states.ReadBucketsAsync(ChangeGroups.System, incarnation, buckets, after, 1024, ChangeGroups.MaxBatchBytes, cancellationToken)
+                .ConfigureAwait(false) is not (var states, var next))
+            {
+                return false;
+            }
+
+            after = next;
             if (states.Any(state => state.Collection is not ("catalog" or Members)))
             {
                 return false;
             }
         }
         while (after is not null);
-        return true;
+        return await _source.HeadAsync(ChangeGroups.System, incarnation, cancellationToken).ConfigureAwait(false) is not null;
     }
 
     // This machine's member record, so every machine knows its region even while it is stopped.
@@ -527,7 +559,13 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
         }
         try
         {
-            var head = await _source.HeadAsync(ChangeGroups.System, cancellationToken).ConfigureAwait(false);
+            // The head is read pinned to the identity it is anchored with: one read transaction checks both.
+            var incarnation = (await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).Incarnation;
+            if (await _source.HeadAsync(ChangeGroups.System, incarnation, cancellationToken).ConfigureAwait(false) is not { } head)
+            {
+                throw new IOException("the catalog's head could not be read for its identity; the anchor is not written");
+            }
+
             if (head <= Anchored)
             {
                 return;
@@ -539,7 +577,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
                 json.WriteStartObject();
                 json.WriteNumber("version", 1);
                 json.WriteNumber("head", head);
-                json.WriteString("incarnation", (await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).Incarnation.ToString());
+                json.WriteString("incarnation", incarnation.ToString());
                 json.WriteString("at", _time.GetUtcNow());
                 json.WriteEndObject();
             }

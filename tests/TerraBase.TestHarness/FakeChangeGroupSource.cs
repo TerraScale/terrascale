@@ -7,12 +7,15 @@ namespace TerraBase.Testing;
 /// <summary>
 /// One test machine's change groups, in memory, as the CDC tailer reads them from <c>turso_cdc</c>: the test adds a
 /// group after it committed the same deltas locally, and peers' acknowledgements are kept per database and peer node.
+/// Every read and ack names the incarnation of the machine's copy that <c>incarnation</c> reports (null: not held),
+/// so a refill the groups' sender names is the copy anti-entropy digests; another incarnation is refused.
 /// </summary>
-internal sealed class FakeChangeGroupSource : IChangeGroupSource
+internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToken, ValueTask<Ulid?>> incarnation) : IChangeGroupSource
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<TenantContext, List<OriginGroup>> _groups = [];
     private readonly Dictionary<(TenantContext Database, ReplicaId Peer), long> _ackedBy = [];
+    private readonly HashSet<(TenantContext Database, ReplicaId Peer)> _refills = [];
     private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource _acked = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Action? _beforeRead;
@@ -46,6 +49,27 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
         return id;
     }
 
+    /// <summary>
+    /// Marks <paramref name="peer"/>'s row as a copied one: its cursor requires a refill, as storage reports a foreign scope,
+    /// until an ack of this copy succeeds.
+    /// </summary>
+    public void RequireRefill(TenantContext database, ReplicaId peer)
+    {
+        lock (_gate)
+        {
+            _ = _refills.Add((database, peer));
+        }
+    }
+
+    /// <summary>Whether <paramref name="peer"/>'s cursor still requires a refill.</summary>
+    public bool RequiresRefill(TenantContext database, ReplicaId peer)
+    {
+        lock (_gate)
+        {
+            return _refills.Contains((database, peer));
+        }
+    }
+
     /// <summary>The last change id <paramref name="peer"/> acknowledged, or 0.</summary>
     public long AckedBy(TenantContext database, ReplicaId peer)
     {
@@ -72,8 +96,14 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
         await Task.CompletedTask;
     }
 
-    public ValueTask<IReadOnlyList<OriginGroup>> ReadAsync(TenantContext database, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
+    public async ValueTask<SourceGroups?> ReadAsync(
+        TenantContext database, Ulid expected, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
     {
+        if (await incarnation(database, cancellationToken) != expected)
+        {
+            return null;
+        }
+
         Interlocked.Exchange(ref _beforeRead, null)?.Invoke();
         lock (_gate)
         {
@@ -90,23 +120,32 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
                 page.Add(group);
             }
 
-            return ValueTask.FromResult<IReadOnlyList<OriginGroup>>(page);
+            return new SourceGroups(expected, page);
         }
     }
 
-    public ValueTask<long> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) => ValueTask.FromResult(AckedBy(database, peer));
+    public async ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) =>
+        await incarnation(database, cancellationToken) is { } current
+            ? new SourceCursor(current, AckedBy(database, peer)) { RequiresRefill = RequiresRefill(database, peer) }
+            : null;
 
-    public ValueTask AckAsync(TenantContext database, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken)
+    public async ValueTask<bool> AckAsync(TenantContext database, Ulid expected, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken)
     {
+        if (await incarnation(database, cancellationToken) != expected)
+        {
+            return false;
+        }
+
         TaskCompletionSource acked;
         lock (_gate)
         {
             _ackedBy[(database, peer)] = Math.Max(_ackedBy.GetValueOrDefault((database, peer)), changeId);
+            _ = _refills.Remove((database, peer));
             (acked, _acked) = (_acked, new(TaskCreationOptions.RunContinuationsAsynchronously));
         }
 
         acked.SetResult();
-        return ValueTask.CompletedTask;
+        return true;
     }
 
     /// <summary>
@@ -140,21 +179,32 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
         }
     }
 
-    public ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken)
+    public async ValueTask<bool?> RetainsAsync(TenantContext database, Ulid expected, long after, CancellationToken cancellationToken)
     {
+        if (await incarnation(database, cancellationToken) != expected)
+        {
+            return null;
+        }
+
         lock (_gate)
         {
-            return ValueTask.FromResult(_groups.GetValueOrDefault(database) is not [var first, ..] || first.ChangeId <= after + 1);
+            return _groups.GetValueOrDefault(database) is not [var first, ..] || first.ChangeId <= after + 1;
         }
     }
 
-    public ValueTask RecordStableAsync(TenantContext database, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+    public async ValueTask<bool> RecordStableAsync(TenantContext database, Ulid expected, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) =>
+        await incarnation(database, cancellationToken) == expected;
 
-    public ValueTask<long> HeadAsync(TenantContext database, CancellationToken cancellationToken)
+    public async ValueTask<long?> HeadAsync(TenantContext database, Ulid expected, CancellationToken cancellationToken)
     {
+        if (await incarnation(database, cancellationToken) != expected)
+        {
+            return null;
+        }
+
         lock (_gate)
         {
-            return ValueTask.FromResult(_groups.TryGetValue(database, out var groups) && groups.Count > 0 ? groups[^1].ChangeId : 0L);
+            return _groups.TryGetValue(database, out var groups) && groups.Count > 0 ? groups[^1].ChangeId : 0L;
         }
     }
 }

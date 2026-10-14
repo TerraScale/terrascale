@@ -47,10 +47,13 @@ public sealed class ReplicatedApplyPowerLossTests
             await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = origin.Value, Region = "sjc", Machine = "zzzz-sender" } });
             await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None) && call.ResponseStream.Current.Welcome is not null).IsTrue();
 
+            // The made-up sender's copy of the database, which every batch names.
+            var sender = ChangeGroups.Wire(database, Ulid.NewUlid());
+
             // A first batch makes the database's file here, whose own syncs are not the timed batch's; acknowledged first.
             await call.RequestStream.WriteAsync(new PushFrame
             {
-                Batch = new Batch { Database = ChangeGroups.Wire(database), LastChangeId = 1, Groups = ChangeGroups.Encode([new OriginGroup(1, [Put(origin, stamp, EntityIds.New().ToString(), -1)])]) },
+                Batch = new Batch { Database = sender, LastChangeId = 1, Groups = ChangeGroups.Encode([new OriginGroup(1, [Put(origin, stamp, EntityIds.New().ToString(), -1)])]) },
             });
             using (var warm = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout))
             {
@@ -63,7 +66,7 @@ public sealed class ReplicatedApplyPowerLossTests
             {
                 Batch = new Batch
                 {
-                    Database = ChangeGroups.Wire(database),
+                    Database = sender,
                     LastChangeId = (ulong)ids.Length + 1,
                     Groups = ChangeGroups.Encode([.. ids.Select((group, index) => new OriginGroup(
                         index + 2, [.. group.Select((id, n) => Put(origin, stamp + 1 + (ulong)(index * 2048 + n), id, index))]))]),

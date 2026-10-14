@@ -321,12 +321,14 @@ public sealed class CatalogGateTests
             await Assert.That(gate.Trusted).IsFalse();
             using var channel = PeerChannel.Create(restored.PeerAddress!);
             var peer = new TerraBase.Features.Replication.V1.Replication.ReplicationClient(channel);
-            var digest = await peer.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(ChangeGroups.System) }, cancellationToken: token);
+            var digest = await peer.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(ChangeGroups.System, null) }, cancellationToken: token);
             await Assert.That(digest.Held).IsFalse();
-            var request = new BucketRequest { Database = ChangeGroups.Wire(ChangeGroups.System) };
+            var incarnation = (await restored.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token)).Incarnation;
+            var request = new BucketRequest { Database = ChangeGroups.Wire(ChangeGroups.System, incarnation) };
             request.Buckets.Add(0);
             using var pages = peer.ReadBucket(request, cancellationToken: token);
-            await Assert.That(async () => await pages.ResponseStream.MoveNext(token)).Throws<RpcException>();
+            var refused = await Assert.ThrowsAsync<RpcException>(() => pages.ResponseStream.MoveNext(token));
+            await Assert.That(refused!.StatusCode).IsEqualTo(StatusCode.FailedPrecondition);
             using var protectedRoute = await restored.Client.GetAsync(ManagementApi.Uri("/v1/management/organizations"), token);
             await Assert.That(protectedRoute.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
             using var provision = await restored.Client.PostAsJsonAsync(ManagementApi.Uri("/admin/api-keys"),
