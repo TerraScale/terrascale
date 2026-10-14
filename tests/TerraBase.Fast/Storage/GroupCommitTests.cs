@@ -3,6 +3,7 @@ using System.Data;
 using System.Net;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
@@ -571,7 +572,14 @@ public sealed class GroupCommitTests
     [Test]
     public async Task A_storage_thread_busy_with_a_long_read_does_not_hold_up_writes()
     {
-        await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "1");
+        // Request admission reads the catalog through caches keyed on SYSTEM's commit count, and a cold read needs the read
+        // thread. Usage's periodic flush commits to SYSTEM: on its own clock, it cannot land after the warm-up and cool them.
+        await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "1", services =>
+        {
+            var usage = services.Single(service => service.ImplementationType == typeof(UsageFlushService));
+            services[services.IndexOf(usage)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
+                ActivatorUtilities.CreateInstance<UsageFlushService>(provider, new FakeTimeProvider(DateTimeOffset.UtcNow)));
+        });
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { n = 0 })).Status).IsEqualTo(HttpStatusCode.Created);
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
