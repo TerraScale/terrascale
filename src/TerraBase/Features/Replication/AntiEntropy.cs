@@ -78,9 +78,21 @@ internal sealed class AntiEntropy : BackgroundService
         await foreach (var database in _source.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
             // The system database is placed in every region.
-            var placement = database == ChangeGroups.System ? null
-                : await _tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord record ? record.Placement
-                : null;
+            DatabasePlacement? placement;
+            try
+            {
+                placement = database == ChangeGroups.System ? null
+                    : await _tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord record ? record.Placement
+                    : null;
+            }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Overload refuses the catalog read (StorageBusyException). Escaping would fault this worker, which stops the
+                // host and aborts the process (exit 134); skip the database until the next round instead.
+                _logger.ZLogWarning(error, $"Anti-entropy could not read the placement of database {database.DatabaseId:@Database}; the next round tries again");
+                continue;
+            }
+
             if (placement is null && database != ChangeGroups.System)
             {
                 continue;
