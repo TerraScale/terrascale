@@ -134,6 +134,22 @@ jobs:
           # On alpha, build on the shared persistent BuildKit daemon (layer + cache-mount reuse).
           driver: ${{ vars.CI_RUNNER && 'remote' || 'docker-container' }}
           endpoint: ${{ vars.CI_RUNNER && 'unix:///run/buildkit/buildkitd.sock' || '' }}
+      # Only this step writes the area's build cache; consumers never overwrite it with test results.
+      - &build-stage
+        uses: docker/build-push-action@v6
+        with:
+          context: terrascale
+          file: terrascale/Dockerfile
+          build-contexts: ts-dotnet=ts-dotnet
+          target: build-${{ github.job }}
+          build-args: &build-args |
+            TERRABASE_REVISION=${{ github.sha }}
+            TS_AUTH_REVISION=${{ github.sha }}
+            DOTNET_PROCESSOR_COUNT=8
+            DOTNET_GCHeapCount=8
+          push: false
+          cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope={0}', github.job) || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && format('type=gha,mode=max,scope={0}', github.job) || '' }}
       - &build-area
         uses: docker/build-push-action@v6
         with:
@@ -142,16 +158,12 @@ jobs:
           build-contexts: ts-dotnet=ts-dotnet
           target: test-${{ github.job }}
           # TerraBase's tests check that /healthz reports the exact commit (unused by the other areas' stages).
-          build-args: |
-            TERRABASE_REVISION=${{ github.sha }}
-            DOTNET_PROCESSOR_COUNT=8
-            DOTNET_GCHeapCount=8
+          build-args: *build-args
           # The build stage is reused for identical inputs; the tests always run on the current head.
           no-cache-filters: test-${{ github.job }}
           push: false
           # Per-job layer cache: the base stage (apt, Playwright Chromium, ts-dotnet) is rebuilt only when it changes.
           cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope={0}', github.job) || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && format('type=gha,mode=max,scope={0}', github.job) || '' }}
 
   auth:
     needs: changes
@@ -162,6 +174,7 @@ jobs:
       - *checkout
       - *checkout-ts-dotnet
       - *setup-builder
+      - *build-stage
       - *build-area
 
   terrabase:
@@ -173,6 +186,7 @@ jobs:
       - *checkout
       - *checkout-ts-dotnet
       - *setup-builder
+      - *build-stage
       - *build-area
 
   test:
@@ -207,10 +221,10 @@ jobs:
         run: terrascale/scripts/terrabase/storage-format-check.sh "$GITHUB_REPOSITORY" "${{ github.event.pull_request.number }}"
 
   slow:
-    needs: changes
+    needs: [changes, auth, terrabase]
     if: >-
-      github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-      || contains(github.event.pull_request.labels.*.name, 'full-ci')
+      !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+      || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -242,14 +256,11 @@ jobs:
           build-contexts: ts-dotnet=ts-dotnet
           target: test-slow-${{ matrix.area }}
           secret-files: ${{ matrix.area == 'terrabase' && format('tigris-ci={0}/tigris-ci.env', runner.temp) || '' }}
-          build-args: |
-            DOTNET_PROCESSOR_COUNT=8
-            DOTNET_GCHeapCount=8
+          build-args: *build-args
           # A rerun of the same commit runs the suites again instead of reusing the stored result.
           no-cache-filters: slow-${{ matrix.area }}-run
           outputs: type=local,dest=slow
-          cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope=slow-{0}', matrix.area) || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && format('type=gha,mode=max,scope=slow-{0}', matrix.area) || '' }}
+          cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope={0}', matrix.area) || '' }}
       - name: Remove the CI credential file
         if: ${{ always() && matrix.area == 'terrabase' }}
         run: rm -f "$RUNNER_TEMP/tigris-ci.env"
@@ -303,6 +314,7 @@ jobs:
 
   # Build each app once with its own scoped token; every region reuses that SHA-tagged image.
   images:
+    needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
@@ -310,11 +322,11 @@ jobs:
         include:
           - app: ts-terrabase
             target: terrabase
-            revision: TERRABASE_REVISION
+            area: terrabase
             token: FLY_TOKEN_TS_TERRABASE
           - app: ts-auth
             target: ts-auth
-            revision: TS_AUTH_REVISION
+            area: auth
             token: FLY_TOKEN_TS_AUTH
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
@@ -348,9 +360,8 @@ jobs:
           build-contexts: ts-dotnet=ts-dotnet
           target: ${{ matrix.target }}
           tags: registry.fly.io/${{ matrix.app }}:${{ github.sha }}
-          cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope=deploy-{0}', matrix.target) || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && format('type=gha,mode=max,scope=deploy-{0}', matrix.target) || '' }}
-          build-args: ${{ matrix.revision }}=${{ github.sha }}
+          cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope={0}', matrix.area) || '' }}
+          build-args: *build-args
           push: true
 
   preview:
@@ -383,11 +394,11 @@ jobs:
         with:
           context: terrascale
           file: terrascale/Dockerfile
+          build-contexts: ts-dotnet=ts-dotnet
           target: terrabase
           tags: registry.fly.io/${{ env.APP }}:terrabase-${{ github.sha }}
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=preview-terrabase' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=preview-terrabase' || '' }}
-          build-args: TERRABASE_REVISION=${{ github.sha }}
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=terrabase' || '' }}
+          build-args: *build-args
           push: true
       - uses: docker/build-push-action@v6
         with:
@@ -396,9 +407,8 @@ jobs:
           build-contexts: ts-dotnet=ts-dotnet
           target: ts-auth
           tags: registry.fly.io/${{ env.APP }}:ts-auth-${{ github.sha }}
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=preview-ts-auth' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=preview-ts-auth' || '' }}
-          build-args: TS_AUTH_REVISION=${{ github.sha }}
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=auth' || '' }}
+          build-args: *build-args
           push: true
       - name: Start or update the preview machine
         run: >-

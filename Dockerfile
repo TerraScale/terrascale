@@ -54,8 +54,10 @@ FROM build-libs AS test-libs
 RUN make -o restore libs-check libs-test CONFIGURATION=Release && touch /passed
 
 FROM restored AS build-auth
+ARG TS_AUTH_REVISION
 RUN make -o restore fmt-check auth-check auth-build CONFIGURATION=Release \
-    && dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo
+    && dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo \
+    && dotnet publish src/TerraScale.Authentication --configuration Release --runtime linux-x64 --self-contained --no-restore --output /out
 
 FROM build-auth AS test-auth
 RUN make -o restore auth-audit auth-test-fast CONFIGURATION=Release && touch /passed
@@ -63,7 +65,8 @@ RUN make -o restore auth-audit auth-test-fast CONFIGURATION=Release && touch /pa
 FROM restored AS build-terrabase
 # The commit /healthz reports as revision (MSBuild reads it from the environment); the image has no .git.
 ARG TERRABASE_REVISION
-RUN make -o restore fmt-check terrabase-check CONFIGURATION=Release
+RUN make -o restore fmt-check terrabase-check CONFIGURATION=Release \
+    && dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --no-restore --output /out
 
 FROM build-terrabase AS test-terrabase
 ARG TERRABASE_REVISION
@@ -78,13 +81,14 @@ COPY --from=test-terrabase /passed /terrabase
 # Slow exports each suite's log and exit code for CI to report; `test-slow` exports both area directories.
 # Plain text: TUnit colours its output here, and the report parses lines like "failed <test> (<duration>)".
 # Each area runs independently so an auth failure cannot prevent TerraBase Slow from executing.
-FROM restored AS slow-auth-run
+FROM build-auth AS slow-auth-run
 RUN mkdir /slow && { make -o restore auth-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi; echo $? > /slow/exit; } 2>&1 | tee /slow/log
 
 FROM scratch AS test-slow-auth
 COPY --from=slow-auth-run /slow /
 
-FROM restored AS slow-terrabase-run
+FROM build-terrabase AS slow-terrabase-run
+ARG TERRABASE_REVISION
 # BuildKit secret mounts never enter a layer or build arg. No org-level provisioning credential reaches CI.
 RUN --mount=type=secret,id=tigris-ci,required=true \
     mkdir /slow && { set -a; . /run/secrets/tigris-ci; set +a; \
@@ -98,28 +102,12 @@ COPY --from=slow-auth-run /slow /auth/
 COPY --from=slow-terrabase-run /slow /terrabase/
 
 # Fly images: the self-contained release executables (`make terrabase-publish` / `auth-publish` flags) on the chiseled
-# runtime-deps base (6 MB: no shell, no package manager). These stages skip the test stages: CI deploys only a tree whose
-# `test` passed (scripts/fly/fast-gate.sh). Run admin commands with `fly ssh console -C '/app/<binary> ...'`.
+# runtime-deps base (6 MB: no shell, no package manager). Every consumer reuses its area's compiled/published build layer.
+# CI deployment needs this same run's `test`. Run admin commands with `fly ssh console -C '/app/<binary> ...'`.
 # root: Fly mounts volumes root-owned.
-FROM sdk AS publish-terrabase
-# CI=true turns on locked-mode restore (Directory.Build.props).
-ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 NUGET_SCRATCH=/nuget-scratch
-WORKDIR /src/terrascale
-COPY . .
-# Shown by TerraBase's /healthz as revision.
-ARG TERRABASE_REVISION
-RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --output /out
+FROM build-terrabase AS publish-terrabase
 
-FROM sdk AS publish-ts-auth
-ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 NUGET_SCRATCH=/nuget-scratch
-COPY --from=ts-dotnet --exclude=.git . /src/ts-dotnet
-WORKDIR /src/terrascale
-COPY . .
-# Shown by ts-auth's /healthz as <version>+<revision>.
-ARG TS_AUTH_REVISION
-RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    dotnet publish src/TerraScale.Authentication --configuration Release --runtime linux-x64 --self-contained --output /out
+FROM build-auth AS publish-ts-auth
 
 # Fly mounts TerraBase's volume at /data.
 FROM mcr.microsoft.com/dotnet/runtime-deps:11.0-resolute-chiseled AS terrabase
