@@ -541,14 +541,14 @@ export default defineConfig({
   title: 'TerraScale',
   description:
     'TerraScale developer documentation: TerraBase SDK installation, document CRUD, queries, authentication and service limits.',
-  appearance: 'force-dark',
+  appearance: 'dark',
   lastUpdated: true,
   srcDir: '.',
-  head: [['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }], ['link', { rel: 'preload', href: '/fonts/oxanium-latin-wght-normal.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }]],
+  head: [['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }], ['link', { rel: 'preload', href: '/fonts/geist-variable.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }]],
   locales: localesConfig,
   themeConfig: {
     siteTitle: 'Docs',
-    logo: { src: '/brand/logo-terrascale-white.svg', alt: 'TerraScale' },
+    logo: { light: '/brand/logo-terrascale-light.svg', dark: '/brand/logo-terrascale-dark.svg', alt: 'TerraScale' },
     search: { provider: 'local' },
   },
 })

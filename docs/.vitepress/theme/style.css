@@ -1,16 +1,16 @@
 @font-face {
-  font-family: Oxanium;
+  font-family: Geist;
   font-style: normal;
-  font-weight: 200 800;
+  font-weight: 100 900;
   font-display: swap;
-  src: url('/fonts/oxanium-latin-wght-normal.woff2') format('woff2');
+  src: url('/fonts/geist-variable.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'JetBrains Mono';
+  font-family: 'Geist Mono';
   font-style: normal;
-  font-weight: 100 800;
+  font-weight: 100 900;
   font-display: swap;
-  src: url('/fonts/jetbrains-mono-latin-wght-normal.woff2') format('woff2');
+  src: url('/fonts/geist-mono-variable.woff2') format('woff2');
 }
 :root, .dark {
   --vp-font-family-base: var(--ts-font-sans);
@@ -37,7 +37,7 @@
   --vp-nav-height: 56px;
 }
 body { font-size: var(--ts-fs-md); }
-:focus-visible { outline: 2px solid var(--ts-accent); outline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--ts-link); outline-offset: 3px; }
 .VPNavBarTitle .logo { height: 22px; }
 .VPNavBarTitle .title { gap: 12px; font-size: 13px; color: var(--ts-ink-3); }
 .VPSidebar { border-inline-end: 1px solid var(--ts-line); }
@@ -48,8 +48,8 @@ body { font-size: var(--ts-fs-md); }
 .VPSidebarItem.level-1 > .item { padding: 0 8px; border-radius: var(--ts-radius); min-height: 36px; }
 .VPSidebarItem.level-1 .text { font-size: 13px; line-height: 24px; }
 .VPSidebarItem.level-1 > .item:hover { background: var(--ts-surface-2); }
-.VPSidebarItem.level-1.is-active > .item { background: var(--ts-accent-soft); }
-.VPSidebarItem.level-1.is-active > .item .text { color: #cfe0ff; }
+.VPSidebarItem.level-1.is-active > .item { background: var(--ts-nav-active-bg); }
+.VPSidebarItem.level-1.is-active > .item .text { color: var(--ts-ink); }
 .VPSidebar .group + .group { border-top: 0; padding-top: 0; }
 .VPDoc .content-container { max-width: 800px !important; }
 .vp-doc h1 { font-size: 32px; font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
