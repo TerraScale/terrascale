@@ -223,7 +223,7 @@ public sealed class ShapeSealPowerLossTests
                     return read;
                 }
 
-                await Assert.That(DateTime.UtcNow).IsLessThan(deadline).Because($"the shape served {string.Join(", ", missing)} by now");
+                await Assert.That(DateTime.UtcNow).IsLessThan(deadline).Because($"the shape served {string.Join(", ", missing)} by now; last {target}: {body[..Math.Min(body.Length, 600)]}");
                 await Task.Delay(250);
             }
 
