@@ -8,6 +8,7 @@ use serde_json::value::RawValue;
 use super::client::{Client, Req, Resp};
 use super::errors::{Error, Result};
 use super::ids::{check_document_id, check_name, DocumentId, IdempotencyKey, Version};
+use super::shapes::Shape;
 use super::tx::{Tx, TxResult};
 use super::types::{u64_string, Durability, Number};
 
@@ -498,6 +499,12 @@ fn precondition_headers(p: Option<&Precondition>) -> Vec<(&'static str, String)>
 }
 
 impl Collection {
+    /// Starts a shape read of this collection. Performs no I/O.
+    #[must_use]
+    pub fn shape(&self) -> Shape {
+        Shape::new(self.clone())
+    }
+
     /// Reads C# TerraBase collection metadata.
     pub async fn get_collection(&self) -> Result<ProjectCollectionInfo> {
         self.check()?;
