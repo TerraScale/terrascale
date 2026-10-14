@@ -66,13 +66,39 @@ public sealed class DatabaseOverviewJourneyTests(DashboardRootFixture fixture)
         Volatile.Write(ref measurement, "");
         await Assert.That(Counts(await PageAsync(replica))).IsEquivalentTo(new[] { "0", "0" });
         await Assert.That((await DetailAsync()).GetProperty("documents").GetInt64()).IsEqualTo(0);
+        var overview = await PageAsync(client);
+        await Assert.That(overview.Contains("id=\"delete-database\"", StringComparison.Ordinal)).IsFalse()
+            .Because("the delete dialog lives on the danger tab");
+        await Assert.That(overview.Contains("aria-label=\"Replication totals\"", StringComparison.Ordinal)).IsFalse();
+        using (var legacy = await client.GetAsync(path + "?delete=1"))
+        {
+            await Assert.That(legacy.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(legacy.Headers.Location?.OriginalString).IsEqualTo(path + "/danger?delete=1");
+        }
+        await Assert.That(await PageAsync(client, "/danger?delete=1")).Contains("data-init=\"el.showModal()\"");
+        var danger = await PageAsync(client, "/danger");
+        await Assert.That(Regex.IsMatch(danger, "aria-current=\"page\"[^>]*><span>Danger zone</span>")).IsTrue();
+        await Assert.That(danger).Contains("data-init=\"void 0\"");
+        using (var refused = new HttpRequestMessage(HttpMethod.Post, "/api/v1/dashboard/databases/delete")
+        { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["_csrf"] = csrf, ["databaseId"] = id, ["confirmName"] = "wrong-name" }) })
+        {
+            refused.Headers.Accept.ParseAdd("text/html");
+            refused.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
+            using var response = await client.SendAsync(refused);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+            var reopened = WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync());
+            await Assert.That(Regex.IsMatch(reopened, "aria-current=\"page\"[^>]*><span>Danger zone</span>")).IsTrue();
+            await Assert.That(reopened).Contains("data-init=\"el.showModal()\"");
+            await Assert.That(Regex.IsMatch(reopened, "<dialog id=\"delete-database\".*role=\"alert\"", RegexOptions.Singleline)).IsTrue()
+                .Because("the delete error renders inside the reopened dialog");
+        }
         using var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new()
         { ["_csrf"] = csrf, ["databaseId"] = id, ["confirmName"] = "measured-overview" });
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
 
-        async Task<string> PageAsync(HttpClient instance)
+        async Task<string> PageAsync(HttpClient instance, string suffix = "")
         {
-            using var response = await instance.GetAsync(path);
+            using var response = await instance.GetAsync(path + suffix);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
             return WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync());
         }

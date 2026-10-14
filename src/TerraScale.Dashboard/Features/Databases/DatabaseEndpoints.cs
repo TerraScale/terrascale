@@ -35,14 +35,17 @@ public static class DatabaseEndpoints
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
             return context is null ? Results.Unauthorized() : Results.Json(context.Project?.Databases.Values.OrderBy(database => database.Name).ToArray() ?? []);
         });
-        foreach (var tab in new[] { "overview", "backups", "branches", "import" })
+        foreach (var tab in new[] { "overview", "replication", "backups", "branches", "import", "danger" })
         {
             var section = tab;
             endpoints.MapGet(tab == "overview" ? "/databases/{databaseId}" : "/databases/{databaseId}/" + tab,
                 async (HttpContext http, string databaseId, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases) =>
                 {
                     var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-                    return context is null ? AccountEndpoints.LoginRedirect(http) : await DetailPageAsync(http, context, databaseId, section, backend, databases);
+                    if (context is null) return AccountEndpoints.LoginRedirect(http);
+                    // The delete dialog moved to the danger tab; keep old overview links working.
+                    if (section == "overview" && http.Request.Query["delete"] == "1") return AuthEndpoints.SeeOther(DatabaseService.Path(databaseId, "danger") + "?delete=1");
+                    return await DetailPageAsync(http, context, databaseId, section, backend, databases);
                 });
         }
         endpoints.MapPost("/api/v1/dashboard/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend) =>
@@ -88,7 +91,7 @@ public static class DatabaseEndpoints
                     catch (Exception error) when (KnownFailure(error))
                     {
                         if (!WantsHtml(http) || Status(error) == 404) return Failure(error);
-                        return await DetailPageAsync(http, context, id, action == "branch" ? "branches" : "overview", backend, databases, Message(error), action == "delete", Status(error));
+                        return await DetailPageAsync(http, context, id, action switch { "branch" => "branches", "delete" => "danger", _ => "overview" }, backend, databases, Message(error), action == "delete", Status(error));
                     }
                 });
         }
@@ -165,8 +168,9 @@ public static class DatabaseEndpoints
             }
             catch (Exception failure) when (failure is HttpRequestException or System.Text.Json.JsonException or OverflowException || KnownFailure(failure))
             { if (error.Length == 0) error = "Database counts are unavailable. The data plane did not answer."; }
-            measurements = await http.RequestServices.GetRequiredService<IUsageReplication>().ReadAsync(new(context, range, database.Id, true), http.RequestAborted);
         }
+        if (tab == "replication")
+            measurements = await http.RequestServices.GetRequiredService<IUsageReplication>().ReadAsync(new(context, range, database.Id, true), http.RequestAborted);
         var backups = tab is "backups" or "overview" ? await BackupEndpoints.PageAsync(http, context, database, error) : null;
         var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, contents, error, regionError, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, contentsAvailable, measurements, range));
         result.StatusCode = status;

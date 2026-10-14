@@ -1,4 +1,4 @@
-/* Databases list and detail: search, name cell, region chips, detail header,
+/* Databases list and detail: search, name cell, region labels, detail header,
    create dialog and its progress, region cards, facts grid, backup switch,
    and the danger zone. */
 
@@ -43,12 +43,6 @@
   border-radius: var(--ts-radius-lg);
   background: var(--ts-surface);
   color: var(--ts-ink-2);
-}
-
-.ts-db-icon-lg {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--ts-radius-lg);
 }
 
 .ts-db-name:hover .ts-strong {
@@ -99,6 +93,18 @@
   gap: var(--ts-s3);
 }
 
+.ts-db-tabs {
+  margin-top: calc(-1 * var(--ts-s4));
+}
+
+.ts-db-tabs .ts-tab[data-kind="danger"] {
+  color: var(--ts-danger);
+}
+
+.ts-db-tabs .ts-tab[data-kind="danger"][aria-current="page"]::after {
+  background: var(--ts-danger);
+}
+
 .ts-breadcrumb {
   display: flex;
   align-items: center;
@@ -123,8 +129,8 @@
 }
 
 .ts-db-title {
-  font-size: var(--ts-fs-2xl);
-  font-weight: 700;
+  font-size: var(--ts-fs-3xl);
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
@@ -245,16 +251,6 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--ts-s1);
-}
-
-.ts-db-chip {
-  padding: var(--ts-s1) var(--ts-s2);
-  border: 1px solid var(--ts-line-strong);
-  border-radius: var(--ts-radius-pill);
-  background: var(--ts-surface-2);
-  color: var(--ts-ink-2);
-  font-size: var(--ts-fs-sm);
-  white-space: nowrap;
 }
 
 /* Create dialog: the fields beside the region map, then the actions. The

@@ -35,7 +35,7 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
     {
         "emerald" => ("success", Database.Name + " is ready", DatabaseService.Regions(Database).Count == 1
             ? "It serves " + Placement + ". Add a collection in Documents, or connect with an API key."
-            : "Its home region is ready. Replica progress is shown below. Add a collection in Documents, or connect with an API key."),
+            : "Its home region is ready. Replica progress is shown in Replication. Add a collection in Documents, or connect with an API key."),
         "rose" => ("danger", Database.Name + " could not be created", "The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing."),
         _ => ("info", Database.Name + " is being created", "The data plane is still placing it in " + Placement + ". Its status changes to ready when it can take requests.")
     };
@@ -65,7 +65,7 @@ public sealed record DatabaseReplicationModel(TerraScale.Dashboard.Features.Usag
 
 public sealed record DatabaseFrameModel(DatabaseRecord Database, string Tab, string Collection = "")
 {
-    public static readonly (string Key, string Label)[] Tabs = [("overview", "Overview"), ("documents", "Documents"), ("sql", "SQL"), ("schema", "Schema"), ("indexes", "Indexes"), ("backups", "Backups"), ("branches", "Branches"), ("import", "Import and export")];
+    public static readonly (string Key, string Label)[] Tabs = [("overview", "Overview"), ("documents", "Documents"), ("sql", "SQL"), ("schema", "Schema"), ("indexes", "Indexes"), ("replication", "Replication"), ("backups", "Backups"), ("branches", "Branches"), ("import", "Import and export"), ("danger", "Danger zone")];
     public static string Title(string section) => section switch
     {
         "sql" => "SQL console",
