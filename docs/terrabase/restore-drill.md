@@ -6,6 +6,8 @@ Genesis verification reads all catalog buckets as one bounded indexed page per c
 
 A fresh empty cluster initializes automatically. A fresh replacement pulls every listed trusted peer, ignoring destroyed historical members. Existing catalogs require trusted-peer pulls and/or an encrypted Tigris anchor at `catalog-anchor/<machine-id>` (format 1: incarnation, CDC head, UTC time). Snapshot and replay copies receive new incarnations. An unreadable anchor, older head, different incarnation or missing non-genesis anchor cannot establish trust; restored peers cannot export system replication state or verify each other.
 
+After verification, a node stamps the supported management catalog version on its own CDC before making dependent catalog writes. Joined rows are not re-shipped: another origin's version must not be the only version preceding this node's project rows or cleanup intents. Unsupported versions and versionless catalogs containing application state remain refused.
+
 An existing machine waits for all recorded/listed peers, or a trusted majority when its own anchor proves it was not restored. A catalog proven stale stays closed for reviewed recovery without a bypass. Recreate a lost region with a fresh catalog from healthy peers, then restore tenant databases. Cleanup skipped while closed runs at the next verified restart.
 
 Revocations and destructive management routes anchor before acknowledging success, including commit-envelope replay. Failure returns 503 `catalog_anchor_unavailable`; the local commit may exist, so retry. Tenant writes and non-revoking management commits do not wait; background anchoring runs every 15 seconds.

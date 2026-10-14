@@ -1241,6 +1241,8 @@ internal sealed partial class EngineManagementService(
             var version = await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false);
             if (version == CatalogVersion)
             {
+                // A joined version is not re-shipped: stamp it locally before this origin's dependent catalog writes.
+                await PutAsync(transaction, Catalog, CatalogVersionId, CatalogVersion, Id, cancellationToken).ConfigureAwait(false);
                 return new Done();
             }
 
