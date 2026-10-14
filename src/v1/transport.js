@@ -42,6 +42,7 @@ const tokenPattern = /^(?!tbk1\.)(?:[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
  * @property {Readonly<Record<string, string>>} [headers] Contract headers only (If-Match, If-None-Match).
  * @property {URLSearchParams | undefined} [query]
  * @property {AbortSignal | undefined} [signal]
+ * @property {"no-store" | undefined} [cache] Authenticated shape epoch keys must bypass caches.
  */
 
 /**
@@ -346,6 +347,7 @@ export class V1Transport {
     if (options.body !== undefined) headers.set("content-type", options.contentType ?? "application/json");
     /** @type {RequestInit & { duplex?: "half" }} */
     const init = { method: route.method, headers, redirect: "manual" };
+    if (options.cache !== undefined) init.cache = options.cache;
     if (route.permission.endsWith(":write") && typeof process !== "undefined" && process.release?.name === "node") {
       // Node fetch replays buffered or absent bodies on 421; use a one-shot stream, including DELETE.
       const bytes = new TextEncoder().encode(options.body ?? "");

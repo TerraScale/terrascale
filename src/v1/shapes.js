@@ -29,6 +29,9 @@ import { stringifyExactJson } from "./json.js";
  * @property {readonly V1ShapeChange[]} changes Apply commits and operations in their received order.
  * @property {string | undefined} cursor Echo this as cursor on the next live request.
  * @property {string | undefined} etag
+ * @property {string | undefined} [coveredOffset] Free-read protocol coverage (feed sequence, not write offset).
+ * @property {string | undefined} [valuesAt] Free-read materialization position.
+ * @property {string | undefined} [cursorResume] Opaque free-read resume token.
  */
 const maximumOffset = (1n << 63n) - 1n;
 const handlePattern = /^h1-[0-9a-f]{16}$/u;
@@ -59,7 +62,7 @@ export function requireShapeOffset(value) {
   throw new TypeError("A shape offset is -1, a signed-64-bit decimal log position, or snap.<head>.<canonical-base64url-id>.");
 }
 /** @param {unknown} value @returns {string} */
-function requireHandle(value) {
+export function requireShapeHandle(value) {
   if (typeof value !== "string" || !handlePattern.test(value)) throw new TypeError("A shape handle is h1- followed by 16 lowercase hex characters.");
   return value;
 }
@@ -72,7 +75,7 @@ export function encodeShapeRequest(request) {
   if (request.where !== undefined) query.set("where", stringifyExactJson(requireFilter(request.where), "shape filter"));
   const offset = requireShapeOffset(request.offset ?? "-1");
   query.set("offset", offset);
-  if (request.handle !== undefined) query.set("handle", requireHandle(request.handle));
+  if (request.handle !== undefined) query.set("handle", requireShapeHandle(request.handle));
   else if (offset !== "-1") throw new TypeError("A shape handle is required after bootstrap.");
   if (request.live !== undefined && typeof request.live !== "boolean") throw new TypeError("live is a boolean.");
   if (request.live === true) {
@@ -94,10 +97,13 @@ export function decodeShapePage(value, headers) {
   const cursor = headers.get("tb-shape-cursor") ?? undefined;
   if (cursor !== undefined && !isLogOffset(cursor)) malformed("shape cursor");
   return Object.freeze({
-    shapeId, handle: requireHandle(raw.handle),
+    shapeId, handle: requireShapeHandle(raw.handle),
     offset: requireShapeOffset(raw.offset), nextOffset: requireShapeOffset(raw.next_offset),
     upToDate: boolean(raw.up_to_date, "shape up_to_date"), cursor,
     etag: headers.get("etag") ?? undefined,
+    ...(raw.covered_offset === undefined ? {} : { coveredOffset: requireShapeOffset(raw.covered_offset) }),
+    ...(raw.values_at === undefined ? {} : { valuesAt: requireShapeOffset(raw.values_at) }),
+    ...(raw.cursor_resume === undefined ? {} : { cursorResume: string(raw.cursor_resume, "shape resume cursor") }),
     changes: Object.freeze(array(raw.changes, "shape changes").map(value => {
       const change = object(value, "shape change");
       return Object.freeze({ offset: u64(change.offset, "shape change offset"), ops: Object.freeze(array(change.ops, "shape operations").map(value => {
@@ -130,7 +136,7 @@ export async function readShape(transport, params, request, signal) {
     const target = new URL(location, source);
     if (target.origin !== source.origin || target.pathname !== source.pathname || target.username !== "" || target.password !== "" || target.hash !== "")
       malformed("shape redirect target");
-    const handle = requireHandle(target.searchParams.get("handle"));
+    const handle = requireShapeHandle(target.searchParams.get("handle"));
     const offset = requireShapeOffset(target.searchParams.get("offset"));
     if (!offset.startsWith("snap.")) malformed("shape bootstrap offset");
     query.set("handle", handle);

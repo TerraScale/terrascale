@@ -1,5 +1,5 @@
 // Current TerraBase routes at e30ffdc; readShape is retained from release 6cb9745 only.
-/** @typedef {"getDocument" | "putDocument" | "createDocument" | "patchDocument" | "deleteDocument" | "commitTransaction" | "queryDocuments" | "createCollection" | "getCollection" | "listCollections" | "dropCollection" | "readShape" | "runSql" | "checkSql" | "explainSql" | "streamDatabaseChanges" | "listDocuments" | "getCollectionSchema" | "putCollectionSchema" | "deleteCollectionSchema" | "createDatabase" | "listDatabases" | "getDatabase" | "updateDatabase" | "deleteDatabase" | "branchDatabase"} V1Operation */
+/** @typedef {"readFreeShape" | "getShapeKey" | "getDocument" | "putDocument" | "createDocument" | "patchDocument" | "deleteDocument" | "commitTransaction" | "queryDocuments" | "createCollection" | "getCollection" | "listCollections" | "dropCollection" | "readShape" | "runSql" | "checkSql" | "explainSql" | "streamDatabaseChanges" | "listDocuments" | "getCollectionSchema" | "putCollectionSchema" | "deleteCollectionSchema" | "createDatabase" | "listDatabases" | "getDatabase" | "updateDatabase" | "deleteDatabase" | "branchDatabase"} V1Operation */
 /**
  * @typedef {object} V1Route
  * @property {V1Operation} operation
@@ -59,7 +59,7 @@ export const v1Routes = Object.freeze(/** @type {V1Route[]} */ ([
 })));
 /** @param {V1Operation} operation @returns {V1Route} */
 export function v1Route(operation) {
-  const route = v1Routes.find(candidate => candidate.operation === operation);
+  const route = [...v1Routes, ...shapeV1Routes].find(candidate => candidate.operation === operation);
   if (route === undefined) throw new TypeError(`Unknown v1 operation ${operation}.`);
   return route;
 }
@@ -71,3 +71,10 @@ export function v1RoutePath(route, params) {
     return encodeURIComponent(value);
   });
 }
+
+// Proposed free-read protocol, separately inventoried from historical/runtime route evidence.
+/** @type {readonly V1Route[]} */
+export const shapeV1Routes = Object.freeze([
+  Object.freeze({ operation: /** @type {const} */ ("readFreeShape"), method: /** @type {const} */ ("GET"), pathTemplate: `${collection}/shape`, permission: /** @type {const} */ ("documents:read"), requestMediaTypes: Object.freeze([]), responseMediaType: "application/json", successStatuses: Object.freeze([200, 307]), idempotencyKey: /** @type {const} */ ("none"), replaySafe: true, contract: "docs/terrabase/shape-reads.md", contractText: Object.freeze([]) }),
+  Object.freeze({ operation: /** @type {const} */ ("getShapeKey"), method: /** @type {const} */ ("GET"), pathTemplate: `${collection}/shape/keys`, permission: /** @type {const} */ ("documents:read"), requestMediaTypes: Object.freeze([]), responseMediaType: "application/json", successStatuses: Object.freeze([200]), idempotencyKey: /** @type {const} */ ("none"), replaySafe: true, contract: "docs/terrabase/shape-reads.md", contractText: Object.freeze([]) }),
+]);

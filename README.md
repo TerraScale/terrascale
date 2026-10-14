@@ -174,6 +174,58 @@ The exported collection `shape()` remains compatible with the historical
 do not use it as current producer evidence. SSE changes are a separate database
 feed, not authorized bounded-query snapshots or the planned reactive WebSocket API.
 
+## Free shape subscriptions (protocol v1)
+
+`collection.subscribeShape({ where? }, { onUpdate?, signal? })` follows a collection's
+sealed snapshot, log chunks, and live long-polls. Its `state` is a map from document
+id to `{ version, document }`; `upToDate` becomes true only after a fresh response
+reports `up_to_date`. Each callback sees the complete applied response.
+
+```js
+const shape = todos.subscribeShape({ where: v1Filter.eq("/done", false) }, {
+  onUpdate(subscription) {
+    console.log(subscription.state, subscription.upToDate);
+  },
+});
+try {
+  await shape.done; // Runs until close(), cancellation, or a terminal error.
+} finally {
+  shape.close();
+}
+```
+
+`close()` cancels a pending read. Terminal errors reject `done` using the existing
+TerraBase error types; attach a handler when starting a subscription. Document
+upserts replace the prior value and deletes of unknown ids are harmless. Repeated
+events are applied: a sealed value can be newer than its event, including after
+failover. There are no durable local writes or offline mutation queue.
+
+The client preserves state for one proven cursor-resume attempt when a different
+machine rejects its handle. It never resumes an incomplete snapshot. A failed
+resume or another `409 must_refetch` clears state and starts a fresh snapshot.
+Opaque resume tokens travel verbatim in the query, or `TB-Shape-Resume` when the
+request target would exceed the protocol limit. Only documented transient
+`shape_busy`, `unavailable`, and `shape_too_large` errors retry with backoff and
+`Retry-After`; authorization and validation errors stop the subscription.
+
+`collection.decryptShapeObject(bytes, { handle, offset, epoch, keyId }, { signal? })`
+fetches the matching epoch key with `cache: "no-store"`, derives the per-object key
+with WebCrypto HKDF, and verifies every AES-256-GCM TBS1 frame before returning a
+page. Keys are fetched for each object, including historical epochs; they are not
+persisted. A failed tag, binding, frame, or response validation applies nothing.
+Native browser Fetch hides manual redirect metadata, so subscription bootstrap
+currently requires server fetch. TBS1 decryption uses WebCrypto in either runtime.
+
+This implements the [proposed protocol](contracts/shape-v1/shape-reads.md) at
+`993927ce7ecf8f9b889d24d4d1d21ec96eaf9416`, using `documents:read`. HTTP fakes and the
+upstream [conformance vectors](test/fixtures/shape-vectors.json) verify client
+behavior; they do not qualify a producer deployment. Current generated OpenAPI,
+live endpoint availability, and automatic region discovery remain unqualified.
+No TerraBase binary is downloaded or run by these tests. The existing historical
+`shape()` method keeps its contract. Manifest/object delivery and 302 redirects
+are deferred to FR-22; vector `presigned-manifest` is explicitly skipped until its
+invalid JSON binding escape is corrected upstream.
+
 Failures throw `TerraBaseV1Error` with status, code, optional transaction `op`,
 parsed `body`, raw `responseText`, response `headers`, and a received
 `X-Request-ID` as `requestId`. The actual producer uses `application/json`

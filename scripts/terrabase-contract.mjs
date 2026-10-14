@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { v1Routes } from "../src/v1/routes.js";
+import { v1Routes, shapeV1Routes } from "../src/v1/routes.js";
 import { openapiDigest } from "./ci/contract-digest.mjs";
 import { currentSourcePin, verifyCurrentSourceRoutes } from "./terrabase-current-source.mjs";
 
@@ -72,11 +72,31 @@ export function verifyProducerRoutes(routes, spec) {
   }
 }
 
+/** Proposed SDK shape protocol evidence; this is not runtime/OpenAPI qualification. */
+export async function shapeProtocolContract() {
+  const directory = new URL("../contracts/shape-v1/", import.meta.url);
+  const pin = JSON.parse(await readFile(new URL("pin.json", directory), "utf8"));
+  for (const [name, input] of Object.entries(pin.inputs))
+    assert.equal(digest(await readFile(new URL(name, directory))), input.sha256, `${name}: shape protocol digest mismatch.`);
+  const spec = await readFile(new URL("shape-reads.md", directory), "utf8");
+  const base = "/v1/projects/{project}/databases/{database}/collections/{collection}/shape";
+  assert.ok(spec.includes(`GET ${base}?where=&handle=&offset=&live=&cursor=`));
+  assert.ok(spec.includes(`GET ${base}/keys?handle=&epoch=&key_id=`));
+  assert.ok(spec.includes("documents:read"));
+  assert.deepEqual(shapeV1Routes.map(route => ({operation: route.operation, method: route.method, path: route.pathTemplate,
+    scope: route.permission, statuses: route.successStatuses, media: route.responseMediaType, idempotency: route.idempotencyKey})), [
+    { operation: "readFreeShape", method: "GET", path: base, scope: "documents:read", statuses: [200, 307], media: "application/json", idempotency: "none" },
+    { operation: "getShapeKey", method: "GET", path: `${base}/keys`, scope: "documents:read", statuses: [200], media: "application/json", idempotency: "none" },
+  ], "Free-read named routes drifted from pinned protocol.");
+  return { ...pin, routes: shapeV1Routes, generatedOpenApi: "Unavailable: proposed protocol only; producer qualification skipped." };
+}
+
 export async function generateV1Manifest() {
   const spec = await producerContract();
   verifyProducerRoutes(v1Routes, spec);
   return {
-    manifestVersion: 3,
+    manifestVersion: 4,
+    shapeProtocol: await shapeProtocolContract(),
     contractVersion: "terrabase-csharp-v1",
     contractSource: releasePin,
     currentSource: currentSourcePin,

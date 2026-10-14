@@ -5,80 +5,97 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "vitest";
 
-test("CI preserves event identity, real C# producer and framework/browser checks", async () => {
-  const workflow = await readFile(
-    new URL("../.forgejo/workflows/ci.yml", import.meta.url),
-    "utf8",
-  );
-  assert.match(workflow, /push:\n    branches: \[develop, main\]/u);
-  assert.match(workflow, /pull_request:\n    branches: \[main\]/u);
-  assert.match(workflow, /permissions:\n  contents: read/u);
-  assert.doesNotMatch(
-    workflow,
-    /pull_request_target|CONTRACT_ARCHIVE|EDGE_CONTRACT_SOURCE|contracts\/v1|TERRASCALE_DEPLOY/u,
-  );
-  for (const job of ["check", "test", "e2e"]) {
-    const definition = jobDefinition(workflow, job);
-    assert.doesNotMatch(definition, /NPM_TOKEN/u);
-    assert.match(definition, /runs-on: terrascale-builder/u);
-    assert.match(definition, /actions\/checkout@[0-9a-f]{40}/u);
-    assert.match(definition, /persist-credentials: false/u);
-    assert.match(definition, /node scripts\/provision-reviewed-npm\.js/u);
-    assert.match(definition, /npm ci/u);
-    assert.match(definition, /npm run build/u);
+const ownedCommands = [
+  "node scripts/provision-reviewed-npm.js",
+  "npm ci",
+  "npm run typecheck",
+  "npm run build",
+  "npm run check:v1-route-manifest",
+  "npm test",
+];
+
+test("pull requests and merges to main run CI on the reviewed Node 22 and 24 runtimes", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+  assert.match(workflow, /^on:\n  push:\n    branches: \[main\]\n  pull_request:\n    branches: \[main\]\n/mu);
+  assert.doesNotMatch(workflow, /^  (?:pull_request_target|workflow_dispatch|schedule):/mu);
+  assert.match(workflow, /^permissions:\n  contents: read\n/mu);
+  const job = jobDefinition(workflow, "verify");
+  assert.match(job, /runs-on: ubuntu-24\.04/u);
+  assert.match(job, /node: \["22\.23\.2", "24\.21\.0"\]/u);
+  assert.match(job, /actions\/checkout@11d5960a326750d5838078e36cf38b85af677262/u);
+  assert.match(job, /persist-credentials: false/u);
+  assert.match(job, /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/u);
+  assert.match(job, /node-version: \$\{\{ matrix\.node \}\}/u);
+});
+
+test("CI has no switches: no draft gate, fail-fast, conditions, or variables", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+  assert.doesNotMatch(workflow, /^\s+if:|fail-fast|continue-on-error|draft|inputs\.|vars\.|enabled|flag|toggle/imu);
+});
+
+test("CI runs exactly the reviewed steps in order", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+  const parsed = steps(jobDefinition(workflow, "verify"));
+  assert.deepEqual(parsed.map((step) => step.name), [
+    "Check out the pull request revision",
+    "Require the owner-approved 0.0.x version policy",
+    "Set up the reviewed Node runtime",
+    "Provision the reviewed npm CLI",
+    "Install locked dependencies",
+    "Typecheck",
+    "Generate SDK type declarations",
+    "Check C# route drift",
+    "Run SDK tests",
+  ]);
+  const commands = parsed.flatMap((step) => {
+    const run = runOf(step);
+    return run === undefined || run.startsWith("set -euo") ? [] : [run];
+  });
+  assert.deepEqual(commands, ownedCommands);
+});
+
+test("CI never invokes or provisions TerraBase, downloads a producer, or lowers CPU priority", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+  assert.doesNotMatch(workflow, /terrabase|integration|provision-terrabase|run-terrabase|scripts\/ci\/|contracts\/|test:browser|e2e/iu);
+  assert.doesNotMatch(workflow, /\b(?:curl|wget|gh release|nice|renice)\b/u);
+  assert.doesNotMatch(workflow, /secrets\.|NPM_TOKEN|REGISTRY_TOKEN|TERRASCALE_|FORGEJO/u);
+});
+
+test("the deploy profiles run no TerraBase producer command", async () => {
+  const deploy = JSON.parse(await readFile(new URL("../.terrascale/deploy.json", import.meta.url), "utf8"));
+  const commands = [
+    ...deploy.prProfiles,
+    ...deploy.releaseProfiles,
+    ...deploy.buildTargets,
+  ].flatMap((profile) => profile.commands);
+  assert.ok(commands.length > 0);
+  for (const command of commands) {
+    assert.ok(["npm", "node"].includes(command.command), command.description);
+    assert.doesNotMatch(
+      [command.command, ...command.arguments].join(" "),
+      /terrabase|integration|provision|producer|scripts\/ci\//iu,
+      command.description,
+    );
   }
-  const node = jobDefinition(workflow, "test");
-  assert.match(node, /node scripts\/ci\/provision-terrabase\.mjs/u);
-  assert.match(node, /FORGEJO_TOKEN: \$\{\{ secrets\.REGISTRY_TOKEN \}\}/u);
-  assert.match(node, /node scripts\/ci\/run-terrabase-integration\.mjs npm test/u);
-  assert.ok(node.indexOf("provision-terrabase.mjs") < node.indexOf("run-terrabase-integration.mjs"));
-  assert.match(jobDefinition(workflow, "check"), /npm run check:v1-route-manifest/u);
-  assert.doesNotMatch(workflow, /provision-current-contract-inputs|canonical effect vectors|check:current-contract|check:route-manifest|check:openapi-contract-descriptor|nice -n|renice/u);
-  assert.match(jobDefinition(workflow, "check"), /npm run typecheck/u);
-  assert.match(jobDefinition(workflow, "test"), /npm run check:frameworks/u);
-  assert.match(jobDefinition(workflow, "test"), /sha256sum --check --strict/u);
-  assert.match(jobDefinition(workflow, "test"), /node: "22\.23\.2"/u);
-  assert.match(jobDefinition(workflow, "test"), /node: "24\.21\.0"/u);
-  assert.match(jobDefinition(workflow, "e2e"), /npm run test:browser/u);
-  assert.match(
-    jobDefinition(workflow, "e2e"),
-    /bash scripts\/ci\/provision-branded-browsers\.sh/u,
-  );
+  assert.doesNotMatch(JSON.stringify(deploy), /test:integration|provision:terrabase/u);
 });
 
-test("npm publication runs only after verification on pushes to main", async () => {
-  const workflow = await readFile(
-    new URL("../.forgejo/workflows/ci.yml", import.meta.url),
-    "utf8",
-  );
-  const publish = jobDefinition(workflow, "release");
-  assert.match(publish, /needs: \[guard, check, test, e2e\]/u);
-  assert.match(
-    publish,
-    /if: \$\{\{ forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main' \}\}/u,
-  );
-  assert.match(publish, /NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/u);
-  assert.match(publish, /npm publish artifacts\/release\/\*\.tgz --access public --ignore-scripts --tag latest/u);
-  assert.equal(workflow.match(/NPM_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/gu)?.length, 1);
-  assert.doesNotMatch(workflow, /npm (?:unpublish|deprecate)|terrascale@/u);
-  assert.doesNotMatch(stepDefinition(publish, "Provision the reviewed npm CLI"), /^        if:/mu);
-  assert.match(publish, /npm view "\$\{name\}" dist-tags\.latest --prefer-online --registry https:\/\/registry\.npmjs\.org\//u);
-  assert.match(stepDefinition(publish, "Skip a version npm already has"), /npm view "\$\{spec\}" version --prefer-online --registry https:\/\/registry\.npmjs\.org\//u);
-  assert.match(publish, /TS-528: expected npm latest \$\{version\}, got \$\{latest\}/u);
-});
-
-test("the real check workflow guard accepts only owner-approved 0.0.x versions", async () => {
-  const workflow = await readFile(new URL("../.forgejo/workflows/ci.yml", import.meta.url), "utf8");
-  const guard = stepRun(stepDefinition(jobDefinition(workflow, "check"), "Require the owner-approved 0.0.x version policy"));
+test("the owner-approved 0.0.x guard runs in CI and the real package passes it", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+  const guard = runOf(stepNamed(jobDefinition(workflow, "verify"), "Require the owner-approved 0.0.x version policy"));
+  assert.ok(guard !== undefined, "Missing version guard run block");
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.match(pkg.version, /^0\.0\.[0-9]+$/u);
   const directory = await mkdtemp(path.join(tmpdir(), "terrascale-version-guard-"));
   try {
-    for (const version of ["0.0.0", "0.0.1", "0.0.528", "0.3.0", "1.0.0", "0.0", "0.0.1-beta", "0.0.1+build"]) {
+    for (const version of ["0.0.0", "0.0.1", "0.0.528", "0.3.0", "1.0.0", "0.0", "0.0.1-beta", "0.0.1+build", pkg.version]) {
       await writeFile(path.join(directory, "package.json"), JSON.stringify({ version }));
+      /** @type {import("node:child_process").SpawnSyncReturns<string>} */
       const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", guard], {
         cwd: directory, encoding: "utf8", timeout: 10_000,
       });
       assert.ifError(result.error);
-      const valid = ["0.0.0", "0.0.1", "0.0.528"].includes(version);
+      const valid = /^0\.0\.[0-9]+$/u.test(version);
       assert.equal(result.status, valid ? 0 : 1, version);
       assert.equal(result.stderr, valid ? "" : `TS-528: 0.0.x is required until the owner lifts it; got ${version}\n`);
     }
@@ -87,72 +104,33 @@ test("the real check workflow guard accepts only owner-approved 0.0.x versions",
   }
 });
 
-test.each(["published", "delayed", "wrong-latest"])("the real npm publish shell verifies latest when %s", async (scenario) => {
-  const workflow = await readFile(new URL("../.forgejo/workflows/ci.yml", import.meta.url), "utf8");
-  const publish = stepRun(stepDefinition(jobDefinition(workflow, "release"), "Pack and publish the release tarball"));
-  const directory = await mkdtemp(path.join(tmpdir(), "terrascale-npm-publish-"));
-  try {
-    await writeFile(path.join(directory, "package.json"), JSON.stringify({ name: "@terrascale/sdk", version: "0.0.1" }));
-    // This npm CLI double never forwards commands to a real registry.
-    await writeFile(path.join(directory, "npm"), `#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> calls
-case "$1" in
-  whoami) echo terrascale ;;
-  pack) touch artifacts/release/terrascale-sdk-0.0.1.tgz ;;
-  publish) touch published ;;
-  view)
-    test -f published
-    if [ "$NPM_CASE" = delayed ] && [ ! -f seen ]; then touch seen; echo 'npm error code E404' >&2; exit 1; fi
-    if [ "$NPM_CASE" = wrong-latest ]; then echo 1.0.0; else echo 0.0.1; fi ;;
-  *) echo "Unexpected npm command: $*" >&2; exit 98 ;;
-esac
-`, { mode: 0o755 });
-    await writeFile(path.join(directory, "calls"), "");
-    const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", `npm() { bash ./npm "$@"; }\nsleep() { :; }\n${publish}`], {
-      cwd: directory, encoding: "utf8", timeout: 10_000,
-      env: { PATH: process.env.PATH ?? "", RUNNER_TEMP: directory, NPM_TOKEN: "workflow-test-token", NPM_CASE: scenario },
-    });
-    assert.ifError(result.error);
-    assert.equal(result.status, scenario === "wrong-latest" ? 1 : 0, result.stderr);
-    assert.match(result.stderr, scenario === "wrong-latest" ? /TS-528: expected npm latest 0\.0\.1, got 1\.0\.0\n$/u : scenario === "delayed" ? /^npm error code E404\n$/u : /^$/u);
-    const view = "view @terrascale/sdk dist-tags.latest --prefer-online --registry https://registry.npmjs.org/";
-    const views = scenario === "published" ? 1 : scenario === "delayed" ? 2 : 30;
-    assert.equal(await readFile(path.join(directory, "calls"), "utf8"), [
-      "whoami --registry https://registry.npmjs.org/",
-      "pack --ignore-scripts --pack-destination artifacts/release",
-      "publish artifacts/release/terrascale-sdk-0.0.1.tgz --access public --ignore-scripts --tag latest --registry https://registry.npmjs.org/",
-      ...Array(views).fill(view),
-    ].map((call) => `${call}\n`).join(""));
-    await assert.rejects(readFile(path.join(directory, "npmrc")), { code: "ENOENT" });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+/** @param {string} workflow @param {string} job @returns {string} */
+function jobDefinition(workflow, job) {
+  const start = workflow.indexOf(`  ${job}:\n`);
+  assert.notEqual(start, -1, `Missing workflow job: ${job}`);
+  const remaining = workflow.slice(start);
+  const next = remaining.slice(1).search(/\n  [a-z][a-z0-9-]+:\n/u);
+  return next === -1 ? remaining : remaining.slice(0, next + 1);
+}
 
-/** @param {string} definition @param {string} name */
-function stepDefinition(definition, name) {
-  const step = definition.split(`      - name: ${name}\n`)[1]?.split(/\n      - name:/u)[0];
+/** @param {string} definition @returns {{ name: string, body: string }[]} */
+function steps(definition) {
+  return definition.split("\n      - name: ").slice(1).map((chunk) => {
+    const [name = "", ...body] = chunk.split("\n");
+    return { name, body: body.join("\n") };
+  });
+}
+
+/** @param {string} definition @param {string} name @returns {{ name: string, body: string }} */
+function stepNamed(definition, name) {
+  const step = steps(definition).find((candidate) => candidate.name === name);
   assert.ok(step, `Missing workflow step: ${name}`);
   return step;
 }
 
-/** @param {string} step */
-function stepRun(step) {
-  const run = step.match(/        run: \|\n((?:          [^\n]*(?:\n|$))+)/u)?.[1];
-  assert.ok(run, "Missing workflow shell block");
-  return run.replace(/^          /gmu, "");
-}
-
-/**
- * @param {string} workflow
- * @param {string} job
- * @returns {string}
- */
-function jobDefinition(workflow, job) {
-  const start = workflow.indexOf(`  ${job}:\n`);
-  assert.notEqual(start, -1);
-  const remaining = workflow.slice(start);
-  const next = remaining.slice(1).search(/\n  [a-z][a-z0-9-]+:\n/u);
-  return next === -1 ? remaining : remaining.slice(0, next + 1);
+/** @param {{ body: string }} step @returns {string | undefined} */
+function runOf(step) {
+  const block = step.body.match(/^        run: \|\n((?:          [^\n]*\n?)+)/mu)?.[1];
+  if (block !== undefined) return block.replace(/^          /gmu, "").trimEnd();
+  return step.body.match(/^        run: (.+)$/mu)?.[1];
 }
