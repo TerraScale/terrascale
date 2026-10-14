@@ -16,10 +16,12 @@ public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing 
     /// <inheritdoc />
     public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
     {
-        var result = await storage.CheckAsync(cancellationToken).ConfigureAwait(false);
+        var storageCheck = storage.CheckAsync(cancellationToken);
+        // The read-only signing check is independent of the synthetic storage write sequence.
+        await Task.WhenAll(storageCheck, ring.CheckPublicMetadataAsync(OidcIssuer.InstanceId, cancellationToken)).ConfigureAwait(false);
+        var result = await storageCheck.ConfigureAwait(false);
         if (result.Healthy)
         {
-            await ring.CheckPublicMetadataAsync(OidcIssuer.InstanceId, cancellationToken).ConfigureAwait(false);
             await rotation.Bootstrapped.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 

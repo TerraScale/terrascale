@@ -16,6 +16,31 @@ namespace TerraScale.Authentication.Fast.Store;
 public sealed class StorageReadinessTests(TerraBaseFixture fixture)
 {
     [Test]
+    public async Task Storage_readiness_checks_required_collections_beyond_the_first_catalog_page()
+    {
+        var (tenant, database) = await fixture.CreateDatabaseAsync();
+        for (var index = 0; index < 200; index++)
+        {
+            await database.CreateCollectionAsync($"extra_{index:D3}");
+        }
+
+        using var requests = new CatalogRequests { InnerHandler = TerraBaseFixture.NewHandler() };
+        using var http = new HttpClient(requests);
+        var probedDatabase = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
+        {
+            BaseAddress = fixture.Server.InternalAddress,
+        }).Database(tenant.Project.Id, "auth");
+        var health = new TerraBaseStorageHealth(probedDatabase);
+        await Assert.That((await health.CheckAsync(CancellationToken.None)).Healthy).IsTrue();
+        await Assert.That(requests.Count).IsEqualTo(2);
+        await Assert.That((await database.ListDocumentsAsync(AuthStore.HealthCollection)).Items.Count).IsEqualTo(0);
+
+        await database.DropCollectionAsync(AuthStore.ChallengeCollection);
+        await Assert.That((await health.CheckAsync(CancellationToken.None)).Healthy).IsFalse();
+        await Assert.That((await database.ListDocumentsAsync(AuthStore.HealthCollection)).Items.Count).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task Keys_scoped_to_another_organization_or_project_never_report_ready(bool anotherOrganization)
@@ -150,6 +175,21 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
     }
 
     private static Task<bool> ReadyWithinAsync(AuthTestServer auth, TimeSpan limit) => ReadinessWait.ReadyWithinAsync(auth.Client, limit);
+
+    private sealed class CatalogRequests : DelegatingHandler
+    {
+        public int Count { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/collections", StringComparison.Ordinal))
+            {
+                this.Count++;
+            }
+
+            return base.SendAsync(request, cancellationToken);
+        }
+    }
 
     // provision: the operator's signing-key provisioning runs before the server starts, as on a provisioned deployment.
     private Task<AuthTestServer> StartAuthAsync(TerraBaseTestTenant tenant, string databaseName = "auth", string? apiKey = null, string? masterKey = null, TimeSpan? refresh = null, bool provision = true) =>
