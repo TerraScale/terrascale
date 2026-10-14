@@ -79,13 +79,7 @@ Never send a localhost URL as a remote preview, invent a hostname, or present an
 
 ### Required Checks
 
-Before pushing, opening or updating a PR, or merging:
-
-- Formatting, lint, and type checks MUST pass.
-- The production build and prerendering MUST succeed (`npm run build`).
-- All configured test suites MUST pass. The `slow` suite is mandatory and blocking; run `fast` too when configured.
-- Results MUST match the exact commit being advanced. Rerun affected checks after any change.
-- Never skip, disable, or weaken checks to pass. Never claim a check passed unless it ran successfully.
+CI is the gate: no local test/check run is required before pushing or opening a PR.
 
 ### Coverage
 
@@ -105,7 +99,7 @@ Before pushing, opening or updating a PR, or merging:
 
 ## Pull Requests
 
-- Open a PR into **`main`** when the work is ready for review and required local checks pass. Keep it focused, with a concise change summary and the validation performed.
+- Open a PR into **`main`** when the work is ready for review. Keep it focused, with a concise change summary and the validation performed.
 - Request reviews from **`mariogk`** and **`terrascale-bot`**, excluding whichever account authored the PR.
 - Never merge while required checks are pending or failing.
 - Visual changes: attach several before/after screenshots of the affected layouts and states (mobile and desktop when both apply). Capture them from the real implementation, never mockups. Upload them as PR attachments; do not commit images just for PR documentation.
