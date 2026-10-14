@@ -32,7 +32,7 @@ env:
 jobs:
   package:
     if: github.event_name == 'push'
-    runs-on: alpha
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -85,7 +85,7 @@ jobs:
 
   github-packages:
     needs: package
-    runs-on: alpha
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -112,7 +112,7 @@ jobs:
   restore:
     needs: [package, github-packages]
     if: ${{ !cancelled() && !failure() }}
-    runs-on: alpha
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -181,7 +181,7 @@ jobs:
     needs: restore
     # Spelled out: the implicit success() would skip this job, as package and github-packages are skipped on dispatch.
     if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && needs.restore.result == 'success' }}
-    runs-on: alpha
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read

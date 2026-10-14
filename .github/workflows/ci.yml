@@ -18,7 +18,7 @@ concurrency:
 # caches, so no GitHub cache step and no paid hosted fallback.
 jobs:
   test:
-    runs-on: alpha
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
