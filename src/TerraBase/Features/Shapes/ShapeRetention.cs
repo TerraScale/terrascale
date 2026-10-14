@@ -26,7 +26,8 @@ internal interface IShapeRetentionTransaction
     ValueTask<int> DropShapeAsync(string handle, int maxRows, long maxBytes, CancellationToken cancellationToken);
 }
 
-internal sealed class ShapeRetention(TimeProvider time, IShapeStorage storage) : IShapeRetention
+internal sealed class ShapeRetention(TimeProvider time, IShapeStorage storage,
+    Func<IDatabaseStore, string, long, CancellationToken, ValueTask>? onTrimmed = null) : IShapeRetention
 {
     private static readonly SearchValues<char> HandleHex = SearchValues.Create("0123456789abcdef");
     internal const int BatchRows = 1024;
@@ -48,9 +49,17 @@ internal sealed class ShapeRetention(TimeProvider time, IShapeStorage storage) :
     {
         Validate(store, handle);
         var before = (time.GetUtcNow() - FeedCursor.Retention).ToUnixTimeMilliseconds();
-        await using var transaction = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false);
-        var deleted = await Storage(transaction).TrimShapeAsync(handle, before, BatchRows, BatchBytes, cancellationToken).ConfigureAwait(false);
-        _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        int deleted;
+        await using (var transaction = await storage.BeginTransactionAsync(store, write: true, cancellationToken).ConfigureAwait(false))
+        {
+            deleted = await Storage(transaction).TrimShapeAsync(handle, before, BatchRows, BatchBytes, cancellationToken).ConfigureAwait(false);
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        if (onTrimmed is not null)
+        {
+            // The floor is read after the trim's writer is disposed; the callback's failures belong to its owner.
+            await onTrimmed(store, handle, await GetFloorAsync(store, handle, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
+        }
         return deleted;
     }
 

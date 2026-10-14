@@ -17,7 +17,7 @@ public sealed record ShapeSealRequest(ShapeSealDefinition Shape, long Offset);
 
 /// <summary>Stored, immutable bytes. The caller retains admission until it finishes sending or caching them.</summary>
 public sealed class ShapeSealedChunk(long offset, long endOffset, long valuesAt, ReadOnlyMemory<byte> body,
-    IMemoryReservation reservation) : IDisposable
+    IMemoryReservation reservation, long sealedAt = 0) : IDisposable
 {
     /// <summary>The exclusive beginning of the covered range.</summary>
     public long Offset { get; } = offset;
@@ -27,6 +27,8 @@ public sealed class ShapeSealedChunk(long offset, long endOffset, long valuesAt,
     public long ValuesAt { get; } = valuesAt;
     /// <summary>The bytes persisted at sealing, never reconstructed from current documents.</summary>
     public ReadOnlyMemory<byte> Body { get; } = body;
+    /// <summary>The persisted seal time in Unix milliseconds; zero when the chunk was not read from storage.</summary>
+    public long SealedAt { get; } = sealedAt;
     /// <summary>Releases admission after use.</summary>
     public void Dispose() => reservation.Dispose();
 }
@@ -95,7 +97,7 @@ public interface IShapeSealer
 
 internal sealed class ShapeSealer(
     IMemoryBudget memory, ILogger<ShapeSealer> logger, IShapeStorage storage, IRemoteDurability durability, IShapeMetrics? metrics = null,
-    TimeProvider? time = null)
+    TimeProvider? time = null, Action<IDatabaseStore, ShapeSealDefinition, ShapeSealedChunk>? onSealed = null)
     : IShapeSealer
 {
     /// <summary>Longest frontier wait of one seal: the live wait's bound, so a stalled proof releases its caller.</summary>
@@ -116,6 +118,7 @@ internal sealed class ShapeSealer(
         do
         {
             // Read before the attempt: a frontier move after it wakes the wait below.
+            var sealedFrom = offset;
             var sequence = store.CommitSequence;
             long sealedOffset;
             // Read before the writer is taken: joined commits of these origins are held elsewhere.
@@ -164,9 +167,31 @@ internal sealed class ShapeSealer(
             }
 
             offset = sealedOffset;
+            if (onSealed is not null && offset > sealedFrom)
+            {
+                await PublishSealedAsync(store, shape, sealedFrom, cancellationToken).ConfigureAwait(false);
+            }
         }
         while (offset < through.Value);
         return offset;
+    }
+
+    private async ValueTask PublishSealedAsync(IDatabaseStore store, ShapeSealDefinition shape, long offset, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // The chunk is re-read after the writer is disposed, so the callback sees only persisted bytes.
+            using var chunk = await ReadChunkAsync(store, shape.Handle, offset, cancellationToken).ConfigureAwait(false);
+            if (chunk is not null)
+            {
+                onSealed!(store, shape, chunk);
+            }
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The chunk stays sealed; a failed notification must not fail origin reads or sealing.
+            logger.ZLogWarning(error, $"Shape seal callback failed; the sealed chunk remains persisted");
+        }
     }
 
     public async ValueTask<ShapeSealedChunk?> ReadChunkAsync(IDatabaseStore store, string handle, long offset,
@@ -214,7 +239,8 @@ internal sealed class ShapeSealer(
             while (!store.IsClosed)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var sequence = store.CommitSequence;
+                var sealedFrom = offset;
+            var sequence = store.CommitSequence;
                 var refused = false;
                 try
                 {

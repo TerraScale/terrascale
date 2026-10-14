@@ -636,7 +636,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         var admission = memory.TryReserve(MemoryLane.Foreground, checked(bytes + 4096), store.Tenant) ?? throw new QosMemoryException();
         try
         {
-            var command = Command("SELECT end_offset, body FROM _tb_shape_chunk WHERE handle = $handle AND offset = $offset;");
+            var command = Command("SELECT end_offset, body, sealed_at FROM _tb_shape_chunk WHERE handle = $handle AND offset = $offset;");
             command.Parameters.AddWithValue("$handle", handle);
             command.Parameters.AddWithValue("$offset", offset);
             // The payload read: the one SELECT a served chunk costs, counted apart from the size probe and other shape SQL.
@@ -649,7 +649,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             var end = reader.GetInt64(0);
             var body = SqliteSession.Bytes(reader, 1);
             var valuesAt = ReadShapeValuesAt(body);
-            return new ShapeSealedChunk(offset, end, valuesAt, body, admission);
+            return new ShapeSealedChunk(offset, end, valuesAt, body, admission, reader.GetInt64(2));
         }
         catch
         {

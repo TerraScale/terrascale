@@ -571,7 +571,7 @@ objects; FR-22 supplies that proof. Before T1 objects exist the default refuses 
   is unpublished (section 10) or not yet mirrored, so it may be empty. The client then reads that offset from the
   origin.
 - Entry: `offset`, `next_offset`, `binding` (JSON string `handle + "\u0000" + offset`), `object`
-  (`v1/shapes/<hex SHA-256(shape_id ‖ 0x00 ‖ binding)>`, where `shape_id` is its 32 lowercase hex characters as ASCII and
+  (`v1/shapes/<handle>/<hex SHA-256(shape_id ‖ 0x00 ‖ binding)>`, where `shape_id` is its 32 lowercase hex characters as ASCII and
   `binding` is the UTF-8 string above), `url` (presigned GET), `expires_at`, `epoch`, `key_id`, `sha256` (hex of the
   exact TBS1 bytes) and `size` (bytes, integer).
 - `expires_at` is RFC 3339 UTC at the start of the next epoch, `(E_now + 1) × 600`. The presigned URL expires no
@@ -586,6 +586,24 @@ objects; FR-22 supplies that proof. Before T1 objects exist the default refuses 
 
   Any failure discards that object and falls back to the origin for its offset.
 - The mirror never replaces a stored object with different bytes (FR-22).
+- FR-22 uses the platform backup bucket and credentials, with conditional `If-None-Match: *` PUTs. The object holds
+  TBS1 ciphertext and hash/key/epoch/seal-time metadata; a numeric retention position supports floor cleanup. Plaintext
+  document ids, snapshot continuation ids, and tenant names never enter object metadata.
+- T1 delivery uses the authenticated manifest for integrity metadata and the next eight objects. Origin reads keep
+  returning plaintext, including when the client falls back after an object fails integrity checks. Conditional origin
+  `304` responses continue to revalidate plaintext.
+- Successful chunk and complete snapshot publication enqueue a bounded background mirror. Snapshot pages are read
+  by the mirror worker. Failed or refused work leaves origin delivery available. After a restart,
+  reading immutable origin bytes warms the metadata cache with HEAD from the existing remote object. Warming never
+  uploads missing objects or renews the original seal timestamp.
+- Historical key proof first checks warmed objects, then scans at most 1024 remote objects with a two-second
+  deadline. An unproven pair answers `409 must_refetch`; reading its immutable offset from the origin warms the proof
+  without rewriting ciphertext. Successful remote proofs are cached and rechecked against retention; absent-object
+  HEAD results back off for 30 seconds. This bounds remote request amplification after a restart.
+- Floor cleanup deletes mirrors below the floor; an hourly bounded sweep also collects objects older than seven days,
+  including retired handles. Expired objects stop appearing in manifests and key proofs immediately, even while a
+  refused remote delete waits for a later pass. Physical deletion can lag the retention cutoff by a sweep interval and
+  the bounded scan backlog.
 
 ## 15. Limitations
 
