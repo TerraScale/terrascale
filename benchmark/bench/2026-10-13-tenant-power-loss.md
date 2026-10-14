@@ -1,14 +1,14 @@
 # Tenant WAL power-loss proof — 2026-10-13
 
-Status: 3 of 3 repeat runs passed at the rebased head `ff44f7ef` on `main` `a96ccbac` (12 of 12 test executions, 0 skipped) within the fault model below. The earlier passing set at `4ee2158d` on `a537727b` is kept as history. The required `make check` at the current head passed on retry (exit 0; TerraBase.Fast 1595 of 1595). The first attempt was interrupted by SIGTERM and is kept below. See Required gates.
+Status: 3 of 3 repeat runs passed at the current head `d69c4eba` on `main` `d875729d` (12 of 12 test executions, 0 skipped) within the fault model below. No local `make check` ran at this head (user decision: the PR CI is the required gate). The earlier passing sets at `ff44f7ef` on `a96ccbac` and `4ee2158d` on `a537727b`, and their `make check` results, are historical. See Required gates.
 
 ## Environment
 
 | Field | Value |
 | --- | --- |
-| Date | 2026-10-13 UTC |
-| Test commit | `ff44f7ef9fc2f53dba9904635bb25d3e0679e5f4` (rebased passing three-run set; earlier attempts below) |
-| Base | `a96ccbac035470816aee8cffe40fce3abfe291ba` (branch rebase base on `main`) |
+| Date | 2026-10-13–14 UTC (latest repeats crossed midnight) |
+| Test commit | `d69c4eba23037bbeada83ac929b762c0286ba9e7` (current passing three-run set; earlier attempts below) |
+| Base | `d875729d1f6d50f31b1d87150708766cd939cf5e` (branch rebase base on `main`) |
 | Machine | `delta`, Intel Core i7-13620H, 16 logical CPUs, 31 GiB RAM |
 | OS | Linux 7.2.10, x86_64 |
 | SDK | .NET `11.0.100-rc.1.26425.128` |
@@ -23,7 +23,7 @@ Run this command three times from the repository root. `ts-heavy` supplies the s
 TsDotnetRoot=/home/mariogk/Projects/TerraScale/ts-dotnet \
   ~/.local/bin/ts-heavy make terrabase-e2e \
   TEST_ARGS='--treenode-filter /*/*/TenantDatabasePowerLossTests/* --minimum-expected-tests 4' \
-  E2E_RESULTS=/tmp/b3-rebased-run-1.jsonl
+  E2E_RESULTS=/tmp/b3-sdkpin-run-1.jsonl
 ```
 
 Change the output suffix to 2 and 3 for subsequent runs. The outcome JSONL records the raw B3 counts and WAL byte lengths in each test's `detail`.
@@ -93,7 +93,7 @@ Aggregates over the three runs:
 
 Raw local evidence: `/tmp/b3-run-{1,2,3}.log`, `/tmp/b3-run-{1,2,3}.jsonl` (SHA-256 run 1 and 2 `58ceb496…edce61`, run 3 `a02f6978…be954`).
 
-### Rebased validation (current)
+### Rebased validation at `ff44f7ef` (historical)
 
 The branch was rebased onto `main` `a96ccbac035470816aee8cffe40fce3abfe291ba`, which adds native reader `Abort` cleanup and the PITR benchmark race fix. The test is unchanged. Validated head: `ff44f7ef9fc2f53dba9904635bb25d3e0679e5f4` (machine `delta`, ts-dotnet `bcd20603`, `TsDotnetRoot=/home/mariogk/Projects/TerraScale/ts-dotnet`). One `ts-heavy` slot ran `/tmp/b3-rebased-runs.sh`, which calls the reproduction command three times (`E2E_RESULTS=/tmp/b3-rebased-run-N.jsonl`) and stops at the first failure. Queued at 2026-10-13T21:50:05Z waiting for a slot. Run 1 22:16:23Z–22:17:03Z (includes `terrabase-build`), run 2 22:17:03Z–22:17:21Z, run 3 22:17:21Z–22:17:35Z. Wrapper exit 0. Each run: 4 total, 4 succeeded, 0 failed, 0 skipped.
 
@@ -126,9 +126,46 @@ Combined with the pre-rebase set: 6 of 6 runs passed, 288 of 288 acknowledged do
 
 Raw local evidence: `/tmp/b3-rebased-run-{1,2,3}.log`, `/tmp/b3-rebased-run-{1,2,3}.jsonl`, with per-run `.start`/`.end` UTC stamps.
 
+### SDK-pin rebased validation (current)
+
+The branch was rebased onto `main` `d875729d1f6d50f31b1d87150708766cd939cf5e`, which adds persisted feed sequences and derived shape storage, monotonic local origin stamps, stored-digest binding to collection and id, independent Slow CI, and the shared Docker SDK pin to the locked RC1 toolchain (`global.json` `rollForward: disable`). The test is unchanged. Validated head: `d69c4eba23037bbeada83ac929b762c0286ba9e7` (machine `delta`, SDK `11.0.100-rc.1.26425.128`, Turso 0.8.2, ts-dotnet `bcd20603`, `TsDotnetRoot` and `TS_DOTNET_DIR` set to `/home/mariogk/Projects/TerraScale/ts-dotnet`). `/tmp/b3-sdkpin-runs.sh` calls the reproduction command through `ts-heavy` three times (`E2E_RESULTS=/tmp/b3-sdkpin-run-N.jsonl`) and stops at the first failure. Run 1 2026-10-13T23:40:57Z–2026-10-14T00:12:11Z (includes waiting for a slot and `terrabase-build`, 0 warnings, 0 errors), run 2 00:12:11Z–00:12:26Z, run 3 00:12:26Z–00:12:45Z. Each run exited 0: 4 total, 4 succeeded, 0 failed, 0 skipped.
+
+| Run | Test | Outcome | Ack | Recovered | Interrupted | Discarded | Post-recovery ack / recovered | Synced WAL bytes | Unsynced bytes | Retained bytes | Torn bytes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | random cut (181, 1) | pass | 15 | 15 | 1 | 1 | 1 / 1 | 1252512 | 78280 | 74161 | 1 |
+| 1 | random cut (13013, 12) | pass | 12 | 12 | 1 | 1 | 1 / 1 | 803432 | 65920 | 61812 | 12 |
+| 1 | random cut (802, 2048) | pass | 21 | 21 | 1 | 1 | 1 / 1 | 1380232 | 57680 | 55608 | 2048 |
+| 2 | random cut (181, 1) | pass | 15 | 15 | 1 | 1 | 1 / 1 | 1252512 | 78280 | 74161 | 1 |
+| 2 | random cut (13013, 12) | pass | 12 | 12 | 1 | 1 | 1 / 1 | 803432 | 65920 | 61812 | 12 |
+| 2 | random cut (802, 2048) | pass | 21 | 21 | 1 | 1 | 1 / 1 | 1363752 | 74160 | 72088 | 2048 |
+| 3 | random cut (181, 1) | pass | 15 | 15 | 1 | 1 | 1 / 1 | 1252512 | 78280 | 74161 | 1 |
+| 3 | random cut (13013, 12) | pass | 12 | 12 | 1 | 1 | 1 / 1 | 803432 | 65920 | 61812 | 12 |
+| 3 | random cut (802, 2048) | pass | 21 | 21 | 1 | 1 | 1 / 1 | 1363752 | 74160 | 72088 | 2048 |
+
+| Run | Test | Outcome | NORMAL commits | NORMAL recovered | FULL ack | FULL recovered | WAL bytes before sync | After NORMAL | FULL sync |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | FULL barrier | pass | 3 | 3 | 1 | 1 | 94792 | 107152 | 156592 |
+| 2 | FULL barrier | pass | 3 | 3 | 1 | 1 | 94792 | 107152 | 156592 |
+| 3 | FULL barrier | pass | 3 | 3 | 1 | 1 | 94792 | 107152 | 156592 |
+
+Aggregates over the three SDK-pin runs:
+
+- Random cut: 144 acknowledged documents before power loss (48 per run: 15 + 12 + 21), 144 recovered with exact bodies, 0 missing or changed. 9 interrupted transactions, 9 discarded. 9 post-recovery acknowledged writes, 9 recovered after the second power loss, together with every earlier acknowledged document.
+- FULL barrier: 9 NORMAL rows primed, 9 recovered; 3 FULL acknowledgements, 3 recovered. In every run the FULL sync (156592 bytes) covered the NORMAL frames (ending at 107152 bytes).
+- WAL byte lengths differ from the earlier sets on every case; the counts are the same. In run 1 the seed-802 case synced 16480 more bytes before its cut than in runs 2 and 3 and had a smaller unsynced tail (57680 bytes); its counts are the same. JSONL SHA-256: run 1 `d120e3f6…e063f`, run 2 `57829539…1e5bd`, run 3 `c59d8766…bc495` (runs 2 and 3 hold the same records in a different line order).
+- Counts above were read from the JSONL `detail` fields; every record has category `pass` (12 of 12) and each log reports `skipped: 0`.
+
+Combined with both earlier sets: 9 of 9 runs passed, 432 of 432 acknowledged documents recovered, 27 of 27 interrupted transactions discarded, 27 of 27 post-recovery documents recovered, 27 of 27 NORMAL rows and 9 of 9 FULL documents recovered.
+
+Raw local evidence: `/tmp/b3-sdkpin-run-{1,2,3}.log`, `/tmp/b3-sdkpin-run-{1,2,3}.jsonl`, with per-run `.start`/`.end` UTC stamps and `.exit` (`0`); `/tmp/b3-sdkpin-runs.sh`; `/tmp/b3-sdkpin-head.txt` (`d69c4eba`).
+
 ## Required gates
 
-### Rebased check retry (current, passing)
+### Current head `d69c4eba`
+
+No local `make check` ran at `d69c4eba`. The user directed that the PR's CI is the required gate once the B3 proof passes, so no full local suite was queued. No local required-check pass is claimed at this head. The checks below ran at earlier heads and are historical.
+
+### Rebased check retry at `ff44f7ef` (historical, passing)
 
 The `main` test gate is open (user decision after `df043b49`). Deployment is tracked separately.
 
