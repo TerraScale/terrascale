@@ -91,7 +91,6 @@ public sealed partial record OrganizationPage
     public string InvitationUrl(int page) => "/organization?tab=invitations" + (page > 1 ? "&page=" + page : "");
     public static string RoleLabel(string role) => role.Length == 0 ? "Unknown" : char.ToUpperInvariant(role[0]) + role[1..];
     public static string RoleFilterLabel(string role) => role switch { "all" => "All roles", "owner" => "Organization owner", _ => RoleLabel(role) };
-    public static string RoleTone(string role) => role switch { "owner" => "violet", "admin" => "teal", "member" => "blue", _ => "slate" };
     public static string InvitationTone(string status) => status switch { "pending" => "amber", "accepted" => "emerald", "declined" => "rose", _ => "slate" };
     public IReadOnlyList<AuditRecord> AuditMatches => Filter.ApplyAudit(Access?.AuditEvents ?? [], Access?.AuditRetentionDays);
     public int AuditPages => Math.Max(1, (AuditMatches.Count + 9) / 10);

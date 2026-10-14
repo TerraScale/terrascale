@@ -67,13 +67,13 @@ dialog.ts-org-wizard {
 }
 
 .ts-org-step-current {
-  border-color: color-mix(in oklab, var(--tone) 50%, transparent);
-  background: color-mix(in oklab, var(--tone) 10%, transparent);
+  border-color: var(--ts-line-strong);
+  background: rgb(255 255 255 / 0.08);
   color: var(--ts-ink);
 }
 
 .ts-org-step-current .ts-org-step-icon {
-  background: var(--tone);
+  background: var(--ts-ink);
   color: var(--ts-canvas);
 }
 
@@ -117,8 +117,8 @@ dialog.ts-org-wizard {
 }
 
 .ts-org-plan:has(input:checked) {
-  border-color: var(--tone);
-  background: color-mix(in oklab, var(--tone) 10%, var(--ts-surface-2));
+  border-color: var(--ts-ink-2);
+  background: rgb(255 255 255 / 0.08);
 }
 
 .ts-org-plan-price {
@@ -172,4 +172,31 @@ dialog.ts-org-wizard {
   .ts-org-step {
     justify-content: center;
   }
+}
+
+.ts-org-page > .ts-tabs { margin-bottom: var(--ts-s5); }
+.ts-org-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s4);
+  margin-bottom: var(--ts-s5);
+}
+.ts-org-title { font-size: var(--ts-fs-2xl); letter-spacing: -0.03em; }
+.ts-org-subtitle { margin-top: var(--ts-s2); }
+.ts-org-overview { display: grid; gap: var(--ts-s5); }
+.ts-org-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: var(--ts-s5); align-items: start; }
+.ts-org-grid > * { min-width: 0; }
+.ts-org-preview { list-style: none; margin: 0; padding: 0; }
+.ts-org-preview li { display: flex; align-items: center; justify-content: space-between; gap: var(--ts-s4); padding: var(--ts-s4) var(--ts-s5); }
+.ts-org-preview li + li { border-top: 1px solid var(--ts-line); }
+.ts-org-preview .ts-list-main { min-width: 0; overflow-wrap: anywhere; }
+.ts-org-danger { border: 1px solid var(--ts-danger); border-radius: var(--ts-radius); padding: var(--ts-s5); }
+.ts-org-danger .ts-card-title { color: var(--ts-danger); }
+.ts-org-danger .ts-card-body { display: grid; justify-items: start; gap: var(--ts-s4); }
+.ts-org-danger .ts-dialog-content { justify-items: stretch; }
+@media (max-width: 47.99rem) {
+  .ts-org-header { flex-wrap: wrap; }
+  .ts-org-grid { grid-template-columns: minmax(0, 1fr); }
+  .ts-org-preview li { flex-wrap: wrap; }
 }

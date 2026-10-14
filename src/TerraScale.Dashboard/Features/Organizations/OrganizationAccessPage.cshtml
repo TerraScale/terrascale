@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
 @using TerraScale.Dashboard.Features.Organizations
-<main id="access-page" class="ts-page ts-access-page">
-    <h1 class="ts-sr-only">Organization</h1><div class="ts-page-actions"></div>
+<main id="access-page" class="ts-page ts-org-page ts-access-page">
+    <header class="ts-org-header"><div><h1 class="ts-org-title">@(Model.Shell.Context.Organization?.Name ?? "Organization")</h1>@if (Model.Shell.Context.Organization is { } headerOrg) { <p class="ts-meta ts-org-subtitle">@(headerOrg.Kind == "personal" ? "Personal organization" : "Business organization")</p> }</div></header><div class="ts-page-actions"></div>
     @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">Could not update access</p><p class="ts-alert-body">@Model.Error</p></div> }
     @if (Model.InvitationLink.Length > 0)
     {
@@ -10,8 +10,8 @@
             <div class="ts-row"><a id="invitation-link" class="ts-link ts-break" href="@Model.InvitationLink" rel="noreferrer" data-text="el.href">@Model.InvitationLink</a><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-signals="{_copy: ''}" data-on:click="(navigator.clipboard?.writeText(document.getElementById('invitation-link').href) ?? Promise.reject()).then(() => { $_copy = 'Copied'; setTimeout(() => $_copy = '', 2000) }, () => $_copy = 'Copy failed: select the link')">@Icons.Render("Copy", 14)<span data-text="$_copy || 'Copy link'">Copy link</span></button></div>
         </section>
     }
+    <nav class="ts-tabs" aria-label="Organization sections">@foreach (var tab in Tabs) { <a class="ts-tab" href="@tab.Url" aria-current="@(tab.Key == "members" ? "page" : null)">@Icons.Render(tab.Icon, 16)<span>@tab.Label</span></a> }</nav>
     <div class="ts-toolbar ts-access-toolbar">
-        <nav class="ts-tabs" aria-label="Organization sections">@foreach (var tab in Tabs) { <a class="ts-tab" href="@tab.Url" aria-current="@(tab.Key == "members" ? "page" : null)"><span>@tab.Label</span></a> }</nav>
         <form id="access-filter-form" method="get" action="/organization" class="ts-filters ts-access-filters" role="search" aria-label="Filter members" data-on:submit="@@get('/organization', {contentType:'form'})">
             <input type="hidden" name="tab" value="members" /><button class="ts-sr-only" type="submit">Apply filters</button><input type="hidden" name="role" value="@(Model.Filter.Role == "all" ? "" : Model.Filter.Role)" />
             <div class="ts-filter-field ts-access-search"><label class="ts-sr-only" for="member-search">Filter members</label><input class="ts-input" id="member-search" name="q" type="search" placeholder="Search members" value="@Model.Filter.Query" /></div>
@@ -23,5 +23,5 @@
     @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationMembers, OrganizationPage>(Model))
 </main>
 @functions {
-    private static readonly (string Key, string Label, string Url)[] Tabs = [("organization", "Organization", "/organization"), ("members", "Members", "/organization?tab=members"), ("projects", "Projects", "/organization?tab=projects"), ("billing", "Billing", "/organization?tab=billing"), ("audit", "Audit", "/organization?tab=audit")];
+    private static readonly (string Key, string Label, string Url, string Icon)[] Tabs = [("organization", "Organization", "/organization", "Building2"), ("members", "Members", "/organization?tab=members", "Users"), ("projects", "Projects", "/organization?tab=projects", "FolderKanban"), ("billing", "Billing", "/organization?tab=billing", "CreditCard"), ("audit", "Audit", "/organization?tab=audit", "ScrollText"), ("danger", "Danger zone", "/organization?tab=danger", "TriangleAlert")];
 }

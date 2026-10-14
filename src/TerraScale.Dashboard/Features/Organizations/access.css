@@ -49,8 +49,23 @@
   max-width: 280px;
 }
 
-.ts-access-filters .ts-filter-field:has(ts-menu) {
+.ts-access-filters .ts-filter-field:has(.ts-menu) {
   flex: 0 0 170px;
+}
+
+/* 390px: filters stack full width, as in the prototype. */
+@media (max-width: 47.99rem) {
+  .ts-access-filters {
+    flex-wrap: wrap;
+  }
+
+  .ts-access-search {
+    max-width: none;
+  }
+
+  .ts-access-filters .ts-filter-field:has(.ts-menu) {
+    flex: 1 1 100%;
+  }
 }
 
 /* Role and invitation distributions: one colored share bar per category. */

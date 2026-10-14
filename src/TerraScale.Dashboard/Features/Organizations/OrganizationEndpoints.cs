@@ -103,9 +103,10 @@ public static class OrganizationEndpoints
         return endpoints;
     }
 
-    private static async Task<RazorSlice> PageAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", int status = 200)
+    private static async Task<RazorSlice> PageAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "", int status = 200, string? tab = null)
     {
-        var slice = OrganizationView.Create(await PageModelAsync(http, context, placement, error));
+        var page = await PageModelAsync(http, context, placement, error);
+        var slice = OrganizationView.Create(tab is null ? page : page with { Tab = tab });
         slice.StatusCode = status;
         return slice;
     }
@@ -113,7 +114,7 @@ public static class OrganizationEndpoints
     private static async Task<OrganizationPage> PageModelAsync(HttpContext http, AccountContext context, IWorkspacePlacement placement, string error = "")
     {
         var tab = http.Request.Query["newProject"] == "1" ? "projects" : http.Request.Query["tab"].ToString();
-        if (tab is not ("projects" or "members" or "invitations" or "audit" or "billing")) tab = "organization";
+        if (tab is not ("projects" or "members" or "invitations" or "audit" or "billing" or "danger")) tab = "organization";
         var regions = tab == "projects" || http.Request.Query["newOrganization"] == "project" || http.Request.Query["newProject"] == "1"
             ? await placement.RegionsAsync(http.RequestAborted) : [];
         var access = context.Organization is not null ? await http.RequestServices.GetRequiredService<IOrganizationAccess>().ReadAsync(context, http.RequestAborted) : null;
@@ -163,9 +164,9 @@ public static class OrganizationEndpoints
                     _ => "cancel"
                 }, id ?? form["userID"].ToString(), form["role"].ToString(), http.RequestAborted);
             }
-            return AuthEndpoints.SeeOther("/organization?tab=members");
+            return AuthEndpoints.SeeOther(operation.StartsWith("ownership", StringComparison.Ordinal) ? "/organization?tab=danger" : "/organization?tab=members");
         }
-        catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode); }
+        catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger" : null); }
     }
 
     private static async Task<IResult> LifecycleAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationLifecycleService lifecycle, IWorkspacePlacement placement, string operation, string? projectId = null)
@@ -179,9 +180,9 @@ public static class OrganizationEndpoints
             if (operation == "leave") await lifecycle.LeaveAsync(context, http.RequestAborted);
             else if (operation == "delete-project") await lifecycle.DeleteProjectAsync(context, projectId!, form["confirmation"].ToString(), http.RequestAborted);
             else await lifecycle.RequestDeletionAsync(context, form["confirmation"].ToString(), http.RequestAborted);
-            return AuthEndpoints.SeeOther(operation == "delete-project" ? "/organization?tab=projects" : "/organization");
+            return AuthEndpoints.SeeOther(operation == "delete-project" ? "/organization?tab=projects" : operation == "delete" ? "/organization?tab=danger" : "/organization");
         }
-        catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode); }
+        catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode, operation == "delete-project" ? "projects" : "danger"); }
     }
 
     internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement, string operation, string? projectId = null)
