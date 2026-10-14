@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Moves a region's TerraBase machine onto a fresh, empty volume when the new build cannot use its data directory (storage
 # format changed; greenfield has no migrations). The user's standing approval (2026-10-12) holds only while
-# ops/fly/greenfield-no-customer-data exists: without it this refuses and the deploy fails. deploy.sh runs it:
+# ops/fly/greenfield-no-customer-data names this exact target storage format; later formats need fresh approval.
+# Without matching approval this refuses and the deploy fails. deploy.sh runs it:
 # - planned, with --image: its gate found the region's on-disk format differs from the new image's (StorageFormat.Id);
 # - after a failure, without --image: only when the machine logged the storage-format refusal.
 # Order: stop the machine, snapshot the old volume and wait until Fly reports the snapshot created (Fly's default
@@ -30,6 +31,8 @@ refusal="start with an empty data directory (no automatic migration)"
 fail() { echo "volume-reset: $*" >&2; exit 1; }
 
 [[ -f $guard ]] || fail "refusing: $guard is gone, so TerraBase may hold customer data; migrate the data instead"
+approved=$(sed -n 's/^storage-format=//p' "$guard")
+[[ $approved =~ ^[0-9]+-[a-f0-9]{12}$ ]] || fail "refusing: $guard must name one exact storage-format=<StorageFormat.Id>"
 
 ids=$(flyctl machine list -a "$app" --json | jq -r --arg r "$region" '.[] | select(.region == $r) | .id')
 [[ $(wc -w <<<"$ids") -eq 1 ]] || fail "expected one $app machine in $region, found: ${ids:-none}"
@@ -44,6 +47,16 @@ if [[ -z $image ]]; then
   grep -qF "$refusal" <<<"$logs" \
     || fail "$app $region ($id) has not recently logged the storage-format refusal; nothing to reset"
 fi
+
+# Inspect the executable, including recovery after a failed deploy, before stopping or snapshotting anything.
+target_image=$image
+if [[ -z $target_image ]]; then
+  target_image=$(flyctl machine list -a "$app" --json | jq -er --arg id "$id" '.[] | select(.id == $id) | .config.image')
+fi
+target_format=$(docker run --rm "$target_image" --storage-format) \
+  || fail "could not read the storage format of $target_image; nothing reset"
+[[ $target_format == "$approved" ]] \
+  || fail "refusing: approval covers $approved, but $target_image writes $target_format; nothing reset"
 
 echo "Plan: snapshot $volume, move $app $region ($id) onto a new empty volume${image:+ with $image}, then delete $volume."
 # Dogfooding: the region's platform databases are on this volume too (docs/terrabase/platform-databases.md).

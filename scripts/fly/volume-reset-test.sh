@@ -12,7 +12,7 @@ cat >"$tmp/bin/flyctl" <<'FAKE'
 # machine destroy removes m1.
 echo "$*" >>"$STATE/calls"
 machine() {
-  printf '{"id":"%s","region":"gru","state":"started","checks":[{"status":"%s"}],"config":{"mounts":[{"volume":"%s"}]}}' "$@"
+  printf '{"id":"%s","region":"gru","state":"started","checks":[{"status":"%s"}],"config":{"image":"registry.fly.io/ts-terrabase:current","mounts":[{"volume":"%s"}]}}' "$@"
 }
 m2=$(machine m2 "$([[ -e $STATE/unhealthy ]] && echo warning || echo passing)" vol_new)
 case "$1 $2" in
@@ -37,7 +37,13 @@ case "$1 $2" in
   *) echo "fake flyctl: unexpected $*" >&2; exit 1 ;;
 esac
 FAKE
-chmod +x "$tmp/bin/flyctl"
+cat >"$tmp/bin/docker" <<'FAKE'
+#!/usr/bin/env bash
+echo "docker $*" >>"$STATE/calls"
+[[ ! -e $STATE/no-docker ]] || exit 1
+cat "$STATE/target-format"
+FAKE
+chmod +x "$tmp/bin/flyctl" "$tmp/bin/docker"
 export PATH="$tmp/bin:$PATH"
 refusal="terrabase: data directory has storage format 1-00000000000f; this build writes 2-51772a611d03; start with an empty data directory (no automatic migration)"
 
@@ -48,7 +54,17 @@ run() {
   export STATE=$tmp/$name
   mkdir -p "$STATE/repo/scripts/fly" "$STATE/repo/ops/fly"
   cp "$here/volume-reset.sh" "$STATE/repo/scripts/fly/"
-  if [[ $setup != no-guard ]]; then touch "$STATE/repo/ops/fly/greenfield-no-customer-data"; fi
+  if [[ $setup != no-guard ]]; then
+    echo 'storage-format=2-51772a611d03' >"$STATE/repo/ops/fly/greenfield-no-customer-data"
+  fi
+  echo '2-51772a611d03' >"$STATE/target-format"
+  case $setup in
+    empty-guard) : >"$STATE/repo/ops/fly/greenfield-no-customer-data" ;;
+    duplicate-guard) echo 'storage-format=2-51772a611d03' >>"$STATE/repo/ops/fly/greenfield-no-customer-data" ;;
+    later-format) echo '3-51772a611d03' >"$STATE/target-format" ;;
+    different-schema) echo '2-00000000000f' >"$STATE/target-format" ;;
+    no-docker) touch "$STATE/no-docker" ;;
+  esac
   if [[ $setup == unhealthy ]]; then touch "$STATE/unhealthy"; fi
   echo "$log" >"$STATE/logs"
   "$STATE/repo/scripts/fly/volume-reset.sh" ts-terrabase gru "$@" >"$STATE/out" 2>&1
@@ -61,6 +77,14 @@ untouched() { [[ -z $(changes "$1") ]] || fail "$1 changed Fly state: $(changes 
 ! run no-guard no-guard "$refusal" || fail "ran without the greenfield guard"
 grep -q "greenfield-no-customer-data is gone" "$tmp/no-guard/out" || fail "no-guard: $(cat "$tmp/no-guard/out")"
 [[ ! -e $tmp/no-guard/calls ]] || fail "no-guard called flyctl"
+
+for setup in empty-guard duplicate-guard later-format different-schema no-docker; do
+  ! run "$setup" "$setup" "$refusal" --image registry.fly.io/ts-terrabase:new \
+    || fail "$setup accepted an unapproved format"
+  untouched "$setup"
+done
+! run recovery-later-format later-format "$refusal" || fail "recovery accepted an unapproved format"
+untouched recovery-later-format
 
 ! run no-refusal guard "started" || fail "reset a machine that never refused its data"
 untouched no-refusal
