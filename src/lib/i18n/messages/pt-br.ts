@@ -141,6 +141,32 @@ export const ptBr: Messages = {
     perks: ['Planos pagos mensais', 'Sem excedentes pagos'],
   },
 
+  statusStrip: {
+    aria: 'Status do sistema',
+    headline: {
+      operational: 'Todos os sistemas operacionais',
+      degraded: 'Desempenho degradado',
+      partial_outage: 'Interrupção parcial',
+      major_outage: 'Interrupção grave',
+      maintenance: 'Manutenção programada',
+    },
+    states: {
+      operational: 'Operacional',
+      degraded: 'Degradado',
+      partial_outage: 'Interrupção parcial',
+      major_outage: 'Interrupção grave',
+      maintenance: 'Manutenção',
+      none: 'Sem dados',
+    },
+    detail: 'Página de status pública · últimos 90 dias',
+    fallback: 'Status atual do sistema',
+    fallbackDetail: 'A disponibilidade é publicada na página de status',
+    barsAria: 'Status diário, últimos 90 dias',
+    axisStart: '90 dias atrás',
+    axisEnd: 'Hoje',
+    link: 'Página de status',
+  },
+
   pricing: {
     eyebrow: 'Preços',
     titleLead: 'Preços simples',
