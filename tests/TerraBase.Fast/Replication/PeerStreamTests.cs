@@ -638,7 +638,11 @@ public sealed class PeerStreamTests
             _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
         });
         var sjcNode = sjc.Node;
-        var streamAck = await gru.HeadAsync(cluster.Database);
+        // The stream acks gru's own last group, never past it: a commit of sjc's frontier can land after that group (as
+        // here, recorded as sjc's stream does), and only retention, which this test drives itself, raises the ack over it.
+        await gru.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RecordFrontierAsync(
+            cluster.Database, sjcNode, sjc.Api.Server.Services.GetRequiredService<LocalReplica>().Clock.Tick(), CancellationToken.None);
+        var streamAck = (await gru.GroupsAsync(cluster.Database, 0))[^1].ChangeId;
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, streamAck)).IsTrue();
         await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined, Json("""{"n":3}"""), CancellationToken.None));
         await Assert.That(await gru.UntilAsync(joined, """{"n":3}""")).IsTrue();

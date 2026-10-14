@@ -182,13 +182,6 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
 
             return new ShapeFlight<T>(answer.Result!, hold);
         }
-        catch when (flight.Result.Task.IsFaulted)
-        {
-            // Error responses need the failed worker's partial reservations released first.
-            hold.Dispose();
-            await flight.Stopped.Task.ConfigureAwait(false);
-            throw;
-        }
         catch
         {
             hold.Dispose();
@@ -233,38 +226,47 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
 
     private async Task RunAsync(ShapeFlightRequest request, ShapeHeadProbe probe, ShapeTailReader<T> read, FlightKey key, Flight flight, TenantContext tenant)
     {
-        using var scope = QosContext.EnterFlight(tenant, flight.Memory);
+        Answer? answer = null;
+        Exception? error = null;
         try
         {
+            using var scope = QosContext.EnterFlight(tenant, flight.Memory);
             using var token = CancellationTokenSource.CreateLinkedTokenSource(_stopping, flight.Cancel.Token);
-            flight.Result.SetResult(await AnswerAsync(request, probe, read, flight.Database, token.Token).ConfigureAwait(false));
+            answer = await AnswerAsync(request, probe, read, flight.Database, token.Token).ConfigureAwait(false);
         }
-        catch (Exception error)
+        catch (Exception caught)
+        {
+            error = caught;
+        }
+
+        lock (_gate)
+        {
+            if (_flights.TryGetValue(key, out var current) && current == flight)
+            {
+                _flights.Remove(key);
+            }
+
+            // A seal this flight started has ended (SealAsync), so no seal still uses the state.
+            if (--flight.Database.Flights == 0)
+            {
+                _databases.Remove(key.Database);
+            }
+
+            _running--;
+        }
+
+        // Slot and owner reference go before any requester sees the answer, so the last requester's dispose
+        // releases every byte, including a failed worker's partial reservations.
+        flight.Memory.Dispose();
+        if (error is null)
+        {
+            flight.Result.SetResult(answer!);
+        }
+        else
         {
             flight.Result.SetException(error);
             // Every requester may have left; the exception is theirs, not the process's.
             _ = flight.Result.Task.Exception;
-        }
-        finally
-        {
-            lock (_gate)
-            {
-                if (_flights.TryGetValue(key, out var current) && current == flight)
-                {
-                    _flights.Remove(key);
-                }
-
-                // A seal this flight started has ended (SealAsync), so no seal still uses the state.
-                if (--flight.Database.Flights == 0)
-                {
-                    _databases.Remove(key.Database);
-                }
-
-                _running--;
-            }
-
-            flight.Memory.Dispose();
-            flight.Stopped.SetResult();
         }
     }
 
@@ -462,8 +464,6 @@ internal sealed class ShapeFlights<T> : IShapeFlights<T>
 
     private sealed class Flight(QosContext.ResultMemory memory, DatabaseState database)
     {
-        public TaskCompletionSource Stopped { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
         public QosContext.ResultMemory Memory { get; } = memory;
 
         public DatabaseState Database { get; } = database;
