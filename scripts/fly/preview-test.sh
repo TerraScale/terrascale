@@ -135,19 +135,55 @@ records = [
 ]
 with open(sys.argv[1], "w") as output:
     for record in records:
-        output.write(json.dumps({"message": json.dumps(record)}) + "\n")
+        output.write(json.dumps({"message": json.dumps(record)}, indent=4) + "\n")
     output.write("secret-canary\nnull\n[]\n")
 PY
 readiness_status=0
 "$here/preview.sh" machine 123 registry.fly.io/test:terrabase registry.fly.io/test:auth > "$state/failed" || readiness_status=$?
 test "$readiness_status" = 22
 test "$(grep -c '^{"event":' "$state/failed")" = 4
+grep -qx '{"log_counts": {"entries": 10, "unparsed": 1, "app_records": 7, "matched": 4}}' "$state/failed"
 grep -q 'System.Net.Http.HttpRequestException' "$state/failed"
 grep -q '"401"' "$state/failed"
 grep -q '"503"' "$state/failed"
 grep -q '"cause": "timed out"' "$state/failed"
 grep -q 'no signing keys: startup bootstrap pending (docs/auth/signing-keys.md)' "$state/failed"
 if grep -q 'secret-canary' "$state/failed"; then echo 'preview: startup diagnostics exposed a secret' >&2; exit 1; fi
+python3 - "$here/preview-log-summary.py" <<'PY'
+import json
+import subprocess
+import sys
+
+def summarize(data):
+    output = subprocess.check_output([sys.executable, sys.argv[1]], input=data.encode()).decode()
+    assert "secret-canary" not in output
+    return [json.loads(line) for line in output.splitlines()]
+
+empty = {"entries": 0, "unparsed": 0, "app_records": 0, "matched": 0}
+assert summarize("") == [{"log_counts": empty}]
+assert summarize("secret-canary") == [{"log_counts": dict(empty, unparsed=1)}]
+assert summarize(json.dumps({"message": "secret-canary"}, indent=4)) == [
+    {"log_counts": dict(empty, entries=1)}]
+record = {"msg": "secret-canary", "component": "secret-canary"}
+assert summarize(json.dumps(record)) == [{"log_counts": dict(empty, entries=1, app_records=1)}]
+record = {"msg": "Readiness check failed: {Cause}",
+          "component": "TerraScale.Authentication.Features.Observability.ReadinessProbe", "Cause": "timed out"}
+compact = json.dumps({"message": json.dumps(record)})
+pretty = json.dumps({"message": json.dumps(record)}, indent=4)
+assert summarize(compact) == summarize(pretty) == summarize(json.dumps(record, indent=4))
+assert summarize("secret-canary\n" + pretty)[-1] == {
+    "log_counts": dict(empty, entries=1, app_records=1, matched=1, unparsed=1)}
+assert summarize(pretty + "\n" + pretty[:-2])[-1] == {
+    "log_counts": dict(empty, entries=1, app_records=1, matched=1, unparsed=1)}
+assert summarize(pretty[:-2] + "\n" + pretty)[-1] == {
+    "log_counts": dict(empty, entries=1, app_records=1, matched=1, unparsed=1)}
+malformed = '{\n    "a": "x" "y"\n}\n'
+assert summarize(malformed)[-1] == {"log_counts": dict(empty, unparsed=1)}
+assert summarize(malformed + pretty)[-1] == {
+    "log_counts": dict(empty, entries=1, app_records=1, matched=1, unparsed=1)}
+assert summarize("[" * 10000) == [{"log_counts": dict(empty, unparsed=1)}]
+assert summarize(json.dumps({"message": "[" * 10000})) == [{"log_counts": dict(empty, entries=1)}]
+PY
 grep -qx 'logs -a ts-pr-123 --machine machine-test --no-tail --json' "$state/flyctl"
 touch "$state/fail-logs"
 readiness_status=0

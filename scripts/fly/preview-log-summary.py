@@ -23,13 +23,29 @@ exceptions = {
     "TerraScale.DotNet.TerraBase.TerraBasePreconditionFailedException", "TerraScale.DotNet.TerraBase.TerraBaseUnavailableException",
 }
 sys.stdin.reconfigure(errors="replace")
-for line in sys.stdin:
+# flyctl renders each buffered entry as indented JSON, so decode consecutive values rather than lines.
+data, decoder, pos = sys.stdin.read(), json.JSONDecoder(), 0
+counts = {"entries": 0, "unparsed": 0, "app_records": 0, "matched": 0}
+while pos < len(data):
+    while pos < len(data) and data[pos].isspace():
+        pos += 1
+    if pos == len(data):
+        break
     try:
-        record = json.loads(line)
+        record, pos = decoder.raw_decode(data, pos)
+    except (ValueError, RecursionError):
+        counts["unparsed"] += 1
+        # Skip indented fragments and closing delimiters when recovering the next top-level entry.
+        resync = re.compile(r"\n(?=[^\s}\]])").search(data, pos)
+        pos = len(data) if resync is None else resync.end()
+        continue
+    counts["entries"] += 1
+    try:
         if isinstance(record, dict) and isinstance(record.get("message"), str):
             record = json.loads(record["message"])
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, RecursionError):
         continue
+    counts["app_records"] += isinstance(record, dict) and isinstance(record.get("msg"), str)
     if not isinstance(record, dict) or not isinstance(record.get("msg"), str) or record["msg"] not in events:
         continue
     component = record.get("component")
@@ -46,4 +62,6 @@ for line in sys.stdin:
     }
     if isinstance(record.get("Cause"), str) and record["Cause"] in causes:
         summary["cause"] = record["Cause"]
+    counts["matched"] += 1
     print(json.dumps(summary))
+print(json.dumps({"log_counts": counts}))
