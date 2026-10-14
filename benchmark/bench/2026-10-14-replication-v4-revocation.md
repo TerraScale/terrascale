@@ -64,7 +64,7 @@ receipt of gru's 204.
 
 | Item | Value |
 | --- | --- |
-| Result | MEASURED (no bound is specified for cross-region revocation; finding F3) |
+| Result | MEASURED, NOT ACCEPTED: COS rejected unbounded acceptance during a partition. The F3 fix (shape key endpoint answers retryable 503 `no-store` when this region's credential/catalog view is older than the epoch length; bound = epoch + staleness) is owned by a separate lane; this row is re-measured after it merges |
 | Bound | Observed ≤ 640 ms after the revoke's 204, under no partition. Not bounded in code: it is the catalog replication lag, so a partitioned region keeps accepting the key until it rejoins |
 | Evidence | `benchmark/bench/2026-10-14-replication-vtest/evidence/v4-revoke-3c459a5f.jsonl` (raw per trial) and `v4-revoke-3c459a5f-stderr.txt`, script `scripts/revoke-timing.py`, on branch `feat/repl-v5-harness` (PR #303) |
 
