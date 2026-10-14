@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Collections.Frozen;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
@@ -897,6 +899,9 @@ public sealed class RemoteAckTests
     public async Task A_received_row_seals_only_under_its_exact_held_origin()
     {
         await using var pair = await Pair.StartAsync();
+        // Before the row exists: the peer's own passes (retention, its stream's proofs) would rightly cover it with the real
+        // held set at any moment. A pass already holding that set sees it blinded at lookup, and one in its writer ends first.
+        pair.PeerProof.Blind = true;
         var id = EntityIds.New().ToString();
         using var held = pair.PeerAck.Hold(id);
         var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
@@ -921,6 +926,7 @@ public sealed class RemoteAckTests
                 await Assert.That(Rows(await ChunksAsync(pair.PeerSealer, store, shape.Handle, 0, pair.Token)).Any(row => row.Id == id)).IsFalse();
             }
 
+            pair.PeerProof.Blind = false;
             await SealCoveringAsync(pair, pair.PeerSealer, store, shape);
             var received = await ChunksAsync(pair.PeerSealer, store, shape.Handle, 0, pair.Token);
             await Assert.That(Rows(received).Single(row => row.Id == id).N).IsEqualTo(1);
@@ -1210,6 +1216,9 @@ public sealed class RemoteAckTests
 
         public ProofGate Proof { get; } = new();
 
+        // Blinds the peer's own frontier advances (retention, its stream's proofs, shape workers): none holds any origin.
+        public ProofGate PeerProof { get; } = new();
+
         public AckRefusal Refusal { get; } = new();
 
         private TaskCompletionSource<Task<bool>> _waitEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1337,7 +1346,8 @@ public sealed class RemoteAckTests
 
         public ShapeSealer PeerSealerWith(IRemoteDurability durability) => SealerOf(_peer!.Server, durability);
 
-        public IRemoteDurability PeerRemote => _peer!.Server.Services.GetRequiredService<IRemoteDurability>();
+        // The peer's real durability, which PeerProof does not blind.
+        public IRemoteDurability PeerRemote => ((GatedRemote)_peer!.Server.Services.GetRequiredService<IRemoteDurability>()).Inner;
 
         public ReplicaId OriginNode => _origin!.Server.Services.GetRequiredService<LocalReplica>().Id;
 
@@ -1389,6 +1399,10 @@ public sealed class RemoteAckTests
             if (ack is not null)
             {
                 services.AddSingleton<IChangeGroupSink>(provider => new HeldSink(ActivatorUtilities.CreateInstance<StorageChangeGroupSink>(provider), ack));
+                var remote = services.Last(service => service.ServiceType == typeof(IRemoteDurability));
+                services.AddSingleton<IRemoteDurability>(provider => new GatedRemote((IRemoteDurability)remote.ImplementationFactory!(provider), PeerProof));
+                var source = services.Last(service => service.ServiceType == typeof(IChangeGroupSource));
+                services.AddSingleton<IChangeGroupSource>(provider => new ControlledSource((IChangeGroupSource)source.ImplementationFactory!(provider), new AckRefusal(), new RefillGate(), PeerProof, this));
             }
             else
             {
@@ -1600,7 +1614,7 @@ public sealed class RemoteAckTests
                 return blinded;
             }
 
-            return await inner.ProveAsync(database, incarnation, from, through, held, cancellationToken);
+            return await inner.ProveAsync(database, incarnation, from, through, new GatedHeld(held, proof), cancellationToken);
         }
 
         public Task ChangedAsync(CancellationToken cancellationToken) => inner.ChangedAsync(cancellationToken);
@@ -1629,6 +1643,50 @@ public sealed class RemoteAckTests
 
         public ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken) =>
             inner.WaitAsync(database, marker, cancellationToken);
+    }
+
+    // Passes everything through; the held origins answer through the gate (GatedHeld).
+    private sealed class GatedRemote(IRemoteDurability inner, ProofGate gate) : IRemoteDurability
+    {
+        public IRemoteDurability Inner => inner;
+
+        public bool Confirms => inner.Confirms;
+
+        public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => inner.OtherRegionsAsync(cancellationToken);
+
+        public ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) => inner.AdmitAsync(database, cancellationToken);
+
+        public async ValueTask<IReadOnlySet<ReplicaId>> HeldOriginsAsync(TenantContext database, CancellationToken cancellationToken) =>
+            new GatedHeld(await inner.HeldOriginsAsync(database, cancellationToken), gate);
+
+        public ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken) =>
+            inner.WaitAsync(database, marker, cancellationToken);
+    }
+
+    // Held origins as the gate sees them at each lookup: once blinded none is held, even by a pass that read the set earlier.
+    private sealed class GatedHeld(IReadOnlySet<ReplicaId> inner, ProofGate gate) : IReadOnlySet<ReplicaId>
+    {
+        private IReadOnlySet<ReplicaId> Current => gate.Blind ? FrozenSet<ReplicaId>.Empty : inner;
+
+        public int Count => Current.Count;
+
+        public bool Contains(ReplicaId item) => Current.Contains(item);
+
+        public IEnumerator<ReplicaId> GetEnumerator() => Current.GetEnumerator();
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        public bool IsProperSubsetOf(IEnumerable<ReplicaId> other) => Current.IsProperSubsetOf(other);
+
+        public bool IsProperSupersetOf(IEnumerable<ReplicaId> other) => Current.IsProperSupersetOf(other);
+
+        public bool IsSubsetOf(IEnumerable<ReplicaId> other) => Current.IsSubsetOf(other);
+
+        public bool IsSupersetOf(IEnumerable<ReplicaId> other) => Current.IsSupersetOf(other);
+
+        public bool Overlaps(IEnumerable<ReplicaId> other) => Current.Overlaps(other);
+
+        public bool SetEquals(IEnumerable<ReplicaId> other) => Current.SetEquals(other);
     }
 
     private sealed class ObservedRemote(IRemoteDurability inner, Pair pair) : IRemoteDurability
