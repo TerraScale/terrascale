@@ -262,6 +262,7 @@ export const ptBr: Messages = {
       docsLink: 'Documentação completa de preços',
     },
     faq: {
+      eyebrow: 'Perguntas frequentes',
       titleLead: 'Perguntas',
       titleAccent: 'frequentes',
       subtitle: 'Respostas diretas sobre os planos do Public Alpha.',
