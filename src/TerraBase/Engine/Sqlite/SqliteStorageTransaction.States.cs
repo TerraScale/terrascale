@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Turso.Data.Sqlite;
 using TerraBase.Engine.Lattices;
+using TerraBase.Features.Management;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -23,6 +24,7 @@ internal sealed partial class SqliteStorageTransaction
     // The state rows of this machine's own writes this transaction wrote: the tailer ships them as one change group, so they
     // stay within a group's bounds (the bytes are counted in _changeBytes, which only the system database uses otherwise).
     private int _captured;
+    private int? _catalogProofBytes;
 
     private LocalReplica Member => store.Member ?? throw new InvalidOperationException("a database writes with this member's replica id");
 
@@ -187,6 +189,21 @@ internal sealed partial class SqliteStorageTransaction
         var (changes, limit) = store.IsSystem
             ? (IStorageTransaction.MaxSystemGroupChanges, IStorageTransaction.MaxSystemGroupBytes)
             : (IStorageTransaction.MaxChangeGroupChanges, IStorageTransaction.MaxChangeGroupBytes);
+        if (store.IsSystem && !_pending.ContainsKey((ManagementCatalog.Collection, ManagementCatalog.VersionId))
+            && (collection != ManagementCatalog.Collection || id != ManagementCatalog.VersionId))
+        {
+            // Leave room for the captured immutable dependency, including its stored state, body and keys.
+            _catalogProofBytes ??= ReadCatalogVersionProof() is { } proof
+                ? DocumentStateEncoding.EncodeStored(proof).Length + proof.Materialize()!.Length
+                    + StrictUtf8.GetByteCount(ManagementCatalog.Collection) + StrictUtf8.GetByteCount(ManagementCatalog.VersionId)
+                : 0;
+            if (_catalogProofBytes > 0)
+            {
+                changes--;
+                limit -= _catalogProofBytes.Value;
+            }
+        }
+
         if (_captured == changes || (_captured > 0 && _changeBytes + bytes > limit))
         {
             LimitsReached = true;
@@ -206,11 +223,27 @@ internal sealed partial class SqliteStorageTransaction
             return;
         }
 
+        var proof = store.IsSystem && !_pending.ContainsKey((ManagementCatalog.Collection, ManagementCatalog.VersionId)) ? ReadCatalogVersionProof() : null;
+        var proofAt = default(EntryVersion);
         foreach (var ((collection, id), (state, at, bodyBytes)) in _pending)
         {
             var stored = DocumentStateEncoding.EncodeStored(state);
             Capture(collection, id, stored.Length, bodyBytes);
             WriteState(collection, id, state, at, stored);
+            if (proof is not null && at.Stamp.Value > proofAt.Stamp.Value)
+            {
+                proofAt = at;
+            }
+        }
+
+        if (proof is not null)
+        {
+            // Capture the immutable dependency in this transaction: no Tick and no later change to an issued cursor.
+            var body = StrictUtf8.GetString(proof.Materialize()!);
+            var stored = DocumentStateEncoding.EncodeStored(proof);
+            Capture(ManagementCatalog.Collection, ManagementCatalog.VersionId, stored.Length, StrictUtf8.GetByteCount(body));
+            PutRow(ManagementCatalog.Collection, ManagementCatalog.VersionId, body);
+            WriteState(ManagementCatalog.Collection, ManagementCatalog.VersionId, proof, proofAt, stored);
         }
 
         _pending.Clear();

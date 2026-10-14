@@ -49,10 +49,10 @@ internal sealed partial class EngineManagementService(
 {
     private const string Organizations = "organizations";
     private const string CurrentOrganizations = "current_organizations";
-    private const string Catalog = "catalog";
-    private const string CatalogVersionId = "version";
+    private const string Catalog = ManagementCatalog.Collection;
+    private const string CatalogVersionId = ManagementCatalog.VersionId;
 
-    private const string CatalogVersion = "1";
+    private const string CatalogVersion = ManagementCatalog.Version;
     private const string PendingDatabaseCleanup = "pending_database_cleanup";
 
     // Global: project id to its organization id, so a client-chosen project id is unique across organizations.

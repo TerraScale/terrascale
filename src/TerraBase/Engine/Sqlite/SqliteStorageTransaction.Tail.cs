@@ -1,6 +1,8 @@
 using System.Buffers.Text;
 using System.Text;
+using System.Text.Json;
 using TerraBase.Engine.Lattices;
+using TerraBase.Features.Management;
 using TerraBase.Features.Replication;
 
 namespace TerraBase.Engine.Sqlite;
@@ -52,6 +54,21 @@ internal sealed partial class SqliteStorageTransaction
         long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken) =>
         RunAsync(() => ReadChangeGroups(after, maxGroups, maxBytes, self, cancellationToken), cancellationToken);
 
+    // A supported immutable version can travel as a dependency without rewriting its future remote stamp.
+    private DocumentState? ReadCatalogVersionProof()
+    {
+        var state = ReadState(ManagementCatalog.Collection, ManagementCatalog.VersionId);
+        if (state.Materialize() is not { } body)
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(body);
+        return document.RootElement.EnumerateObject().Count() == 1
+            && document.RootElement.TryGetProperty("\0", out var version) && version.ValueKind == JsonValueKind.String
+            && version.GetString() == ManagementCatalog.Version ? state : null;
+    }
+
     // Worker-only. Rows come in commit order: one writer per file, so a transaction's rows are contiguous and end with its
     // commit row (change_type 2), and a reader never sees part of one.
     private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) ReadChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken)
@@ -66,7 +83,7 @@ internal sealed partial class SqliteStorageTransaction
 
         var bytes = 0;
         long? first = null;
-        var transaction = new TailTransaction();
+        var transaction = new TailTransaction(store.IsSystem);
         for (var from = after; ;)
         {
             var command = Command(TailPage);
@@ -112,7 +129,7 @@ internal sealed partial class SqliteStorageTransaction
                             quiet = from;
                         }
 
-                        transaction = new TailTransaction();
+                        transaction = new TailTransaction(store.IsSystem);
                         continue;
                     }
 
@@ -373,7 +390,7 @@ internal sealed partial class SqliteStorageTransaction
     // The rows of one Turso transaction, as far as the tailer needs them: its local groups' deltas, and the after-image of
     // each document row, so that every state row pairs with the last document row before it (R2a: a request may rewrite a
     // document's row several times and writes its state row once, at its end).
-    private sealed class TailTransaction
+    private sealed class TailTransaction(bool isSystem)
     {
         // Document rows before the first local state row, undecoded: a transaction of remote joins never decodes them.
         private List<(string Table, byte[] Image)>? _rows = [];
@@ -437,7 +454,15 @@ internal sealed partial class SqliteStorageTransaction
 
             var full = DocumentStateEncoding.DecodeStored(stored, document is null ? [] : Encoding.UTF8.GetBytes(document));
             var at = new Hlc(unchecked((ulong)stamp));
-            Deltas.Add(new ChangeDelta(collection, id, at, full.DeltaAt(at)));
+            if (isSystem && collection == ManagementCatalog.Collection && id == ManagementCatalog.VersionId)
+            {
+                // The captured dependency retains its original state, even when its stamps precede or exceed this group.
+                Deltas.Insert(0, new ChangeDelta(collection, id, at, full));
+            }
+            else
+            {
+                Deltas.Add(new ChangeDelta(collection, id, at, full.DeltaAt(at)));
+            }
         }
 
         // id, doc: a client collection table's row; collection, id, body: a row of the system database's one documents table.
