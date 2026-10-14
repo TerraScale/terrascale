@@ -90,10 +90,17 @@ Each product owns one area. Never duplicate another product's data; call its API
 
 - Target **`main`**. Include a change summary, validation performed, and the relevant compatibility, storage, migration or security implications.
 - Never claim a check passed unless it actually ran successfully. Distinguish required checks from non-blocking Slow results.
-- Required checks (formatting, build, analyzers, required security checks, OpenAPI validation where the area has it, and Fast) MUST pass before pushing. Do not wait for or require Slow.
+- CI is the gate: no local test/check run is required before pushing or opening a PR. Required checks (formatting, build, analyzers, required security checks, OpenAPI validation where the area has it, and Fast) must pass in CI before merge. Do not wait for or require Slow.
 - Update documentation and compatibility notes for API, storage or authentication behavior changes.
 - Request reviews from **`mariogk`**, excluding the PR author. Enable auto-merge once required checks pass. Never bypass checks or required reviews.
 - Before finishing, verify the target branch, title, reviewers, attachments and CI status. Send the PR URL and name any unresolved blockers or linked failure reports.
+
+### Conflict rules
+
+- Keep each PR under about 400 changed lines. Stack bigger work as a series of PRs.
+- Feature PRs never bump `src/TerraBase/Engine/Sqlite/StorageFormat.cs`. Write `Needs format bump` in the PR body; the deploy lane batches bumps, one production reset per batch.
+- Shared docs get a new file, not in-place edits (for example `docs/terrabase/replication/`, listed by its index).
+- Changes to `.github/workflows/ci.yml` go through the CI owner.
 
 ## .NET rules (libs, auth, terrabase)
 
@@ -117,7 +124,6 @@ Each product owns one area. Never duplicate another product's data; call its API
 - Analyzers and style run in the build with warnings as errors (`Directory.Build.props`, `.editorconfig`). `TreatWarningsAsErrors` MUST always be `true` for every project and configuration. Never disable it, override it per project, or use `WarningsNotAsErrors`.
 - `NoWarn` is closed: only the entries in `Directory.Build.props` and `Directory.Build.targets`, each with its reason in a comment. Never add another without asking a human first.
 - Never suppress warnings globally or otherwise: no `GlobalSuppressions.cs`, assembly-level `[SuppressMessage]`, `.editorconfig` severity lowered to `none`/`silent`/`suggestion` for an enforced rule, `<WarningLevel>` reduction, or `#pragma warning disable` outside generated code. If one local suppression is truly required, ask a human first and document the justification beside it.
-- `make check` (formatting, build, fast suite) MUST pass before pushing.
 
 ## Testing (every area)
 

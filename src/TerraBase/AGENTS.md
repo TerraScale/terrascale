@@ -74,7 +74,7 @@ The project MUST follow a **feature-sliced design** so related and dependent fil
 
 ## Build
 
-- Build with the root `Makefile` (`terrabase-*` targets). Run `make check` before pushing.
+- Build with the root `Makefile` (`terrabase-*` targets).
 
 ## Testing
 
