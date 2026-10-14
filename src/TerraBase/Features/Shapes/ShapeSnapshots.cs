@@ -72,6 +72,9 @@ internal sealed class ShapeSnapshots(
     internal const int PageDocuments = 1000;
     internal const int PageBytes = 1024 * 1024;
     internal const int SingletonBytes = 8 * PageBytes;
+    // The ops buffer (PageBytes, never grown: a singleton reserves its own growth) plus framing. Sized to need, so Hobby's 1/16
+    // share of a 512 MB machine's budget (~7 MiB) holds a full page and its result.
+    internal const int WorkspaceBytes = PageBytes + 64 * 1024;
     internal const int PageExamined = 10_000;
     internal const int ResealChunks = 4096;
     internal static readonly TimeSpan ResealAge = TimeSpan.FromHours(1);
@@ -114,6 +117,8 @@ internal sealed class ShapeSnapshots(
         try
         {
             using var admission = memory.TryReserve(MemoryLane.Bulk, 4096, store.Tenant) ?? throw new StorageBusyException();
+            // Refuse before the frontier and head reads when the first page cannot be admitted now.
+            (memory.TryReserve(MemoryLane.Bulk, 256 * 1024 + WorkspaceBytes, store.Tenant) ?? throw new StorageBusyException()).Dispose();
             if (durability.Confirms && store.Tenant is { } tenant)
             {
                 // Before the reader pins its head, and outside its writer once committed: a receive-only replica has no own ack

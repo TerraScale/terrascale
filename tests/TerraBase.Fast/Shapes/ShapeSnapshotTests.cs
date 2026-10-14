@@ -351,8 +351,8 @@ public sealed class ShapeSnapshotTests
     public async Task A_seal_without_memory_admission_or_after_cancellation_publishes_nothing()
     {
         await using var api = await DocumentApi.StartAsync();
-        // A Hobby tenant gets 1/16 of 64 MiB: the seal's small admissions fit, the 8 MiB page workspace does not.
-        await using var fixture = await Fixture.OpenAsync(api, limit: 64L * 1024 * 1024);
+        // A Hobby tenant gets 1/16 of 16 MiB: the seal's small admissions fit, the 1 MiB page workspace on top of them does not.
+        await using var fixture = await Fixture.OpenAsync(api, limit: 16L * 1024 * 1024);
         _ = await WriteAsync(api, Model(), (DocumentApi.NewId(), Doc(1)));
         var shape = await ShapeAsync(fixture.Store);
 
@@ -362,7 +362,7 @@ public sealed class ShapeSnapshotTests
 
         await Assert.That(await fixture.Snapshots.NewestAsync(fixture.Store, shape.Handle, CancellationToken.None)).IsNull();
         await Assert.That(await ScalarAsync(fixture.Raw, $"SELECT COUNT(*) FROM _tb_shape_snapshot WHERE handle = '{shape.Handle}';")).IsEqualTo(0L);
-        using var whole = fixture.Memory.TryReserve(MemoryLane.Bulk, 64L * 1024 * 1024, tenant: null);
+        using var whole = fixture.Memory.TryReserve(MemoryLane.Bulk, 16L * 1024 * 1024, tenant: null);
         await Assert.That(whole).IsNotNull().Because("the refused seal returned its admissions");
     }
 

@@ -55,6 +55,30 @@ public sealed class ShapeEndToEndTests
     }
 
     [Test]
+    [Arguments(1, 64)]
+    [Arguments(18, 60 * 1024)]
+    public async Task A_production_size_machine_syncs_a_hobby_shape_instead_of_answering_shape_busy(int documents, int bytes)
+    {
+        // A 512 MB Fly machine derives 120,231,936 bytes (a quarter of the memory .NET sees); Hobby admits 1/16 of it.
+        await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "120231936");
+        var faker = new Faker();
+        HashSet<string> ids = [with(StringComparer.Ordinal)];
+        for (var index = 0; index < documents; index++)
+        {
+            var id = DocumentApi.NewId();
+            await Assert.That((await PutAsync(api, id, new { status = "open", body = faker.Random.String2(bytes) })).Status).IsEqualTo(HttpStatusCode.Created);
+            ids.Add(id);
+        }
+
+        var client = new ShapeClient(api, query: null);
+        var head = await client.SyncAsync();
+
+        await Assert.That(head.UpToDate).IsEqualTo("true");
+        await Assert.That(client.State.Keys.ToHashSet(StringComparer.Ordinal).SetEquals(ids)).IsTrue()
+            .Because("full snapshot pages fit Hobby's share of the production budget");
+    }
+
+    [Test]
     public async Task The_http_resume_validation_vectors_return_their_exact_error_bodies_and_cache_headers()
     {
         await using var api = await DocumentApi.StartAsync();
