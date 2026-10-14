@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Features.Replication;
 using TerraBase.Testing;
@@ -28,6 +29,14 @@ public sealed class CatalogBootstrapTests
         var originalVersion = original.SelectMany(group => group.Deltas).First(delta => delta.Collection == "catalog" && delta.Id == "version");
         await Assert.That(creation.Deltas[0].State).IsEqualTo(originalVersion.State);
         await Assert.That(creation.Deltas[0].Stamp.Value).IsLessThanOrEqualTo(creation.Deltas.Skip(1).Max(delta => delta.Stamp.Value));
+
+        // Later peer versions cannot change the payload at an already-issued CDC cursor.
+        await using var later = await ManagementApi.StartAsync(time: new FakeTimeProvider(TimeProvider.System.GetUtcNow() + TimeSpan.FromMinutes(10)), userId: first.User);
+        _ = await later.CreateOrganizationAsync("Later origin");
+        _ = await middle.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(ChangeGroups.System,
+            later.Server.Services.GetRequiredService<LocalReplica>().Id, await GroupsAsync(later, token), token);
+        var replayed = (await GroupsAsync(middle, token)).Single(group => group.ChangeId == creation.ChangeId);
+        await Assert.That(ChangeGroups.Encode([replayed])).IsEqualTo(ChangeGroups.Encode([creation]));
 
         await using var last = await ManagementApi.StartAsync(userId: first.User);
         var sink = last.Server.Services.GetRequiredService<IChangeGroupSink>();
