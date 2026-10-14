@@ -21,13 +21,13 @@
   width: 40px;
   height: 40px;
   border-radius: var(--ts-radius-lg);
-  background: color-mix(in oklab, var(--tone) 16%, transparent);
-  color: var(--tone);
+  background: var(--ts-surface-2);
+  color: var(--ts-ink-2);
 }
 
 .ts-billing-plan-name {
   font-size: var(--ts-fs-xl);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ts-billing-facts {
@@ -69,22 +69,19 @@
   gap: var(--ts-s4);
 }
 
-/* Plan card: a flat surface whose top edge carries the plan's tone. */
+/* Plan card: a flat neutral surface; the current plan gets a blue outline only. */
 .ts-plan {
-  display: grid;
-  grid-template-rows: auto auto 1fr auto;
-  gap: var(--ts-s5);
-  padding: var(--ts-s6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ts-s3);
+  padding: var(--ts-s5);
   border: 1px solid var(--ts-line);
-  border-top: 2px solid var(--tone);
   border-radius: var(--ts-radius-lg);
   background: var(--ts-surface);
 }
 
 .ts-plan-current {
-  border-color: color-mix(in oklab, var(--tone) 45%, transparent);
-  border-top-color: var(--tone);
-  background: color-mix(in oklab, var(--tone) 5%, var(--ts-surface));
+  border-color: color-mix(in oklab, var(--ts-accent) 50%, transparent);
 }
 
 .ts-plan-head {
@@ -95,9 +92,8 @@
 }
 
 .ts-plan-name {
-  color: var(--tone);
   font-size: var(--ts-fs-lg);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ts-plan-price {
@@ -117,27 +113,38 @@
 
 .ts-plan-features {
   display: grid;
+  flex: 1;
   align-content: start;
   gap: var(--ts-s2);
+  margin: 0;
+  padding: 0;
   color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
   list-style: none;
 }
 
 .ts-plan-features > li {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--ts-s2);
 }
 
 .ts-plan-features svg {
   flex: none;
-  margin-top: 2px;
-  color: var(--tone);
+  color: var(--ts-ink-3);
 }
 
 /* The plan an accepted change moves to. */
 .ts-plan-upcoming {
-  border-color: color-mix(in oklab, var(--tone) 45%, transparent);
   border-style: dashed;
-  border-top: 2px solid var(--tone);
+  border-color: var(--ts-line-strong);
+}
+
+.ts-internal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--ts-s6); }
+.ts-internal-meter .ts-svg-sharebar-fill { fill: var(--ts-chart-1); }
+.ts-internal-meter[data-state="warning"] .ts-svg-sharebar-fill { fill: var(--ts-warning); }
+.ts-billing-history-filters { align-items: end; }
+@container page (width < 768px) {
+  .ts-internal-grid { grid-template-columns: minmax(0, 1fr); }
+  .ts-billing-history-filters > .ts-field { flex: 1 1 100%; }
 }

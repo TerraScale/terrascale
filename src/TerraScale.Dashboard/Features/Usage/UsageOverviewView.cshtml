@@ -5,7 +5,7 @@
 @using System.Globalization
 @inject AssetUrls Assets
 @functions { private static string RegionCountry(string region) => region.ToLowerInvariant() switch { "gru" => "br", "fra" => "de", "sjc" => "us", _ => "" }; }
-@if (Model.InternalBill is { } bill) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.InternalBillingView, InternalBill>(bill)) }
+@if (Model.InternalBill is { } bill) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.InternalBillingView, InternalBillingViewModel>(new(bill, PlanCatalog.Limits(Model.Shell.Context.Organization!)))) }
 <section class="ts-card" id="usage-allowance" aria-labelledby="usage-allowance-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="usage-allowance-title">Plan allowance</h2><p class="ts-card-description">Use of the @Model.PlanName plan this month</p></div></header><div class="ts-card-body">
 @if (Model.AllowanceError.Length > 0) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-body">@Model.AllowanceError</p></div> }
 <div class="ts-usage-gauges">@foreach (var gauge in Model.Allowances)
