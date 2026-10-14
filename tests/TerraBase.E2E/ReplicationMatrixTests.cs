@@ -138,4 +138,10 @@ public sealed class ReplicationMatrixTests
             Expected.Check((long)(await query.ExecuteScalarAsync())! == 1, $"{region} retains the replicated tombstone for {id}");
         }
     }
+
+    // Each region's tombstone ETag, named in a failure: a 404 without one is a document never written there (or collected).
+    internal sealed record Tombstones((string Region, string? Tag)[] Tags)
+    {
+        public override string ToString() => string.Join(' ', Tags.Select(tag => $"{tag.Region}={tag.Tag ?? "no-tombstone(never-written-or-collected)"}"));
+    }
 }

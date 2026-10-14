@@ -20,9 +20,9 @@ public sealed class F4RestartDiagnosticTests
         await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
         var uri = cluster.Document(EntityIds.New().ToString());
         await Converge.SeedAsync(cluster, uri, new JsonObject { ["n"] = 1 });
-        await Task.WhenAll(cluster.Regions.Select(cluster.StopAsync));
+        await Task.WhenAll(cluster.Regions.Select(region => cluster.StopAsync(region)));
         var started = Stopwatch.GetTimestamp();
-        await Task.WhenAll(cluster.Regions.Select(cluster.StartAgainAsync));
+        await Task.WhenAll(cluster.Regions.Select(region => cluster.StartAgainAsync(region)));
         // Serving the persisted catalog does not prove the restarted nodes can confirm one another's writes.
         await Task.WhenAll(cluster.Regions.Select(region => Converge.UntilAsync(() => cluster.ReplicationAsync(region),
             status => cluster.Regions.Where(peer => peer != region).All(peer => status.GetProperty("peers").EnumerateArray()

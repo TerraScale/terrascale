@@ -178,13 +178,15 @@ public sealed class Cluster : IAsyncDisposable
 
     /// <summary>
     /// Takes <paramref name="region"/> down: the local node stops and keeps its data directory, or Fly stops the region's
-    /// machine. Requests to the region fail until <see cref="StartAgainAsync"/>.
+    /// machine. Requests to the region fail until <see cref="StartAgainAsync"/>. The token cancels flyctl; a local stop is
+    /// not canceled once begun.
     /// </summary>
-    public async Task StopAsync(string region)
+    public async Task StopAsync(string region, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         if (_local is null)
         {
-            await Flyctl.RunAsync("machine", "stop", Disposable.Machines[region], "--app", Disposable.App);
+            await Flyctl.RunAsync(["machine", "stop", Disposable.Machines[region], "--app", Disposable.App], token);
             return;
         }
 
@@ -196,11 +198,12 @@ public sealed class Cluster : IAsyncDisposable
         $"machine faults on Fly need a pinned disposable app ({FlyRevisionVariable} and {DisposableTarget.AppVariable})");
 
     /// <summary>Brings <paramref name="region"/> back on the same data (the same volume on Fly) after <see cref="StopAsync"/>.</summary>
-    public async Task StartAgainAsync(string region)
+    public async Task StartAgainAsync(string region, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         if (_local is null)
         {
-            await Flyctl.StartStoppedAsync(Disposable.App, Disposable.Machines[region]);
+            await Flyctl.StartStoppedAsync(Disposable.App, Disposable.Machines[region], token: token);
             return;
         }
 
@@ -346,7 +349,7 @@ public sealed class Cluster : IAsyncDisposable
     public Uri MetricsAddress(string region) => RequireLocal().MetricsAddress(region);
 
     /// <summary>Local nodes only: connected outbound peer streams reported by the internal listener.</summary>
-    public Task<JsonElement> ReplicationAsync(string region) => RequireLocal().ReplicationAsync(region);
+    public Task<JsonElement> ReplicationAsync(string region, CancellationToken token = default) => RequireLocal().ReplicationAsync(region, token);
 
     /// <summary>
     /// Local nodes only: sends the peer traffic between <paramref name="a"/> and <paramref name="b"/> through the link
@@ -404,9 +407,9 @@ public sealed class Cluster : IAsyncDisposable
         var path = backup ? "" : $"{projectPath}/databases/{Required("TERRABASE_E2E_FLY_DATABASE")}";
         if (target is not null)
         {
-            using var apps = JsonDocument.Parse(await Flyctl.RunAsync("apps", "list", "--org", target.Org, "--json"));
+            using var apps = JsonDocument.Parse(await Flyctl.RunAsync(["apps", "list", "--org", target.Org, "--json"]));
             DisposableTarget.CheckApp(target, apps.RootElement);
-            using var listed = JsonDocument.Parse(await Flyctl.RunAsync("machine", "list", "--app", target.App, "--json"));
+            using var listed = JsonDocument.Parse(await Flyctl.RunAsync(["machine", "list", "--app", target.App, "--json"]));
             DisposableTarget.CheckMachines(target, listed.RootElement);
         }
 
@@ -794,9 +797,9 @@ public sealed class Cluster : IAsyncDisposable
         public Uri MetricsAddress(string region) =>
             (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.MetricsAddress;
 
-        public Task<JsonElement> ReplicationAsync(string region) =>
+        public Task<JsonElement> ReplicationAsync(string region, CancellationToken token) =>
             (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.Client
-                .GetFromJsonAsync<JsonElement>(new Uri("/replication", UriKind.Relative));
+                .GetFromJsonAsync<JsonElement>(new Uri("/replication", UriKind.Relative), token);
 
         public string ProjectPath => $"/v1/projects/{_project}";
 
