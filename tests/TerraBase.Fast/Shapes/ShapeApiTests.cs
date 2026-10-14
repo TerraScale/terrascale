@@ -19,7 +19,7 @@ public sealed class ShapeApiTests
     private const string Handle = "h1-0123456789abcdef";
     private const string ShapeId = "0123456789abcdef0123456789abcdef";
     private const long Snapshot = 7;
-    private static readonly string[] ExpectedParameters = ["project", "database", "collection", "where", "handle", "offset", "live", "cursor", "TB-Shape-Resume"];
+    private static readonly string[] ExpectedParameters = ["project", "database", "collection", "where", "handle", "offset", "live", "cursor", "TB-Shape-Resume", "X-TerraScale-Region-Pin"];
     private static readonly string[] ExpectedResponses = ["200", "307", "304", "400", "404", "409", "414", "429", "503"];
 
     // Fixture bytes the fake page returns verbatim; the endpoint must not re-serialize them.
@@ -73,7 +73,7 @@ public sealed class ShapeApiTests
         var page = await GetShapeAsync(api.Client, bootstrap.Location!);
 
         await Assert.That(page.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(page.RawBody).IsEqualTo(FixtureBody);
+        await Assert.That(page.RawBody.AsSpan().SequenceEqual(FixtureBody)).IsTrue();
         await Assert.That(page.ContentType).IsEqualTo("application/json");
         await Assert.That(page.Handle).IsEqualTo(Handle);
         await Assert.That(page.NextOffset).IsEqualTo(Snapshot.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -401,7 +401,7 @@ public sealed class ShapeApiTests
     }
 
     [Test]
-    public async Task The_shape_needs_documents_read_and_is_not_served_on_the_internal_listener()
+    public async Task The_shape_needs_documents_read_and_the_internal_listener_reaches_it_as_the_operator()
     {
         await using var api = await DocumentApi.StartAsync();
         using var writeOnly = await api.ClientWithScopesAsync("documents:write");
@@ -411,7 +411,9 @@ public sealed class ShapeApiTests
 
         await Assert.That(denied.Status).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(denied.Code).IsEqualTo("forbidden_scope");
-        await Assert.That(internalListener.Status).IsEqualTo(HttpStatusCode.NotFound);
+        // Client routes are also served on the internal listener, as the platform operator (Listeners.cs).
+        await Assert.That(internalListener.Status).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(internalListener.Code).IsEqualTo("unavailable");
     }
 
     [Test]
@@ -563,7 +565,8 @@ public sealed class ShapeApiTests
                 json);
         }
 
+        // Raw wire values: HttpClient reorders parsed headers such as Cache-Control.
         private static string? Header(HttpResponseMessage response, string name) =>
-            response.Headers.TryGetValues(name, out var values) ? values.SingleOrDefault() : null;
+            response.Headers.NonValidated.TryGetValues(name, out var values) ? values.SingleOrDefault() : null;
     }
 }
