@@ -33,7 +33,8 @@ case "$1 $2" in
     done
     test ! -e "$STATE/fail-secret" ;;
   "ssh console") printf '%s\n' "$*" >> "$STATE/provision" ;;
-  "storage destroy"|"apps destroy") echo "$1 $2 $3" >> "$STATE/destroy" ;;
+  "storage destroy") echo "$1 $2 $3" >> "$STATE/destroy"; test ! -e "$STATE/fail-storage" ;;
+  "apps destroy") echo "$1 $2 $3" >> "$STATE/destroy" ;;
   *) echo "unexpected flyctl command: $1 $2" >&2; exit 1 ;;
 esac
 FAKE
@@ -110,6 +111,14 @@ if grep -qx 'https://ts-pr-123.fly.dev' "$state/failed"; then
   echo 'preview: printed a URL after a failed readiness check' >&2
   exit 1
 fi
+# A failed bucket deletion keeps the app, so a retry (reap or destroy) deletes the bucket and then the app.
+touch "$state/fail-storage"
+if "$here/preview.sh" destroy 123; then
+  echo 'preview: deleted the app after its bucket deletion failed' >&2
+  exit 1
+fi
+test "$(cat "$state/destroy")" = 'storage destroy terrascale-ts-pr-123'
+rm "$state/fail-storage" "$state/destroy"
 "$here/preview.sh" destroy 123
 test "$(cat "$state/destroy")" = $'storage destroy terrascale-ts-pr-123\napps destroy ts-pr-123'
 echo 'preview: all checks passed'

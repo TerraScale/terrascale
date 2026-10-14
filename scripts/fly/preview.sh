@@ -16,7 +16,8 @@ org=terrascale-previews-515
 api() { curl -sS --fail-with-body -H "Authorization: $FLY_API_TOKEN" -H 'Content-Type: application/json' "$@"; }
 machines=https://api.machines.dev/v1
 # The preview's Tigris bucket (terrascale-<app>; bucket names are global) outlives the app unless destroyed first.
-destroy_app() { flyctl storage destroy "terrascale-$1" --yes || true; flyctl apps destroy "$1" --yes; }
+# A failed bucket deletion stops here so the app stays listed and the next reap can retry.
+destroy_app() { flyctl storage destroy "terrascale-$1" --yes; flyctl apps destroy "$1" --yes; }
 
 case ${1:-} in
   app)
