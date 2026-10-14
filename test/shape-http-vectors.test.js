@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { TerraBaseV1Error } from "../src/v1/errors.js";
 import { decryptSealedShapePage, readShapePage } from "../src/v1/shape-reader.js";
 import { V1ShapeSubscription } from "../src/v1/shape-subscription.js";
@@ -348,11 +348,16 @@ const cases = {
   "epoch-key": {
     action: "cache_key_in_memory_for_epoch",
     run: async found => {
-      // No key cache: each object's key is fetched with no-store. The reader does not keep K_e in memory (DECISION).
-      const fake = upstream([found.id]);
-      const page = await decryptSealedShapePage(transportFor(fake.fetch), params, sealed, positionFor(found), undefined);
-      expect(fake.calls[0]?.init.cache).toBe("no-store");
-      expectPage(page, { body: tigris.expected_body, headers: {} });
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Number(found.request.query.epoch) * 600_000);
+      try {
+        const fake = upstream([found.id]);
+        const transport = transportFor(fake.fetch);
+        const page = await decryptSealedShapePage(transport, params, sealed, positionFor(found), undefined);
+        await decryptSealedShapePage(transport, params, sealed, positionFor(found), undefined);
+        expect(fake.calls).toHaveLength(1);
+        expect(fake.calls[0]?.init.cache).toBe("no-store");
+        expectPage(page, { body: tigris.expected_body, headers: {} });
+      } finally { clock.mockRestore(); }
     },
   },
   "future-key-refused": { action: "do_not_prefetch_future_key", run: found => expectKeyFailure(found) },

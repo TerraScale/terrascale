@@ -3,9 +3,41 @@ import { malformed, object, string } from "./decode.js";
 import { decodeShapePage, encodeShapeRequest, requireShapeHandle, requireShapeOffset } from "./shapes.js";
 import { decryptShapeObject } from "./shape-crypto.js";
 import { parseExactJson } from "./json.js";
+import { TerraBaseV1Error } from "./errors.js";
 /** @import { V1Transport } from "./transport.js" */
 /** @import { V1ShapeRequest, V1ShapePage } from "./shapes.js" */
 /** @typedef {{handle: string; offset: string; epoch: string; keyId: string}} V1SealedShapePosition */
+/** @typedef {{ latestEpoch: bigint; keys: Map<string, { epoch: bigint; key: Uint8Array }> }} ShapeKeys */
+/** @type {WeakMap<V1Transport, Map<string, ShapeKeys>>} Keys stay scoped to a credential, database and collection. */
+const shapeKeys = new WeakMap();
+/** @param {Readonly<Record<string, string>>} params */
+const keyScope = params => JSON.stringify([params.database, params.collection]);
+/**
+ * A refetch invalidates both the materialized state and any epoch keys for that collection.
+ * @param {V1Transport} transport @param {Readonly<Record<string, string>>} params
+ * @param {"readFreeShape" | "getShapeKey"} operation @param {import("./transport.js").V1CallOptions} options
+ */
+async function shapeCall(transport, params, operation, options) {
+  try { return await transport.call(operation, params, options); }
+  catch (error) {
+    if (error instanceof TerraBaseV1Error && error.status === 409 && error.code === "must_refetch")
+      shapeKeys.get(transport)?.delete(keyScope(params));
+    throw error;
+  }
+}
+/** @param {V1Transport} transport @param {Readonly<Record<string, string>>} params @returns {ShapeKeys} */
+function currentKeys(transport, params) {
+  let scopes = shapeKeys.get(transport);
+  if (scopes === undefined) { scopes = new Map(); shapeKeys.set(transport, scopes); }
+  const scope = keyScope(params);
+  let cache = scopes.get(scope);
+  if (cache === undefined) { cache = { latestEpoch: 0n, keys: new Map() }; scopes.set(scope, cache); }
+  // Expiry is lazy; a higher served epoch also protects against a regressed client clock.
+  const epoch = BigInt(Math.floor(Date.now() / 600_000));
+  if (epoch > cache.latestEpoch) cache.latestEpoch = epoch;
+  for (const [id, entry] of cache.keys) if (entry.epoch < cache.latestEpoch) cache.keys.delete(id);
+  return cache;
+}
 /** @param {unknown} value @returns {string} */
 function decimal(value) {
   const text = requireShapeOffset(value);
@@ -84,7 +116,7 @@ export async function readShapePage(transport, params, request, signal) {
       query.delete("cursor");
     }
   }
-  let response = await transport.call("readFreeShape", params, { query, headers, signal });
+  let response = await shapeCall(transport, params, "readFreeShape", { query, headers, signal });
   if (response.status === 307) {
     if (query.get("offset") !== "-1") malformed("unexpected shape redirect");
     const location = response.headers.get("location");
@@ -102,7 +134,7 @@ export async function readShapePage(transport, params, request, signal) {
     query.delete("cursor");
     query.set("handle", handle);
     query.set("offset", offset);
-    response = await transport.call("readFreeShape", params, { query, signal });
+    response = await shapeCall(transport, params, "readFreeShape", { query, signal });
     if (response.status !== 200) malformed("repeated shape redirect");
   } else if (query.get("offset") === "-1") malformed("shape bootstrap requires redirect");
   const page = decodeFreeShapePage(response.value, response.headers);
@@ -112,7 +144,7 @@ export async function readShapePage(transport, params, request, signal) {
   return page;
 }
 /**
- * Fetch a key for exactly this authorized handle/epoch/KID, with no browser or HTTP cache reuse.
+ * Reuse process-memory keys for this handle/epoch/KID; fetch misses without HTTP cache reuse.
  * @param {V1Transport} transport @param {Readonly<Record<string,string>>} params
  * @param {Uint8Array} bytes @param {V1SealedShapePosition} position @param {AbortSignal | undefined} signal
  * @returns {Promise<V1ShapePage>}
@@ -122,17 +154,30 @@ export async function decryptSealedShapePage(transport, params, bytes, position,
   const offset = requireShapeOffset(position.offset);
   if (offset === "-1") throw new TypeError("Sealed shapes require a snapshot or log offset.");
   if (typeof position.epoch !== "string" || !/^(?:0|[1-9][0-9]*)$/u.test(position.epoch) || BigInt(position.epoch) > (1n << 64n) - 1n) throw new TypeError("Shape epoch must be a canonical uint64.");
-  if (typeof position.keyId !== "string" || !/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u.test(position.keyId)) throw new TypeError("Shape key id must be a canonical ULID.");
+  if (typeof position.keyId !== "string" || !/^[\x00-\x7f]{26}$/u.test(position.keyId)) throw new TypeError("Shape key id must be 26 ASCII characters.");
   const epoch = position.epoch;
   const keyId = position.keyId;
-  const query = new URLSearchParams({ handle, epoch, key_id: keyId });
-  const response = await transport.call("getShapeKey", params, { query, cache: "no-store", signal });
-  const key = object(response.value, "shape epoch key");
-  if (key.handle !== handle || key.epoch !== epoch || key.key_id !== keyId) malformed("shape epoch key binding");
-  const encoded = string(key.key, "shape epoch key");
-  if (!/^[A-Za-z0-9_-]{43}$/u.test(encoded)) malformed("shape epoch key encoding");
-  const raw = Uint8Array.from(atob(encoded.replace(/-/gu, "+").replace(/_/gu, "/")), c => c.charCodeAt(0));
-  if (btoa(String.fromCharCode(...raw)).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "") !== encoded) malformed("shape epoch key encoding");
+  signal?.throwIfAborted();
+  const cache = currentKeys(transport, params);
+  const cacheId = JSON.stringify([handle, epoch, keyId]);
+  let raw = cache.keys.get(cacheId)?.key;
+  if (raw === undefined) {
+    const query = new URLSearchParams({ handle, epoch, key_id: keyId });
+    const response = await shapeCall(transport, params, "getShapeKey", { query, cache: "no-store", signal });
+    const key = object(response.value, "shape epoch key");
+    if (key.handle !== handle || key.epoch !== epoch || key.key_id !== keyId) malformed("shape epoch key binding");
+    const encoded = string(key.key, "shape epoch key");
+    if (!/^[A-Za-z0-9_-]{43}$/u.test(encoded)) malformed("shape epoch key encoding");
+    raw = Uint8Array.from(atob(encoded.replace(/-/gu, "+").replace(/_/gu, "/")), c => c.charCodeAt(0));
+    if (btoa(String.fromCharCode(...raw)).replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "") !== encoded) malformed("shape epoch key encoding");
+    const servedEpoch = BigInt(epoch);
+    const active = currentKeys(transport, params);
+    if (active === cache && servedEpoch >= cache.latestEpoch) {
+      cache.latestEpoch = servedEpoch;
+      for (const [id, entry] of cache.keys) if (entry.epoch < servedEpoch) cache.keys.delete(id);
+      cache.keys.set(cacheId, { epoch: servedEpoch, key: raw });
+    }
+  }
   const plaintext = await decryptShapeObject(bytes, { handle, offset, epoch, keyId, key: raw });
   signal?.throwIfAborted();
   const page = decodeFreeShapePage(parseExactJson(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(plaintext)), new Headers());

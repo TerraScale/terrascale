@@ -219,12 +219,19 @@ accepted as a response, as §4 allows, but cannot be sent as the next input;
 
 Origin JSON with a leading UTF-8 BOM is rejected by the v1 transport, including
 historical routes; shape v1 §6 requires bytes without a BOM.
+Subscriptions use unconditional reads; they do not send `If-None-Match` or use
+the optional `304` cached-body path.
 
 `collection.decryptShapeObject(bytes, { handle, offset, epoch, keyId }, { signal? })`
 fetches the matching epoch key with `cache: "no-store"`, derives the per-object key
 with WebCrypto HKDF, and verifies every AES-256-GCM TBS1 frame before returning a
-page. Keys are fetched for each object, including historical epochs; they are not
-persisted. A failed tag, binding, frame, or response validation applies nothing.
+page. Keys are cached only in process memory by `(handle, epoch, keyId)`, scoped
+to the credential, database and collection. A key fetch bypasses HTTP caches;
+keys are never persisted. Past epochs are evicted on access as time or the
+latest served epoch advances; historical objects fetch their keys again without
+retaining them. Any `409 must_refetch` on the shape or key route clears that
+collection's key cache. A failed tag, binding, frame, or response validation
+applies nothing. Key ids follow §12's 26 ASCII bytes without assuming a ULID.
 Native browser Fetch hides manual redirect metadata, so subscription bootstrap
 currently requires server fetch. TBS1 decryption uses WebCrypto in either runtime.
 

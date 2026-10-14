@@ -32,8 +32,8 @@ export async function decryptShapeObject(input, { handle, offset, epoch, keyId, 
   const bytes = Uint8Array.from(input);
   const key = Uint8Array.from(keyInput);
   if (key.byteLength !== 32) throw new TypeError("TBS1 epoch key must be 32 bytes");
-  if (typeof keyId !== "string" || !/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u.test(keyId))
-    throw new TypeError("TBS1 key id must be a canonical 26-character ULID");
+  if (typeof keyId !== "string" || !/^[\x00-\x7f]{26}$/u.test(keyId))
+    throw new TypeError("TBS1 key id must be 26 ASCII characters");
   if (bytes.byteLength < HEADER_BYTES) throw new TypeError("TBS1 header is short");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (new TextDecoder().decode(bytes.subarray(0, 4)) !== MAGIC) throw new TypeError("TBS1 magic mismatch");

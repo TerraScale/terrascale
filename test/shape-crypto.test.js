@@ -346,8 +346,14 @@ describe("TBS1 request and object guards", () => {
 
   test("rejects a key id that is not the 26 characters in the header", async () => {
     await expect(decryptShapeObject(bytes(), { ...request(), keyId: "01ARZ3NDEKTSV4RRFFQ69G5FC1" })).rejects.toThrow("key id mismatch");
-    await expect(decryptShapeObject(bytes(), { ...request(), keyId: "short" })).rejects.toThrow("26-character ULID");
-    await expect(decryptShapeObject(bytes(), { ...request(), keyId: "é".repeat(26) })).rejects.toThrow("26-character ULID");
+    await expect(decryptShapeObject(bytes(), { ...request(), keyId: "short" })).rejects.toThrow("26 ASCII characters");
+    await expect(decryptShapeObject(bytes(), { ...request(), keyId: "é".repeat(26) })).rejects.toThrow("26 ASCII characters");
+  });
+
+  test("accepts a 26-ASCII key id without assuming a ULID alphabet", async () => {
+    const binding = { ...request(), keyId: "k".repeat(26) };
+    const sealed = await sealObject({ ...binding, epochKey: binding.key, salt: fromHex(valid.object_salt_hex), plaintext: utf8(valid.plaintext_utf8) });
+    expect(new TextDecoder().decode(await decryptShapeObject(sealed.object, binding))).toBe(valid.plaintext_utf8);
   });
 
   test("a valid object decrypts with the expected request", async () => {

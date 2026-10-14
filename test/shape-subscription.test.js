@@ -258,7 +258,7 @@ describe("V1ShapeSubscription", () => {
     }
   });
 
-  test("503 unavailable continues with capped backoff beyond eight retries", async () => {
+  test("503 unavailable continues beyond eight transient failures", async () => {
     vi.useFakeTimers();
     try {
       const unavailable = () => json(503, { error: { code: "unavailable", message: "later" } });

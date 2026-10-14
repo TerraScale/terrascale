@@ -163,7 +163,7 @@ describe("origin free shape reads", () => {
 });
 
 describe("authenticated sealed object reads", () => {
-  test("uses the exact epoch/key id and bypasses key caches for every object", async () => {
+  test("fetches the exact historical epoch/key id without HTTP or past-epoch key cache reuse", async () => {
     const object = shapeVectors.tbs1_vectors[0];
     const position = { handle: object.handle, offset: object.request_offset, epoch: object.epoch, keyId: object.key_id };
     const bytes = Uint8Array.from(Buffer.from(object.tbs1_hex, "hex"));
