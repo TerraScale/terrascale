@@ -194,13 +194,13 @@ terrabase-e2e: terrabase-build
 	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build $(TEST_ARGS) || status=$$?; \
 	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-local}" || status=1; exit $$status
 
-# Stops machines of the Fly app (the fly-outage category): run alone, never with terrabase-e2e and never on every deploy.
+# Stops each region of the Fly app in one isolated test: run alone, never with terrabase-e2e or other fly-outage tests.
 # It fails unless the all-regions outage proof (FlyOutageE2ETests) is an actual pass: a skip is never live evidence.
 terrabase-e2e-fly-outage: terrabase-build
 	rm -f "$(E2E_RESULTS)"
-	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_FLY_OUTAGE=1 TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --treenode-filter '/*/*/*/*[Category=fly-outage]' --minimum-expected-tests 2 $(TEST_ARGS) || status=$$?; \
+	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_FLY_OUTAGE=1 TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --treenode-filter '/*/*/*/*[Category=replication-matrix-fly-outage]' --minimum-expected-tests 1 $(TEST_ARGS) || status=$$?; \
 	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-fly-outage}" || status=1; \
-	jq -se 'map(select(.category == "pass" and (.test | startswith("Each_region_machine_stopped_then_started")))) | length == 1' "$(E2E_RESULTS)" > /dev/null \
+	jq -se 'map(select(.category == "pass" and .nodes == "Fly machines" and (.test | startswith("Each_region_machine_stopped_then_started")))) | length == 1' "$(E2E_RESULTS)" > /dev/null \
 		|| { echo "terrabase-e2e-fly-outage: the all-regions outage proof is not an actual pass" >&2; status=1; }; exit $$status
 
 terrabase-check: terrabase-build terrabase-analyzer-check
