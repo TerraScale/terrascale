@@ -9,6 +9,7 @@ namespace TerraBase.E2E;
 /// docs/terrabase/e2e-disposable-app.md) with <c>TERRABASE_E2E_FLY_OUTAGE=1</c>.
 /// </summary>
 [Category("fly-outage")]
+[Category("replication-matrix-fly-outage")]
 public sealed class FlyOutageE2ETests
 {
     // Three outages in sequence, each with machine stop and start waits and the convergence deadlines.

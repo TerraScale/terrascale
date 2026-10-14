@@ -42,7 +42,8 @@ machine and waits until it serves both backlogs, every tombstone (404 with an eq
 settled conflict, and every region lists the same collection digest. Before the outage writes, each survivor's write
 must be confirmed by the other; only `remote_region_unavailable` and `confirmation_busy` (refused before execution) are
 sent again. It reports six `rejoin <survivor> to <stopped>` latencies. The target fails unless this test is an actual
-pass. It needs `flyctl` logged in. It runs alone because it stops a machine the other tests use. It never targets
+pass on Fly. The target selects only `replication-matrix-fly-outage`; the broader `fly-outage` scenarios remain separate
+because they stop the same app's machines. It needs `flyctl` logged in. It runs alone because it stops a machine the other tests use. It never targets
 production: without `TERRABASE_E2E_FLY_URL`, `TERRABASE_E2E_FLY_REVISION` and `TERRABASE_E2E_FLY_OUTAGE=1` it is reported
 as skipped, and `TERRABASE_E2E_FLY_APP` must name the disposable app (no default; production and preview apps are refused,
 see `e2e-disposable-app.md`).
