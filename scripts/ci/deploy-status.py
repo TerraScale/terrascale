@@ -19,7 +19,9 @@ def check_status(current_sha, run_sha, needs):
         raise ValueError("NEEDS_JSON must contain job results")
     test = needs.get("test", {})
     if not isinstance(test, dict) or test.get("result") != "success":
-        raise ValueError("Main quality gate test did not succeed")
+        result = test.get("result") if isinstance(test, dict) else None
+        state = "Current" if current_sha == run_sha else "Superseded"
+        raise ValueError(f"{state} main {run_sha}: quality gate test did not succeed ({result!r})")
     if current_sha != run_sha:
         return f"Superseded main {run_sha}; current main is {current_sha}"
     for name in ("deploy", "e2e"):

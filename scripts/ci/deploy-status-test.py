@@ -29,8 +29,9 @@ for output in ({}, {"deployed": "false"}, {"deployed": True}, None):
     cases.append((f"superseded output {output}", other, needs, 0, 0, "Superseded main", {}))
 for result in ("", "skipped", "cancelled", "failure"):
     for head in (sha, other):
+        state = "Current" if head == sha else "Superseded"
         cases.append((f"quality {result} {head}", head, green | {"test": {"result": result}},
-                      0, 1, "quality gate", {}))
+                      0, 1, f"{state} main {sha}: quality gate test did not succeed ({result!r})", {}))
 cases += [
     ("missing quality", sha, {}, 0, 1, "quality gate", {}),
     ("malformed needs", sha, [], 0, 1, "job results", {}),
