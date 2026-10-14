@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
+using TerraBase.Features.Documents;
 using TerraBase.Features.Shapes;
 using TerraBase.Fast.Documents;
 using TerraBase.Tenancy;
@@ -383,6 +385,22 @@ public sealed class ShapeApiTests
     }
 
     [Test]
+    public async Task A_resume_header_accepts_the_longest_issuer_and_all_256_origins()
+    {
+        var resume = new FixtureResume();
+        await using var api = await StartWithFixturesAsync(services => services.AddSingleton<IShapeResume>(resume));
+        var machine = new string('a', 63);
+        var token = ResumeToken(machine, ChangeCursor.MaxOrigins);
+
+        var reply = await GetShapeAsync(api.Client, Shape(api, "?offset=-1"), ("TB-Shape-Resume", token));
+
+        await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
+        await Assert.That(reply.CacheControl).IsEqualTo("no-store");
+        await Assert.That(resume.Cursor!.Machine).IsEqualTo(machine);
+        await Assert.That(resume.Cursor.Stamps.Count).IsEqualTo(ChangeCursor.MaxOrigins);
+    }
+
+    [Test]
     public async Task Live_buckets_advance_past_the_input_or_use_the_clock_and_are_preserved_on_304()
     {
         await using var api = await StartWithFixturesAsync(services =>
@@ -452,19 +470,22 @@ public sealed class ShapeApiTests
         services?.Invoke(collection);
     });
 
-    private static string ResumeToken()
+    private static string ResumeToken(string? machine = null, int origins = 0)
     {
-        // Envelope marker + 16-byte scope + R8 marker, issued stamp 1 and issuer 1, with no named origins.
-        var bytes = new byte[34];
+        var cursor = new FeedCursor(Enumerable.Range(1, origins).ToDictionary(value => new ReplicaId((ulong)value), _ => new Hlc(1)), new Hlc(1))
+        {
+            Issuer = new ReplicaId(1),
+            Machine = machine,
+        };
+        var inner = System.Buffers.Text.Base64Url.DecodeFromChars(ChangeCursor.Encode(cursor));
+        var bytes = new byte[17 + inner.Length];
         bytes[0] = 1;
         for (var index = 1; index <= 16; index++)
         {
             bytes[index] = (byte)index;
         }
 
-        bytes[17] = 1;
-        bytes[25] = 1;
-        bytes[33] = 1;
+        inner.CopyTo(bytes.AsSpan(17));
         return System.Buffers.Text.Base64Url.EncodeToString(bytes);
     }
 

@@ -294,7 +294,8 @@ the rows with `seq ≤ covered_offset`.
 - Rows the `where` filter drops still advance it, so the proof chain stays complete.
 - Sealed objects freeze it at seal time; its issue stamp is the seal stamp. Fresh responses compute a new one.
 - Layout (for vectors only; clients never parse it): the envelope is `0x01`, then the 16 scope bytes, then `R8`. `R8` is
-  marker `0x01`, issue stamp, issuer `ReplicaId`, then per origin in ascending order the origin, stamp, retention floor
+  marker `0x01`, issue stamp, issuer `ReplicaId`, a one-byte machine length and that many ASCII machine bytes (at most 63),
+  then per origin in ascending order the origin, stamp, retention floor
   and 32-byte prefix hash. Integers are 8-byte big-endian; the token is unpadded base64url; at most 256 origins.
 
 A resume is `offset=-1`, no handle, and the cursor in `cursor` or `TB-Shape-Resume`. The receiving machine:

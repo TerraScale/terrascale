@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
@@ -33,7 +34,7 @@ public interface IDatabaseChanges
 /// commit or the 15 s heartbeat. No per-connection queue: a slow client holds back only its own reads, and one that takes
 /// no bytes for 10 s is dropped.
 /// </summary>
-internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memory, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters)
+internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memory, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters, TerraBaseOptions options)
     : IDatabaseChanges
 {
     /// <summary>Open streams per database on one machine.</summary>
@@ -94,6 +95,15 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
                 cursor = cursor with { Issued = FeedCursor.At(time.GetUtcNow()) };
             }
 
+            if (cursor?.Machine is { Length: > 0 } machine && machine != options.MachineId
+                && Listeners.ArrivedOn(context) == TerraBaseListener.Client
+                && !context.Request.Headers.ContainsKey("Fly-Replay-Src") && !context.Request.Headers.ContainsKey("fly-replay-failed"))
+            {
+                context.Response.Headers["fly-replay"] = $"instance={machine};timeout=2s;fallback=force_self";
+                context.Response.Headers.CacheControl = "no-store";
+                return new IssuerReplay();
+            }
+
             if (head)
             {
                 if (await HeadAsync(database, stop.Token).ConfigureAwait(false) is not { } stamps)
@@ -125,7 +135,7 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
             context.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
             var position = new Dictionary<ReplicaId, Hlc>(cursor?.Stamps ?? new Dictionary<ReplicaId, Hlc>());
             var prefixes = page.Before.ToDictionary();
-            Cursor(buffer, new FeedCursor(position, issued) { Issuer = page.Issuer, Prefixes = prefixes });
+            Cursor(buffer, new FeedCursor(position, issued) { Issuer = page.Issuer, Machine = options.MachineId, Prefixes = prefixes });
             await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
             var beat = time.GetUtcNow() + Heartbeat;
             while (true)
@@ -145,7 +155,7 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
                     // Only the last event of an (origin, stamp) carries the advanced cursor: a reader that leaves inside one
                     // resumes before it, never past events of that stamp it did not get.
                     var last = i + 1 == page.Events.Count || (page.Events[i + 1].Origin, page.Events[i + 1].Stamp) != (change.Origin, change.Stamp);
-                    Change(buffer, change, last ? ChangeCursor.Encode(new FeedCursor(position, issued) { Issuer = page.Issuer, Prefixes = prefixes }) : null);
+                    Change(buffer, change, last ? ChangeCursor.Encode(new FeedCursor(position, issued) { Issuer = page.Issuer, Machine = options.MachineId, Prefixes = prefixes }) : null);
                     if (buffer.WrittenCount >= 64 * 1024)
                     {
                         await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
@@ -165,13 +175,13 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
 
                 if (time.GetUtcNow() >= beat)
                 {
-                    Cursor(buffer, new FeedCursor(position, issued) { Issuer = page.Issuer, Prefixes = prefixes });
+                    Cursor(buffer, new FeedCursor(position, issued) { Issuer = page.Issuer, Machine = options.MachineId, Prefixes = prefixes });
                     await SendAsync(context, buffer, stop.Token).ConfigureAwait(false);
                     beat = time.GetUtcNow() + Heartbeat;
                 }
 
                 results = QosContext.Enter(database, memory);
-                cursor = new FeedCursor(position, issued) { Issuer = page.Issuer, Prefixes = prefixes };
+                cursor = new FeedCursor(position, issued) { Issuer = page.Issuer, Machine = options.MachineId, Prefixes = prefixes };
                 issued = FeedCursor.At(time.GetUtcNow());
                 if (await ReadAsync(database, cursor, collections, stop.Token).ConfigureAwait(false) is not var (nextStore, nextSequence, nextPage))
                 {
@@ -381,6 +391,12 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
         {
             context.Abort();
         }
+    }
+
+    private sealed class IssuerReplay : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext) =>
+            BadRequests.WriteAsync(httpContext, StatusCodes.Status421MisdirectedRequest, "cursor_elsewhere", "the cursor resumes on its issuing machine", op: null);
     }
 
     private static async Task SendAsync(HttpContext context, ArrayBufferWriter<byte> buffer, CancellationToken cancellationToken)
