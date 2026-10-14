@@ -17,8 +17,8 @@ export async function checkResponse(url, expectedBytes, status, contentType) {
     } catch (error) {
       if (attempt === 1) throw error;
       // Cloudflare can acknowledge deployment before its assets reach every edge.
-      console.warn(`${url}: publication is not ready; retrying the same checks in 5 seconds.`);
-      await timers.setTimeout(5_000);
+      console.warn(`${url}: publication is not ready; retrying the same checks in 30 seconds.`);
+      await timers.setTimeout(30_000);
     }
   }
 }

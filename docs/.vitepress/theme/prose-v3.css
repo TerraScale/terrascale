@@ -2,7 +2,7 @@
 
 /* Content spans the column; running text keeps an ~80ch measure, so code, tables and callouts run full width. */
 .VPDoc .content-container { max-width: none !important; }
-.vp-doc > :is(p, ul, ol, blockquote) { max-width: 80ch; }
+.vp-doc > div > :is(p, ul, ol, blockquote) { max-width: 80ch; }
 .vp-doc { font-size: 15px; }
 .vp-doc p, .vp-doc li { line-height: 1.7; }
 
@@ -53,3 +53,12 @@
 .vp-doc code.docs-method[data-method="POST"] { --method: var(--ts-link); }
 .vp-doc code.docs-method:is([data-method="PUT"], [data-method="PATCH"]) { --method: var(--ts-tone-violet); }
 .vp-doc code.docs-method[data-method="DELETE"] { --method: var(--ts-danger); }
+
+.docs-breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; font-size: 12px; color: var(--ts-ink-3); }
+.docs-breadcrumb a { color: var(--ts-ink-3); }
+.docs-breadcrumb a:hover { color: var(--ts-ink); }
+.docs-breadcrumb [aria-current] { color: var(--ts-ink-2); }
+
+@media (max-width: 767px) {
+  .Layout .vp-doc div[class*='language-'] { margin-inline: 0; }
+}
