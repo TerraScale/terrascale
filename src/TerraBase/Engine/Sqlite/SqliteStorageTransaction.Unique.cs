@@ -85,13 +85,14 @@ internal sealed partial class SqliteStorageTransaction
             return true;
         }, cancellationToken, mutation: true).AsTask());
 
-    private StoredDocument? ReadUniqueDocument(string collection, string id, bool reserveResult = false)
+    private StoredDocument? ReadUniqueDocument(string collection, string id, bool reserveResult = false, string path = "point")
     {
         if (!HasTable(collection))
         {
             return null;
         }
 
+        CountRead(path);
         using var reader = TableCommand(UniqueRawDocument, collection, id).ExecuteReader();
         if (!reader.Read() || reader.IsDBNull(1))
         {

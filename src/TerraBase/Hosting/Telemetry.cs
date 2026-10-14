@@ -121,13 +121,16 @@ public static class Telemetry
                         or "terrabase.replication.sender.durable_lag" or "terrabase.replication.sender.initialized"
                         or "terrabase.replication.observability.omitted" or "terrabase.wan.served.groups"
                         or "terrabase.replication.cdc_backlog" or "terrabase.replication.tail_lag"
+                        or "terrabase.shape.reads" or "terrabase.shape.requests.waiting" or "terrabase.shape.flights.active"
+                        or "terrabase.shape.seals" or "terrabase.shape.seals.duration" or "terrabase.shape.sealed_bytes"
+                        or "terrabase.shape.mirror.lag" or "terrabase.shape.redirects"
                         => new MetricStreamConfiguration { CardinalityLimit = 1 },
                     "terrabase.auth.key_fetches" or "terrabase.stats.operations" => new MetricStreamConfiguration { CardinalityLimit = 2 },
                     "terrabase_pressure_listener_request_rate" or "terrabase_pressure_listener_p95_latency_ms"
                         or "terrabase_pressure_listener_requests" or "terrabase.document_cache.evictions" or "terrabase.stats.dropped"
                         or "terrabase.stats.rollups"
                         => new MetricStreamConfiguration { CardinalityLimit = 3 },
-                    "terrabase.document_cache.lookups" => new MetricStreamConfiguration { CardinalityLimit = 4 },
+                    "terrabase.document_cache.lookups" or "terrabase.storage.reads" => new MetricStreamConfiguration { CardinalityLimit = 4 },
                     "terrabase.query_shapes.dropped" => new MetricStreamConfiguration { CardinalityLimit = 7 },
                     "terrabase_pressure_top_tenant_request_rate" or "terrabase_pressure_top_tenant_storage_bytes"
                         or "terrabase.stats.top.replication" or "terrabase.stats.top.operations"

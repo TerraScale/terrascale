@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -204,6 +205,63 @@ func promValue(body, base, label string) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// storageReadsMetric is terrabase.storage.reads, a synchronous counter of physical SELECTs exported with _total. Its
+// path label is one of storageReadPaths; any other value fails the step rather than joining a delta.
+const storageReadsMetric = "terrabase_storage_reads"
+
+var storageReadPaths = []string{"point", "query", "feed", "shape"}
+
+var pathLabel = regexp.MustCompile(`[{,]path="([^"]*)"`)
+
+// storageReads is the counter's value per path label. A sample without a bounded path, or a path repeated in the
+// scrape, is an error.
+func storageReads(body string) (map[string]float64, error) {
+	out := map[string]float64{}
+	for _, line := range promLines(body, storageReadsMetric) {
+		m := pathLabel.FindStringSubmatch(line)
+		if m == nil || !slices.Contains(storageReadPaths, m[1]) {
+			return nil, fmt.Errorf("metrics: %s sample without a bounded path label: %q", storageReadsMetric, line)
+		}
+		if _, dup := out[m[1]]; dup {
+			return nil, fmt.Errorf("metrics: two %s series with path %q", storageReadsMetric, m[1])
+		}
+		v, ok := promValue(line, storageReadsMetric, `path="`+m[1]+`"`)
+		if !ok {
+			return nil, fmt.Errorf("metrics: unreadable %s sample: %q", storageReadsMetric, line)
+		}
+		out[m[1]] = v
+	}
+	return out, nil
+}
+
+// feedReads is the feed path's count. The series appears with the first feed SELECT, so an absent series is an error,
+// not zero.
+func feedReads(body string) (float64, error) {
+	counts, err := storageReads(body)
+	if err != nil {
+		return 0, err
+	}
+	v, ok := counts["feed"]
+	if !ok {
+		return 0, fmt.Errorf("metrics: no %s{path=\"feed\"}: no feed SELECT has run on this node, or the feed is not instrumented", storageReadsMetric)
+	}
+	return v, nil
+}
+
+// feedDelta is the feed SELECTs between two scrapes. A counter that fell was reset or its node restarted.
+func feedDelta(before, after float64) (int64, error) {
+	if after < before {
+		return 0, fmt.Errorf("%s{path=\"feed\"} fell from %v to %v during the step: the counter reset or the node restarted", storageReadsMetric, before, after)
+	}
+	return int64(after - before), nil
+}
+
+// rawSamples are the scrape lines the step's deltas come from, for the report.
+func rawSamples(body string) string {
+	lines := append(promLines(body, "terrabase_stats_operations"), promLines(body, storageReadsMetric)...)
+	return strings.Join(lines, "\n") + "\n"
 }
 
 // promLines are the sample lines of metric base or base_total.

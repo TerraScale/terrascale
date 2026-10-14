@@ -32,17 +32,26 @@ the targets file at the end stops the host.
 - Delivery lag (p50 … max): the write's send time, stored in the document, to the follower reading its change event.
 - Missed deliveries of in-window writes to admitted followers, and SSE response body bytes of admitted streams.
 - CPU and RSS of the combined host process from `/proc/<pid>` (both nodes, replication work, ts-auth stand-in and test runner).
-- `accounting_reads_delta`: `terrabase.stats.operations{kind="read"}` after minus before the step, from the node's
-  Prometheus scrape (identified by opening one calibration stream on gru and finding the host TCP listener whose
+- `storage_reads_delta` (primary): `terrabase.storage.reads{path="feed"}` (Prometheus `terrabase_storage_reads_total`)
+  after minus before the step, from the same gru scrape. It counts every physical backend SELECT the feed runs on that
+  node: head, floor, prefix and retention reads, and each document body, including zero-row reads and misses. Page
+  cache hits count; this is not disk I/O. The harness reads the counter's `path` label only and accepts `point`,
+  `query`, `feed` and `shape`; any other label, a repeated path, a missing feed series or a fallen counter fails the
+  step. The counter carries no tenant label.
+- The step's window opens before admission and closes after the 5 s grace and a 6 s settle. The delta therefore
+  includes admission, warmup and grace reads, not the 30 s measured window alone.
+- `accounting_reads_delta` (secondary): `terrabase.stats.operations{kind="read"}` after minus before the step, from the
+  node's Prometheus scrape (identified by opening one calibration stream on gru and finding the host TCP listener whose
   scoped `/metrics` reports that stream, then closing it before measurement). It is document accounting
-  (GETs and queries), published per closed 5 s window, and the feed does not add to it. The raw lines are in the report.
-  Both accounting reads and inferred document SELECTs cover gru only; sjc reads are not included.
+  (GETs and queries), published per closed 5 s window, and is not a storage read count.
+- The raw `terrabase_storage_reads_total` and `terrabase_stats_operations` lines before and after each step are in the report.
+- Both deltas cover gru only; sjc reads are not included.
 
 ## Limits
 
-- Physical storage reads of the feed are not instrumented: the report says N/A. `inferred_min_doc_selects` is inferred
-  from `SqliteStorageTransaction.Feed.cs` (one document SELECT per received upsert of an in-window write per stream,
-  including redeliveries through grace), not measured. It excludes warmup writes and other storage work.
+- `inferred_min_doc_selects` (secondary) is inferred from `SqliteStorageTransaction.Feed.cs` (one document SELECT per
+  received upsert of an in-window write per stream, including redeliveries through grace), not measured. It excludes
+  warmup writes and other storage work. Compare it with `storage_reads_delta`, which is measured.
 - Two regions are required for database placement. All client traffic targets gru; sjc replicates in the same process.
   Both nodes use loopback: no WAN, Fly Proxy or TLS.
 - A step stops the run with an error when a measurement is invalid: a follower refused other than by `changes_busy`

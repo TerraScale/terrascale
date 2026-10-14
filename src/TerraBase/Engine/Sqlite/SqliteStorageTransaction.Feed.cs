@@ -46,6 +46,7 @@ internal sealed partial class SqliteStorageTransaction
             {
                 var command = Command(FeedHead);
                 command.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
+                CountRead("feed");
                 if (command.ExecuteScalar() is long stamp)
                 {
                     head[origin] = new Hlc((ulong)stamp);
@@ -70,6 +71,7 @@ internal sealed partial class SqliteStorageTransaction
                 oldest.Parameters.AddWithValue("$limit", (long)(limit - deleted));
                 var rows = new List<long>();
                 var highest = (long)floor.Value;
+                CountRead("feed");
                 using (var reader = oldest.ExecuteReader())
                 {
                     while (reader.Read())
@@ -151,6 +153,7 @@ internal sealed partial class SqliteStorageTransaction
     private List<(ReplicaId Origin, Hlc Floor)> Floors()
     {
         var floors = new List<(ReplicaId, Hlc)>();
+        CountRead("feed");
         using var reader = Command(FeedFloors).ExecuteReader();
         while (reader.Read())
         {
@@ -276,6 +279,7 @@ internal sealed partial class SqliteStorageTransaction
         command.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
         command.Parameters.AddWithValue("$floor", Version(floor));
         command.Parameters.AddWithValue("$stamp", Version(stamp));
+        CountRead("feed");
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
@@ -295,6 +299,7 @@ internal sealed partial class SqliteStorageTransaction
         command.Parameters.AddWithValue("$after", Version(after));
         command.Parameters.AddWithValue("$limit", (long)FeedOriginRows);
         long rowid = 0;
+        CountRead("feed");
         using (var reader = command.ExecuteReader())
         {
             while (reader.Read())
@@ -315,6 +320,7 @@ internal sealed partial class SqliteStorageTransaction
         same.Parameters.AddWithValue("$origin", origin);
         same.Parameters.AddWithValue("$stamp", rows[^1].Item1);
         same.Parameters.AddWithValue("$rowid", rowid);
+        CountRead("feed");
         using (var reader = same.ExecuteReader())
         {
             while (reader.Read())
@@ -340,6 +346,7 @@ internal sealed partial class SqliteStorageTransaction
             return null;
         }
 
+        CountRead("feed");
         using var reader = TableCommand(FeedDocument, collection, id).ExecuteReader();
         if (!reader.Read())
         {

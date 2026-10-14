@@ -106,6 +106,46 @@ terrabase_changes_streams_other 9
 	}
 }
 
+// The feed's count fails closed: an absent feed series, a path outside the bounded set, a path without a label and a
+// repeated path are errors; a counter that fell is an error too.
+func TestFeedReadsFailsClosed(t *testing.T) {
+	t.Parallel()
+	const point = `terrabase_storage_reads_total{otel_scope_name="TerraScale.TerraBase",path="point"} 4 1700000000000` + "\n"
+	const feed = `terrabase_storage_reads_total{otel_scope_name="TerraScale.TerraBase",path="feed"} 17 1700000000000` + "\n"
+	if v, err := feedReads(point + feed); err != nil || v != 17 {
+		t.Fatalf("feed %v, %v", v, err)
+	}
+	if _, err := feedReads(point); err == nil {
+		t.Fatal("an absent feed series read as a count")
+	}
+	if _, err := feedReads(point + feed + `terrabase_storage_reads_total{otel_scope_name="x",path="tenant_a"} 1` + "\n"); err == nil {
+		t.Fatal("an unbounded path label accepted")
+	}
+	if _, err := feedReads(feed + feed); err == nil {
+		t.Fatal("two feed series accepted")
+	}
+	if _, err := feedReads(`terrabase_storage_reads_total{otel_scope_name="x"} 1` + "\n" + feed); err == nil {
+		t.Fatal("a sample without a path label accepted")
+	}
+	if d, err := feedDelta(17, 40); err != nil || d != 23 {
+		t.Fatalf("delta %d, %v", d, err)
+	}
+	if _, err := feedDelta(40, 17); err == nil {
+		t.Fatal("a fallen counter accepted")
+	}
+}
+
+// The storage delta is the table's first measured read column, ahead of the accounting delta it no longer replaces.
+func TestNotesTableOrdersStorageReadsBeforeTheSecondaryColumns(t *testing.T) {
+	t.Parallel()
+	res := []apibench.Result{{Scenario: "changes.fanout", Concurrency: 10, Status: map[string]int64{"admitted": 10,
+		"storage_reads_delta": 1234, "accounting_reads_delta": 5, "inferred_min_doc_selects": 6}}}
+	text := notes(res, []probe{{n: 10, target: "changes.fanout", before: "b\n", after: "a\n"}}, 1, "http://127.0.0.1:1/metrics", "Commit: c")
+	if !strings.Contains(text, "| changes.fanout | 10 | 10 | 0 | 0 | 0 | 0 | 0.00 | 1234 | 5 | 6 |") {
+		t.Fatal(text)
+	}
+}
+
 func TestListenPortsKeepsTheProcessListeners(t *testing.T) {
 	t.Parallel()
 	table := `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode

@@ -2,7 +2,8 @@
 // at a fixed rate into one collection, and N = 1, 10, 100 and 1000 followers of the same database's
 // GET …/changes SSE stream, one N
 // per step. It records requested, admitted and rejected followers (the server admits 32 streams per database and 1024
-// per machine), delivery lag, SSE body bytes, the server's CPU and memory and its document accounting reads.
+// per machine), delivery lag, SSE body bytes, the server's CPU and memory, its feed storage reads and its document
+// accounting reads.
 //
 // Run it from benchmark/ after a Release build of the host (README.md). It takes no flags.
 package main
@@ -204,9 +205,11 @@ func notes(results []apibench.Result, probes []probe, pid int, metricsURL, commi
 	fmt.Fprintf(&b, "- Writer: %d PUTs/s of %d-byte documents into one collection, open loop; every write must succeed. Followers: GET …/changes?cursor=now&collections=<that collection>, opened one at a time at %d/s, each awaiting its admission or rejection (the local tenant is on the Hobby QoS plan), then all read together through the measured window.\n", writeRate, payloadBytes, admitRate)
 	fmt.Fprintf(&b, "- Columns: conc = requested N; rate = writes/s; req/s = deliveries/s summed over admitted followers; p50…max = delivery lag from the write's send time (in the document) to the follower reading its change event; err %% = missed deliveries of in-window writes to admitted followers (grace %s); MB in = SSE response body bytes of admitted streams in the window; CPU %% and RSS MB = the combined host process (/proc/%d: both nodes, replication work, ts-auth stand-in and test runner), not this client.\n", grace, pid)
 	fmt.Fprintf(&b, "- Admission: the server admits at most 32 streams per database per machine and 1024 per machine (DatabaseChanges.cs). Above 32, only admitted followers are measured: req/s and MB in do not grow with requested N, and no gain past the cap is claimed.\n")
-	fmt.Fprintf(&b, "- accounting_reads_delta: terrabase.stats.operations{kind=\"read\"} from %s, after minus before the step, gru node only; sjc reads are not included. It is document accounting (document GETs and queries), published per closed 5 s window; it is not a count of storage reads, and the feed does not add to it.\n", metricsURL)
-	fmt.Fprintf(&b, "- Origin physical storage reads of the feed: N/A, not instrumented. inferred_min_doc_selects is inferred from source, not measured, gru feed only; sjc reads are not included: SqliteStorageTransaction.Feed.cs reads each upsert's current document with one SELECT per stream. The inference counts received upserts of in-window writes through delivery grace, including redeliveries; warmup upserts, feed-table page reads and other storage work are excluded.\n")
-	fmt.Fprintf(&b, "\n| target | requested N | admitted | rejected | writes in window | delivered | missed | deliveries/s per admitted follower | accounting reads delta | inferred min doc SELECTs for in-window writes |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	fmt.Fprintf(&b, "- storage_reads_delta (primary): terrabase.storage.reads{path=\"feed\"} (terrabase_storage_reads_total) from %s, after minus before the step, gru node only; sjc reads are not included. It counts every physical backend SELECT the feed runs on this node: head, floor, prefix and retention reads, and each document body, including zero-row reads and misses. Page cache hits count; this is not disk I/O.\n", metricsURL)
+	fmt.Fprintf(&b, "- Storage window: the scrape before admission (before the first follower opens) through the scrape after warmup, the 30 s measured window, grace and a 6 s settle. A step's delta therefore includes admission, warmup and grace reads, not the measured window alone. A fall of the counter fails the step (reset or restarted node); an absent feed series fails it too, never as zero.\n")
+	fmt.Fprintf(&b, "- accounting_reads_delta (secondary): terrabase.stats.operations{kind=\"read\"} from %s, after minus before the step, gru node only. It is document accounting (document GETs and queries), published per closed 5 s window; it is not a storage read count.\n", metricsURL)
+	fmt.Fprintf(&b, "- inferred_min_doc_selects (secondary, a source-based estimate, not measured): gru feed only. SqliteStorageTransaction.Feed.cs reads each upsert's current document with one SELECT per stream. The estimate counts received upserts of in-window writes through delivery grace, including redeliveries; warmup upserts, feed-table reads and other storage work are excluded. Compare it with storage_reads_delta, which is measured.\n")
+	fmt.Fprintf(&b, "\n| target | requested N | admitted | rejected | writes in window | delivered | missed | deliveries/s per admitted follower | storage reads delta (feed) | accounting reads delta (secondary) | inferred min doc SELECTs (secondary estimate) |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, r := range results {
 		var rejected []string
 		for k, v := range r.Status {
@@ -218,8 +221,8 @@ func notes(results []apibench.Result, probes []probe, pid int, metricsURL, commi
 		if a := r.Status["admitted"]; a > 0 {
 			per = r.RPS / float64(a)
 		}
-		fmt.Fprintf(&b, "| %s | %d | %d | %s | %d | %d | %d | %.2f | %d | %d |\n", r.Scenario, r.Concurrency, r.Status["admitted"], cmp.Or(strings.Join(rejected, ", "), "0"),
-			r.Status["writes"], r.OK, r.Errors, per, r.Status["accounting_reads_delta"], r.Status["inferred_min_doc_selects"])
+		fmt.Fprintf(&b, "| %s | %d | %d | %s | %d | %d | %d | %.2f | %d | %d | %d |\n", r.Scenario, r.Concurrency, r.Status["admitted"], cmp.Or(strings.Join(rejected, ", "), "0"),
+			r.Status["writes"], r.OK, r.Errors, per, r.Status["storage_reads_delta"], r.Status["accounting_reads_delta"], r.Status["inferred_min_doc_selects"])
 	}
 	fmt.Fprintf(&b, "\n### Raw metric lines\n")
 	for _, p := range probes {

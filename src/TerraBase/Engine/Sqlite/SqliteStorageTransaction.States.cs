@@ -76,6 +76,7 @@ internal sealed partial class SqliteStorageTransaction
             return DocumentState.Bottom;
         }
 
+        CountRead("point");
         using var reader = TableCommand(store.IsSystem ? SqliteStatements.SystemGetState : SqliteStatements.GetState, collection, id).ExecuteReader();
         if (!reader.Read())
         {
