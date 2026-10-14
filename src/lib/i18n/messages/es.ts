@@ -86,27 +86,32 @@ export const es: Messages = {
     titleLead: 'Public Alpha,',
     titleAccent: 'con límites explícitos',
     subtitle:
-      'El contrato de lanzamiento cubre documentos, tres regiones seleccionables, clientes tipados y salud visible sin compromiso de disponibilidad.',
+      'El contrato de lanzamiento cubre documentos, tres regiones activas, clientes tipados y salud visible sin compromiso de disponibilidad.',
     items: [
       {
-        title: 'API de datos tipados',
-        text: 'Crea bases de datos, repositorios, esquemas y documentos, y consulta con TQL a través de una única API pública.',
-        bullets: ['Repositorios', 'TQL', 'Clientes SDK'],
+        title: 'Datos',
+        text: 'Las bases de datos contienen colecciones de documentos JSON, cada una con un esquema opcional. Consulta con filtros JSON o SQL de solo lectura: SELECT, WHERE, ORDER BY y hasta 1.000 filas por sentencia.',
+        bullets: ['Colecciones', 'Filtros JSON', 'SQL de solo lectura'],
       },
       {
-        title: 'Enrutamiento regional',
-        text: 'El endpoint global elige la región seleccionada saludable más cercana. Los endpoints regionales estrictos nunca sirven desde otra región.',
-        bullets: ['Endpoint global', 'Endpoints regionales estrictos', 'Regiones seleccionadas'],
-      },
-      {
-        title: 'Regiones de lanzamiento',
-        text: 'Elige São Paulo, San Francisco Bay Area o Frankfurt durante Public Alpha.',
+        title: 'Regiones',
+        text: 'São Paulo, San Francisco Bay Area y Fráncfort ya sirven tráfico. Cada base de datos vive en una región principal y se replica completa en las demás regiones que selecciones.',
         bullets: ['gru', 'sjc', 'fra'],
       },
       {
-        title: 'Señales medidas',
-        text: 'La salud de replicación, convergencia, conflictos, latencia de API y estimaciones geográficas siguen siendo valores separados. El contenido del cliente permanece en las regiones seleccionadas. El tráfico del cliente requiere TLS 1.2 o posterior, los datos en reposo usan cifrado calificado y cada solicitud aún requiere autorización.',
-        bullets: ['Hora de observación', 'Etiquetas de evidencia', 'Sin promesa de retraso limitado'],
+        title: 'Enrutamiento',
+        text: 'El endpoint global responde desde la región saludable más cercana que tenga tu base de datos. Los endpoints regionales estrictos nunca sirven desde una región que no seleccionaste.',
+        bullets: ['Endpoint global', 'Endpoints regionales estrictos'],
+      },
+      {
+        title: 'Salud',
+        text: 'La replicación es asíncrona. Retraso, convergencia, conflictos y latencia de API se publican como valores medidos separados, con su hora de observación. No hay promesa de retraso limitado, porcentaje de disponibilidad ni SLA.',
+        bullets: ['Replicación asíncrona', 'Hora de observación', 'Sin SLA'],
+      },
+      {
+        title: 'Seguridad',
+        text: 'El tráfico del cliente requiere TLS 1.2 o posterior, los datos en reposo usan cifrado calificado y cada solicitud requiere autorización. El contenido del cliente permanece en las regiones que selecciones.',
+        bullets: ['TLS 1.2+', 'Cifrado en reposo', 'Autorización por solicitud'],
       },
     ],
   },
@@ -115,17 +120,23 @@ export const es: Messages = {
     eyebrow: 'SDK para desarrolladores',
     headlineLead: 'Consulta tus datos',
     headlineAccent: 'en el lenguaje que amas',
-    text: 'SDKs de primera clase en C# y TypeScript usan las mismas rutas HTTP públicas que el panel, con modelos OpenAPI generados por debajo.',
-    bullets: [
-      'Catálogo de contratos OpenAPI generado',
-      'Clientes tipados en C# y TypeScript',
-      'El panel usa el límite público del SDK',
-      'Entradas de región para gru, sjc, fra',
-    ],
+    text: 'Los SDKs tipados de C# y TypeScript usan la misma API HTTP pública que el panel, con modelos generados a partir de su contrato OpenAPI.',
+    bullets: ['Clientes tipados en C# y TypeScript', 'Modelos OpenAPI generados', 'Filtros JSON o SQL de solo lectura'],
+    agent: {
+      title: 'O pide a tu agente de IA favorito que lo haga por ti',
+      text: 'Soportamos CLI y MCP. Conecta Claude Code, Cursor o cualquier cliente MCP al servidor MCP de TerraScale con un token de acceso personal. El agente actúa con tus roles y cada llamada se vuelve a verificar. Los agentes también pueden llamar a la API HTTP desde una terminal.',
+      promptsLabel: 'Prueba a pedir',
+      prompts: [
+        'Lista mis bases de datos y las regiones que sirve cada una.',
+        'Encuentra los clientes con 10 o más asientos en la base de datos app.',
+        '¿Cuánto de la cuota de unidades de operación de este mes hemos usado?',
+      ],
+      toolsLabel: 'Algunas herramientas MCP',
+    },
     copy: 'Copiar',
     copied: 'Copiado',
     copyAria: 'Copiar código',
-    tablistLabel: 'Ejemplos de lenguaje',
+    tablistLabel: 'Ejemplos de código',
   },
 
   cta: {
@@ -137,32 +148,6 @@ export const es: Messages = {
     ctaSecondary: 'Hablar con ventas',
     perksAria: 'Detalles de planes',
     perks: ['Planes pagados mensuales', 'Sin excedentes pagados'],
-  },
-
-  statusStrip: {
-    aria: 'Estado del sistema',
-    headline: {
-      operational: 'Todos los sistemas operativos',
-      degraded: 'Rendimiento degradado',
-      partial_outage: 'Interrupción parcial',
-      major_outage: 'Interrupción grave',
-      maintenance: 'Mantenimiento programado',
-    },
-    states: {
-      operational: 'Operativo',
-      degraded: 'Degradado',
-      partial_outage: 'Interrupción parcial',
-      major_outage: 'Interrupción grave',
-      maintenance: 'Mantenimiento',
-      none: 'Sin datos',
-    },
-    detail: 'Página de estado pública · últimos 90 días',
-    fallback: 'Estado actual del sistema',
-    fallbackDetail: 'La disponibilidad se publica en la página de estado',
-    barsAria: 'Estado diario, últimos 90 días',
-    axisStart: 'Hace 90 días',
-    axisEnd: 'Hoy',
-    link: 'Página de estado',
   },
 
   pricingTeaser: {
