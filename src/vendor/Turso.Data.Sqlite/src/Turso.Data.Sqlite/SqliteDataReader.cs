@@ -664,7 +664,7 @@ public class SqliteDataReader : DbDataReader
         EnsureHasCurrentRow();
         var statement = GetStatement();
         var value = TursoBindings.GetValue(statement, ordinal);
-        if (IsGuidType(GetDeclaredTypeName(ordinal)) && value.ValueType is TursoValueType.Blob or TursoValueType.Text)
+        if (value.ValueType is TursoValueType.Blob or TursoValueType.Text && IsGuidType(GetDeclaredTypeName(ordinal)))
             return ToGuid(value);
 
         return value.ValueType switch
@@ -1130,6 +1130,11 @@ public class SqliteDataReader : DbDataReader
             ValidateOrdinal(ordinal);
             return CurrentManagedResult.Columns[ordinal].DataTypeName;
         }
+
+        // TerraScale: native metadata avoids preparing schema queries for every value read.
+        var declaredType = TursoBindings.GetDeclaredTypeName(GetStatement(), ordinal);
+        if (!string.IsNullOrEmpty(declaredType))
+            return StripTypeLength(declaredType);
 
         if (TryGetSelectSource(out var tableName, out var selections))
         {

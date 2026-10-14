@@ -159,6 +159,18 @@ and abort is idempotent. The original TerraBase Slow regression proves cancellat
 reader and allows another query in the same transaction. Both targeted tests passed on mariogk-dev. This supplement
 covers the patch; it does not repeat the package or Rust advisory audit above.
 
+### Patch 0006 (2026-10-14)
+
+`SqliteDataReader` uses the existing native column-declaration binding before falling back to schema queries,
+and numeric or null values do not look up a GUID declaration. This removes repeated PRAGMA preparations from
+the value-reading path. GUID conversion and stripped type names remain unchanged; expression columns retain
+the existing fallback. No native package, dependency, configuration, public API or persisted format changes.
+
+Real-native regression tests cover both GUID encodings, text, blobs, integers, reals, nulls and expression columns
+across result sets. Native metadata returns GUID and VARCHAR declarations in the pinned library. All nine driver
+tests passed locally; TerraBase and hosted performance qualification remain pending. This supplement does not
+repeat the package or Rust advisory audit above.
+
 ## 6. Rust crates in `libturso_sdk_kit`
 
 Read-only, against upstream's workspace at `5c168be5ef6a32ac966daf5983502a4f694b37ad` (a fresh clone), with tools from

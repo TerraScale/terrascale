@@ -1,0 +1,36 @@
+From b10dbbc6f0b1b60a1c245983c9b1cecbbc8396a4 Mon Sep 17 00:00:00 2001
+From: mariogk <mariogk@terrascale.tech>
+Date: Wed, 14 Oct 2026 15:58:28 -0300
+Subject: [PATCH] fix(turso): read declared types from native column metadata
+
+---
+ src/Turso.Data.Sqlite/SqliteDataReader.cs | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/src/Turso.Data.Sqlite/SqliteDataReader.cs b/src/Turso.Data.Sqlite/SqliteDataReader.cs
+index 7824280fe..fd2ef70c6 100644
+--- a/src/Turso.Data.Sqlite/SqliteDataReader.cs
++++ b/src/Turso.Data.Sqlite/SqliteDataReader.cs
+@@ -664,7 +664,7 @@ public class SqliteDataReader : DbDataReader
+         EnsureHasCurrentRow();
+         var statement = GetStatement();
+         var value = TursoBindings.GetValue(statement, ordinal);
+-        if (IsGuidType(GetDeclaredTypeName(ordinal)) && value.ValueType is TursoValueType.Blob or TursoValueType.Text)
++        if (value.ValueType is TursoValueType.Blob or TursoValueType.Text && IsGuidType(GetDeclaredTypeName(ordinal)))
+             return ToGuid(value);
+
+         return value.ValueType switch
+@@ -1131,6 +1131,11 @@ public class SqliteDataReader : DbDataReader
+             return CurrentManagedResult.Columns[ordinal].DataTypeName;
+         }
+
++        // TerraScale: native metadata avoids preparing schema queries for every value read.
++        var declaredType = TursoBindings.GetDeclaredTypeName(GetStatement(), ordinal);
++        if (!string.IsNullOrEmpty(declaredType))
++            return StripTypeLength(declaredType);
++
+         if (TryGetSelectSource(out var tableName, out var selections))
+         {
+             var tableColumns = GetTableColumns(tableName);
+--
+2.54.0
