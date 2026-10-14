@@ -258,6 +258,7 @@
     .detailed__table tbody th,
     .detailed__table td {
       white-space: normal;
+      overflow-wrap: anywhere;
     }
   }
 </style>
