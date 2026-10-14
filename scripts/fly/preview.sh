@@ -38,10 +38,18 @@ buckets() {
   ' <<<"$table"
 }
 
-# Reads a Fly machine or volume JSON list; prints its oldest created_at, or nothing for []. Any other shape fails.
+# Reads a Fly machine or volume JSON list; prints its oldest created_at as epoch seconds, or nothing for []. Any other
+# shape, or a date date(1) cannot parse, fails. Epochs, not strings: offsets make string order wrong.
 oldest() {
-  jq -er 'if type == "array" and all(.[]; .created_at | type == "string" and length > 0)
-    then map(.created_at) | min // "" else error("unexpected Fly listing") end'
+  local stamps stamp epoch min=""
+  stamps=$(jq -er 'if type == "array" and all(.[]; .created_at | type == "string" and length > 0 and (contains("\n") | not))
+    then map(.created_at) | join("\n") else error("unexpected Fly listing") end') || return 1
+  [[ -n $stamps ]] || return 0
+  while IFS= read -r stamp; do
+    epoch=$(date -u -d "$stamp" +%s) || return 1
+    if [[ -z $min ]] || (( epoch < min )); then min=$epoch; fi
+  done <<<"$stamps"
+  printf '%s\n' "$min"
 }
 
 # Prints the PR number when its preview must go; returns non-zero when an API call or a date fails. $2: an app exists.
@@ -57,7 +65,6 @@ expired() {
       [[ -n $created ]] || created=$(flyctl volumes list -a "ts-pr-$1" --json | oldest) || return 1
       # Neither machines nor volumes: nothing paid is left to age, so the app stays until the PR closes.
       [[ -n $created ]] || return 0
-      created=$(date -u -d "$created" +%s) || return 1
       cutoff=$(date -u -d '24 hours ago' +%s) || return 1
       if (( created < cutoff )); then echo "$1"; fi
       ;;

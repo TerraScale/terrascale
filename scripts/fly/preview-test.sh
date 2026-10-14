@@ -194,9 +194,13 @@ ago 25 > "$state/volumes-ts-pr-4"
 ago 1 > "$state/volumes-ts-pr-7"
 echo '[]' > "$state/volumes-ts-pr-9"
 test "$("$here/preview.sh" expired)" = '[1,3,4,6]'
+# Offsets: PR 2's oldest machine is 25 hours old, but its string sorts after the young one; epochs decide.
+echo "[{\"created_at\":\"$(date -u -d '15 hours ago' +%FT%T)-14:00\"},{\"created_at\":\"$(date -u -d '11 hours ago' +%FT%T)+14:00\"}]" > "$state/machines-ts-pr-2"
+test "$("$here/preview.sh" expired)" = '[1,2,3,4,6]'
+ago 1 > "$state/machines-ts-pr-2"
 # Empty output, another shape, or a missing, null or unreadable date in a machine or volume list is an error, not
-# "no machines"; decidable previews are still listed.
-for bad in '' '{}' '[{}]' '[{"created_at":null}]' '[{"created_at":"not-a-date"}]'; do
+# "no machines"; decidable previews are still listed. A valid date never hides an invalid one, nor a newline-split blank.
+for bad in '' '{}' '[{}]' '[{"created_at":null}]' '[{"created_at":"not-a-date"}]' '[{"created_at":"2026-10-13T18:36:33Z"},{"created_at":"not-a-date"}]' '[{"created_at":"2026-10-13T18:36:33Z\n"}]'; do
   for file in machines-ts-pr-2 volumes-ts-pr-7; do
     cp "$state/$file" "$state/$file.ok"
     printf '%s' "$bad" > "$state/$file"
