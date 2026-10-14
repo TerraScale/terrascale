@@ -251,6 +251,7 @@ public sealed class ShapeMirrorTests
         var url = entry.GetProperty("url").GetString() ?? throw new InvalidOperationException("the manifest names no url");
         var key = entry.GetProperty("object").GetString() ?? throw new InvalidOperationException("the manifest names no object");
         var expiresAt = entry.GetProperty("expires_at").GetDateTimeOffset();
+        var tenantIds = new[] { harness.Tenant.OrganizationId, harness.Tenant.ProjectId!, harness.Tenant.DatabaseId! };
 
         using var platform = harness.PlatformClient();
         using (var fetched = await platform.GetAsync(url))
@@ -263,12 +264,22 @@ public sealed class ShapeMirrorTests
             await Assert.That(fetched.Headers.CacheControl!.Public).IsTrue();
             await Assert.That(fetched.Headers.CacheControl!.MaxAge).IsEqualTo(TimeSpan.FromDays(365));
             await Assert.That(fetched.Headers.CacheControl!.Extensions.Any(value => value.Name == "immutable")).IsTrue();
+            await Assert.That(fetched.Content.Headers.ContentType!.MediaType).IsEqualTo("application/octet-stream").Because("the platform serves ciphertext as opaque bytes");
+            await Assert.That(fetched.Content.Headers.ContentEncoding).IsEmpty().Because("the ciphertext is not content-encoded");
+            await Assert.That(fetched.Content.Headers.ContentDisposition).IsNull();
+            var metadata = fetched.Headers.Where(header => header.Key.StartsWith("x-amz-meta-", StringComparison.Ordinal))
+                .ToDictionary(header => header.Key, header => string.Join(",", header.Value));
+            await Assert.That(metadata.Keys).IsEquivalentTo(new[] { "x-amz-meta-owner", "x-amz-meta-object-hash", "x-amz-meta-sha256", "x-amz-meta-epoch", "x-amz-meta-key-id", "x-amz-meta-sealed-at", "x-amz-meta-floor-offset" });
+            await Assert.That(metadata.Values.Any(value => tenantIds.Any(id => value.Contains(id, StringComparison.Ordinal)))).IsFalse().Because("metadata carries hashes and numbers, never tenant identifiers");
+            using var repeat = await platform.GetAsync(url);
+            await Assert.That((await repeat.Content.ReadAsByteArrayAsync()).SequenceEqual(bytes)).IsTrue().Because("the same signed URL serves the same ciphertext");
         }
 
         // The signed window ends no later than the manifest's expiry.
         var signedAt = DateTimeOffset.ParseExact(Query(url, "X-Amz-Date")!, "yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
         var lifetime = long.Parse(Query(url, "X-Amz-Expires")!, CultureInfo.InvariantCulture);
         await Assert.That(signedAt.AddSeconds(lifetime)).IsLessThanOrEqualTo(expiresAt);
+        await Assert.That(tenantIds.Any(id => url.Contains(id, StringComparison.Ordinal))).IsFalse().Because("the presigned path is shape-scoped, not tenant-scoped");
 
         using (var signature = await platform.GetAsync(url.Replace("X-Amz-Signature=" + Query(url, "X-Amz-Signature"),
             "X-Amz-Signature=" + Flip(Query(url, "X-Amz-Signature")!), StringComparison.Ordinal)))

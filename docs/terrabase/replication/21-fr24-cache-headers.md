@@ -8,12 +8,17 @@
 | Where | `Cache-Control` |
 | --- | --- |
 | Every answer of `GET …/collections/{collection}/shape` (origin, T0): `200` (snapshot page, chunk, fresh, live), `304`, both `307`s, every error including `401` and `403` | `private, no-store` |
-| Shape key and manifest endpoints | `private, no-store` (key errors included) |
+| Shape key endpoint | `private, no-store` (key errors included) |
+| Shape manifest endpoint (FR-22, pending integration) | `private, no-store` |
 | TBS1 ciphertext objects in Tigris (T1) | `public, max-age=31536000, immutable` (FR-22, `ShapeObjectStore.CacheControl`) |
 
 Only TBS1 ciphertext is ever shared-cacheable. Origin bodies are tenant plaintext, and every origin answer depends on
 the caller's credential, so no cache, private or shared, may store one. `Vary: Authorization`, `ETag` and `304` stay:
 a client that keeps its own copy can still send `If-None-Match`. Conditional requests remain supported, but clients must obey the new no-store policy.
+
+The exact header applies after routing selects a marked GET endpoint. Kestrel rejections before the application
+pipeline (for example oversized request lines/headers) and unmatched routes do not pass through this guard; global
+application errors remain `no-store`. None carries tenant plaintext from a shape response.
 
 ## As built
 
@@ -26,7 +31,8 @@ a client that keeps its own copy can still send `If-None-Match`. Conditional req
   retain their exact status and body assertions and now assert the FR-24 origin header. Keys, manifest and Tigris
   vector policies are unchanged.
 - Fast: `ShapeApiTests.Every_origin_answer_including_401_and_403_is_private_no_store_and_never_shared_cacheable`, plus
-  the existing exact assertions in `ShapeApiTests` and `ShapeEndToEndTests`.
+  the existing exact assertions in `ShapeApiTests` and `ShapeEndToEndTests`, and failure fixtures for `429`, `503`
+  and a thrown exception whose error writer clears the response before returning `500`.
 
 ## T1 (Tigris) requirements, from V4 (#301)
 

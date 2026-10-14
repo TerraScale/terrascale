@@ -64,7 +64,6 @@ internal sealed class GetShapeKeyEndpoint(
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        HttpContext.Response.Headers.CacheControl = "private, no-store";
         if (!await catalog.IsFreshAsync(CatalogWindow, cancellationToken))
         {
             return ErrorResponse.From(CatalogStale);

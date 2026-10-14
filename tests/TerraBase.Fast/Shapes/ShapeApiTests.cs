@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
+using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Shapes;
 using TerraBase.Fast.Documents;
@@ -460,6 +461,21 @@ public sealed class ShapeApiTests
     }
 
     [Test]
+    [Arguments(429)]
+    [Arguments(503)]
+    [Arguments(500)]
+    public async Task Origin_failures_remain_private_no_store_even_when_the_error_writer_clears_headers(int status)
+    {
+        await using var api = await StartWithFixturesAsync(services =>
+            services.AddSingleton<IShapeChunks>(new FailingChunks(status)));
+
+        var reply = await GetShapeAsync(api.Client, Shape(api, $"?handle={Handle}&offset=0"));
+
+        await Assert.That((int)reply.Status).IsEqualTo(status);
+        await Assert.That(reply.CacheControl).IsEqualTo("private, no-store");
+    }
+
+    [Test]
     public async Task The_shape_needs_documents_read_and_is_not_served_on_the_internal_listener()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -567,6 +583,17 @@ public sealed class ShapeApiTests
             offset > Snapshot
                 ? ValueTask.FromResult<ShapeRead>(new MustRefetch("offset is above the sealed head"))
                 : ValueTask.FromResult<ShapeRead>(new ShapeBody(FixtureBody, offset.ToString(System.Globalization.CultureInfo.InvariantCulture), false));
+    }
+
+    private sealed class FailingChunks(int status) : IShapeChunks
+    {
+        public ValueTask<ShapeRead> ReadAsync(ShapeScope scope, ShapeLineage lineage, long offset, CancellationToken cancellationToken) =>
+            status switch
+            {
+                429 => ValueTask.FromResult<ShapeRead>(new QuotaExceeded("shape is busy", "shape_busy")),
+                503 => ValueTask.FromResult<ShapeRead>(new Unavailable("shape is unavailable")),
+                _ => throw new InvalidOperationException("synthetic shape failure"),
+            };
     }
 
     private sealed class FixtureResume : IShapeResume

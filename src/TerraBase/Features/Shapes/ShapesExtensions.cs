@@ -85,12 +85,7 @@ public static class ShapesExtensions
                 {
                     foreach (var response in responses.Values.OfType<OpenApiResponse>())
                     {
-                        response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal);
-                        response.Headers["Cache-Control"] = new OpenApiHeader
-                        {
-                            Description = "private, no-store; shape keys and manifests must never be cached.",
-                            Schema = new OpenApiSchema { Type = JsonSchemaType.String },
-                        };
+                        DocumentNoStore(response);
                     }
                 }
 
@@ -146,12 +141,7 @@ public static class ShapesExtensions
                 continue;
             }
 
-            concrete.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal);
-            concrete.Headers["Cache-Control"] = new OpenApiHeader
-            {
-                Description = OriginNoStore.CacheControl,
-                Schema = new OpenApiSchema { Type = JsonSchemaType.String },
-            };
+            DocumentNoStore(concrete);
             concrete.Description = documented.Description;
             foreach (var media in concrete.Content?.Values.OfType<OpenApiMediaType>() ?? [])
             {
@@ -164,6 +154,16 @@ public static class ShapesExtensions
                 concrete.Headers[name] = new OpenApiHeader { Description = Headers[name], Schema = new OpenApiSchema { Type = JsonSchemaType.String } };
             }
         }
+    }
+
+    private static void DocumentNoStore(OpenApiResponse response)
+    {
+        response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal);
+        response.Headers["Cache-Control"] = new OpenApiHeader
+        {
+            Description = OriginNoStore.CacheControl,
+            Schema = new OpenApiSchema { Type = JsonSchemaType.String },
+        };
     }
 
     private static string Error(string code, string message) => $$$"""{"error":{"code":"{{{code}}}","message":"{{{message}}}"}}""";
