@@ -76,7 +76,7 @@ public static class ShapesExtensions
             .AddSingleton<IShapeMetrics, ShapeMetrics>()
             .AddSingleton<IShapeSealer>(provider => new ShapeSealer(provider.GetRequiredService<IMemoryBudget>(),
                 provider.GetRequiredService<ILogger<ShapeSealer>>(), provider.GetRequiredService<IShapeStorage>(), provider.GetRequiredService<IRemoteDurability>(),
-                provider.GetRequiredService<IShapeMetrics>()))
+                provider.GetRequiredService<IShapeMetrics>(), provider.GetRequiredService<TimeProvider>()))
             .AddSingleton<IShapeSnapshotSealer>(provider => new ShapeSnapshots(provider.GetRequiredService<IMemoryBudget>(),
                 provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IShapeSnapshotTransactions>(),
                 provider.GetRequiredService<IRemoteDurability>(), provider.GetRequiredService<IShapeMetrics>()))

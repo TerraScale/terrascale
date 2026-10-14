@@ -137,9 +137,10 @@ URLs.
   Older snapshots stay servable until retention removes them.
 - `-1` redirects to the newest snapshot that is published (`F ≥ S`). If the handle has none, the request seals one at
   the current feed head. A reseal that is due while the head is above `F` answers with the newest published snapshot at
-  or above the retention floor instead, when there is one. When `F` does not reach that `S` within the request deadline, it answers `503 unavailable`
-  with `no-store`.
-- A `snap.<S>.<P>` that names no sealed page of this handle answers `409 must_refetch`.
+  or above the retention floor instead, when there is one. With no published snapshot and the head above `F`, it answers
+  `429 shape_busy` with `no-store`; the client retains its state and retries with backoff.
+- A `snap.<S>.<P>` that names no sealed page of this handle answers `409 must_refetch`. One whose `S` is above `F` but
+  at or below the feed head answers `503 unavailable` with `no-store`; the client keeps its state and retries.
 
 ### 3.3 Chunks
 
@@ -330,8 +331,9 @@ lands after #211. There is no runtime switch. Until then, every resume answers `
 - **Gate.** A sealed object or fresh body is served only when `F ≥ max(covered_offset, values_at)`. Its values may be
   newer than its range, so it waits until those newer values are durable too. The gate is evaluated on every serve.
   In a cell, the sealer never persists a chunk head that `F` does not cover (see Chunk seal). During a partition the
-  gate may never clear; `-1` keeps answering the newest published snapshot, and reads above `F` wait or answer
-  `503 unavailable`.
+  gate may never clear; `-1` keeps answering the newest published snapshot. A live read at `F` waits up to 20 s for a
+  commit; when the woken seal's head is still not covered 20 s later, it answers `503 unavailable`. Reads above `F`,
+  including snapshot pages, answer `503 unavailable` at once.
 - **No new mechanism.** There is no copy-on-overwrite, no pre-image table, and no reconstruction of past values.
 - **Walk.** `F` advances over captured change-log rows in commit order, from the last walked change id, reading only this
   incarnation's capture. Each state row's origin decides it:
@@ -362,7 +364,9 @@ lands after #211. There is no runtime switch. Until then, every resume answers `
   `values_at` ahead of `F`. Persisted chunks are checked against `F` on every read and stay servable once covered,
   because valid proof only advances within an incarnation. Missing or damaged proof fails closed at `F = 0`, including
   reads of previously sealed objects; availability after proof loss is not guaranteed.
-- **Wake.** A seal that waits for `F` wakes on the next commit or after 1 second, whichever comes first, then retries. A
+- **Wake.** A seal that waits for `F` wakes on the next commit or after 1 second, whichever comes first, then retries,
+  for at most 20 s; a read whose seal is still waiting then answers `503 unavailable`, and the background sealer backs
+  off before its next pass. A
   stall on a joined commit also moves when a link to its origin connects, which signals no commit, so the 1 second poll
   is what sees it.
 - **Retention.** Three paths apply the hold: the replication tailer's trim, the continuous-backup tap's truncate, and the
@@ -404,7 +408,7 @@ lands after #211. There is no runtime switch. Until then, every resume answers `
 - **Starvation.** A head ahead of `F` is never persisted. In a cell, a seal waits for `F` to cover the head it
   materializes at, and a snapshot publishes only when `F ≥ S`. While any case above holds `F`, seals and snapshot
   publication wait. `-1` keeps answering the newest published snapshot, and a snapshot request with no published
-  snapshot answers `503 unavailable` at its deadline. Under sustained writes the head can stay ahead of `F`, so seals and
+  snapshot answers `429 shape_busy` for the client to retry. Under sustained writes the head can stay ahead of `F`, so seals and
   snapshots can starve for as long as the lag lasts. This plan does not measure how long that takes.
 - **Recovery limits.** No guarantee says a restored, copied or rebuilt database regains its frontier. That database starts
   at `F = 0` and rises only as its own capture proves commits. A missing or trimmed capture can hold `F` there

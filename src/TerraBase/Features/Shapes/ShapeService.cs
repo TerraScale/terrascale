@@ -207,6 +207,14 @@ internal sealed class ShapeService(
                 return new MustRefetch(below.Message);
             }
 
+            // Committed here but not yet held by another region: never served, and never a reason to refetch (section 10).
+            // Above the head it names no snapshot. F is read first: it only rises and never passes the head.
+            if (snapshot > await sealer.FrontierAsync(store, cancellationToken).ConfigureAwait(false)
+                && snapshot <= await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false))
+            {
+                return new Unavailable("the snapshot is not remote durable yet; retry later");
+            }
+
             if (await snapshots.ReadPageAsync(store, lineage.Handle, snapshot, afterId, cancellationToken).ConfigureAwait(false) is not { } page)
             {
                 return new MustRefetch("the snapshot page is not sealed for this handle");
@@ -386,6 +394,10 @@ internal sealed class ShapeService(
         catch (ShapeTooLargeException)
         {
             return new Unavailable("a materialized commit exceeds 8 MiB", "shape_too_large");
+        }
+        catch (ShapeUndurableException)
+        {
+            return new Unavailable("the shape head is not remote durable yet; retry later");
         }
         catch (ObjectDisposedException)
         {

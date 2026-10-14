@@ -37,6 +37,9 @@ public sealed class ShapeTooLargeException() : IOException("shape_too_large: a m
 /// <summary>The requested range is unavailable or is not a retained commit boundary.</summary>
 public sealed class ShapeSealOffsetException() : IOException("must_refetch: the shape offset is not a retained commit boundary");
 
+/// <summary>The remote durable frontier did not cover the head to materialize at within <see cref="ShapeSealer.ProofTimeout"/>.</summary>
+public sealed class ShapeUndurableException() : IOException("unavailable: the materialized head is not remote durable yet");
+
 /// <summary>The engine boundary for shape sealing; implementations execute on their transaction's lane.</summary>
 internal interface IShapeStorageTransaction
 {
@@ -71,8 +74,10 @@ public interface IShapeSealer
 {
     /// <summary>
     /// Seals every chunk through the committed head observed on entry; returns the sealed boundary. In a cell a chunk seals
-    /// only once the head it materializes at is remote durable (FR-25): until then this waits for commits and frontier moves.
+    /// only once the head it materializes at is remote durable (FR-25): until then this waits for commits and frontier moves,
+    /// for at most 20 s.
     /// </summary>
+    /// <exception cref="ShapeUndurableException">The frontier stayed below the head past the wait.</exception>
     ValueTask<long> SealUpToHeadAsync(IDatabaseStore store, ShapeSealDefinition shape, long offset,
         CancellationToken cancellationToken);
     /// <summary>Reads a closed chunk; an unsealed range, or a chunk above the durable frontier, returns null.</summary>
@@ -89,9 +94,12 @@ public interface IShapeSealer
 }
 
 internal sealed class ShapeSealer(
-    IMemoryBudget memory, ILogger<ShapeSealer> logger, IShapeStorage storage, IRemoteDurability durability, IShapeMetrics? metrics = null)
+    IMemoryBudget memory, ILogger<ShapeSealer> logger, IShapeStorage storage, IRemoteDurability durability, IShapeMetrics? metrics = null,
+    TimeProvider? time = null)
     : IShapeSealer
 {
+    /// <summary>Longest frontier wait of one seal: the live wait's bound, so a stalled proof releases its caller.</summary>
+    internal static readonly TimeSpan ProofTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan RefusalBackoff = TimeSpan.FromSeconds(30);
     // A frontier stalled on a joined commit also moves when a link of its origin connects, which no commit signals.
     private static readonly TimeSpan FrontierPoll = TimeSpan.FromSeconds(1);
@@ -103,6 +111,8 @@ internal sealed class ShapeSealer(
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
         long? through = null;
+        // Started on entry, so the bound covers the whole call; never passed to storage, so it only ends a wait.
+        using var proof = new CancellationTokenSource(ProofTimeout, time ?? TimeProvider.System);
         do
         {
             // Read before the attempt: a frontier move after it wakes the wait below.
@@ -136,8 +146,14 @@ internal sealed class ShapeSealer(
 
             if (sealedOffset == offset && offset < through.Value)
             {
-                // The head is not remote durable yet: wait outside the writer, never weakening the gate.
-                using (var poll = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                // The head is not remote durable yet: wait outside the writer, never weakening the gate. The attempt after
+                // the bound passes is the last one.
+                if (proof.IsCancellationRequested)
+                {
+                    throw new ShapeUndurableException();
+                }
+
+                using (var poll = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, proof.Token))
                 {
                     _ = await Task.WhenAny(store.WaitForCommitAsync(sequence, poll.Token), Task.Delay(FrontierPoll, poll.Token)).ConfigureAwait(false);
                     await poll.CancelAsync().ConfigureAwait(false);
@@ -219,9 +235,9 @@ internal sealed class ShapeSealer(
                         {
                             refused = true;
                             logger.ZLogWarning(error, $"Shape sealing refused a shape; retrying after backoff");
-                            if (error is InvalidDataException)
+                            if (error is InvalidDataException or ShapeUndurableException)
                             {
-                                // Damaged capture holds this database, rather than repeating its decode for every shape.
+                                // Damaged capture or a stalled frontier holds this database, rather than repeating for every shape.
                                 break;
                             }
                         }

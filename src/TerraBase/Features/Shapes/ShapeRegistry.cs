@@ -201,6 +201,7 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
 
     // Each shape of the database seals from its own cursor, so a wake seals only the commits it has not sealed yet.
     // Best effort per shape: one shape's failure never stops the others, and this method never reports a shape's error as the database's.
+    // A stalled frontier is the database's: it would stall every shape, so the first one ends the wake as unavailable.
     public async ValueTask<ShapeFlightSealResult> SealAsync(IDatabaseStore store, CancellationToken cancellationToken)
     {
         if (store.Tenant is not { } tenant)
@@ -262,6 +263,10 @@ internal sealed class ShapeRegistry(IShapeSealer sealer, IShapeStorage storage, 
                         Remove(entry);
                     }
                 }
+            }
+            catch (ShapeUndurableException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return new Unavailable("the shape head is not remote durable yet; retry later");
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {

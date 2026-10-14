@@ -662,6 +662,12 @@ public sealed class RemoteAckTests
             await Assert.That(above.Json.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unavailable");
             var beyond = await GetShapeAsync(pair, ShapeUri(pair, $"handle={handle}&offset={head + 1}"), pair.Token);
             await Assert.That(beyond.Status).IsEqualTo(HttpStatusCode.Conflict);
+            // A snapshot page above F is unavailable too; above the committed head it names no snapshot.
+            var pageAbove = await GetShapeAsync(pair, ShapeUri(pair, $"handle={handle}&offset={ShapeSnapshots.PageOffset(head, null)}"), pair.Token);
+            await Assert.That(pageAbove.Status).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(pageAbove.Json.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unavailable");
+            var pageBeyond = await GetShapeAsync(pair, ShapeUri(pair, $"handle={handle}&offset={ShapeSnapshots.PageOffset(head + 1, null)}"), pair.Token);
+            await Assert.That(pageBeyond.Status).IsEqualTo(HttpStatusCode.Conflict);
 
             // Bootstrap keeps answering the published snapshot; a handle with none stays busy.
             var again = await GetShapeAsync(pair, ShapeUri(pair, "offset=-1"), pair.Token);
@@ -687,11 +693,22 @@ public sealed class RemoteAckTests
                     .IsEqualTo("remote_durable");
             }
 
-            // The proof wakes the live read; a wake before the proof answers up to date at F and parks again.
+            // The proof wakes the live read; a wake before the proof answers up to date at F and parks again, or 503 once its
+            // seal's proof bound passes, which keeps the offset.
             var answer = await live;
-            while (answer.Status == HttpStatusCode.OK && !OpIds(answer).Contains(id))
+            var offset = published;
+            while (answer.Status == HttpStatusCode.ServiceUnavailable || (answer.Status == HttpStatusCode.OK && !OpIds(answer).Contains(id)))
             {
-                answer = await GetShapeAsync(pair, ShapeUri(pair, $"handle={handle}&offset={answer.Json.GetProperty("next_offset").GetString()}&live=true"), pair.Token);
+                if (answer.Status == HttpStatusCode.OK)
+                {
+                    offset = answer.Json.GetProperty("next_offset").GetString()!;
+                }
+                else
+                {
+                    await Assert.That(answer.Json.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unavailable");
+                }
+
+                answer = await GetShapeAsync(pair, ShapeUri(pair, $"handle={handle}&offset={offset}&live=true"), pair.Token);
             }
 
             await Assert.That(answer.Status).IsEqualTo(HttpStatusCode.OK);

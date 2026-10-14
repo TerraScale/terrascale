@@ -8,6 +8,7 @@ using System.Text.Json.Nodes;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
@@ -663,6 +664,71 @@ public sealed class ShapeSealTests
         }
     }
 
+    // In a cell whose frontier never covers the head, a seal ends at its proof bound: no chunk, no admission held.
+    [Test]
+    public async Task A_seal_above_a_stalled_frontier_ends_undurable_at_its_bound_and_keeps_cancellation()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var db = await Database.OpenAsync(api.Server, await api.TenantOfAsync());
+        var start = await db.HeadAsync();
+        _ = await db.PutAsync(DocumentApi.NewId(), new { n = 1 });
+        var shape = await ShapeAsync(db);
+        var memory = new ObservedBudget(api.Server.Services.GetRequiredService<IMemoryBudget>());
+        var time = new FakeTimeProvider();
+        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, db.Storage, new UnprovenDurability(), time: time);
+
+        using (var stop = new CancellationTokenSource())
+        {
+            var cancelled = sealer.SealUpToHeadAsync(db.Store, shape, start, stop.Token).AsTask();
+            await stop.CancelAsync();
+            await Assert.That(async () => await cancelled).Throws<OperationCanceledException>()
+                .Because("the caller's cancellation stays cancellation, never proof lag");
+        }
+
+        // The bound starts on entry, so the clock can pass it as soon as the call returns.
+        var sealing = sealer.SealUpToHeadAsync(db.Store, shape, start, CancellationToken.None).AsTask();
+        time.Advance(ShapeSealer.ProofTimeout);
+        await Assert.That(async () => await sealing).Throws<ShapeUndurableException>();
+        await Assert.That(await db.ScalarAsync($"SELECT COUNT(*) FROM _tb_shape_chunk WHERE handle = '{shape.Handle}';")).IsEqualTo(0L)
+            .Because("nothing above the frontier is persisted");
+        await Assert.That(memory.ActiveReservations).IsEqualTo(0);
+    }
+
+    // A live wake seals every shape of the database; a stalled frontier stalls them all, so the wake waits one bound, not one per shape.
+    [Test]
+    public async Task A_wake_seal_above_a_stalled_frontier_answers_unavailable_after_one_bound()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var tenant = await api.TenantOfAsync();
+        var db = await Database.OpenAsync(api.Server, tenant);
+        var start = await db.HeadAsync();
+        var memory = new ObservedBudget(api.Server.Services.GetRequiredService<IMemoryBudget>());
+        var time = new FakeTimeProvider();
+        var sealer = new EnteredSealer(new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, db.Storage, new UnprovenDurability(), time: time));
+        var registry = new ShapeRegistry(sealer, db.Storage, memory, time);
+        try
+        {
+            for (var n = 0; n < 3; n++)
+            {
+                await Assert.That(registry.Track(tenant, $"key-{n}", ShapeFilter.All, await ShapeAsync(db), start)).IsNull();
+            }
+
+            _ = await db.PutAsync(DocumentApi.NewId(), new { n = 1 });
+            var wake = registry.SealAsync(db.Store, CancellationToken.None).AsTask();
+            await sealer.Entered.Task;
+            time.Advance(ShapeSealer.ProofTimeout);
+            await Assert.That((await wake) is TerraBase.Errors.Unavailable { Code: "unavailable" }).IsTrue();
+            await Assert.That(sealer.Seals).IsEqualTo(1).Because("the frontier is the database's, so later shapes are not each waited on");
+            await Assert.That(await db.ScalarAsync("SELECT COUNT(*) FROM _tb_shape_chunk WHERE handle <> '~frontier';")).IsEqualTo(0L);
+        }
+        finally
+        {
+            registry.Dispose();
+        }
+
+        await Assert.That(memory.ActiveReservations).IsEqualTo(0);
+    }
+
     private static async Task<ShapeSealDefinition> ShapeAsync(Database db, Func<StoredDocument, bool>? predicate = null)
     {
         await using var transaction = await db.Store.BeginTransactionAsync(write: false, CancellationToken.None);
@@ -1037,6 +1103,41 @@ public sealed class ShapeSealTests
             {
             }
         }
+    }
+
+    // A cell whose other region never acknowledges: the frontier stays below every new head.
+    private sealed class UnprovenDurability : IRemoteDurability
+    {
+        public bool Confirms => true;
+        public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    // Counts seals and signals the first once its proof bound has started, which the call does before it returns.
+    private sealed class EnteredSealer(IShapeSealer inner) : IShapeSealer
+    {
+        private int _seals;
+
+        public int Seals => Volatile.Read(ref _seals);
+
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ValueTask<long> SealUpToHeadAsync(IDatabaseStore store, ShapeSealDefinition shape, long offset, CancellationToken cancellationToken)
+        {
+            _ = Interlocked.Increment(ref _seals);
+            var sealing = inner.SealUpToHeadAsync(store, shape, offset, cancellationToken);
+            _ = Entered.TrySetResult();
+            return sealing;
+        }
+
+        public ValueTask<ShapeSealedChunk?> ReadChunkAsync(IDatabaseStore store, string handle, long offset, CancellationToken cancellationToken) =>
+            inner.ReadChunkAsync(store, handle, offset, cancellationToken);
+
+        public ValueTask<long> FrontierAsync(IDatabaseStore store, CancellationToken cancellationToken) => inner.FrontierAsync(store, cancellationToken);
+
+        public Task RunDatabaseAsync(IDatabaseStore store, Func<IReadOnlyList<ShapeSealRequest>> shapes, CancellationToken cancellationToken) =>
+            inner.RunDatabaseAsync(store, shapes, cancellationToken);
     }
 
     /// <summary>gru and sjc in one fake DNS, both placing the pair's database.</summary>
