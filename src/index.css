@@ -101,6 +101,7 @@ body {
 }
 
 html {
+  scroll-padding-top: 60px;
   background-color: var(--ts-bg-base);
 }
 

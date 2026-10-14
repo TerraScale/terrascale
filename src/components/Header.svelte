@@ -28,14 +28,8 @@
 <header class="ts-header" class:scrolled>
   <div class="ts-header__inner">
     <RouteLink href="/" class="ts-header__brand" aria-label={$dict.chrome.brandHome}>
-      <img
-        src="/logo-principal.svg"
-        alt="TerraScale"
-        width="1429"
-        height="345"
-        decoding="async"
-        fetchpriority="high"
-      />
+      <img src="/icon-blue.svg" alt="" width="28" height="28" decoding="async" fetchpriority="high" />
+      <span class="ts-header__word">TerraScale</span>
     </RouteLink>
 
     <nav class="ts-nav" aria-label="Primary">
@@ -76,13 +70,18 @@
         {$dict.chrome.login}
       </ExternalLink>
 
-      <ExternalLink href={getStartedLink.href} class="ts-cta cta-shine">
+      <ExternalLink href={getStartedLink.href} class="ts-cta">
         {launchPhase === 'public-alpha' ? $dict.chrome.getStarted : $dict.chrome.prelaunch}
         <Icon name={getStartedLink.icon} className="ts-cta__icon" />
       </ExternalLink>
 
       <LanguageSelector />
     </div>
+
+    <ExternalLink href={getStartedLink.href} class="ts-cta ts-header__mobile-cta">
+      {launchPhase === 'public-alpha' ? $dict.chrome.getStarted : $dict.chrome.prelaunch}
+      <Icon name={getStartedLink.icon} className="ts-cta__icon" />
+    </ExternalLink>
 
     <button
       type="button"
@@ -135,7 +134,7 @@
         <ExternalLink href={loginUrl} class="ts-status-link ts-status-link--mobile">
           {$dict.chrome.login}
         </ExternalLink>
-        <ExternalLink href={getStartedLink.href} class="ts-cta cta-shine ts-cta--mobile">
+        <ExternalLink href={getStartedLink.href} class="ts-cta ts-cta--mobile">
           {launchPhase === 'public-alpha' ? $dict.chrome.getStarted : $dict.chrome.prelaunch}
           <Icon name={getStartedLink.icon} className="ts-cta__icon" />
         </ExternalLink>
@@ -149,11 +148,13 @@
 
 <style>
   .ts-header {
-    position: sticky;
+    position: fixed;
     top: 0;
+    left: 0;
+    right: 0;
     z-index: 100;
     border-bottom: 1px solid var(--ts-divider);
-    background: rgba(var(--ts-bg-base-raw), 0.75);
+    background: rgba(var(--ts-bg-base-raw), 0.9);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     transition: background 250ms ease;
@@ -164,32 +165,42 @@
   }
 
   .ts-header__inner {
-    max-width: 1440px;
-    margin: 0 auto;
-    padding: 0 40px;
+    padding: 0 clamp(16px, 2.5vw, 40px);
     display: flex;
     align-items: center;
-    height: 72px;
+    height: 60px;
+    gap: 24px;
   }
 
   :global(.ts-header__brand) {
     display: flex;
     align-items: center;
+    gap: 10px;
     flex-shrink: 0;
+    color: var(--ts-text);
     text-decoration: none;
   }
 
   :global(.ts-header__brand img) {
-    height: 38px;
+    height: 28px;
     width: auto;
     display: block;
+  }
+
+  .ts-header__word {
+    font-family: var(--ts-font-accent);
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
   }
 
   .ts-nav {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 2px;
+    gap: 4px;
     margin: 0 auto;
   }
 
@@ -198,24 +209,24 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px;
-    border-radius: 4px;
+    padding: 6px 12px;
+    border-radius: 8px;
     font-family: var(--ts-font-accent);
-    font-size: 15px;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 500;
     color: var(--ts-text-muted);
     background: transparent;
-    border: 1px solid transparent;
+    border: 0;
     text-decoration: none;
     transition:
       color 150ms ease,
-      background 150ms ease,
-      border-color 150ms ease;
+      background 150ms ease;
   }
 
   :global(.ts-nav__link:hover),
   :global(.ts-header__docs:hover) {
     color: var(--ts-text);
+    background: rgba(255, 255, 255, 0.05);
   }
 
   :global(.ts-nav__icon) {
@@ -226,43 +237,39 @@
   }
 
   :global(.ts-nav__link.is-active) {
-    color: var(--ts-primary-light);
-    background: rgba(var(--ts-primary-rgb), 0.1);
-    border-color: rgba(var(--ts-primary-rgb), 0.25);
+    color: var(--ts-text);
+    background: rgba(255, 255, 255, 0.08);
   }
 
   .ts-header__actions {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 14px;
+    gap: 8px;
   }
 
   :global(.ts-status-link) {
     display: inline-flex;
     align-items: center;
     gap: 9px;
-    color: var(--ts-text);
-    font-size: 15px;
-    font-weight: 700;
+    color: var(--ts-text-muted);
+    font-size: 14px;
+    font-weight: 500;
     font-family: var(--ts-font-accent);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
     text-decoration: none;
-    padding: 8px 4px;
+    padding: 6px 4px;
     transition: color 150ms ease;
   }
 
   :global(.ts-status-link:hover) {
-    color: var(--ts-secondary);
+    color: var(--ts-text);
   }
 
   .ts-status-link__dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 5px;
-    background: var(--ts-secondary);
-    box-shadow: 0 0 10px var(--ts-secondary);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #6bca92;
     display: inline-block;
   }
 
@@ -270,25 +277,20 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    background: var(--ts-gradient-primary);
+    height: 32px;
+    background: var(--ts-primary);
     color: #fff;
     font-family: var(--ts-font-accent);
-    font-weight: 700;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-    padding: 9px 20px;
-    border-radius: 5px;
+    font-weight: 500;
+    font-size: 13px;
+    padding: 0 14px;
+    border-radius: 8px;
     text-decoration: none;
-    box-shadow: 0 4px 14px rgba(var(--ts-primary-rgb), 0.35);
-    transition:
-      transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
-      box-shadow 180ms ease;
+    transition: opacity 150ms ease;
   }
 
   :global(.ts-cta:hover) {
-    transform: translateY(-1px);
-    box-shadow: 0 8px 22px rgba(var(--ts-primary-rgb), 0.5);
+    opacity: 0.9;
   }
 
   :global(.ts-cta__icon) {
@@ -311,10 +313,13 @@
       background 150ms;
   }
 
+  :global(.ts-header__mobile-cta) {
+    display: none;
+  }
+
   .ts-header__menu:hover {
     color: var(--ts-text);
-    border-color: rgba(var(--ts-primary-rgb), 0.35);
-    background: rgba(var(--ts-primary-rgb), 0.08);
+    background: rgba(255, 255, 255, 0.08);
   }
 
   :global(.ts-header__menu-icon) {
@@ -324,8 +329,10 @@
   }
 
   .ts-header__mobile {
+    max-height: calc(100dvh - 60px);
+    overflow-y: auto;
     border-top: 1px solid var(--ts-divider);
-    padding: 16px 40px 20px;
+    padding: 16px clamp(16px, 2.5vw, 40px) 20px;
     background: rgba(var(--ts-bg-base-raw), 0.96);
   }
 
@@ -355,7 +362,11 @@
 
   @media (max-width: 1240px) {
     .ts-header__inner {
-      padding: 0 20px;
+      gap: 8px;
+    }
+    :global(.ts-header__mobile-cta) {
+      display: inline-flex;
+      margin-left: auto;
     }
     .ts-nav {
       display: none;

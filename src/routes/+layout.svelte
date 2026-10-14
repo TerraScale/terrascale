@@ -11,7 +11,7 @@
     '/': {
       title: 'TerraScale Public Alpha | Regional Document Database',
       description:
-        'TerraScale Public Alpha provides a typed document database with asynchronous replication across São Paulo and San Jose.',
+        'TerraScale Public Alpha provides a typed document database with asynchronous replication across São Paulo and the San Francisco Bay Area.',
     },
     '/about': {
       title: 'About TerraScale',
@@ -56,7 +56,7 @@
 <div class="min-h-screen">
   <Header />
 
-  <main>
+  <main style="padding-top: 60px">
     <slot />
   </main>
 
