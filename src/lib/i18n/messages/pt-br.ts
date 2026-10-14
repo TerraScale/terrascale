@@ -211,6 +211,7 @@ export const ptBr: Messages = {
       storage: '{n} entre regiões',
       operationUnits: '{n} unidades de operação/mês',
     },
+    usage: { eyebrow: 'Como o uso é medido', title: 'Armazenamento e unidades de operação.' },
     triad: [
       { title: 'Armazenamento entre regiões', text: 'Os bytes contam uma vez em cada região selecionada' },
       { title: 'Unidades de operação', text: 'Cada 4 KiB iniciados lidos ou gravados contam como uma unidade' },
