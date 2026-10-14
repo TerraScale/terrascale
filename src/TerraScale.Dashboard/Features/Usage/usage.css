@@ -85,7 +85,7 @@
 }
 
 .ts-usage-share a[aria-current="page"] {
-  color: var(--tone);
+  color: var(--ts-link);
 }
 
 .ts-usage-billing-kpis .ts-svg-sharebar {
@@ -95,6 +95,101 @@
 .ts-usage-page[aria-current="page"] {
   background: var(--ts-surface-3);
   color: var(--ts-ink);
+}
+
+/* Replication: flat stat row, flag and mono region codes, filters that stack. */
+.ts-usage-replication .ts-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-block-end: var(--ts-s6);
+  border-block: 1px solid var(--ts-line);
+}
+
+.ts-usage-replication .ts-stat {
+  padding-block: var(--ts-s4);
+}
+
+.ts-usage-replication .ts-stat + .ts-stat {
+  padding-inline-start: var(--ts-s4);
+  border-inline-start: 1px solid var(--ts-line);
+}
+
+.ts-usage-sub {
+  margin-block: var(--ts-s6) var(--ts-s3);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+  font-weight: 600;
+}
+
+.ts-usage-region,
+.ts-usage-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.ts-usage-pair {
+  gap: var(--ts-s2);
+}
+
+.ts-usage-flag {
+  flex: none;
+  width: 16px;
+  height: 12px;
+  border-radius: 2px;
+  object-fit: cover;
+}
+
+.ts-usage-filters {
+  flex: 1 1 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: var(--ts-s4);
+}
+
+@container page (width < 768px) {
+  .ts-usage-replication .ts-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ts-usage-replication .ts-stat:nth-child(2n + 1) {
+    padding-inline-start: 0;
+    border-inline-start: 0;
+  }
+
+  .ts-usage-replication .ts-stat:nth-child(n + 3) {
+    border-block-start: 1px solid var(--ts-line);
+  }
+
+  .ts-usage-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ts-usage-filters > .ts-btn {
+    grid-column: 1 / -1;
+  }
+}
+
+@container page (width < 400px) {
+  .ts-usage-replication .ts-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-usage-replication .ts-stat,
+  .ts-usage-replication .ts-stat + .ts-stat {
+    padding-inline-start: 0;
+    border-inline-start: 0;
+  }
+
+  .ts-usage-replication .ts-stat + .ts-stat {
+    border-block-start: 1px solid var(--ts-line);
+  }
+
+  .ts-usage-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* Spending controls: flat sections with a consistent category grid. */
@@ -172,3 +267,12 @@
     width: 100%;
   }
 }
+
+.ts-usage-header { margin-bottom: var(--ts-s5); }
+.ts-usage-header h1 { font-size: var(--ts-fs-2xl); letter-spacing: -0.03em; }
+.ts-usage-header p { margin-top: var(--ts-s2); }
+.ts-usage .ts-usage-gauge { display: grid; align-items: start; gap: var(--ts-s3); }
+.ts-usage-allowance-meter .ts-svg-sharebar-fill { fill: var(--ts-chart-1); }
+.ts-usage-allowance-meter[data-state="warning"] .ts-svg-sharebar-fill { fill: var(--ts-warning); }
+.ts-usage-allowance-meter[data-state="danger"] .ts-svg-sharebar-fill { fill: var(--ts-danger); }
+.ts-usage-filters .ts-field { min-width: 0; }

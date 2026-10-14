@@ -266,8 +266,7 @@ code:not(pre code) {
 .ts-chart .ts-chart-series-1 { stroke: var(--ts-chart-1); }
 .ts-chart .ts-chart-series-2 { stroke: var(--ts-chart-2); }
 
-.ts-chart-fill-start { stop-color: var(--ts-chart-1); stop-opacity: 0.32; }
-.ts-chart-fill-end { stop-color: var(--ts-chart-1); stop-opacity: 0; }
+.ts-chart-area { fill: var(--ts-chart-1); fill-opacity: 0.18; }
 
 /* Hover columns: a guide line, dots per value, and a tooltip, revealed on
    hover and keyboard focus. The focused column tints its band instead of
