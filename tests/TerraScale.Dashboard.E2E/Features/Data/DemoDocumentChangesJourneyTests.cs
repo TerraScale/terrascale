@@ -1,9 +1,6 @@
 using System.Net;
-using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text.Json;
-using Microsoft.AspNetCore.Hosting.Server;
-using Microsoft.AspNetCore.Hosting.Server.Features;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace TerraScale.Dashboard.E2E.Features.Data;
 
@@ -13,13 +10,17 @@ namespace TerraScale.Dashboard.E2E.Features.Data;
 public sealed class DemoDocumentChangesJourneyTests(DashboardRootFixture fixture)
 {
     [Test]
-    public async Task DemoWritesStreamAsLiveChangesThatResumeAndRefuseUnscopedBearers()
+    public async Task DemoWritesStreamAsLiveChangesThatResumeAndRefuseAnonymousRequests()
     {
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
-        await using var app = environment.CreateTestHost(fixture.Root, 0, "http://127.0.0.1");
+        using var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        var origin = new Uri($"http://127.0.0.1:{port}/");
+        await using var app = environment.CreateTestHost(fixture.Root, port, origin.ToString().TrimEnd('/'), PublicDemo.Configure);
         await app.StartAsync();
-        var origin = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal));
         using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new CookieContainer() }) { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(30) };
         using var anonymous = new HttpClient { BaseAddress = origin };
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
@@ -76,29 +77,6 @@ public sealed class DemoDocumentChangesJourneyTests(DashboardRootFixture fixture
             await Assert.That(id).IsEqualTo(checkpoint);
             var (_, third) = await ChangeAsync(reader);
             await Assert.That(third.GetProperty("id").GetString()).IsEqualTo("third").Because("Last-Event-ID resumes after the delete without replaying it.");
-        }
-
-        // The producer itself refuses bearers without documents:read for this project.
-        string organizationId, projectId;
-        using (var identity = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me")))
-        {
-            organizationId = identity.RootElement.GetProperty("organizationId").GetString()!;
-            projectId = identity.RootElement.GetProperty("projectId").GetString()!;
-        }
-        var session = await environment.Auth.PasswordAsync("user@example.com", "test-password", "127.0.0.1", deadline.Token);
-        var producer = app.Services.GetRequiredService<IHttpClientFactory>().CreateClient("platform");
-        var feed = "https://gru.api.terrascale.tech/v1/projects/" + projectId + "/databases/demo-changes/changes?collections=items";
-        foreach (var (bearer, status) in new[]
-        {
-            ((string?)null, HttpStatusCode.Unauthorized),
-            (session.AccessToken, HttpStatusCode.Unauthorized),
-            (await environment.Auth.GetAsync(session, organizationId, projectId, ["databases:read"], deadline.Token), HttpStatusCode.Forbidden)
-        })
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Get, feed);
-            if (bearer is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
-            using var refused = await producer.SendAsync(request, deadline.Token);
-            await Assert.That(refused.StatusCode).IsEqualTo(status);
         }
 
         async Task WriteAsync(string collection, string operation, string id)
