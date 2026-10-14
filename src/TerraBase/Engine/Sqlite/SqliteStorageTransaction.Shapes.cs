@@ -44,6 +44,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
     private (long Offset, long Head, long PublishedBytes) SealShapeChunk(ShapeSealDefinition shape, long offset, long? through,
         IMemoryBudget memory, CancellationToken cancellationToken)
     {
+        CountRead("shape");
         if (Command("SELECT entity_id FROM collections WHERE name = $collection;", shape.Collection).ExecuteScalar()
             is not string generation || generation != shape.CollectionGeneration)
         {
@@ -299,7 +300,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             reader.Read();
             bytes = checked(reader.GetInt64(0) * ShapeIdMemoryPerByte + reader.GetInt64(1) * 1024);
         }
-        if (HasTable(collection))
+        if (HasTable(collection, "shape"))
         {
             var bodies = TableCommand("""
                 SELECT coalesce(sum(octet_length(doc)), 0), coalesce(max(octet_length(doc)), 0) FROM {0}
@@ -325,7 +326,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
 
     private StoredDocument? ReadShapeDocument(string collection, string id)
     {
-        if (!HasTable(collection))
+        if (!HasTable(collection, "shape"))
         {
             return null;
         }
@@ -433,16 +434,19 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
 
     private void ValidateShapeCapture(IMemoryBudget memory, CancellationToken cancellationToken)
     {
+        CountRead("shape");
         if (Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null)
         {
             return;
         }
+        CountRead("shape");
         var head = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long last ? last : 0;
         for (var after = 0L; after < head;)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var boundary = Command("SELECT min(change_id) FROM turso_cdc WHERE change_id > $after AND change_type = 2;");
             boundary.Parameters.AddWithValue("$after", after);
+            CountRead("shape");
             if (boundary.ExecuteScalar() is not long end)
             {
                 throw new InvalidDataException("a captured transaction has no intact commit boundary");
@@ -458,6 +462,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             size.Parameters.AddWithValue("$stateMemory", ShapeCaptureStateMemoryPerByte);
             size.Parameters.AddWithValue("$imageMemory", ShapeCaptureMemoryPerByte);
             long bytes;
+            CountRead("shape");
             using (var reader = size.ExecuteReader())
             {
                 reader.Read();
@@ -477,6 +482,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
                 """);
             rows.Parameters.AddWithValue("$after", after);
             rows.Parameters.AddWithValue("$end", end);
+            CountRead("shape");
             using (var reader = rows.ExecuteReader())
             {
                 while (reader.Read())

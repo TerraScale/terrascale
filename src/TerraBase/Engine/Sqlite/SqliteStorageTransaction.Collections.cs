@@ -48,8 +48,18 @@ internal sealed partial class SqliteStorageTransaction
 
     // Worker-only: whether a client collection's table exists. Metadata tables always do, and so does the system
     // database's one documents table.
-    private bool HasTable(string collection) =>
-        store.IsSystem || IsMetadata(collection) || Command(SqliteStatements.GetCollection, collection).ExecuteScalar() is not null;
+    private bool HasTable(string collection, string? path = null)
+    {
+        if (store.IsSystem || IsMetadata(collection))
+        {
+            return true;
+        }
+        if (path is not null)
+        {
+            CountRead(path);
+        }
+        return Command(SqliteStatements.GetCollection, collection).ExecuteScalar() is not null;
+    }
 
     // Worker-only: a statement over one collection's table ({0} in sql), prepared once per transaction. The system
     // database's statements name its documents table themselves.

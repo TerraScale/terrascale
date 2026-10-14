@@ -406,7 +406,7 @@ public sealed class ShapeMetricsTests
 
         await Assert.That(await sealer.SealUpToHeadAsync(store, shape, 0, token)).IsEqualTo(head);
         var reusedReads = ShapeStorageReads(await ScrapeAsync(api.Server));
-        await Assert.That(reusedReads - sealedReads).IsEqualTo(2d).Because("a reused seal reads only the head and stored boundary");
+        await Assert.That(reusedReads - sealedReads).IsEqualTo(3d).Because("a reused seal reads the collection generation, head and stored boundary");
 
         using var missing = await sealer.ReadChunkAsync(store, shape.Handle, head + 1, token);
         await Assert.That(missing).IsNull();

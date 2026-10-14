@@ -383,6 +383,34 @@ public sealed class ShapeEndToEndTests
         await Assert.That(second.Bodies.Distinct().Count()).IsEqualTo(1).Because("every reader receives the same bytes");
     }
 
+    [Test]
+    public async Task The_metrics_scrape_retains_all_five_storage_paths_after_feed_query_and_shape_reads()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var id = DocumentApi.NewId();
+        await PutAsync(api, id, new { status = "open" });
+        await Assert.That((await api.GetAsync(id, cancellationToken: token)).Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await api.QueryAsync(new { limit = 10 }, token)).Status).IsEqualTo(HttpStatusCode.OK);
+        using var feed = await api.Client.GetAsync($"{api.DatabasePath()}/changes?cursor=now&collections={DocumentApi.Collection}",
+            HttpCompletionOption.ResponseHeadersRead, token);
+        await Assert.That(feed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        var client = new ShapeClient(api, query: null);
+        await client.SyncAsync();
+        await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
+        await Assert.That((await client.ReadAsync(client.NextOffset)).Status).IsEqualTo(HttpStatusCode.OK);
+
+        var scrape = await Scrape(api.Server, token);
+        string[] paths = ["point", "query", "feed", "shape", "shape_body"];
+        foreach (var path in paths)
+        {
+            await Assert.That(Total(scrape, "terrabase_storage_reads_total", $"path=\"{path}\"")).IsGreaterThan(0d);
+        }
+        var storage = string.Join('\n', scrape.Split('\n').Where(line => line.StartsWith("terrabase_storage_reads_total", StringComparison.Ordinal)));
+        await Assert.That(storage).DoesNotContain("otel_metric_overflow");
+    }
+
     // Converges the client on the collection's own answer (section 7 rule 1), reading the collection through the Document API.
     private static async Task AssertConvergedAsync(DocumentApi api, ShapeClient client, string? query)
     {

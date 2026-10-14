@@ -272,14 +272,14 @@ internal sealed partial class SqliteStorageTransaction
     }
 
     // A cross-machine resume verifies the retained prefix without materializing or reading document bodies.
-    private FeedPrefix PrefixThrough(ReplicaId origin, Hlc floor, Hlc stamp, CancellationToken cancellationToken)
+    private FeedPrefix PrefixThrough(ReplicaId origin, Hlc floor, Hlc stamp, CancellationToken cancellationToken, string path = "feed")
     {
         var prefix = FeedPrefix.Empty(floor);
         var command = Command("SELECT stamp, collection, id, deleted FROM _tb_feed WHERE origin = $origin AND stamp > $floor AND stamp <= $stamp ORDER BY stamp, rowid;");
         command.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
         command.Parameters.AddWithValue("$floor", Version(floor));
         command.Parameters.AddWithValue("$stamp", Version(stamp));
-        CountRead("feed");
+        CountRead(path);
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
