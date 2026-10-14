@@ -134,19 +134,46 @@
   overflow-wrap: anywhere;
 }
 
-/* Danger zone: a flat section like its siblings, split by a hairline. */
-.ts-db-danger {
+/* Danger zone: a boxed section with a red heading and one row per action. */
+.ts-card.ts-card-boxed.ts-db-danger { border-color: var(--ts-danger); }
+.ts-db-danger .ts-card-title { color: var(--ts-danger); }
+
+.ts-db-danger-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--ts-s4);
-  padding-top: var(--ts-s6);
+  padding-top: var(--ts-s4);
   border-top: 1px solid var(--ts-line);
 }
 
-.ts-db-danger > .ts-list-main {
+.ts-db-danger-row > .ts-list-main {
   flex: 1 1 240px;
+}
+
+/* Import tab: icon tile above the empty-state title. */
+.ts-db-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: var(--ts-s2);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface-2);
+  color: var(--ts-ink-2);
+}
+
+/* Replication topology: map (styled by .ts-analytics-map) beside per-region cards. */
+.ts-db-topology {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--ts-s5);
+  align-items: start;
+}
+.ts-db-topology > ul { margin: 0; padding: 0; list-style: none; }
+@media (max-width: 64rem) {
+  .ts-db-topology { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Branches tab: full-width rows; name wraps first on narrow screens. */
