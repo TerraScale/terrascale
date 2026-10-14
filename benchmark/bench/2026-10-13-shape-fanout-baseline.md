@@ -2,31 +2,36 @@
 
 ## FR-17 instrumented rerun — measured origin reads
 
-The rerun after B2 PR #223 merged now measures origin feed reads with
-`terrabase.storage.reads{path="feed"}` on the gru node-scoped scrape. These are backend document/feed SELECT
-executions, including empty results and SQLite page-cache hits; they do not measure physical disk I/O.
+The rerun after B2 PR #223 merged measures origin feed reads with `terrabase.storage.reads{path="feed"}` on the gru
+node-scoped scrape. These are attempted backend document/feed SELECT executions, including empty results, misses and
+SQLite page-cache hits; they do not measure physical disk I/O.
 
 | requested N | admitted | feed counter before | feed counter after | measured origin reads (delta) | delivered in-window writes |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 1 | 2 | 2106 | 2104 | 600 |
-| 10 | 10 | 2106 | 23104 | 20998 | 6000 |
-| 100 | 32 | 23104 | 90600 | 67496 | 19200 |
-| 1000 | 32 | 90600 | 158270 | 67670 | 19200 |
+| 1 | 1 | 2 | 2100 | 2098 | 600 |
+| 10 | 10 | 2100 | 22988 | 20888 | 6000 |
+| 100 | 32 | 22988 | 89752 | 66764 | 19200 |
+| 1000 | 32 | 89752 | 156778 | 67026 | 19200 |
 
-Every row has 600 measured writes, zero missed deliveries and an accounting-read delta of zero. The source-derived
-minimum document SELECT counts remain secondary estimates (600, 6000, 19200, 19200), distinct from the measured
-origin-read deltas above. The 32-stream database cap still rejects 68 and 968 followers in the last two rows.
+Every row has 600 measured writes, zero missed deliveries and an accounting-read delta of zero. Each before/after
+difference equals the run JSON's `storage_reads_delta` (2098, 20888, 66764, 67026). The source-derived minimum
+document SELECT counts remain secondary estimates (600, 6000, 19200, 19200), distinct from the measured origin-read
+deltas above. The 32-stream database cap admits 1, 10, 32 and 32 followers and rejects 68 and 968 in the last two rows.
+The first row's before value (2) is the real feed series after host startup (floor SELECT and calibration reads), not
+a zero baseline.
 
 **Sampling scope:** before follower admission through 5 s warmup, the 30 s delivery window, 5 s grace and 6 s accounting
 settle, on gru only. Each row includes all 700 writes in warmup plus measurement, feed pages, head/floor and other feed
 SELECTs across that whole step. It excludes sjc, point-path write preconditions and system lookups. Consequently these
 read deltas cover a wider interval and more operations than the 600 in-window writes' inferred document SELECT count.
+State lookups that load document bodies now count under `path="point"` (c005b9bd), so the point-path series in the raw
+lines is not comparable with the earlier rerun; the feed series stays isolated from it.
 
 | provenance | value |
 | --- | --- |
-| UTC run interval | `2026-10-13T23:10:13.493327892Z`–`2026-10-13T23:14:25.061744219Z` |
-| Run ID | `01M4VRQD55KZP7NR42MJ36GFD4` |
-| Measured HEAD / last product-host commit | `fc0cfdd7e962a3689f5ea163afc1e5dd49861a9f` |
+| UTC run interval | `2026-10-13T23:47:45.927524571Z`–`2026-10-13T23:51:57.306120774Z` |
+| Run ID | `01M4VTW4KTKF2VMVNQRG89034K` |
+| Measured HEAD / last product-host commit | `cc89673676657f9af9e3d9fff920e0a47b248411` |
 | Last harness commit | `8ebdf30c3ccb8f91f4bea5afdf171e74983f4e44` |
 | Working tree / build | clean; fresh Release build from measured HEAD |
 | Host / CPU | mariogk-dev; Intel Xeon E5-2660 v4 at 2.00 GHz; 46 logical CPUs, affinity 0–45 |
@@ -36,18 +41,19 @@ read deltas cover a wider interval and more operations than the 600 in-window wr
 | Scheduling | shared host, nice 19 through two-slot `ts-heavy`; no CPU isolation |
 
 This is one local two-region test-host run, with all clients targeting gru, using the same B2 workload described below.
-The machine snapshot at `2026-10-13T23:10:11.038473+00:00` recorded load averages 28.39 / 18.14 / 14.87 and
-28,366,934,016 available RAM bytes. This rerun used a different host from the historical run;
-CPU, RSS and latency differences between these two runs do not establish performance improvement.
+The machine snapshot at `2026-10-13T23:47:45.051111+00:00` recorded load averages 15.51 / 19.83 / 16.83 and
+25,932,566,528 available RAM bytes. This rerun used a different host from the historical run;
+CPU, RSS, latency and read-count differences between runs do not establish performance improvement.
 
-At measured HEAD, `ts-heavy` ran all 9 focused ShapeMetricsTests, `make check` (formatting, build/analyzers,
-security/OpenAPI, Go race tests and Fast: Endpoints 88, Logging 46, Auth 668, Turso 7, TerraBase 1615), and the Release
+At measured HEAD, `ts-heavy` ran all 10 focused ShapeMetricsTests, `make check` (formatting, build/analyzers,
+security/OpenAPI, Go race tests and Fast: Endpoints 88, Logging 46, Auth 668, Turso 7, TerraBase 1616), and the Release
 host build successfully. The baseline exited 0 and cleaned up its host. Slow was not run.
 
-Raw evidence: [generated report and before/after metric lines](2026-10-13-mariogk-dev-01M4VRQD55KZP7NR42MJ36GFD4.md),
-[run JSON](2026-10-13-mariogk-dev-01M4VRQD55KZP7NR42MJ36GFD4.json), [machine snapshot](2026-10-13-fr17-machine.json).
-The snapshot's root-directory Go command reported 1.27.2; the actual benchmark directory and run report confirm the
-benchmark-pinned runtime was 1.25.0.
+Raw evidence: [generated report and before/after metric lines](2026-10-13-mariogk-dev-01M4VTW4KTKF2VMVNQRG89034K.md),
+[run JSON](2026-10-13-mariogk-dev-01M4VTW4KTKF2VMVNQRG89034K.json), [machine snapshot](2026-10-13-fr17-machine-r3.json).
+The earlier rerun at `fc0cfdd7` (run `01M4VRQD55KZP7NR42MJ36GFD4`) keeps its
+[report](2026-10-13-mariogk-dev-01M4VRQD55KZP7NR42MJ36GFD4.md),
+[JSON](2026-10-13-mariogk-dev-01M4VRQD55KZP7NR42MJ36GFD4.json) and [snapshot](2026-10-13-fr17-machine.json).
 
 ## Original B2 run — historical, uninstrumented
 
