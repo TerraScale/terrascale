@@ -16,11 +16,20 @@ import (
 )
 
 func TestShapeKeyDiagnosticsRedactKey(t *testing.T) {
-	key := ShapeKey{Handle: shapeKeyHandle, Epoch: 100, KeyID: shapeKeyID, key: bytes.Repeat([]byte{173}, 32)}
+	material := bytes.Repeat([]byte{173}, 32)
+	key := ShapeKey{Handle: shapeKeyHandle, Epoch: 100, KeyID: shapeKeyID, key: &material}
 	for _, value := range []any{key, &key} {
-		for _, format := range []string{"%v", "%+v", "%#v", "%s", "%q"} {
+		for _, format := range []string{"%v", "%+v", "%#v", "%s", "%q", "%d", "%+d", "%#x", "%f", "%t"} {
 			got := fmt.Sprintf(format, value)
 			if !strings.Contains(got, "key redacted") || strings.Contains(got, "173") {
+				t.Fatalf("%s diagnostic exposes key material: %s", format, got)
+			}
+		}
+	}
+	for _, value := range []any{key, &key, struct{ Key ShapeKey }{key}, struct{ key ShapeKey }{key}} {
+		for _, format := range []string{"%p", "%v", "%#v", "%d", "%x"} {
+			got := fmt.Sprintf(format, value)
+			if strings.Contains(got, "[173 173") || strings.Contains(got, "[ad ad") || strings.Contains(got, strings.Repeat("ad", 32)) {
 				t.Fatalf("%s diagnostic exposes key material: %s", format, got)
 			}
 		}
@@ -139,7 +148,7 @@ func TestShapeKeyVectorResponses(t *testing.T) {
 				if key.Handle != q["handle"] || key.Epoch != epoch || key.KeyID != q["key_id"] {
 					t.Fatalf("metadata = %s %d %s", key.Handle, key.Epoch, key.KeyID)
 				}
-				if got := base64.RawURLEncoding.EncodeToString(key.key); got != body.Key {
+				if got := base64.RawURLEncoding.EncodeToString(*key.key); got != body.Key {
 					t.Fatalf("key = %s, want %s", got, body.Key)
 				}
 			case "future-key-refused":
@@ -273,7 +282,7 @@ func TestShapeKeyRotationFetchesEachEpochSeparately(t *testing.T) {
 	if current.Epoch != 100 || current.KeyID != shapeKeyID || next.Epoch != 101 || next.KeyID != nextKeyID {
 		t.Fatalf("epochs/IDs = %d %s, %d %s", current.Epoch, current.KeyID, next.Epoch, next.KeyID)
 	}
-	if bytes.Equal(current.key, next.key) {
+	if bytes.Equal(*current.key, *next.key) {
 		t.Fatal("epoch keys are equal")
 	}
 }
@@ -283,7 +292,8 @@ func TestShapeKeyDecryptVectors(t *testing.T) {
 		t.Run(v.ID, func(t *testing.T) {
 			epoch := mustEpoch(t, v.Epoch)
 			obj := mustHex(t, v.TBS1Hex)
-			key := &ShapeKey{Handle: v.Handle, Epoch: epoch, KeyID: v.KeyID, key: mustHex(t, v.EpochKeyHex)}
+			material := mustHex(t, v.EpochKeyHex)
+			key := &ShapeKey{Handle: v.Handle, Epoch: epoch, KeyID: v.KeyID, key: &material}
 
 			got, err := key.Decrypt(v.RequestOffset, obj)
 			if err != nil {

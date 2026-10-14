@@ -17,12 +17,13 @@ type ShapeKey struct {
 	Handle string
 	Epoch  uint64
 	KeyID  string
-	key    []byte
+	// Indirection keeps reflection-based diagnostics from exposing the bytes.
+	key *[]byte
 }
 
-// String and GoString keep epoch-key bytes out of ordinary diagnostics.
-func (ShapeKey) String() string     { return "terrabase shape key (key redacted)" }
-func (k ShapeKey) GoString() string { return k.String() }
+// String and Format keep epoch-key bytes out of diagnostics for every verb.
+func (ShapeKey) String() string               { return "terrabase shape key (key redacted)" }
+func (k ShapeKey) Format(f fmt.State, _ rune) { fmt.Fprint(f, k.String()) }
 
 // ShapeKey fetches the epoch key for handle at epoch, named by keyID. The request
 // and the response are both no-store, and the response must echo the requested
@@ -70,7 +71,7 @@ func (col *Collection) ShapeKey(ctx context.Context, handle string, epoch uint64
 	if err != nil || len(key) != 32 || base64.RawURLEncoding.EncodeToString(key) != body.Key {
 		return nil, errors.New("terrabase: shape key must be unpadded base64url for 32 bytes")
 	}
-	return &ShapeKey{Handle: handle, Epoch: epoch, KeyID: keyID, key: key}, nil
+	return &ShapeKey{Handle: handle, Epoch: epoch, KeyID: keyID, key: &key}, nil
 }
 
 // Decrypt opens one TBS1 object fetched at offset. Snapshot and boundary offsets
@@ -79,7 +80,10 @@ func (k *ShapeKey) Decrypt(offset string, ciphertext []byte) ([]byte, error) {
 	if _, _, _, err := parseShapeOffset(offset); err != nil || offset == "-1" {
 		return nil, errors.New("terrabase: shape object offset is invalid")
 	}
-	return decryptShapeObject(ciphertext, k.key, k.Handle, offset, k.Epoch, k.KeyID)
+	if k.key == nil {
+		return nil, errors.New("terrabase: shape epoch key is missing")
+	}
+	return decryptShapeObject(ciphertext, *k.key, k.Handle, offset, k.Epoch, k.KeyID)
 }
 
 // hasNoStore reports whether any Cache-Control header carries the no-store directive.

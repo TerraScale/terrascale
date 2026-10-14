@@ -45,6 +45,7 @@ Protocol member names are exact; case aliases and duplicate protocol members
 are rejected while additional unknown members remain compatible. Repeated
 bootstrap refusals use a cancellable backoff after the first immediate restart.
 Epoch-key diagnostics redact secret bytes.
+Reflection that bypasses Go formatting methods exposes only the key's address.
 
 The shape body carries materialized values that may be newer than their event.
 The vector `cross-lineage-repeat-has-newer-materialized-value` requires applying
