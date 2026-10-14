@@ -75,6 +75,14 @@ public interface IChangeGroupSource
     /// </summary>
     ValueTask<bool> AckAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Advances the shape reads' remote durable frontier (FR-25) with an eligible live acknowledgement: a machine of another
+    /// placed region durably holds every own group of <paramref name="incarnation"/> after <paramref name="from"/> up to
+    /// <paramref name="through"/>, each received in a live batch. Joined commits are held when their origin is one of
+    /// <paramref name="held"/> (<see cref="IRemoteDurability.HeldOriginsAsync"/>). False when the copy in place is another.
+    /// </summary>
+    ValueTask<bool> ProveAsync(TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken);
+
     /// <summary>Completes once a group may have committed after the call (or when the source cannot tell): a wake-up, not a guarantee.</summary>
     Task ChangedAsync(CancellationToken cancellationToken);
 

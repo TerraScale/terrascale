@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Diagnostics.Metrics;
 using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
@@ -29,6 +30,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private static readonly TimeSpan FrontierEvery = TimeSpan.FromSeconds(5);
     private const int MaxDetail = 128;
     private const int MaxPendingResponses = 32;
+    // Linked nodes HeldOriginsAsync considers at most; past it none is held. The membership bounds links well below it.
+    private const int MaxOrigins = 256;
 
     private static readonly Unavailable NoRemote =
         new("no machine of another region that holds the database is connected; this write executed nothing, retry later", "remote_region_unavailable");
@@ -83,6 +86,44 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     {
         var placement = await PlacementAsync(database, cancellationToken).ConfigureAwait(false);
         return await _acks.WaitAsync(database, marker, () => Eligible(placement), cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask<IReadOnlySet<ReplicaId>> HeldOriginsAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        if (await PlacementAsync(database, cancellationToken).ConfigureAwait(false) is not { } placement)
+        {
+            return FrozenSet<ReplicaId>.Empty;
+        }
+
+        // The node each connected link's machine welcomed it with, under the region the membership names for that machine. A
+        // node two links name with different regions is trusted for neither. Past MaxOrigins nodes none is: fail closed.
+        var regions = new Dictionary<ReplicaId, string?>();
+        foreach (var link in Links())
+        {
+            lock (link.Gate)
+            {
+                if (!link.Connected || link.Origin is not { } origin)
+                {
+                    continue;
+                }
+
+                if (regions.TryGetValue(origin, out var known))
+                {
+                    regions[origin] = known == link.Peer.Region ? known : null;
+                }
+                else if (regions.Count == MaxOrigins)
+                {
+                    return FrozenSet<ReplicaId>.Empty;
+                }
+                else
+                {
+                    regions[origin] = link.Peer.Region;
+                }
+            }
+        }
+
+        return regions.Where(entry => entry.Key != _self.Id && entry.Value is { } region && region != _options.Region && placement.Includes(region))
+            .Select(entry => entry.Key).ToFrozenSet();
     }
 
     private async ValueTask<DatabasePlacement?> PlacementAsync(TenantContext database, CancellationToken cancellationToken) =>
@@ -201,7 +242,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             {
                 lock (link.Gate)
                 {
-                    link.Connected = false;
+                    (link.Connected, link.Origin) = (false, null);
                 }
 
                 _acks.Lost();
@@ -246,7 +287,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         var peer = new ReplicaId(call.ResponseStream.Current.Welcome.Node);
         lock (link.Gate)
         {
-            link.Connected = true;
+            (link.Connected, link.Origin) = (true, peer);
             foreach (var cursor in link.Cursors.Values)
             {
                 (cursor.Incarnation, cursor.Acked, cursor.InFlight, cursor.InFlightGroups, cursor.RequiresRefill, cursor.Refilling, cursor.Live) =
@@ -632,6 +673,17 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         if (live && (await PlacementAsync(database, cancellationToken).ConfigureAwait(false))?.Includes(link.Peer.Region) == true)
         {
             _acks.Acked(database, incarnation, from, (long)ack.ChangeId);
+            // Shape reads publish from the same proof, whether or not a client write still waits for it. A failure only delays
+            // publication until the next ack of the run, which covers the same range: it never fails the stream.
+            try
+            {
+                var held = await HeldOriginsAsync(database, cancellationToken).ConfigureAwait(false);
+                _ = await _source.ProveAsync(database, incarnation, from, (long)ack.ChangeId, held, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.ZLogWarning(error, $"Recording a remote durable proof for shape reads failed; the next ack retries");
+            }
         }
     }
 
@@ -728,6 +780,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         public Lock Gate { get; } = new();
 
         public bool Connected { get; set; }
+
+        // The node the peer welcomed this connection with: the replica id its own commits carry. Null while not connected.
+        public ReplicaId? Origin { get; set; }
 
         public Dictionary<TenantContext, Cursor> Cursors { get; } = [];
 

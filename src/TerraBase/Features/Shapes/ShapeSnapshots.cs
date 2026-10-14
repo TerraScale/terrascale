@@ -7,6 +7,7 @@ using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Shapes;
 
@@ -41,7 +42,13 @@ internal interface IShapeSnapshotStorage
 {
     ValueTask<ShapeSnapshot?> NewestShapeSnapshotAsync(string handle, CancellationToken cancellationToken);
     ValueTask<bool> ShapeSnapshotDueAsync(string handle, long now, CancellationToken cancellationToken);
-    ValueTask<(long Offset, string Cursor)> ShapeSnapshotHeadAsync(ReadOnlyMemory<byte> resumeScope, DateTimeOffset now, CancellationToken cancellationToken);
+    /// <summary>The handle's retention floor: a snapshot below it is never a bootstrap answer.</summary>
+    ValueTask<long> ShapeSnapshotFloorAsync(string handle, CancellationToken cancellationToken);
+    /// <summary>
+    /// The offset a snapshot seals at, the committed head, with its resume cursor. With <paramref name="remote"/>,
+    /// <see cref="StorageBusyException"/> until the head is remote durable: the snapshot's values are the head's.
+    /// </summary>
+    ValueTask<(long Offset, string Cursor)> ShapeSnapshotHeadAsync(bool remote, ReadOnlyMemory<byte> resumeScope, DateTimeOffset now, CancellationToken cancellationToken);
     ValueTask<ShapeSnapshotPage> BuildShapeSnapshotPageAsync(ShapeSnapshotDefinition shape, long offset, string? afterId, string cursor, IMemoryBudget memory, TimeProvider time, CancellationToken cancellationToken);
     ValueTask InsertShapeSnapshotPageAsync(string handle, long offset, int page, ShapeSnapshotPage body, long sealedAt, CancellationToken cancellationToken);
     ValueTask DeleteIncompleteShapeSnapshotsAsync(string handle, CancellationToken cancellationToken);
@@ -55,7 +62,9 @@ internal interface IShapeSnapshotTransactions
 }
 
 /// <summary>Persisted, immutable snapshots; registration and scheduling belong to FR-10/FR-20.</summary>
-internal sealed class ShapeSnapshots(IMemoryBudget memory, TimeProvider time, IShapeSnapshotTransactions transactions, IShapeMetrics? metrics = null) : IShapeSnapshotSealer
+internal sealed class ShapeSnapshots(
+    IMemoryBudget memory, TimeProvider time, IShapeSnapshotTransactions transactions, IRemoteDurability durability, IShapeMetrics? metrics = null)
+    : IShapeSnapshotSealer
 {
     // One admitted seal per singleton; callers retry rather than queueing unbounded scans.
     private int _sealing;
@@ -72,7 +81,8 @@ internal sealed class ShapeSnapshots(IMemoryBudget memory, TimeProvider time, IS
     {
         using var admission = memory.TryReserve(MemoryLane.Bulk, 4096, store.Tenant) ?? throw new StorageBusyException();
         await using var transaction = await transactions.BeginAsync(store, write: false, cancellationToken).ConfigureAwait(false);
-        return await Storage(transaction).NewestShapeSnapshotAsync(handle, cancellationToken).ConfigureAwait(false);
+        var newest = await Storage(transaction).NewestShapeSnapshotAsync(handle, cancellationToken).ConfigureAwait(false);
+        return newest is not null && newest.Offset <= await FrontierAsync(transaction, cancellationToken).ConfigureAwait(false) ? newest : null;
     }
 
     public async ValueTask<ShapeSnapshot> SealIfDueAsync(IDatabaseStore store, ShapeSnapshotDefinition shape, CancellationToken cancellationToken)
@@ -92,7 +102,7 @@ internal sealed class ShapeSnapshots(IMemoryBudget memory, TimeProvider time, IS
         {
             if (!await Storage(probe).ShapeSnapshotDueAsync(shape.Handle, time.GetUtcNow().ToUnixTimeMilliseconds(), cancellationToken).ConfigureAwait(false))
             {
-                return (await Storage(probe).NewestShapeSnapshotAsync(shape.Handle, cancellationToken).ConfigureAwait(false))!;
+                return await PublishedSnapshotAsync(probe, shape.Handle, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -104,17 +114,44 @@ internal sealed class ShapeSnapshots(IMemoryBudget memory, TimeProvider time, IS
         try
         {
             using var admission = memory.TryReserve(MemoryLane.Bulk, 4096, store.Tenant) ?? throw new StorageBusyException();
+            if (durability.Confirms && store.Tenant is { } tenant)
+            {
+                // Before the reader pins its head, and outside its writer once committed: a receive-only replica has no own ack
+                // to prove with, so its seal requests move the frontier over joined commits of held origins.
+                var held = await durability.HeldOriginsAsync(tenant, cancellationToken).ConfigureAwait(false);
+                await using var refresh = await transactions.BeginAsync(store, write: true, cancellationToken).ConfigureAwait(false);
+                _ = await Shapes(refresh).AdvanceShapeFrontierAsync(held, cancellationToken).ConfigureAwait(false);
+                _ = await refresh.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             await using var reader = await transactions.BeginAsync(store, write: false, cancellationToken).ConfigureAwait(false);
             var storage = Storage(reader);
             var started = Stopwatch.GetTimestamp();
             var now = time.GetUtcNow();
             if (!await storage.ShapeSnapshotDueAsync(shape.Handle, now.ToUnixTimeMilliseconds(), cancellationToken).ConfigureAwait(false))
             {
-                return (await storage.NewestShapeSnapshotAsync(shape.Handle, cancellationToken).ConfigureAwait(false))!;
+                return await PublishedSnapshotAsync(reader, shape.Handle, cancellationToken).ConfigureAwait(false);
             }
 
             using var sealMemory = memory.TryReserve(MemoryLane.Bulk, 256 * 1024, store.Tenant) ?? throw new StorageBusyException();
-            var (offset, cursor) = await storage.ShapeSnapshotHeadAsync(shape.ResumeScope, now, cancellationToken).ConfigureAwait(false);
+            long offset;
+            string cursor;
+            try
+            {
+                (offset, cursor) = await storage.ShapeSnapshotHeadAsync(durability.Confirms, shape.ResumeScope, now, cancellationToken).ConfigureAwait(false);
+            }
+            catch (StorageBusyException) when (durability.Confirms)
+            {
+                // The head is not remote durable yet: a retained snapshot within the frontier and the floor still answers.
+                var published = await PublishedSnapshotAsync(reader, shape.Handle, cancellationToken).ConfigureAwait(false);
+                if (published.Offset < await storage.ShapeSnapshotFloorAsync(shape.Handle, cancellationToken).ConfigureAwait(false))
+                {
+                    throw;
+                }
+
+                return published;
+            }
+
             var newest = await storage.NewestShapeSnapshotAsync(shape.Handle, cancellationToken).ConfigureAwait(false);
             if (newest?.Offset == offset)
             {
@@ -158,8 +195,24 @@ internal sealed class ShapeSnapshots(IMemoryBudget memory, TimeProvider time, IS
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
         using var admission = memory.TryReserve(MemoryLane.Foreground, 4096, store.Tenant) ?? throw new StorageBusyException();
         await using var transaction = await transactions.BeginAsync(store, write: false, cancellationToken).ConfigureAwait(false);
-        return await Storage(transaction).ReadShapeSnapshotPageAsync(handle, offset, afterId, memory, cancellationToken).ConfigureAwait(false);
+        return offset <= await FrontierAsync(transaction, cancellationToken).ConfigureAwait(false)
+            ? await Storage(transaction).ReadShapeSnapshotPageAsync(handle, offset, afterId, memory, cancellationToken).ConfigureAwait(false)
+            : null;
     }
+
+    // Snapshots seal at or below it; this keeps every read below it too.
+    private async ValueTask<ShapeSnapshot> PublishedSnapshotAsync(IStorageTransaction transaction, string handle, CancellationToken cancellationToken)
+    {
+        var newest = await Storage(transaction).NewestShapeSnapshotAsync(handle, cancellationToken).ConfigureAwait(false);
+        return newest is not null && newest.Offset <= await FrontierAsync(transaction, cancellationToken).ConfigureAwait(false)
+            ? newest : throw new StorageBusyException();
+    }
+
+    private ValueTask<long> FrontierAsync(IStorageTransaction transaction, CancellationToken cancellationToken) =>
+        Shapes(transaction).ReadShapeFrontierAsync(durability.Confirms, cancellationToken);
+
+    private static IShapeStorageTransaction Shapes(IStorageTransaction transaction) =>
+        transaction as IShapeStorageTransaction ?? throw new NotSupportedException("the storage transaction does not support shapes");
 
     private static IShapeSnapshotStorage Storage(IStorageTransaction transaction) =>
         transaction as IShapeSnapshotStorage ?? throw new NotSupportedException("the storage transaction does not support shape snapshots");

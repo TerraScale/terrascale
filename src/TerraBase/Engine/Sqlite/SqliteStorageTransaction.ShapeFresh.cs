@@ -18,13 +18,13 @@ internal sealed partial class SqliteStorageTransaction : IShapeFreshStorage
         return (long)Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar()!;
     }, cancellationToken);
 
-    public ValueTask<ShapeBody?> ReadShapeFreshAsync(ShapeSealDefinition shape, long offset, IMemoryBudget memory,
-        CancellationToken cancellationToken) => RunAsync(() => ShapeFresh(shape, offset, memory, cancellationToken), cancellationToken);
+    public ValueTask<ShapeBody?> ReadShapeFreshAsync(ShapeSealDefinition shape, long offset, bool remote, IMemoryBudget memory,
+        CancellationToken cancellationToken) => RunAsync(() => ShapeFresh(shape, offset, remote, memory, cancellationToken), cancellationToken);
 
-    private ShapeBody? ShapeFresh(ShapeSealDefinition shape, long offset, IMemoryBudget memory, CancellationToken cancellationToken)
+    // With `remote`, the head served is the remote durable frontier: nothing above it is framed or vouched up to date.
+    private ShapeBody? ShapeFresh(ShapeSealDefinition shape, long offset, bool remote, IMemoryBudget memory, CancellationToken cancellationToken)
     {
-        CountRead("shape");
-        var head = (long)Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar()!;
+        var head = ShapeFrontierOrHead(remote);
         if (offset > head)
         {
             return null;
@@ -80,10 +80,18 @@ internal sealed partial class SqliteStorageTransaction : IShapeFreshStorage
                 stored = SqliteSession.Bytes(reader, 1);
             }
 
+            var sealedAt = ReadShapeValuesAt(stored);
+            if (Math.Max(end, sealedAt) > head)
+            {
+                // Sealed before its commits were remote durable (a cell of one's chunk, or a restored frontier).
+                admission.Dispose();
+                return null;
+            }
+
             var upToDate = end == head;
             // values_at is the head the values were materialized at. Up to date, that is the head itself (the chunk sealed at it);
             // behind the head, the stored values keep their seal-time head, since they are not re-materialized here.
-            var values = upToDate ? head : ReadShapeValuesAt(stored);
+            var values = upToDate ? head : sealedAt;
             var body = ShapeEnvelope(shape, offset, end, values, ShapeResume(shape.ResumeScope.Span, end, cancellationToken),
                 ShapeChangesOf(stored), upToDate);
             return new ShapeBody(body, ShapeNumber(end), upToDate, admission);

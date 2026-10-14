@@ -1,11 +1,19 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
+using TerraBase.Features.Shapes;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -16,6 +24,8 @@ namespace TerraBase.Fast.Replication;
 /// <summary>Client responses through real listeners, CDC and peer streams (decision 0013a, B4).</summary>
 public sealed class RemoteAckTests
 {
+    private const string Collection = "items";
+
     [Test]
     public async Task A_cell_of_one_answers_after_its_local_commit()
     {
@@ -354,6 +364,12 @@ public sealed class RemoteAckTests
                 await Assert.That((await later.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString()).IsEqualTo("remote_durable");
             }
 
+            var store = await pair.OriginStoreAsync();
+            var shape = await ShapeAsync(store);
+            _ = await SealBoundedAsync(pair, pair.OriginSealer, store, shape, 0);
+            await Assert.That(await ChunksAsync(pair.OriginSealer, store, shape.Handle, 0, pair.Token)).IsEmpty()
+                .Because("a later live ACK cannot close the earlier unproven refill gap in the durable prefix");
+
             using var response = await pending.WaitAsync(pair.Token);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
             await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("error").GetProperty("code").GetString())
@@ -406,6 +422,775 @@ public sealed class RemoteAckTests
         }
     }
 
+    [Test]
+    public async Task A_held_ack_keeps_its_commit_out_of_sealed_chunks()
+    {
+        await using var pair = await Pair.StartAsync();
+        var id = EntityIds.New().ToString();
+        using var held = pair.PeerAck.Hold(id);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
+        try
+        {
+            await held.Applied.Task.WaitAsync(pair.Token);
+            var waiting = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            await Assert.That(waiting.IsCompleted).IsFalse();
+            var store = await pair.OriginStoreAsync();
+            var sealer = pair.OriginSealer;
+            var shape = await ShapeAsync(store);
+            // Sealing is not gated; the reads below stay gated until the ACK, so the held commit is not published.
+            _ = await SealBoundedAsync(pair, sealer, store, shape, 0);
+            var visible = await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token);
+            await Assert.That(Rows(visible).Any(row => row.Id == id)).IsFalse().Because("the peer has not acknowledged the commit");
+            using var local = await pair.Client.GetAsync(pair.Document(id), pair.Token);
+            await Assert.That(local.StatusCode).IsEqualTo(HttpStatusCode.OK).Because("by-key reads show local-only writes");
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            _ = await sealer.SealUpToHeadAsync(store, shape, SealedEnd(visible), pair.Token);
+            var published = await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token);
+            await Assert.That(Rows(published).Single(row => row.Id == id).N).IsEqualTo(1);
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+        }
+    }
+
+    [Test]
+    public async Task A_refused_ack_never_publishes_its_commit()
+    {
+        await using var pair = await Pair.StartAsync();
+        pair.PeerAck.Refuse = true;
+        var id = EntityIds.New().ToString();
+        using var response = await pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(pair.PeerAck.Refused.Task.IsCompleted).IsTrue().Because("a real live ACK was refused for this database");
+        var store = await pair.OriginStoreAsync();
+        var sealer = pair.OriginSealer;
+        var shape = await ShapeAsync(store);
+        _ = await SealBoundedAsync(pair, sealer, store, shape, 0);
+        var visible = await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token);
+        await Assert.That(Rows(visible).Any(row => row.Id == id)).IsFalse().Because("no ACK ever covered the commit");
+    }
+
+    [Test]
+    public async Task A_local_cell_of_one_seals_its_commit_at_once()
+    {
+        await using var api = await Documents.DocumentApi.StartAsync();
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var id = EntityIds.New().ToString();
+        var response = await api.PutAsync(id, new { n = 1 });
+        await Assert.That(response.Json.GetProperty("durability").GetString()).IsEqualTo("local_durable");
+        var store = await OpenStoreAsync(api.Server, await api.TenantOfAsync(), token);
+        var sealer = SealerOf(api.Server, new LocalDurability());
+        var shape = await ShapeAsync(store);
+        var boundary = await sealer.SealUpToHeadAsync(store, shape, 0, token);
+        var visible = await ChunksAsync(sealer, store, shape.Handle, 0, token);
+        await Assert.That(SealedEnd(visible)).IsEqualTo(boundary);
+        await Assert.That(Rows(visible).Single(row => row.Id == id).N).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task Missing_capture_and_frontier_never_prove_a_local_only_write()
+    {
+        await using var pair = await Pair.StartAsync();
+        pair.PeerAck.Refuse = true;
+        var id = EntityIds.New().ToString();
+        using var response = await pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        var store = await pair.OriginStoreAsync();
+        var sqlite = await pair.OriginSqliteAsync();
+        await sqlite.WithWriterAsync(session =>
+        {
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = "DELETE FROM turso_cdc;";
+            command.ExecuteNonQuery();
+            command.CommandText = "DELETE FROM _tb_shape_chunk WHERE handle = '~frontier';";
+            command.ExecuteNonQuery();
+            return true;
+        }, "a test removing durability evidence", pair.Token);
+        var shape = await ShapeAsync(store);
+        _ = await SealBoundedAsync(pair, pair.OriginSealer, store, shape, 0);
+        await Assert.That(await ChunksAsync(pair.OriginSealer, store, shape.Handle, 0, pair.Token)).IsEmpty()
+            .Because("missing capture and a missing proof cannot turn a local-only write into a remotely durable prefix");
+    }
+
+    [Test]
+    public async Task An_unacked_overwrite_is_never_published_before_its_ack()
+    {
+        await using var pair = await Pair.StartAsync();
+        var id = EntityIds.New().ToString();
+        using (var created = await pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token))
+        {
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        }
+
+        var store = await pair.OriginStoreAsync();
+        var sealer = pair.OriginSealer;
+        var shape = await ShapeAsync(store);
+        _ = await sealer.SealUpToHeadAsync(store, shape, 0, pair.Token);
+        var first = await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token);
+        await Assert.That(Rows(first).Single(row => row.Id == id).N).IsEqualTo(1);
+        // The create's wait completed WaitEntered: the overwrite needs its own.
+        pair.ExpectWait();
+        using var held = pair.PeerAck.Hold(id);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 2 }, pair.Token);
+        try
+        {
+            await held.Applied.Task.WaitAsync(pair.Token);
+            var waiting = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            await Assert.That(waiting.IsCompleted).IsFalse();
+            _ = await SealBoundedAsync(pair, sealer, store, shape, SealedEnd(first));
+            var visible = await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token);
+            await Assert.That(visible.Length).IsGreaterThanOrEqualTo(first.Length);
+            for (var n = 0; n < first.Length; n++)
+            {
+                await Assert.That(visible[n].Body.AsSpan().SequenceEqual(first[n].Body)).IsTrue().Because("sealed bytes are immutable");
+            }
+
+            await Assert.That(Rows(visible).Where(row => row.Id == id).Select(row => row.N).ToArray()).IsEquivalentTo([1])
+                .Because("the unacked overwrite stays out of every readable chunk");
+            await Assert.That(await pair.PersistedChunksAsync(shape.Handle)).IsEqualTo((first.Length, SealedEnd(first)))
+                .Because("the gate keeps the overwrite out of the persisted chunks, not only out of reads");
+            var unsealed = await ShapeAsync(store);
+            _ = await SealBoundedAsync(pair, sealer, store, unsealed, 0);
+            var candidate = await ChunksAsync(sealer, store, unsealed.Handle, 0, pair.Token);
+            await Assert.That(Rows(candidate).Any(row => row.Id == id && row.N == 2)).IsFalse()
+                .Because("materializing an older acknowledged event must not publish the newer unacknowledged value");
+            await Assert.That((await pair.PersistedChunksAsync(unsealed.Handle)).Count).IsEqualTo(0)
+                .Because("values_at would be the unacked overwrite's head, so nothing seals at all");
+            using var local = await pair.Client.GetAsync(pair.Document(id), pair.Token);
+            await Assert.That(local.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString())
+                .IsEqualTo("remote_durable");
+            _ = await sealer.SealUpToHeadAsync(store, shape, SealedEnd(visible), pair.Token);
+            var published = await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token);
+            await Assert.That(Rows(published).Any(row => row.Id == id && row.N == 2)).IsTrue().Because("the ACK publishes the overwrite");
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+        }
+    }
+
+    [Test]
+    public async Task The_worker_publishes_a_commit_only_after_its_ack()
+    {
+        await using var pair = await Pair.StartAsync();
+        var store = await pair.OriginStoreAsync();
+        var sealer = pair.OriginSealer;
+        var shape = await ShapeAsync(store);
+        var id = EntityIds.New().ToString();
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(pair.Token);
+        var worker = sealer.RunDatabaseAsync(store, () => [new ShapeSealRequest(shape, 0)], stop.Token);
+        using var held = pair.PeerAck.Hold(id);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
+        try
+        {
+            await held.Applied.Task.WaitAsync(pair.Token);
+            var waiting = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            await Assert.That(waiting.IsCompleted).IsFalse();
+            // The worker wakes on the local commit, which the peer has not acknowledged, so the row must stay unpublished.
+            var visible = await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token);
+            await Assert.That(Rows(visible).Any(row => row.Id == id)).IsFalse();
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            // No later commit follows the ACK, so the worker must wake on the ACK itself.
+            await TerraBaseTestServer.EventuallyAsync(async token => Rows(await ChunksAsync(sealer, store, shape.Handle, 0, token)).Any(row => row.Id == id),
+                timeout: TimeSpan.FromSeconds(30));
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+            stop.Cancel();
+            await Assert.That(async () => await worker).Throws<OperationCanceledException>();
+        }
+    }
+
+    [Test]
+    public async Task Http_shape_reads_serve_nothing_above_a_held_proof_and_publish_once_it_is_released()
+    {
+        await using var pair = await Pair.StartAsync();
+        var first = EntityIds.New().ToString();
+        using (var created = await pair.Client.PutAsJsonAsync(pair.Document(first), new { n = 1 }, pair.Token))
+        {
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        }
+
+        // The bootstrap snapshot seals once the ACK's proof covers its head.
+        Reply bootstrap = null!;
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            (bootstrap = await GetShapeAsync(pair, ShapeUri(pair, "offset=-1"), token)).Status == HttpStatusCode.TemporaryRedirect);
+        var page = await GetShapeAsync(pair, new Uri(bootstrap.Location!, UriKind.Relative), pair.Token);
+        await Assert.That(page.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(OpIds(page)).Contains(first);
+        var handle = page.Json.GetProperty("handle").GetString()!;
+        var published = page.Json.GetProperty("next_offset").GetString()!;
+        var at = long.Parse(published, CultureInfo.InvariantCulture);
+
+        pair.ExpectWait();
+        var id = EntityIds.New().ToString();
+        using var held = pair.PeerAck.Hold(id);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 2 }, pair.Token);
+        try
+        {
+            await held.Applied.Task.WaitAsync(pair.Token);
+            var waiting = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            await Assert.That(waiting.IsCompleted).IsFalse();
+            var head = await FeedHeadAsync(await pair.OriginSqliteAsync(), pair.Token);
+            await Assert.That(head).IsGreaterThan(at).Because("the held write committed locally");
+
+            // Fresh at F: up to date at the published frontier, with nothing of the held commit.
+            var fresh = await GetShapeAsync(pair, ShapeUri(pair, $"handle={handle}&offset={published}"), pair.Token);
+            await Assert.That(fresh.Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(OpIds(fresh)).DoesNotContain(id);
+            await Assert.That(fresh.Json.GetProperty("next_offset").GetString()).IsEqualTo(published);
+            await Assert.That(fresh.Json.GetProperty("values_at").GetString()).IsEqualTo(published);
+            await Assert.That(fresh.Json.GetProperty("up_to_date").GetBoolean()).IsTrue();
+
+            // Above F but committed: unavailable, never must_refetch. Above the committed head: must_refetch.
+            var above = await GetShapeAsync(pair, ShapeUri(pair, $"handle={handle}&offset={head}"), pair.Token);
+            await Assert.That(above.Status).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            await Assert.That(above.Json.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unavailable");
+            var beyond = await GetShapeAsync(pair, ShapeUri(pair, $"handle={handle}&offset={head + 1}"), pair.Token);
+            await Assert.That(beyond.Status).IsEqualTo(HttpStatusCode.Conflict);
+
+            // Bootstrap keeps answering the published snapshot; a handle with none stays busy.
+            var again = await GetShapeAsync(pair, ShapeUri(pair, "offset=-1"), pair.Token);
+            await Assert.That(again.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
+            await Assert.That(again.Location).IsEqualTo(bootstrap.Location);
+            var filtered = await GetShapeAsync(pair, ShapeUri(pair, "offset=-1&where=" + Uri.EscapeDataString(Where)), pair.Token);
+            await Assert.That(filtered.Status).IsEqualTo(HttpStatusCode.TooManyRequests);
+
+            // A live read parks at F although the committed head is above it.
+            var live = GetShapeAsync(pair, ShapeUri(pair, $"handle={handle}&offset={published}&live=true"), pair.Token);
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                ShapeWaiting(await pair.OriginServer.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), token)) >= 1);
+            if (live.IsCompleted)
+            {
+                // Another commit can wake it early: it still answers nothing of the held commit.
+                await Assert.That(OpIds(await live)).DoesNotContain(id);
+            }
+
+            held.Release.TrySetResult();
+            using (var response = await pending.WaitAsync(pair.Token))
+            {
+                await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString())
+                    .IsEqualTo("remote_durable");
+            }
+
+            // The proof wakes the live read; a wake before the proof answers up to date at F and parks again.
+            var answer = await live;
+            while (answer.Status == HttpStatusCode.OK && !OpIds(answer).Contains(id))
+            {
+                answer = await GetShapeAsync(pair, ShapeUri(pair, $"handle={handle}&offset={answer.Json.GetProperty("next_offset").GetString()}&live=true"), pair.Token);
+            }
+
+            await Assert.That(answer.Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(long.Parse(answer.Json.GetProperty("values_at").GetString()!, CultureInfo.InvariantCulture)).IsLessThanOrEqualTo(head);
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                (await GetShapeAsync(pair, ShapeUri(pair, "offset=-1&where=" + Uri.EscapeDataString(Where)), token)).Status == HttpStatusCode.TemporaryRedirect);
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+        }
+    }
+
+    [Test]
+    public async Task A_due_reseal_above_a_held_proof_answers_the_newest_published_snapshot()
+    {
+        await using var pair = await Pair.StartAsync();
+        using (var created = await pair.Client.PutAsJsonAsync(pair.Document(EntityIds.New().ToString()), new { n = 1 }, pair.Token))
+        {
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        }
+
+        var store = await pair.OriginStoreAsync();
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var snapshots = new ShapeSnapshots(pair.OriginServer.Services.GetRequiredService<IMemoryBudget>(), time,
+            pair.OriginServer.Services.GetRequiredService<IShapeSnapshotTransactions>(), pair.Remote);
+        var shape = SnapshotOf(await ShapeAsync(store));
+        ShapeSnapshot first = null!;
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            try
+            {
+                first = await snapshots.SealIfDueAsync(store, shape, token);
+                return true;
+            }
+            catch (StorageBusyException)
+            {
+                return false;
+            }
+        });
+
+        pair.ExpectWait();
+        var id = EntityIds.New().ToString();
+        using var held = pair.PeerAck.Hold(id);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 2 }, pair.Token);
+        try
+        {
+            await held.Applied.Task.WaitAsync(pair.Token);
+            _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            time.Advance(ShapeSnapshots.ResealAge);
+            await Assert.That(await snapshots.SealIfDueAsync(store, shape, pair.Token)).IsEqualTo(first)
+                .Because("a due reseal whose head is not remote durable falls back to the published snapshot");
+            await Assert.That(async () => await snapshots.SealIfDueAsync(store, SnapshotOf(await ShapeAsync(store)), pair.Token))
+                .Throws<StorageBusyException>().Because("a handle without a published snapshot has nothing to fall back to");
+
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+            {
+                try
+                {
+                    return (await snapshots.SealIfDueAsync(store, shape, token)).Offset > first.Offset;
+                }
+                catch (StorageBusyException)
+                {
+                    return false;
+                }
+            });
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+        }
+    }
+
+    [Test]
+    public async Task A_captured_transaction_larger_than_one_frontier_pass_is_walked_past()
+    {
+        await using var pair = await Pair.StartAsync();
+        var store = await pair.OriginStoreAsync();
+        var sealer = pair.OriginSealer;
+        var shape = await ShapeAsync(store);
+        var probe = "~probe-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8));
+        // One autocommit statement with capture on: more images than one pass walks (64 pages of 512), one commit row, no
+        // feed row. The rows sit under a handle no shape can name.
+        var (images, commits) = await (await pair.OriginSqliteAsync()).WithWriterAsync(session =>
+        {
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = "SELECT coalesce(max(change_id), 0) FROM turso_cdc;";
+            var before = (long)command.ExecuteScalar()!;
+            command.CommandText = """
+                WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i + 1 FROM n WHERE i < 33000)
+                INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at) SELECT $handle, i, i, x'', 0 FROM n;
+                """;
+            command.Parameters.AddWithValue("$handle", probe);
+            _ = command.ExecuteNonQuery();
+            command.Parameters.Clear();
+            command.CommandText = "SELECT coalesce(sum(change_type <> 2), 0), coalesce(sum(change_type = 2), 0) FROM turso_cdc WHERE change_id > $before;";
+            command.Parameters.AddWithValue("$before", before);
+            using var reader = command.ExecuteReader();
+            _ = reader.Read();
+            return (reader.GetInt64(0), reader.GetInt64(1));
+        }, "a test capturing one large transaction", pair.Token);
+        await Assert.That(images).IsGreaterThan(64 * 512);
+        await Assert.That(commits).IsEqualTo(1);
+        var id = EntityIds.New().ToString();
+        using (var response = await pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token))
+        {
+            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString())
+                .IsEqualTo("remote_durable");
+        }
+
+        using (var bound = CancellationTokenSource.CreateLinkedTokenSource(pair.Token))
+        {
+            bound.CancelAfter(TimeSpan.FromSeconds(20));
+            try
+            {
+                _ = await sealer.SealUpToHeadAsync(store, shape, 0, bound.Token);
+            }
+            catch (OperationCanceledException) when (!pair.Token.IsCancellationRequested)
+            {
+                throw new TimeoutException($"the origin's frontier stopped at the large transaction: {await pair.OriginFrontierAsync()}");
+            }
+        }
+
+        await Assert.That(Rows(await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token)).Any(row => row.Id == id)).IsTrue();
+    }
+
+    [Test]
+    public async Task Retention_at_the_ack_never_erases_the_commit_it_proves()
+    {
+        await using var pair = await Pair.StartAsync();
+        var store = await pair.OriginStoreAsync();
+        var sealer = pair.OriginSealer;
+        var shape = await ShapeAsync(store);
+        var id = EntityIds.New().ToString();
+        using var held = pair.PeerAck.Hold(id);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
+        try
+        {
+            await held.Applied.Task.WaitAsync(pair.Token);
+            var waiting = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            await Assert.That(waiting.IsCompleted).IsFalse();
+            // Past the 60 s hold, recording the ACK may trim the very rows the ACK's proof walks next.
+            await pair.AgeOriginCaptureAsync();
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString())
+                .IsEqualTo("remote_durable");
+            using (var bound = CancellationTokenSource.CreateLinkedTokenSource(pair.Token))
+            {
+                bound.CancelAfter(TimeSpan.FromSeconds(20));
+                try
+                {
+                    _ = await sealer.SealUpToHeadAsync(store, shape, 0, bound.Token);
+                }
+                catch (OperationCanceledException) when (!pair.Token.IsCancellationRequested)
+                {
+                    throw new TimeoutException($"the origin's frontier never covered the acknowledged row: {await pair.OriginFrontierAsync()}");
+                }
+            }
+
+            await Assert.That(Rows(await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token)).Any(row => row.Id == id)).IsTrue();
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+        }
+    }
+
+    [Test]
+    public async Task Received_rows_are_served_before_their_origin_ack()
+    {
+        await using var pair = await Pair.StartAsync();
+        var id = EntityIds.New().ToString();
+        using var held = pair.PeerAck.Hold(id);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
+        try
+        {
+            // The peer has applied the row but has not acknowledged it, so the origin's write still waits.
+            await held.Applied.Task.WaitAsync(pair.Token);
+            var waiting = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            await Assert.That(waiting.IsCompleted).IsFalse();
+            var store = await pair.PeerStoreAsync();
+            var sealer = pair.PeerSealer;
+            var shape = await ShapeAsync(store);
+            await SealCoveringAsync(pair, sealer, store, shape);
+
+            var received = await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token);
+            await Assert.That(Rows(received).Single(row => row.Id == id).N).IsEqualTo(1)
+                .Because("received joins are proven at their local commit, not at their origin's ACK");
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+        }
+    }
+
+    [Test]
+    public async Task A_received_row_seals_only_under_its_exact_held_origin()
+    {
+        await using var pair = await Pair.StartAsync();
+        var id = EntityIds.New().ToString();
+        using var held = pair.PeerAck.Hold(id);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
+        try
+        {
+            await held.Applied.Task.WaitAsync(pair.Token);
+            var waiting = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            await Assert.That(waiting.IsCompleted).IsFalse();
+            var store = await pair.PeerStoreAsync();
+            var shape = await ShapeAsync(store);
+            var origin = pair.OriginNode;
+            var actual = await pair.PeerRemote.HeldOriginsAsync(pair.Database, pair.Token);
+            await Assert.That(actual.Contains(origin)).IsTrue().Because("the peer holds the origin's applied row");
+            var mismatched = ReplicaId.Of(origin.Region, origin.Member, unchecked((ushort)(origin.Epoch + 1)));
+            var stale = new List<IReadOnlySet<ReplicaId>> { new HashSet<ReplicaId>(), new HashSet<ReplicaId> { mismatched } };
+            var before = await pair.PeerSealer.FrontierAsync(store, pair.Token);
+            foreach (var staleSet in stale)
+            {
+                _ = await SealBoundedAsync(pair, pair.PeerSealerWith(new StaleHeldDurability(pair.PeerRemote, staleSet)), store, shape, 0);
+                await Assert.That(await pair.PeerSealer.FrontierAsync(store, pair.Token)).IsEqualTo(before)
+                    .Because("a held set without the row's exact origin cannot advance or persist the frontier");
+                await Assert.That(Rows(await ChunksAsync(pair.PeerSealer, store, shape.Handle, 0, pair.Token)).Any(row => row.Id == id)).IsFalse();
+            }
+
+            await SealCoveringAsync(pair, pair.PeerSealer, store, shape);
+            var received = await ChunksAsync(pair.PeerSealer, store, shape.Handle, 0, pair.Token);
+            await Assert.That(Rows(received).Single(row => row.Id == id).N).IsEqualTo(1);
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+        }
+    }
+
+    [Test]
+    public async Task A_proof_stopped_at_a_joined_commit_still_covers_the_own_write_without_another_ack()
+    {
+        await using var pair = await Pair.StartAsync();
+        // Also blind any delayed setup ACK, so it cannot certify the joined row before the held write's ACK.
+        pair.Proof.Blind = true;
+        var peerId = EntityIds.New().ToString();
+        using (var joined = await pair.PeerClient.PutAsJsonAsync(pair.Document(peerId), new { n = 1 }, pair.Token))
+        {
+            await Assert.That(joined.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        }
+
+        // The peer's row is joined on the origin, and no sealer has run, so the frontier has not moved past it.
+        using (var local = await pair.Client.GetAsync(pair.Document(peerId), pair.Token))
+        {
+            await Assert.That(local.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var id = EntityIds.New().ToString();
+        using var held = pair.PeerAck.Hold(id);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 2 }, pair.Token);
+        try
+        {
+            await held.Applied.Task.WaitAsync(pair.Token);
+            var waiting = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            await Assert.That(waiting.IsCompleted).IsFalse();
+            var actual = await pair.Remote.HeldOriginsAsync(pair.Database, pair.Token);
+            await Assert.That(actual.Contains(pair.PeerNode)).IsTrue().Because("the origin holds the peer's joined row");
+            // This ACK's proof sees the peer's joined origin as not held, so it stops at that row and must keep the own range.
+            pair.Proof.Blind = true;
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString())
+                .IsEqualTo("remote_durable");
+            await pair.Proof.Committed.Task.WaitAsync(pair.Token);
+
+            var store = await pair.OriginStoreAsync();
+            var sealer = pair.OriginSealer;
+            var head = await (await pair.OriginSqliteAsync()).WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT seq FROM _tb_feed_sequence WHERE id = 1;";
+                return (long)command.ExecuteScalar()!;
+            }, "a test reading the materialization head", pair.Token);
+            await Assert.That(await sealer.FrontierAsync(store, pair.Token)).IsLessThan(head)
+                .Because("the ACK persisted its proof while the earlier joined commit still held the walk");
+            var shape = await ShapeAsync(store);
+            using (var bound = CancellationTokenSource.CreateLinkedTokenSource(pair.Token))
+            {
+                bound.CancelAfter(TimeSpan.FromSeconds(20));
+                try
+                {
+                    _ = await sealer.SealUpToHeadAsync(store, shape, 0, bound.Token);
+                }
+                catch (OperationCanceledException) when (!pair.Token.IsCancellationRequested)
+                {
+                    throw new TimeoutException($"the origin's frontier stopped before the held write: {await pair.OriginFrontierAsync()}");
+                }
+            }
+
+            var rows = Rows(await ChunksAsync(sealer, store, shape.Handle, 0, pair.Token));
+            await Assert.That(rows.Single(row => row.Id == peerId).N).IsEqualTo(1).Because("the joined row is held by the peer's live origin");
+            await Assert.That(rows.Single(row => row.Id == id).N).IsEqualTo(2).Because("the own write is proven by the ACK range that stopped earlier");
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+        }
+    }
+
+    [Test]
+    public async Task A_frontier_hold_past_the_row_bound_ends_the_hold_while_changes_are_young()
+    {
+        await using var api = await Documents.DocumentApi.StartAsync();
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        _ = await api.PutAsync(EntityIds.New().ToString(), new { n = 1 });
+        var sqlite = await OpenSqliteAsync(api.Server, await api.TenantOfAsync(), token);
+        // One autocommit: the change log captures every row, so more than FarBehindRows (65536) unwalked changes are young.
+        _ = await PadChangesAsync(sqlite, 65_537, token);
+        var (count, oldest) = await CaptureAsync(sqlite, token);
+        await Assert.That(count).IsGreaterThan(65_536L).Because("the standalone database captures the padded rows as real changes");
+        await Assert.That(oldest).IsGreaterThanOrEqualTo(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 60)
+            .Because("the unwalked changes are younger than the 60 s hold, so only the row bound can end it");
+        await Assert.That(await FrontierHoldAsync(sqlite, token)).IsNull()
+            .Because("unwalked changes past the row bound end the hold, however young they are");
+    }
+
+    [Test]
+    public async Task A_frontier_hold_within_the_row_bound_returns_the_scanned_frontier()
+    {
+        await using var api = await Documents.DocumentApi.StartAsync();
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        _ = await api.PutAsync(EntityIds.New().ToString(), new { n = 1 });
+        var sqlite = await OpenSqliteAsync(api.Server, await api.TenantOfAsync(), token);
+        var (count, _) = await CaptureAsync(sqlite, token);
+        await Assert.That(count).IsGreaterThan(0L).Because("the standalone database captures its write");
+        await Assert.That(await FrontierHoldAsync(sqlite, token)).IsEqualTo(0L)
+            .Because("with no frontier row, a few young unwalked changes within the bound hold at scanned 0");
+    }
+
+    // Each seal attempt refreshes the frontier with the current held origins, so this retries until a received join is covered or the bound passes.
+    private static async Task SealCoveringAsync(Pair pair, ShapeSealer sealer, IDatabaseStore store, ShapeSealDefinition shape)
+    {
+        using var bound = CancellationTokenSource.CreateLinkedTokenSource(pair.Token);
+        bound.CancelAfter(TimeSpan.FromSeconds(20));
+        try
+        {
+            _ = await sealer.SealUpToHeadAsync(store, shape, 0, bound.Token);
+        }
+        catch (OperationCanceledException) when (!pair.Token.IsCancellationRequested)
+        {
+            throw new TimeoutException($"the peer's frontier never covered the received row: {await pair.PeerFrontierAsync()}");
+        }
+    }
+
+    // The SQLite store itself, as Pair opens it: the engine's own handle, not the IStorageEngine wrapper.
+    private static async Task<SqliteDatabaseStore> OpenSqliteAsync(TerraBaseTestServer server, TenantContext database, CancellationToken cancellationToken) =>
+        (SqliteDatabaseStore)(await server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(database, cancellationToken)
+            ?? throw new InvalidOperationException("the database is missing"));
+
+    // The change log's row count and oldest change time, read raw: proves capture happened before a hold is judged.
+    private static Task<(long Count, long Oldest)> CaptureAsync(SqliteDatabaseStore sqlite, CancellationToken cancellationToken) =>
+        sqlite.WithWriterAsync(session =>
+        {
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = "SELECT count(*), coalesce(min(change_time), 0) FROM turso_cdc;";
+            using var reader = command.ExecuteReader();
+            _ = reader.Read();
+            return (reader.GetInt64(0), reader.GetInt64(1));
+        }, "a test reading the change log", cancellationToken);
+
+    private static Task<long?> FrontierHoldAsync(SqliteDatabaseStore sqlite, CancellationToken cancellationToken) =>
+        sqlite.WithWriterAsync(session => SqliteStorageTransaction.ShapeFrontierHold(session.Connection, null, DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
+            "a test reading the frontier hold", cancellationToken);
+
+    // Inserts harmless chunk rows in one statement; the change log captures each of them as a real commit.
+    private static Task<int> PadChangesAsync(SqliteDatabaseStore sqlite, long count, CancellationToken cancellationToken) =>
+        sqlite.WithWriterAsync(session =>
+        {
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = """
+                WITH RECURSIVE pad(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM pad WHERE n < $count)
+                INSERT INTO _tb_shape_chunk (handle, offset, end_offset, body, sealed_at)
+                SELECT 'pad', n, n, zeroblob(0), 0 FROM pad;
+                """;
+            command.Parameters.AddWithValue("$count", count);
+            return command.ExecuteNonQuery();
+        }, "a test inserting harmless chunk rows", cancellationToken);
+
+    private static ShapeSealer SealerOf(TerraBaseTestServer server, IRemoteDurability durability) => new(
+        server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance,
+        new SqliteShapeStorage(server.Services.GetRequiredService<SqliteStorageEngine>()), durability);
+
+    private static async Task<IDatabaseStore> OpenStoreAsync(TerraBaseTestServer server, TenantContext database, CancellationToken cancellationToken) =>
+        await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, cancellationToken)
+        ?? throw new InvalidOperationException("the database is missing");
+
+    private static async Task<ShapeSealDefinition> ShapeAsync(IDatabaseStore store)
+    {
+        await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        var collection = await transaction.GetCollectionAsync(Collection, CancellationToken.None)
+            ?? throw new InvalidOperationException("the collection is missing");
+        return new ShapeSealDefinition(Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)),
+            "h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)), Collection, collection.Id, RandomNumberGenerator.GetBytes(16));
+    }
+
+    // A seal waiting on an unacknowledged commit ends at the bound; null means it waited rather than returning a boundary.
+    private static async Task<long?> SealBoundedAsync(Pair pair, ShapeSealer sealer, IDatabaseStore store, ShapeSealDefinition shape, long offset)
+    {
+        using var bound = CancellationTokenSource.CreateLinkedTokenSource(pair.Token);
+        bound.CancelAfter(TimeSpan.FromSeconds(1));
+        try
+        {
+            return await sealer.SealUpToHeadAsync(store, shape, offset, bound.Token);
+        }
+        catch (OperationCanceledException) when (bound.IsCancellationRequested && !pair.Token.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    // The chain of closed chunks from `from`, each starting where the previous one ended.
+    private static async Task<SealedChunk[]> ChunksAsync(ShapeSealer sealer, IDatabaseStore store, string handle, long from, CancellationToken cancellationToken)
+    {
+        List<SealedChunk> chunks = [];
+        while (await sealer.ReadChunkAsync(store, handle, from, cancellationToken) is { } chunk)
+        {
+            using (chunk)
+            {
+                chunks.Add(new SealedChunk(chunk.EndOffset, chunk.Body.ToArray()));
+                from = chunk.EndOffset;
+            }
+        }
+
+        return [.. chunks];
+    }
+
+    private static long SealedEnd(SealedChunk[] chunks) => chunks.Length == 0 ? 0 : chunks[^1].EndOffset;
+
+    private static SealedRow[] Rows(SealedChunk[] chunks)
+    {
+        List<SealedRow> rows = [];
+        foreach (var chunk in chunks)
+        {
+            using var json = JsonDocument.Parse(chunk.Body);
+            foreach (var change in json.RootElement.GetProperty("changes").EnumerateArray())
+            {
+                foreach (var op in change.GetProperty("ops").EnumerateArray())
+                {
+                    if (op.GetProperty("op").GetString() == "upsert")
+                    {
+                        rows.Add(new SealedRow(op.GetProperty("id").GetString()!, op.GetProperty("document").GetProperty("n").GetInt32()));
+                    }
+                }
+            }
+        }
+
+        return [.. rows];
+    }
+
+    private const string Where = """{"eq":["/n",2]}""";
+
+    private static Uri ShapeUri(Pair pair, string query) => new($"{pair.DatabasePath}/collections/{Collection}/shape?{query}", UriKind.Relative);
+
+    private static async Task<Reply> GetShapeAsync(Pair pair, Uri uri, CancellationToken token)
+    {
+        using var response = await pair.Client.GetAsync(uri, token);
+        var text = await response.Content.ReadAsStringAsync(token);
+        return new Reply(response.StatusCode, text.Length == 0 ? default : JsonElement.Parse(text), response.Headers.Location?.OriginalString);
+    }
+
+    private static string[] OpIds(Reply reply) =>
+        [.. reply.Json.GetProperty("changes").EnumerateArray().SelectMany(change => change.GetProperty("ops").EnumerateArray())
+            .Select(op => op.GetProperty("id").GetString()!)];
+
+    private static double ShapeWaiting(string scrape) => scrape.Split('\n')
+        .Where(line => line.StartsWith("terrabase_shape_requests_waiting ", StringComparison.Ordinal)
+            || line.StartsWith("terrabase_shape_requests_waiting{", StringComparison.Ordinal))
+        .Sum(line => double.Parse(line.Split(' ')[^1], CultureInfo.InvariantCulture));
+
+    private static Task<long> FeedHeadAsync(SqliteDatabaseStore sqlite, CancellationToken cancellationToken) =>
+        sqlite.WithWriterAsync(session =>
+        {
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = "SELECT seq FROM _tb_feed_sequence WHERE id = 1;";
+            return (long)command.ExecuteScalar()!;
+        }, "a test reading the feed head", cancellationToken);
+
+    private static ShapeSnapshotDefinition SnapshotOf(ShapeSealDefinition shape) =>
+        new(shape.Handle, shape.ShapeId, shape.Collection, shape.CollectionGeneration, shape.ResumeScope);
+
+    private sealed record Reply(HttpStatusCode Status, JsonElement Json, string? Location);
+
+    private sealed record SealedChunk(long EndOffset, byte[] Body);
+
+    private sealed record SealedRow(string Id, int N);
+
     private sealed class Pair : IAsyncDisposable
     {
         private readonly CancellationTokenSource _deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
@@ -423,9 +1208,16 @@ public sealed class RemoteAckTests
 
         public RefillGate Refill { get; } = new();
 
+        public ProofGate Proof { get; } = new();
+
         public AckRefusal Refusal { get; } = new();
 
-        public TaskCompletionSource<Task<bool>> WaitEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource<Task<bool>> _waitEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<Task<bool>> WaitEntered => Volatile.Read(ref _waitEntered);
+
+        // Call only once every earlier write has answered, so a later write's wait completes the new source.
+        public void ExpectWait() => Volatile.Write(ref _waitEntered, new(TaskCreationOptions.RunContinuationsAsynchronously));
 
         public TaskCompletionSource<CommitMarker> ReachedWait { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -452,6 +1244,102 @@ public sealed class RemoteAckTests
         public ReplicaId PeerNode => _peer!.Server.Services.GetRequiredService<LocalReplica>().Id;
 
         public Uri Document(string id) => new($"{DatabasePath}/collections/items/documents/by-key?id={id}", UriKind.Relative);
+
+        public Task<IDatabaseStore> OriginStoreAsync() => OpenStoreAsync(_origin!.Server, Database, Token);
+
+        public async Task<SqliteDatabaseStore> OriginSqliteAsync() =>
+            (SqliteDatabaseStore)(await _origin!.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(Database, Token)
+                ?? throw new InvalidOperationException("the database is missing"));
+
+        public TerraBaseTestServer OriginServer => _origin!.Server;
+
+        public ShapeSealer OriginSealer => SealerOf(_origin!.Server, _origin!.Server.Services.GetRequiredService<IRemoteDurability>());
+
+        public Task<IDatabaseStore> PeerStoreAsync() => OpenStoreAsync(_peer!.Server, Database, Token);
+
+        // The peer's persisted frontier row and the captured rows past it, for a stuck seal's failure message.
+        // The origin's persisted chunks of a shape, whatever the read gate serves.
+        public async Task<(int Count, long End)> PersistedChunksAsync(string handle) =>
+            await (await OriginSqliteAsync()).WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT count(*), coalesce(max(end_offset), 0) FROM _tb_shape_chunk WHERE handle = $handle;";
+                command.Parameters.AddWithValue("$handle", handle);
+                using var reader = command.ExecuteReader();
+                _ = reader.Read();
+                return (reader.GetInt32(0), reader.GetInt64(1));
+            }, "a test reading persisted chunks", Token);
+
+        public Task<string> PeerFrontierAsync() => FrontierStateAsync(_peer!.Server);
+
+        public Task<string> OriginFrontierAsync() => FrontierStateAsync(_origin!.Server);
+
+        // Ages every captured row of the origin past retention's 60 s hold, as if the commits were older.
+        public async Task AgeOriginCaptureAsync() =>
+            await (await OriginSqliteAsync()).WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "UPDATE turso_cdc SET change_time = $aged;";
+                command.Parameters.AddWithValue("$aged", DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 120);
+                return command.ExecuteNonQuery();
+            }, "a test ageing the change log", Token);
+
+        // A machine's frontier state and the oldest captured rows, for a stuck seal's failure message.
+        private async Task<string> FrontierStateAsync(TerraBaseTestServer server)
+        {
+            var sqlite = (SqliteDatabaseStore)(await server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(Database, Token)
+                ?? throw new InvalidOperationException("the database is missing"));
+            var self = server.Services.GetRequiredService<LocalReplica>().Id;
+            return await sqlite.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                string Scalar(string sql)
+                {
+                    command.CommandText = sql;
+                    return Convert.ToString(command.ExecuteScalar(), CultureInfo.InvariantCulture) ?? "null";
+                }
+
+                var text = new StringBuilder();
+                text.Append(CultureInfo.InvariantCulture, $"self {self.Value:x} region {self.Region}; ");
+                text.Append("frontier ").Append(Scalar("SELECT end_offset || ' (' || CAST(body AS TEXT) || ')' FROM _tb_shape_chunk WHERE handle = '~frontier';"));
+                text.Append("; incarnation ").Append(Scalar(SqliteStatements.Incarnation));
+                text.Append("; feed seq ").Append(Scalar("SELECT seq FROM _tb_feed_sequence WHERE id = 1;"));
+                text.Append("; cdc min/max/count ").Append(Scalar("SELECT min(change_id) || '/' || max(change_id) || '/' || count(*) FROM turso_cdc;"));
+                text.Append("; peers ").Append(Scalar("SELECT group_concat(printf('%x', node) || ' acked ' || acked || ' seen ' || seen, ', ') FROM _tb_peers;"));
+                text.Append("; rows");
+                command.CommandText = "SELECT change_id, change_type, table_name, after FROM turso_cdc ORDER BY change_id LIMIT 64;";
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    var table = reader.IsDBNull(2) ? "" : reader.GetString(2);
+                    text.Append(CultureInfo.InvariantCulture, $" {reader.GetInt64(0)}:{reader.GetInt64(1)}:{table}");
+                    if (reader.IsDBNull(3) || reader.GetInt64(1) == 2)
+                    {
+                        continue;
+                    }
+
+                    var record = SqliteRecord.Decode(SqliteSession.Bytes(reader, 3));
+                    if (table == "_tb_state" && record is [_, _, _, _, _, long origin, ..])
+                    {
+                        text.Append(CultureInfo.InvariantCulture, $":origin={unchecked((ulong)origin):x}");
+                    }
+                    else if (table == "_tb_feed" && record is [long seq, ..])
+                    {
+                        text.Append(CultureInfo.InvariantCulture, $":seq={seq}");
+                    }
+                }
+
+                return text.ToString();
+            }, "a test reading the shape frontier", Token);
+        }
+
+        public ShapeSealer PeerSealer => PeerSealerWith(PeerRemote);
+
+        public ShapeSealer PeerSealerWith(IRemoteDurability durability) => SealerOf(_peer!.Server, durability);
+
+        public IRemoteDurability PeerRemote => _peer!.Server.Services.GetRequiredService<IRemoteDurability>();
+
+        public ReplicaId OriginNode => _origin!.Server.Services.GetRequiredService<LocalReplica>().Id;
 
         public static async Task<Pair> StartAsync(string peerRegion = "sjc", PlanTier plan = PlanTier.Hobby)
         {
@@ -507,7 +1395,7 @@ public sealed class RemoteAckTests
                 var remote = services.Last(service => service.ServiceType == typeof(IRemoteDurability));
                 services.AddSingleton<IRemoteDurability>(provider => new ObservedRemote((IRemoteDurability)remote.ImplementationFactory!(provider), this));
                 var source = services.Last(service => service.ServiceType == typeof(IChangeGroupSource));
-                services.AddSingleton<IChangeGroupSource>(provider => new ControlledSource((IChangeGroupSource)source.ImplementationFactory!(provider), Refusal, Refill, this));
+                services.AddSingleton<IChangeGroupSource>(provider => new ControlledSource((IChangeGroupSource)source.ImplementationFactory!(provider), Refusal, Refill, Proof, this));
             }
         }, cancellationToken: Token);
 
@@ -648,7 +1536,21 @@ public sealed class RemoteAckTests
         public bool Refuses(TenantContext database) => Volatile.Read(ref _database) is { } target && (target with { Plan = PlanTier.Hobby }) == (database with { Plan = PlanTier.Hobby });
     }
 
-    private sealed class ControlledSource(IChangeGroupSource inner, AckRefusal refusal, RefillGate refill, Pair pair) : IChangeGroupSource
+    private sealed class ProofGate
+    {
+        private int _blind;
+
+        // Completes once the blinded proof of the held write's ACK has committed.
+        public TaskCompletionSource Committed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool Blind
+        {
+            get => Volatile.Read(ref _blind) != 0;
+            set => Volatile.Write(ref _blind, value ? 1 : 0);
+        }
+    }
+
+    private sealed class ControlledSource(IChangeGroupSource inner, AckRefusal refusal, RefillGate refill, ProofGate proof, Pair pair) : IChangeGroupSource
     {
         public IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken) => inner.ListDatabasesAsync(cancellationToken);
 
@@ -681,6 +1583,26 @@ public sealed class RemoteAckTests
             return await inner.AckAsync(database, incarnation, peer, changeId, stable, cancellationToken);
         }
 
+        public async ValueTask<bool> ProveAsync(TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken)
+        {
+            if (proof.Blind && (database with { Plan = PlanTier.Hobby }) == (pair.Database with { Plan = PlanTier.Hobby }))
+            {
+                var blinded = await inner.ProveAsync(database, incarnation, from, through, new HashSet<ReplicaId>(), cancellationToken);
+                if (pair.ReachedWait.Task.IsCompletedSuccessfully)
+                {
+                    var marker = await pair.ReachedWait.Task;
+                    if (incarnation == marker.Incarnation && through >= marker.ChangeId)
+                    {
+                        proof.Committed.TrySetResult();
+                    }
+                }
+
+                return blinded;
+            }
+
+            return await inner.ProveAsync(database, incarnation, from, through, held, cancellationToken);
+        }
+
         public Task ChangedAsync(CancellationToken cancellationToken) => inner.ChangedAsync(cancellationToken);
 
         public ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) =>
@@ -693,6 +1615,22 @@ public sealed class RemoteAckTests
             inner.HeadAsync(database, incarnation, cancellationToken);
     }
 
+    // Passes everything through except the held origins, which it answers with a fixed set: a stale or unknown view.
+    private sealed class StaleHeldDurability(IRemoteDurability inner, IReadOnlySet<ReplicaId> held) : IRemoteDurability
+    {
+        public bool Confirms => inner.Confirms;
+
+        public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => inner.OtherRegionsAsync(cancellationToken);
+
+        public ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) => inner.AdmitAsync(database, cancellationToken);
+
+        public ValueTask<IReadOnlySet<ReplicaId>> HeldOriginsAsync(TenantContext database, CancellationToken cancellationToken) =>
+            ValueTask.FromResult(held);
+
+        public ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken) =>
+            inner.WaitAsync(database, marker, cancellationToken);
+    }
+
     private sealed class ObservedRemote(IRemoteDurability inner, Pair pair) : IRemoteDurability
     {
         public bool Confirms => inner.Confirms;
@@ -700,6 +1638,9 @@ public sealed class RemoteAckTests
         public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => inner.OtherRegionsAsync(cancellationToken);
 
         public ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) => inner.AdmitAsync(database, cancellationToken);
+
+        public ValueTask<IReadOnlySet<ReplicaId>> HeldOriginsAsync(TenantContext database, CancellationToken cancellationToken) =>
+            inner.HeldOriginsAsync(database, cancellationToken);
 
         public async ValueTask<bool> WaitAsync(TenantContext database, CommitMarker marker, CancellationToken cancellationToken)
         {

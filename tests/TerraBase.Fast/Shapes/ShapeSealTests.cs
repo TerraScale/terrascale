@@ -383,7 +383,7 @@ public sealed class ShapeSealTests
         var head = await db.PutAsync(DocumentApi.NewId(), new { n = 1 });
         var shape = await ShapeAsync(db);
 
-        var refusing = new ShapeSealer(new RefusingBudget(), NullLogger<ShapeSealer>.Instance, db.Storage);
+        var refusing = new ShapeSealer(new RefusingBudget(), NullLogger<ShapeSealer>.Instance, db.Storage, new LocalDurability());
         await Assert.That(async () => await refusing.SealUpToHeadAsync(db.Store, shape, start, CancellationToken.None)).Throws<QosMemoryException>();
         await Assert.That(await db.ReadAsync(shape.Handle, start)).IsNull();
         await Assert.That(await db.SealAsync(shape, start)).IsEqualTo(head).Because("admission refusal leaves the range sealable");
@@ -413,7 +413,7 @@ public sealed class ShapeSealTests
             materialized++;
             return true;
         });
-        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, db.Storage);
+        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, db.Storage, new LocalDurability());
 
         await Assert.That(await sealer.SealUpToHeadAsync(db.Store, shape, start, CancellationToken.None)).IsEqualTo(head);
         var chunk = (await db.ReadAllAsync(shape.Handle, start, head)).Single();
@@ -436,7 +436,7 @@ public sealed class ShapeSealTests
         var shape = await ShapeAsync(db);
         var memory = new ObservedBudget(api.Server.Services.GetRequiredService<IMemoryBudget>());
         var storage = new ObservedShapeStorage(db.Storage);
-        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, storage);
+        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, storage, new LocalDurability());
         ShapeSealRequest[] active = [new(shape, start)];
         using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var worker = sealer.RunDatabaseAsync(db.Store, () => Volatile.Read(ref active), stop.Token);
@@ -581,7 +581,7 @@ public sealed class ShapeSealTests
         var (shapeDamaged, shapeHealthy) = (await ShapeAsync(damaged), await ShapeAsync(healthy));
         // The 16 MB image allowance fits; token admission (or bookkeeping's byte upper bound) exceeds the remainder.
         var memory = new ObservedBudget(api.Server.Services.GetRequiredService<IMemoryBudget>(), 20 * MiB);
-        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, damaged.Storage);
+        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, damaged.Storage, new LocalDurability());
 
         await Assert.That(async () => await sealer.SealUpToHeadAsync(damaged.Store, shapeDamaged, damagedStart, CancellationToken.None))
             .Throws<QosMemoryException>();
@@ -592,7 +592,7 @@ public sealed class ShapeSealTests
         await Assert.That(await damaged.ReadAsync(shapeDamaged.Handle, damagedStart)).IsNull();
         await Assert.That(await damaged.ScalarAsync("SELECT COUNT(*) FROM _tb_shape_chunk;")).IsEqualTo(0L);
 
-        var healthySealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, healthy.Storage);
+        var healthySealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, healthy.Storage, new LocalDurability());
         await Assert.That(await healthySealer.SealUpToHeadAsync(healthy.Store, shapeHealthy, healthyStart, CancellationToken.None))
             .IsEqualTo(healthyHead).Because("the refused database does not retain admission or stop another database from sealing");
         await Assert.That(await healthy.ReadAsync(shapeHealthy.Handle, healthyStart)).IsNotNull();
@@ -728,7 +728,8 @@ public sealed class ShapeSealTests
 
         public SqliteShapeStorage Storage { get; } = new(server.Services.GetRequiredService<SqliteStorageEngine>());
 
-        public ShapeSealer Sealer => new(server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance, Storage);
+        public ShapeSealer Sealer => new(server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance, Storage,
+            server.Services.GetRequiredService<IRemoteDurability>());
 
         private IChangeGroupSource Groups => server.Services.GetRequiredService<IChangeGroupSource>();
 

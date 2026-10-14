@@ -390,7 +390,9 @@ internal sealed partial class SqliteStorageTransaction
             retire.ExecuteNonQuery();
 
             var delete = Command(Retention);
-            delete.Parameters.AddWithValue("$below", backupAnchor ?? long.MaxValue);
+            // Nor the rows the shape frontier has not walked yet, for a bounded time: this ack's proof comes after it (FR-25).
+            var hold = store.IsSystem ? null : ShapeFrontierHold(session.Connection, transaction, now.ToUnixTimeSeconds());
+            delete.Parameters.AddWithValue("$below", Math.Min(backupAnchor ?? long.MaxValue, hold ?? long.MaxValue));
             delete.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
             delete.Parameters.AddWithValue("$gone", Member.GoneBefore(now.ToUnixTimeMilliseconds()));
             delete.ExecuteNonQuery();

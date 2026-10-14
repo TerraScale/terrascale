@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
@@ -151,6 +152,29 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     public ValueTask<bool> AckAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken) =>
         RecordAsync(database, incarnation, peer, changeId, stable, cancellationToken);
+
+    public async ValueTask<bool> ProveAsync(TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken)
+    {
+        if (await BeginAsync(database, incarnation, write: true, cancellationToken).ConfigureAwait(false) is not (var store, var transaction))
+        {
+            return false;
+        }
+
+        bool moved;
+        await using (transaction.ConfigureAwait(false))
+        {
+            moved = await transaction.AdvanceShapeFrontierAsync(_engine.ReplicaId, (from, through), held, cancellationToken).ConfigureAwait(false);
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        if (moved)
+        {
+            // Wakes shape sealing and live reads waiting for the frontier.
+            store.MoveCommitCount();
+        }
+
+        return true;
+    }
 
     public async ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken)
     {
@@ -406,7 +430,15 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         {
             // The file this transaction holds, which a reopen may have made another than the store's cached one.
             var incarnation = await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false);
-            (var left, floor, var raised, var oldest) = await transaction.TrimAsync(store.BackupAnchor, _engine.HostTime.GetUtcNow(), _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
+            // Before the cut: commits that need no new proof pass the shape frontier while capture still holds them. No held
+            // origins here (the source knows no links): joined commits wait for a proof or a seal request that names them.
+            var moved = await transaction.AdvanceShapeFrontierAsync(_engine.ReplicaId, null, FrozenSet<ReplicaId>.Empty, cancellationToken).ConfigureAwait(false);
+            var now = _engine.HostTime.GetUtcNow();
+            // The cut keeps what the frontier has not walked yet, for a bounded time (a pass's budget, or a proof to come).
+            var below = await transaction.ShapeFrontierHoldAsync(now.ToUnixTimeSeconds(), cancellationToken).ConfigureAwait(false) is { } hold
+                ? Math.Min(store.BackupAnchor ?? long.MaxValue, hold)
+                : store.BackupAnchor;
+            (var left, floor, var raised, var oldest) = await transaction.TrimAsync(below, now, _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
             // Before the commit wakes a stream: its RetainsAsync then already sees the ranges the raises proved quiet (which
             // hold whether or not the commit lands; the rows are unchanged until a later cut).
             foreach (var (from, to) in raised)
@@ -419,6 +451,11 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             _backlog[incarnation] = left;
             Prune(incarnation, oldest);
+            if (moved)
+            {
+                // Wakes shape sealing and live reads waiting for the frontier.
+                store.MoveCommitCount();
+            }
         }
 
         await TailAsync(store, floor, cancellationToken).ConfigureAwait(false);

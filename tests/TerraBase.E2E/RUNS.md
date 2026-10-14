@@ -444,3 +444,50 @@ E2E run (#105 94086cd6 on main, run 3 of 3 (mariogk-dev)), 2026-10-12T10:54Z on 
 | `Hosts_three_local_regions_until_the_benchmark_deletes_its_targets_file` | skip | in-process nodes | none | the replication benchmark's local cluster host: run it with make benchmark-repl-local |
 | `Sjc_machine_stopped_then_started_catches_up_on_writes_made_during_the_outage` | skip | in-process nodes | NodeStop | Fly outage test: set TERRABASE_E2E_FLY_URL and TERRABASE_E2E_FLY_OUTAGE=1, or run make terrabase-e2e-fly-outage |
 <!-- /e2e-summary -->
+
+## FR-25 process durability scenarios (working tree)
+
+<!-- e2e-summary -->
+E2E run (local), 2026-10-14T06:02Z on delta
+
+- Commit: `993927ce7ecf8f9b889d24d4d1d21ec96eaf9416`; working tree: 2541e8771da12bfcd4c86c5dfa0eb8abdec26b4434cd538f11703bbb1347211c
+- Stacked on: none (merge base with origin/main `993927ce7ecf8f9b889d24d4d1d21ec96eaf9416`)
+
+| Category | Tests |
+| --- | ---: |
+| actual pass | 2 |
+| harness check | 0 |
+| expected failure | 0 |
+| not supported | 0 |
+| skip | 0 |
+| fail | 0 |
+| total | 2 |
+
+| Test | Outcome | Nodes | Faults | Waits on / reason |
+| --- | --- | --- | --- | --- |
+| `An_unacknowledged_origin_write_is_never_read_from_a_sealed_chunk_and_dies_with_its_origin` | actual pass | separate OS processes | ProcessKill |  |
+| `The_remote_durable_frontier_survives_the_origins_SIGKILL` | actual pass | separate OS processes | ProcessKill |  |
+<!-- /e2e-summary -->
+
+
+<!-- e2e-summary -->
+E2E run (local), 2026-10-14T06:46Z on delta
+
+- Commit: `993927ce7ecf8f9b889d24d4d1d21ec96eaf9416`; working tree: ea3ec095bed736912489d31f2144b910779a1e7b351c4940d0f4190bc284f485
+- Stacked on: none (merge base with origin/main `993927ce7ecf8f9b889d24d4d1d21ec96eaf9416`)
+
+| Category | Tests |
+| --- | ---: |
+| actual pass | 2 |
+| harness check | 0 |
+| expected failure | 0 |
+| not supported | 0 |
+| skip | 0 |
+| fail | 0 |
+| total | 2 |
+
+| Test | Outcome | Nodes | Faults | Waits on / reason |
+| --- | --- | --- | --- | --- |
+| `An_unacknowledged_origin_write_is_never_read_from_a_sealed_chunk_and_dies_with_its_origin` | actual pass | separate OS processes | ProcessKill |  |
+| `The_remote_durable_frontier_survives_the_origins_SIGKILL` | actual pass | separate OS processes | ProcessKill |  |
+<!-- /e2e-summary -->

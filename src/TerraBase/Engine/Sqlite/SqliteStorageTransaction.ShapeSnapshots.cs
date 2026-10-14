@@ -28,6 +28,9 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
         return reader.Read() ? new ShapeSnapshot(reader.GetInt64(0), reader.GetInt64(1)) : null;
     }
 
+    public ValueTask<long> ShapeSnapshotFloorAsync(string handle, CancellationToken cancellationToken) =>
+        RunAsync(() => ShapeFloor(handle), cancellationToken);
+
     public ValueTask<bool> ShapeSnapshotDueAsync(string handle, long now, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
@@ -60,11 +63,17 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
         }, cancellationToken);
 
     public ValueTask<(long Offset, string Cursor)> ShapeSnapshotHeadAsync(
-        ReadOnlyMemory<byte> resumeScope, DateTimeOffset now, CancellationToken cancellationToken) =>
+        bool remote, ReadOnlyMemory<byte> resumeScope, DateTimeOffset now, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
             CountRead("shape");
             var offset = (long)Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar()!;
+            // Values are read at the head: a snapshot seals only once the head is remote durable.
+            if (remote && ShapeFrontierOrHead(remote: true) < offset)
+            {
+                throw new StorageBusyException();
+            }
+
             Dictionary<ReplicaId, Hlc> stamps = [];
             Dictionary<ReplicaId, FeedPrefix> prefixes = [];
             List<(ReplicaId Origin, Hlc Floor)> floors = [];

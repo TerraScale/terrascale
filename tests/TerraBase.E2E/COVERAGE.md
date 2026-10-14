@@ -250,3 +250,14 @@ restored databases, and fails if unpinned or missing that credential. Target: `t
 `terrascale-previews-515`; PR apps and production apps remain refused. Per-cut details are retained in the run's
 `TERRABASE_E2E_RESULTS` JSONL and console log. Exact acknowledgement-time cuts before convergence, shipping faults,
 lease handoff and restored multi-region placement are not qualified by this scenario.
+
+## Shape publication durability (FR-25)
+
+`ShapeDurabilityE2ETests` drives the real shape sealer in separate gru/sjc operating-system processes through a
+test-only probe. The peer refuses database applies before storing them; catalog replication continues. Both served
+chunks and raw persisted chunks exclude the unacknowledged insertion and overwrite. After SIGKILL of the origin,
+the peer lacks both writes. A second scenario proves that a remotely acknowledged frontier and safe immutable chunk
+survive origin SIGKILL/restart. These scenarios passed locally; they do not qualify a Fly deployment or power loss.
+
+The probe bypasses endpoint wiring owned by FR-20. Fast tests cover held/refused acknowledgements, publication after
+ack, immutable old values during an unacknowledged overwrite, worker wake, missing capture, and cell-of-one commits.

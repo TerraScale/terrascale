@@ -13,8 +13,9 @@ internal interface IShapeFreshStorage
 
     /// <summary>
     /// A fresh body at <paramref name="offset"/>: no changes at the head, or the sealed chunk's changes re-framed at its end
-    /// with a fresh cursor and <c>up_to_date</c> only when that end is the head. Null when the offset is above the head or
-    /// its chunk is not sealed. The caller owns the returned lease.
+    /// with a fresh cursor and <c>up_to_date</c> only when that end is the head. With <paramref name="remote"/> the head is
+    /// the remote durable frontier read in the same transaction (FR-25). Null when the offset is above the head, its chunk is
+    /// not sealed, or the chunk's end or values_at is above the head. The caller owns the returned lease.
     /// </summary>
-    ValueTask<ShapeBody?> ReadShapeFreshAsync(ShapeSealDefinition shape, long offset, IMemoryBudget memory, CancellationToken cancellationToken);
+    ValueTask<ShapeBody?> ReadShapeFreshAsync(ShapeSealDefinition shape, long offset, bool remote, IMemoryBudget memory, CancellationToken cancellationToken);
 }
