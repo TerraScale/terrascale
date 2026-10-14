@@ -1,6 +1,5 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
-  import RegionFlag from '@/components/RegionFlag.svelte'
   import { tokenize, CODE_SAMPLES, LANG_META, type Lang } from '@/lib/highlight'
   import { dict } from '@/lib/i18n'
 
@@ -10,8 +9,12 @@
 
   $: code = CODE_SAMPLES[lang]
   $: tokens = tokenize(code, lang)
-  $: ext = LANG_META.find((l) => l.id === lang)?.ext ?? 'txt'
+  $: file = LANG_META.find((l) => l.id === lang)?.file ?? ''
   $: bullets = $dict.code.bullets
+  $: agent = $dict.code.agent
+
+  // Tool names registered by the ts-dashboard MCP server.
+  const mcpTools = ['list_databases', 'run_sql', 'create_document', 'get_usage', 'set_database_regions']
 
   async function handleCopy() {
     try {
@@ -48,19 +51,35 @@
               <span class="code__bullet-check">
                 <Icon name="check" className="code__bullet-icon" />
               </span>
-              {#if bullet.endsWith('gru, sjc, fra')}
-                <span>{bullet.slice(0, -13)}</span><RegionFlag code="gru" /><RegionFlag code="sjc" /><RegionFlag code="fra" />
-              {:else}
-                <span>{bullet}</span>
-              {/if}
+              <span>{bullet}</span>
             </li>
           {/each}
         </ul>
+
+        <div class="code__agent">
+          <h3 class="code__agent-title">
+            <Icon name="messageSquare" className="code__agent-icon" />
+            {agent.title}
+          </h3>
+          <p class="code__agent-text">{agent.text}</p>
+          <p class="code__agent-label">{agent.promptsLabel}</p>
+          <ul class="code__prompts">
+            {#each agent.prompts as prompt (prompt)}
+              <li class="code__prompt">{prompt}</li>
+            {/each}
+          </ul>
+          <p class="code__agent-label">{agent.toolsLabel}</p>
+          <ul class="code__tools">
+            {#each mcpTools as tool (tool)}
+              <li><code class="code__tool">{tool}</code></li>
+            {/each}
+          </ul>
+        </div>
       </div>
 
       <div class="code__terminal">
         <div class="code__head">
-          <span class="code__filename">~/app/queries.{ext}</span>
+          <span class="code__filename">{file}</span>
           <div class="code__tabs" role="tablist" aria-label={$dict.code.tablistLabel}>
             {#each LANG_META as l (l.id)}
               <button
@@ -71,7 +90,9 @@
                 aria-selected={lang === l.id}
                 on:click={() => (lang = l.id)}
               >
-                <img src={l.icon} alt="" width="14" height="14" class="code__tab-icon" />
+                {#if l.icon}
+                  <img src={l.icon} alt="" width="14" height="14" class="code__tab-icon" />
+                {/if}
                 {l.label}
               </button>
             {/each}
@@ -108,7 +129,7 @@
     display: grid;
     grid-template-columns: minmax(0, 6fr) minmax(0, 7fr);
     gap: 64px;
-    align-items: center;
+    align-items: start;
   }
 
   .code__copy {
@@ -175,6 +196,88 @@
     height: 14px;
   }
 
+  .code__agent {
+    display: grid;
+    gap: 12px;
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid var(--ts-divider);
+  }
+
+  .code__agent-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--ts-text);
+    letter-spacing: -0.015em;
+    line-height: 1.3;
+  }
+
+  :global(.code__agent-icon) {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    color: var(--ts-primary);
+  }
+
+  .code__agent-text {
+    margin: 0;
+    font-size: 14px;
+    color: var(--ts-text-muted);
+    line-height: 1.7;
+    max-width: 60ch;
+  }
+
+  .code__agent-label {
+    margin: 8px 0 0;
+    font-family: var(--ts-font-mono);
+    font-size: 12px;
+    color: var(--ts-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .code__prompts,
+  .code__tools {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .code__prompts {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .code__prompt {
+    padding: 8px 12px;
+    border: 1px solid var(--ts-divider);
+    border-radius: 10px 10px 10px 2px;
+    background: var(--ts-bg-surface);
+    color: var(--ts-text);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .code__tool {
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 8px;
+    border: 1px solid var(--ts-divider);
+    border-radius: 4px;
+    color: var(--ts-text-muted);
+    font-family: var(--ts-font-mono);
+    font-size: 12px;
+    line-height: 1;
+  }
+
   .code__terminal {
     min-width: 0;
     background: var(--ts-bg-surface);
@@ -201,7 +304,7 @@
 
   .code__tabs {
     display: flex;
-    gap: 4px;
+    gap: 16px;
     margin-left: auto;
     overflow-x: auto;
     scrollbar-width: none;

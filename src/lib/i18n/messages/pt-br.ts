@@ -86,27 +86,32 @@ export const ptBr: Messages = {
     titleLead: 'Public Alpha,',
     titleAccent: 'com limites explícitos',
     subtitle:
-      'O contrato de lançamento cobre documentos, três regiões selecionáveis, clientes tipados e saúde visível sem compromisso de disponibilidade.',
+      'O contrato de lançamento cobre documentos, três regiões ativas, clientes tipados e saúde visível sem compromisso de disponibilidade.',
     items: [
       {
-        title: 'API de dados tipados',
-        text: 'Crie bancos de dados, repositórios, esquemas e documentos e consulte com TQL por meio de uma única API pública.',
-        bullets: ['Repositórios', 'TQL', 'Clientes SDK'],
+        title: 'Dados',
+        text: 'Bancos de dados guardam coleções de documentos JSON, cada uma com um esquema opcional. Consulte com filtros JSON ou SQL somente leitura: SELECT, WHERE, ORDER BY e até 1.000 linhas por instrução.',
+        bullets: ['Coleções', 'Filtros JSON', 'SQL somente leitura'],
       },
       {
-        title: 'Roteamento regional',
-        text: 'O endpoint global escolhe a região selecionada saudável mais próxima. Endpoints regionais estritos nunca atendem de outra região.',
-        bullets: ['Endpoint global', 'Endpoints regionais estritos', 'Regiões selecionadas'],
-      },
-      {
-        title: 'Regiões de lançamento',
-        text: 'Escolha São Paulo, San Francisco Bay Area ou Frankfurt durante o Public Alpha.',
+        title: 'Regiões',
+        text: 'São Paulo, San Francisco Bay Area e Frankfurt já atendem tráfego. Cada banco vive em uma região principal e é replicado por completo nas outras regiões que você selecionar.',
         bullets: ['gru', 'sjc', 'fra'],
       },
       {
-        title: 'Sinais medidos',
-        text: 'Saúde da replicação, convergência, conflitos, latência da API e estimativas geográficas continuam sendo valores separados. O conteúdo do cliente permanece nas regiões selecionadas. O tráfego do cliente exige TLS 1.2 ou mais recente, os dados em repouso usam criptografia qualificada e cada solicitação ainda exige autorização.',
-        bullets: ['Hora da observação', 'Rótulos de evidência', 'Sem promessa de atraso limitado'],
+        title: 'Roteamento',
+        text: 'O endpoint global responde da região saudável mais próxima que tem o seu banco. Endpoints regionais estritos nunca atendem de uma região que você não selecionou.',
+        bullets: ['Endpoint global', 'Endpoints regionais estritos'],
+      },
+      {
+        title: 'Saúde',
+        text: 'A replicação é assíncrona. Atraso, convergência, conflitos e latência da API são publicados como valores medidos separados, com o horário da observação. Não há promessa de atraso limitado, porcentagem de disponibilidade nem SLA.',
+        bullets: ['Replicação assíncrona', 'Horário da observação', 'Sem SLA'],
+      },
+      {
+        title: 'Segurança',
+        text: 'O tráfego do cliente exige TLS 1.2 ou superior, os dados em repouso usam criptografia qualificada e toda requisição exige autorização. O conteúdo do cliente permanece nas regiões que você selecionar.',
+        bullets: ['TLS 1.2+', 'Criptografia em repouso', 'Autorização por requisição'],
       },
     ],
   },
@@ -115,17 +120,23 @@ export const ptBr: Messages = {
     eyebrow: 'SDK para desenvolvedores',
     headlineLead: 'Consulte seus dados',
     headlineAccent: 'na linguagem que você ama',
-    text: 'SDKs de primeira classe em C# e TypeScript usam as mesmas rotas HTTP públicas do painel, com modelos OpenAPI gerados por baixo.',
-    bullets: [
-      'Catálogo de contratos OpenAPI gerado',
-      'Clientes tipados em C# e TypeScript',
-      'O painel usa o limite público do SDK',
-      'Entradas de região para gru, sjc, fra',
-    ],
+    text: 'SDKs tipados em C# e TypeScript chamam a mesma API HTTP pública usada pelo painel, com modelos gerados a partir do contrato OpenAPI.',
+    bullets: ['Clientes tipados em C# e TypeScript', 'Modelos OpenAPI gerados', 'Filtros JSON ou SQL somente leitura'],
+    agent: {
+      title: 'Ou peça ao seu agente de IA favorito para fazer isso por você',
+      text: 'Suportamos CLI e MCP. Conecte o Claude Code, o Cursor ou qualquer cliente MCP ao servidor MCP da TerraScale com um token de acesso pessoal. O agente age com os seus papéis e cada chamada é verificada novamente. Agentes também podem chamar a API HTTP pelo terminal.',
+      promptsLabel: 'Experimente pedir',
+      prompts: [
+        'Liste meus bancos de dados e as regiões que cada um atende.',
+        'Encontre os clientes com 10 ou mais assentos no banco app.',
+        'Quanto da cota de unidades de operação deste mês já usamos?',
+      ],
+      toolsLabel: 'Algumas ferramentas MCP',
+    },
     copy: 'Copiar',
     copied: 'Copiado',
     copyAria: 'Copiar código',
-    tablistLabel: 'Exemplos de linguagem',
+    tablistLabel: 'Exemplos de código',
   },
 
   cta: {
@@ -137,32 +148,6 @@ export const ptBr: Messages = {
     ctaSecondary: 'Fale com vendas',
     perksAria: 'Detalhes dos planos',
     perks: ['Planos pagos mensais', 'Sem excedentes pagos'],
-  },
-
-  statusStrip: {
-    aria: 'Status do sistema',
-    headline: {
-      operational: 'Todos os sistemas operacionais',
-      degraded: 'Desempenho degradado',
-      partial_outage: 'Interrupção parcial',
-      major_outage: 'Interrupção grave',
-      maintenance: 'Manutenção programada',
-    },
-    states: {
-      operational: 'Operacional',
-      degraded: 'Degradado',
-      partial_outage: 'Interrupção parcial',
-      major_outage: 'Interrupção grave',
-      maintenance: 'Manutenção',
-      none: 'Sem dados',
-    },
-    detail: 'Página de status pública · últimos 90 dias',
-    fallback: 'Status atual do sistema',
-    fallbackDetail: 'A disponibilidade é publicada na página de status',
-    barsAria: 'Status diário, últimos 90 dias',
-    axisStart: '90 dias atrás',
-    axisEnd: 'Hoje',
-    link: 'Página de status',
   },
 
   pricingTeaser: {
