@@ -91,7 +91,7 @@ With `920629bb`, every sampled origin answer is `private, no-store`.
   - Keep #283's `mirror.Warm(...)` and drop the `CachePrivate` assignment in `GetShapeEndpoint`.
   - Use `DocumentNoStore(response)` in `ShapesExtensions` in place of #283's inline OpenAPI `Cache-Control` header block.
 
-Still needed after #283 lands: a FakeS3 regression test asserting that a PUT carries `public, max-age=31536000, immutable`.
+FR-22 already tests public/365-day/immutable headers in `A_presigned_url_serves_the_ciphertext_and_refuses_tampering_and_expiry`. FR-24 will extend that regression with ciphertext content/metadata assertions after #283 lands.
 
 ## Cleanup (verified 20:06Z)
 
