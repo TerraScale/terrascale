@@ -8,10 +8,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Nothing deploys from here, so superseded runs are cancelled everywhere, main included.
+# Superseded PR runs are cancelled; main runs always finish so main's cache and status stay current.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -21,12 +21,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: stable
+          # Module + build cache keyed on go.sum; a PR only saves when it changes go.sum.
           cache: true
           cache-dependency-path: go.sum
       - run: test -z "$(gofmt -l .)"
