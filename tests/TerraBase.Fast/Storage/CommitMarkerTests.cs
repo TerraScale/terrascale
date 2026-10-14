@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Replication;
@@ -208,6 +209,11 @@ public sealed class CommitMarkerTests
         using var data = await api.CreateClientAsync(managed.Organization, "documents:write", "documents:read");
         await ManagementApi.CreateCollectionAsync(data, managed, "items");
         var (store, source, tenant) = await OpenAsync(api, managed, token);
+        if (failingStep == "writer.marker")
+        {
+            // Keep the faulted copy in place while proving its landed write; rebuild behavior has its own integration tests.
+            await api.Server.Services.GetServices<IHostedService>().OfType<RebuildRecovery>().Single().StopAsync(token);
+        }
         committing = store;
         _ = await PutAsync(store, EntityIds.New().ToString(), token);
         var before = await HeadAsync(source, store, tenant, token);
@@ -240,6 +246,11 @@ public sealed class CommitMarkerTests
         await Assert.That(Volatile.Read(ref markedSession)).IsSameReferenceAs(session);
         await Assert.That(store.CommitSequence).IsGreaterThan(sequence).Because("the successful COMMIT must notify waiters even when its marker read fails");
         await Assert.That(store.Incarnation).IsEqualTo(incarnation);
+        if (failingStep == "writer.marker")
+        {
+            await AssertFaultedCommitAsync(api, store, source, tenant, before, id, token);
+            return;
+        }
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.OK);
         await AssertValueAsync(data, managed, id, 1, token);
         await Assert.That((await ReadAsync(source, store, tenant, before, token))
@@ -282,6 +293,11 @@ public sealed class CommitMarkerTests
         using var data = await api.CreateClientAsync(managed.Organization, "documents:write", "documents:read");
         await ManagementApi.CreateCollectionAsync(data, managed, "items");
         var (store, source, tenant) = await OpenAsync(api, managed, token);
+        if (failingStep == "writer.marker")
+        {
+            // Keep the faulted copy in place while proving its landed write; rebuild behavior has its own integration tests.
+            await api.Server.Services.GetServices<IHostedService>().OfType<RebuildRecovery>().Single().StopAsync(token);
+        }
         committing = store;
         _ = await PutAsync(store, EntityIds.New().ToString(), token);
         var before = await HeadAsync(source, store, tenant, token);
@@ -312,6 +328,11 @@ public sealed class CommitMarkerTests
             await Assert.That(store.CurrentWriter()).IsNotSameReferenceAs(Volatile.Read(ref markedSession));
         }
         await Assert.That(store.Incarnation).IsEqualTo(incarnation);
+        if (failingStep == "writer.marker")
+        {
+            await AssertFaultedCommitAsync(api, store, source, tenant, before, id, token);
+            return;
+        }
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.OK);
         await AssertValueAsync(data, managed, id, 1, token);
         await Assert.That((await ReadAsync(source, store, tenant, before, token))
@@ -353,6 +374,26 @@ public sealed class CommitMarkerTests
         await Assert.That(await StatusAsync(data, managed, id, token)).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That((await ReadAsync(source, store, tenant, before, token))
             .Any(group => group.Deltas.Any(delta => delta.Id == id))).IsFalse();
+    }
+
+    private static async Task AssertFaultedCommitAsync(
+        ManagementApi api, SqliteDatabaseStore store, IChangeGroupSource source, TenantContext tenant, long before, string id, CancellationToken token)
+    {
+        await Assert.That(await api.Server.Services.GetRequiredService<IReplicaCopyFaults>().RefusedAsync(tenant, store.Incarnation, token)).IsTrue();
+        await Assert.That(await source.ReadAsync(tenant, store.Incarnation, before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token)).IsNull()
+            .Because("a landed commit on a faulted copy cannot be offered to peers");
+        await using (var read = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, token))
+        {
+            var document = await read.GetAsync("items", id, token);
+            await Assert.That(document).IsNotNull().Because("the native COMMIT landed before the marker read failed");
+            using var body = JsonDocument.Parse(document!.Json);
+            await Assert.That(body.RootElement.GetProperty("n").GetInt32()).IsEqualTo(1);
+            var (groups, _, _) = await read.ReadChangeGroupsAsync(before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes,
+                api.Server.Services.GetRequiredService<SqliteStorageEngine>().ReplicaId, token);
+            await Assert.That(groups.Count(group => group.Deltas.Any(delta => delta.Id == id))).IsEqualTo(1)
+                .Because("the ambiguous mutation was committed once, without replay");
+        }
+        await Assert.ThrowsAsync<ReplicaCopyFaultedException>(() => PutAsync(store, EntityIds.New().ToString(), token).AsTask());
     }
 
     private static ValueTask<(long Result, CommitResult Commit)> PutAsync(SqliteDatabaseStore store, string id, CancellationToken token) =>

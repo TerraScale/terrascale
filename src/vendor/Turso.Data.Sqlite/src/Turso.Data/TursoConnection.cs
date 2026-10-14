@@ -11,6 +11,9 @@ public class TursoConnection : DbConnection
     internal static Func<HttpMessageHandler?>? RemoteMessageHandlerFactory { get; set; }
     internal static Func<HttpClient?>? SyncHttpClientFactory { get; set; }
 
+    /// <summary>The local owning copy's refusal; observes runtime storage state, not connection-string configuration.</summary>
+    public Func<string?>? CloseRefusal { get; set; }
+
     private TursoDatabaseHandle? _turso;
     private TursoRemoteClient? _remoteClient;
     private TursoSyncDatabase? _syncDatabase;
@@ -98,6 +101,7 @@ public class TursoConnection : DbConnection
         {
             _turso = TursoBindings.OpenDatabase(filename);
         }
+        _turso.CloseRefusal = CloseRefusal;
     }
 
     public override Task OpenAsync(CancellationToken cancellationToken)

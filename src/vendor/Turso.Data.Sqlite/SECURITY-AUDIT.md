@@ -142,6 +142,14 @@ I/O, configuration, reflection or public API.
   `TransactionTests.AFailingProbeNeverReplacesTheOriginalError` (probe failing at `BEGIN` and at `ROLLBACK`), which failed
   both ways before the fix ("the test breaks the probe" instead of the read's error) and passes after.
 
+Patch 0005 was reviewed as a source delta on 2026-10-13. `TursoBindings.ThrowIfError` preserves the existing native
+status in a new `TursoNativeException` subtype. Local command and connection error conversion maps only
+`Corrupt` (133), `IoError` (134) and `NotADatabase` (132) to SQLite damage codes 11, 10 and 26; other local errors retain
+code 1. The native ABI, package version, dependencies, I/O and configuration are unchanged. This lets TerraBase refuse
+damaged copies on statement and open failures, rather than losing that information in generic error conversion.
+`DamageErrorCodeTests` covers corrupt-page reads/writes, a non-database file and ordinary errors; runtime validation of
+this delta remains pending. No failing-disk experiment qualifies the I/O mapping here.
+
 Our build files (`Directory.Build.props`, `Directory.Build.targets`; not patches) set net11.0, warnings as errors, lock
 files under `locks/`, not packable, `NU1507;NU1801` as in the root props, Turso.Raw's package id to its project name,
 and the `Turso.Data.Native` reference.
@@ -188,6 +196,20 @@ nixpkgs#cargo-deny` (cargo 1.95.0, cargo-audit 0.22.1, cargo-deny 0.19.6), `CARG
 - Obligations: Apache-2.0, BSD, Zlib and Unicode-3.0 ask for attribution when the binary is distributed. TerraBase is
   not distributed (it runs as TerraScale's service; no published binaries), so none applies today; distributing a
   TerraBase binary would need these notices.
+
+### Patch 0006 (2026-10-13)
+
+Refused local connections use the existing connection/statement deinit exports instead of graceful close, which can
+checkpoint. Native operations must have stopped and executing write statements must have ended before this terminal
+cleanup. Statement ownership uses long weak references and one per-connection release lock so teardown can release a
+statement whose SafeHandle finalizer already marked it closed. No native package, ABI, dependency or wire format changes.
+
+The pinned source and Linux x64 binary were inspected: connection Drop releases locks and ownership without the graceful
+checkpoint; statement Drop can finish an executing write, which is why this is not an interrupt API. Driver regressions
+cover actual last-connection healthy checkpointing, refused byte preservation and zero file descriptors, provider disposal
+and rollback failures, and deterministic disposal/finalizer races. TerraBase integration coverage holds a reader across
+swap and verifies retained bytes and replacement isolation after late disposal. These checks do not qualify arbitrary
+power loss, concurrent native abandonment or every native architecture.
 
 ## Open items
 

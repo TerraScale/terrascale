@@ -1,3 +1,4 @@
+using TerraBase.Engine;
 using TerraBase.Features.Memory;
 using TerraBase.Tenancy;
 
@@ -37,11 +38,12 @@ internal enum RebuildPhase
 }
 
 /// <summary>The one recovery record of a database's rebuild, kept next to its fault record.</summary>
-internal sealed record RebuildRecord(TenantContext Database, Ulid OldIncarnation, string SidePath, RebuildPhase Phase, Ulid? NewIncarnation);
+internal sealed record RebuildRecord(
+    TenantContext Database, Ulid OldIncarnation, string SidePath, RebuildPhase Phase, Ulid? NewIncarnation, Ulid? AdditionalIncarnation = null);
 
 /// <summary>
 /// Where rebuild records persist: outside the suspect file, durable (FULL) before a call returns. Its storage belongs
-/// with the copy-fault record (R6-FIX, R10a) and is not built yet.
+/// with the node-local copy-fault record in the system database.
 /// </summary>
 internal interface IRebuildLedger
 {
@@ -139,22 +141,27 @@ internal interface IReplicaRebuild
 /// unwritten and a fresh file takes their place; a certified refill fills it from a source; every state of the side copy
 /// that verifies against its stored digest joins it (whatever the source lacks survives); the completion barrier
 /// certifies; only then does the side copy go. Any step that cannot finish refuses, keeping the record and the side copy;
-/// a later run resumes from the record. Production wiring (who calls it, where records live) is R6-FIX's and R10a's.
+/// a later run resumes from the record. The recovery worker resumes durable records at startup and after a copy fault.
 /// </summary>
 internal sealed class ReplicaRebuild(
-    IRebuildStorage storage, IRebuildLedger ledger, IRebuildCertification certification, IChangeGroupSink sink, IMemoryBudget memory) : IReplicaRebuild
+    IRebuildStorage storage, IRebuildLedger ledger, IRebuildCertification certification, IRebuildRepair repair, IMemoryBudget memory) : IReplicaRebuild
 {
     private const int SalvageRows = ChangeGroups.MaxDeltas;
     private const long SalvageBytes = ChangeGroups.MaxBatchBytes;
 
-    // Reserved per stored byte of a page: its text as read, its decoded bytes and the decoded state and document.
-    private const long ReservedPerByte = 4;
+    // Stored text, decoded lattice nodes, JSON parser metadata and repair encodings, held through each page's join.
+    private const long ReservedPerByte = 16;
 
     // 1 while a rebuild runs on this host: a second one answers busy, nothing queues in memory.
     private int _active;
 
     public async ValueTask<RebuildOutcome> RebuildAsync(TenantContext database, Ulid faultedIncarnation, CancellationToken cancellationToken)
     {
+        if (database == ChangeGroups.System)
+        {
+            return new RebuildOutcome.Refused("the system database cannot be rebuilt in process");
+        }
+
         if (Interlocked.CompareExchange(ref _active, 1, 0) != 0)
         {
             return new RebuildOutcome.Busy();
@@ -163,6 +170,10 @@ internal sealed class ReplicaRebuild(
         try
         {
             return await RunAsync(database, faultedIncarnation, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ReplicaCopyFaultedException error)
+        {
+            return new RebuildOutcome.Refused(error.Message);
         }
         catch (IOException)
         {
@@ -223,9 +234,15 @@ internal sealed class ReplicaRebuild(
                 return new RebuildOutcome.Refused("no certified refill from an intact source");
             }
 
-            if (await SalvageAsync(database, record.SidePath, cancellationToken).ConfigureAwait(false) is { } failed)
+            if (await SalvageAsync(database, rebuilt, record.SidePath, cancellationToken).ConfigureAwait(false) is { } failed)
             {
                 return new RebuildOutcome.Refused(failed);
+            }
+
+            if (record.AdditionalIncarnation is { } additional
+                && await SalvageAsync(database, rebuilt, storage.SidePath(database, additional), cancellationToken).ConfigureAwait(false) is { } additionalFailure)
+            {
+                return new RebuildOutcome.Refused(additionalFailure);
             }
 
             record = record with { Phase = RebuildPhase.Salvaged };
@@ -251,13 +268,19 @@ internal sealed class ReplicaRebuild(
             return new RebuildOutcome.Refused("the rebuilt copy is no longer in place; the side copy stays");
         }
 
+        if (record.AdditionalIncarnation is { } retained
+            && !await storage.FinalizeAsync(database, rebuilt, storage.SidePath(database, retained), cancellationToken).ConfigureAwait(false))
+        {
+            return new RebuildOutcome.Refused("the rebuilt copy is no longer in place; the additional side copy stays");
+        }
+
         await ledger.RetireAsync(database, faulted, cancellationToken).ConfigureAwait(false);
         return new RebuildOutcome.Completed(rebuilt);
     }
 
     // Joins every state of the side copy into the new incarnation as repairs, page by page, read from a private working copy
     // and with each page's memory reserved before it is read; the reason it could not, or null.
-    private async ValueTask<string?> SalvageAsync(TenantContext database, string sidePath, CancellationToken cancellationToken)
+    private async ValueTask<string?> SalvageAsync(TenantContext database, Ulid rebuilt, string sidePath, CancellationToken cancellationToken)
     {
         var working = await storage.CopyForSalvageAsync(sidePath, cancellationToken).ConfigureAwait(false);
         try
@@ -265,13 +288,33 @@ internal sealed class ReplicaRebuild(
             var (collection, id) = (string.Empty, string.Empty);
             while (true)
             {
-                var rows = await storage.MeasureSideAsync(working, collection, id, SalvageRows, SalvageBytes, cancellationToken).ConfigureAwait(false);
+                using var metadata = memory.TryReserve(MemoryLane.Bulk, SalvageRows * 8192L, tenant: null);
+                if (metadata is null)
+                {
+                    return "no memory to measure the side copy's next page";
+                }
+
+                IReadOnlyList<SideRow> rows;
+                try
+                {
+                    rows = await storage.MeasureSideAsync(working, collection, id, SalvageRows, SalvageBytes, cancellationToken).ConfigureAwait(false);
+                }
+                catch (InvalidDataException)
+                {
+                    return "a key of the side copy exceeds the bounded salvage page";
+                }
                 if (rows.Count == 0)
                 {
                     return null;
                 }
 
-                using var reservation = memory.TryReserve(MemoryLane.Bulk, rows.Sum(row => row.Bytes) * ReservedPerByte, database);
+                var bytes = rows.Sum(row => row.Bytes);
+                if (rows.Count > SalvageRows || bytes > SalvageBytes || rows.Any(row => row.Bytes < 0 || !ChangeGroups.ValidKey(database, row.Collection, row.Id)))
+                {
+                    return "a state of the side copy exceeds the bounded salvage page";
+                }
+
+                using var reservation = memory.TryReserve(MemoryLane.Bulk, bytes * ReservedPerByte, tenant: null);
                 if (reservation is null)
                 {
                     return "no memory to read the side copy's next page";
@@ -287,7 +330,7 @@ internal sealed class ReplicaRebuild(
                     return "a state of the side copy does not verify against its digest";
                 }
 
-                if (await sink.RepairAsync(database, page, cancellationToken).ConfigureAwait(false) is null)
+                if (await repair.RepairRebuildAsync(database, rebuilt, page, cancellationToken).ConfigureAwait(false) is null)
                 {
                     return "the rebuilt copy is not held";
                 }

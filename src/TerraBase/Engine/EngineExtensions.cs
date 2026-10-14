@@ -49,13 +49,19 @@ public static class EngineExtensions
             };
         });
         services.AddSingleton<IWalBackup>(provider => provider.GetRequiredService<SqliteStorageEngine>());
+        services.AddSingleton<IRebuildStorage>(provider => provider.GetRequiredService<SqliteStorageEngine>());
+        services.AddSingleton<IRebuildLedger>(provider => provider.GetRequiredService<SqliteStorageEngine>().Ledger);
+        services.AddSingleton<IRebuildRecovery>(provider => provider.GetRequiredService<SqliteStorageEngine>().Ledger);
+        services.AddSingleton<IReplicaCopyFaults>(provider => provider.GetRequiredService<SqliteStorageEngine>().Ledger);
+        services.AddSingleton<IRebuildRepair>(provider => provider.GetRequiredService<SqliteStorageEngine>().Ledger);
         services.AddSingleton(provider => provider.GetRequiredService<SqliteStorageEngine>().Member);
         // The peer streams' source: the CDC tailer of every database file.
         services.AddSingleton(provider => new TursoChangeGroupSource(
             provider.GetRequiredService<SqliteStorageEngine>(), provider.GetRequiredService<IMeterFactory>(), provider.GetRequiredService<ILogger<TursoChangeGroupSource>>(),
-            provider.GetService<IRemoteDurability>));
-        services.AddSingleton<IChangeGroupSource>(provider => provider.GetRequiredService<TursoChangeGroupSource>());
-        services.AddSingleton<IReplicaStates>(provider => provider.GetRequiredService<TursoChangeGroupSource>());
+            provider.GetService<IRemoteDurability>()));
+        services.AddSingleton<FaultAwareReplicaSource>();
+        services.AddSingleton<IChangeGroupSource>(provider => provider.GetRequiredService<FaultAwareReplicaSource>());
+        services.AddSingleton<IReplicaStates>(provider => provider.GetRequiredService<FaultAwareReplicaSource>());
         services.AddHostedService(provider => provider.GetRequiredService<TursoChangeGroupSource>());
         // The changes feed's 7-day retention.
         services.AddSingleton(provider => new FeedRetention(provider.GetRequiredService<SqliteStorageEngine>(), provider.GetRequiredService<ILogger<FeedRetention>>()));

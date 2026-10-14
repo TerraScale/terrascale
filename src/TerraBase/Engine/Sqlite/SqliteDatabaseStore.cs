@@ -1,6 +1,7 @@
 using System.Collections.Frozen;
 using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using Turso.Data.Sqlite;
@@ -58,7 +59,9 @@ internal sealed partial class SqliteDatabaseStore(
     // docs/terrabase/multi-region-replication.md): each document's DocumentState in _tb_state and its materialized JSON
     // beside it, captured and shipped by the same CDC tailer and peer streams. Its collections are paths
     // (projects/<id>/databases), one set per tenant, so its live documents share one documents table instead of a table
-    // per collection. collections and commit_offset are the engine tables both kinds share.
+    // per collection. collections and commit_offset are the engine tables both kinds share. _tb_rebuild and
+    // _tb_write_intent are this node's copy faults and rebuilds (RebuildLedger): node-local, written uncaptured, never a
+    // document state, so no peer receives them.
     private const string SystemSchemaSql = """
         CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, body TEXT NOT NULL, UNIQUE (collection, id));
         CREATE TABLE _tb_state (
@@ -80,13 +83,24 @@ internal sealed partial class SqliteDatabaseStore(
             id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
         );
         INSERT INTO commit_offset (id, value, incarnation) VALUES (1, 0, '');
+        CREATE TABLE _tb_rebuild (
+            organization TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL, member INTEGER NOT NULL,
+            old_incarnation TEXT NOT NULL, phase INTEGER NOT NULL, new_incarnation TEXT, reason TEXT NOT NULL CHECK (length(reason) <= 256),
+            source_machine TEXT CHECK (length(source_machine) <= 255), source_incarnation TEXT, source_head INTEGER, additional_incarnation TEXT,
+            UNIQUE (organization, project, database)
+        );
+        CREATE TABLE _tb_write_intent (
+            organization TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL, incarnation TEXT NOT NULL, replica INTEGER NOT NULL,
+            UNIQUE (organization, project, database)
+        );
         """;
 
     // A client database (docs/terrabase/multi-region-replication.md section 5). Each collection is a table of its own, created
     // with it (the metadata collections here), holding the materialized JSON of its live documents (doc): reads, queries,
     // and indexes never decode a state. _tb_state keeps each document's replicated DocumentState in its
     // stored form (base64url), with its anti-entropy bucket and digest; the other _tb_ tables belong to the change feed,
-    // the peer streams and anti-entropy, which later slices fill. Every new table is a rowid table.
+    // the peer streams and anti-entropy, which later slices fill; _tb_refill holds the certificate of a rebuild's refill
+    // (decision 0013a section 1). Every new table is a rowid table.
     private const string ClientSchemaSql = """
         CREATE TABLE "_collections" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
         CREATE TABLE "_indexes" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
@@ -120,6 +134,7 @@ internal sealed partial class SqliteDatabaseStore(
         );
         CREATE TABLE _tb_merkle (bucket INTEGER PRIMARY KEY, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL);
         CREATE TABLE _tb_tail (id INTEGER PRIMARY KEY CHECK (id = 1), change_id INTEGER NOT NULL);
+        CREATE TABLE _tb_refill (origin TEXT PRIMARY KEY, incarnation TEXT NOT NULL, head INTEGER NOT NULL);
         CREATE TABLE collections (
             name TEXT PRIMARY KEY, created_at INTEGER NOT NULL,
             entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
@@ -235,10 +250,142 @@ internal sealed partial class SqliteDatabaseStore(
     public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) =>
         await BeginAsync(write: true, durable: true, cancellationToken, "a durable write transaction").ConfigureAwait(false);
 
-    // writer names a write transaction in the warning about a long wait for the writer.
-    private async ValueTask<SqliteStorageTransaction> BeginAsync(
-        bool write, bool durable, CancellationToken cancellationToken, string writer = "a write transaction")
+    /// <summary>
+    /// A write transaction of a rebuild's certified refill, salvage or completion barrier: the only writes a copy under
+    /// rebuild accepts. The caller checks the file's incarnation inside it (<see cref="RebuildLedger"/>).
+    /// </summary>
+    internal ValueTask<SqliteStorageTransaction> BeginRebuildTransactionAsync(CancellationToken cancellationToken) =>
+        BeginAsync(write: true, durable: true, cancellationToken, "a rebuild repair", rebuild: true);
+
+    /// <summary>This node's copy faults and rebuilds; null for stores built outside an engine.</summary>
+    internal RebuildLedger? Ledger { get; init; }
+
+    // Set once this incarnation's write intent is durable in this process (RebuildLedger.RecordIntentAsync).
+    private bool _intentRecorded;
+
+    // A known fault refuses this exact open copy before recording it can wait on SYSTEM or the ledger gate. A new
+    // incarnation has another store; a faulted store never clears this marker.
+    internal string? CopyFault
     {
+        get => Volatile.Read(ref field);
+        set => Volatile.Write(ref field, value);
+    }
+
+    /// <summary>The current reason every native session must preserve this copy on close.</summary>
+    internal string? CloseRefusal => CopyFault ?? Ledger?.Refusal(this);
+
+    /// <summary>
+    /// This database's rebuild record while the store is open, kept by <see cref="RebuildLedger"/>: what refuses its writes.
+    /// The ledger publishes a fault here from any thread, so every access is volatile.
+    /// </summary>
+    internal RebuildLedger.Row? RebuildRow
+    {
+        get => Volatile.Read(ref field);
+        set => Volatile.Write(ref field, value);
+    }
+
+    /// <summary>
+    /// Whether <see cref="RebuildRow"/> was read under the ledger's gate after publication (<see cref="RebuildLedger.SettleAsync"/>):
+    /// until then a record change may have missed this store, so it refuses ordinary writes.
+    /// </summary>
+    internal bool Settled
+    {
+        get => Volatile.Read(ref field);
+        set => Volatile.Write(ref field, value);
+    }
+
+    /// <summary>The ledger's generation when <see cref="RebuildRow"/> was loaded, before publication.</summary>
+    internal long LoadedGeneration { get; set; }
+
+    // Before this process first opens a client transaction or raw copy source, a FULL intent records the incarnation:
+    // an unclean exit faults it at the next start, including damage detected by a read that never recorded its fault.
+    private async ValueTask RecordIntentAsync(CancellationToken cancellationToken)
+    {
+        if (Ledger is { } ledger && !IsSystem && !Volatile.Read(ref _intentRecorded))
+        {
+            await ledger.RecordIntentAsync(this, cancellationToken).ConfigureAwait(false);
+            Volatile.Write(ref _intentRecorded, true);
+        }
+    }
+
+    /// <summary>Settles refusal and records source use before copying takes the engine's creation lock.</summary>
+    internal async ValueTask PrepareCopyAsync(CancellationToken cancellationToken)
+    {
+        if (Ledger is { } ledger && !IsSystem)
+        {
+            await ledger.SettleAsync(this, cancellationToken).ConfigureAwait(false);
+        }
+
+        ThrowIfRefused(rebuild: false);
+        // Opens SYSTEM outside creation: recording a raw-source fault must never lazily acquire creation from inside it.
+        await RecordIntentAsync(cancellationToken).ConfigureAwait(false);
+        ThrowIfRefused(rebuild: false);
+    }
+
+    // Throws when the ledger refuses a write now; a rebuild's own write is refused only when the node failed closed.
+    private void ThrowIfRefused(bool rebuild)
+    {
+        if (Ledger is { } ledger && (rebuild ? ledger.FailedClosed : ledger.Refusal(this)) is { } refusal)
+        {
+            throw new ReplicaCopyFaultedException(refusal);
+        }
+    }
+
+    /// <summary>Refuses a damaged copy, or the whole node for SYSTEM, before cleanup or durable recording can await.</summary>
+    internal void NoteCopyFault(string reason)
+    {
+        CopyFault = reason;
+        if (IsSystem)
+        {
+            Ledger?.FailClosed($"the system database faulted: {reason}");
+        }
+    }
+
+    /// <summary>
+    /// Records that a transaction may have left this file uncertain or damaged: a copy fault of a client database, the
+    /// node failing closed for the system database. Never throws; a fault that cannot be recorded fails the node closed.
+    /// </summary>
+    internal async Task RecordCopyFaultAsync(string reason)
+    {
+        if (Ledger is not { } ledger)
+        {
+            return;
+        }
+
+        if (IsSystem || Tenant is not { } tenant)
+        {
+            ledger.FailClosed($"the system database faulted: {reason}");
+            return;
+        }
+
+        try
+        {
+            await ledger.RecordAsync(tenant, Incarnation, reason, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            ledger.FailClosed($"a copy fault could not be recorded: {error.GetType().Name}");
+        }
+    }
+
+    // writer names a write transaction in the warning about a long wait for the writer. rebuild: a rebuild's own write,
+    // which a copy under rebuild accepts.
+    private async ValueTask<SqliteStorageTransaction> BeginAsync(
+        bool write, bool durable, CancellationToken cancellationToken, string writer = "a write transaction", bool rebuild = false)
+    {
+        if (write)
+        {
+            if (Ledger is { } ledger && !IsSystem)
+            {
+                await ledger.SettleAsync(this, cancellationToken).ConfigureAwait(false);
+            }
+
+            ThrowIfRefused(rebuild);
+        }
+
+        // Before renting a session: its setup and BEGIN can also detect damage. SYSTEM skips this recursive ledger write.
+        await RecordIntentAsync(cancellationToken).ConfigureAwait(false);
+
         // Every write transaction syncs the write-ahead log at its commit (synchronous = FULL): what a write answers, the
         // system database's catalog and keys (decision 0012) and a client database's documents (0013), survives a power loss.
         durable |= write;
@@ -257,6 +404,8 @@ internal sealed partial class SqliteDatabaseStore(
             {
                 await AcquireWriterAsync(writer, cancellationToken).ConfigureAwait(false);
                 writing = true;
+                // Again under the writer: a fault recorded while this one waited refuses it.
+                ThrowIfRefused(rebuild);
             }
 
             session = write ? await WriterSessionAsync(cancellationToken).ConfigureAwait(false) : await RentAsync(runner, cancellationToken).ConfigureAwait(false);
@@ -287,8 +436,15 @@ internal sealed partial class SqliteDatabaseStore(
             return new SqliteStorageTransaction(
                 this, session, transaction, runner, write, durable, write ? Committed : null, ownsAdmission);
         }
-        catch
+        catch (Exception error)
         {
+            var damaged = SqliteStorageTransaction.Damaged(error);
+            const string faultReason = "the file or its log reported an I/O error or corruption at BEGIN";
+            if (damaged)
+            {
+                NoteCopyFault(faultReason);
+            }
+
             try
             {
                 if (session is not null && write)
@@ -308,7 +464,19 @@ internal sealed partial class SqliteDatabaseStore(
             }
             finally
             {
-                End(writing, ownsAdmission);
+                try
+                {
+                    if (damaged)
+                    {
+                        // Damage opening the session or at BEGIN is a copy fault like a statement's, recorded before the
+                        // writer is released.
+                        await RecordCopyFaultAsync(faultReason).ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    End(writing, ownsAdmission);
+                }
             }
 
             throw;
@@ -411,9 +579,11 @@ internal sealed partial class SqliteDatabaseStore(
                 _writerSession = null;
                 try
                 {
-                    // Turso does not checkpoint when the last connection closes: leave the file whole when no reader
-                    // stops it (CleanupAsync then deletes the empty log).
-                    Scalar(session.Connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
+                    // Preserve a refused copy and its log byte-for-byte for salvage; only healthy closes checkpoint.
+                    if (CloseRefusal is null)
+                    {
+                        Scalar(session.Connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
+                    }
                 }
                 catch (SqliteException)
                 {
@@ -457,7 +627,7 @@ internal sealed partial class SqliteDatabaseStore(
         try
         {
             var statistics = Volatile.Read(ref _statistics);
-            session = await SqliteSession.OpenAsync(WriteLane, _connectionString, pragmas, cancellationToken).ConfigureAwait(false);
+            session = await SqliteSession.OpenAsync(WriteLane, _connectionString, pragmas, cancellationToken, this).ConfigureAwait(false);
             session.Statistics = statistics;
         }
         catch (Exception error)
@@ -506,22 +676,54 @@ internal sealed partial class SqliteDatabaseStore(
         }
     }
 
-    /// <summary>Writes a consistent snapshot of this database to a new file at <paramref name="path"/>; the caller holds an admission.</summary>
-    internal async Task CopyToAsync(string path, CancellationToken cancellationToken)
+    /// <summary>
+    /// Writes a consistent snapshot to <paramref name="path"/>; the caller awaited <see cref="PrepareCopyAsync"/> before
+    /// taking creation and holds an admission.
+    /// </summary>
+    internal async Task<Ulid> CopyToAsync(string path, CancellationToken cancellationToken)
     {
-        // Row by row in one read transaction (TursoCopy): writes go on meanwhile.
-        await io.RunAsync(() =>
+        const string reason = "the source file or its log reported an I/O error or corruption while copying";
+        ExceptionDispatchInfo? sourceError = null;
+        try
         {
-            using var source = new Turso.TursoConnection($"Data Source={FilePath}");
-            SqliteSession.OpenExisting(source, FilePath);
-            using var begin = source.CreateCommand();
-            begin.CommandText = "BEGIN;";
-            begin.ExecuteNonQuery();
-            TursoCopy.Write(source, path, cancellationToken);
-        }, cancellationToken).ConfigureAwait(false);
+            // Row by row in one read transaction (TursoCopy): writes go on meanwhile. Only source operations mark damage;
+            // the interleaved target writes and its initialization must not fault a healthy source.
+            await io.RunAsync(() =>
+            {
+                using var source = new FaultAwareCopySource($"Data Source={FilePath}", error =>
+                {
+                    NoteCopyFault(reason);
+                    sourceError ??= ExceptionDispatchInfo.Capture(error);
+                })
+                {
+                    CloseRefusal = () => CloseRefusal,
+                };
+                if (Tenant is { } tenant)
+                {
+                    Checkpoint?.Invoke("copy.source.opening", tenant);
+                }
+                SqliteSession.OpenExisting(source, FilePath);
+                using var begin = source.CreateCommand();
+                begin.CommandText = "BEGIN;";
+                begin.ExecuteNonQuery();
+                TursoCopy.Write(source, path, cancellationToken);
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception) when (sourceError is not null)
+        {
+            // Await off the I/O worker, retaining creation and its admission until the FULL record commits (or fails closed).
+            _ = await io.WithAdmissionAsync(async () =>
+            {
+                await RecordCopyFaultAsync(reason).ConfigureAwait(false);
+                return true;
+            }).ConfigureAwait(false);
+            // Reader/connection cleanup can fail too; preserve the first native source error that withdrew trust.
+            sourceError.Throw();
+            throw;
+        }
 
         // InitializeAsync switches the copy to WAL and refuses an unsupported schema version.
-        await InitializeAsync(name, path, io, pragmas, cancellationToken).ConfigureAwait(false);
+        return await InitializeAsync(name, path, io, pragmas, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>The database file.</summary>
@@ -785,7 +987,8 @@ internal sealed partial class SqliteDatabaseStore(
                 }
             }
         }
-        catch (Exception error) when (!IsSystem && transaction?.Committed is { } committedAt && !transaction.ChangedReaderState)
+        catch (Exception error) when (error is not ReplicaCopyFaultedException && CopyFault is null && Ledger?.FailedClosed is null
+            && !IsSystem && transaction?.Committed is { } committedAt && !transaction.ChangedReaderState)
         {
             // A client database's batch committed and changed no state readers see beside its documents: its writes are
             // answered as committed, not as a failure a client would retry. What failed is a wake-up or the cleanup after
@@ -804,6 +1007,13 @@ internal sealed partial class SqliteDatabaseStore(
         {
             // No usable commit result, including a failed marker read after COMMIT: never replay an ambiguous batch.
             batch.ForEach(write => write.Fail(error));
+            return [];
+        }
+
+        // Disposal can publish damage without throwing after a landed commit: fail without replaying its writes.
+        if ((Ledger?.FailedClosed ?? CopyFault) is { } fault)
+        {
+            batch.ForEach(write => write.Fail(new ReplicaCopyFaultedException(fault)));
             return [];
         }
 
@@ -990,7 +1200,7 @@ internal sealed partial class SqliteDatabaseStore(
         try
         {
             var statistics = Volatile.Read(ref _statistics);
-            session = await SqliteSession.OpenAsync(runner, _connectionString, pragmas, cancellationToken).ConfigureAwait(false);
+            session = await SqliteSession.OpenAsync(runner, _connectionString, pragmas, cancellationToken, this).ConfigureAwait(false);
             session.Statistics = statistics;
         }
         catch (Exception error)
@@ -1020,7 +1230,7 @@ internal sealed partial class SqliteDatabaseStore(
     /// closing checkpoint. Creation holds the engine's creation lock, so on a slow disk those syncs queued every other
     /// creation behind them (TS-647).
     /// </remarks>
-    internal static Task InitializeAsync(
+    internal static Task<Ulid> InitializeAsync(
         string name, string path, SqliteIoPool io, string pragmas, CancellationToken cancellationToken) =>
         io.RunAsync(() =>
         {
@@ -1030,6 +1240,7 @@ internal sealed partial class SqliteDatabaseStore(
                 Mode = SqliteOpenMode.ReadWriteCreate,
                 Pooling = false,
             }.ToString();
+            Ulid incarnation;
             using (var connection = new SqliteConnection(connectionString))
             {
                 connection.Open();
@@ -1039,7 +1250,7 @@ internal sealed partial class SqliteDatabaseStore(
                 Bootstrap(name, connection, cancellationToken);
                 // Publish a fresh identity, on this file only.
                 using var transaction = connection.BeginTransaction(deferred: false);
-                RenewIncarnation(connection, transaction);
+                incarnation = RenewIncarnation(connection, transaction);
                 cancellationToken.ThrowIfCancellationRequested();
                 transaction.Commit();
                 // Turso does not checkpoint when the last connection closes: copy the log into the file, which is moved
@@ -1050,7 +1261,7 @@ internal sealed partial class SqliteDatabaseStore(
             // The file alone now holds the database: sync it once, before it can be published.
             using var file = File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite);
             RandomAccess.FlushToDisk(file);
-            return true;
+            return incarnation;
         }, cancellationToken);
 
     // The caller holds an admission.
@@ -1122,13 +1333,15 @@ internal sealed partial class SqliteDatabaseStore(
     }
 
     // Called only from the worker that owns this connection, including during bootstrap and copying.
-    private static void RenewIncarnation(SqliteConnection connection, SqliteTransaction? transaction)
+    private static Ulid RenewIncarnation(SqliteConnection connection, SqliteTransaction? transaction)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = SqliteStatements.RenewIncarnation;
-        command.Parameters.AddWithValue("$incarnation", EntityIds.New().ToString());
+        var incarnation = EntityIds.New();
+        command.Parameters.AddWithValue("$incarnation", incarnation.ToString());
         command.ExecuteNonQuery();
+        return incarnation;
     }
 
     private static object? Scalar(SqliteConnection connection, SqliteTransaction? transaction, string sql)

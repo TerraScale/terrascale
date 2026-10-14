@@ -4,6 +4,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
+using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -362,6 +363,8 @@ public sealed class ShapeHandleTests
                 tenant = await api.TenantOfAsync();
                 collection = await CollectionAsync(original);
                 before = ShapeHandle.Compute(original, replica, collection, Parse(Filter));
+                await Assert.That(await api.Server.Services.GetRequiredService<IChangeGroupSource>()
+                    .HeadAsync(tenant, original.Incarnation, CancellationToken.None)).IsNotNull();
 
                 // Captured while live: the file then says the process is running, so the next start is unclean.
                 running = await File.ReadAllBytesAsync(identity);
@@ -370,13 +373,23 @@ public sealed class ShapeHandleTests
             // Disposal wrote the clean-stop mark; putting back the running record simulates a crash instead.
             await File.WriteAllBytesAsync(identity, running);
 
-            await using var restarted = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = directory);
+            // Retain the uncertain copy: this fixture isolates epoch rotation from the rebuild's store replacement.
+            await using var restarted = await TerraBaseTestServer.StartAsync(
+                settings => settings["data-directory"] = directory,
+                services => services.AddSingleton<IReplicaRebuild, BusyRebuild>());
             var reopened = await StoreAsync(restarted, tenant);
             var rotated = Replica(restarted);
 
             await Assert.That(rotated.Member).IsEqualTo(replica.Member);
             await Assert.That(rotated.Epoch).IsEqualTo((ushort)(replica.Epoch + 1));
-            await Assert.That(reopened.Incarnation).IsEqualTo(original.Incarnation).Because("the database itself did not change");
+            await Assert.That(reopened.Incarnation).IsEqualTo(original.Incarnation).Because("the busy rebuild retains the uncertain copy in place");
+            var faults = restarted.Services.GetRequiredService<IReplicaCopyFaults>();
+            var pending = await restarted.Services.GetRequiredService<IRebuildLedger>().GetAsync(tenant, CancellationToken.None);
+            await Assert.That(pending?.Phase).IsEqualTo(RebuildPhase.Pending);
+            await Assert.That(pending?.OldIncarnation).IsEqualTo(original.Incarnation);
+            await Assert.That(await faults.RefusedAsync(tenant, reopened.Incarnation, CancellationToken.None)).IsTrue();
+
+            // A raw metadata read proves unchanged collection lineage; computing a new handle certifies nothing.
             var reopenedCollection = await CollectionAsync(reopened);
             await Assert.That(reopenedCollection.Id).IsEqualTo(collection.Id);
 
@@ -384,6 +397,17 @@ public sealed class ShapeHandleTests
             await Assert.That(after.Handle).IsNotEqualTo(before.Handle);
             await Assert.That(after.ShapeId).IsNotEqualTo(before.ShapeId);
             await Assert.That(after.IsCurrent(before.Handle)).IsFalse();
+
+            var source = restarted.Services.GetRequiredService<IChangeGroupSource>();
+            await Assert.That(await source.HeadAsync(tenant, reopened.Incarnation, CancellationToken.None)).IsNull();
+            await Assert.That(await source.ReadAsync(tenant, reopened.Incarnation, 0,
+                ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsNull();
+            _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () =>
+            {
+                await using var refused = await reopened.BeginDurableTransactionAsync(CancellationToken.None);
+            });
+            await Assert.That(await faults.RefusedAsync(tenant, reopened.Incarnation, CancellationToken.None)).IsTrue()
+                .Because("the rotated handle does not certify the uncertain copy");
         }
         finally
         {
@@ -430,6 +454,12 @@ public sealed class ShapeHandleTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    private sealed class BusyRebuild : IReplicaRebuild
+    {
+        public ValueTask<RebuildOutcome> RebuildAsync(TenantContext database, Ulid faultedIncarnation, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<RebuildOutcome>(new RebuildOutcome.Busy());
     }
 
     private static ReplicaId Replica(DocumentApi api) => Replica(api.Server);
