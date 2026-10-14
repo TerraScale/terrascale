@@ -27,7 +27,7 @@ These are actual job wall-clock durations from [run 38513716906](https://github.
 | libs | success | 2026-10-14T04:56:59Z | 2026-10-14T04:59:28Z | 149 |
 | terrabase | success | 2026-10-14T04:58:03Z | 2026-10-14T05:07:36Z | 573 |
 | auth | success | 2026-10-14T04:58:41Z | 2026-10-14T05:07:11Z | 510 |
-| slow | skipped | 2026-10-14T04:54:36Z | 2026-10-14T04:54:35Z | -1 |
+| slow | skipped | 2026-10-14T04:54:36Z | 2026-10-14T04:54:35Z | — |
 | test | success | 2026-10-14T05:08:36Z | 2026-10-14T05:08:54Z | 18 |
 | preview | success | 2026-10-14T05:16:01Z | 2026-10-14T05:22:58Z | 417 |
 
