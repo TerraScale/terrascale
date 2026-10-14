@@ -1,10 +1,9 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Home.OperationChart>
 <svg class="ts-chart" viewBox="0 0 720 180" role="group" aria-label="@Model.Label" data-init="el.querySelectorAll('.ts-chart-column').forEach((column, i, all) => column.setAttribute('tabindex', i === all.length - 1 ? '0' : '-1'))" data-on:keydown="evt.target.matches('.ts-chart-column') &amp;&amp; ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(evt.key) &amp;&amp; (evt.preventDefault(), [{ArrowLeft: evt.target.previousElementSibling, ArrowRight: evt.target.nextElementSibling, Home: el.querySelector('.ts-chart-column'), End: el.querySelector('.ts-chart-column:last-of-type')}[evt.key]?.closest('.ts-chart-column')].filter(Boolean).forEach(next => (evt.target.setAttribute('tabindex', '-1'), next.setAttribute('tabindex', '0'), next.focus())))">
-    <defs><linearGradient id="@Model.GradientId" x1="0" y1="0" x2="0" y2="1"><stop class="ts-chart-fill-start" offset="0"></stop><stop class="ts-chart-fill-end" offset="1"></stop></linearGradient></defs>
     @for (var index = 0; index < Model.Grid.Count; index++)
     { var item = Model.Grid[index]; <line class="ts-chart-grid @(index == Model.Grid.Count - 1 ? "ts-chart-baseline" : "")" x1="48" y1="@item.Y" x2="708" y2="@item.Y"></line>@if (item.Label.Length > 0) { <g><text class="ts-chart-axis" x="38" y="@item.Y" dy="0.32em" text-anchor="end">@item.Label</text></g> } }
     @foreach (var tick in Model.Ticks) { <g><text class="ts-chart-axis" x="@tick.X" y="172" text-anchor="@tick.Anchor">@tick.Label</text></g> }
-    <path class="ts-chart-area" d="@Model.Area" fill="url(#@Model.GradientId)"></path><path class="ts-chart-line ts-chart-series-1" d="@Model.Path" stroke-dasharray=""></path>
+    <path class="ts-chart-area" d="@Model.Area"></path><path class="ts-chart-line ts-chart-series-1" d="@Model.Path" stroke-dasharray=""></path>
     @foreach (var column in Model.Columns)
     {
         var left = double.Parse(column.TipX, System.Globalization.CultureInfo.InvariantCulture); var width = double.Parse(column.TipWidth, System.Globalization.CultureInfo.InvariantCulture);
