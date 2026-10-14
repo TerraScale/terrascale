@@ -9,7 +9,8 @@
 #   scripts/fly/preview.sh machine <pr> <terrabase-image> <auth-image>   create or update the machine
 #   scripts/fly/preview.sh destroy <pr>                     delete the app and everything in it; succeeds if already gone
 #   scripts/fly/preview.sh expired                          print the JSON array of PRs whose preview must go: closed PRs,
-#                                                           and open PRs whose machine was created more than 24 hours ago
+#                                                           and open PRs whose oldest machine (or, with no machine, oldest
+#                                                           volume) was created more than 24 hours ago
 # `expired` reads PR state with gh (GH_TOKEN, GITHUB_REPOSITORY). Every API failure is an error, never "absent".
 set -euo pipefail
 set +x
@@ -37,6 +38,12 @@ buckets() {
   ' <<<"$table"
 }
 
+# Reads a Fly machine or volume JSON list; prints its oldest created_at, or nothing for []. Any other shape fails.
+oldest() {
+  jq -er 'if type == "array" and all(.[]; .created_at | type == "string" and length > 0)
+    then map(.created_at) | min // "" else error("unexpected Fly listing") end'
+}
+
 # Prints the PR number when its preview must go; returns non-zero when an API call or a date fails. $2: an app exists.
 expired() {
   local state created cutoff
@@ -46,12 +53,13 @@ expired() {
     open)
       # An open PR's leftover bucket without an app has no age; its next preview build fails visibly on create.
       [[ $2 == true ]] || return 0
-      created=$(api "$machines/apps/ts-pr-$1/machines" | jq -r '[.[].created_at] | min // empty') || return 1
-      if [[ -n $created ]]; then
-        created=$(date -u -d "$created" +%s) || return 1
-        cutoff=$(date -u -d '24 hours ago' +%s) || return 1
-        if (( created < cutoff )); then echo "$1"; fi
-      fi
+      created=$(api "$machines/apps/ts-pr-$1/machines" | oldest) || return 1
+      [[ -n $created ]] || created=$(flyctl volumes list -a "ts-pr-$1" --json | oldest) || return 1
+      # Neither machines nor volumes: nothing paid is left to age, so the app stays until the PR closes.
+      [[ -n $created ]] || return 0
+      created=$(date -u -d "$created" +%s) || return 1
+      cutoff=$(date -u -d '24 hours ago' +%s) || return 1
+      if (( created < cutoff )); then echo "$1"; fi
       ;;
     *) echo "unexpected state '$state' for PR $1" >&2; return 1 ;;
   esac
@@ -157,7 +165,9 @@ case ${1:-} in
     [[ $code == 404 ]] || flyctl apps destroy "$app" --yes
     ;;
   expired)
-    apps=$(flyctl apps list -o "$org" --json | jq -r '.[].Name')
+    # One joined string, so [] is a valid empty list while empty output, null names or other shapes fail jq -e.
+    apps=$(flyctl apps list -o "$org" --json \
+      | jq -er 'if type == "array" and all(.[]; .Name | type == "string") then map(.Name) | join("\n") else error end')
     bucket_prs=$(buckets)
     app_prs=
     for app in $apps; do

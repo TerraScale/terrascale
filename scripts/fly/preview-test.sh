@@ -15,7 +15,7 @@ case "$1 $2" in
   "apps list") test ! -e "$STATE/fail-apps"; cat "$STATE/apps" ;;
   "storage list") test ! -e "$STATE/fail-list"; cat "$STATE/buckets" ;;
   "ips list") echo '[{}]' ;;
-  "volumes list") echo '[{"id":"vol-test"}]' ;;
+  "volumes list") if [[ -e $STATE/volumes-$4 ]]; then cat "$STATE/volumes-$4"; else echo '[{"id":"vol-test"}]'; fi ;;
   "secrets list") jq -Rn '[inputs | {name: .}]' < "$STATE/secrets" ;;
   "secrets set")
     # Record names only; never write generated secret values to a log.
@@ -180,17 +180,43 @@ done
 fails "$here/preview.sh" destroy 2>/dev/null
 test ! -s "$state/flyctl"
 
-# Sweep: closed PRs go regardless of age, machines or app (6 has only a leftover bucket); open PRs go after 24 hours.
-printf '%s\n' '[{"Name":"ts-pr-1"},{"Name":"ts-pr-2"},{"Name":"ts-pr-3"},{"Name":"ts-pr-4"},{"Name":"ts-pr-05"},{"Name":"ts-terrabase"}]' > "$state/apps"
+# Sweep: closed PRs go regardless of age, machines or app (6 has only a leftover bucket); open PRs go after 24 hours,
+# dated by their oldest machine, else their oldest volume (4 old, 7 young); 9 has neither and stays until close.
+rm "$state/existing"
+ago() { echo "[{\"created_at\":\"$(date -u -d "$1 hours ago" +%FT%TZ)\"}]"; }
+printf '%s\n' '[{"Name":"ts-pr-1"},{"Name":"ts-pr-2"},{"Name":"ts-pr-3"},{"Name":"ts-pr-4"},{"Name":"ts-pr-05"},{"Name":"ts-pr-7"},{"Name":"ts-pr-9"},{"Name":"ts-terrabase"}]' > "$state/apps"
 bucket terrascale-ts-pr-1 terrascale-ts-pr-6 terrascale-ts-pr-8
 echo closed > "$state/pr-1"; cp "$state/pr-1" "$state/pr-6"
-for pr in 2 3 4 8; do echo open > "$state/pr-$pr"; done
-echo "[{\"created_at\":\"$(date -u -d '1 hour ago' +%FT%TZ)\"}]" > "$state/machines-ts-pr-2"
-echo "[{\"created_at\":\"$(date -u -d '25 hours ago' +%FT%TZ)\"}]" > "$state/machines-ts-pr-3"
-test "$("$here/preview.sh" expired)" = '[1,3,6]'
-# A failed PR lookup or unreadable machine date is an error, not "keep"; decidable previews are still listed.
+for pr in 2 3 4 7 8 9; do echo open > "$state/pr-$pr"; done
+ago 1 > "$state/machines-ts-pr-2"
+ago 25 > "$state/machines-ts-pr-3"
+ago 25 > "$state/volumes-ts-pr-4"
+ago 1 > "$state/volumes-ts-pr-7"
+echo '[]' > "$state/volumes-ts-pr-9"
+test "$("$here/preview.sh" expired)" = '[1,3,4,6]'
+# Empty output, another shape, or a missing, null or unreadable date in a machine or volume list is an error, not
+# "no machines"; decidable previews are still listed.
+for bad in '' '{}' '[{}]' '[{"created_at":null}]' '[{"created_at":"not-a-date"}]'; do
+  for file in machines-ts-pr-2 volumes-ts-pr-7; do
+    cp "$state/$file" "$state/$file.ok"
+    printf '%s' "$bad" > "$state/$file"
+    out=$("$here/preview.sh" expired 2>/dev/null) && exit 1
+    test "$out" = '[1,3,4,6]'
+    mv "$state/$file.ok" "$state/$file"
+  done
+done
+# The same holds for the app list, but [] is a valid empty list (only buckets remain).
+cp "$state/apps" "$state/apps.ok"
+for bad in '' '{}' '{"x":{"Name":"ts-pr-1"}}' '[{}]' '[{"Name":null}]'; do
+  printf '%s' "$bad" > "$state/apps"
+  out=$("$here/preview.sh" expired 2>/dev/null) && exit 1
+  test -z "$out"
+done
+echo '[]' > "$state/apps"
+test "$("$here/preview.sh" expired)" = '[1,6]'
+mv "$state/apps.ok" "$state/apps"
+# A failed PR lookup is an error, not "keep".
 rm "$state/pr-4"
-echo '[{"created_at":"not-a-date"}]' > "$state/machines-ts-pr-2"
 out=$("$here/preview.sh" expired 2>/dev/null) && exit 1
 test "$out" = '[1,3,6]'
 # A failed Fly app or bucket listing lists nothing.
