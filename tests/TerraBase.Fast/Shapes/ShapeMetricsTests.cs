@@ -228,6 +228,10 @@ public sealed class ShapeMetricsTests
         {
             var page = await transaction.ReadFeedAsync(null, null, 100, 1024 * 1024, token);
             await Assert.That(page.Events.Count).IsGreaterThan(0);
+        }
+        var shapeStorage = new SqliteShapeStorage(server.Services.GetRequiredService<SqliteStorageEngine>());
+        await using (var transaction = await shapeStorage.BeginTransactionAsync(store, write: false, token))
+        {
             using var absent = await ((IShapeStorageTransaction)transaction).ReadShapeChunkAsync(
                 "h1-" + Convert.ToHexStringLower(new Faker().Random.Bytes(8)), 0,
                 server.Services.GetRequiredService<IMemoryBudget>(), token);
@@ -342,8 +346,9 @@ public sealed class ShapeMetricsTests
                 "h1-" + Convert.ToHexStringLower(random.Bytes(8)), DocumentApi.Collection, collection.Id, random.Bytes(16));
         }
 
+        var shapeStorage = new SqliteShapeStorage(api.Server.Services.GetRequiredService<SqliteStorageEngine>());
         var sealer = new ShapeSealer(api.Server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance,
-            new SqliteShapeStorage(api.Server.Services.GetRequiredService<SqliteStorageEngine>()));
+            shapeStorage);
         var before = ShapeStorageReads(await ScrapeAsync(api.Server));
         var head = await sealer.SealUpToHeadAsync(store, shape, 0, token);
         var sealedReads = ShapeStorageReads(await ScrapeAsync(api.Server));
@@ -364,7 +369,7 @@ public sealed class ShapeMetricsTests
         var bodyReads = ShapeStorageReads(await ScrapeAsync(api.Server));
         await Assert.That(bodyReads - missedReads).IsEqualTo(2d).Because("a stored chunk executes size and body SELECTs");
 
-        await using (var transaction = await store.BeginTransactionAsync(write: false, token))
+        await using (var transaction = await shapeStorage.BeginTransactionAsync(store, write: false, token))
         {
             _ = await ((IShapeRetentionTransaction)transaction).ReadShapeFloorAsync(shape.Handle, token);
         }
