@@ -29,6 +29,8 @@ while let Some(update) = updates.next().await {
 text when needed; the server validates and canonicalizes the predicate. Omit
 the filter to synchronize every document. Each `ShapeUpdate` retains an
 immutable state snapshot, so later responses do not change earlier updates.
+An encoded request target exceeding the protocol limit fails locally before
+the request is sent, even when the raw filter fits its separate 8 KiB bound.
 The stream ends after a fatal error or exhausted retries; create a new stream
 to restart with empty state. No state or credentials are persisted to disk.
 

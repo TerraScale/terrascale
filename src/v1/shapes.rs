@@ -467,6 +467,11 @@ impl ShapeSync {
                     )?;
                 }
             }
+            if url.path().len() + url.query().map_or(0, |q| q.len() + 1) > MAX_REQUEST_TARGET {
+                return Err(Error::InvalidInput(
+                    "encoded shape request target exceeds the protocol limit".into(),
+                ));
+            }
             let response = self
                 .client
                 .shape_get(&url, region.as_deref(), &headers)

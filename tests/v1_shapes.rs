@@ -704,6 +704,26 @@ async fn redirect_targets_cannot_leak_credentials_or_leave_the_shape_route() {
 }
 
 #[tokio::test]
+async fn percent_encoded_filter_limit_is_checked_before_sending() {
+    let raw = json!({"eq":["/value", "[\"".repeat(1500)]}).to_string();
+    assert!(raw.len() < 8 << 10);
+    let fixture = Fixture::new(vec![]).await;
+    let stream = fixture
+        .client()
+        .database("demo")
+        .collection("notes")
+        .shape()
+        .filter_json(&raw)
+        .unwrap()
+        .stream();
+    pin_mut!(stream);
+    let error = stream.next().await.unwrap().unwrap_err();
+    assert!(matches!(error, terrascale::v1::Error::InvalidInput(_)));
+    assert!(stream.next().await.is_none());
+    assert!(fixture.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn canonical_filter_from_redirect_is_used_for_continuations() {
     let raw = r#"{ "eq" : [ "/read", false ] }"#;
     let canonical = r#"{"eq":["/read",false]}"#;
