@@ -255,8 +255,9 @@
       white-space: normal;
     }
 
+    .detailed__table tbody th,
     .detailed__table td {
-      white-space: nowrap;
+      white-space: normal;
     }
   }
 </style>
