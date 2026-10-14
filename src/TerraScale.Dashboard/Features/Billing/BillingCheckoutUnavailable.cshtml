@@ -1,8 +1,20 @@
 @inherits RazorSlice<DocumentModel>
 @implements IUsesLayout<TerraScale.Dashboard.UI.Slices.Document, DocumentModel>
-<main class="ts-auth"><section class="ts-auth-card">
-    <div class="ts-auth-heading"><h1 class="ts-auth-title">Checkout temporarily unavailable</h1></div>
-    <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-title">Stripe checkout did not open</p><p class="ts-alert-body">Return to billing to resume the checkout or cancel it before choosing another plan.</p></div>
-    <a class="ts-btn ts-btn-primary ts-btn-block" href="/organization?tab=billing">Try again</a>
-</section></main>
+@inject AssetUrls Assets
+<main class="ts-login">
+    <section class="ts-login-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.RegionMap>())
+        <ul class="ts-login-regions"><li><span class="ts-dot"></span>San Francisco</li><li><span class="ts-dot"></span>São Paulo</li></ul>
+    </section>
+    <div class="ts-login-column">
+        <div class="ts-login-panel">
+            <div class="ts-login-stack">
+                <img class="ts-login-logo" src="@Assets.Url("brand/logo-terrascale-blue.svg")" alt="TerraScale" decoding="async" />
+                <div class="ts-auth-heading"><h1 class="ts-auth-title">Checkout temporarily unavailable</h1></div>
+                <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-title">Stripe checkout did not open</p><p class="ts-alert-body">Return to billing to resume the checkout or cancel it before choosing another plan.</p></div>
+                <a class="ts-btn ts-btn-primary ts-btn-block" href="/organization?tab=billing">Try again</a>
+            </div>
+        </div>
+    </div>
+</main>
 @functions { public DocumentModel LayoutModel => Model; }
