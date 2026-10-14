@@ -463,9 +463,9 @@ func (b *bench) write(ctx context.Context, t0, start, end time.Time, inWindow, q
 			resp, err := b.put(ctx, replbench.DocPath(b.collection, ulid.Make().String()), document(sent), qosBusy)
 			switch {
 			case err != nil:
-				once.Do(func() { failed = fmt.Errorf("write: %w", err) })
+				once.Do(func() { failed = fmt.Errorf("write sent at %s answered after %s: %w", sent.UTC().Format(time.RFC3339Nano), time.Since(sent), err) })
 			case resp.Status/100 != 2:
-				once.Do(func() { failed = fmt.Errorf("write: HTTP %d %s", resp.Status, resp.Body) })
+				once.Do(func() { failed = fmt.Errorf("write sent at %s answered after %s: HTTP %d %s", sent.UTC().Format(time.RFC3339Nano), time.Since(sent), resp.Status, resp.Body) })
 			case !sent.Before(start) && sent.Before(end):
 				inWindow.Add(1)
 			}

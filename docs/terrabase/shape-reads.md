@@ -444,9 +444,11 @@ project data-key id. It always selects the current epoch; callers cannot supply 
 `DataKeys` and `BackupLayout.KeyScope`; a development host without that key store answers `503 unavailable`.
 
 The key endpoint uses `IShapeLineages` to validate the collection's current handle. Filtered handles resolve through
-the bounded shape registry and require current filter admission and collection lineage. Historical `(epoch, key_id)` pairs require
-`IShapeKeyRetention.HasObjectAsync` proof from the retained T1 objects; FR-22 supplies that proof. Before T1 objects
-exist the default refuses historical pairs with `409 must_refetch`, rather than releasing unproven keys.
+the bounded shape registry and require current filter admission and collection lineage. The registry is in memory, so a
+filtered handle it no longer tracks (LRU eviction or a restart) answers `409 must_refetch` until a shape read tracks it
+again. Historical `(epoch, key_id)` pairs require `IShapeKeyRetention.HasObjectAsync` proof from the retained T1
+objects; FR-22 supplies that proof. Before T1 objects exist the default refuses historical pairs with
+`409 must_refetch`, rather than releasing unproven keys.
 
 ## 14. Manifest (presigned, D2)
 

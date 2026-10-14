@@ -384,6 +384,38 @@ public sealed class ShapeEndToEndTests
     }
 
     [Test]
+    public async Task Concurrent_identical_snapshot_page_reads_share_one_flight_and_one_payload_read()
+    {
+        var gate = new PageGate();
+        await using var api = await DocumentApi.StartAsync(services: collection => Gate(collection, gate));
+        await PutAsync(api, DocumentApi.NewId(), new { status = "open" });
+        var client = new ShapeClient(api, query: null);
+        var bootstrap = await client.Get($"{api.Collections}/{DocumentApi.Collection}/shape?offset=-1");
+        await Assert.That(bootstrap.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
+        var page = bootstrap.Location!.OriginalString;
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var before = await Scrape(api.Server, token);
+
+        // Four readers fit every plan's request concurrency; the flight's page read is held until all four joined it.
+        gate.Arm(readers: 4);
+        Task<Reply>[] readers = [.. Enumerable.Range(0, 4).Select(_ => client.Get(page))];
+        var joinedFirst = await Task.WhenAny(gate.Joined, Task.WhenAny(readers)) == gate.Joined;
+        gate.Release();
+        var answers = await Task.WhenAll(readers);
+        var after = await Scrape(api.Server, token);
+
+        await Assert.That(joinedFirst).IsTrue().Because("no reader answers before all four joined the held flight");
+        foreach (var answer in answers)
+        {
+            await Assert.That(answer.Status).IsEqualTo(HttpStatusCode.OK);
+        }
+        await Assert.That(answers.Select(answer => Encoding.UTF8.GetString(answer.Body)).Distinct().Count()).IsEqualTo(1).Because("every reader receives the same bytes");
+        await Assert.That(gate.PageReads).IsEqualTo(1).Because("one flight reads the page for every reader");
+        await Assert.That(Delta(before, after, "terrabase_storage_reads_total", "path=\"shape_body\"")).IsEqualTo(1d)
+            .Because("one page payload SELECT serves all four readers");
+    }
+
+    [Test]
     public async Task The_metrics_scrape_retains_all_five_storage_paths_after_feed_query_and_shape_reads()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -503,6 +535,18 @@ public sealed class ShapeEndToEndTests
             Delta(before, after, "terrabase_storage_reads_total", "path=\"shape_body\""));
     }
 
+    // Wraps the stock flights and snapshot sealer, so the test sees each join and can hold the shared page read.
+    private static void Gate(IServiceCollection services, PageGate gate)
+    {
+        services.AddSingleton<IShapeFlights<ShapeRead>>(provider => new JoiningFlights(new ShapeFlights<ShapeRead>(
+            provider.GetRequiredService<TerraBase.Engine.IStorageEngine>(), provider.GetRequiredService<IShapeFlightSealer>(),
+            provider.GetRequiredService<TerraBase.Features.Memory.IMemoryBudget>(), provider.GetRequiredService<TimeProvider>(),
+            provider.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(), provider.GetRequiredService<IShapeMetrics>()), gate));
+        services.AddSingleton<IShapeSnapshotSealer>(provider => new HeldPages(new ShapeSnapshots(
+            provider.GetRequiredService<TerraBase.Features.Memory.IMemoryBudget>(), provider.GetRequiredService<TimeProvider>(),
+            provider.GetRequiredService<IShapeSnapshotTransactions>(), provider.GetRequiredService<IShapeMetrics>()), gate));
+    }
+
     // Live requests park at the sealed head until a commit; the server's waiting gauge says when every reader is parked.
     private static Task ParkedAsync(DocumentApi api, int readers) =>
         TerraBaseTestServer.EventuallyAsync(async ct => Sample(await Scrape(api.Server, ct), "terrabase_shape_requests_waiting") >= readers);
@@ -528,6 +572,74 @@ public sealed class ShapeEndToEndTests
     private sealed record PutResult(HttpStatusCode Status, string Version);
 
     private sealed record Wave(string[] Bodies, string NextOffset, double Seals, double PayloadReads);
+
+    /// <summary>Once armed, counts non-live flight joins and holds page reads until the armed number of readers joined.</summary>
+    private sealed class PageGate
+    {
+        private readonly TaskCompletionSource _joined = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _readers;
+        private int _admitted;
+        private int _pageReads;
+
+        public Task Joined => _joined.Task;
+
+        public bool Armed => Volatile.Read(ref _readers) > 0;
+
+        public int PageReads => Volatile.Read(ref _pageReads);
+
+        public void Arm(int readers) => Volatile.Write(ref _readers, readers);
+
+        public void Admit()
+        {
+            var readers = Volatile.Read(ref _readers);
+            if (readers > 0 && Interlocked.Increment(ref _admitted) == readers)
+            {
+                _joined.TrySetResult();
+            }
+        }
+
+        // A second page read means the readers did not share a flight; releasing lets the assertions say so instead of hanging.
+        public Task HoldAsync(CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _pageReads) > 1)
+            {
+                Release();
+            }
+
+            return Joined.WaitAsync(cancellationToken);
+        }
+
+        public void Release() => _joined.TrySetResult();
+    }
+
+    private sealed class JoiningFlights(IShapeFlights<ShapeRead> inner, PageGate gate) : IShapeFlights<ShapeRead>
+    {
+        public long NextCursor(long? input) => inner.NextCursor(input);
+
+        public ValueTask<ShapeFlightResult<ShapeRead>> ReadAsync(
+            ShapeFlightRequest request, ShapeHeadProbe probe, ShapeTailReader<ShapeRead> read, CancellationToken cancellationToken) =>
+            inner.ReadAsync(request.Live ? request : request with { OnAdmitted = gate.Admit }, probe, read, cancellationToken);
+    }
+
+    private sealed class HeldPages(IShapeSnapshotSealer inner, PageGate gate) : IShapeSnapshotSealer
+    {
+        public ValueTask<ShapeSnapshot?> NewestAsync(TerraBase.Engine.IDatabaseStore store, string handle, CancellationToken cancellationToken) =>
+            inner.NewestAsync(store, handle, cancellationToken);
+
+        public ValueTask<ShapeSnapshot> SealIfDueAsync(TerraBase.Engine.IDatabaseStore store, ShapeSnapshotDefinition shape, CancellationToken cancellationToken) =>
+            inner.SealIfDueAsync(store, shape, cancellationToken);
+
+        public async ValueTask<ShapeSnapshotPage?> ReadPageAsync(
+            TerraBase.Engine.IDatabaseStore store, string handle, long offset, string? afterId, CancellationToken cancellationToken)
+        {
+            if (gate.Armed)
+            {
+                await gate.HoldAsync(cancellationToken);
+            }
+
+            return await inner.ReadPageAsync(store, handle, offset, afterId, cancellationToken);
+        }
+    }
 
     /// <summary>A response read to the end, with the raw wire values the shape tests compare.</summary>
     private sealed record Reply(HttpStatusCode Status, byte[] Body, JsonElement Json, string? Handle, string? ETag, string? CacheControl,

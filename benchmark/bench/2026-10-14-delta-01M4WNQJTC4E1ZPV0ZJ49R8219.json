@@ -1,0 +1,224 @@
+{
+  "id": "01M4WNQJTC4E1ZPV0ZJ49R8219",
+  "host": "delta",
+  "cluster_state": "local-gru,sjc",
+  "endpoint": "http://127.0.0.1:40357/",
+  "start": "2026-10-14T07:36:18.123941998Z",
+  "end": "2026-10-14T07:41:19.564108168Z",
+  "probe": {
+    "tcp_connect_ms": {
+      "min": 0,
+      "median": 0
+    },
+    "tls_handshake_ms": {
+      "min": 0,
+      "median": 0
+    },
+    "healthz_ms": {
+      "min": 0,
+      "median": 0
+    }
+  },
+  "startup": [
+    {
+      "client": "local terrabase host (1 launch)",
+      "wall_ms": {
+        "min": 12047,
+        "median": 12047
+      },
+      "init_ms": {
+        "min": 12047,
+        "median": 12047
+      },
+      "max_rss_mb": {
+        "min": 0,
+        "median": 0
+      }
+    }
+  ],
+  "clients": [
+    {
+      "client": "shape-bench",
+      "ready": {
+        "type": "",
+        "client": "shape-bench",
+        "sdk": "raw HTTP/1.1 (SSE and JSON long-poll)",
+        "sdk_version": "-",
+        "runtime": "go1.25.0",
+        "database": "canary",
+        "setup_ms": 153,
+        "auth_ms": 0
+      },
+      "results": [
+        {
+          "type": "result",
+          "scenario": "changes.fanout",
+          "transport": "sse-http1",
+          "payload_bytes": 256,
+          "mode": "open",
+          "concurrency": 1,
+          "rate": 20,
+          "start": "2026-10-14T07:36:35.338293437Z",
+          "duration_s": 30,
+          "ops": 600,
+          "ok": 600,
+          "errors": 0,
+          "error_rate": 0,
+          "rps": 20,
+          "status": {
+            "accounting_reads_delta": 0,
+            "admitted": 1,
+            "inferred_min_doc_selects": 600,
+            "qos_busy_followers": 0,
+            "qos_busy_writes": 0,
+            "retries": 0,
+            "server_at_ready": 1,
+            "storage_reads_delta": 1676,
+            "writes": 600
+          },
+          "latency_us": {
+            "p50": 16199,
+            "p90": 1377279,
+            "p99": 2390015,
+            "p999": 2590719,
+            "max": 2639871,
+            "mean": 379107.7266666667
+          },
+          "bytes_out": 0,
+          "bytes_in": 328774,
+          "cpu_s": 13.903198414576742,
+          "rss_mb": 268.80078125,
+          "stopped": ""
+        },
+        {
+          "type": "result",
+          "scenario": "changes.fanout",
+          "transport": "sse-http1",
+          "payload_bytes": 256,
+          "mode": "open",
+          "concurrency": 10,
+          "rate": 20,
+          "start": "2026-10-14T07:37:21.845273561Z",
+          "duration_s": 30,
+          "ops": 6000,
+          "ok": 6000,
+          "errors": 0,
+          "error_rate": 0,
+          "rps": 200,
+          "status": {
+            "accounting_reads_delta": 0,
+            "admitted": 10,
+            "inferred_min_doc_selects": 6000,
+            "qos_busy_followers": 0,
+            "qos_busy_writes": 0,
+            "retries": 0,
+            "server_at_ready": 10,
+            "storage_reads_delta": 18350,
+            "writes": 600
+          },
+          "latency_us": {
+            "p50": 53855,
+            "p90": 866815,
+            "p99": 1868799,
+            "p999": 2117631,
+            "max": 2119679,
+            "mean": 228266.41733333335
+          },
+          "bytes_out": 0,
+          "bytes_in": 3298720,
+          "cpu_s": 17.799702821993236,
+          "rss_mb": 274.85546875,
+          "stopped": ""
+        },
+        {
+          "type": "result",
+          "scenario": "changes.fanout",
+          "transport": "sse-http1",
+          "payload_bytes": 256,
+          "mode": "open",
+          "concurrency": 100,
+          "rate": 20,
+          "start": "2026-10-14T07:38:12.848902788Z",
+          "duration_s": 30,
+          "ops": 19200,
+          "ok": 19200,
+          "errors": 0,
+          "error_rate": 0,
+          "rps": 640,
+          "status": {
+            "accounting_reads_delta": 0,
+            "admitted": 32,
+            "inferred_min_doc_selects": 19200,
+            "qos_busy_followers": 0,
+            "qos_busy_writes": 0,
+            "rejected_changes_busy": 68,
+            "retries": 0,
+            "server_at_ready": 32,
+            "storage_reads_delta": 58840,
+            "writes": 600
+          },
+          "latency_us": {
+            "p50": 53503,
+            "p90": 802303,
+            "p99": 2283519,
+            "p999": 2590719,
+            "max": 2643967,
+            "mean": 239207.16739583333
+          },
+          "bytes_out": 0,
+          "bytes_in": 10559198,
+          "cpu_s": 25.751133722720155,
+          "rss_mb": 303.09765625,
+          "stopped": ""
+        },
+        {
+          "type": "result",
+          "scenario": "changes.fanout",
+          "transport": "sse-http1",
+          "payload_bytes": 256,
+          "mode": "open",
+          "concurrency": 1000,
+          "rate": 20,
+          "start": "2026-10-14T07:39:48.870506663Z",
+          "duration_s": 30,
+          "ops": 19200,
+          "ok": 19200,
+          "errors": 0,
+          "error_rate": 0,
+          "rps": 640,
+          "status": {
+            "accounting_reads_delta": 0,
+            "admitted": 32,
+            "inferred_min_doc_selects": 19200,
+            "qos_busy_followers": 0,
+            "qos_busy_writes": 0,
+            "rejected_changes_busy": 968,
+            "retries": 0,
+            "server_at_ready": 32,
+            "storage_reads_delta": 63406,
+            "writes": 600
+          },
+          "latency_us": {
+            "p50": 13383,
+            "p90": 593919,
+            "p99": 2877439,
+            "p999": 3147775,
+            "max": 3174399,
+            "mean": 211070.58322916666
+          },
+          "bytes_out": 0,
+          "bytes_in": 10555904,
+          "cpu_s": 23.118854410301104,
+          "rss_mb": 316.98046875,
+          "stopped": ""
+        }
+      ],
+      "done": {
+        "type": "done",
+        "cleanup": true,
+        "cleanup_error": ""
+      },
+      "error": "shape.fanout N=1: write: HTTP 503 {\"error\":{\"code\":\"write_outcome_unknown\",\"message\":\"no other region confirmed the write within 10 s; its outcome is unknown\",\"region\":\"gru\",\"machine\":\"3e1be4a417ac61\"}}"
+    }
+  ]
+}

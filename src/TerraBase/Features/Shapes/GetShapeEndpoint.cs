@@ -18,7 +18,7 @@ namespace TerraBase.Features.Shapes;
 /// <summary><c>GET …/collections/{collection}/shape</c>: a collection's shape as snapshot pages, chunks and a live tail (shape reads v1).</summary>
 internal sealed class GetShapeEndpoint(
     IDocumentService documents, ITenantDirectory tenants, IShapeLineages lineages, IShapeSnapshots snapshots, IShapeChunks chunks, IShapeLiveTail live,
-    IShapeResume resumes, IShapeMetrics metrics, TimeProvider time) : EndpointWithoutRequest<IResult>
+    IShapeResume resumes, IShapeMetrics metrics, IShapeFlights<ShapeRead> flights) : EndpointWithoutRequest<IResult>
 {
     private const string ResumeHeader = "TB-Shape-Resume";
     private const string CachePrivate = "private, max-age=0, must-revalidate";
@@ -205,8 +205,7 @@ internal sealed class GetShapeEndpoint(
         if (request.Live)
         {
             // Strictly increasing per client even when the clock steps back; the input is below long.MaxValue.
-            var bucket = Math.Max(time.GetUtcNow().ToUnixTimeSeconds() / 20, (request.Cursor ?? -1) + 1);
-            headers["TB-Shape-Cursor"] = DocumentRoute.Decimal(bucket);
+            headers["TB-Shape-Cursor"] = DocumentRoute.Decimal(flights.NextCursor(request.Cursor));
         }
 
         metrics.RecordRead();

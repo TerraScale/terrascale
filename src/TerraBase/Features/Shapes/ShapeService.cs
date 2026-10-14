@@ -12,7 +12,7 @@ namespace TerraBase.Features.Shapes;
 
 /// <summary>
 /// The shape reads over the sealing, snapshot, flight, retention and filter components (shape-reads.md sections 3 to 9).
-/// Serves plaintext T0 only: nothing here reads the data keys, and sealed objects reach the mirror through the FR-22 hooks.
+/// Serves plaintext T0 only: nothing here reads the data keys or mirrors sealed objects; FR-22 adds the mirror hooks later.
 /// </summary>
 internal sealed class ShapeService(
     IStorageEngine engine, LocalReplica replica, IDocumentService documents, IShapeSealer sealer, IShapeSnapshotSealer snapshots,
@@ -173,6 +173,7 @@ internal sealed class ShapeService(
     }
 
     /// <inheritdoc />
+    /// <remarks>Page reads join one flight per (handle, snap.S.P) like closed chunks, so concurrent identical reads share one payload read.</remarks>
     public async ValueTask<ShapeRead> PageAsync(ShapeScope scope, ShapeLineage lineage, long snapshot, string? afterId, CancellationToken cancellationToken)
     {
         if (await engine.OpenDatabaseAsync(scope.Database, cancellationToken).ConfigureAwait(false) is not { } store)
@@ -180,6 +181,18 @@ internal sealed class ShapeService(
             return UnknownDatabase;
         }
 
+        var request = new ShapeFlightRequest(scope.Database, lineage.Handle, ShapeSnapshots.PageOffset(snapshot, afterId), false, null);
+        return Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
+
+        async ValueTask<ShapeRead> Read(IDatabaseStore current, CancellationToken token)
+        {
+            return Detach(await ReadPageAtAsync(current, scope, lineage, snapshot, afterId, token).ConfigureAwait(false));
+        }
+    }
+
+    // One stored snapshot page, refused when it is not sealed for the handle or is below the retention floor (section 8).
+    private async ValueTask<ShapeRead> ReadPageAtAsync(IDatabaseStore store, ShapeScope scope, ShapeLineage lineage, long snapshot, string? afterId, CancellationToken cancellationToken)
+    {
         try
         {
             if (await CurrentAsync(store, scope, lineage, cancellationToken).ConfigureAwait(false) is { } stale)
@@ -242,12 +255,6 @@ internal sealed class ShapeService(
 
         var request = new ShapeFlightRequest(scope.Database, lineage.Handle, DocumentRoute.Decimal(offset), false, null);
         return Join(await flights.ReadAsync(request, NotParked, Read, cancellationToken).ConfigureAwait(false));
-
-        // A non-live flight never probes or waits.
-        static ValueTask<bool> NotParked(IDatabaseStore current, CancellationToken token)
-        {
-            return ValueTask.FromResult(false);
-        }
 
         async ValueTask<ShapeRead> Read(IDatabaseStore current, CancellationToken token)
         {
@@ -485,6 +492,9 @@ internal sealed class ShapeService(
 
         return new ShapeBody(body.Json, body.NextOffset, body.UpToDate, flight);
     }
+
+    // A non-live flight never probes or waits.
+    private static readonly ShapeHeadProbe NotParked = static (_, _) => ValueTask.FromResult(false);
 
     private static ShapeRead Join(ShapeFlightResult<ShapeRead> result) => result switch
     {

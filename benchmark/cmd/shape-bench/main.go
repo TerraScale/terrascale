@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -165,6 +166,9 @@ func run() error {
 	}
 	fmt.Println(md)
 	fmt.Println(js)
+	if runErr != nil {
+		fmt.Fprintf(os.Stderr, "cluster host log tail:\n%s\n", tail(filepath.Join(work, "host.log")))
+	}
 	return runErr
 }
 
@@ -270,7 +274,7 @@ func notes(results []apibench.Result, probes []probe, pid int, metricsURL, commi
 	fmt.Fprintf(&b, "\n### Raw metric lines\n")
 	for _, p := range probes {
 		if p.after == "" {
-			fmt.Fprintf(&b, "\n%s N=%d: no window, so no after scrape (the step stopped at a capacity limit before it).\n", p.target, p.n)
+			fmt.Fprintf(&b, "\n%s N=%d: no window or final scrape recorded; see the result's stopped reason or the client error for the outcome.\n", p.target, p.n)
 			continue
 		}
 		fmt.Fprintf(&b, "\n%s N=%d before:\n\n```\n%s```\n\n%s N=%d after:\n\n```\n%s```\n", p.target, p.n, p.before, p.target, p.n, p.after)
