@@ -28,6 +28,14 @@ internal static class Docs
         await EnsureSuccessAsync(response);
     }
 
+    // PUT that is also sent again after 503 remote_region_unavailable or confirmation_busy, which the write route answers
+    // before it executes anything; write_outcome_unknown (or any other 503) is never sent again.
+    public static async Task PutRefusedBeforeRunAsync(HttpClient client, Uri uri, JsonNode body)
+    {
+        using var response = await AdmittedAsync(() => client.PutAsync(uri, Json(body, "application/json")), refusedBeforeRun: true);
+        await EnsureSuccessAsync(response);
+    }
+
     public static async Task PatchAsync(HttpClient client, Uri uri, JsonNode merge, CancellationToken token = default)
     {
         using var response = await AdmittedAsync(() => client.PatchAsync(uri, Json(merge, "application/merge-patch+json"), token));
@@ -73,6 +81,19 @@ internal static class Docs
     {
         using var response = await AdmittedAsync(() => client.GetAsync(uri, token));
         return response.StatusCode == HttpStatusCode.NotFound ? null : await BodyAsync(response, token);
+    }
+
+    // A deleted document's answer: 404 with its retained tombstone's ETag, or null for a document never written (or collected).
+    public static async Task<string?> TombstoneAsync(HttpClient client, Uri uri, CancellationToken token = default)
+    {
+        using var response = await AdmittedAsync(() => client.GetAsync(uri, token));
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return response.Headers.ETag?.Tag;
+        }
+
+        await EnsureSuccessAsync(response);
+        throw new HttpRequestException($"GET {uri} answered {(int)response.StatusCode}, not the deleted document's 404", null, response.StatusCode);
     }
 
     public static async Task<HttpStatusCode> StatusAsync(HttpClient client, Uri uri, CancellationToken token = default)
@@ -138,13 +159,17 @@ internal static class Docs
 
     // Tenant admission answers 429 with Retry-After before it runs the request, so sending it again cannot repeat it.
     // Past the convergence deadline the 429 is returned, and the caller reports it.
-    private static async Task<HttpResponseMessage> AdmittedAsync(Func<Task<HttpResponseMessage>> send)
+    private static async Task<HttpResponseMessage> AdmittedAsync(Func<Task<HttpResponseMessage>> send, bool refusedBeforeRun = false)
     {
         var clock = Stopwatch.StartNew();
         while (true)
         {
             var response = await send();
-            if (response.StatusCode != HttpStatusCode.TooManyRequests || clock.Elapsed > Converge.Deadline)
+            var refused = response.StatusCode == HttpStatusCode.TooManyRequests
+                || (refusedBeforeRun && response.StatusCode == HttpStatusCode.ServiceUnavailable
+                    && await response.Content.ReadAsStringAsync() is var answer
+                    && (answer.Contains("\"remote_region_unavailable\"", StringComparison.Ordinal) || answer.Contains("\"confirmation_busy\"", StringComparison.Ordinal)));
+            if (!refused || clock.Elapsed > Converge.Deadline)
             {
                 return response;
             }

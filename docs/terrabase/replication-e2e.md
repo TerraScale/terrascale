@@ -36,8 +36,13 @@ Each test creates its own `e2e-<guid>` collection in the shared database and del
 nice -n 19 make terrabase-e2e-fly-outage
 ```
 
-Stops the single `sjc` machine of a pinned disposable app, writes through `gru`, starts `sjc` and waits for it to catch
-up. It needs `flyctl` logged in. It runs alone because it stops a machine the other tests use. It never targets
+For gru, sjc and fra in turn, each on a collection of its own: stops the region's single machine of a pinned disposable
+app, writes 40 documents, deletes a seeded document and patches one shared document from both survivors, starts the
+machine and waits until it serves both backlogs, every tombstone (404 with an equal ETag in every region) and the
+settled conflict, and every region lists the same collection digest. Before the outage writes, each survivor's write
+must be confirmed by the other; only `remote_region_unavailable` and `confirmation_busy` (refused before execution) are
+sent again. It reports six `rejoin <survivor> to <stopped>` latencies. The target fails unless this test is an actual
+pass. It needs `flyctl` logged in. It runs alone because it stops a machine the other tests use. It never targets
 production: without `TERRABASE_E2E_FLY_URL`, `TERRABASE_E2E_FLY_REVISION` and `TERRABASE_E2E_FLY_OUTAGE=1` it is reported
 as skipped, and `TERRABASE_E2E_FLY_APP` must name the disposable app (no default; production and preview apps are refused,
 see `e2e-disposable-app.md`).
