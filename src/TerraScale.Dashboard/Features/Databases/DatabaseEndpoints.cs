@@ -86,12 +86,12 @@ public static class DatabaseEndpoints
                             await databases.SetRegionsAsync(context, id, form["region"].Select(value => value ?? ""), http.RequestAborted);
                         else
                             await databases.DeleteAsync(context, id, form.ContainsKey("confirmName") ? form["confirmName"].ToString() : form["confirm"].ToString(), http.RequestAborted);
-                        return WantsHtml(http) ? AuthEndpoints.SeeOther(action == "delete" ? "/databases" : DatabaseService.Path(id) + "#placement") : Results.NoContent();
+                        return WantsHtml(http) ? AuthEndpoints.SeeOther(action == "delete" ? "/databases" : DatabaseService.Path(id, "replication") + "#placement") : Results.NoContent();
                     }
                     catch (Exception error) when (KnownFailure(error))
                     {
                         if (!WantsHtml(http) || Status(error) == 404) return Failure(error);
-                        return await DetailPageAsync(http, context, id, action switch { "branch" => "branches", "delete" => "danger", _ => "overview" }, backend, databases, Message(error), action == "delete", Status(error));
+                        return await DetailPageAsync(http, context, id, action switch { "branch" => "branches", "delete" => "danger", _ => "replication" }, backend, databases, Message(error), action == "delete", Status(error));
                     }
                 });
         }
@@ -150,7 +150,7 @@ public static class DatabaseEndpoints
         var regionError = "";
         var range = HomePage.NormalizeRange(http.Request.Query["range"]);
         UsageReplication? measurements = null;
-        if (tab == "overview")
+        if (tab == "replication")
         {
             try
             {
@@ -160,6 +160,9 @@ public static class DatabaseEndpoints
                 choices = [.. listed, .. DatabaseService.Regions(database).Select(code => DatabaseRegion.Resolve(listed, code)).OfType<DatabaseRegion>().Where(region => !listed.Contains(region)).Distinct()];
             }
             catch (HttpRequestException) { regionError = "Region discovery is unavailable. Try again shortly."; }
+        }
+        if (tab == "overview")
+        {
             try
             {
                 contents = await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), id, http.RequestAborted);

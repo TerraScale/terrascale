@@ -44,9 +44,10 @@ public sealed class DatabaseOverviewJourneyTests(DashboardRootFixture fixture)
         var path = "/databases/" + id;
         var known = await PageAsync(client);
         await Assert.That(Counts(known)).IsEquivalentTo(new[] { "0", "0" });
-        await Assert.That(known).Contains("gru · São Paulo is the home region and stays selected.");
-        await Assert.That(known).Contains("Single region · GRU only");
-        var home = Regex.Match(known, "<input[^>]+type=\"checkbox\"[^>]+value=\"GRU\"[^>]*>").Value;
+        var placement = await PageAsync(client, "/replication");
+        await Assert.That(placement).Contains("gru · São Paulo is the home region and stays selected.");
+        await Assert.That(placement).Contains("Single region · GRU only");
+        var home = Regex.Match(placement, "<input[^>]+type=\"checkbox\"[^>]+value=\"GRU\"[^>]*>").Value;
         await Assert.That(home).Contains("required");
         await Assert.That(home.Contains("disabled", StringComparison.Ordinal)).IsFalse();
         var knownTool = await DetailAsync();
