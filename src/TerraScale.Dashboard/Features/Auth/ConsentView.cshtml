@@ -1,4 +1,22 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Auth.ConsentPage>
 @implements IUsesLayout<TerraScale.Dashboard.UI.Slices.Document, DocumentModel>
-<main class="ts-flow-root"><section class="ts-flow-panel" data-tone="amber"><header class="ts-flow-header"><span class="ts-flow-icon" aria-hidden="true">!</span><div class="ts-flow-header-content"><h1 class="ts-flow-title">@Model.Title</h1><p class="ts-flow-subtitle">@Model.Description</p></div></header><div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-title">Request unavailable</p><p class="ts-alert-body">@Model.Message</p></div><p class="ts-flow-note"><a class="ts-link" href="/login">← Back to sign in</a></p></section></main>
+@inject AssetUrls Assets
+<main class="ts-login">
+    <section class="ts-login-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.RegionMap>())
+        <ul class="ts-login-regions"><li><span class="ts-dot"></span>San Francisco</li><li><span class="ts-dot"></span>São Paulo</li></ul>
+    </section>
+    <div class="ts-login-column">
+        <div class="ts-login-panel">
+            <div class="ts-login-stack">
+                <div class="ts-login-heading">
+                    <img class="ts-login-logo" src="@Assets.Url("brand/logo-terrascale-blue.svg")" alt="TerraScale" decoding="async" />
+                    <div class="ts-auth-heading"><h1 class="ts-auth-title">@Model.Title</h1><p class="ts-auth-subtitle">@Model.Description</p></div>
+                </div>
+                <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-title">Request unavailable</p><p class="ts-alert-body">@Model.Message</p></div>
+            </div>
+            <p class="ts-auth-footer"><a class="ts-link" href="/login">← Back to sign in</a></p>
+        </div>
+    </div>
+</main>
 @functions { public DocumentModel LayoutModel => Model.Document; }

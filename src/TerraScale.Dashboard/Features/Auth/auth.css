@@ -2,7 +2,7 @@
 
 .ts-login {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(19rem, 1fr);
+  grid-template-columns: minmax(0, 1.1fr) minmax(420px, 1fr);
   min-height: 100dvh;
 }
 
@@ -11,6 +11,8 @@
   display: grid;
   place-items: center;
   padding: var(--ts-s10);
+  border-right: 1px solid var(--ts-line);
+  background: var(--ts-surface);
   overflow: hidden;
 }
 
@@ -44,59 +46,73 @@
   color: var(--ts-link);
 }
 
+/* Centered form column: card, then the locale footer below it. */
 .ts-login-column {
-  display: grid;
-  grid-template-rows: 1fr auto;
-  border-left: 1px solid color-mix(in oklab, var(--ts-accent) 45%, transparent);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ts-s6);
+  padding: var(--ts-s10) var(--ts-s5);
   background: var(--ts-canvas);
 }
 
-/* The reference places the header in the top 304px and the account link
-   immediately above the locale footer. */
 .ts-login-panel {
   display: grid;
-  grid-template-rows: 1fr auto;
   gap: var(--ts-s5);
-  width: min(384px, calc(100% - 2 * var(--ts-s5)));
-  margin-inline: auto;
-  padding-top: var(--ts-s4);
+  width: min(400px, 100%);
 }
 
 .ts-login-stack {
   display: grid;
-  align-content: start;
   gap: var(--ts-s5);
-  min-height: 0;
 }
 
 .ts-login-heading {
   display: grid;
-  align-content: end;
-  gap: var(--ts-s5);
-  min-height: 288px;
-  padding-bottom: var(--ts-s3);
+  justify-items: center;
+  gap: var(--ts-s4);
+}
+
+.ts-login-heading .ts-auth-heading {
+  gap: var(--ts-s2);
 }
 
 .ts-login-heading .ts-auth-title {
-  font-size: var(--ts-fs-3xl);
+  font-size: var(--ts-fs-2xl);
 }
 
 .ts-login-logo {
-  justify-self: center;
   width: auto;
-  height: 80px;
-  object-fit: contain;
+  height: 28px;
+}
+
+.ts-login-panel .ts-auth-providers {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ts-s2);
 }
 
 .ts-login-panel .ts-auth-providers .ts-btn {
   height: var(--ts-control-h-lg);
+  padding-inline: var(--ts-s3);
+}
+
+/* Matches the prototype's mono uppercase divider label. */
+.ts-login-panel .ts-auth-divider {
+  font-family: var(--ts-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .ts-login-footer {
   display: flex;
   justify-content: center;
-  padding: var(--ts-s4);
-  border-top: 1px solid var(--ts-line);
+}
+
+.ts-login-footer .ts-auth-locale .ts-select {
+  width: 130px;
+  height: 28px;
+  font-size: var(--ts-fs-xs);
 }
 
 /* Keep a usable native field until Datastar has initialized the digit boxes. */
@@ -136,7 +152,6 @@
   font-size: var(--ts-fs-2xl);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  box-shadow: inset 0 0 12px var(--ts-accent-soft);
 }
 
 .ts-email-code:focus-within .ts-email-code-active {
@@ -157,7 +172,8 @@
   outline-color: var(--ts-danger);
 }
 
-@media (max-width: 64rem) {
+/* Below 900px the map hides and the form stacks from the top, as in the prototype. */
+@media (max-width: 900px) {
   .ts-login {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -167,18 +183,7 @@
   }
 
   .ts-login-column {
-    border-left: 0;
-  }
-
-  .ts-login-panel {
-    width: min(384px, calc(100% - 2 * var(--ts-s4)));
-  }
-
-  .ts-login-logo {
-    height: 64px;
-  }
-
-  .ts-login-heading {
-    min-height: 0;
+    justify-content: flex-start;
+    padding-top: var(--ts-s12);
   }
 }
