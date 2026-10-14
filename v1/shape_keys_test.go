@@ -30,7 +30,7 @@ func TestShapeKeyDiagnosticsRedactKey(t *testing.T) {
 		for _, format := range []string{"%p", "%v", "%#v", "%d", "%x", "%s", "%q", "%8.3f"} {
 			got := fmt.Sprintf(format, value)
 			normalized := strings.Join(strings.Fields(got), " ")
-			if strings.Contains(normalized, "173 173") || strings.Contains(got, "[ad ad") || strings.Contains(got, strings.Repeat("ad", 32)) {
+			if bytes.Contains([]byte(got), material) || strings.Contains(normalized, "173 173") || strings.Contains(got, "[ad ad") || strings.Contains(got, strings.Repeat("ad", 32)) {
 				t.Fatalf("%s diagnostic exposes key material: %s", format, got)
 			}
 		}
