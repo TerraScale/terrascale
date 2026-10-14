@@ -1,10 +1,8 @@
 using System.Text.Json;
 using Grpc.Core;
-using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
-using TerraBase.Primitives;
 using TerraBase.Testing;
 using ReplicaCluster = TerraBase.Fast.Replication.PeerStreamTests.Cluster;
 
