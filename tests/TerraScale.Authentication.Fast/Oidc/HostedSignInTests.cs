@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Net.Http.Headers;
+using Microsoft.Playwright;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Tests;
@@ -11,6 +12,9 @@ namespace TerraScale.Authentication.Fast.Oidc;
 public sealed class HostedSignInTests(TerraBaseFixture fixture)
 {
     private const string SignIn = $"/ui/{OidcIssuer.Slug}/sign-in";
+
+    [ClassDataSource<BrowserFixture>(Shared = SharedType.PerTestSession)]
+    public required BrowserFixture Chromium { get; init; }
 
     [Test]
     public async Task Cross_origin_posts_and_unknown_addresses_send_no_mail()
@@ -144,5 +148,100 @@ public sealed class HostedSignInTests(TerraBaseFixture fixture)
             await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(await page.Content.ReadAsStringAsync()).DoesNotContain("evil.example");
         }
+    }
+
+    [Test]
+    public async Task The_theme_picker_sets_the_colour_scheme_follows_the_os_and_survives_reload()
+    {
+        await using var server = await AuthTestServer.StartAsync();
+        var violations = new List<string>();
+        var browser = await Chromium.BrowserAsync();
+        await using var context = await browser.NewContextAsync(new() { ColorScheme = ColorScheme.Light });
+        var page = await OpenSignInAsync(context, server, violations);
+        var picker = page.Locator("select.theme-picker");
+
+        await Assert.That(await picker.InputValueAsync()).IsEqualTo("system");
+        await ExpectSchemeAsync(page, "light");
+
+        await page.EmulateMediaAsync(new() { ColorScheme = ColorScheme.Dark });
+        await ExpectSchemeAsync(page, "dark");
+
+        await picker.SelectOptionAsync("light");
+        await ExpectSchemeAsync(page, "light");
+        await page.ReloadAsync();
+        await Assert.That(await picker.InputValueAsync()).IsEqualTo("light");
+        await Assert.That(await page.EvaluateAsync<string?>("localStorage.getItem('ts-auth-theme')")).IsEqualTo("light");
+        await ExpectSchemeAsync(page, "light");
+
+        // An explicit choice ignores the OS; "system" follows it again.
+        await picker.SelectOptionAsync("dark");
+        await page.EmulateMediaAsync(new() { ColorScheme = ColorScheme.Light });
+        await ExpectSchemeAsync(page, "dark");
+        await picker.SelectOptionAsync("system");
+        await ExpectSchemeAsync(page, "light");
+        await page.EmulateMediaAsync(new() { ColorScheme = ColorScheme.Dark });
+        await ExpectSchemeAsync(page, "dark");
+
+        await Assert.That(violations).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(1440, 900)]
+    [Arguments(390, 844)]
+    public async Task The_card_is_centred_and_the_powered_footer_sits_below_it(int width, int height)
+    {
+        await using var server = await AuthTestServer.StartAsync();
+        var violations = new List<string>();
+        var browser = await Chromium.BrowserAsync();
+        await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
+        var page = await OpenSignInAsync(context, server, violations);
+
+        var card = (await page.Locator(".card").BoundingBoxAsync())!;
+        var powered = (await page.Locator(".auth-powered").BoundingBoxAsync())!;
+        await Assert.That(Math.Abs(card.X + card.Width / 2 - width / 2.0)).IsLessThanOrEqualTo(1);
+        await Assert.That(Math.Abs(card.Y + card.Height / 2 - height / 2.0)).IsLessThanOrEqualTo(1);
+        await Assert.That(await page.Locator(".card .auth-powered").CountAsync()).IsEqualTo(0);
+        await Assert.That(powered.Y).IsGreaterThanOrEqualTo(card.Y + card.Height);
+        await Assert.That(violations).IsEmpty();
+    }
+
+    /// <summary>
+    /// Opens the real sign-in page. The browser never reaches the loopback listener directly: every request to the
+    /// public origin is answered by the test server with its real headers, including the CSP, and anything else is refused.
+    /// </summary>
+    private static async Task<IPage> OpenSignInAsync(IBrowserContext context, AuthTestServer server, List<string> violations)
+    {
+        await context.RouteAsync("**/*", async route =>
+        {
+            var url = new Uri(route.Request.Url);
+            if (url.Host != "auth.test.invalid")
+            {
+                await route.AbortAsync();
+                return;
+            }
+
+            using var response = await server.Client.GetAsync(url.PathAndQuery);
+            var headers = response.Headers.Concat(response.Content.Headers)
+                .Where(header => header.Key is not ("Content-Length" or "Transfer-Encoding"))
+                .ToDictionary(header => header.Key, header => string.Join(", ", header.Value));
+            await route.FulfillAsync(new() { Status = (int)response.StatusCode, Headers = headers, BodyBytes = await response.Content.ReadAsByteArrayAsync() });
+        });
+        var page = await context.NewPageAsync();
+        page.Console += (_, message) =>
+        {
+            if (message.Text.Contains("Content Security Policy", StringComparison.Ordinal))
+            {
+                violations.Add(message.Text);
+            }
+        };
+        await page.GotoAsync($"{OidcHarness.PublicOrigin}{SignIn}");
+        return page;
+    }
+
+    /// <summary>Waits for the effective colour scheme, so the OS change event has run before the assertion.</summary>
+    private static async Task ExpectSchemeAsync(IPage page, string expected)
+    {
+        await page.WaitForFunctionAsync("scheme => getComputedStyle(document.documentElement).colorScheme === scheme", expected);
+        await Assert.That(await page.EvaluateAsync<string>("getComputedStyle(document.documentElement).colorScheme")).IsEqualTo(expected);
     }
 }

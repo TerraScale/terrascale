@@ -11,14 +11,47 @@
 <style nonce="@Model.Nonce">:root{--accent:@accent}</style>
 }
 @await RenderSectionAsync("head")
+<script nonce="@Model.Nonce">
+(function () {
+  var saved = 'system';
+  try { saved = localStorage.getItem('ts-auth-theme') || saved; } catch (e) { }
+  document.documentElement.dataset.theme = saved === 'light' || saved === 'dark' ? saved : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+})();
+</script>
 </head>
 <body>
-<main class="card">
-<div class="brand">@if (Model.LogoUrl is { } logo)
-{<img src="@logo" alt="" class="logo-img">}
-else
-{<span class="logo">◇</span>} ts-auth</div>
+<main class="auth-page">
+<div class="card">
+<div class="brand"><img src="@(Model.LogoUrl ?? "/admin/logo-icon-blue.svg")" alt="" class="logo-img"><span>@(Model.LogoUrl is null ? "TerraScale" : "ts-auth")</span></div>
 @await RenderBodyAsync()
+</div>
 </main>
+<footer class="auth-foot">
+<select class="theme-picker" aria-label="Theme">
+<option value="system">System</option>
+<option value="light">Light</option>
+<option value="dark">Dark</option>
+</select>
+<p class="auth-powered">Powered by <b>TerraScale</b></p>
+</footer>
+<script nonce="@Model.Nonce">
+(function () {
+  var root = document.documentElement, picker = document.querySelector('.theme-picker'), key = 'ts-auth-theme';
+  var osDark = window.matchMedia('(prefers-color-scheme: dark)');
+  function apply(choice) {
+    root.dataset.theme = choice === 'light' || choice === 'dark' ? choice : osDark.matches ? 'dark' : 'light';
+  }
+  var saved = 'system';
+  try { saved = localStorage.getItem(key) || saved; } catch (e) { }
+  if (saved !== 'light' && saved !== 'dark') saved = 'system';
+  picker.value = saved;
+  apply(saved);
+  picker.addEventListener('change', function () {
+    try { localStorage.setItem(key, picker.value); } catch (e) { }
+    apply(picker.value);
+  });
+  osDark.addEventListener('change', function () { apply(picker.value); });
+})();
+</script>
 </body>
 </html>
