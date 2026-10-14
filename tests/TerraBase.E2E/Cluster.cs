@@ -274,18 +274,15 @@ public sealed class Cluster : IAsyncDisposable
     /// Fly only: makes <paramref name="region"/> lose the acknowledged document <paramref name="id"/>, as a lost apply would.
     /// The running terrabase holds its database files locked, so the machine is first updated to idle
     /// (<c>sleep infinity</c>; terrabase stops on SIGTERM), then the id's rows are deleted from every table keyed by
-    /// <c>id</c> in each database file (sqlite3, installed into the test-only image's ephemeral rootfs), and the machine's
-    /// saved config is restored. Returns the edit's output once the region is ready again.
+    /// <c>id</c> in each database file (sqlite3, installed into the test-only image's ephemeral rootfs), and terrabase is
+    /// started again. Returns the edit's output once the region is ready again.
     /// </summary>
     public async Task<string> LoseDocumentAsync(string region, string id)
     {
         var machine = Disposable.Machines[region];
-        using var listed = JsonDocument.Parse(await Flyctl.RunAsync("machine", "list", "--app", Disposable.App, "--json"));
-        var saved = Path.GetTempFileName();
+        _ = await Flyctl.RunAsync("machine", "update", machine, "--app", Disposable.App, "--entrypoint", "sleep infinity", "--skip-health-checks", "--yes");
         try
         {
-            await File.WriteAllTextAsync(saved, listed.RootElement.EnumerateArray().Single(found => found.GetProperty("id").GetString() == machine).GetProperty("config").GetRawText());
-            _ = await Flyctl.RunAsync("machine", "update", machine, "--app", Disposable.App, "--entrypoint", "sleep infinity", "--skip-health-checks", "--yes");
             var output = await FlyScriptAsync(region, $$"""
                 apt-get update -qq > /dev/null 2>&1; apt-get install -y -qq sqlite3 > /dev/null 2>&1
                 for f in /data/data/*/*/*.db; do
@@ -295,7 +292,7 @@ public sealed class Cluster : IAsyncDisposable
                   done
                 done
                 """);
-            _ = await Flyctl.RunAsync("machine", "update", machine, "--app", Disposable.App, "--machine-config", saved, "--skip-health-checks", "--yes");
+            await RestoreEntrypointAsync();
             _ = await Converge.UntilAsync(async () =>
             {
                 try
@@ -309,9 +306,16 @@ public sealed class Cluster : IAsyncDisposable
             }, status => status == HttpStatusCode.OK, $"{region} ready on its edited volume", TimeSpan.FromMinutes(4));
             return output;
         }
-        finally
+        catch
         {
-            File.Delete(saved);
+            await RestoreEntrypointAsync();
+            throw;
+        }
+
+        // The image's own entrypoint: a merged --machine-config cannot clear the override.
+        Task<string> RestoreEntrypointAsync()
+        {
+            return Flyctl.RunAsync("machine", "update", machine, "--app", Disposable.App, "--entrypoint", "/app/terrabase", "--skip-health-checks", "--yes");
         }
     }
     // The script travels base64-encoded, so its quotes survive flyctl's command line and sh -c.
