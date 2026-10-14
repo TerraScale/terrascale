@@ -149,6 +149,36 @@
   flex: 1 1 240px;
 }
 
+/* Branches tab: full-width rows; name wraps first on narrow screens. */
+.ts-db-branches {
+  display: grid;
+  margin: var(--ts-s4) 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--ts-line);
+}
+
+.ts-db-branch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s2) var(--ts-s4);
+  min-height: 52px;
+  padding: var(--ts-s3) 0;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-db-branch-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.ts-db-branch .ts-meta {
+  margin-left: auto;
+}
+
 /* Inline restore form in the restore points table. */
 .ts-db-restore {
   display: flex;
