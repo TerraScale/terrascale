@@ -58,7 +58,8 @@ public sealed class ConfigurationTests
         // ts-auth's issuer and TerraBase's audience have no region: the same token is accepted in gru, sjc and fra.
         var production = TerraBaseOptions.FromValues(Auth(TerraBaseOptions.PlatformAuthIssuer, TerraBaseOptions.PlatformAuthAudience));
         await Assert.That((production.AuthIssuer, production.AuthAudiences.Single())).IsEqualTo(("https://auth.terrascale.tech/terrascale", "https://api.terrascale.tech"));
-        await Assert.That(TerraBaseOptions.FromValues(new Dictionary<string, string>()).AuthIssuer).IsNull();
+        var defaults = TerraBaseOptions.FromValues(new Dictionary<string, string>());
+        await Assert.That((defaults.AuthIssuer, defaults.AuthAudiences.Single())).IsEqualTo((production.AuthIssuer, production.AuthAudiences.Single()));
         foreach (var (issuer, audience) in new[]
         {
             ("https://gru.auth.terrascale.tech/terrascale", TerraBaseOptions.PlatformAuthAudience),

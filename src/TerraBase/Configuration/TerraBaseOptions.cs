@@ -256,6 +256,12 @@ public sealed record TerraBaseOptions
         }
 
         var (authIssuer, authAudiences) = ParseAuth(values);
+        if (app == ProductionApp && authIssuer is null)
+        {
+            authIssuer = PlatformAuthIssuer;
+            authAudiences = [PlatformAuthAudience];
+        }
+
         // A regional issuer or audience would turn every platform token away with 401 in production; previews and tests run their own ts-auth.
         if (app == ProductionApp && authIssuer is not null && (authIssuer != PlatformAuthIssuer || !authAudiences.Contains(PlatformAuthAudience)))
         {
