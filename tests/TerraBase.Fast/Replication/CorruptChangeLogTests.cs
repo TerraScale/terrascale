@@ -199,9 +199,14 @@ public sealed class CorruptChangeLogTests
         var before = await gru.HeadAsync(first);
         await gru.WriteAsync(first, async transaction => _ = await transaction.PutAsync(Items, "held", Json("""{"n":1}"""), CancellationToken.None));
         await gru.DamageAsync(first, before, Damage.Load("unknown-change-type-on-state-row"));
-        cluster.List(sjc);
+        // Establish the fault while unlisted, so the new sender link has never learned this copy's cursor.
         await gru.UntilFaultRecordedAsync(first);
+        cluster.List(sjc);
         await Assert.That(await gru.UntilMetricAsync("terrabase_replication_send_lag_seconds", value => value > 0, "sjc")).IsTrue();
+        await gru.UntilAcknowledgedAsync(first, acknowledged => acknowledged == 0);
+        var peer = sjc.Api.Server.Services.GetRequiredService<LocalReplica>().Id;
+        await Assert.That(await gru.Groups.AckedAsync(first, peer, CancellationToken.None)).IsNull();
+        await Assert.That(await gru.Groups.AckAsync(first, await gru.IncarnationAsync(first), peer, before, default, CancellationToken.None)).IsFalse();
         await Assert.That(await sjc.ReadAsync(first, "held")).IsNull();
 
         await gru.RepairAsync(first, "UPDATE turso_cdc SET change_type = 1 WHERE change_type = 7;");
