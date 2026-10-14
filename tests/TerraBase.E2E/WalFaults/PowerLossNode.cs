@@ -7,8 +7,8 @@ using TerraBase.Testing;
 
 namespace TerraBase.E2E.WalFaults;
 
-// shortcut: one node of RegionProcessHost started here with the shim, until RegionProcesses loads it (hookup on #108);
-// then these scenarios move onto RegionProcesses.PowerLossAsync.
+// shortcut: one node of RegionProcessHost started here with the shim; RegionProcesses.StartWithWalFaultsAsync now loads it
+// too (V1), and these single-node scenarios move onto RegionProcesses.PowerLossAtSyncAsync when they need a peer.
 /// <summary>
 /// One TerraBase node in a process of its own with the write-ahead log fault shim loaded, driven over its internal
 /// listener as the platform operator; <see cref="PowerLossAsync"/> drops every unsynced byte of every log.

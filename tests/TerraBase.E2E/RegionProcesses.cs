@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Net;
@@ -10,6 +11,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication;
+using TerraBase.E2E.WalFaults;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -35,8 +37,12 @@ internal sealed class RegionProcesses : IAsyncDisposable
     private readonly string _project = EntityIds.New().ToString();
     private readonly string _database = EntityIds.New().ToString();
 
-    private RegionProcesses()
+    // Every region's process loads the write-ahead log fault shim (StartWithWalFaultsAsync).
+    private readonly bool _walFaults;
+
+    private RegionProcesses(bool walFaults)
     {
+        _walFaults = walFaults;
     }
 
     /// <summary>The database's path on every region, <c>/v1/projects/{project}/databases/canary</c>.</summary>
@@ -57,9 +63,14 @@ internal sealed class RegionProcesses : IAsyncDisposable
     public Uri Document(string id) => new($"{DatabasePath}/collections/{Collection}/documents/by-key?id={Uri.EscapeDataString(id)}", UriKind.Relative);
 
     /// <summary>Starts one process per region, registers the database placed in all of them, and waits until each serves it.</summary>
-    public static async Task<RegionProcesses> StartAsync(params string[] regions)
+    public static Task<RegionProcesses> StartAsync(params string[] regions) => StartAsync(walFaults: false, regions);
+
+    /// <summary>As <see cref="StartAsync(string[])"/>, with the write-ahead log fault shim in every region's process.</summary>
+    public static Task<RegionProcesses> StartWithWalFaultsAsync(params string[] regions) => StartAsync(walFaults: true, regions);
+
+    private static async Task<RegionProcesses> StartAsync(bool walFaults, string[] regions)
     {
-        var cluster = new RegionProcesses();
+        var cluster = new RegionProcesses(walFaults);
         try
         {
             Directory.CreateDirectory(Path.Combine(cluster._root, "members"));
@@ -125,6 +136,62 @@ internal sealed class RegionProcesses : IAsyncDisposable
         File.Move(hold + ".partial", hold, overwrite: true);
     }
 
+    /// <summary>A client of the region's public listener with a fresh API key of the database's organization holding <paramref name="scopes"/>.</summary>
+    public async Task<HttpClient> DataClientAsync(string region, params string[] scopes)
+    {
+        using var response = await this[region].PostAsJsonAsync(new Uri("/admin/api-keys", UriKind.Relative),
+            new { name = "e2e", scopes, organizationId = _organization });
+        await Docs.EnsureSuccessAsync(response);
+        var secret = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("secret").GetString();
+        var client = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }) { BaseAddress = _regions[region].ClientAddress };
+        client.DefaultRequestHeaders.Authorization = new("Bearer", secret);
+        return client;
+    }
+
+    /// <summary>The region applies the database's batches again.</summary>
+    public void ReleaseReplication(string region) => File.Delete(HoldFile(_regions[region]));
+
+    /// <summary>The fault shim's control of the region's process (<see cref="StartWithWalFaultsAsync"/> only).</summary>
+    public WalSyncFaults Faults(string region) => new(_regions[region].DataDirectory + ".walfaults");
+
+    /// <summary>The harness database's write-ahead log on the region.</summary>
+    public string TenantWal(string region) => Path.Combine(_regions[region].DataDirectory, _organization, _project, _database + ".db-wal");
+
+    /// <summary>
+    /// A power loss at the sync the region's shim was armed to kill: waits for that SIGKILL, drops every unsynced byte of
+    /// every log, then writes back the dropped frames of the database's log but the last, torn after
+    /// <paramref name="tornBytes"/> (a torn tail). Answers the log's synced, unsynced and written-back lengths.
+    /// </summary>
+    public async Task<(long Synced, long Unsynced, long Retained)> PowerLossAtSyncAsync(string region, int tornBytes)
+    {
+        var node = _regions[region];
+        using var armed = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        try
+        {
+            await node.Process!.WaitForExitAsync(armed.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            throw new TimeoutException($"the armed sync of {region} never ran");
+        }
+
+        await KillAsync(region);
+        var (faults, wal) = (Faults(region), TenantWal(region));
+        var written = await File.ReadAllBytesAsync(wal);
+        var synced = faults.SyncedLength(wal);
+        faults.DropUnsynced(node.DataDirectory);
+        faults.Clear();
+        var unsynced = written.LongLength - synced;
+        var frame = BinaryPrimitives.ReadUInt32BigEndian(written.AsSpan(8, 4)) + 24L;
+        var retained = unsynced < frame ? 0 : unsynced - frame + Math.Min(tornBytes, frame - 1);
+        await using (var file = new FileStream(wal, FileMode.Append, FileAccess.Write))
+        {
+            await file.WriteAsync(written.AsMemory(checked((int)synced), checked((int)retained)));
+        }
+
+        return (synced, unsynced, retained);
+    }
+
     /// <summary>Starts the region's process again on the same data directory and machine id.</summary>
     public Task StartAgainAsync(string region) =>
         _regions[region].Process is { HasExited: false } ? throw new InvalidOperationException($"{region} is still running") : LaunchAsync(_regions[region]);
@@ -179,6 +246,11 @@ internal sealed class RegionProcesses : IAsyncDisposable
         start.Environment[RegionProcessHost.DataVariable] = node.DataDirectory;
         start.Environment[RegionProcessHost.MembersVariable] = Path.Combine(_root, "members");
         start.Environment[RegionProcessHost.HoldVariable] = HoldFile(node);
+        if (_walFaults)
+        {
+            Faults(node.Name).AddTo(start.Environment);
+        }
+
         var process = Process.Start(start) ?? throw new InvalidOperationException($"the {node.Name} process did not start");
         process.OutputDataReceived += (_, line) => node.Append(line.Data);
         process.ErrorDataReceived += (_, line) => node.Append(line.Data);
@@ -202,7 +274,9 @@ internal sealed class RegionProcesses : IAsyncDisposable
             await Task.Delay(100);
         }
 
-        var address = new Uri(JsonNode.Parse(await File.ReadAllTextAsync(info))!["internal"]!.GetValue<string>());
+        var listeners = JsonNode.Parse(await File.ReadAllTextAsync(info))!;
+        var address = new Uri(listeners["internal"]!.GetValue<string>());
+        node.ClientAddress = new Uri(listeners["client"]!.GetValue<string>());
         node.Client = new HttpClient(PeerTls.Credential.Wrap(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }))
         {
             BaseAddress = address,
@@ -252,6 +326,8 @@ internal sealed class RegionProcesses : IAsyncDisposable
         public Process? Process { get; set; }
 
         public HttpClient? Client { get; set; }
+
+        public Uri? ClientAddress { get; set; }
 
         public string Output
         {
@@ -327,7 +403,11 @@ public sealed class RegionProcessHost
         // Written aside and moved, so a reader never sees half an entry (names starting with '.' are not machines).
         await File.WriteAllTextAsync(Path.Combine(members, "." + machine), $"{region}\n{api.Server.PeerAddress}", cancellationToken);
         File.Move(Path.Combine(members, "." + machine), Path.Combine(members, machine), overwrite: true);
-        await File.WriteAllTextAsync(info + ".partial", new JsonObject { ["internal"] = api.Server.BaseAddress.ToString() }.ToJsonString(), cancellationToken);
+        await File.WriteAllTextAsync(info + ".partial", new JsonObject
+        {
+            ["internal"] = api.Server.BaseAddress.ToString(),
+            ["client"] = api.Server.ClientAddress?.ToString(),
+        }.ToJsonString(), cancellationToken);
         File.Move(info + ".partial", info!, overwrite: true);
         await Task.Delay(Timeout.Infinite, cancellationToken);
     }

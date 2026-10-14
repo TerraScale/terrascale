@@ -261,3 +261,15 @@ survive origin SIGKILL/restart. These scenarios passed locally; they do not qual
 
 The probe bypasses endpoint wiring owned by FR-20. Fast tests cover held/refused acknowledgements, publication after
 ack, immutable old values during an unacknowledged overwrite, worker wake, missing capture, and cell-of-one commits.
+
+## Sealed shape chunks under power loss (V1)
+
+`ShapeSealPowerLossTests` loads the write-ahead log fault shim into both gru and sjc processes
+(`RegionProcesses.StartWithWalFaultsAsync`). After remote durable writes are sealed into snapshot pages and chunks
+(shape HTTP API on the public listener, plus the probe's served and persisted chunk rows), one tenant-log sync is
+killed: a gru write after the seals, a seal's own commit, or sjc's apply of the next batch. Every unsynced byte is
+dropped, then the dropped frames but the last are written back with a torn commit frame. After restart every op of
+every chunk, page and persisted row resolves to its document value on gru (served ones on sjc too), served chunks keep
+their range and body, and the old HTTP handle resumes or answers 409 `must_refetch`. Six seed/cut pairs; results in
+`benchmark/bench/2026-10-14-replication-v1.md`. The shim models only log cuts: torn main-database pages after a
+checkpoint are not simulated, and no Fly machine lost power.

@@ -106,12 +106,12 @@ public sealed class ShapeDurabilityE2ETests
         await Assert.That(Ops(after).Any(op => op.Id == id)).IsTrue().Because($"the chunk served before the SIGKILL: {after}");
     }
 
-    private static async Task ConnectedAsync(RegionProcesses regions) =>
+    internal static async Task ConnectedAsync(RegionProcesses regions) =>
         _ = await Converge.UntilAsync(() => regions[Origin].GetFromJsonAsync<JsonElement>(new Uri("/replication", UriKind.Relative)),
             status => status.GetProperty("peers").EnumerateArray().Any(peer => peer.GetProperty("region").GetString() == Remote),
             $"{Origin} streams to {Remote}");
 
-    private static async Task PutDurableAsync(RegionProcesses regions, string id, string value)
+    internal static async Task PutDurableAsync(RegionProcesses regions, string id, string value)
     {
         using var response = await regions[Origin].PutAsJsonAsync(regions.Document(id), new { value });
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await response.Content.ReadAsStringAsync());
@@ -119,7 +119,7 @@ public sealed class ShapeDurabilityE2ETests
     }
 
     // Seals the shape on the origin and reads back what its sealer serves.
-    private static async Task<JsonElement> SealAsync(RegionProcesses regions, Shape shape)
+    internal static async Task<JsonElement> SealAsync(RegionProcesses regions, Shape shape)
     {
         var tenant = regions.Tenant;
         var query = string.Join('&', new Dictionary<string, string>
@@ -137,14 +137,14 @@ public sealed class ShapeDurabilityE2ETests
     }
 
     // Every op of every served chunk, with the document's value when it carries one.
-    private static (string Id, string? Value)[] Ops(JsonElement seal, string field = "chunks") =>
+    internal static (string Id, string? Value)[] Ops(JsonElement seal, string field = "chunks") =>
         [.. seal.GetProperty(field).EnumerateArray()
             .SelectMany(chunk => chunk.GetProperty("body").GetProperty("changes").EnumerateArray())
             .SelectMany(change => change.GetProperty("ops").EnumerateArray())
             .Select(op => (op.GetProperty("id").GetString()!,
                 op.TryGetProperty("document", out var document) && document.TryGetProperty("value", out var value) ? value.GetString() : null))];
 
-    private sealed record Shape(string Id, string Handle)
+    internal sealed record Shape(string Id, string Handle)
     {
         public static Shape New() =>
             new(Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)), "h1-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)));
