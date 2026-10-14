@@ -184,7 +184,7 @@ public sealed class ShapeCryptoTests
         var key = Base64Url.DecodeFromChars((await current.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("key").GetString()!);
         await Assert.That(Client.Open(next.Bytes.ToArray(), host.Handle, "4", host.Epoch + 1, host.KeyId, key)?.AsSpan().SequenceEqual(plain)).IsTrue();
         await Assert.That(Client.Open(late.Bytes.ToArray(), host.Handle, "4", host.Epoch, host.KeyId, key)).IsNull();
-        // No retained object names the previous epoch (NoShapeKeyRetention), so it is no longer released.
+        // No retained object names the previous epoch, so it is no longer released.
         await AssertRefetchAsync(previous, host.Handle);
         await AssertInvalidAsync(future);
     }

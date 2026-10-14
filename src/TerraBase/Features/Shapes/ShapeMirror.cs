@@ -44,6 +44,8 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 {
     internal const int ManifestObjects = 8;
     private const int QueueItems = 32;
+    private const int TrimItems = 64;
+    private const long TrimBytes = 1024;
     private const long QueueBytes = 64 * 1024 * 1024;
     private const int CacheItems = 4096;
     private const int ScanItems = 1024;
@@ -54,8 +56,14 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         FullMode = BoundedChannelFullMode.Wait,
         SingleReader = true,
     });
+    private readonly Channel<PendingTrim> _trims = Channel.CreateBounded<PendingTrim>(new BoundedChannelOptions(TrimItems)
+    {
+        FullMode = BoundedChannelFullMode.Wait,
+        SingleReader = true,
+    });
     private readonly Lock _gate = new();
     private readonly HashSet<string> _pending = [];
+    private readonly HashSet<string> _trimming = [];
     private readonly Dictionary<string, Cached> _cache = [];
     private readonly Dictionary<string, Proven> _proofs = [];
     private readonly Dictionary<string, Missing> _missing = [];
@@ -89,12 +97,30 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         }
     }
 
-    internal async ValueTask FloorTrimmedAsync(IDatabaseStore store, string handle, long floor, CancellationToken cancellationToken)
+    // Runs inside origin maintenance, so it only queues: Tigris I/O belongs to the worker, and a refusal waits for the next trim or hourly sweep.
+    internal ValueTask FloorTrimmedAsync(IDatabaseStore store, string handle, long floor, CancellationToken cancellationToken)
     {
-        if (store.Tenant is { } tenant)
+        if (store.Tenant is { } tenant && _objects is not null)
         {
-            _ = await TrimAsync(tenant, handle, floor, cancellationToken).ConfigureAwait(false);
+            ValidateHandle(handle);
+            lock (_gate)
+            {
+                if (!_trimming.Contains(handle) && _trimming.Count < TrimItems
+                    && _memory.TryReserve(MemoryLane.Bulk, TrimBytes, tenant) is { } admission)
+                {
+                    if (_trims.Writer.TryWrite(new(tenant, handle, floor, admission)))
+                    {
+                        _trimming.Add(handle);
+                    }
+                    else
+                    {
+                        admission.Dispose();
+                    }
+                }
+            }
         }
+
+        return ValueTask.CompletedTask;
     }
 
     public void Warm(TenantContext database, string shapeId, string handle, string offset, string nextOffset)
@@ -133,6 +159,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         }
 
         var key = ShapeObjectStore.Key(shapeId, handle, offset);
+        IMemoryReservation? admission;
         lock (_gate)
         {
             if (_cache.ContainsKey(key) || _pending.Contains(key))
@@ -145,32 +172,33 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                 return false;
             }
 
-            var admission = _memory.TryReserve(MemoryLane.Bulk, sealedBody.Length + 2048L + (offset.Length + nextOffset.Length) * 2L, database);
+            admission = _memory.TryReserve(MemoryLane.Bulk, sealedBody.Length + 2048L + (offset.Length + nextOffset.Length) * 2L, database);
             if (admission is null)
             {
                 return false;
             }
 
-            try
-            {
-                var pending = new Pending(database, shapeId, handle, offset, nextOffset, coveredOffset, valuesAt,
-                    sealedAt, sealedBody.ToArray(), admission, adoptOnly);
-                if (!_queue.Writer.TryWrite(pending))
-                {
-                    admission.Dispose();
-                    return false;
-                }
+            // The claimed slot keeps duplicates and the byte bound exact while the body is copied outside the lock.
+            _pending.Add(key);
+            _queuedBytes += sealedBody.Length;
+        }
 
-                _pending.Add(key);
-                _queuedBytes += pending.Body.Length;
+        try
+        {
+            if (_queue.Writer.TryWrite(new(database, shapeId, handle, offset, nextOffset, coveredOffset, valuesAt,
+                sealedAt, sealedBody.ToArray(), admission, adoptOnly)))
+            {
                 return true;
             }
-            catch
-            {
-                admission.Dispose();
-                throw;
-            }
         }
+        catch
+        {
+            Release(key, sealedBody.Length, admission);
+            throw;
+        }
+
+        Release(key, sealedBody.Length, admission);
+        return false;
     }
 
     public async ValueTask<ShapeMirrorManifest> ManifestAsync(TenantContext database, string shapeId, string handle,
@@ -280,6 +308,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
                     previous.Admission.Dispose();
                 }
 
+                // shortcut: continuation waits for another floor notification; refused cursor admission falls back to the hourly expiry sweep.
                 if (more && _trimCursors.Count < CacheItems && _memory.TryReserve(MemoryLane.Bulk, 1024, database) is { } cursorAdmission)
                 {
                     _trimCursors[handle] = new(after!, cursorAdmission);
@@ -365,6 +394,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var sweep = SweepAsync(stoppingToken);
+        var trims = TrimQueueAsync(stoppingToken);
         try
         {
             await foreach (var pending in _queue.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
@@ -386,21 +416,60 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         finally
         {
             _queue.Writer.TryComplete();
+            _trims.Writer.TryComplete();
             try
             {
-                await sweep.ConfigureAwait(false);
+                await Task.WhenAll(sweep, trims).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                // Both owned workers finish before queued reservations are released.
+                // Every owned worker finishes before queued reservations are released.
             }
 
-            while (_queue.Reader.TryRead(out var pending))
+            finally
             {
-                Release(pending);
-            }
+                while (_queue.Reader.TryRead(out var pending))
+                {
+                    Release(pending);
+                }
 
-            ClearCaches();
+                while (_trims.Reader.TryRead(out var trim))
+                {
+                    Dequeued(trim);
+                    trim.Admission.Dispose();
+                }
+
+                ClearCaches();
+            }
+        }
+    }
+
+    private async Task TrimQueueAsync(CancellationToken cancellationToken)
+    {
+        await foreach (var trim in _trims.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        {
+            // Dequeued first so a floor raised during this pass queues one more pass for the handle.
+            Dequeued(trim);
+            try
+            {
+                _ = await TrimAsync(trim.Database, trim.Handle, trim.Floor, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.ZLogWarning(error, $"Shape mirror retention will retry on the next pass");
+            }
+            finally
+            {
+                trim.Admission.Dispose();
+            }
+        }
+    }
+
+    private void Dequeued(PendingTrim trim)
+    {
+        lock (_gate)
+        {
+            _trimming.Remove(trim.Handle);
         }
     }
 
@@ -705,15 +774,18 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
         }
     }
 
-    private void Release(Pending pending)
+    private void Release(Pending pending) =>
+        Release(ShapeObjectStore.Key(pending.ShapeId, pending.Handle, pending.Offset), pending.Body.Length, pending.Admission);
+
+    private void Release(string key, long bytes, IMemoryReservation admission)
     {
         lock (_gate)
         {
-            _pending.Remove(ShapeObjectStore.Key(pending.ShapeId, pending.Handle, pending.Offset));
-            _queuedBytes -= pending.Body.Length;
+            _pending.Remove(key);
+            _queuedBytes -= bytes;
         }
 
-        pending.Admission.Dispose();
+        admission.Dispose();
     }
 
     private static bool RemoteFailure(Exception error) => error is IOException or InvalidDataException or HttpRequestException or AmazonServiceException or OperationCanceledException or StorageBusyException;
@@ -738,6 +810,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
 
     private sealed record Pending(TenantContext Database, string ShapeId, string Handle, string Offset, string NextOffset,
         long CoveredOffset, long ValuesAt, DateTimeOffset SealedAt, ReadOnlyMemory<byte> Body, IMemoryReservation Admission, bool AdoptOnly);
+    private sealed record PendingTrim(TenantContext Database, string Handle, long Floor, IMemoryReservation Admission);
     private sealed record Cached(ShapeObjectHead Head, string NextOffset, IMemoryReservation Admission);
     private sealed record Proven(ShapeObjectHead Head, IMemoryReservation Admission);
     private sealed record Missing(DateTimeOffset RetryAfter, IMemoryReservation Admission);

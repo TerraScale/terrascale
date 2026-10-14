@@ -2,8 +2,6 @@ using System.Buffers;
 using System.Buffers.Text;
 using System.Globalization;
 using System.Text;
-using System.Text.Encodings.Web;
-using System.Text.Json;
 using Microsoft.OpenApi;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -23,7 +21,6 @@ internal sealed class GetShapeManifestEndpoint(
     private const string NoStore = "private, no-store";
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
-    private static readonly JsonWriterOptions CanonicalWriter = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     private static readonly Validation BadOffset = new("offset must be snap.<S>.<P> or a decimal commit boundary");
 
     /// <inheritdoc />
@@ -95,6 +92,9 @@ internal sealed class GetShapeManifestEndpoint(
         {
             return resolved switch
             {
+                QuotaExceeded error => ErrorResponse.From(error),
+                Evicted evicted => Refetch(evicted.Lineage, "shape lineage changed or filter evicted"),
+                NotFound error => ErrorResponse.From(error),
                 Unavailable error => ErrorResponse.From(error),
                 ShapeLineage => throw new System.Diagnostics.UnreachableException(),
             };
@@ -116,17 +116,21 @@ internal sealed class GetShapeManifestEndpoint(
         {
             return read switch
             {
-                MustRefetch refetch => Refetch(lineage, refetch.Message),
+                MustRefetch refetch => Refetch(refetch.Lineage ?? lineage, refetch.Message),
                 QuotaExceeded error => ErrorResponse.From(error),
+                NotFound error => ErrorResponse.From(error),
                 Unavailable error => ErrorResponse.From(error),
                 ShapeBody => throw new System.Diagnostics.UnreachableException(),
             };
         }
 
-        // Fresh tails have no immutable T1 object.
-        if (body.UpToDate)
+        using (body.Lease)
         {
-            return TypedResults.Json(new ShapeMirrorManifest(lineage.Handle, []), ShapeMirrorJsonContext.Default.ShapeMirrorManifest);
+            // Fresh tails have no immutable T1 object.
+            if (body.UpToDate)
+            {
+                return TypedResults.Json(new ShapeMirrorManifest(lineage.Handle, []), ShapeMirrorJsonContext.Default.ShapeMirrorManifest);
+            }
         }
 
         var manifest = await mirror.ManifestAsync(request.Scope.Database, lineage.ShapeId, lineage.Handle, request.OffsetText, 0, cancellationToken);
@@ -164,20 +168,20 @@ internal sealed class GetShapeManifestEndpoint(
             return BadOffset;
         }
 
-        var (canonical, filter) = (string.Empty, (DocumentFilter?)null);
+        var filter = ShapeFilter.All;
         if (Parameter("where") is { } where)
         {
-            switch (CheckWhere(where))
+            switch (ShapeFilter.Parse(where))
             {
                 case Validation error:
                     return error;
-                case Where parsed:
-                    (canonical, filter) = (parsed.Canonical, parsed.Filter);
+                case ShapeFilter parsed:
+                    filter = parsed;
                     break;
             }
         }
 
-        return new ManifestRequest(new ShapeScope(database, collection, canonical, filter), offset, offsetText, handle);
+        return new ManifestRequest(new ShapeScope(database, collection, filter.Canonical, filter), offset, offsetText, handle);
     }
 
     private static bool IsHandle(string handle) =>
@@ -230,40 +234,7 @@ internal sealed class GetShapeManifestEndpoint(
         }
     }
 
-    // The filter grammar of POST …/query; its canonical form is the compact JSON with member order kept and relaxed escaping.
-    private static Valid<Where> CheckWhere(string where)
-    {
-        const string Code = "invalid_query";
-        try
-        {
-            using var json = JsonDocument.Parse(where);
-            return QueryParser.CheckFilter(json.RootElement, Code) switch
-            {
-                Validation error => error,
-                DocumentFilter filter => new Where(Canonical(json.RootElement), filter),
-            };
-        }
-        // JsonElement.GetString rejects lone surrogate escapes with InvalidOperationException.
-        catch (Exception error) when (error is JsonException or InvalidOperationException)
-        {
-            return new Validation("where must be a JSON filter", Code);
-        }
-    }
-
-    private static string Canonical(JsonElement filter)
-    {
-        using var buffer = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(buffer, CanonicalWriter))
-        {
-            filter.WriteTo(writer);
-        }
-
-        return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
-    }
-
     private sealed record ManifestRequest(ShapeScope Scope, Offset Offset, string OffsetText, string Handle);
-
-    private sealed record Where(string Canonical, DocumentFilter Filter);
 
     private abstract record Offset;
 

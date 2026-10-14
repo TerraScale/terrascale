@@ -332,6 +332,38 @@ public sealed class ShapeMirrorTests
     }
 
     [Test]
+    public async Task A_floor_notification_defers_remote_cleanup_until_the_worker_runs()
+    {
+        await using var harness = await Harness.StartAsync();
+        var start = await harness.Db.HeadAsync();
+        _ = await harness.CommitLargeAsync();
+        var chunk = await harness.SealAsync(start);
+        await Assert.That(harness.Queue(chunk)).IsTrue();
+        await harness.MirroredAsync(1);
+        var stored = (await harness.ManifestAsync(start)).Objects.Single();
+        var aged = new FakeTimeProvider(harness.Time.GetUtcNow());
+        aged.Advance(FeedCursor.Retention + TimeSpan.FromSeconds(1));
+        using var mirror = harness.NewMirror(aged);
+        harness.S3.ObservedListPrefix = "v1/shapes/" + harness.Shape.Handle + "/";
+
+        await mirror.FloorTrimmedAsync(harness.Db.Store, harness.Shape.Handle, 0, harness.Cancellation);
+        await Assert.That(harness.S3.ListRequests).IsEqualTo(0).Because("the retention callback only queues work");
+        await Assert.That(harness.S3.Objects.ContainsKey(stored.Object)).IsTrue();
+
+        await mirror.StartAsync(harness.Cancellation);
+        try
+        {
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!harness.S3.Objects.ContainsKey(stored.Object)),
+                TimeSpan.FromSeconds(30));
+        }
+        finally
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            await mirror.StopAsync(deadline.Token);
+        }
+    }
+
+    [Test]
     public async Task A_missing_database_does_not_turn_an_unknown_floor_into_remote_deletion()
     {
         await using var harness = await Harness.StartAsync();
@@ -594,7 +626,7 @@ public sealed class ShapeMirrorTests
                 ManualBackupHosting.Configure(services);
                 services.AddSingleton<TimeProvider>(time);
                 services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, time);
-                // Lineage, closed chunks and snapshot pages are fixtures until the shape read path is wired to the real components.
+                // These retention scenarios serve one manually sealed lineage; ShapeMirrorHttpTests covers the real HTTP adapters.
                 services.AddSingleton<IShapeLineages>(lineage);
                 services.AddSingleton<IShapeChunks>(provider => new StoredChunks(provider));
                 services.AddSingleton<IShapeSnapshots>(provider => new StoredSnapshots(provider));
@@ -649,7 +681,7 @@ public sealed class ShapeMirrorTests
 
         /// <summary>Seals a snapshot of the shape's collection at the feed head, through the production snapshot store.</summary>
         public ValueTask<ShapeSnapshot> SealSnapshotAsync() => Snapshots.SealIfDueAsync(Db.Store,
-            new ShapeSnapshotDefinition(Shape.Handle, Shape.ShapeId, Shape.Collection, Shape.ResumeScope), Cancellation);
+            new ShapeSnapshotDefinition(Shape.Handle, Shape.ShapeId, Shape.Collection, Shape.CollectionGeneration, Shape.ResumeScope), Cancellation);
 
         public Task<HttpResponseMessage> GetKeyAsync(string epoch, string keyId) =>
             _api.Client.GetAsync(new Uri($"{_api.Collections}/{Collection}/shape/keys?handle={Shape.Handle}&epoch={epoch}&key_id={keyId}", UriKind.Relative));
@@ -732,7 +764,12 @@ public sealed class ShapeMirrorTests
     {
         public ShapeSealDefinition? Shape { get; set; }
 
-        public ValueTask<LineageResult> ResolveAsync(ShapeScope scope, CancellationToken cancellationToken)
+        public ValueTask<LineageResult> ResolveHandleAsync(TenantContext database, CollectionInfo collection, string handle, CancellationToken cancellationToken) =>
+            Resolve();
+
+        public ValueTask<LineageResult> ResolveAsync(ShapeScope scope, CancellationToken cancellationToken) => Resolve();
+
+        private ValueTask<LineageResult> Resolve()
         {
             if (Shape is not { } shape)
             {

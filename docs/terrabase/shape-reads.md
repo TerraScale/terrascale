@@ -576,6 +576,8 @@ and 9). It never redirects an origin fallback to Tigris. SDKs fetch `…/shape/m
 concrete handle and offset; `-1`, `live`, `cursor` and resume parameters are not accepted by that route. Forward
 the canonical `where` filter when present. Manifest requests require the same `documents:read` authorization as
 origin reads, and answer `200 application/json` with `Cache-Control: private, no-store`.
+The manifest uses the same filter parser and normalized identity as origin reads: an empty `where` answers
+`400 invalid_request`; malformed filter JSON or a value over 8 KiB answers `400 invalid_query`.
 
 Fetch each manifest URL as an opaque bearer URL, without forwarding origin authorization or cookies. The downloaded
 body is TBS1 ciphertext, never shape JSON. An empty manifest, expired URL, download failure or any verification
@@ -610,8 +612,10 @@ plaintext. The origin never answers `302`; SDKs must not treat any redirect as a
 - T1 delivery uses the authenticated manifest for integrity metadata and the next eight objects. Origin reads keep
   returning plaintext, including when the client falls back after an object fails integrity checks. Conditional origin
   `304` responses continue to revalidate plaintext.
-- Successful chunk and complete snapshot publication enqueue a bounded background mirror. Snapshot pages are read
-  by the mirror worker. Failed or refused work leaves origin delivery available. After a restart,
+- Successful chunk and complete snapshot publication enqueue a bounded background mirror. Chunk publication retains
+  the encoded admitted bytes through commit and performs no post-commit payload read. Snapshot pages are read after
+  publication by the bounded background mirror worker, one admitted page at a time; these reads are separate from
+  the one-payload-read live wake path. Failed or refused work leaves origin delivery available. After a restart,
   reading immutable origin bytes warms the metadata cache with HEAD from the existing remote object. Warming never
   uploads missing objects or renews the original seal timestamp.
 - Historical key proof first checks warmed objects, then scans at most 1024 remote objects with a two-second
