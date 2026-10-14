@@ -150,32 +150,6 @@ export const es: Messages = {
     perks: ['Planes pagados mensuales', 'Sin excedentes pagados'],
   },
 
-  statusStrip: {
-    aria: 'Estado del sistema',
-    headline: {
-      operational: 'Todos los sistemas operativos',
-      degraded: 'Rendimiento degradado',
-      partial_outage: 'Interrupción parcial',
-      major_outage: 'Interrupción grave',
-      maintenance: 'Mantenimiento programado',
-    },
-    states: {
-      operational: 'Operativo',
-      degraded: 'Degradado',
-      partial_outage: 'Interrupción parcial',
-      major_outage: 'Interrupción grave',
-      maintenance: 'Mantenimiento',
-      none: 'Sin datos',
-    },
-    detail: 'Página de estado pública · últimos 90 días',
-    fallback: 'Estado actual del sistema',
-    fallbackDetail: 'La disponibilidad se publica en la página de estado',
-    barsAria: 'Estado diario, últimos 90 días',
-    axisStart: 'Hace 90 días',
-    axisEnd: 'Hoy',
-    link: 'Página de estado',
-  },
-
   pricingTeaser: {
     eyebrow: 'Precios',
     title: 'Empieza gratis. Límites estrictos, sin excedentes.',

@@ -148,32 +148,6 @@ export const en = {
     perks: ['Monthly paid plans', 'No paid overages'],
   },
 
-  statusStrip: {
-    aria: 'System status',
-    headline: {
-      operational: 'All systems operational',
-      degraded: 'Degraded performance',
-      partial_outage: 'Partial outage',
-      major_outage: 'Major outage',
-      maintenance: 'Scheduled maintenance',
-    },
-    states: {
-      operational: 'Operational',
-      degraded: 'Degraded',
-      partial_outage: 'Partial outage',
-      major_outage: 'Major outage',
-      maintenance: 'Maintenance',
-      none: 'No data',
-    },
-    detail: 'Public status page · last 90 days',
-    fallback: 'Current system status',
-    fallbackDetail: 'Availability is published on the status page',
-    barsAria: 'Daily status, last 90 days',
-    axisStart: '90 days ago',
-    axisEnd: 'Today',
-    link: 'Status page',
-  },
-
   pricingTeaser: {
     eyebrow: 'Pricing',
     title: 'Start free. Hard limits, no overages.',
