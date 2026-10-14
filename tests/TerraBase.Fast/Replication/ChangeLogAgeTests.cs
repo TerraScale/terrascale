@@ -261,7 +261,7 @@ public sealed class ChangeLogAgeTests
 
         public async Task ReportFrontierAsync()
         {
-            using var channel = PeerChannel.Create(Sender.Api.Server.BaseAddress);
+            using var channel = PeerChannel.Create(Sender.Api.Server.BaseAddress, Sender.Api.Server.Credential);
             using var deadline = new CancellationTokenSource(Deadline);
             using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push(cancellationToken: deadline.Token);
             await call.RequestStream.WriteAsync(new PushFrame

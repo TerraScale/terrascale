@@ -37,7 +37,7 @@ public sealed class PeerStreamBlockedFrontierTests
             };
         }
 
-        using var channel = PeerChannel.Create(receiver.Api.Server.BaseAddress);
+        using var channel = PeerChannel.Create(receiver.Api.Server.BaseAddress, receiver.Api.Server.Credential);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push();
         try
         {

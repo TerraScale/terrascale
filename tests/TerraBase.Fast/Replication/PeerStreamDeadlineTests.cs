@@ -44,7 +44,7 @@ public sealed class PeerStreamDeadlineTests
         var time = new ObservedTime();
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru", services =>
             services.AddSingleton(provider => ActivatorUtilities.CreateInstance<PeerStreamReceiver>(provider, time)));
-        using var channel = PeerChannel.Create(api.Server.BaseAddress);
+        using var channel = PeerChannel.Create(api.Server.BaseAddress, api.Server.Credential);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push();
         await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = ReplicaId.Of(1, 7, 0).Value, Region = "sjc" } });
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None).WaitAsync(Deadline)).IsTrue();
@@ -70,7 +70,7 @@ public sealed class PeerStreamDeadlineTests
         var time = new ObservedTime();
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru", services =>
             services.AddSingleton(provider => ActivatorUtilities.CreateInstance<PeerStreamReceiver>(provider, time)));
-        using var channel = PeerChannel.Create(api.Server.BaseAddress);
+        using var channel = PeerChannel.Create(api.Server.BaseAddress, api.Server.Credential);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push();
 
         // The receiver's deadline is the only timer on its clock: once it exists, the call reached the receiver.
@@ -407,7 +407,7 @@ public sealed class PeerStreamDeadlineTests
         await using var api = await StartReceiverAsync(peer, time, held, blocked);
         var database = await CreateDatabaseAsync(api);
         var memory = (RefillMemory)api.Server.Services.GetRequiredService<IMemoryBudget>();
-        using var channel = PeerChannel.Create(api.Server.BaseAddress);
+        using var channel = PeerChannel.Create(api.Server.BaseAddress, api.Server.Credential);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push();
         var hello = new Hello { Node = ReplicaId.Of(1, 7, 0).Value, Region = "sjc", Machine = "zzzz-peer" };
         await call.RequestStream.WriteAsync(new PushFrame { Hello = hello });
@@ -442,7 +442,7 @@ public sealed class PeerStreamDeadlineTests
         await using var api = await StartReceiverAsync(peer, time, held);
         var database = await CreateDatabaseAsync(api);
         var memory = (RefillMemory)api.Server.Services.GetRequiredService<IMemoryBudget>();
-        using var channel = PeerChannel.Create(api.Server.BaseAddress);
+        using var channel = PeerChannel.Create(api.Server.BaseAddress, api.Server.Credential);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push();
         await call.RequestStream.WriteAsync(new PushFrame
         {
