@@ -4,11 +4,11 @@
 <!DOCTYPE html>
 <html lang="@Model.Context.Account.Locale" data-theme="dark" data-nonce="@Model.Nonce">
 <head>
-    <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="color-scheme" content="dark" /><meta name="theme-color" content="#0a0c12" />
+    <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="color-scheme" content="dark" /><meta name="theme-color" content="#151515" />
     <title>@Model.Title · TerraScale</title>
     <link rel="icon" type="image/svg+xml" href="@Assets.Url("brand/logo-icon-blue.svg")" />
-    <link rel="preload" href="@Assets.Url("fonts/oxanium-latin-wght-normal.woff2")" as="font" type="font/woff2" crossorigin />
-    <link rel="preload" href="@Assets.Url("fonts/jetbrains-mono-latin-wght-normal.woff2")" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="@Assets.Url("fonts/Geist-Variable.woff2")" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="@Assets.Url("fonts/GeistMono-Variable.woff2")" as="font" type="font/woff2" crossorigin />
     <link id="ts-css" rel="stylesheet" href="@Assets.Url("css/terrascale.css")" data-dashboard-css />
     <script type="module" src="@Assets.Url("js/button-loading.js")" nonce="@Model.Nonce"></script>
     <script type="module" src="@Assets.Url("js/datastar.js")" integrity="@AssetUrls.DatastarIntegrity" crossorigin="anonymous" nonce="@Model.Nonce"></script>
@@ -21,12 +21,10 @@
     <div class="ts-shell" data-class:nav-open="$navOpen"
          data-on:keydown__window="evt.key === 'Escape' &amp;&amp; $navOpen &amp;&amp; !document.querySelector('dialog[open]') &amp;&amp; ($navOpen = false, setTimeout(() => document.getElementById('ts-nav-toggle').focus()))"
          data-on:resize__window__debounce.150ms="innerWidth >= 768 &amp;&amp; $navOpen &amp;&amp; ($navOpen = false, setTimeout(() => document.getElementById('ts-navigation').focus()))">
+        <button type="button" id="ts-nav-toggle" class="ts-icon-btn ts-fab-nav" aria-label="Open navigation" aria-controls="ts-navigation" aria-expanded="false" data-on:click="$navOpen = true; setTimeout(() => document.getElementById('ts-nav-close').focus())" data-attr:aria-expanded="$navOpen ? 'true' : 'false'">@ShellIcons.Svg("panel-left", 18)</button>
         <div class="ts-nav-backdrop" aria-hidden="true" data-on:click="$navOpen = false; setTimeout(() => document.getElementById('ts-nav-toggle').focus())"></div>
         @(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.ShellSidebar, ShellModel>(Model))
         <div class="ts-inset" data-attr:inert="$navOpen">
-            <header class="ts-topbar"><button type="button" id="ts-nav-toggle" class="ts-icon-btn ts-fab-nav" aria-label="Open navigation" aria-controls="ts-navigation" aria-expanded="false" data-on:click="$navOpen = true; setTimeout(() => document.getElementById('ts-nav-close').focus())" data-attr:aria-expanded="$navOpen ? 'true' : 'false'">@ShellIcons.Svg("panel-left", 18)</button>
-            <img class="ts-topbar-brand" src="@Assets.Url("brand/logo-terrascale-principal.svg")" alt="TerraScale" decoding="async" />
-            @(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.ShellNotificationsBell, ShellModel>(Model))</header>
             <div id="ts-main" class="ts-main" tabindex="-1">@await RenderBodyAsync()</div>
         </div>
     </div>

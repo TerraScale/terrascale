@@ -5,12 +5,10 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-content: start;
-  gap: var(--ts-s8);
+  gap: var(--ts-s10);
   width: 100%;
-  /* A compact top inset reclaims viewport space at every breakpoint;
-     the larger grid gap separates content sections within the page. */
-  padding-top: var(--ts-s2);
-  padding-inline: var(--ts-s10);
+  padding-top: var(--ts-s8);
+  padding-inline: clamp(16px, 2.5vw, 40px);
   padding-bottom: var(--ts-s12);
 }
 
@@ -102,7 +100,7 @@
   justify-content: flex-end;
 }
 
-/* The sidebar consumes 264px on desktop; query the page column instead of
+/* The sidebar consumes 256px on desktop; query the page column instead of
    the viewport before adding columns. Container rems use the 14px root font
    (unlike media-query rems), so use px for the 60rem/960px breakpoint. */
 @container page (width < 960px) {
@@ -118,9 +116,11 @@
   }
 }
 
+/* 68px clears the floating nav button (shell.css) at the top-left. */
 @media (max-width: 47.99rem) {
   .ts-page {
     gap: var(--ts-s5);
+    padding-top: 68px;
     padding-inline: var(--ts-s4);
     padding-bottom: var(--ts-s10);
   }
