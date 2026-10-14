@@ -27,6 +27,10 @@ internal sealed class FaultAwareReplicaSource(
     public ValueTask<bool> AckAsync(TenantContext database, Ulid incarnation, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken) =>
         ReadAsync(database, incarnation, () => source.AckAsync(database, incarnation, peer, changeId, stable, cancellationToken), static () => false, cancellationToken);
 
+    public ValueTask<bool> ProveAsync(
+        TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken) =>
+        ReadAsync(database, incarnation, () => source.ProveAsync(database, incarnation, from, through, held, cancellationToken), static () => false, cancellationToken);
+
     public ValueTask<bool> RecordStableAsync(TenantContext database, Ulid incarnation, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) =>
         ReadAsync(database, incarnation, () => source.RecordStableAsync(database, incarnation, peer, stable, cancellationToken), static () => false, cancellationToken);
 
