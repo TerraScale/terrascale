@@ -49,10 +49,12 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         {
             throw new ShapeSealOffsetException();
         }
+        CountRead("shape");
         var head = (long)Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar()!;
         var stored = Command("SELECT end_offset FROM _tb_shape_chunk WHERE handle = $handle AND offset = $offset;");
         stored.Parameters.AddWithValue("$handle", shape.Handle);
         stored.Parameters.AddWithValue("$offset", offset);
+        CountRead("shape");
         if (stored.ExecuteScalar() is long existing)
         {
             return (existing, head);
@@ -151,6 +153,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             SELECT seq, commit_offset FROM _tb_feed WHERE seq >= $offset ORDER BY seq LIMIT 2;
             """);
         command.Parameters.AddWithValue("$offset", offset);
+        CountRead("shape");
         using var reader = command.ExecuteReader();
         if (!reader.Read())
         {
@@ -173,6 +176,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             FROM _tb_feed WHERE seq > $offset ORDER BY seq;
             """);
         command.Parameters.AddWithValue("$offset", offset);
+        CountRead("shape");
         using var reader = command.ExecuteReader();
         var end = offset;
         var commit = -1L;
@@ -225,6 +229,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         command.Parameters.AddWithValue("$start", start);
         command.Parameters.AddWithValue("$end", end);
         List<string> rows = [];
+        CountRead("shape");
         using (var reader = command.ExecuteReader())
         {
             while (reader.Read())
@@ -288,6 +293,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         command.Parameters.AddWithValue("$start", start);
         command.Parameters.AddWithValue("$end", end);
         long bytes;
+        CountRead("shape");
         using (var reader = command.ExecuteReader())
         {
             reader.Read();
@@ -301,6 +307,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
                 """, collection);
             bodies.Parameters.AddWithValue("$start", start);
             bodies.Parameters.AddWithValue("$end", end);
+            CountRead("shape");
             using var reader = bodies.ExecuteReader();
             reader.Read();
             if (reader.GetInt64(1) > DocumentJson.MaxBytes)
@@ -323,6 +330,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             return null;
         }
         // Only visible documents belong in a shape; hidden uniqueness contenders become deletes.
+        CountRead("shape");
         using var reader = TableCommand("""
             SELECT (SELECT stamp FROM _tb_state WHERE collection = $collection AND id = $id), doc FROM {0} WHERE id = $id;
             """, collection, id).ExecuteReader();
@@ -358,6 +366,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         var command = Command("SELECT origin, max(stamp), min(stamp) FROM _tb_feed WHERE seq <= $covered GROUP BY origin;");
         command.Parameters.AddWithValue("$covered", covered);
         Dictionary<ReplicaId, Hlc> stamps = [];
+        CountRead("shape");
         using (var reader = command.ExecuteReader())
         {
             while (reader.Read())
@@ -395,6 +404,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
     {
         var command = Command("SELECT stamp FROM _tb_feed_floor WHERE origin = $origin;");
         command.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
+        CountRead("shape");
         return command.ExecuteScalar() is long floor
             ? floor >= 0 ? new Hlc((ulong)floor) : throw new InvalidDataException("a shape resume floor is negative")
             : default;
@@ -411,6 +421,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         command.Parameters.AddWithValue("$floor", Version(floor));
         command.Parameters.AddWithValue("$stamp", Version(stamp));
         command.Parameters.AddWithValue("$covered", covered);
+        CountRead("shape");
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
@@ -615,6 +626,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         var size = Command("SELECT octet_length(body) FROM _tb_shape_chunk WHERE handle = $handle AND offset = $offset;");
         size.Parameters.AddWithValue("$handle", handle);
         size.Parameters.AddWithValue("$offset", offset);
+        CountRead("shape");
         if (size.ExecuteScalar() is not long bytes)
         {
             return null;
@@ -629,6 +641,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             var command = Command("SELECT end_offset, body FROM _tb_shape_chunk WHERE handle = $handle AND offset = $offset;");
             command.Parameters.AddWithValue("$handle", handle);
             command.Parameters.AddWithValue("$offset", offset);
+            CountRead("shape");
             using var reader = command.ExecuteReader();
             if (!reader.Read())
             {

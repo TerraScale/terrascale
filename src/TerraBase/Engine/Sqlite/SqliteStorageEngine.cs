@@ -353,7 +353,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         _dataDirectory = dataDirectory;
         _schemaMemory = schemaMemory;
         _schemaEvaluations = meter.CreateCounter<long>("terrabase.schema.keyword_evaluations", description: "Collection schema keyword evaluations started by local writes.");
-        _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Physical document and feed SELECTs executed, by path (point, query, feed).");
+        _storageReads = meter.CreateCounter<long>("terrabase.storage.reads", description: "Physical document and feed SELECTs executed, by path (point, query, feed, shape).");
         _logger = logger;
         _shutdownGrace = shutdownGrace;
         _checkpoint = checkpoint ?? (static (_, _) => { });

@@ -4,7 +4,10 @@ using System.Globalization;
 using System.Net;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
+using TerraBase.Features.Memory;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Shapes;
 using TerraBase.Hosting;
@@ -225,6 +228,10 @@ public sealed class ShapeMetricsTests
         {
             var page = await transaction.ReadFeedAsync(null, null, 100, 1024 * 1024, token);
             await Assert.That(page.Events.Count).IsGreaterThan(0);
+            using var absent = await ((IShapeStorageTransaction)transaction).ReadShapeChunkAsync(
+                "h1-" + Convert.ToHexStringLower(new Faker().Random.Bytes(8)), 0,
+                server.Services.GetRequiredService<IMemoryBudget>(), token);
+            await Assert.That(absent).IsNull();
         }
 
         var names = measured.Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
@@ -241,6 +248,7 @@ public sealed class ShapeMetricsTests
         await Assert.That(paths).Contains("point");
         await Assert.That(paths).Contains("query");
         await Assert.That(paths).Contains("feed");
+        await Assert.That(paths).Contains("shape");
         await Assert.That(paths.All(path => path is "point" or "query" or "feed" or "shape")).IsTrue();
 
         foreach (var (name, keys, values) in measured)
@@ -315,6 +323,59 @@ public sealed class ShapeMetricsTests
         // The next mutation uses pending state; only the collection-metadata document is read again.
         await Assert.That(PointReads(await ScrapeAsync(api.Server)) - afterFirst).IsEqualTo(1d);
     }
+
+    [Test]
+    public async Task Shape_seals_chunk_reads_and_floors_count_backend_reads_on_the_shape_path()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { n = new Faker().Random.Int() })).Status)
+            .IsEqualTo(HttpStatusCode.Created);
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>()
+            .OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
+        ShapeSealDefinition shape;
+        await using (var transaction = await store.BeginTransactionAsync(write: false, token))
+        {
+            var collection = (await transaction.GetCollectionAsync(DocumentApi.Collection, token))!;
+            var random = new Faker().Random;
+            shape = new ShapeSealDefinition(Convert.ToHexStringLower(random.Bytes(16)),
+                "h1-" + Convert.ToHexStringLower(random.Bytes(8)), DocumentApi.Collection, collection.Id, random.Bytes(16));
+        }
+
+        var sealer = new ShapeSealer(api.Server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance,
+            new SqliteShapeStorage(api.Server.Services.GetRequiredService<SqliteStorageEngine>()));
+        var before = ShapeStorageReads(await ScrapeAsync(api.Server));
+        var head = await sealer.SealUpToHeadAsync(store, shape, 0, token);
+        var sealedReads = ShapeStorageReads(await ScrapeAsync(api.Server));
+        await Assert.That(head).IsGreaterThan(0L);
+        await Assert.That(sealedReads - before).IsGreaterThan(2d).Because("a fresh seal reads feed rows and document bodies");
+
+        await Assert.That(await sealer.SealUpToHeadAsync(store, shape, 0, token)).IsEqualTo(head);
+        var reusedReads = ShapeStorageReads(await ScrapeAsync(api.Server));
+        await Assert.That(reusedReads - sealedReads).IsEqualTo(2d).Because("a reused seal reads only the head and stored boundary");
+
+        using var missing = await sealer.ReadChunkAsync(store, shape.Handle, head + 1, token);
+        await Assert.That(missing).IsNull();
+        var missedReads = ShapeStorageReads(await ScrapeAsync(api.Server));
+        await Assert.That(missedReads - reusedReads).IsEqualTo(1d).Because("a missing chunk still executes its size SELECT");
+
+        using var chunk = await sealer.ReadChunkAsync(store, shape.Handle, 0, token);
+        await Assert.That(chunk).IsNotNull();
+        var bodyReads = ShapeStorageReads(await ScrapeAsync(api.Server));
+        await Assert.That(bodyReads - missedReads).IsEqualTo(2d).Because("a stored chunk executes size and body SELECTs");
+
+        await using (var transaction = await store.BeginTransactionAsync(write: false, token))
+        {
+            _ = await ((IShapeRetentionTransaction)transaction).ReadShapeFloorAsync(shape.Handle, token);
+        }
+        await Assert.That(ShapeStorageReads(await ScrapeAsync(api.Server)) - bodyReads).IsEqualTo(4d)
+            .Because("the retained floor reads its sentinel, sequence, head and first feed row");
+    }
+
+    private static double ShapeStorageReads(string scrape) => scrape.Split('\n')
+        .Where(line => !string.IsNullOrWhiteSpace(line) && !line.StartsWith('#') && MetricName(line) == "terrabase_storage_reads_total"
+            && line.Contains("path=\"shape\"", StringComparison.Ordinal))
+        .Sum(line => double.Parse(line.Split(' ')[^1], CultureInfo.InvariantCulture));
 
     // The sum of terrabase_storage_reads point samples, which every document, version, size and system lookup feeds.
     private static double PointReads(string scrape) => scrape.Split('\n')

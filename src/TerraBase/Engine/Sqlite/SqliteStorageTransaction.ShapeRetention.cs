@@ -104,15 +104,22 @@ internal sealed partial class SqliteStorageTransaction : IShapeRetentionTransact
     {
         var sentinel = Command("SELECT max(end_offset) FROM _tb_shape_chunk WHERE handle = $sentinel AND offset = 0;");
         sentinel.Parameters.AddWithValue("$sentinel", ShapeFloorPrefix + handle);
+        CountRead("shape");
         var floor = sentinel.ExecuteScalar() is long end ? end : 0;
+        CountRead("shape");
         var counter = Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar() is long seq ? seq : 0;
         var head = Command("SELECT 1 FROM _tb_feed WHERE seq = $seq;");
         head.Parameters.AddWithValue("$seq", counter);
-        if (counter > 0 && head.ExecuteScalar() is null)
+        if (counter > 0)
         {
-            return Math.Max(floor, counter);
+            CountRead("shape");
+            if (head.ExecuteScalar() is null)
+            {
+                return Math.Max(floor, counter);
+            }
         }
 
+        CountRead("shape");
         var first = Command("SELECT min(seq) FROM _tb_feed;").ExecuteScalar();
         return Math.Max(floor, first is long start ? start - 1 : counter);
     }
@@ -121,12 +128,17 @@ internal sealed partial class SqliteStorageTransaction : IShapeRetentionTransact
     // highest retained seq whose predecessor is gone names the hole below it (a trimmed prefix included).
     private long FeedHoleFloor()
     {
+        CountRead("shape");
         var counter = Command("SELECT seq FROM _tb_feed_sequence WHERE id = 1;").ExecuteScalar() is long seq ? seq : 0;
         var head = Command("SELECT 1 FROM _tb_feed WHERE seq = $seq;");
         head.Parameters.AddWithValue("$seq", counter);
-        if (counter > 0 && head.ExecuteScalar() is null)
+        if (counter > 0)
         {
-            return counter;
+            CountRead("shape");
+            if (head.ExecuteScalar() is null)
+            {
+                return counter;
+            }
         }
 
         // shortcut: maintenance scans the seq index for interior holes; persist the floor in feed GC when this scan costs
@@ -135,16 +147,18 @@ internal sealed partial class SqliteStorageTransaction : IShapeRetentionTransact
             SELECT seq FROM _tb_feed f WHERE seq > 1 AND NOT EXISTS (SELECT 1 FROM _tb_feed p WHERE p.seq = f.seq - 1)
             ORDER BY seq DESC LIMIT 1;
             """);
+        CountRead("shape");
         return hole.ExecuteScalar() is long above ? above - 1 : 0;
     }
 
     // Worker-only: the candidates' longest prefix within maxBytes, its body bytes, and its highest second column.
     // Reads row metadata only; bodies stay on disk.
-    private static (List<long> Rows, long Bytes, long End) ShapeBudget(SqliteCommand candidates, long maxBytes)
+    private (List<long> Rows, long Bytes, long End) ShapeBudget(SqliteCommand candidates, long maxBytes)
     {
         var rows = new List<long>();
         long bytes = 0;
         long end = 0;
+        CountRead("shape");
         using var reader = candidates.ExecuteReader();
         while (reader.Read())
         {
