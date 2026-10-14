@@ -16,7 +16,7 @@ them after the final reruns: `scripts/vtest.sh destroy` (bucket, then app with i
 | Fly secrets on `ts-vtest-tb` | `TERRABASE_MASTER_KEY`, `TERRABASE_PEER_SECRET` (generated, 0600 temp file deleted), `AWS_*`/`BUCKET_NAME` (set by `flyctl storage create`) | — | set |
 | Image | `registry.fly.io/ts-vtest-tb:vtest-a439e1d17ddc` `sha256:b2267cc04eb069432bcdaf204eaee536320d70b109ddeb61d4bbd51c22edc804` | — | deployed |
 | Synthetic tenant (data inside the cluster) | owner `01M4XPQPMBAZXA6GW4R5C7W2HP`, org `01M4XPQPQ31V2MXW39W44J1FGW`, project `01M4XPQPT87J82RB1Q4ZCE0FCH`, database `e2e` | — | exists |
-| Forged-peer probe orgs (data) | `forged-{none,wrong}-{gru,sjc,fra}` created by the forged operator user `01J0F0RGED0000000000000000` | — | exist (evidence of V5 R7) |
+| Forged-peer probe orgs (data) | `forged-{none,wrong}-{gru,sjc,fra}` created by the forged operator user `01J0F0RGED0000000000000000` | — | deleted 2026-10-14T20:25Z |
 | API keys | `01M4XPSTE9D4S5CZ6HDWKRNWZA`, `01M4XQ8G1W3XFEK44VDG6QMWK5`, `01M4XQ907E0WV33PPEMSQJ91SN`, `01M4XQD8YQ8GAPZJ2GRRDDHHSG` (24 h, documents:read/write) | — | each revoked on exit |
 
 Nothing was created outside `ts-vtest-tb`: no builder app (the image is published on beta and layered on Fly's depot
