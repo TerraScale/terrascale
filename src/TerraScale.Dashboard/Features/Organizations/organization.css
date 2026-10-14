@@ -254,3 +254,5 @@ dialog.ts-org-wizard {
   .ts-org-id code { max-width: 180px; }
   .ts-org-preview li, .ts-org-card-foot { padding-inline: var(--ts-s4); }
 }
+
+.ts-card-boxed:not(.ts-card-flush) > .ts-org-card-foot { margin: 0 calc(-1 * var(--ts-s5)) calc(-1 * var(--ts-s5)); }
