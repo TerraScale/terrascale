@@ -52,12 +52,25 @@ a real-time wait until exp, which the Fast rules forbid.
 
 ## 3. Cross-region API-key revocation (row 11)
 
-Measured live on `ts-vtest-tb` by another agent; the owner fills this in.
+Measured live on `ts-vtest-tb` (gru/sjc/fra, shared-cpu-2x 512 MB, image of `3c459a5f` = main + #307 + #309 + #314),
+2026-10-14T20:23:03Z–20:23:15Z, 5 trials. Each trial mints a key for a test database, revokes it through gru
+(`DELETE`, 204 in 232.7–250.3 ms round trip), and polls sjc and fra every 50 ms from 8 connections. Times count from
+receipt of gru's 204.
+
+| Region | first 401 after the 204: min / median / max | trials with a request accepted after the 204 |
+| --- | --- | --- |
+| sjc | 53.0 / 129.1 / 639.8 ms | 1 of 5 (trial 3: sent 341.1 ms after) |
+| fra | 83.6 / 93.7 / 633.6 ms | 2 of 5 (trial 3: 291.1 ms; trial 5: 4.3 ms) |
 
 | Item | Value |
 | --- | --- |
-| Bound | _pending (measured live)_ |
-| Evidence | _pending_ |
+| Result | MEASURED (no bound is specified for cross-region revocation; finding F3) |
+| Bound | Observed ≤ 640 ms after the revoke's 204, under no partition. Not bounded in code: it is the catalog replication lag, so a partitioned region keeps accepting the key until it rejoins |
+| Evidence | `benchmark/bench/2026-10-14-replication-vtest/evidence/v4-revoke-3c459a5f.jsonl` (raw per trial) and `v4-revoke-3c459a5f-stderr.txt`, script `scripts/revoke-timing.py`, on branch `feat/repl-v5-harness` (PR #303) |
+
+**F3 (Low):** the revocation's 204 does not wait for the other regions. A revoked API key stays usable in another region
+for the catalog replication lag (≤ 640 ms observed; unbounded during a partition). Options: document the bound in
+`shape-reads.md` section 13 and the API-key docs, or make revocation wait for remote durability like document writes (A3).
 
 ## 4. CI outcome of the new test
 
