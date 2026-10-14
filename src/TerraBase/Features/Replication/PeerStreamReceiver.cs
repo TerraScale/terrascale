@@ -5,6 +5,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -23,6 +24,7 @@ namespace TerraBase.Features.Replication;
 internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 {
     private const int MaxRefills = 4;
+    private const long BucketReadBytes = 16L * ReplicationProtocol.MaxApplicationBytes;
     // Two digests and one page's wire, decompressed, parsed and decoded payloads; held until the sink finishes.
     private const long RefillBytes = (2 * 4096 * 16) + (4L * ReplicationProtocol.MaxApplicationBytes);
     private readonly IChangeGroupSink _sink;
@@ -409,29 +411,41 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             throw new RpcException(new Status(StatusCode.InvalidArgument, "a bucket read names 1 to 4096 buckets, each 0 to 4095"));
         }
 
-        var buckets = request.Buckets.Select(bucket => (int)bucket).ToList();
-        BucketCursor? after = null;
-        do
+        using var reservation = _memory.TryReserve(MemoryLane.Replication, BucketReadBytes, tenant: null)
+            ?? throw new RpcException(new Status(StatusCode.ResourceExhausted,
+                "the source has no memory capacity for a bucket read"));
+
+        try
         {
-            // Every page, and the end, of the incarnation the request names: a replaced copy fails the stream.
-            if (await _states.ReadBucketsAsync(database, incarnation, buckets, after, ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, context.CancellationToken)
-                .ConfigureAwait(false) is not (var states, var next))
+            var buckets = request.Buckets.Select(bucket => (int)bucket).ToList();
+            BucketCursor? after = null;
+            do
+            {
+                // Every page, and the end, of the incarnation the request names: a replaced copy fails the stream.
+                if (await _states.ReadBucketsAsync(database, incarnation, buckets, after, ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, context.CancellationToken)
+                    .ConfigureAwait(false) is not (var states, var next))
+                {
+                    throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source no longer holds the named incarnation of the database"));
+                }
+
+                after = next;
+                if (states.Count > 0)
+                {
+                    await responseStream.WriteAsync(AntiEntropy.Encode(states, incarnation), context.CancellationToken).ConfigureAwait(false);
+                }
+            }
+            while (after is not null);
+
+            // Recheck the answering state source without scanning its digests again.
+            if (await _states.ReadBucketsAsync(database, incarnation, [], null, 1, 1, context.CancellationToken).ConfigureAwait(false) is null)
             {
                 throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source no longer holds the named incarnation of the database"));
             }
-
-            after = next;
-            if (states.Count > 0)
-            {
-                await responseStream.WriteAsync(AntiEntropy.Encode(states, incarnation), context.CancellationToken).ConfigureAwait(false);
-            }
         }
-        while (after is not null);
-
-        // Recheck the answering state source without scanning its digests again.
-        if (await _states.ReadBucketsAsync(database, incarnation, [], null, 1, 1, context.CancellationToken).ConfigureAwait(false) is null)
+        catch (Exception error) when (error is StorageBusyException or QosMemoryException)
         {
-            throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source no longer holds the named incarnation of the database"));
+            throw new RpcException(new Status(StatusCode.ResourceExhausted,
+                "the source bucket read exceeded memory or page capacity"));
         }
     }
 

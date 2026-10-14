@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using TerraBase.Engine.Lattices;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 
 namespace TerraBase.Engine.Sqlite;
@@ -19,13 +20,26 @@ internal sealed partial class SqliteStorageTransaction
         {
             // shortcut: reads every state row per round; keep _tb_merkle folded per commit once databases hold millions of documents.
             var digests = new byte[Buckets * 16];
-            using var reader = Command("SELECT bucket, h1, h2 FROM _tb_state;").ExecuteReader();
+            // CASE keeps unchecked TEXT/BLOB values out of the driver's managed projection.
+            using var reader = Command("""
+                SELECT CASE WHEN typeof(bucket) = 'integer' AND bucket >= 0 AND bucket < 4096
+                    AND typeof(h1) = 'integer' AND typeof(h2) = 'integer' THEN 1 ELSE 0 END,
+                    CASE WHEN typeof(bucket) = 'integer' THEN bucket ELSE 0 END,
+                    CASE WHEN typeof(h1) = 'integer' THEN h1 ELSE 0 END,
+                    CASE WHEN typeof(h2) = 'integer' THEN h2 ELSE 0 END
+                FROM _tb_state;
+                """).ExecuteReader();
             while (reader.Read())
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var slot = digests.AsSpan((int)reader.GetInt64(0) * 16, 16);
-                BinaryPrimitives.WriteInt64LittleEndian(slot, BinaryPrimitives.ReadInt64LittleEndian(slot) ^ reader.GetInt64(1));
-                BinaryPrimitives.WriteInt64LittleEndian(slot[8..], BinaryPrimitives.ReadInt64LittleEndian(slot[8..]) ^ reader.GetInt64(2));
+                if (reader.GetInt64(0) != 1)
+                {
+                    throw StoredDataCorruption.Create("a stored digest has a non-integer hash or an invalid bucket");
+                }
+
+                var slot = digests.AsSpan((int)reader.GetInt64(1) * 16, 16);
+                BinaryPrimitives.WriteInt64LittleEndian(slot, BinaryPrimitives.ReadInt64LittleEndian(slot) ^ reader.GetInt64(2));
+                BinaryPrimitives.WriteInt64LittleEndian(slot[8..], BinaryPrimitives.ReadInt64LittleEndian(slot[8..]) ^ reader.GetInt64(3));
             }
 
             return digests;
@@ -40,46 +54,133 @@ internal sealed partial class SqliteStorageTransaction
         IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
+            ArgumentOutOfRangeException.ThrowIfLessThan(maxStates, 1);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(maxStates, ChangeGroups.MaxDeltas);
+            ArgumentOutOfRangeException.ThrowIfLessThan(maxBytes, 1);
+            if (buckets.Count > Buckets || buckets.Any(bucket => bucket is < 0 or >= Buckets)
+                || (after is { } cursor && (cursor.Bucket is < 0 or >= Buckets
+                    || !ChangeGroups.ValidKey(store.IsSystem ? ChangeGroups.System : store.Tenant!, cursor.Collection, cursor.Id))))
+            {
+                throw new ArgumentException("a repair read names valid buckets and a valid cursor", nameof(buckets));
+            }
+
             List<RepairState> states = [];
-            var bytes = 0;
+            long bytes = 0;
+            long pageBytes = 0;
             var ordered = buckets.Distinct().Order().ToList();
             var all = ordered.Count == Buckets && ordered[0] == 0 && ordered[^1] == Buckets - 1;
-            var start = after is { } cursor ? ordered.FindIndex(bucket => bucket >= cursor.Bucket) : 0;
+            var start = after is { } fromCursor ? ordered.FindIndex(bucket => bucket >= fromCursor.Bucket) : 0;
             for (var index = start < 0 ? ordered.Count : start; index < ordered.Count; index++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var bucket = ordered[index];
                 var resume = after is { } from && from.Bucket == bucket ? from : null;
-                // Keys first, then each state: Turso refuses a write on a connection while one of its reads is open, and a
-                // state read is a second statement.
-                // Genesis and a complete repair read all buckets. One indexed page avoids 4096 empty-bucket queries,
-                // avoiding empty-bucket work in the catalog gate's bounded startup pass.
-                var command = Command(all ? """
-                    SELECT collection, id FROM _tb_state
-                    WHERE bucket > $bucket OR (bucket = $bucket AND (collection > $collection OR (collection = $collection AND id > $id)))
-                    ORDER BY bucket, collection, id LIMIT $limit;
-                    """ : """
-                    SELECT collection, id FROM _tb_state WHERE bucket = $bucket AND (collection > $collection OR (collection = $collection AND id > $id))
-                    ORDER BY collection, id LIMIT $limit;
+                // Complete reads share one indexed page across buckets, with the same bounded key preflight.
+                var predicate = all
+                    ? "bucket > $bucket OR (bucket = $bucket AND ($resume = 0 OR collection > $collection OR (collection = $collection AND id > $id)))"
+                    : "bucket = $bucket AND ($resume = 0 OR collection > $collection OR (collection = $collection AND id > $id))";
+                var order = all ? "bucket, collection, id" : "collection, id";
+                var sizes = Command($"""
+                    SELECT coalesce(sum(collection_bytes + id_bytes), 0), count(*),
+                        coalesce(min(collection_bytes), 1), coalesce(max(collection_bytes), 0),
+                        coalesce(min(id_bytes), 1), coalesce(max(id_bytes), 0),
+                        count(*) - count(collection_bytes), count(*) - count(id_bytes),
+                        coalesce(min(valid_hash), 1), coalesce(min(valid_bucket), 1)
+                    FROM (
+                        SELECT octet_length(collection) AS collection_bytes, octet_length(id) AS id_bytes,
+                            typeof(h1) = 'integer' AND typeof(h2) = 'integer' AS valid_hash,
+                            typeof(bucket) = 'integer' AND bucket >= 0 AND bucket < 4096 AS valid_bucket
+                        FROM _tb_state WHERE {predicate}
+                        ORDER BY {order} LIMIT $limit
+                    );
                     """);
-                command.Parameters.AddWithValue("$bucket", (long)bucket);
-                command.Parameters.AddWithValue("$collection", resume?.Collection ?? string.Empty);
-                command.Parameters.AddWithValue("$id", resume?.Id ?? string.Empty);
-                command.Parameters.AddWithValue("$limit", (long)(maxStates - states.Count + 1));
-                List<(string Collection, string Id)> keys = [];
+                Bind(sizes);
+                long totalKeyBytes;
+                long keyCount;
+                using (var reader = sizes.ExecuteReader())
+                {
+                    if (!reader.Read())
+                    {
+                        throw StoredDataCorruption.Create("a stored repair key preflight is missing");
+                    }
+
+                    if (reader.GetInt64(8) != 1)
+                    {
+                        throw StoredDataCorruption.Create("a stored repair key has non-integer digest columns");
+                    }
+
+                    if (reader.GetInt64(9) != 1)
+                    {
+                        throw StoredDataCorruption.Create("a stored repair bucket is outside 0 to 4095 or is not an integer");
+                    }
+
+                    totalKeyBytes = reader.GetInt64(0);
+                    keyCount = reader.GetInt64(1);
+                    var collectionLimit = store.IsSystem ? 3L * ushort.MaxValue : 63L;
+                    var idLimit = store.IsSystem ? 3L * ushort.MaxValue : 3L * 1024;
+                    if (reader.GetInt64(2) <= 0 || reader.GetInt64(3) > collectionLimit
+                        || reader.GetInt64(4) <= 0 || reader.GetInt64(5) > idLimit
+                        || reader.GetInt64(6) != 0 || reader.GetInt64(7) != 0)
+                    {
+                        throw StoredDataCorruption.Create("a stored repair key exceeds its key bounds");
+                    }
+                }
+
+                if (keyCount > 0)
+                {
+                    _stateReadMemory?.Reserve(2 * totalKeyBytes + 128 * keyCount,
+                        store.IsSystem ? null : QosContext.Current);
+                }
+
+                // The managed driver must never project unadmitted keys or hashes with unchecked storage types.
+                store.Checkpoint?.Invoke("repair.keys", store.Tenant ?? ChangeGroups.System);
+                var command = Command($"""
+                    SELECT bucket, collection, id, h1, h2 FROM _tb_state WHERE {predicate}
+                    ORDER BY {order} LIMIT $limit;
+                    """);
+                Bind(command);
+                List<(long Bucket, string Collection, string Id, UInt128 Hash)> keys = [];
                 using (var reader = command.ExecuteReader())
                 {
                     while (reader.Read())
                     {
-                        keys.Add((reader.GetString(0), reader.GetString(1)));
+                        keys.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2),
+                            ((UInt128)unchecked((ulong)reader.GetInt64(3)) << 64) | unchecked((ulong)reader.GetInt64(4))));
                     }
                 }
 
-                foreach (var (collection, id) in keys)
+                foreach (var (storedBucket, collection, id, hash) in keys)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (!ChangeGroups.ValidKey(store.IsSystem ? ChangeGroups.System : store.Tenant!, collection, id)
+                        || storedBucket is < 0 or >= Buckets || Bucket(collection, id) != storedBucket
+                        || (!all && storedBucket != bucket) || !HasTable(collection))
+                    {
+                        throw StoredDataCorruption.Create("a stored repair key has an invalid key, bucket or table");
+                    }
+
+                    // The keys provide count lookahead; do not decode the next whole state merely to count it.
+                    if (states.Count == maxStates)
+                    {
+                        var last = states[^1];
+                        return (states, (BucketCursor?)new BucketCursor(Bucket(last.Collection, last.Id), last.Collection, last.Id));
+                    }
+
                     var state = ReadState(collection, id);
+                    if (DocumentStateEncoding.Digest(collection, id, state) != hash)
+                    {
+                        throw StoredDataCorruption.Create("a stored repair state does not match its keyed digest");
+                    }
+
                     var size = DocumentStateEncoding.Encode(state).Length;
-                    if (states.Count == maxStates || (states.Count > 0 && bytes + size > maxBytes))
+                    var entryBytes = RepairEntryBytes(collection, id, size);
+                    if (entryBytes > ReplicationProtocol.MaxApplicationBytes)
+                    {
+                        throw new StorageBusyException();
+                    }
+
+                    if (states.Count > 0 && (bytes + size > maxBytes
+                        || pageBytes + entryBytes > ReplicationProtocol.MaxApplicationBytes))
                     {
                         var last = states[^1];
                         return (states, (BucketCursor?)new BucketCursor(Bucket(last.Collection, last.Id), last.Collection, last.Id));
@@ -87,14 +188,40 @@ internal sealed partial class SqliteStorageTransaction
 
                     states.Add(new RepairState(collection, id, state));
                     bytes += size;
+                    pageBytes += entryBytes;
                 }
 
                 if (all)
                 {
                     break;
                 }
+
+                void Bind(Turso.Data.Sqlite.SqliteCommand target)
+                {
+                    target.Parameters.AddWithValue("$bucket", (long)bucket);
+                    target.Parameters.AddWithValue("$resume", resume is null ? 0 : 1);
+                    target.Parameters.AddWithValue("$collection", resume?.Collection ?? string.Empty);
+                    target.Parameters.AddWithValue("$id", resume?.Id ?? string.Empty);
+                    target.Parameters.AddWithValue("$limit", (long)(maxStates - states.Count + 1));
+                }
             }
 
             return (states, (BucketCursor?)null);
         }, cancellationToken);
+
+    private static long RepairEntryBytes(string collection, string id, int stateBytes)
+    {
+        var collectionBytes = StrictUtf8.GetByteCount(collection);
+        var idBytes = StrictUtf8.GetByteCount(id);
+        var entryBytes = 1L + Google.Protobuf.CodedOutputStream.ComputeLengthSize(collectionBytes) + collectionBytes
+            + 1L + Google.Protobuf.CodedOutputStream.ComputeLengthSize(idBytes) + idBytes
+            + 1L + Google.Protobuf.CodedOutputStream.ComputeLengthSize(stateBytes) + stateBytes;
+        if (entryBytes > int.MaxValue)
+        {
+            throw new StorageBusyException();
+        }
+
+        return 1L + Google.Protobuf.CodedOutputStream.ComputeLengthSize((int)entryBytes) + entryBytes;
+    }
+
 }

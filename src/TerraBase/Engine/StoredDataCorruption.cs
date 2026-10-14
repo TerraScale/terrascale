@@ -1,8 +1,8 @@
-namespace TerraBase.Engine.Sqlite;
+namespace TerraBase.Engine;
 
 /// <summary>
 /// Marks an <see cref="InvalidDataException"/> (sealed, so not subclassed) as a value this node's file stored that does
-/// not decode: the file is damaged, and the transaction that read it faults its copy (<see cref="RebuildLedger"/>). A
+/// not decode: the file is damaged, and the transaction that read it faults its copy through the rebuild ledger. A
 /// received value that does not decode stays unmarked, so wire validation never faults a healthy file.
 /// </summary>
 internal static class StoredDataCorruption

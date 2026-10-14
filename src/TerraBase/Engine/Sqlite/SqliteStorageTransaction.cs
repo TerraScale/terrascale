@@ -38,6 +38,9 @@ internal sealed partial class SqliteStorageTransaction(
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     // Serializes calls and disposal, so two workers never use the same connection concurrently.
+    private readonly QosContext.ResultMemory? _stateReadMemory =
+        store.SchemaMemory is { } memory ? new QosContext.ResultMemory(memory) : null;
+
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Lock _disposalGate = new();
     private Task? _disposal;
@@ -1013,10 +1016,16 @@ internal sealed partial class SqliteStorageTransaction(
         var clear = new DocumentState(drop, DocumentState.Bottom.Fields);
         var retained = false;
         var pendingIds = _pending.Keys.Where(key => key.Collection == name).Select(key => key.Id).ToArray();
+        // Read once: the loop changes neither the definition nor the drop it is weighed against, and each read is admitted
+        // for the whole transaction.
+        IReadOnlyList<UniqueConstraint> constraints = IsClient ? ReadUniqueConstraints(name) : [];
         foreach (var id in CollectionDropIds(name, cancellationToken).Where(id => !_pending.ContainsKey((name, id))).Concat(pendingIds))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var state = _pending.TryGetValue((name, id), out var pending) ? pending.State : ReadState(name, id);
+            // Each document is written before the next is read, so its admission ends with its iteration: an unbounded
+            // collection must not accumulate leases for the whole drop.
+            using var admission = store.SchemaMemory is { } memory ? new QosContext.ResultMemory(memory) : null;
+            var state = _pending.TryGetValue((name, id), out var pending) ? pending.State : ReadState(name, id, admission);
             var next = state.Join(clear);
             if (next.Equals(state) && !next.Equals(clear))
             {
@@ -1025,7 +1034,7 @@ internal sealed partial class SqliteStorageTransaction(
             }
 
             var body = Materialize(next);
-            var affected = ReplaceUniqueKeys(name, id, body, cancellationToken, local: false);
+            var affected = ReplaceUniqueKeys(name, id, body, cancellationToken, local: false, constraints);
             ClearUniqueConflict(name, id);
             PutRow(name, id, body);
             _pending.Remove((name, id));
@@ -1550,7 +1559,14 @@ internal sealed partial class SqliteStorageTransaction(
                 }
                 finally
                 {
-                    _gate.Release();
+                    try
+                    {
+                        _stateReadMemory?.Dispose();
+                    }
+                    finally
+                    {
+                        _gate.Release();
+                    }
                 }
             }
         }

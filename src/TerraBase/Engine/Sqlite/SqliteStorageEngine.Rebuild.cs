@@ -368,14 +368,32 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
     private static List<RepairState> ReadSide(string workingPath, IReadOnlyList<SideRow> rows, CancellationToken cancellationToken)
     {
         using var connection = Working(workingPath);
+        using var snapshot = connection.BeginTransaction(deferred: true);
         List<RepairState> states = [];
         foreach (var row in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var keyBytes = Encoding.UTF8.GetByteCount(row.Collection) + Encoding.UTF8.GetByteCount(row.Id);
             var documentBytes = DocumentBytes(connection, row.Collection, row.Id);
+            // Hash affinity permits BLOBs: reject them before any getter can allocate their unmeasured payload.
+            using (var preflight = connection.CreateCommand())
+            {
+                preflight.CommandText = """
+                    SELECT octet_length(state), typeof(state) = 'text' AND typeof(h1) = 'integer' AND typeof(h2) = 'integer'
+                    FROM _tb_state WHERE collection = $collection AND id = $id;
+                    """;
+                preflight.Parameters.AddWithValue("$collection", row.Collection);
+                preflight.Parameters.AddWithValue("$id", row.Id);
+                using var measured = preflight.ExecuteReader();
+                if (!measured.Read() || measured.IsDBNull(0) || measured.GetInt64(1) != 1
+                    || measured.GetInt64(0) <= 0 || checked(keyBytes + documentBytes + measured.GetInt64(0)) != row.Bytes)
+                {
+                    throw new InvalidDataException("a side-copy state has invalid storage types or no longer matches its measured size");
+                }
+            }
+
             using var command = connection.CreateCommand();
-            command.CommandText = "SELECT state, h1, h2, octet_length(state) FROM _tb_state WHERE collection = $collection AND id = $id;";
+            command.CommandText = "SELECT state, h1, h2 FROM _tb_state WHERE collection = $collection AND id = $id;";
             command.Parameters.AddWithValue("$collection", row.Collection);
             command.Parameters.AddWithValue("$id", row.Id);
             string stored;
@@ -385,11 +403,6 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
                 if (!reader.Read())
                 {
                     throw new InvalidDataException("a measured state of the side copy is gone");
-                }
-
-                if (checked(keyBytes + documentBytes + reader.GetInt64(3)) != row.Bytes)
-                {
-                    throw new InvalidDataException("a side-copy state no longer matches its measured size");
                 }
 
                 (stored, h1, h2) = (reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2));

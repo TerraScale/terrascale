@@ -1,11 +1,10 @@
-using System.Buffers.Binary;
 using System.Buffers.Text;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Turso.Data.Sqlite;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Management;
+using TerraBase.Features.Qos;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -35,22 +34,13 @@ internal sealed partial class SqliteStorageTransaction
     // version in memory until the request ends and writes its state row.
     private long Version(string collection, string id, SqliteDataReader reader, int ordinal) =>
         _pending.TryGetValue((collection, id), out var pending) ? Version(pending.At.Stamp)
-            : reader.IsDBNull(ordinal) ? throw new InvalidDataException("a stored document has no state") : reader.GetInt64(ordinal);
+            : reader.IsDBNull(ordinal) ? throw StoredDataCorruption.Create("a stored document has no state") : reader.GetInt64(ordinal);
 
     /// <summary>
     /// Bucket of a document for anti-entropy: the first 12 bits of SHA-256 over the collection's UTF-8 byte length (4 bytes,
     /// little-endian), the collection and the id, so no two (collection, id) pairs share an input.
     /// </summary>
-    internal static int Bucket(string collection, string id)
-    {
-        var name = Encoding.UTF8.GetBytes(collection);
-        var input = new byte[4 + name.Length + Encoding.UTF8.GetByteCount(id)];
-        BinaryPrimitives.WriteInt32LittleEndian(input, name.Length);
-        name.CopyTo(input, 4);
-        Encoding.UTF8.GetBytes(id, input.AsSpan(4 + name.Length));
-        var hash = SHA256.HashData(input);
-        return (hash[0] << 4) | (hash[1] >> 4);
-    }
+    internal static int Bucket(string collection, string id) => DocumentStateEncoding.Bucket(collection, id);
 
     // Worker-only: the state of a document and the version this request writes it at. The stamp is minted once per
     // document per request, above every stamp the state holds, so a write after a remote stamp from the future still
@@ -68,8 +58,9 @@ internal sealed partial class SqliteStorageTransaction
         return (state, new EntryVersion(stamp, member.Id));
     }
 
-    // Worker-only: the stored state of a document, or the empty state.
-    private DocumentState ReadState(string collection, string id)
+    // Worker-only: the stored state of a document, or the empty state. Its admission is held in `memory`, the transaction's
+    // by default; a caller that keeps nothing past one document passes a shorter-lived owner.
+    private DocumentState ReadState(string collection, string id, QosContext.ResultMemory? memory = null)
     {
         if (!HasTable(collection))
         {
@@ -77,24 +68,75 @@ internal sealed partial class SqliteStorageTransaction
         }
 
         CountRead("point");
+        long stateTextBytes;
+        long documentBytes;
+        using (var sizes = TableCommand(
+            store.IsSystem ? SqliteStatements.SystemGetStateBytes : SqliteStatements.GetStateBytes,
+            collection, id).ExecuteReader())
+        {
+            if (!sizes.Read())
+            {
+                return DocumentState.Bottom;
+            }
+
+            if (sizes.GetInt64(2) != 1)
+            {
+                throw StoredDataCorruption.Create("a stored document state has non-integer digest columns");
+            }
+
+            if (sizes.IsDBNull(0))
+            {
+                throw StoredDataCorruption.Create("a stored document state has no encoding");
+            }
+
+            stateTextBytes = sizes.GetInt64(0);
+            documentBytes = sizes.GetInt64(1);
+        }
+
+        if (stateTextBytes <= 0 || documentBytes < 0)
+        {
+            throw StoredDataCorruption.Create("a stored document state has invalid byte lengths");
+        }
+
+        var decodedBytes = 3L * (stateTextBytes / 4) + 3;
+        var keyBytes = (long)StrictUtf8.GetByteCount(collection) + StrictUtf8.GetByteCount(id);
+        if (stateTextBytes > int.MaxValue || documentBytes > int.MaxValue
+            || decodedBytes > (long.MaxValue - 2048 - 2 * keyBytes) / 16 - documentBytes)
+        {
+            throw new StorageBusyException();
+        }
+
+        // Retain raw bytes and derived graphs through join, persistence, and unconditional transaction cleanup.
+        (memory ?? _stateReadMemory)?.Reserve(16 * (decodedBytes + documentBytes) + 2 * keyBytes + 2048,
+            store.IsSystem ? null : QosContext.Current);
+        store.Checkpoint?.Invoke("state.payload", store.Tenant ?? ChangeGroups.System);
+
+        CountRead("point");
         using var reader = TableCommand(store.IsSystem ? SqliteStatements.SystemGetState : SqliteStatements.GetState, collection, id).ExecuteReader();
         if (!reader.Read())
         {
-            return DocumentState.Bottom;
+            throw StoredDataCorruption.Create("a preflighted document state is missing");
         }
 
         try
         {
             var document = reader.IsDBNull(1) ? [] : SqliteSession.Bytes(reader, 1);
-            return DocumentStateEncoding.DecodeStored(Base64Url.DecodeFromChars(reader.GetString(0)), document);
+            var state = DocumentStateEncoding.DecodeStored(Base64Url.DecodeFromChars(reader.GetString(0)), document);
+            var stored = ((UInt128)unchecked((ulong)reader.GetInt64(2)) << 64) | unchecked((ulong)reader.GetInt64(3));
+            if (DocumentStateEncoding.Digest(collection, id, state) != stored)
+            {
+                throw StoredDataCorruption.Create("a stored document state does not match its keyed digest");
+            }
+
+            return state;
         }
         catch (FormatException error)
         {
-            throw new InvalidDataException("a stored document state is corrupt", error);
+            throw StoredDataCorruption.Create("a stored document state is corrupt", error);
         }
-        catch (InvalidDataException error)
+        catch (InvalidDataException error) when (!StoredDataCorruption.Is(error))
         {
-            throw new InvalidDataException("a stored document state is corrupt", error);
+            throw StoredDataCorruption.Create("a stored document state is corrupt", error);
         }
     }
 

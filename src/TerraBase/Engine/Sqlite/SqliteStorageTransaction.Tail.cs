@@ -92,11 +92,16 @@ internal sealed partial class SqliteStorageTransaction
         {
             return DecodeChangeGroups(after, maxGroups, maxBytes, self, cancellationToken);
         }
-        catch (InvalidDataException)
+        catch (InvalidDataException error)
         {
             // Tail gauges and retention catch decoder errors: fault this local copy before either can swallow one.
             NoteCopyFault("stored replication data could not be decoded");
-            throw;
+            if (StoredDataCorruption.Is(error))
+            {
+                throw;
+            }
+
+            throw StoredDataCorruption.Create("stored replication data could not be decoded", error);
         }
     }
 
@@ -193,8 +198,17 @@ internal sealed partial class SqliteStorageTransaction
     /// at the same path while the caller waited for it (a copy, restore or rebuild) shows as the other incarnation it is.
     /// </summary>
     internal ValueTask<Ulid> GetIncarnationAsync(CancellationToken cancellationToken) =>
-        RunAsync(() => Ulid.Parse(Command(SqliteStatements.Incarnation).ExecuteScalar() as string
-            ?? throw new InvalidDataException("database incarnation is missing")), cancellationToken);
+        RunAsync(() =>
+        {
+            var text = Command(SqliteStatements.Incarnation).ExecuteScalar() as string;
+            if (text is not { Length: 26 } || text[0] is < '0' or > '7' || !Ulid.TryParse(text, out var incarnation)
+                || incarnation == Ulid.Empty || incarnation.ToString() != text)
+            {
+                throw StoredDataCorruption.Create("the stored database incarnation is missing or invalid");
+            }
+
+            return incarnation;
+        }, cancellationToken);
 
     /// <summary>
     /// See <see cref="IChangeGroupSource.AckedAsync"/>; a row of another incarnation returns a zero cursor requiring refill.
@@ -298,7 +312,7 @@ internal sealed partial class SqliteStorageTransaction
                 {
                     (_, quiet, _) = ReadChangeGroups(at, 1, 1, self, cancellationToken);
                 }
-                catch (InvalidDataException)
+                catch (InvalidDataException error) when (!StoredDataCorruption.Is(error))
                 {
                     continue;
                 }

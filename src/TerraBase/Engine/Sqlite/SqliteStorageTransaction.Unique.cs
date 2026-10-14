@@ -109,14 +109,16 @@ internal sealed partial class SqliteStorageTransaction
 
     // All contenders retain their merged state. Visibility is a deterministic projection of the current keys.
     // A local write that collides throws; a replicated join never fails a constraint, its loser is hidden instead.
-    private IEnumerable<string> ReplaceUniqueKeys(string collection, string id, string? body, CancellationToken cancellationToken, bool local = true)
+    // `constraints`, when given, are the collection's as ReadUniqueConstraints returns them in this transaction.
+    private IEnumerable<string> ReplaceUniqueKeys(string collection, string id, string? body, CancellationToken cancellationToken,
+        bool local = true, IReadOnlyList<UniqueConstraint>? constraints = null)
     {
         if (!IsClient)
         {
             return [];
         }
 
-        var constraints = ReadUniqueConstraints(collection);
+        constraints ??= ReadUniqueConstraints(collection);
         if (constraints.Count == 0)
         {
             return [];
