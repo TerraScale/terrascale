@@ -271,41 +271,49 @@ public sealed class Cluster : IAsyncDisposable
         """);
 
     /// <summary>
-    /// Fly only: makes <paramref name="region"/> lose the document <paramref name="id"/> as a crash after a lost apply would:
-    /// freezes the machine's terrabase (SIGSTOP), deletes the id's rows from every table keyed by <c>id</c> in each database
-    /// file (sqlite3, installed into the test-only image's ephemeral rootfs), then SIGKILLs it; the on-failure restart policy
-    /// brings it back on the edited volume. Returns once the region is ready again.
+    /// Fly only: makes <paramref name="region"/> lose the acknowledged document <paramref name="id"/>, as a lost apply would.
+    /// The running terrabase holds its database files locked, so the machine is first updated to idle
+    /// (<c>sleep infinity</c>; terrabase stops on SIGTERM), then the id's rows are deleted from every table keyed by
+    /// <c>id</c> in each database file (sqlite3, installed into the test-only image's ephemeral rootfs), and the machine's
+    /// saved config is restored. Returns the edit's output once the region is ready again.
     /// </summary>
     public async Task<string> LoseDocumentAsync(string region, string id)
     {
-        var output = await FlyScriptAsync(region, $$"""
-            command -v sqlite3 > /dev/null || { apt-get update -qq > /dev/null 2>&1; apt-get install -y -qq sqlite3 > /dev/null 2>&1; } || exit 1
-            pid=$(grep -l '^terrabase$' /proc/[0-9]*/comm | head -1 | cut -d/ -f3)
-            [ -n "$pid" ] || exit 1
-            # From here the process is always killed, whatever the edit does: 2 s after this session ends, so its output returns.
-            trap 'nohup sh -c "sleep 2; kill -KILL $pid" > /dev/null 2>&1 &' EXIT
-            kill -STOP "$pid"
-            for f in /data/data/*/*/*.db; do
-              for t in $(sqlite3 "$f" "SELECT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) c WHERE m.type = 'table' AND c.name = 'id'"); do
-                n=$(sqlite3 "$f" "DELETE FROM \"$t\" WHERE id = '{{id}}'; SELECT changes();")
-                [ "$n" = 0 ] || echo "deleted $n from $t in $f"
-              done
-            done
-            """);
-        _ = await Converge.UntilAsync(async () =>
+        var machine = Disposable.Machines[region];
+        using var listed = JsonDocument.Parse(await Flyctl.RunAsync("machine", "list", "--app", Disposable.App, "--json"));
+        var saved = Path.GetTempFileName();
+        try
         {
-            try
+            await File.WriteAllTextAsync(saved, listed.RootElement.EnumerateArray().Single(found => found.GetProperty("id").GetString() == machine).GetProperty("config").GetRawText());
+            _ = await Flyctl.RunAsync("machine", "update", machine, "--app", Disposable.App, "--entrypoint", "sleep infinity", "--skip-health-checks", "--yes");
+            var output = await FlyScriptAsync(region, $$"""
+                apt-get update -qq > /dev/null 2>&1; apt-get install -y -qq sqlite3 > /dev/null 2>&1
+                for f in /data/data/*/*/*.db; do
+                  for t in $(sqlite3 "$f" "SELECT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) c WHERE m.type = 'table' AND c.name = 'id'" 2>&1); do
+                    n=$(sqlite3 "$f" "DELETE FROM \"$t\" WHERE id = '{{id}}'; SELECT changes();" 2>&1)
+                    [ "$n" = 0 ] || echo "deleted $n from $t in $f"
+                  done
+                done
+                """);
+            _ = await Flyctl.RunAsync("machine", "update", machine, "--app", Disposable.App, "--machine-config", saved, "--skip-health-checks", "--yes");
+            _ = await Converge.UntilAsync(async () =>
             {
-                return await Docs.StatusAsync(this[region], new Uri("/readyz", UriKind.Relative));
-            }
-            catch (Exception error) when (error is HttpRequestException or RegionMismatchException)
-            {
-                return HttpStatusCode.ServiceUnavailable;
-            }
-        }, status => status == HttpStatusCode.OK, $"{region} ready after its SIGKILL", TimeSpan.FromMinutes(4));
-        return output;
+                try
+                {
+                    return await Docs.StatusAsync(this[region], new Uri("/readyz", UriKind.Relative));
+                }
+                catch (Exception error) when (error is HttpRequestException or RegionMismatchException)
+                {
+                    return HttpStatusCode.ServiceUnavailable;
+                }
+            }, status => status == HttpStatusCode.OK, $"{region} ready on its edited volume", TimeSpan.FromMinutes(4));
+            return output;
+        }
+        finally
+        {
+            File.Delete(saved);
+        }
     }
-
     // The script travels base64-encoded, so its quotes survive flyctl's command line and sh -c.
     private Task<string> FlyScriptAsync(string region, string script) =>
         FlySshAsync(region, $"echo {Convert.ToBase64String(Encoding.UTF8.GetBytes(script))} | base64 -d | sh");
