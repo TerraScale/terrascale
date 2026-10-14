@@ -8,7 +8,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.1-resolute@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675 AS sdk
 
 FROM sdk AS base
-# BuildKit exposes the shared host's CPUs; test hosts use the alpha slot's eight-CPU budget.
+# Test hosts retain the eight-CPU .NET budget across runner types.
 # Publish/runtime stages have their own base and retain Fly's automatic CPU discovery.
 ARG DOTNET_PROCESSOR_COUNT=8
 ARG DOTNET_GCHeapCount=8
@@ -60,6 +60,7 @@ RUN make -o restore fmt-check auth-check auth-build CONFIGURATION=Release \
     && dotnet publish src/TerraScale.Authentication --configuration Release --runtime linux-x64 --self-contained --no-restore --output /out
 
 FROM build-auth AS test-auth
+ARG TS_AUTH_REVISION
 RUN make -o restore auth-audit auth-test-fast CONFIGURATION=Release && touch /passed
 
 FROM restored AS build-terrabase
@@ -82,6 +83,7 @@ COPY --from=test-terrabase /passed /terrabase
 # Plain text: TUnit colours its output here, and the report parses lines like "failed <test> (<duration>)".
 # Each area runs independently so an auth failure cannot prevent TerraBase Slow from executing.
 FROM build-auth AS slow-auth-run
+ARG TS_AUTH_REVISION
 RUN mkdir /slow && { make -o restore auth-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi; echo $? > /slow/exit; } 2>&1 | tee /slow/log
 
 FROM scratch AS test-slow-auth
