@@ -52,7 +52,7 @@ public sealed class DemoEnvironment
         billingPlans = new TestBillingPlanTransport(stripe);
         checkoutPersistence = new TestBillingCheckoutPersistence(state);
         apiKeys = new TestAuthApiKeys(auth.ResolveAccessToken, workspace.ProjectRole);
-        reporting = new TestReportingTransport(state, workspace, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken, apiKeys);
+        reporting = new TestReportingTransport(state, workspace, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken, apiKeys, documents);
         imports = new TestImports(reporting, databases, documents, auth.ResolveProjectToken);
     }
 
@@ -690,7 +690,7 @@ sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
     private ManagedDatabase Database(DatabaseScope scope, string id) => databases.TryGetValue(id, out var database) && database.ProjectId == scope.ProjectId ? database : throw new HttpRequestException("Test database missing.", null, HttpStatusCode.NotFound);
 }
 
-sealed class TestDocuments : IDocumentBackend
+sealed partial class TestDocuments : IDocumentBackend
 {
     private readonly Dictionary<string, Dictionary<string, TerraBaseDocument>> collections = [];
     private long offset;
@@ -709,7 +709,13 @@ sealed class TestDocuments : IDocumentBackend
     public void DropDatabase(DatabaseScope scope, string database)
     {
         var prefix = scope.ProjectId + "/" + database + "/";
-        lock (collections) foreach (var key in collections.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray()) collections.Remove(key);
+        lock (collections)
+        {
+            foreach (var key in collections.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray()) collections.Remove(key);
+            logs.Remove(scope.ProjectId + "/" + database);
+            changed.TrySetResult();
+            changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
     }
     public Task<IReadOnlyList<TerraBaseCollection>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, CancellationToken cancellationToken)
     {
@@ -785,6 +791,7 @@ sealed class TestDocuments : IDocumentBackend
             var nextVersion = "tbv1-" + Guid.NewGuid().ToString("N");
             if (operation == "delete") items.Remove(id);
             else items[id] = new(id, nextVersion, "value", operation == "patch" ? JsonSerializer.SerializeToElement(Merge(JsonNode.Parse(previous?.Document.GetRawText() ?? "{}"), JsonNode.Parse(document.GetRawText()))) : document.Clone());
+            if (operation != "delete" || previous is not null) RecordChange(scope, databaseName, collection, id, operation == "delete" ? "delete" : "upsert");
             return Task.FromResult(new TerraBaseWriteResult(id, nextVersion, ++offset, "local_durable"));
         }
     }
