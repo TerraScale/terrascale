@@ -22,7 +22,8 @@ assert "fast-gate.sh" not in workflow
 assert "if: steps.qualified.outputs.current == 'true'" in steps["Deploy TerraBase (gru, sjc, fra)"]
 assert "if: steps.qualified.outputs.current == 'true'" in steps["Deploy ts-auth (gru, sjc, fra)"]
 assert "deployed: ${{ steps.deploy-auth.outcome == 'success' }}" in deploy
-assert "if: needs.deploy.outputs.deployed == 'true'" in workflow.split("\n  e2e:\n", 1)[1]
+e2e = workflow.split("\n  e2e:\n", 1)[1].split("\n    steps:", 1)[0]
+assert re.findall(r"^    if: (.+)$", e2e, re.M) == ["github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.deploy.outputs.deployed == 'true'"]
 
 sha, other = "a" * 40, "b" * 40
 prefix = "repos/TerraScale/terrascale"
