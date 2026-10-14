@@ -72,3 +72,47 @@ Negative values mean the revocation applied in that region before the operator's
 - The bound counts machines the directory lists. A machine that leaves the directory stops counting (docs/terrabase/shape-reads.md §13).
 - Attempts 1–3 aborted before any partition: no handle (`429 shape_busy`), then the keys had not yet replicated. Each
   cleaned up (`raw/f3-aborted-attempts-1-3-30d6f833.jsonl`).
+
+## Live proof with real epoch keys and real TBS1 chunks (run 2, 2026-10-14)
+
+`live/f3-live.py` with `live/tbs1.py`. The decoder is written from shape-reads.md §12 and checked against
+`shape-vectors.json` `tbs1_vectors`.
+
+**Candidate.** `84d1e0991f4663f6eab4f77c16a271a66c120db2`, image `registry.fly.io/ts-vtest-tb:vtest-84d1e0991f46`,
+digest `sha256:380977aea1c8f2ba6ccef1740f50a0fb3f94269c40acfa539b825785fea524ac`. It is built from the proof-only
+branch `fix/f3-live-proof-candidate`: main `35b14217` + #307 + #309 + #314 + #283 (TBS1 sealing and the Tigris
+manifest) + #316 at `41e715bc`. The #316 files are byte-identical. The only merge edit keeps #309's `MatchedAsync`
+block next to #316's proof lines in `AntiEntropy.cs`.
+
+| Step | Result |
+|---|---|
+| Before the cut, sjc, `K_rev` | Shape `snap.20.0` sealed and mirrored: 4273 B, size and sha256 checked. Its key came from sjc's `/shape/keys` (200, `private, no-store`). The TBS1 object decrypted, and the plaintext equals the origin body |
+| Cut sjc (6PN only) | 22:54:18Z, epoch E = 2986697 |
+| Revoke `K_rev` through gru | 204, cut + 0.2 s |
+| gru and fra, `K_rev` | 401 from the first sweep |
+| sjc, `K_rev`, partitioned | Last key 546.8 s after the revoke, for epoch E + 1 (2986698). Every key it got was for E or E + 1 |
+| sjc refuses | From cut + 552 s: `503 catalog_stale`, `no-store`, `Retry-After: 1` |
+| Heal | 23:04:50Z, rc 0. sjc answered 401 to `K_rev` and 200 to `K_ctl` within 11 s; every machine was released by then |
+| Later chunk | Offset `20`, sealed on sjc in epoch E + 2 (2986699) after the heal. None of `K_rev`'s keys (E, E + 1) open it. `K_rev` gets 401 for its key and its manifest in all three regions. `K_ctl`'s key opens it, matching the origin body |
+
+The revoked credential's last decryptable data is therefore what was sealed by the end of epoch E + 1, which is spec
+check 4.
+
+**Run 1 (`20f6238b`, also cut sjc's DNS, `raw/run1-20f6238b-dns-cut.jsonl`).**
+- From 2 min after the revoke, sjc answered `503 unavailable`, then `catalog_stale` from cut + 554 s. With its DNS cut,
+  sjc can no longer resolve Tigris, so its data-key reads failed: this fails closed, but it is not the gate.
+- The keys `K_rev` got were all for epoch E.
+- `vtest.sh heal` could not reach sjc, because `fly ssh` certificate checks need DNS. fra kept its rules until it was
+  flushed by hand, and sjc's rules were cleared by `fly machine restart`. That is why run 2 cuts 6PN only.
+- Its post-heal phase timed out, but every key and the database were still cleaned up.
+
+## Fast coverage (CI)
+
+`ShapeCryptoTests` covers:
+- unproven peers;
+- an exact 599 s / 601 s bound;
+- tenant-only rounds never proving the catalog;
+- an empty or self-only directory, with recorded regions;
+- the catalog going stale during the lookup;
+- an API key revoked after authentication;
+- the 503 and 401 headers and bodies.
