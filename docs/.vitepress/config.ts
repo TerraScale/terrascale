@@ -544,7 +544,7 @@ export default defineConfig({
   appearance: 'dark',
   lastUpdated: true,
   srcDir: '.',
-  head: [['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }], ['link', { rel: 'preload', href: '/fonts/Geist-Variable.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }]],
+  head: [['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }], ['link', { rel: 'preload', href: '/fonts/geist-variable.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }]],
   locales: localesConfig,
   themeConfig: {
     siteTitle: 'Docs',
