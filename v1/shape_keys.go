@@ -20,6 +20,10 @@ type ShapeKey struct {
 	key    []byte
 }
 
+// String and GoString keep epoch-key bytes out of ordinary diagnostics.
+func (ShapeKey) String() string     { return "terrabase shape key (key redacted)" }
+func (k ShapeKey) GoString() string { return k.String() }
+
 // ShapeKey fetches the epoch key for handle at epoch, named by keyID. The request
 // and the response are both no-store, and the response must echo the requested
 // handle, epoch and key ID before the key is trusted.

@@ -65,6 +65,7 @@ func (col *Collection) Subscribe(ctx context.Context, options ShapeOptions) iter
 		state := ShapeState{Documents: map[string]Document{}, Offset: "-1"}
 		resumeAttempt := false
 		redirected := false
+		refetches := 0
 		header := http.Header{}
 		for {
 			if err := ctx.Err(); err != nil {
@@ -99,6 +100,13 @@ func (col *Collection) Subscribe(ctx context.Context, options ShapeOptions) iter
 					if !yield(cloneShapeState(state), nil) {
 						return
 					}
+					if refetches > 0 {
+						if err := sleep(ctx, backoff(refetches-1)); err != nil {
+							yield(cloneShapeState(state), err)
+							return
+						}
+					}
+					refetches = min(refetches+1, 6)
 					continue
 				}
 				yield(cloneShapeState(state), err)
@@ -121,15 +129,21 @@ func (col *Collection) Subscribe(ctx context.Context, options ShapeOptions) iter
 				yield(cloneShapeState(state), errors.New("terrabase: shape bootstrap requires a 307"))
 				return
 			}
-			next, err := applyShapeBody(state, resp.body, query.Get("handle"), query.Get("offset"))
+			wire, err := parseShapeBody(state, resp.body, query.Get("handle"), query.Get("offset"))
 			if err == nil {
-				err = shapeResponseHeaders(resp, next, query.Get("live") == "true", query.Get("cursor"))
+				if query.Get("live") != "true" && *wire.UpToDate && *wire.NextOffset != *wire.Offset {
+					err = errors.New("terrabase: sealed shape chunk cannot report up to date")
+				} else {
+					head := ShapeState{Handle: *wire.Handle, Offset: *wire.NextOffset, UpToDate: *wire.UpToDate}
+					err = shapeResponseHeaders(resp, head, query.Get("live") == "true", query.Get("cursor"))
+				}
 			}
 			if err != nil {
 				yield(cloneShapeState(state), err)
 				return
 			}
-			state = next
+			state = wire.apply(state)
+			refetches = 0
 			header.Del("TB-Shape-Resume")
 			resumeAttempt, redirected = false, false
 			query.Set("handle", state.Handle)

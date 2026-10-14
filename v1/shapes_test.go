@@ -16,9 +16,99 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	v1 "terrascale.tech/sdk/v1"
 )
+
+func TestSubscribeHeaderMismatchKeepsState(t *testing.T) {
+	steps := append(subscribeSnapshot(), subscribeStep{id: "closed-commit-upsert-delete", patch: func(v *subscribeVector) {
+		v.Response.Headers["TB-Shape-Next-Offset"] = "6"
+	}})
+	_, col := subscribeSetup(t, v1.Config{Token: testToken}, steps...)
+	got := collectSubscribe(t, col, 10)
+	wantYields(t, got, 3)
+	if got[2].err == nil {
+		t.Fatal("inconsistent headers accepted")
+	}
+	checkSubscribeHead(t, got[2].state, shapeHandleA, "2", false)
+	checkSubscribeDoc(t, got[2].state, shapeDocA, shapeVersionA1, upsertDocument(t, loadSubscribeVector(t, "snapshot-first-page").wire(), shapeDocA))
+	checkSubscribeDoc(t, got[2].state, shapeDocB, shapeVersionB1, upsertDocument(t, loadSubscribeVector(t, "snapshot-last-page").wire(), shapeDocB))
+}
+
+func TestSubscribeNonFreshNoProgressStops(t *testing.T) {
+	steps := append(subscribeSnapshot(), subscribeStep{id: "closed-commit-upsert-delete", patch: func(v *subscribeVector) {
+		editSubscribeBody(t, v, func(body map[string]any) {
+			body["next_offset"], body["covered_offset"] = "2", "2"
+			body["changes"] = []any{}
+		})
+		v.Response.Headers["TB-Shape-Next-Offset"] = "2"
+	}})
+	server, col := subscribeSetup(t, v1.Config{Token: testToken}, steps...)
+	got := collectSubscribe(t, col, 10)
+	wantYields(t, got, 3)
+	if got[2].err == nil {
+		t.Fatal("non-fresh non-advancing body accepted")
+	}
+	checkSubscribeHead(t, got[2].state, shapeHandleA, "2", false)
+	if server.count() != 4 {
+		t.Fatal("client retried a non-advancing body")
+	}
+}
+
+func TestSubscribeSealedChunkCannotClaimFreshness(t *testing.T) {
+	steps := append(subscribeSnapshot(), subscribeStep{id: "closed-commit-upsert-delete", patch: func(v *subscribeVector) {
+		editSubscribeBody(t, v, func(body map[string]any) { body["up_to_date"] = true })
+		v.Response.Headers["TB-Shape-Up-To-Date"] = "true"
+	}})
+	_, col := subscribeSetup(t, v1.Config{Token: testToken}, steps...)
+	got := collectSubscribe(t, col, 10)
+	wantYields(t, got, 3)
+	if got[2].err == nil {
+		t.Fatal("sealed chunk claimed freshness")
+	}
+	checkSubscribeHead(t, got[2].state, shapeHandleA, "2", false)
+}
+
+func TestSubscribeRepeatedBootstrapRefusalsBackOff(t *testing.T) {
+	var hits atomic.Int32
+	var timesMu sync.Mutex
+	var times []time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("offset") != "-1" || r.URL.Query().Get("handle") != "" {
+			t.Error("reset bootstrap retained a handle")
+		}
+		hits.Add(1)
+		timesMu.Lock()
+		times = append(times, time.Now())
+		timesMu.Unlock()
+		w.Header().Set("TB-Shape-Handle", shapeHandleA)
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"must_refetch","message":"not yet available"}}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := v1.New(v1.Config{BaseURL: server.URL, Token: testToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	col := client.Database(shapeProject, "demo").Collection("notes")
+	got := collectSubscribe(t, col, 3)
+	wantYields(t, got, 3)
+	for _, result := range got {
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		checkSubscribeReset(t, result.state)
+	}
+	if hits.Load() != 3 {
+		t.Fatalf("requests = %d, want 3", hits.Load())
+	}
+	timesMu.Lock()
+	defer timesMu.Unlock()
+	if times[2].Sub(times[1]) < 50*time.Millisecond {
+		t.Fatal("repeated bootstrap refusals did not back off")
+	}
+}
 
 const (
 	shapeProject   = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
@@ -357,13 +447,13 @@ func editSubscribeBody(t *testing.T, v *subscribeVector, edit func(map[string]an
 	v.BodyUTF8 = &body
 }
 
-// subscribeLive makes the closed commit caught up, with live cursor 50.
-func subscribeLive(t *testing.T) func(*subscribeVector) {
-	return func(v *subscribeVector) {
-		editSubscribeBody(t, v, func(m map[string]any) { m["up_to_date"] = true })
-		v.Response.Headers["TB-Shape-Up-To-Date"] = "true"
-		v.Response.Headers["TB-Shape-Cursor"] = "50"
-	}
+// A non-live read at the head is fresh and empty; it has no live bucket.
+func subscribeAtHead() subscribeStep {
+	return subscribeStep{id: "live-timeout", patch: func(v *subscribeVector) {
+		delete(v.Request.Query, "live")
+		delete(v.Request.Query, "cursor")
+		delete(v.Response.Headers, "TB-Shape-Cursor")
+	}}
 }
 
 func TestSubscribeSnapshotPagesStagedBeforeCursorResume(t *testing.T) {
@@ -404,21 +494,63 @@ func TestSubscribeClosedCommitUpsertsAndDeletesAtomically(t *testing.T) {
 
 func TestSubscribeLivePollCarriesCursorAndKeepsDocuments(t *testing.T) {
 	steps := append(subscribeSnapshot(),
-		subscribeStep{id: "closed-commit-upsert-delete", patch: subscribeLive(t)},
-		subscribeStep{id: "live-timeout"},
+		subscribeStep{id: "closed-commit-upsert-delete"},
+		subscribeAtHead(),
+		subscribeStep{id: "live-timeout", patch: func(v *subscribeVector) { delete(v.Request.Query, "cursor") }},
+		subscribeStep{id: "live-timeout", patch: func(v *subscribeVector) {
+			v.Request.Query["cursor"] = "51"
+			v.Response.Headers["TB-Shape-Cursor"] = "52"
+		}},
 	)
 	_, col := subscribeSetup(t, v1.Config{Token: testToken}, steps...)
-	got := collectSubscribe(t, col, 4)
-	wantYields(t, got, 4)
-	caught, idle := got[2].state, got[3].state
+	got := collectSubscribe(t, col, 6)
+	wantYields(t, got, 6)
+	caught, idle := got[3].state, got[5].state
 	checkSubscribeHead(t, caught, shapeHandleA, "4", true)
 	checkSubscribeHead(t, idle, shapeHandleA, "4", true)
-	// The edited commit re-marshals its body, so compare with the state it produced.
+	// Fresh reads and empty live polls retain the exact sealed document bytes.
 	if idle.Documents[shapeDocA].Version != shapeVersionA2 || string(idle.Documents[shapeDocA].Document) != string(caught.Documents[shapeDocA].Document) {
 		t.Errorf("live poll changed document %s", shapeDocA)
 	}
 	if idle.CursorResume != caught.CursorResume {
 		t.Errorf("empty live poll changed cursor resume")
+	}
+}
+
+func TestSubscribeLiveCommitAdvancesAndApplies(t *testing.T) {
+	steps := append(subscribeSnapshot(),
+		subscribeStep{id: "closed-commit-upsert-delete"},
+		subscribeAtHead(),
+		subscribeStep{id: "closed-commit-upsert-delete", patch: func(v *subscribeVector) {
+			v.Request.Query["offset"], v.Request.Query["live"] = "4", "true"
+			v.Response.Headers["TB-Shape-Next-Offset"] = "6"
+			v.Response.Headers["TB-Shape-Up-To-Date"], v.Response.Headers["TB-Shape-Cursor"] = "true", "51"
+			editSubscribeBody(t, v, func(body map[string]any) {
+				body["offset"], body["next_offset"], body["covered_offset"], body["values_at"] = "4", "6", "6", "6"
+				body["up_to_date"] = true
+				change := body["changes"].([]any)[0].(map[string]any)
+				change["offset"] = "6"
+				upsert := change["ops"].([]any)[0].(map[string]any)
+				upsert["version"], upsert["document"] = shapeVersionA3, map[string]any{"title": "Live", "read": true}
+			})
+		}},
+	)
+	_, col := subscribeSetup(t, v1.Config{Token: testToken}, steps...)
+	got := collectSubscribe(t, col, 5)
+	wantYields(t, got, 5)
+	state := got[4].state
+	checkSubscribeHead(t, state, shapeHandleA, "6", true)
+	checkSubscribeAbsent(t, state, shapeDocB)
+	if state.Documents[shapeDocA].Version != shapeVersionA3 {
+		t.Fatal("live upsert version was not applied")
+	}
+	doc := state.Documents[shapeDocA]
+	var body struct {
+		Title string
+		Read  bool
+	}
+	if err := doc.Decode(&body); err != nil || body.Title != "Live" || !body.Read {
+		t.Fatalf("live document = %+v, err %v", body, err)
 	}
 }
 
@@ -433,8 +565,9 @@ func TestSubscribeBreakStopsWithoutExtraRequest(t *testing.T) {
 
 func TestSubscribeCancelInLongPollReturnsContextError(t *testing.T) {
 	steps := append(subscribeSnapshot(),
-		subscribeStep{id: "closed-commit-upsert-delete", patch: subscribeLive(t)},
-		subscribeStep{id: "live-timeout", block: true},
+		subscribeStep{id: "closed-commit-upsert-delete"},
+		subscribeAtHead(),
+		subscribeStep{id: "live-timeout", block: true, patch: func(v *subscribeVector) { delete(v.Request.Query, "cursor") }},
 	)
 	s, col := subscribeSetup(t, v1.Config{Token: testToken}, steps...)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -447,11 +580,11 @@ func TestSubscribeCancelInLongPollReturnsContextError(t *testing.T) {
 	for st, err := range col.Subscribe(ctx, v1.ShapeOptions{}) {
 		got = append(got, subscribeYield{st, err})
 	}
-	if len(got) != 4 {
-		t.Fatalf("got %d yields, want 4 (three states and the cancel)", len(got))
+	if len(got) != 5 {
+		t.Fatalf("got %d yields, want 5 (four states and the cancel)", len(got))
 	}
-	wantYields(t, got, 4)
-	last := got[3]
+	wantYields(t, got, 5)
+	last := got[4]
 	if !errors.Is(last.err, context.Canceled) {
 		t.Fatalf("final error = %v, want context.Canceled", last.err)
 	}

@@ -47,110 +47,165 @@ type shapeOpWire struct {
 	Document json.RawMessage `json:"document"`
 }
 
-// applyShapeBody validates one whole body and returns the state it produces.
-// The caller passes the handle and offset it requested, after any redirect; the
-// body must echo them. A failed body returns state unchanged, so the caller
-// keeps its checkpoint. A changed handle is accepted: a proven resume may move
-// to another machine's handle and shape id.
-func applyShapeBody(state ShapeState, data []byte, handle, offset string) (ShapeState, error) {
+func (wire *shapeBodyWire) UnmarshalJSON(data []byte) error {
+	type plain shapeBodyWire
+	return decodeShapeMembers(data, []string{"shape_id", "handle", "offset", "next_offset", "covered_offset", "values_at", "up_to_date", "cursor_resume", "changes"}, (*plain)(wire))
+}
+
+func (change *shapeChangeWire) UnmarshalJSON(data []byte) error {
+	type plain shapeChangeWire
+	return decodeShapeMembers(data, []string{"offset", "ops"}, (*plain)(change))
+}
+
+func (op *shapeOpWire) UnmarshalJSON(data []byte) error {
+	type plain shapeOpWire
+	return decodeShapeMembers(data, []string{"op", "id", "version", "document"}, (*plain)(op))
+}
+
+// decodeShapeMembers decodes one protocol object. A known member name must match
+// exactly and appear once. Unknown names are ignored, and a document's own
+// members are never inspected. encoding/json would match "Offset" to "offset"
+// and let the last duplicate win.
+func decodeShapeMembers(data []byte, known []string, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return badShape("object expected")
+	}
+	seen := make(map[string]bool, len(known))
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return badShape("object member")
+		}
+		name, _ := tok.(string)
+		if slices.Contains(known, name) {
+			if seen[name] {
+				return badShape("duplicate member")
+			}
+			seen[name] = true
+		} else if slices.ContainsFunc(known, func(k string) bool { return strings.EqualFold(k, name) }) {
+			return badShape("member name differs in case")
+		}
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return badShape("object member")
+		}
+	}
+	return json.Unmarshal(data, v)
+}
+
+// parseShapeBody validates one whole body and returns it. The caller passes the
+// handle and offset it requested, after any redirect; the body must echo them.
+// It does not change state. A changed handle is accepted: a proven resume may
+// move to another machine's handle and shape id.
+func parseShapeBody(state ShapeState, data []byte, handle, offset string) (*shapeBodyWire, error) {
 	if len(data) > shapeBodyMax {
-		return state, badShape("body exceeds 8 MiB")
+		return nil, badShape("body exceeds 8 MiB")
 	}
 	if !utf8.Valid(data) || bytes.HasPrefix(data, []byte("\uFEFF")) {
-		return state, badShape("body is not UTF-8 without BOM")
+		return nil, badShape("body is not UTF-8 without BOM")
 	}
 	var wire shapeBodyWire
 	if err := decodeExact(data, &wire); err != nil {
-		return state, badShape("body is not exact JSON")
+		return nil, badShape("body is not exact JSON")
 	}
 	required := []*string{wire.ShapeID, wire.Handle, wire.Offset, wire.NextOffset, wire.CoveredOffset, wire.ValuesAt, wire.CursorResume}
 	if slices.Contains(required, nil) || wire.UpToDate == nil || wire.Changes == nil {
-		return state, badShape("missing required member")
+		return nil, badShape("missing required member")
 	}
 	if *wire.CursorResume == "" {
-		return state, badShape("empty cursor_resume")
+		return nil, badShape("empty cursor_resume")
 	}
 	if !isLowerHex(*wire.ShapeID, 32) || !isShapeHandle(*wire.Handle) {
-		return state, badShape("shape id or handle")
+		return nil, badShape("shape id or handle")
 	}
 	if *wire.Handle != handle || *wire.Offset != offset {
-		return state, badShape("body does not echo the request")
+		return nil, badShape("body does not echo the request")
 	}
 	if handle == state.Handle && (state.ShapeID != *wire.ShapeID || state.Offset != offset) {
-		return state, badShape("same handle with another shape or offset")
+		return nil, badShape("same handle with another shape or offset")
 	}
 	snapshot, boundary, page, err := parseShapeOffset(offset)
 	if err != nil || boundary < 0 {
-		return state, badShape("request offset")
+		return nil, badShape("request offset")
 	}
 	nextSnap, next, nextPage, err := parseShapeOffset(*wire.NextOffset)
 	if err != nil {
-		return state, badShape("next offset")
+		return nil, badShape("next offset")
 	}
 	covered, err := parseShapeDecimal(*wire.CoveredOffset)
 	if err != nil {
-		return state, badShape("covered offset")
+		return nil, badShape("covered offset")
 	}
 	values, err := parseShapeDecimal(*wire.ValuesAt)
 	if err != nil || values < covered {
-		return state, badShape("values_at")
+		return nil, badShape("values_at")
 	}
 	if snapshot {
 		// A page is one upsert change at S. Its progress is the last examined key.
 		if *wire.UpToDate {
-			return state, badShape("snapshot page reports up_to_date")
+			return nil, badShape("snapshot page reports up_to_date")
 		}
 		if covered != boundary || values != boundary || next != boundary || nextSnap != (nextPage != "") {
-			return state, badShape("snapshot page offsets")
+			return nil, badShape("snapshot page offsets")
 		}
 		if nextSnap && page != "" && !shapeKeyLess(page, nextPage) {
-			return state, badShape("snapshot page does not advance")
+			return nil, badShape("snapshot page does not advance")
 		}
 		if len(wire.Changes) != 1 {
-			return state, badShape("snapshot page must have one change")
+			return nil, badShape("snapshot page must have one change")
 		}
-	} else if nextSnap || next < boundary || covered != next {
-		return state, badShape("chunk offsets")
+	} else if nextSnap || next < boundary || covered != next || (next == boundary && !*wire.UpToDate) {
+		// A chunk advances past its request unless the body is fresh (section 4).
+		return nil, badShape("chunk offsets")
 	}
 	prev := boundary
 	for _, change := range wire.Changes {
 		if change.Offset == nil || change.Ops == nil {
-			return state, badShape("change member")
+			return nil, badShape("change member")
 		}
 		off, err := parseShapeDecimal(*change.Offset)
 		if err != nil {
-			return state, badShape("change offset")
+			return nil, badShape("change offset")
 		}
 		if snapshot && off != boundary || !snapshot && (off <= prev || off > covered || len(change.Ops) == 0) {
-			return state, badShape("change offset range or empty ops")
+			return nil, badShape("change offset range or empty ops")
 		}
 		prev = off
 		if err := checkShapeOps(change.Ops, snapshot, page, nextSnap, nextPage); err != nil {
-			return state, err
+			return nil, err
 		}
 	}
-	out := cloneShapeState(state)
+	return &wire, nil
+}
+
+// apply returns state with a validated body applied. Documents are written in
+// place, so the caller clones state first when it must keep the prior value.
+func (wire *shapeBodyWire) apply(state ShapeState) ShapeState {
+	// The offsets were validated by parseShapeBody, so their errors are ignored.
+	snapshot, _, page, _ := parseShapeOffset(*wire.Offset)
+	nextSnap := strings.HasPrefix(*wire.NextOffset, "snap.")
 	if snapshot && page == "" {
 		// The first page restarts the snapshot; earlier pages of another snapshot are discarded.
-		out.Documents = map[string]Document{}
+		state.Documents = map[string]Document{}
 	}
 	for _, change := range wire.Changes {
 		for _, op := range change.Ops {
 			if op.Op == "delete" {
-				delete(out.Documents, *op.ID)
+				delete(state.Documents, *op.ID)
 				continue
 			}
-			out.Documents[*op.ID] = Document{ID: *op.ID, Version: *op.Version, State: StateValue, Document: op.Document}
+			state.Documents[*op.ID] = Document{ID: *op.ID, Version: *op.Version, State: StateValue, Document: op.Document}
 		}
 	}
-	out.ShapeID, out.Handle, out.Offset = *wire.ShapeID, *wire.Handle, *wire.NextOffset
-	out.UpToDate = *wire.UpToDate
-	out.CursorResume = *wire.CursorResume
+	state.ShapeID, state.Handle, state.Offset = *wire.ShapeID, *wire.Handle, *wire.NextOffset
+	state.UpToDate = *wire.UpToDate
+	state.CursorResume = *wire.CursorResume
 	if nextSnap {
 		// A snapshot cursor is usable only after its last page (section 7, rule 5).
-		out.CursorResume = ""
+		state.CursorResume = ""
 	}
-	return out, nil
+	return state
 }
 
 // checkShapeOps validates one change's ops: ids are valid keys in strictly

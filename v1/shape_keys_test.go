@@ -5,13 +5,27 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+func TestShapeKeyDiagnosticsRedactKey(t *testing.T) {
+	key := ShapeKey{Handle: shapeKeyHandle, Epoch: 100, KeyID: shapeKeyID, key: bytes.Repeat([]byte{173}, 32)}
+	for _, value := range []any{key, &key} {
+		for _, format := range []string{"%v", "%+v", "%#v", "%s", "%q"} {
+			got := fmt.Sprintf(format, value)
+			if !strings.Contains(got, "key redacted") || strings.Contains(got, "173") {
+				t.Fatalf("%s diagnostic exposes key material: %s", format, got)
+			}
+		}
+	}
+}
 
 const (
 	shapeKeyProject = "01ARZ3NDEKTSV4RRFFQ69G5FAW"

@@ -37,6 +37,15 @@ applied. Consumers persisting state must persist its entire checkpoint with
 the documents. A reset update has empty documents and offset `-1`; a terminal
 error carries the last valid state.
 
+Each update copies the current document map and JSON bytes once for caller
+ownership. Per-page snapshot updates therefore cost O(pages × documents) in
+total copying; retain only needed states for large collections. Internal apply
+does not copy the map: complete body and header validation precedes mutation.
+Protocol member names are exact; case aliases and duplicate protocol members
+are rejected while additional unknown members remain compatible. Repeated
+bootstrap refusals use a cancellable backoff after the first immediate restart.
+Epoch-key diagnostics redact secret bytes.
+
 The shape body carries materialized values that may be newer than their event.
 The vector `cross-lineage-repeat-has-newer-materialized-value` requires applying
 the repeated operation. Event-identity or stamp deduplication would lose data.

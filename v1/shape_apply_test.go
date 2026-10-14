@@ -146,6 +146,16 @@ func applyTestChunkBody() string {
 		applyTestDelete(applyTestDocB)))
 }
 
+// applyShapeBody is the test-only parse-then-apply path. It clones state, so the
+// caller's value is never changed, including on failure.
+func applyShapeBody(state ShapeState, data []byte, handle, offset string) (ShapeState, error) {
+	wire, err := parseShapeBody(state, data, handle, offset)
+	if err != nil {
+		return state, err
+	}
+	return wire.apply(cloneShapeState(state)), nil
+}
+
 func TestApplyShapeBodyVectors(t *testing.T) {
 	for _, v := range loadApplyVectors(t).ApplyVectors {
 		t.Run(v.ID, func(t *testing.T) {
@@ -275,6 +285,14 @@ func TestApplyShapeBodyMalformedKeepsState(t *testing.T) {
 		{"snapshot op after its next key", []byte(applyTestBody("snap.2.0", "snap.2."+applyTestPageA, "2", "2", "false", applyTestChange("2", applyTestUpsert(applyTestDocB, "tbv1-x", `{}`)))), "snap.2.0"},
 		{"snapshot page does not advance", []byte(applyTestBody("snap.2."+applyTestPageA, "snap.2."+applyTestPageA, "2", "2", "false", applyTestChange("2"))), "snap.2." + applyTestPageA},
 		{"snapshot op at or before its page key", []byte(applyTestBody("snap.2."+applyTestPageA, "2", "2", "2", "false", applyTestChange("2", upsertA("tbv1-x")))), "snap.2." + applyTestPageA},
+		{"zero progress without up_to_date", []byte(applyTestBody("2", "2", "2", "2", "false")), "2"},
+		{"body member differs in case", []byte(strings.Replace(valid, `"handle":`, `"HANDLE":`, 1)), "2"},
+		{"body member repeated", []byte(strings.Replace(valid, `"offset":"2"`, `"offset":"2","offset":"2"`, 1)), "2"},
+		{"change member differs in case", []byte(strings.Replace(valid, `"offset":"4","ops"`, `"Offset":"4","ops"`, 1)), "2"},
+		{"change member repeated", []byte(strings.Replace(valid, `"ops":[`, `"ops":[],"ops":[`, 1)), "2"},
+		{"op member differs in case", []byte(strings.Replace(valid, `"op":"upsert"`, `"OP":"upsert"`, 1)), "2"},
+		{"op id differs in case", []byte(strings.Replace(valid, `"id":"`+applyTestDocA, `"ID":"`+applyTestDocA, 1)), "2"},
+		{"op member repeated", []byte(strings.Replace(valid, `"op":"upsert",`, `"op":"upsert","op":"upsert",`, 1)), "2"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -395,4 +413,28 @@ func TestApplyShapeBodyOwnsItsState(t *testing.T) {
 	if got.Documents[applyTestDocA].Document[2] != 'X' {
 		t.Errorf("clone shares document bytes with its source")
 	}
+}
+
+func TestApplyShapeBodyFreshAndDocumentMembers(t *testing.T) {
+	t.Run("live timeout at the head is fresh", func(t *testing.T) {
+		body := applyTestBody("2", "2", "2", "2", "true")
+		got, err := applyShapeBody(applyTestState(), []byte(body), applyTestHandle, "2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Offset != "2" || !got.UpToDate || len(got.Documents) != 2 {
+			t.Errorf("state %+v", got)
+		}
+	})
+	t.Run("document member names keep their case", func(t *testing.T) {
+		raw := `{"Title":"a","ID":1,"Op":"x","Offset":"9"}`
+		body := applyTestBody("2", "4", "4", "4", "false", applyTestChange("4", applyTestUpsert(applyTestDocA, "tbv1-x", raw)))
+		got, err := applyShapeBody(applyTestState(), []byte(body), applyTestHandle, "2")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got.Documents[applyTestDocA].Document) != raw {
+			t.Errorf("document bytes %q, want %q", got.Documents[applyTestDocA].Document, raw)
+		}
+	})
 }
