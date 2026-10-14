@@ -20,6 +20,7 @@ using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Fast.Replication;
 
@@ -471,6 +472,8 @@ public sealed class RebuildCertificationTests
             .RefusedAsync(pair.Database, incarnation, pair.Token)).IsTrue();
         var row = await pair.Gru.Service<IRebuildLedger>().GetAsync(pair.Database, pair.Token);
         await Assert.That(row?.OldIncarnation).IsEqualTo(incarnation);
+        await Assert.That(row?.Phase).IsEqualTo(RebuildPhase.Pending);
+        await Assert.That(await pair.Gru.FaultReasonAsync()).IsEqualTo("a stored value is corrupt").Because("the keyed read check faulted the copy");
         await Assert.That(await pair.Sjc.ReadAsync(kept)).IsEqualTo("{\"n\":1}");
         await AnswersAsync(client, pair.Database, incarnation, held: false);
     }
@@ -1161,9 +1164,8 @@ public sealed class RebuildCertificationTests
         public async Task CorruptStateAsync(string id)
         {
             var store = (SqliteDatabaseStore)await StoreAsync();
-            await store.WithWriterAsync(session =>
+            await store.WithWriterAsync(session => Uncaptured(session, command =>
             {
-                using var command = session.Connection.CreateCommand();
                 command.CommandText = "UPDATE _tb_state SET state = (SELECT state FROM _tb_state WHERE collection = 'items' AND id != $id LIMIT 1) WHERE collection = 'items' AND id = $id;";
                 command.Parameters.AddWithValue("$id", id);
                 if (command.ExecuteNonQuery() != 1)
@@ -1173,20 +1175,44 @@ public sealed class RebuildCertificationTests
                 // Its materialization remains valid for the donor state; only the original keyed h1/h2 reveals damage.
                 command.CommandText = "UPDATE \"items\" SET doc = (SELECT doc FROM \"items\" WHERE id != $id LIMIT 1) WHERE id = $id;";
                 return command.ExecuteNonQuery();
-            }, "a test corrupting state while preserving materialization", pair.Token);
+            }), "a test corrupting state while preserving materialization", pair.Token);
         }
 
         public async Task CorruptDocumentAsync(string id)
         {
             var store = (SqliteDatabaseStore)await StoreAsync();
-            var changed = await store.WithWriterAsync(session =>
+            var changed = await store.WithWriterAsync(session => Uncaptured(session, command =>
             {
-                using var command = session.Connection.CreateCommand();
                 command.CommandText = "UPDATE \"items\" SET doc = '{\"n\":9}' WHERE id = $id;";
                 command.Parameters.AddWithValue("$id", id);
                 return command.ExecuteNonQuery();
-            }, "a test corrupting a materialized document", pair.Token);
+            }), "a test corrupting a materialized document", pair.Token);
             await Assert.That(changed).IsEqualTo(1).Because("the stored document changed while its keyed digest stayed intact");
+        }
+
+        // Damage at rest, not a write: with capture on, the CDC tail would decode the raw edit and fault the copy first, in
+        // memory ahead of its durable record, so the read under test would be refused before the keyed check ever ran.
+        private static int Uncaptured(SqliteSession session, Func<SqliteCommand, int> corrupt)
+        {
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = "SELECT coalesce(max(change_id), 0) FROM turso_cdc;";
+            var head = (long)command.ExecuteScalar()!;
+            command.CommandText = SqliteSession.CaptureOff;
+            _ = command.ExecuteNonQuery();
+            int changed;
+            try
+            {
+                changed = corrupt(command);
+            }
+            finally
+            {
+                command.Parameters.Clear();
+                command.CommandText = SqliteSession.CaptureOn;
+                _ = command.ExecuteNonQuery();
+            }
+
+            command.CommandText = "SELECT coalesce(max(change_id), 0) FROM turso_cdc;";
+            return (long)command.ExecuteScalar()! == head ? changed : throw new InvalidOperationException("the corruption reached the change log");
         }
 
         // Deletes the document's rows from the file directly, as a lost apply would leave it.
@@ -1202,6 +1228,19 @@ public sealed class RebuildCertificationTests
             }, "a test editing rows directly", pair.Token);
             store.ForgetCollections();
             await Assert.That(await ReadAsync(id)).IsNull();
+        }
+
+        // The reason on the database's ledger row: which check faulted the copy first, or null.
+        public async Task<string?> FaultReasonAsync()
+        {
+            var system = (SqliteDatabaseStore)await Engine.OpenSystemDatabaseAsync(pair.Token);
+            return await system.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = "SELECT reason FROM _tb_rebuild WHERE database = $database;";
+                command.Parameters.AddWithValue("$database", pair.Database.DatabaseId);
+                return command.ExecuteScalar() as string;
+            }, "a test reading the rebuild ledger", pair.Token);
         }
 
         // The refill proof on the database's ledger row: the source member's name, or null.
