@@ -28,8 +28,21 @@ public sealed class TerraBaseStorageHealth(TerraBaseDatabase database) : IStorag
     /// <inheritdoc />
     public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
     {
-        // Concurrently, so the list can grow without the probe outgrowing its deadline.
-        await Task.WhenAll(AuthStore.RequiredCollections.Select(collection => database.GetCollectionAsync(collection, cancellationToken))).ConfigureAwait(false);
+        // One catalog read replaces a burst of one request per collection on the shared authority.
+        var missing = AuthStore.RequiredCollections.ToHashSet(StringComparer.Ordinal);
+        string? cursor = null;
+        do
+        {
+            var page = await database.ListCollectionsAsync(limit: 200, cursor: cursor, cancellationToken: cancellationToken).ConfigureAwait(false);
+            missing.ExceptWith(page.Items.Select(collection => collection.Name));
+            cursor = page.NextCursor;
+        }
+        while (missing.Count > 0 && cursor is not null);
+
+        if (missing.Count > 0)
+        {
+            return new StorageHealthResult(false, null);
+        }
 
         // An interrupted probe may have committed its create. Only this synthetic address
         // is safe to clean up; never compensate an ambiguous identity write this way.
