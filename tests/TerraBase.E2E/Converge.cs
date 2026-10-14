@@ -21,6 +21,7 @@ internal static class Converge
         var clock = Stopwatch.StartNew();
         while (true)
         {
+            token.ThrowIfCancellationRequested();
             var latest = await read();
             if (done(latest))
             {
