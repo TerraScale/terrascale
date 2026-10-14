@@ -50,9 +50,13 @@ jobs:
   # the app afterwards; different PRs stay independent.
   cleanup:
     needs: discover
-    if: ${{ !cancelled() && startsWith(needs.discover.outputs.prs, '[') && needs.discover.outputs.prs != '[]' }}
+    if: >-
+      !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      && startsWith(needs.discover.outputs.prs, '[') && needs.discover.outputs.prs != '[]'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
