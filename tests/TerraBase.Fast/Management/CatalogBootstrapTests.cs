@@ -1,0 +1,55 @@
+using System.Net;
+using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
+using TerraBase.Features.Replication;
+using TerraBase.Testing;
+
+namespace TerraBase.Fast.Management;
+
+public sealed class CatalogBootstrapTests
+{
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_dependent_origin_carries_the_supported_catalog_version_to_a_fresh_receiver(bool delayFirstOrigin)
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var first = await ManagementApi.StartAsync();
+        var organization = await first.CreateOrganizationAsync("First origin");
+        var original = await GroupsAsync(first, token);
+        await using var middle = await ManagementApi.StartAsync(userId: first.User);
+        _ = await middle.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(ChangeGroups.System,
+            first.Server.Services.GetRequiredService<LocalReplica>().Id, original, token);
+        var project = await middle.CreateProjectAsync(organization, "Dependent origin");
+        var dependent = await GroupsAsync(middle, token);
+        var version = dependent.SingleOrDefault(group => group.Deltas.Any(delta => delta.Collection == "catalog" && delta.Id == "version"));
+        await Assert.That(version).IsNotNull();
+        var creation = dependent.Single(group => group.Deltas.Any(delta => delta.Collection == "project_organizations" && delta.Id == project));
+        await Assert.That(version!.ChangeId).IsLessThan(creation.ChangeId);
+
+        await using var last = await ManagementApi.StartAsync(userId: first.User);
+        var sink = last.Server.Services.GetRequiredService<IChangeGroupSink>();
+        if (!delayFirstOrigin)
+        {
+            _ = await sink.ApplyAsync(ChangeGroups.System, first.Server.Services.GetRequiredService<LocalReplica>().Id, original, token);
+        }
+
+        _ = await sink.ApplyAsync(ChangeGroups.System, middle.Server.Services.GetRequiredService<LocalReplica>().Id, dependent, token);
+        using var accepted = await last.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/organizations"), new { name = "Receiver origin" }, token);
+        await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        if (delayFirstOrigin)
+        {
+            _ = await sink.ApplyAsync(ChangeGroups.System, first.Server.Services.GetRequiredService<LocalReplica>().Id, original, token);
+        }
+
+        using var originalOrganization = await last.Client.GetAsync(ManagementApi.Uri("/v1/management/organizations/" + organization), token);
+        await Assert.That(originalOrganization.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    private static async Task<IReadOnlyList<OriginGroup>> GroupsAsync(ManagementApi api, CancellationToken token)
+    {
+        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+        return (await api.Server.Services.GetRequiredService<IChangeGroupSource>().ReadAsync(
+            ChangeGroups.System, system.Incarnation, 0, 512, 1048576, token))!.Groups;
+    }
+}
