@@ -14,11 +14,11 @@ namespace TerraBase.Features.Replication;
 /// <param name="Deltas">1 to <see cref="ChangeGroups.MaxDeltas"/> deltas.</param>
 public sealed record OriginGroup(long ChangeId, IReadOnlyList<ChangeDelta> Deltas);
 
-/// <summary>One document operation of a group: the entries it wrote at (<paramref name="Stamp"/>, the origin).</summary>
+/// <summary>A document operation or immutable catalog-version dependency; the stamp advances the sending origin only for its own group.</summary>
 /// <param name="Collection">The document's collection: a collection name or a reserved metadata collection.</param>
 /// <param name="Id">The document's id.</param>
 /// <param name="Stamp">The operation's stamp.</param>
-/// <param name="State"><see cref="DocumentState.DeltaAt"/> of the operation, plain values included.</param>
+/// <param name="State"><see cref="DocumentState.DeltaAt"/> of the operation, or the unchanged catalog-version state carried with dependent rows.</param>
 public sealed record ChangeDelta(string Collection, string Id, Hlc Stamp, DocumentState State);
 
 /// <summary>
@@ -40,7 +40,8 @@ public sealed record SourceGroups(Ulid Incarnation, IReadOnlyList<OriginGroup> G
 
 /// <summary>
 /// Where the peer streams read this machine's own change groups: the CDC tailer (slice R3). Only groups of local
-/// writes: a group joined from a peer (its origin is another node, or 0 for a repair) is never returned, so nothing echoes.
+/// writes: a group joined from a peer (its origin is another node, or 0 for a repair) is never returned. System groups
+/// include the supported catalog-version state as an immutable dependency, without rewriting it or raising the sending origin's frontier.
 /// Every read and write but <see cref="AckedAsync"/> names the incarnation it expects, checked inside its storage
 /// transaction (for writes, under the writer), and is refused (null or false, nothing written) when the copy in place is
 /// another or this machine no longer holds the database.
