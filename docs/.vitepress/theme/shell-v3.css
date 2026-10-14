@@ -182,3 +182,21 @@ body .VPLocalSearchBox .excerpt-gradient-top { display: none; }
   color: var(--ts-ink-3); font: 400 11px / 16px var(--vp-font-family-mono);
   text-transform: uppercase; letter-spacing: .06em;
 }
+
+.Layout .VPSidebar .VPSidebarItem > .item > .link { min-width: 0; }
+.Layout .VPSidebar .VPSidebarItem > .item > .link > .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 767px) {
+  .Layout .VPDoc { padding: 32px 16px 64px; }
+  .Layout .VPNavBar > .wrapper { padding: 0 8px 0 56px; }
+  .Layout .VPNavBarTitle .logo { content: url('/favicon.svg'); width: 24px; height: 24px; margin-right: 0; }
+  .Layout .VPNavBarTitle .title > span { display: none; }
+  .Layout .VPNavBarAppearance { display: flex; align-items: center; }
+  .Layout .VPLocalNav { height: 0; padding: 0; border: 0; }
+  .Layout .VPLocalNav .VPOutlineDropdown { display: none; }
+  .Layout .VPLocalNav .menu {
+    position: fixed; top: 8px; left: 8px; z-index: var(--vp-z-index-nav);
+    width: 40px; height: 40px; justify-content: center; padding: 0;
+  }
+  .Layout .VPLocalNav .menu-icon { margin: 0; font-size: 18px; }
+  .Layout .VPLocalNav .menu-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+}

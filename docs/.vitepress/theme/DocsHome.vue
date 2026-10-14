@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useData } from 'vitepress'
+import dotnetExample from '../../public/examples/terrabase-dotnet/Program.cs?raw'
 
 const { localeIndex } = useData()
 const prefix = computed(() => localeIndex.value === 'root' ? '' : `/${localeIndex.value}`)
@@ -16,12 +17,18 @@ function openSearch() {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))
 }
 
+const activeTab = ref(0)
+const tabButtons = ref([])
+function changeTab(index) {
+  activeTab.value = index
+  tabButtons.value[index].focus()
+}
 const code = ref(null)
 const copyStatus = ref('')
 let statusTimer
 async function copyCode() {
   try {
-    await navigator.clipboard.writeText(code.value.textContent)
+    await navigator.clipboard.writeText(activeTab.value === 0 ? code.value.textContent : dotnetExample)
     copyStatus.value = 'Copied'
   } catch {
     copyStatus.value = 'Copy failed'
@@ -71,13 +78,21 @@ onBeforeUnmount(() => clearTimeout(statusTimer))
       </div>
       <div class="docs-code-frame">
         <div class="docs-code-label">
-          <span>JavaScript · a provisioned database and collection</span>
+          <div class="docs-code-tabs" role="tablist" aria-label="Example language">
+            <button v-for="(label, index) in ['JavaScript', 'C# candidate']" :key="label" ref="tabButtons"
+              :id="`docs-code-tab-${index}`" type="button" role="tab" :aria-selected="activeTab === index"
+              :aria-controls="`docs-code-panel-${index}`" :tabindex="activeTab === index ? 0 : -1"
+              @click="activeTab = index" @keydown.left.prevent="changeTab(1 - index)"
+              @keydown.right.prevent="changeTab(1 - index)" @keydown.home.prevent="changeTab(0)" @keydown.end.prevent="changeTab(1)">{{ label }}</button>
+          </div>
           <button class="docs-copy" type="button" aria-label="Copy code" @click="copyCode">Copy</button>
           <span class="docs-copy-status" role="status">{{ copyStatus }}</span>
         </div>
-        <pre ref="code" class="docs-code" tabindex="0" role="region" aria-label="JavaScript document example"><code><span class="docs-code-keyword">const</span> posts = client.database(<span class="docs-code-string">'quickstart'</span>).collection(<span class="docs-code-string">'posts'</span>)
+        <div class="docs-code-description">JavaScript · a provisioned database and collection</div>
+        <pre v-show="activeTab === 0" ref="code" id="docs-code-panel-0" class="docs-code" tabindex="0" role="tabpanel" aria-labelledby="docs-code-tab-0"><code><span class="docs-code-keyword">const</span> posts = client.database(<span class="docs-code-string">'quickstart'</span>).collection(<span class="docs-code-string">'posts'</span>)
 <span class="docs-code-keyword">const</span> created = <span class="docs-code-keyword">await</span> posts.create({ title: <span class="docs-code-string">'Hello TerraBase'</span> })
 <span class="docs-code-keyword">const</span> current = <span class="docs-code-keyword">await</span> posts.get(created.id)</code></pre>
+        <pre v-show="activeTab === 1" id="docs-code-panel-1" class="docs-code" tabindex="0" role="tabpanel" aria-labelledby="docs-code-tab-1"><code>{{ dotnetExample }}</code></pre>
       </div>
     </section>
     <p class="docs-home-foot">TerraScale uses TerraBase through its SDKs. Application data belongs in your own scoped database.</p>

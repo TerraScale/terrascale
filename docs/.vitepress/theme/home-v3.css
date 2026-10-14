@@ -13,7 +13,7 @@
   --docs-violet: #7f5794;
   --docs-indigo: #565bc3;
 }
-.docs-home p { max-width: 80ch; }
+.docs-home p { max-width: 80ch; margin: 0; }
 .docs-home h1 { margin: 0; font-size: var(--ts-fs-4xl, 40px); letter-spacing: -.02em; line-height: 1.15; border: 0; }
 .docs-hero { display: grid; gap: var(--ts-s4); }
 .docs-eyebrow { color: var(--ts-link); font-size: var(--ts-fs-xs); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
@@ -49,7 +49,7 @@
 .docs-section-head h2 { margin: 0; padding: 0; border: 0; font-size: var(--ts-fs-xl); font-weight: 600; }
 .docs-section-head > span { color: var(--ts-ink-3); font-size: var(--ts-fs-sm); }
 .docs-section-head a { font-size: var(--ts-fs-sm); }
-.docs-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: var(--ts-s4); }
+.docs-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: var(--ts-s4); }
 .docs-card {
   display: grid; align-content: start; gap: var(--ts-s3); padding: var(--ts-s5); border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius-lg); background: var(--ts-surface); color: var(--ts-ink); text-decoration: none;
@@ -97,3 +97,16 @@
   .docs-code-label > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .docs-copy { flex-shrink: 0; }
 }
+
+.vp-doc .docs-home a.docs-card { color: var(--ts-ink); text-decoration: none; }
+.vp-doc .docs-home a.docs-card :is(h3, p, .docs-tile) { text-decoration: none; }
+@media (max-width: 767px) {
+  .docs-home { padding-top: 0; }
+  .docs-search kbd { flex-shrink: 0; white-space: nowrap; }
+}
+
+.docs-code-tabs { display: flex; align-self: stretch; gap: 8px; }
+.docs-code-tabs button { padding: 0 8px; color: var(--ts-ink-3); white-space: nowrap; font: inherit; }
+.docs-code-tabs button[aria-selected="true"] { color: var(--ts-ink); box-shadow: inset 0 -2px 0 var(--ts-ink); }
+.docs-code-description { padding: 8px 16px 0; color: var(--ts-ink-3); font-size: 12px; }
+.docs-code-frame .docs-code { max-height: 360px; overflow: auto; }
