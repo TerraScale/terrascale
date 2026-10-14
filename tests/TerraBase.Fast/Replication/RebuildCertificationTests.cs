@@ -86,6 +86,35 @@ public sealed class RebuildCertificationTests
     }
 
     [Test]
+    public async Task A_live_batch_refused_while_the_copy_is_faulted_streams_into_the_certified_copy()
+    {
+        await using var pair = await Pair.StartAsync();
+        _ = await pair.SeedAsync();
+        var refusedBefore = Volatile.Read(ref pair.Sjc.Buckets.RefusedPushes);
+        var faulted = await pair.Sjc.IncarnationAsync();
+        var rebuilds = pair.Sjc.Rebuilds;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rebuilds.Gate = release;
+        await pair.Sjc.Service<IReplicaCopyFaults>().RecordAsync(pair.Database, faulted, "a test fault", pair.Token);
+        await rebuilds.Entered.Task.WaitAsync(Deadline, pair.Token);
+
+        // gru's live batch meets the faulted copy in place: sjc refuses it, and gru's cursor waits out its retry.
+        var during = EntityIds.New().ToString();
+        await pair.Gru.PutAsync(during, """{"n":5}""");
+        await pair.WaitAsync(_ => Task.FromResult(Volatile.Read(ref pair.Sjc.Buckets.RefusedPushes) > refusedBefore));
+        rebuilds.Gate = null;
+        release.SetResult();
+        await pair.WaitAsync(_ => Task.FromResult(rebuilds.Outcomes.Count > 0));
+
+        var outcome = rebuilds.Outcomes[0];
+        await Assert.That(outcome is RebuildOutcome.Completed).IsTrue().Because(outcome.ToString());
+        await pair.Sjc.CertifiedAsync(faulted, ((RebuildOutcome.Completed)outcome).NewIncarnation, pair.Gru);
+        var after = EntityIds.New().ToString();
+        await pair.Gru.PutAsync(after, """{"n":4}""");
+        await Assert.That(await pair.Sjc.UntilAsync(after, """{"n":4}""")).IsTrue();
+    }
+
+    [Test]
     [Arguments("h1", "blob", false)]
     [Arguments("h2", "blob", false)]
     [Arguments("h1", "text", false)]
@@ -875,8 +904,10 @@ public sealed class RebuildCertificationTests
             {
                 services.AddSingleton<IMemberDirectory>(pair.Members);
                 // Keep periodic anti-entropy and recovery retries from consuming this test's pinned refill hooks.
-                // Durable fault wakes and commit-driven peer streams still run; transport deadlines use the system clock.
+                // Durable fault wakes still run. Peer streams keep the system clock, as in production: a batch refused while
+                // a copy is faulted retries after real time instead of waiting forever on this frozen clock.
                 services.AddSingleton<TimeProvider>(Clock);
+                services.AddSingleton(provider => ActivatorUtilities.CreateInstance<PeerStreams>(provider, TimeProvider.System));
                 services.AddSingleton(Admission);
                 services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
                 {
@@ -1612,6 +1643,27 @@ public sealed class RebuildCertificationTests
         public int PreparedPages;
         public Ulid PreparedPin;
         public bool PreservesCoverage;
+        public int RefusedPushes;
+
+        public override Task DuplexStreamingServerHandler<TRequest, TResponse>(IAsyncStreamReader<TRequest> requestStream,
+            IServerStreamWriter<TResponse> responseStream, ServerCallContext context, DuplexStreamingServerMethod<TRequest, TResponse> continuation) =>
+            continuation(requestStream, new RefusalWriter<TResponse>(responseStream, this, context.CancellationToken), context);
+
+        // Counts the watched database's refused acks this receiver sends; every frame passes through unchanged.
+        private sealed class RefusalWriter<T>(IServerStreamWriter<T> inner, BucketReads probe, CancellationToken callToken) : IServerStreamWriter<T>
+        {
+            public WriteOptions? WriteOptions { get => inner.WriteOptions; set => inner.WriteOptions = value; }
+            public Task WriteAsync(T message) => WriteAsync(message, callToken);
+
+            public async Task WriteAsync(T message, CancellationToken cancellationToken)
+            {
+                await inner.WriteAsync(message, cancellationToken);
+                if (message is AckFrame { Ack: { Refused: true } ack } && ack.Database?.DatabaseId == probe.WatchedDatabaseId)
+                {
+                    _ = Interlocked.Increment(ref probe.RefusedPushes);
+                }
+            }
+        }
 
         public override async Task ServerStreamingServerHandler<TRequest, TResponse>(
             TRequest request, IServerStreamWriter<TResponse> responseStream, ServerCallContext context,
