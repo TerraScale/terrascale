@@ -60,6 +60,11 @@ public sealed class ReplicationMatrixTests
         var stopped = true;
         try
         {
+            // Seed convergence through the stopped region does not prove the survivors can confirm each other's writes.
+            await Task.WhenAll(survivors.Select(from => Converge.UntilAsync(() => cluster.ReplicationAsync(from),
+                status => status.GetProperty("peers").EnumerateArray().Any(peer => peer.GetProperty("region").GetString() == survivors.Single(to => to != from)),
+                $"{from} streams to the other survivor while {offline} is down")));
+
             const int count = 40;
             var faker = new Faker();
             var documents = Enumerable.Range(0, count)

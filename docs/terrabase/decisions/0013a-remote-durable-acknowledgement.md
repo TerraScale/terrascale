@@ -132,6 +132,11 @@
   - A partition never produces success. A write already committed answers outcome unknown, and new writes are refused
     by the precheck while no other placed region is connected.
 
+Outage tests must observe connected outbound streams between the surviving regions before issuing their writes.
+Seed convergence through the region being stopped does not prove those streams exist. The 10 s window waits for
+a durable acknowledgement after admission and commit; it does not wait for admission eligibility. A welcome proves
+only precheck eligibility, never durability: success still requires the eligible durable acknowledgement.
+
 ## 3. Rules for SDKs and callers
 
 - **No automatic replay of an ambiguous mutation.** An SDK never resends a mutating request on its own after:
