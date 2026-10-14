@@ -36,14 +36,6 @@
 <section class="contact-body">
   <div class="contact-body__inner">
     <div class="contact-body__grid">
-      <div class="contact-email ts-glass">
-        <h2 class="contact-email__title">{$dict.contact.formTitle}</h2>
-        <ExternalLink href={channelMeta[0].href} class="ts-btn ts-btn-primary">
-          <Icon name="mail" />
-          {$dict.contact.channels[0].value}
-        </ExternalLink>
-      </div>
-
       <div class="contact-channels">
         <h2 class="contact-channels__title">{$dict.contact.channelsTitle}</h2>
         <div class="contact-channels__list">
@@ -149,21 +141,8 @@
   }
 
   .contact-body__grid {
-    display: grid;
-    grid-template-columns: 1.3fr 1fr;
-    gap: 40px;
-  }
-
-  .contact-email {
-    padding: 36px;
-    border-radius: 12px;
-  }
-
-  .contact-email__title {
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--ts-text);
-    margin: 0 0 24px;
+    max-width: 560px;
+    margin: 0 auto;
   }
 
   .contact-channels__title {
@@ -255,13 +234,6 @@
     .contact-hero__inner,
     .contact-body__inner {
       padding: 0 20px;
-    }
-    .contact-body__grid {
-      grid-template-columns: 1fr;
-      gap: 32px;
-    }
-    .contact-email {
-      padding: 24px;
     }
   }
 </style>
