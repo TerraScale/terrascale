@@ -41,8 +41,10 @@ public sealed class ChangesFeedE2ETests
     public async Task A_cursor_from_sjc_presented_in_fra_is_replayed_to_sjc_with_every_later_write_once_in_order()
     {
         await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
+        // The cursor comes from the exact sjc machine the resume must be answered by.
+        using var issuer = await cluster.ViaAsync(Cluster.Sjc, Cluster.Sjc);
         using var resume = await cluster.ViaAsync(Cluster.Fra, Cluster.Sjc);
-        await ResumeElsewhereAsync(region => cluster[region], resume, cluster.DatabasePath, cluster.Collection, cluster.Document, stopSjc: null);
+        await ResumeElsewhereAsync(region => cluster[region], resume, cluster.DatabasePath, cluster.Collection, cluster.Document, stopSjc: null, issuer);
     }
 
     // The issuer-stop scenario on a pinned disposable app: the sjc machine is stopped, and the fra machine (MachinePin) must
@@ -84,13 +86,15 @@ public sealed class ChangesFeedE2ETests
     }
 
     // gru and sjc write; a consumer reads sjc's feed and keeps the cursor; gru and sjc write more, which reaches fra; sjc goes
-    // away (`stopSjc`, when given) and gru writes again; the consumer resumes through `resume` from the cursor.
-    private static async Task ResumeElsewhereAsync(Func<string, HttpClient> client, HttpClient resume, string databasePath, string? collection, Func<string, Uri> document, Func<Task>? stopSjc)
+    // away (`stopSjc`, when given) and gru writes again; the consumer resumes through `resume` from the cursor. The cursor is
+    // read through `issuer`, sjc's own client unless given.
+    private static async Task ResumeElsewhereAsync(Func<string, HttpClient> client, HttpClient resume, string databasePath, string? collection, Func<string, Uri> document, Func<Task>? stopSjc,
+        HttpClient? issuer = null)
     {
         var before = await WriteAsync(client, document, 0, Writes, Cluster.Gru, Cluster.Sjc);
         var changes = $"{databasePath}/changes" + (collection is null ? "" : $"?collections={collection}");
         string cursor;
-        using (var sjc = await Feed.OpenAsync(client(Cluster.Sjc), changes))
+        using (var sjc = await Feed.OpenAsync(issuer ?? client(Cluster.Sjc), changes))
         {
             var seen = await sjc.UntilAsync(events => before.Keys.All(id => events.Any(change => change.DocumentId == id)));
             Expected.Check(seen.Count == before.Count, $"sjc's feed from the start holds each earlier write once; got {seen.Count} events for {before.Count} writes");

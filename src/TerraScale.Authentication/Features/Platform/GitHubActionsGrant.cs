@@ -45,7 +45,10 @@ public static class GitHubActionsGrant
     /// <summary>Only pushes: a pull request never runs as <c>main</c>.</summary>
     public const string EventName = "push";
 
-    /// <summary>The workflow, and the job's own workflow: no reusable workflow called from elsewhere matches.</summary>
+    /// <summary>
+    /// The workflow (<c>workflow_ref</c>), and the job's workflow when the token names one (<c>job_workflow_ref</c>, which GitHub
+    /// documents for jobs of a reusable workflow): no reusable workflow matches.
+    /// </summary>
     public const string WorkflowRef = "TerraScale/terrascale/.github/workflows/ci.yml@refs/heads/main";
 
     /// <summary>The most a token carries: databases and documents of the e2e project only.</summary>

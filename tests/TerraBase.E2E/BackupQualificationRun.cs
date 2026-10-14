@@ -178,11 +178,8 @@ internal static class BackupQualificationRun
             {
                 try
                 {
-                    using var deleted = await client.DeleteAsync(Uri(path), TestContext.Current!.Execution.CancellationToken);
-                    if (deleted.StatusCode != HttpStatusCode.NotFound)
-                    {
-                        await Docs.EnsureSuccessAsync(deleted);
-                    }
+                    // A restore inherits the source's replica regions, so it is deleted the way every owned database is.
+                    await Cluster.DeleteDatabaseAsync(region => cluster[region], Cluster.Gru, path);
                 }
                 catch (Exception cleanupError)
                 {

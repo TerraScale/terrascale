@@ -66,7 +66,7 @@ public sealed class LatticeE2ETests
         await Gaps.RunAsync("E10", async () =>
         {
             await using var cluster = await Cluster.StartAsync();
-            var (cursor, position) = await CursorThenWritesAsync(cluster);
+            var (cursor, position) = await CursorThenWritesAsync(cluster, cluster[Cluster.Gru]);
             foreach (var id in position.Keys)
             {
                 _ = await Converge.UntilAsync(() => Docs.ReadAsync(cluster[Cluster.Sjc], cluster.Document(id)), body => body is not null, "every write on sjc before gru stops");
@@ -89,19 +89,21 @@ public sealed class LatticeE2ETests
         await Gaps.RunAsync("E10", async () =>
         {
             await using var cluster = await Cluster.StartAsync();
-            var (cursor, position) = await CursorThenWritesAsync(cluster);
+            // The cursor comes from the exact gru machine the resume must be answered by.
+            using var gru = await cluster.ViaAsync(Cluster.Gru, Cluster.Gru);
+            var (cursor, position) = await CursorThenWritesAsync(cluster, gru);
             using var sjc = await cluster.ViaAsync(Cluster.Sjc, Cluster.Gru);
             await ResumedInOrderAsync(sjc, cluster, cursor, position);
         });
     }
 
-    // A cursor from gru's feed, then ten writes after it alternating regions (each region writes its own in order); returns
-    // the cursor and each write's position.
-    private static async Task<(string Cursor, Dictionary<string, int> Position)> CursorThenWritesAsync(Cluster cluster)
+    // A cursor from gru's feed read through `issuer`, then ten writes after it alternating regions (each region writes its own
+    // in order); returns the cursor and each write's position.
+    private static async Task<(string Cursor, Dictionary<string, int> Position)> CursorThenWritesAsync(Cluster cluster, HttpClient issuer)
     {
         var first = EntityIds.New().ToString();
         await Docs.PutAsync(cluster[Cluster.Gru], cluster.Document(first), new JsonObject { ["step"] = 0 });
-        var head = await ChangesAsync(cluster[Cluster.Gru], cluster, cursor: null, events => events.Any(change => Id(change) == first));
+        var head = await ChangesAsync(issuer, cluster, cursor: null, events => events.Any(change => Id(change) == first));
         var cursor = head.First(change => Id(change.Event) == first).Cursor;
         var writes = Enumerable.Range(1, 10).Select(step => (Id: EntityIds.New().ToString(), Region: step % 2 == 0 ? Cluster.Gru : Cluster.Sjc, Step: step)).ToArray();
         foreach (var write in writes)

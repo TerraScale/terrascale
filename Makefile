@@ -193,8 +193,8 @@ terrabase-e2e-local: terrabase-build
 # End-to-end replication (tests/TerraBase.E2E): leaderless writes between gru, sjc and fra, every pair and three-way, with
 # partitions, restarts, a region down, backlog and clock skew. Local by default (in-process nodes); tests/TerraBase.E2E/Gaps.cs
 # records which scenarios wait on which replication slice. With TERRABASE_E2E_FLY_URL, TERRABASE_E2E_FLY_API_KEY,
-# TERRABASE_E2E_FLY_PROJECT and TERRABASE_E2E_FLY_DATABASE set, the same scenarios run against Fly; the key is a TerraBase
-# API key of the e2e project (documents:read/write, no expiry: revoked explicitly), installed by a human: scripts/handoff/morning-credentials.sh install e2e.
+# TERRABASE_E2E_FLY_PROJECT_TOKEN, TERRABASE_E2E_FLY_PROJECT and TERRABASE_E2E_FLY_DATABASE set, the same scenarios run against
+# Fly; CI exports them from the GitHub OIDC exchange (scripts/e2e/ci-oidc-credential.sh): no stored e2e credential.
 # Not part of check: CI's e2e job runs it after the deploys.
 # Each test's outcome goes to $(E2E_RESULTS); the summary after the run keeps actual passes, expected failures (with their
 # slice), unwired hooks, skips (with their reason) and failures apart, and names the commit and the working tree's patch.

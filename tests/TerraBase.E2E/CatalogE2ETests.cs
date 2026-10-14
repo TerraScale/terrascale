@@ -18,8 +18,7 @@ public sealed class CatalogE2ETests
         await Gaps.RunAsync("E12", async () =>
         {
             await using var cluster = await Cluster.StartAsync();
-            var created = new List<(string Region, string Name)>();
-            try
+            await cluster.OwningDatabasesAsync(async created =>
             {
                 var name = NewName();
                 created.Add((Cluster.Sjc, name));
@@ -39,11 +38,7 @@ public sealed class CatalogE2ETests
                     async () => (Gru: await IdAsync(cluster[Cluster.Gru], twinPath), Sjc: await IdAsync(cluster[Cluster.Sjc], twinPath)),
                     pair => pair.Gru is not null && pair.Gru == pair.Sjc, "both regions serve one database of the twin name");
 
-            }
-            finally
-            {
-                await DeleteAsync(cluster, created);
-            }
+            });
         });
     }
 
@@ -56,9 +51,10 @@ public sealed class CatalogE2ETests
             await using var cluster = await Cluster.StartAsync();
             var name = NewName();
             var path = $"{cluster.ProjectPath}/databases/{name}";
-            _ = await CreateAsync(cluster, Cluster.Gru, name);
-            try
+            await cluster.OwningDatabasesAsync(async created =>
             {
+                created.Add((Cluster.Gru, name));
+                _ = await CreateAsync(cluster, Cluster.Gru, name);
                 _ = await Docs.PostAsync(cluster[Cluster.Gru], Relative($"{path}/collections"), new JsonObject { ["name"] = "items" });
                 // Writes keep going through gru; only acknowledged ones must survive the move.
                 var acknowledged = new ConcurrentBag<string>();
@@ -99,11 +95,7 @@ public sealed class CatalogE2ETests
                     Expected.Check(await Docs.ReadAsync(cluster[Cluster.Sjc], Item(path, id)) is not null, $"acknowledged write {id} is in sjc");
                 }
 
-            }
-            finally
-            {
-                await DeleteAsync(cluster, [(Cluster.Gru, name)]);
-            }
+            });
         });
     }
 
@@ -130,18 +122,5 @@ public sealed class CatalogE2ETests
     {
         using var response = await client.GetAsync(database);
         return response.StatusCode == HttpStatusCode.NotFound ? null : (await Docs.BodyAsync(response))?["id"]?.GetValue<string>();
-    }
-
-    // Deletes each database through the region that created it; one already gone (404) is fine.
-    private static async Task DeleteAsync(Cluster cluster, IEnumerable<(string Region, string Name)> databases)
-    {
-        foreach (var (region, name) in databases)
-        {
-            using var response = await cluster[region].DeleteAsync(Relative($"{cluster.ProjectPath}/databases/{name}"));
-            if (response.StatusCode != HttpStatusCode.NotFound)
-            {
-                await Docs.EnsureSuccessAsync(response);
-            }
-        }
     }
 }

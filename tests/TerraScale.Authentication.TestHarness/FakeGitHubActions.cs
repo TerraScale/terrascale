@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -39,10 +40,11 @@ public sealed class FakeGitHubActions : IDisposable
     /// A GitHub OIDC token for the e2e job on a push to main, for <paramref name="audience"/> (none when null).
     /// <paramref name="claims"/> replaces or (with a null value) removes claims; <paramref name="signing"/> signs instead
     /// of the published key; <paramref name="issuer"/> replaces GitHub's issuer; <paramref name="notBeforeIn"/> moves
-    /// <c>nbf</c>; without <paramref name="expires"/> the token has no <c>exp</c>.
+    /// <c>nbf</c>; without <paramref name="expires"/> the token has no <c>exp</c>; <paramref name="json"/> replaces claims
+    /// with raw JSON values (JSON null, numbers, arrays), which <paramref name="claims"/> cannot express.
     /// </summary>
     public string Mint(string? audience, IReadOnlyDictionary<string, string?>? claims = null, TimeSpan? expiresIn = null, SigningCredentials? signing = null,
-        string issuer = GitHubActionsGrant.Issuer, TimeSpan? notBeforeIn = null, bool expires = true)
+        string issuer = GitHubActionsGrant.Issuer, TimeSpan? notBeforeIn = null, bool expires = true, IReadOnlyDictionary<string, JsonElement>? json = null)
     {
         var now = DateTimeOffset.UtcNow;
         var payload = new Dictionary<string, object>(StringComparer.Ordinal)
@@ -70,6 +72,11 @@ public sealed class FakeGitHubActions : IDisposable
             {
                 payload[name] = value;
             }
+        }
+
+        foreach (var (name, value) in json ?? new Dictionary<string, JsonElement>())
+        {
+            payload[name] = value;
         }
 
         return Tokens.CreateToken(new SecurityTokenDescriptor

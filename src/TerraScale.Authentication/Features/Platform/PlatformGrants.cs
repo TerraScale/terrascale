@@ -200,8 +200,8 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
                 ("ref", GitHubActionsGrant.Ref),
                 ("event_name", GitHubActionsGrant.EventName),
                 ("workflow_ref", GitHubActionsGrant.WorkflowRef),
-                ("job_workflow_ref", GitHubActionsGrant.WorkflowRef),
             }.FirstOrDefault(pair => Claim(token, pair.Claim) != pair.Expected).Claim
+            ?? (JobWorkflowMatches(token) ? null : "job_workflow_ref")
             ?? (Claim(token, "jti") is null ? "jti" : Claim(token, "run_id") is null ? "run_id" : null);
         if (token is null || refused is not null)
         {
@@ -227,6 +227,16 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
         var scopes = requested.IsEmpty ? GitHubActionsGrant.Scopes : [.. requested];
         logger.ZLogWarning($"Audit: GitHub Actions project token for organization {organization}, project {project}: run {runId} attempt {Claim(token, "run_attempt")}, sha {Claim(token, "sha")}, jti {tokenId}, scopes {string.Join(' ', scopes)}");
         return SignIn(Identity($"github-actions:{GitHubActionsGrant.RepositoryId}:{runId}", organization, project, scopes, Lifetime));
+    }
+
+    // GitHub documents job_workflow_ref only for jobs of a reusable workflow, where it names the called workflow: absent is a
+    // job of the workflow itself; present in any JSON form (null, a number, an array), it must be exactly ci.yml's string,
+    // so no reusable workflow (here or elsewhere) matches. Read from the raw payload so no typed lookup hides a non-string.
+    private static bool JobWorkflowMatches(JsonWebToken token)
+    {
+        using var payload = JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(token.EncodedPayload));
+        return !payload.RootElement.TryGetProperty("job_workflow_ref", out var value)
+            || (value.ValueKind == JsonValueKind.String && value.GetString() == GitHubActionsGrant.WorkflowRef);
     }
 
     private static string? Claim(JsonWebToken token, string name) =>

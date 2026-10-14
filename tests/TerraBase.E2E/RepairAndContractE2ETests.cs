@@ -213,21 +213,33 @@ public sealed class RepairAndContractE2ETests
         {
             await using var cluster = await Cluster.StartAsync(All);
             var hot = $"hot{Guid.NewGuid():N}"[..20];
-            using (var created = await cluster[Cluster.Gru].PostAsJsonAsync(new Uri($"{cluster.ProjectPath}/databases", UriKind.Relative), new { name = hot }))
+            // The hot database is this test's own: deleted at its home when the test ends, so a Fly run leaves none behind.
+            await cluster.OwningDatabasesAsync(async created =>
             {
-                await Docs.EnsureSuccessAsync(created);
-            }
+                created.Add((Cluster.Gru, hot));
+                using (var response = await cluster[Cluster.Gru].PostAsJsonAsync(new Uri($"{cluster.ProjectPath}/databases", UriKind.Relative), new { name = hot }))
+                {
+                    await Docs.EnsureSuccessAsync(response);
+                }
 
-            var hotPath = $"{cluster.ProjectPath}/databases/{hot}";
-            _ = await Docs.PostAsync(cluster[Cluster.Gru], new Uri($"{hotPath}/collections", UriKind.Relative), new JsonObject { ["name"] = "burst" });
-            var faker = new Faker();
-            var burst = Parallel.ForEachAsync(Enumerable.Range(0, 3000), new ParallelOptions { MaxDegreeOfParallelism = 32 }, async (_, token) =>
-                await Docs.PutAsync(cluster[Cluster.Gru], new Uri($"{hotPath}/collections/burst/documents/by-key?id={EntityIds.New()}", UriKind.Relative), ThreeRegionE2ETests.Synthetic(faker), token));
-            await Task.Delay(TimeSpan.FromSeconds(1));
-            var uri = cluster.Document(EntityIds.New().ToString());
-            await Docs.PutAsync(cluster[Cluster.Gru], uri, new JsonObject { ["value"] = "quiet" });
-            _ = await Converge.UntilAsync(() => Docs.ReadAsync(cluster[Cluster.Sjc], uri), read => read is not null, "the quiet database's write on sjc", TimeSpan.FromSeconds(5));
-            await burst;
+                var hotPath = $"{cluster.ProjectPath}/databases/{hot}";
+                _ = await Docs.PostAsync(cluster[Cluster.Gru], new Uri($"{hotPath}/collections", UriKind.Relative), new JsonObject { ["name"] = "burst" });
+                var faker = new Faker();
+                var burst = Parallel.ForEachAsync(Enumerable.Range(0, 3000), new ParallelOptions { MaxDegreeOfParallelism = 32 }, async (_, token) =>
+                    await Docs.PutAsync(cluster[Cluster.Gru], new Uri($"{hotPath}/collections/burst/documents/by-key?id={EntityIds.New()}", UriKind.Relative), ThreeRegionE2ETests.Synthetic(faker), token));
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1));
+                    var uri = cluster.Document(EntityIds.New().ToString());
+                    await Docs.PutAsync(cluster[Cluster.Gru], uri, new JsonObject { ["value"] = "quiet" });
+                    _ = await Converge.UntilAsync(() => Docs.ReadAsync(cluster[Cluster.Sjc], uri), read => read is not null, "the quiet database's write on sjc", TimeSpan.FromSeconds(5));
+                }
+                finally
+                {
+                    // No delete while burst writes are still in flight.
+                    await burst;
+                }
+            });
         });
     }
 
