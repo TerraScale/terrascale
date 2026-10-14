@@ -542,6 +542,18 @@ export default defineConfig({
   description:
     'TerraScale developer documentation: TerraBase SDK installation, document CRUD, queries, authentication and service limits.',
   appearance: 'dark',
+  vite: {
+    plugins: [{
+      name: 'workers-module-preload',
+      transform(source, id) {
+        if (!id.endsWith('/vitepress/dist/client/app/composables/preFetch.js')) return
+        // Workers reject speculative prefetch requests; module preloads retain eager route loading.
+        const prefetch = 'link.rel = `prefetch`'
+        if (!source.includes(prefetch)) throw new Error('VitePress route preload source changed')
+        return source.replace(prefetch, 'link.rel = `modulepreload`')
+      },
+    }],
+  },
   markdown: {
     config(md) {
       const renderCode = md.renderer.rules.code_inline!
