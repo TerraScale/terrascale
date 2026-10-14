@@ -297,7 +297,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await ownerPage.Locator("#project-backup").SelectOptionAsync("SFO");
             await flow.SubmitAsync(ownerPage, "#create-project form", "Create project");
             var row = ownerPage.Locator("#projects tbody tr").Filter(new() { HasText = "Disposable " + slug });
-            var projectId = await row.Locator(".ts-mono").InnerTextAsync();
+            var projectId = await row.Locator(".ts-org-project-name .ts-mono").InnerTextAsync();
             await row.GetByRole(AriaRole.Button, new() { Name = "Rename", Exact = true }).ClickAsync();
             await ownerPage.Locator("#rename-project-" + projectId + " input[name=name]").FillAsync("Renamed " + slug);
             await flow.SubmitAsync(ownerPage, "#rename-project-" + projectId + " form", "Save project");
@@ -375,17 +375,17 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
 
             await flow.GotoAsync(ownerPage, "/organization?tab=members");
             await RequestTransferAsync(ownerPage, guestId);
-            await flow.GotoAsync(ownerPage, "/organization");
+            await flow.GotoAsync(ownerPage, "/organization?tab=danger");
             await ownerPage.GetByText("Ownership transfer pending", new() { Exact = true }).WaitForAsync();
             await flow.SubmitAsync(ownerPage, "form[action$=\"/ownership/cancel\"]", "Cancel transfer");
             await RequestTransferAsync(ownerPage, guestId);
-            await flow.GotoAsync(guestPage, "/organization");
+            await flow.GotoAsync(guestPage, "/organization?tab=danger");
             await flow.SubmitAsync(guestPage, "form[action$=\"/ownership/confirm\"]", "Accept ownership");
             await Assert.That(Text(await flow.MeAsync(guestContext), "role")).IsEqualTo("owner");
             await Assert.That(Text(await flow.MeAsync(ownerContext), "role")).IsEqualTo("admin");
             await flow.PostAsync(ownerContext, ownerPage, "/api/v1/dashboard/organization/members/ownership", new() { ["userID"] = guestId }, 403);
             await RequestTransferAsync(guestPage, Text(original, "userId")!);
-            await flow.GotoAsync(ownerPage, "/organization");
+            await flow.GotoAsync(ownerPage, "/organization?tab=danger");
             await flow.SubmitAsync(ownerPage, "form[action$=\"/ownership/confirm\"]", "Accept ownership");
             await Assert.That(Text(await flow.MeAsync(ownerContext), "role")).IsEqualTo("owner");
             await Assert.That(Text(await flow.MeAsync(guestContext), "role")).IsEqualTo("admin");
@@ -428,7 +428,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await Assert.That((await guestContext.APIRequest.GetAsync(flow.Origin + "/audit/export?format=json")).Status).IsEqualTo(403);
             flow.Checks.Add("member query/role/page filters, 7d audit defaults, action search, actual JSON/CSV export and member export authorization");
 
-            await flow.GotoAsync(guestPage, "/organization");
+            await flow.GotoAsync(guestPage, "/organization?tab=danger");
             await guestPage.GetByRole(AriaRole.Button, new() { Name = "Leave organization", Exact = true }).First.ClickAsync();
             await flow.SubmitAsync(guestPage, "#leave-organization form", "Leave organization");
             await Assert.That(Text(await flow.MeAsync(guestContext), "organizationId")).IsEqualTo(Text(originalGuest, "organizationId"));
@@ -449,11 +449,11 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             await flow.GotoAsync(guestPage, revokedInvite, 404);
             flow.Checks.Add("native member removal causes live scope fallback; owner invitation revoke invalidates the scoped token");
 
-            await flow.GotoAsync(ownerPage, "/organization");
+            await flow.GotoAsync(ownerPage, "/organization?tab=danger");
             await ownerPage.GetByRole(AriaRole.Button, new() { Name = "Organization deletion", Exact = true }).ClickAsync();
             await ownerPage.Locator("#deletion-confirmation").FillAsync("Wrong");
             await Assert.That((await flow.SubmitAsync(ownerPage, "#delete-organization form", "Request deletion")).Status).IsEqualTo(422);
-            await flow.GotoAsync(ownerPage, "/organization");
+            await flow.GotoAsync(ownerPage, "/organization?tab=danger");
             await ownerPage.GetByRole(AriaRole.Button, new() { Name = "Organization deletion", Exact = true }).ClickAsync();
             await ownerPage.Locator("#deletion-confirmation").FillAsync("Invite company " + slug);
             await flow.SubmitAsync(ownerPage, "#delete-organization form", "Request deletion");
@@ -468,7 +468,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             flow.Checks.Add("native business member leave, actual session revocation after removal, and idempotent queued organization deletion retains owner access");
 
             await ownerPage.SetViewportSizeAsync(390, 844);
-            foreach (var (path, key) in new[] { ("/profile", "profile-mobile"), ("/profile?tab=sessions", "sessions-mobile"), ("/profile?tab=security", "security-mobile"), ("/organization", "organization-mobile"), ("/organization?tab=projects", "projects-mobile"), ("/notifications", "notifications-mobile") })
+            foreach (var (path, key) in new[] { ("/profile", "profile-mobile"), ("/profile?tab=sessions", "sessions-mobile"), ("/profile?tab=security", "security-mobile"), ("/organization", "organization-mobile"), ("/organization?tab=danger", "organization-danger-mobile"), ("/organization?tab=projects", "projects-mobile"), ("/notifications", "notifications-mobile") })
             {
                 await flow.GotoAsync(ownerPage, path);
                 await flow.ShotAsync(ownerPage, key);
@@ -496,7 +496,7 @@ public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
             }
             async Task RequestTransferAsync(IPage page, string recipient)
             {
-                await flow.GotoAsync(page, "/organization");
+                await flow.GotoAsync(page, "/organization?tab=danger");
                 await page.GetByRole(AriaRole.Button, new() { Name = "Transfer ownership", Exact = true }).ClickAsync();
                 await page.Locator("#new-owner").SelectOptionAsync(recipient);
                 await flow.SubmitAsync(page, "#transfer-ownership form", "Request transfer");

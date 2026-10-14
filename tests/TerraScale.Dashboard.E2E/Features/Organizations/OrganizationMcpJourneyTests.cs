@@ -163,6 +163,24 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(members.GetProperty("roleCounts").GetProperty("viewer").GetInt32()).IsEqualTo(0);
         var ownerDetails = await owner.GetStringAsync("/organization");
         await Assert.That(ownerDetails.Contains("commandfor=\"rename-organization\"", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(ownerDetails.Contains("commandfor=\"transfer-ownership\"", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(ownerDetails.Contains("commandfor=\"delete-organization\"", StringComparison.Ordinal)).IsFalse();
+        var ownerDanger = await owner.GetStringAsync("/organization?tab=danger");
+        await Assert.That(ownerDanger.Contains("id=\"organization-danger\"", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(ownerDanger.Contains("commandfor=\"transfer-ownership\"", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(ownerDanger.Contains("commandfor=\"delete-organization\"", StringComparison.Ordinal)).IsTrue();
+        var dangerNavigation = ownerDanger[ownerDanger.IndexOf("aria-label=\"Organization sections\"", StringComparison.Ordinal)..];
+        dangerNavigation = dangerNavigation[..dangerNavigation.IndexOf("</nav>", StringComparison.Ordinal)];
+        await Assert.That(dangerNavigation.LastIndexOf("href=\"/organization?tab=danger\"", StringComparison.Ordinal))
+            .IsGreaterThan(dangerNavigation.LastIndexOf("href=\"/organization?tab=audit\"", StringComparison.Ordinal));
+        using (var invalidDeletion = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/organization/deletion", new()
+        { ["_csrf"] = await HttpJourney.CsrfAsync(owner, "/organization?tab=danger"), ["confirmation"] = "Wrong name" }))
+        {
+            await Assert.That(invalidDeletion.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+            var invalidBody = await invalidDeletion.Content.ReadAsStringAsync();
+            await Assert.That(invalidBody.Contains("id=\"organization-danger\"", StringComparison.Ordinal)).IsTrue();
+            await Assert.That(invalidBody.Contains("role=\"alert\"", StringComparison.Ordinal)).IsTrue();
+        }
         var ownerMembers = await owner.GetStringAsync("/organization?tab=members");
         await Assert.That(ownerMembers.Contains("id=\"team-invite\"", StringComparison.Ordinal)).IsTrue();
         await Assert.That(ownerMembers.Contains("name=\"role\" required", StringComparison.Ordinal)).IsTrue();
@@ -210,6 +228,10 @@ public sealed class OrganizationMcpJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(pendingOwner.GetProperty("pendingOwnerExpiresAt").GetDateTimeOffset()).IsGreaterThan(DateTimeOffset.UtcNow);
         await Assert.That(pendingOwner.GetProperty("canConfirmOwnership").GetBoolean()).IsFalse();
         await Assert.That((await ToolAsync(member, memberSecret, "get_organization", new { organizationId = businessId })).GetProperty("canConfirmOwnership").GetBoolean()).IsTrue();
+        var incomingDanger = await member.GetStringAsync("/organization?tab=danger");
+        await Assert.That(incomingDanger.Contains("You are asked to take ownership", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(incomingDanger.Contains("/api/v1/dashboard/organization/members/ownership/confirm", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(incomingDanger.Contains("commandfor=\"delete-organization\"", StringComparison.Ordinal)).IsFalse();
         await ErrorAsync(owner, ownerSecret, "confirm_ownership_transfer", new { organizationId = businessId });
         await ToolAsync(member, memberSecret, "confirm_ownership_transfer", new { organizationId = businessId });
         var transferred = await ToolAsync(member, memberSecret, "get_organization", new { organizationId = businessId });

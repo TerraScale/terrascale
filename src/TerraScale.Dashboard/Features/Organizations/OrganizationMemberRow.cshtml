@@ -2,7 +2,7 @@
 @using TerraScale.Dashboard.Features.Organizations
 <tr>
     <td><div class="ts-row ts-access-member"><span class="ts-avatar" aria-hidden="true">@(Model.Initials.Length > 0 ? Model.Initials : "?")</span><div class="ts-list-main"><span class="ts-strong ts-truncate">@Model.DisplayName</span><span class="ts-meta ts-truncate">@Model.Member.Email</span></div></div></td>
-    <td><code class="ts-meta">@Model.Member.UserId</code></td><td><span class="ts-badge ts-badge-tone" data-tone="@OrganizationPage.RoleTone(Model.Member.Role)"><span class="ts-dot" aria-hidden="true"></span>@(Model.Member.Role == "owner" ? "Organization Owner" : OrganizationPage.RoleLabel(Model.Member.Role))</span></td>
+    <td><code class="ts-meta">@Model.Member.UserId</code></td><td><span class="ts-badge ts-badge-neutral"><span class="ts-dot" aria-hidden="true"></span>@(Model.Member.Role == "owner" ? "Organization Owner" : OrganizationPage.RoleLabel(Model.Member.Role))</span></td>
     <td class="ts-meta ts-access-date">@(Model.Member.CreatedAt != DateTimeOffset.MinValue ? Model.Member.CreatedAt.UtcDateTime.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture) : Model.Member.JoinedOn?.ToString("MMM d, yyyy", System.Globalization.CultureInfo.InvariantCulture) ?? "Not reported")</td>
     <td class="ts-table-actions">
     @if (Model.CanEdit)

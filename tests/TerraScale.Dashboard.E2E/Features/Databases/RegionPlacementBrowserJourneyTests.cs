@@ -80,8 +80,8 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
         var row = page.Locator("#projects tbody tr").Filter(new() { HasText = projectName });
         await row.WaitForAsync();
         await Assert.That(await row.CountAsync()).IsEqualTo(1);
-        await Assert.That(await row.Locator("td").Nth(3).InnerTextAsync()).Contains("SFO");
-        var projectId = (await row.Locator(".ts-mono").InnerTextAsync()).Trim();
+        await Assert.That(await row.Locator("td").Nth(3).InnerTextAsync()).Contains("sfo");
+        var projectId = (await row.Locator(".ts-org-project-name .ts-mono").InnerTextAsync()).Trim();
         await row.GetByRole(AriaRole.Button, new() { Name = "Rename", Exact = true }).ClickAsync();
 
         var edit = page.Locator($"#rename-project-{projectId}[open]");
@@ -190,7 +190,7 @@ public sealed class RegionPlacementBrowserJourneyTests(DashboardRootFixture fixt
 
         var row = page.Locator("#projects tbody tr").Filter(new() { HasText = projectName });
         await row.WaitForAsync();
-        var projectId = (await row.Locator(".ts-mono").InnerTextAsync()).Trim();
+        var projectId = (await row.Locator(".ts-org-project-name .ts-mono").InnerTextAsync()).Trim();
         using var httpContextResponse = await replica.GetAsync("/api/v1/dashboard/context");
         await Assert.That(httpContextResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using var httpContextDocument = JsonDocument.Parse(await httpContextResponse.Content.ReadAsStringAsync());

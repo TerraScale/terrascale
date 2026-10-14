@@ -1,12 +1,13 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.ProjectDialogModel>
 @using TerraScale.Dashboard.Features.Organizations
+@inject AssetUrls Assets
 @if (Model.Project is { } project)
 {
     <tr>
         <td><div class="ts-stack-sm ts-org-project-name"><span class="ts-table-strong">@project.Name</span><span class="ts-meta ts-mono">@project.Id</span></div></td>
         <td class="ts-muted">@(project.Slug.Length > 0 ? project.Slug : "—")</td>
         <td><span class="ts-badge @(Model.Page.Shell.Context.Project?.Id == project.Id ? "ts-badge-success" : "ts-badge-neutral")">@(Model.Page.Shell.Context.Project?.Id == project.Id ? "Current" : "Available")</span></td>
-        <td>@if (project.BackupRegion.Length > 0) { <span class="ts-badge ts-badge-info">@project.BackupRegion.ToUpperInvariant()</span> } else { <span class="ts-meta">None</span> }</td>
+        <td>@if (project.BackupRegion.Length > 0) { var region = project.BackupRegion.ToLowerInvariant(); var country = region switch { "gru" => "br", "fra" => "de", "sjc" => "us", _ => "" }; <span class="ts-db-region">@if (country.Length > 0) { <img class="ts-db-region-flag" src="@Assets.Url("flags/" + country + ".svg")" alt="" aria-hidden="true" /> }<span class="ts-mono">@region</span></span> } else { <span class="ts-meta">None</span> }</td>
         <td class="ts-muted">@(project.CreatedAt == DateTimeOffset.MinValue ? "" : project.CreatedAt.UtcDateTime.ToString("MMM d, yyyy HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture))</td>
         <td class="ts-table-actions"><div class="ts-row ts-row-end">
             @if (Model.Page.Shell.Context.Project?.Id != project.Id)
