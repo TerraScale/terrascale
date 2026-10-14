@@ -165,12 +165,15 @@ marker. This can cause a false failure, but cannot produce a passing qualificati
 Before later writes it takes a ready manual backup and records a shipped PIT checkpoint. It then
 updates a document and inserts another in a transaction, waits for convergence and a newer shipped checkpoint, and
 restores the frozen supported cuts (manual, earlier PIT, latest PIT) into separate new databases. The earlier cuts
-must exclude those later changes. A cut before the restore window must answer exactly HTTP 400 `invalid_request`;
-a generic 5xx or an invented snake_case code never counts as safety proof.
+must exclude those later changes. A cut a minute before the restore window's `earliest`, still inside the plan's
+retention window, must answer exactly HTTP 409 `backup_history_incomplete` (the restore API contract: 400 only after now
+or before retention); another 409 code, that code at another status, a generic 5xx or an invented snake_case code never
+counts as safety proof.
 
 Each restored database is read back over HTTP. Count, canonical digest, source id and placement must match.
-Restores deliberately live at home (gru) only under the current API; they do not inherit the source's three-region
-placement. Public ETags include the new database identity, so the harness verifies stored versions by reconstructing
+A restore is placed as a new database: home at the serving region (gru) and every other serving region as a replica.
+The expected placement is frozen from the source record before any write, since the source was created the same way;
+it is compared as a sorted sequence and is never taken from a restore's own answer. Public ETags include the new database identity, so the harness verifies stored versions by reconstructing
 the expected ETag under that identity from each source change-feed stamp and body. A local integration regression
 rewrites the same restored body and proves the judge rejects the changed version even when count/digest match.
 No engine code is changed.

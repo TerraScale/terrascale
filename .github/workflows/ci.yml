@@ -487,12 +487,12 @@ jobs:
         # The local-only category (whole-database backups, every node stopped, a cursor's issuer stopped) runs in the
         # required test-terrabase stage on local nodes; the deploy run never stops a production machine. It writes only the
         # bound e2e project: its fixed ci-e2e (created once, later runs reuse it) and the databases each test creates and deletes.
-        # 139 = the 165 test cases in tests/TerraBase.E2E (one per [Arguments] row) minus the 26 local-only ones; skipped cases
+        # 138 = the 165 test cases in tests/TerraBase.E2E (one per [Arguments] row) minus the 27 local-only ones; skipped cases
         # (fly-outage, hosts, local processes) count. A narrower filter or lost tests fail the run.
         run: |
           make terrabase-build
           source scripts/e2e/ci-oidc-credential.sh
-          make -o terrabase-build terrabase-e2e E2E_LABEL=fly TEST_ARGS='-- --treenode-filter "/*/*/*/*[Category!=local-only]" --minimum-expected-tests 139 --output detailed --no-ansi' 2>&1 | tee replication-e2e.log
+          make -o terrabase-build terrabase-e2e E2E_LABEL=fly TEST_ARGS='-- --treenode-filter "/*/*/*/*[Category!=local-only]" --minimum-expected-tests 138 --output detailed --no-ansi' 2>&1 | tee replication-e2e.log
       - name: Preserve replication proof and per-direction lag
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

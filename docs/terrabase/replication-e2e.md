@@ -57,10 +57,10 @@ only the R9 signature "only SELECT statements are supported" counts as its gap.
 ## CI
 
 Run `make terrabase-e2e` after the deploys with the `TERRABASE_E2E_FLY_*` variables that `scripts/e2e/ci-oidc-credential.sh` exports from the GitHub OIDC exchange (no e2e secret is stored). The deploy job passes
-`--treenode-filter "/*/*/*/*[Category!=local-only]" --minimum-expected-tests 139` (every test case but the local-only
+`--treenode-filter "/*/*/*/*[Category!=local-only]" --minimum-expected-tests 138` (every test case but the local-only
 ones): the `local-only` category (whole-database backups, every node
 stopped, a changes-feed issuer stopped, the proxy and pin harness) runs instead in CI's required `test-terrabase` stage
-with `make terrabase-e2e-local`, which requires all 26 tests to pass with no skip. Replication needs
+with `make terrabase-e2e-local`, which requires all 27 tests to pass with no skip. Replication needs
 both regions live, so a run after the `gru` deploy alone cannot check it. Do not set `TERRABASE_E2E_FLY_OUTAGE` in CI.
 The suite is not part of `make check`.
 

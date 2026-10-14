@@ -47,7 +47,7 @@ internal static class BackupQualification
                 failures.Add($"supported cut {cut.Name} refused ({outcome.Refusal ?? "no code"}): a supported cut must restore");
             }
             else if (outcome.Refusal != cut.ExpectedRefusal || outcome.Status != cut.ExpectedStatus
-                || (cut.ExpectedRefusal, cut.ExpectedStatus) is not (("invalid_request", 400) or ("not_found", 404)))
+                || (cut.ExpectedRefusal, cut.ExpectedStatus) is not (("invalid_request", 400) or ("not_found", 404) or ("backup_history_incomplete", 409)))
             {
                 failures.Add($"cut {cut.Name} neither restored nor answered a typed refusal");
             }
