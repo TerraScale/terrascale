@@ -83,7 +83,7 @@ Work has been lost while resolving conflicts. On any merge, rebase, cherry-pick,
 ### Pull Requests
 
 - Use `fj` for git and Forgejo.
-- Before pushing: lint passes, and the `fast` and `slow` tests are green.
+- CI is the gate: no local test/check run is required before pushing or opening a PR.
 - Target `main`. Enable auto-merge once checks pass.
 - Reviewers: `mariogk` and `terrascale-bot`. Forgejo rejects the PR author, so skip whoever opened the PR.
 - Send the PR link to the user when done.
