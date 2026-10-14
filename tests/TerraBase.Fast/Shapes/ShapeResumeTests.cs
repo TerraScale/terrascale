@@ -133,7 +133,10 @@ public sealed partial class ShapeResumeTests
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), token))!;
         var origin = ReplicaId.Of(4518, 23, 1);
         var now = DateTimeOffset.UtcNow;
-        Hlc Stamp(TimeSpan ago) => new((ulong)(now - ago).ToUnixTimeMilliseconds() << 16);
+        Hlc Stamp(TimeSpan ago)
+        {
+            return new((ulong)(now - ago).ToUnixTimeMilliseconds() << 16);
+        }
         async Task JoinAsync(string id, Hlc stamp, int pad)
         {
             using var body = JsonDocument.Parse(JsonSerializer.Serialize(new { pad = new string('x', pad) }));
