@@ -334,8 +334,12 @@ public sealed class ShapeCryptoTests
         await using var pair = await Pair.StartAsync();
         var host = pair.Host;
 
-        // Past a membership heartbeat, a lists b, which no comparison has proved yet.
+        // Past a membership heartbeat, a lists b, which no comparison has proved yet. Tenant rounds never prove the
+        // catalog: it has its own rounds, so a slow tenant repair cannot hold its proofs back either.
         host.Time.Advance(TimeSpan.FromSeconds(6));
+        var antiEntropy = host.Api.Server.Services.GetRequiredService<AntiEntropy>();
+        await antiEntropy.RunRoundAsync(CancellationToken.None, system: false);
+        await antiEntropy.RunRoundAsync(CancellationToken.None, system: false);
         await AssertCatalogStaleAsync(await pair.GetKeyAsync());
         await pair.ProveAsync();
         await AssertReleasedAsync(host, await pair.GetKeyAsync());
@@ -419,6 +423,43 @@ public sealed class ShapeCryptoTests
         host.Time.Advance(TimeSpan.FromSeconds(20));
         lookup.Release();
         await AssertCatalogStaleAsync(await pending.WaitAsync(TimeSpan.FromSeconds(10), TUnit.Core.TestContext.Current!.Execution.CancellationToken));
+    }
+
+    [Test]
+    public async Task An_api_key_revoked_after_authentication_gets_no_key()
+    {
+        // Authentication read the key as valid; its revocation lands before the release, as a healing partition delivers it.
+        var lookup = new GatedLineage();
+        await using var host = await CryptoHost.StartAsync(services: collection =>
+        {
+            lookup.Inner = (IShapeLineages)collection.Last(service => service.ServiceType == typeof(IShapeLineages)).ImplementationInstance!;
+            collection.AddSingleton<IShapeLineages>(lookup);
+        });
+        using var owner = host.Api.Management.As(host.Api.Tenant.User);
+        var keys = $"/v1/management/organizations/{host.Api.Tenant.OrganizationId}/projects/{host.Api.Tenant.ProjectId}/api-keys";
+        using var created = await owner.PostAsJsonAsync(new Uri(keys, UriKind.Relative), new { name = _faker.Hacker.Noun(), scopes = ReadScopes });
+        created.StatusCode.ShouldBe(HttpStatusCode.Created);
+        var issued = await created.Content.ReadFromJsonAsync<JsonElement>();
+        using var reader = host.Api.Management.DataClient(issued.GetProperty("secret").GetString());
+        using (var before = await host.GetKeyAsync(reader, host.Handle, host.Epoch, host.KeyId))
+        {
+            await Assert.That(before.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        var entered = lookup.Arm();
+        var pending = host.GetKeyAsync(reader, host.Handle, host.Epoch, host.KeyId);
+        await entered.WaitAsync(TimeSpan.FromSeconds(10), TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        using var revoked = await owner.DeleteAsync(new Uri($"{keys}/{issued.GetProperty("key").GetProperty("id").GetString()}", UriKind.Relative));
+        lookup.Release();
+        using var refused = await pending.WaitAsync(TimeSpan.FromSeconds(10), TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+
+        await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(await CodeAsync(refused)).IsEqualTo("invalid_key");
+        await Assert.That(refused.Headers.CacheControl?.NoStore).IsTrue();
+        await Assert.That((await refused.Content.ReadAsStringAsync()).Contains("\"key\"", StringComparison.Ordinal)).IsFalse();
+        // The owner's own key, authenticated the same way, is still released.
+        await Assert.That((await host.ReleasedKeyAsync(host.Epoch, host.KeyId)).Length).IsEqualTo(32);
     }
 
     [Test]

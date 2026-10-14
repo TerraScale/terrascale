@@ -520,7 +520,9 @@ from the object. A mismatched object fails its tags. Reject the whole object, ap
 - **API key:** once its revocation reaches the serving machine, no key is released for any epoch. Peer streams
   usually deliver it in about a second, but a partition can hold it back. So the endpoint releases a key only while
   this machine's catalog is fresh: checked before any tenancy check, and again just before the key is returned.
-  Otherwise it answers `503 catalog_stale` with `Retry-After` and `no-store`, and releases nothing. The catalog is
+  Otherwise it answers `503 catalog_stale` with `Retry-After` and `no-store`, and releases nothing. After that last
+  check, an API key is looked up again in the catalog, which authentication may have read before a healed partition
+  delivered its revocation; a key no longer found answers `401 invalid_key`. The catalog is
   fresh when all of these hold, within one epoch (600 s, `ShapeCrypto.EpochSeconds`):
   - the last directory read listed this machine. Fly's DNS answers a lost name with no records, and such a view proves
     nothing;

@@ -20,8 +20,8 @@ namespace TerraBase.Features.Shapes;
 
 /// <summary>Releases only a shape's handle and epoch key to an authorized reader.</summary>
 internal sealed class GetShapeKeyEndpoint(
-    IDocumentService documents, ITenantDirectory tenants, IShapeLineages lineages, IShapeCrypto crypto, ICatalogFreshness catalog, TimeProvider time)
-    : EndpointWithoutRequest<IResult>
+    IDocumentService documents, ITenantDirectory tenants, IShapeLineages lineages, IShapeCrypto crypto, ICatalogFreshness catalog, IApiKeyStore keys,
+    TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     // One epoch: a revocation this machine cannot have seen stops key release within it, so a revoked credential reads
     // nothing sealed after the epoch following the revocation's (docs/terrabase/shape-reads.md, revocation bound).
@@ -138,6 +138,15 @@ internal sealed class GetShapeKeyEndpoint(
                 if (!await catalog.IsFreshAsync(CatalogWindow, cancellationToken))
                 {
                     return ErrorResponse.From(CatalogStale);
+                }
+
+                // Authentication read the catalog as it was when the request arrived, possibly before a healed partition
+                // delivered the key's revocation; the fresh catalog decides. Offline JWTs keep their documented expiry bound.
+                if (HttpContext.User.Identity?.AuthenticationType == ApiKeyAuthenticationHandler.SchemeName
+                    && (ApiKeyAuthenticationHandler.Secret(HttpContext.Request) is not { } secret
+                        || await keys.FindAsync(secret, cancellationToken) is not ApiKey current || current.Id != ApiKey.Of(HttpContext).Id))
+                {
+                    return ErrorResponse.From(new Unauthorized("The request cannot be served.", "invalid_key"));
                 }
 
                 return TypedResults.Json(new ShapeKeyResponse(handle, epoch.ToString(CultureInfo.InvariantCulture), key.KeyId,
