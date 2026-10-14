@@ -1,4 +1,4 @@
-/* 404 page: copy beside the illustration. */
+/* 404 page: standalone, centered copy under the brand mark. No app shell. */
 
 .ts-notfound {
   display: grid;
@@ -14,22 +14,22 @@
   height: clamp(28px, 2.5vw, 44px);
 }
 
-.ts-notfound-inner {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: center;
-  gap: clamp(2rem, 4vw, 4rem);
-}
-
 .ts-notfound-copy {
   display: grid;
-  justify-items: start;
+  justify-items: center;
+  align-content: center;
   gap: clamp(1rem, 1.5vw, 1.75rem);
+  text-align: center;
 }
 
 .ts-notfound-copy .ts-eyebrow {
-  color: #a78bfa;
-  font-size: clamp(12px, 1vw, 16px);
+  color: var(--ts-ink-2);
+}
+
+.ts-notfound-num {
+  font: 500 clamp(80px, 14vw, 120px) / 1 var(--ts-font-mono);
+  letter-spacing: -0.06em;
+  color: var(--ts-surface-3);
 }
 
 .ts-notfound-copy .ts-auth-title {
@@ -41,28 +41,11 @@
   font-size: clamp(14px, 1.25vw, 20px);
 }
 
+.ts-notfound-copy .ts-row {
+  justify-content: center;
+}
+
 .ts-notfound-copy .ts-btn {
   height: clamp(44px, 3.5vw, 56px);
   font-size: clamp(14px, 1vw, 18px);
-}
-
-.ts-notfound-number {
-  width: min(100%, 36rem);
-  height: auto;
-}
-
-.ts-notfound-art {
-  width: 100%;
-  height: auto;
-}
-
-@media (max-width: 47.99rem) {
-  .ts-notfound-inner {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .ts-notfound-art {
-    max-width: 28rem;
-    justify-self: center;
-  }
 }
