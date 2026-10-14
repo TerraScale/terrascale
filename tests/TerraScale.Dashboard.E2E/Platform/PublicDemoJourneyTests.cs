@@ -87,9 +87,13 @@ public sealed class PublicDemoJourneyTests
             await Assert.That(html).Contains($"data-auth-section=\"{section.Key}\"");
             await Assert.That(html).DoesNotContain(AuthenticationConsole.Unavailable).Because($"{section.Key} shows synthetic data, not the unavailable state.");
             await Assert.That(html).DoesNotContain("unavailable</p>").Because(section.Key);
-            if (section.Fields is not null || section.Key is "overview" or "sessions" or "audit" or "emails")
+            if (section.Fields is not null || section.Key is "overview" or "sessions" or "audit")
                 await Assert.That(Regex.IsMatch(html, @"<tbody>\s*<tr>")).IsTrue().Because($"{section.Key} lists fixture rows.");
         }
+        var preview = await client.GetStringAsync("/auth/emails/preview?template=Magic%20link&locale=en");
+        await Assert.That(preview).Contains("Preview of Magic link");
+        await Assert.That(preview).Contains("auth-email-subject");
+        await Assert.That(preview).Contains("Sign in to Northwind");
         var users = await client.GetStringAsync("/auth/users?q=globex");
         await Assert.That(users).Contains("Alan Turing").Because("Read-only search filters the rows.");
         await Assert.That(users).DoesNotContain("<td class=\"ts-table-strong\">Ada Lovelace</td>");
