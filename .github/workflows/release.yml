@@ -42,8 +42,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # alpha shares its .NET and NuGet caches with every job of every repository: release jobs install the SDK and
-      # restore packages into folders of their own.
+      # Release jobs install the SDK and restore packages into folders of their own.
       - run: |
           {
             echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet"
