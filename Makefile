@@ -181,11 +181,11 @@ terrabase-replication-matrix: terrabase-build
 	dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/*/*[Category=replication-matrix]' --minimum-expected-tests 16 --output detailed --no-ansi $(TEST_ARGS)
 
 # The local-only category: scenarios that only local nodes may run (every node stopped at once, whole databases created
-# and restored, a cursor's issuer stopped under the local stand-in for Fly's proxy) and the proxy/pin and live outage
-# proof harness checks.
+# and restored, a cursor's issuer stopped under the local stand-in for Fly's proxy, a canceled outage's recovery) and the
+# proxy/pin and live outage proof harness checks.
 # CI's required TerraBase test stage runs it; the deploy E2E job excludes the category with a visible filter. Exactly
 # $(E2E_LOCAL_TESTS) tests, each an actual pass or a harness check: a skip, a failure or a missing test fails the target.
-E2E_LOCAL_TESTS := 55
+E2E_LOCAL_TESTS := 56
 terrabase-e2e-local: terrabase-build
 	rm -f "$(E2E_RESULTS)"
 	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL -u TERRABASE_E2E_FLY_URL TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/*/*[Category=local-only]' --minimum-expected-tests $(E2E_LOCAL_TESTS) --output detailed --no-ansi $(TEST_ARGS) || status=$$?; \
@@ -206,11 +206,17 @@ terrabase-e2e: terrabase-build
 	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build $(TEST_ARGS) || status=$$?; \
 	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-local}" || status=1; exit $$status
 
-# Stops machines of the Fly app (the fly-outage category): run alone, never with terrabase-e2e and never on every deploy.
+# Stops each region of the Fly app in one isolated test: run alone, never with terrabase-e2e or other fly-outage tests.
+# It fails unless the run records exactly one test, the all-regions outage proof (FlyOutageE2ETests), as an actual pass on
+# Fly machines: a skip, a second test or a missing result is never live evidence.
 terrabase-e2e-fly-outage: terrabase-build
 	rm -f "$(E2E_RESULTS)"
-	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_FLY_OUTAGE=1 TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --treenode-filter '/*/*/*/*[Category=fly-outage]' $(TEST_ARGS) || status=$$?; \
-	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-fly-outage}" || status=1; exit $$status
+	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_FLY_OUTAGE=1 TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --treenode-filter '/*/*/*/*[Category=replication-matrix-fly-outage]' --minimum-expected-tests 1 $(TEST_ARGS) || status=$$?; \
+	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-fly-outage}" || status=1; \
+	jq -se 'length == 1 and (.[0] | .category == "pass" and .nodes == "Fly machines" and .faults == "NodeStop" \
+		and (.test | sub("\\(.*$$"; "")) == "Each_region_machine_stopped_then_started_catches_up_on_writes_tombstones_and_conflicts_from_both_survivors")' \
+		"$(E2E_RESULTS)" > /dev/null \
+		|| { echo "terrabase-e2e-fly-outage: the run is not exactly one actual pass of the all-regions outage proof on Fly machines" >&2; status=1; }; exit $$status
 
 terrabase-check: terrabase-build terrabase-analyzer-check
 	scripts/terrabase/e2e-summary.sh check tests/TerraBase.E2E/COVERAGE.md tests/TerraBase.E2E/RUNS.md

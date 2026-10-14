@@ -1,59 +1,30 @@
-using System.Diagnostics;
-using System.Text.Json.Nodes;
-using TerraBase.Primitives;
-
 namespace TerraBase.E2E;
 
 /// <summary>
-/// Region offline and rejoin on Fly: stops the sjc machine, writes through gru, starts sjc and waits for it to catch
-/// up. It stops a machine, so it runs alone (<c>make terrabase-e2e-fly-outage</c>), never in the deploy run, and only
-/// on a pinned disposable app (<c>TERRABASE_E2E_FLY_REVISION</c> and <c>TERRABASE_E2E_FLY_APP</c>, never production; see
+/// Region offline and rejoin on Fly, for each region in turn: stops its machine, writes, deletes and conflicts through
+/// both survivors, starts it again and waits until it serves both backlogs, the tombstones and the settled conflict
+/// (<see cref="ReplicationMatrixTests.RejoinAsync"/>, the same proof the local matrix runs). It stops machines, so it runs
+/// alone (<c>make terrabase-e2e-fly-outage</c>), never in the deploy run, and only on a pinned disposable app
+/// (<c>TERRABASE_E2E_FLY_REVISION</c> and <c>TERRABASE_E2E_FLY_APP</c>, never production; see
 /// docs/terrabase/e2e-disposable-app.md) with <c>TERRABASE_E2E_FLY_OUTAGE=1</c>.
 /// </summary>
 [Category("fly-outage")]
+[Category("replication-matrix-fly-outage")]
 public sealed class FlyOutageE2ETests
 {
+    // One test for all three outages, in sequence: no two outages share the app's machines at the same time.
     [Test]
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
-    public async Task Sjc_machine_stopped_then_started_catches_up_on_writes_made_during_the_outage()
+    public async Task Each_region_machine_stopped_then_started_catches_up_on_writes_tombstones_and_conflicts_from_both_survivors(CancellationToken cancellationToken)
     {
         Skip.Unless(Cluster.FlyRequested && Cluster.FlyMachineFaults,
             "Fly outage test: a pinned disposable app (TERRABASE_E2E_FLY_URL, TERRABASE_E2E_FLY_APP, TERRABASE_E2E_FLY_REVISION) and TERRABASE_E2E_FLY_OUTAGE=1");
-        await using var cluster = await Cluster.StartAsync();
-        var stopped = false;
-        try
+        foreach (var offline in new[] { Cluster.Gru, Cluster.Sjc, Cluster.Fra })
         {
-            await cluster.StopAsync(Cluster.Sjc);
-            stopped = true;
-            var uri = cluster.Document(EntityIds.New().ToString());
-            var body = new JsonObject { ["value"] = $"written-during-outage-{EntityIds.New()}" };
-            await Docs.PutAsync(cluster[Cluster.Gru], uri, body);
-            await Assert.That(Docs.Canonical(await Docs.ReadAsync(cluster[Cluster.Gru], uri))).IsEqualTo(Docs.Canonical(body));
-
-            await cluster.StartAgainAsync(Cluster.Sjc);
-            stopped = false;
-            var started = Stopwatch.GetTimestamp();
-            // While sjc boots, Fly serves the pinned request from gru: the pin refuses that answer, so it reads as not yet there.
-            var caught = await Converge.UntilAsync(async () =>
-            {
-                try
-                {
-                    return await Docs.ReadAsync(cluster[Cluster.Sjc], uri);
-                }
-                catch (RegionMismatchException)
-                {
-                    return null;
-                }
-            }, document => Docs.Canonical(document) == Docs.Canonical(body), "sjc catch-up after rejoin");
-            Converge.Report("sjc catch-up after rejoin", started);
-            await Assert.That(Docs.Canonical(caught)).IsEqualTo(Docs.Canonical(body));
-        }
-        finally
-        {
-            if (stopped)
-            {
-                await cluster.StartAgainAsync(Cluster.Sjc);
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            // A collection per outage: its digest names only this outage's documents, and its cleanup runs with every machine up.
+            await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
+            await ReplicationMatrixTests.RejoinAsync(cluster, offline, cancellationToken);
         }
     }
 }
