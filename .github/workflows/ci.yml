@@ -9,15 +9,21 @@ on:
 permissions:
   contents: read
 
+# Superseded PR runs are cancelled; main runs always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   verify:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
       matrix:
         node: ["22.23.2", "24.21.0"]
     steps:
       - name: Check out the pull request revision
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - name: Require the owner-approved 0.0.x version policy
@@ -29,9 +35,11 @@ jobs:
             exit 1
           fi
       - name: Set up the reviewed Node runtime
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node }}
+          # ~/.npm keyed on package-lock.json; a PR only saves when it changes the lockfile.
+          cache: npm
       - name: Provision the reviewed npm CLI
         run: node scripts/provision-reviewed-npm.js
       - name: Install locked dependencies
