@@ -103,7 +103,12 @@ impl Shape {
         shape_crypto::decrypt(object, handle, request_offset, epoch, key_id, &key)
     }
 
-    async fn epoch_key(&self, handle: &str, epoch: u64, key_id: &str) -> Result<[u8; 32]> {
+    async fn epoch_key(
+        &self,
+        handle: &str,
+        epoch: u64,
+        key_id: &str,
+    ) -> Result<zeroize::Zeroizing<[u8; 32]>> {
         let database = self.collection.database();
         let client = database.client();
         let (base, region) = client.shape_endpoint(database.name(), false).await?;
@@ -119,7 +124,7 @@ impl Shape {
             Some("keys"),
             &query,
         )?;
-        let resp = client
+        let mut resp = client
             .shape_get(
                 &url,
                 region.as_deref(),
@@ -127,16 +132,24 @@ impl Shape {
             )
             .await?;
         resp.check_status(&[StatusCode::OK])?;
-        let body: KeyBody = resp.decode()?;
+        // Clear key-bearing buffers on every exit and exclude them from diagnostics.
+        let raw = zeroize::Zeroizing::new(std::mem::take(&mut resp.body));
+        let body: KeyBody = serde_json::from_slice(&raw)
+            .map_err(|e| resp.invalid(format!("shape key response: {e}")))?;
         if body.handle != handle || body.epoch != epoch.to_string() || body.key_id != key_id {
             return Err(resp.invalid("shape key does not match its request".into()));
         }
-        let bytes = URL_SAFE_NO_PAD
-            .decode(&body.key)
-            .map_err(|e| resp.invalid(format!("shape key encoding: {e}")))?;
-        bytes
-            .try_into()
-            .map_err(|_| resp.invalid("shape key is not 32 bytes".into()))
+        let bytes = zeroize::Zeroizing::new(
+            URL_SAFE_NO_PAD
+                .decode(body.key.as_bytes())
+                .map_err(|e| resp.invalid(format!("shape key encoding: {e}")))?,
+        );
+        let mut key = zeroize::Zeroizing::new([0u8; 32]);
+        if bytes.len() != key.len() {
+            return Err(resp.invalid("shape key is not 32 bytes".into()));
+        }
+        key.copy_from_slice(&bytes);
+        Ok(key)
     }
 }
 
@@ -363,9 +376,6 @@ impl ShapeSync {
                         if error.code() != Some("must_refetch") {
                             return Err(error);
                         }
-                        if matches!(target, Target::Bootstrap) {
-                            return Err(resp.check_status(&[StatusCode::OK]).unwrap_err());
-                        }
                         let now = resp.header("TB-Shape-Handle");
                         let changed = match (&self.handle, now) {
                             (Some(saved), Some(now)) => saved.as_str() != now,
@@ -535,8 +545,8 @@ impl ShapeSync {
         {
             return Err(resp.invalid("shape redirect does not match its headers".into()));
         }
-        if matches!(previous, Target::Bootstrap) && !offset.starts_with("snap.") {
-            return Err(resp.invalid("bootstrap redirect must name a snapshot".into()));
+        if offset.starts_with("snap.") != matches!(previous, Target::Bootstrap) {
+            return Err(resp.invalid("shape redirect names the wrong offset kind".into()));
         }
         if let Some(filter) = &filter {
             if filter.is_empty() || filter.len() > MAX_WHERE_BYTES {
@@ -584,9 +594,6 @@ impl ShapeSync {
             {
                 return Err(resp.invalid("live cursor bucket did not advance".into()));
             }
-        }
-        if resp.body.len() > 8 << 20 {
-            return Err(resp.invalid("shape body exceeds 8 MiB".into()));
         }
         let body: Body = resp.decode()?;
         if handle_header != handle
@@ -648,9 +655,10 @@ impl ShapeSync {
             }
         }
         if body.up_to_date
-            && (matches!(from, Position::Snapshot { .. }) || !live && !body.changes.is_empty())
+            && (matches!(from, Position::Snapshot { .. })
+                || !live && (!body.changes.is_empty() || body.next_offset != requested))
         {
-            return Err(resp.invalid("a snapshot page cannot be up to date".into()));
+            return Err(resp.invalid("shape response cannot be up to date".into()));
         }
 
         let upper = match next {
@@ -890,7 +898,14 @@ struct KeyBody {
     handle: String,
     epoch: String,
     key_id: String,
-    key: String,
+    #[serde(deserialize_with = "secret_key")]
+    key: zeroize::Zeroizing<String>,
+}
+
+fn secret_key<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<zeroize::Zeroizing<String>, D::Error> {
+    String::deserialize(deserializer).map(zeroize::Zeroizing::new)
 }
 
 #[cfg(test)]

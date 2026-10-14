@@ -38,6 +38,9 @@ with `live=true` and the returned `TB-Shape-Cursor` bucket. Upserts replace a
 local document and its version; deletes remove it, including harmless deletes
 for unknown ids. Each whole response is validated before its state and
 checkpoint become visible. Only fresh responses can report `up_to_date=true`.
+Non-live freshness requires an empty response at the requested offset. The
+existing HTTP response bound leaves room for the envelope around a legal
+8 MiB materialized commit or singleton snapshot document.
 That describes the serving lineage, not global convergence or read-your-writes.
 
 Every repeated operation is applied. Protocol v1 section 7 forbids deduplicating
@@ -50,6 +53,8 @@ A changed endpoint or a changed-handle `409 must_refetch` permits one resume
 attempt against the saved complete state. An unsuccessful resume, a second
 `409` during its redirect follow-up, or an unusable snapshot cursor discards the
 state and restarts at `-1`. Other `409 must_refetch` responses also restart.
+Bootstrap restarts are bounded, and a proven resume must redirect to a decimal
+commit boundary rather than a snapshot page.
 `503 shape_too_large`, `503 unavailable`, and `429 shape_busy` preserve state and
 offset while the existing client retry policy applies. Caller cancellation
 stops the pending request; no background subscription is spawned.
@@ -60,6 +65,8 @@ object is authenticated in full before any plaintext is returned. `Shape::decryp
 only in memory and are never reused across epoch or data-key rotations.
 Key material must never be logged or persisted. An old object retains its
 original epoch and data-key id; new epochs fetch their own keys.
+The existing `zeroize` dependency clears owned key buffers on drop, and
+successful key-response bodies are excluded from error diagnostics.
 
 Object-storage `302` redirects and presigned manifests are deferred until the
 FR-22 contract is finalized. The stream reads JSON from the authorized origin;

@@ -1429,6 +1429,7 @@ dependencies = [
  "tokio-rustls",
  "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

@@ -46,9 +46,13 @@ pub(crate) fn decrypt(
         return Err(reject("key id mismatch"));
     }
 
-    let object_key = object_key(epoch_key, &header[SALT], &binding(handle, request_offset))?;
+    let object_key = zeroize::Zeroizing::new(object_key(
+        epoch_key,
+        &header[SALT],
+        &binding(handle, request_offset),
+    )?);
     let key = aead::LessSafeKey::new(
-        aead::UnboundKey::new(&aead::AES_256_GCM, &object_key).map_err(|_| reject("key"))?,
+        aead::UnboundKey::new(&aead::AES_256_GCM, &object_key[..]).map_err(|_| reject("key"))?,
     );
 
     let mut plaintext = Vec::new();

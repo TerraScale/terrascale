@@ -180,6 +180,148 @@ fn snapshot() -> Vec<Reply> {
 }
 
 #[tokio::test]
+async fn eight_mib_materialized_commit_and_snapshot_singleton_allow_response_envelope() {
+    for snapshot_page in [false, true] {
+        let mut body = vector(if snapshot_page {
+            "snapshot-first-page"
+        } else {
+            "closed-commit-upsert-delete"
+        })["response"]["body"]
+            .clone();
+        body["changes"][0]["ops"]
+            .as_array_mut()
+            .unwrap()
+            .truncate(1);
+        body["changes"][0]["ops"][0]["document"] = json!({"padding":""});
+        let materialized = if snapshot_page {
+            &body["changes"][0]["ops"][0]["document"]
+        } else {
+            &body["changes"][0]
+        };
+        let padding = (8 << 20) - serde_json::to_vec(materialized).unwrap().len();
+        body["changes"][0]["ops"][0]["document"]["padding"] = json!("x".repeat(padding));
+        let reply = Reply::body(body);
+        assert!(reply.body.len() > 8 << 20);
+        let mut replies = if snapshot_page {
+            vec![Reply::vector("bootstrap")]
+        } else {
+            snapshot()
+        };
+        replies.push(reply);
+        let fixture = Fixture::new(replies).await;
+        let stream = fixture
+            .client()
+            .database("demo")
+            .collection("notes")
+            .shape()
+            .stream();
+        pin_mut!(stream);
+        if !snapshot_page {
+            stream.next().await.unwrap().unwrap();
+            stream.next().await.unwrap().unwrap();
+        }
+        let update = stream.next().await.unwrap().unwrap();
+        let document: Value =
+            serde_json::from_str(update.state.get(ID0).unwrap().document.get()).unwrap();
+        assert_eq!(document["padding"].as_str().unwrap().len(), padding);
+        fixture.assert_auth();
+    }
+}
+
+#[tokio::test]
+async fn resume_redirect_cannot_enter_snapshot_with_preserved_state() {
+    let mut replies = snapshot();
+    replies.push(Reply::vector(
+        "changed-machine-continuation-tries-resume-once",
+    ));
+    let mut redirect = Reply::vector("proven-cursor-resume-query");
+    for (name, value) in &mut redirect.headers {
+        if name == "Location" {
+            let mut url = url::Url::parse(&format!("http://localhost{value}")).unwrap();
+            let pairs: Vec<_> = url.query_pairs().into_owned().collect();
+            url.set_query(None);
+            for (name, value) in pairs {
+                url.query_pairs_mut()
+                    .append_pair(&name, if name == "offset" { "snap.2.0" } else { &value });
+            }
+            *value = format!("{}?{}", url.path(), url.query().unwrap());
+        }
+    }
+    replies.push(redirect);
+    let fixture = Fixture::new(replies).await;
+    let stream = fixture
+        .client()
+        .database("demo")
+        .collection("notes")
+        .shape()
+        .stream();
+    pin_mut!(stream);
+    stream.next().await.unwrap().unwrap();
+    let before = stream.next().await.unwrap().unwrap();
+    assert!(stream.next().await.unwrap().is_err());
+    assert_eq!(before.state.len(), 2);
+    assert!(stream.next().await.is_none());
+    fixture.assert_auth();
+}
+
+#[tokio::test]
+async fn advancing_non_live_response_cannot_claim_to_be_up_to_date() {
+    let mut replies = snapshot();
+    let mut body = vector("closed-commit-upsert-delete")["response"]["body"].clone();
+    body["changes"] = json!([]);
+    body["up_to_date"] = json!(true);
+    replies.push(Reply::body(body));
+    let fixture = Fixture::new(replies).await;
+    let stream = fixture
+        .client()
+        .database("demo")
+        .collection("notes")
+        .shape()
+        .stream();
+    pin_mut!(stream);
+    stream.next().await.unwrap().unwrap();
+    let before = stream.next().await.unwrap().unwrap();
+    assert!(stream.next().await.unwrap().is_err());
+    assert_eq!(before.offset, "2");
+    assert_eq!(before.state.len(), 2);
+    fixture.assert_auth();
+}
+
+#[tokio::test]
+async fn bootstrap_must_refetch_restarts_with_a_bounded_retry_count() {
+    let mut replies = vec![Reply::vector("expired-offset")];
+    replies.extend(snapshot());
+    let fixture = Fixture::new(replies).await;
+    let stream = fixture
+        .client()
+        .database("demo")
+        .collection("notes")
+        .shape()
+        .stream();
+    pin_mut!(stream);
+    stream.next().await.unwrap().unwrap();
+    stream.next().await.unwrap().unwrap();
+    assert_eq!(fixture.query(0), fixture.query(1));
+    fixture.assert_auth();
+
+    let fixture = Fixture::new(vec![Reply::vector("expired-offset"); 4]).await;
+    let stream = fixture
+        .client()
+        .database("demo")
+        .collection("notes")
+        .shape()
+        .stream();
+    pin_mut!(stream);
+    assert!(stream.next().await.unwrap().is_err());
+    assert!(stream.next().await.is_none());
+    for index in 0..4 {
+        assert_eq!(fixture.query(index)["offset"], "-1");
+        assert_eq!(fixture.query(index).len(), 1);
+    }
+    fixture.assert_auth();
+}
+
+#[tokio::test]
 async fn snapshot_chunks_live_buckets_and_immutable_state_follow_vectors() {
     let mut replies = snapshot();
     replies.push(Reply::vector("closed-commit-upsert-delete"));
@@ -596,6 +738,47 @@ fn unhex(s: &str) -> Vec<u8> {
         .step_by(2)
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
         .collect()
+}
+
+#[tokio::test]
+async fn invalid_epoch_key_responses_exclude_secret_bytes_from_diagnostics() {
+    let v = vectors();
+    let crypto = &v["tbs1_vectors"][0];
+    let object = unhex(crypto["tbs1_hex"].as_str().unwrap());
+    for failure in ["identity", "encoding", "length", "json"] {
+        let mut body = vector("epoch-key")["response"]["body"].clone();
+        match failure {
+            "identity" => body["epoch"] = json!("101"),
+            "encoding" => body["key"] = json!("secret+invalid"),
+            "length" => body["key"] = json!("c2VjcmV0"),
+            "json" => {}
+            _ => unreachable!(),
+        }
+        let mut reply = Reply::body(body);
+        if failure == "json" {
+            reply.body.pop();
+        }
+        let fixture = Fixture::new(vec![reply]).await;
+        let shape = fixture
+            .client()
+            .database("demo")
+            .collection("notes")
+            .shape();
+        let error = shape
+            .decrypt_sealed(
+                &object,
+                crypto["handle"].as_str().unwrap(),
+                crypto["request_offset"].as_str().unwrap(),
+                100,
+                crypto["key_id"].as_str().unwrap(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.status(), Some(200));
+        assert_eq!(error.raw_body(), Some([].as_slice()), "{failure}");
+        assert!(!error.to_string().contains("secret"));
+        fixture.assert_auth();
+    }
 }
 
 #[tokio::test]
