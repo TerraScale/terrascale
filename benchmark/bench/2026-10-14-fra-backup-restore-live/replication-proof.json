@@ -1,0 +1,81 @@
+{
+  "paths": [
+    {
+      "source": "fra",
+      "target": "gru",
+      "seconds": 1.007412696002575
+    },
+    {
+      "source": "fra",
+      "target": "sjc",
+      "seconds": 1.783610183003475
+    },
+    {
+      "source": "gru",
+      "target": "fra",
+      "seconds": 0.5715789780006162
+    },
+    {
+      "source": "gru",
+      "target": "sjc",
+      "seconds": 0.9960297490033554
+    },
+    {
+      "source": "sjc",
+      "target": "fra",
+      "seconds": 0.8892616519951844
+    },
+    {
+      "source": "sjc",
+      "target": "gru",
+      "seconds": 0.9799662299992633
+    }
+  ],
+  "regions": [
+    {
+      "region": "fra",
+      "machine": "78111541ae9d38",
+      "revision": "ad2b9ee841379f7308a416bcb3f0838c60353714",
+      "catalog": {
+        "open": true,
+        "trusted": true,
+        "pending": [],
+        "digest": "4e17c616ab94a0bd9a35dac0f92690d1a3e0769836b8594c52ac9cade3fd8615"
+      },
+      "restoredCount": 12,
+      "restoredDigest": "5e95b5c8d26e5390ee8c43eed37ee2446d28b02ef6cd72d0942fef14f8958880",
+      "afterWriteCount": 15,
+      "afterWriteDigest": "e2fda34c44c39e5e8125cb7ecd90c4cc882d253fd6b358df97c8d0bc7da84d28"
+    },
+    {
+      "region": "gru",
+      "machine": "1857503f017528",
+      "revision": "ad2b9ee841379f7308a416bcb3f0838c60353714",
+      "catalog": {
+        "open": true,
+        "trusted": true,
+        "pending": [],
+        "digest": "4e17c616ab94a0bd9a35dac0f92690d1a3e0769836b8594c52ac9cade3fd8615"
+      },
+      "restoredCount": 12,
+      "restoredDigest": "5e95b5c8d26e5390ee8c43eed37ee2446d28b02ef6cd72d0942fef14f8958880",
+      "afterWriteCount": 15,
+      "afterWriteDigest": "e2fda34c44c39e5e8125cb7ecd90c4cc882d253fd6b358df97c8d0bc7da84d28"
+    },
+    {
+      "region": "sjc",
+      "machine": "847310c2ee95d8",
+      "revision": "ad2b9ee841379f7308a416bcb3f0838c60353714",
+      "catalog": {
+        "open": true,
+        "trusted": true,
+        "pending": [],
+        "digest": "4e17c616ab94a0bd9a35dac0f92690d1a3e0769836b8594c52ac9cade3fd8615"
+      },
+      "restoredCount": 12,
+      "restoredDigest": "5e95b5c8d26e5390ee8c43eed37ee2446d28b02ef6cd72d0942fef14f8958880",
+      "afterWriteCount": 15,
+      "afterWriteDigest": "e2fda34c44c39e5e8125cb7ecd90c4cc882d253fd6b358df97c8d0bc7da84d28"
+    }
+  ]
+}

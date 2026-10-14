@@ -1,0 +1,11 @@
+[
+    {
+        "id": "vs_6mJLpO2PP98cXpownzyM",
+        "size": 134679536,
+        "volume_size": 1073741824,
+        "digest": "c5828cf7aba2b1296889508299fdd5d362bd02b1a970061bb8ee82b0fc795d43",
+        "created_at": "2026-10-14T07:21:13Z",
+        "status": "created",
+        "retention_days": 5
+    }
+]
