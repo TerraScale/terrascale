@@ -167,7 +167,11 @@ internal sealed partial class SqliteStorageTransaction
 
         if (!HasTable(index.Collection))
         {
-            CreateCollection(new CollectionInfo(index.Collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+            CreateCollection(new CollectionInfo(index.Collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), cancellationToken);
+            if (IndexExists(index.Name))
+            {
+                return false;
+            }
         }
 
         // ANALYZE of the new index alone reads only that index, so the write lock is held for its collection's size.

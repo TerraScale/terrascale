@@ -39,9 +39,14 @@ internal sealed partial class SqliteStorageTransaction
     public ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken) =>
         RunAsync(() => ReadUniqueConstraints(collection), cancellationToken);
 
+    private bool UniqueDefinitionActive(string collection) => CollectionDrop(collection) is not { } drop
+        || (_pending.TryGetValue((DocumentDelta.Unique, collection), out var pending) ? pending.State : ReadState(DocumentDelta.Unique, collection))
+            .Clear?.Version > drop.Version;
+
     private IReadOnlyList<UniqueConstraint> ReadUniqueConstraints(string collection)
     {
-        if (store.IsSystem || Command(UniqueDefinitions, collection).ExecuteScalar() is not string body)
+        if (store.IsSystem || Command(UniqueDefinitions, collection).ExecuteScalar() is not string body
+            || !UniqueDefinitionActive(collection))
         {
             return [];
         }
@@ -62,7 +67,8 @@ internal sealed partial class SqliteStorageTransaction
             }
 
             var body = JsonSerializer.Serialize(new UniqueSchema(constraints), TerraBaseJsonContext.Default.UniqueSchema);
-            if (Command(UniqueDefinitions, collection).ExecuteScalar() is string previous && previous == Canonical(body))
+            if (Command(UniqueDefinitions, collection).ExecuteScalar() is string previous && previous == Canonical(body)
+                && UniqueDefinitionActive(collection))
             {
                 return true;
             }

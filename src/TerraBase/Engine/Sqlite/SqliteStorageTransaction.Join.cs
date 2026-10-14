@@ -46,18 +46,29 @@ internal sealed partial class SqliteStorageTransaction
     {
         ThrowIfReadOnly();
         Member.Clock.Observe(at.Stamp);
-        if (!HasTable(collection))
+        ClearEntry? collectionDrop = null;
+        if (IsClient && !IsMetadata(collection) && ReadState(DocumentDelta.Collections, collection).Clear is { Deleted: true } dropped)
         {
-            // A dropped collection's metadata document keeps its deletion: entries below it are dominated (section 5). A
-            // newer write brings the collection back, as a write after a delete brings a document back.
-            if (ReadState(DocumentDelta.Collections, collection).Clear is { Deleted: true } dropped
-                && !new DocumentState(dropped, DocumentState.Bottom.Fields).Join(delta).Exists)
+            collectionDrop = dropped;
+            var clear = new DocumentState(dropped, DocumentState.Bottom.Fields);
+            delta = clear.Join(delta);
+            if (delta.Equals(clear))
             {
                 return false;
             }
+        }
 
-            // The collection's own metadata document comes later (another origin made it); it then sets the identity.
-            AddCollection(collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), EntityIds.New().ToString());
+        if (!HasTable(collection))
+        {
+            if (collectionDrop is { } drop)
+            {
+                AddDroppedCollection(collection, drop, cancellationToken);
+            }
+            else
+            {
+                // The collection's own metadata document comes later (another origin made it); it then sets the identity.
+                AddCollection(collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), EntityIds.New().ToString());
+            }
         }
 
         var state = ReadState(collection, id);
@@ -79,7 +90,7 @@ internal sealed partial class SqliteStorageTransaction
         {
             if (collection == DocumentDelta.Collections)
             {
-                CollectionMetadata(id, materialized);
+                CollectionMetadata(id, materialized, next, state.Clear, cancellationToken);
             }
             else if (collection == DocumentDelta.Indexes)
             {
@@ -97,9 +108,8 @@ internal sealed partial class SqliteStorageTransaction
         return true;
     }
 
-    // Worker-only: the local DDL of a collection's metadata document. A live document creates the collection, or gives the
-    // existing one its identity; a deleted one drops it here, without writing metadata of its own.
-    private void CollectionMetadata(string name, string? body)
+    // Worker-only: project collection identity and clear covered entries without emitting new metadata operations.
+    private void CollectionMetadata(string name, string? body, DocumentState state, ClearEntry? previousClear, CancellationToken cancellationToken)
     {
         if (CollectionName.IsReserved(name) || !DatabaseName.TryParse(name, out _))
         {
@@ -107,13 +117,17 @@ internal sealed partial class SqliteStorageTransaction
         }
 
         var exists = Command(SqliteStatements.GetCollection, name).ExecuteScalar() is not null;
+        if (exists && state.Clear is { Deleted: true } drop && state.Clear != previousClear)
+        {
+            DropCoveredCollection(name, drop, cancellationToken);
+            exists = HasTable(name);
+        }
+
         if (body is null)
         {
-            if (exists)
+            if (exists && state.Clear is { Deleted: true } bodyDrop)
             {
-                DropTable(name);
-                Command(SqliteStatements.DropCollection, name).ExecuteNonQuery();
-                DropUniqueCollection(name, local: false);
+                SetDroppedCollectionIdentity(name, bodyDrop);
                 ChangedReaderState = true;
             }
 
@@ -121,13 +135,19 @@ internal sealed partial class SqliteStorageTransaction
         }
 
         using var parsed = JsonDocument.Parse(body, DocumentState.JsonOptions);
-        var created = parsed.RootElement.TryGetProperty("created_at", out var at) && at.TryGetInt64(out var ms) ? ms : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var created = parsed.RootElement.TryGetProperty("created_at", out var at) && at.TryGetInt64(out var ms) ? ms
+            : state.Clear is { Deleted: true } deleted ? deleted.Version.Stamp.Milliseconds : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var entity = parsed.RootElement.TryGetProperty("entity_id", out var value) && value.GetString() is { } text && EntityIds.IsValid(text)
             ? text
-            : EntityIds.New().ToString();
+            : state.Clear is { Deleted: true } deletedClear ? DroppedCollectionId(deletedClear) : EntityIds.New().ToString();
         if (!exists)
         {
             AddCollection(name, created, entity);
+            if (state.Clear is { Deleted: true } droppedClear)
+            {
+                RestoreDroppedCollectionIndexes(name, droppedClear, cancellationToken);
+            }
+
             return;
         }
 
@@ -168,6 +188,13 @@ internal sealed partial class SqliteStorageTransaction
             }
 
             fields.Add(field);
+        }
+
+        if (ReadState(DocumentDelta.Collections, collection).Clear is { Deleted: true } drop
+            && (!HasTable(collection) || !(ReadState(DocumentDelta.Indexes, name).Clear?.Version > drop.Version)))
+        {
+            _ = DropIndex(name, cancellationToken);
+            return;
         }
 
         if (ReadIndexes(cancellationToken).Find(index => index.Name == name) is { } existing)
@@ -238,5 +265,44 @@ internal sealed partial class SqliteStorageTransaction
         }
 
         ChangedReaderState = true;
+    }
+
+    private void RestoreDroppedCollectionIndexes(string collection, ClearEntry drop, CancellationToken cancellationToken)
+    {
+        var after = string.Empty;
+        while (true)
+        {
+            var command = TableCommand("SELECT id FROM {0} WHERE id > $after ORDER BY id LIMIT 128;", DocumentDelta.Indexes);
+            command.Parameters.AddWithValue("$after", after);
+            List<string> ids = [];
+            using (var reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    ids.Add(reader.GetString(0));
+                }
+            }
+
+            if (ids.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var id in ids)
+            {
+                var state = ReadState(DocumentDelta.Indexes, id);
+                if (state.Clear?.Version > drop.Version && Materialize(state) is { } body)
+                {
+                    using var parsed = JsonDocument.Parse(body, DocumentState.JsonOptions);
+                    if (parsed.RootElement.TryGetProperty("collection", out var named) && named.GetString() == collection)
+                    {
+                        IndexDefinitionMetadata(id, body, cancellationToken);
+                    }
+                }
+            }
+
+            after = ids[^1];
+        }
     }
 }
