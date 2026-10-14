@@ -95,16 +95,19 @@ public sealed class MobileNavigationJourneyTests(DashboardRootFixture fixture)
         await Assert.That(await sidebar.IsVisibleAsync()).IsFalse();
 
         await toggle.FocusAsync();
+        await Assert.That(await toggle.EvaluateAsync<bool>("el => document.activeElement === el")).IsTrue();
         await page.Keyboard.PressAsync("Control+k");
         var search = page.Locator("#ts-search-dialog[open]");
         await search.WaitForAsync();
+        await Assert.That(await search.EvaluateAsync<string>("el => el.returnFocusElement?.id ?? ''")).IsEqualTo("ts-nav-toggle");
         await search.GetByRole(AriaRole.Searchbox).FillAsync("no matching page");
         await Assert.That(await search.GetByText("No pages match", new() { Exact = true }).IsVisibleAsync()).IsTrue();
         await search.GetByRole(AriaRole.Searchbox).FillAsync("database");
         await Assert.That(await search.GetByRole(AriaRole.Link, new() { Name = "Databases", Exact = true }).IsVisibleAsync()).IsTrue();
         await Assert.That(await search.GetByRole(AriaRole.Link, new() { Name = "Overview", Exact = true }).IsVisibleAsync()).IsFalse();
         await page.Keyboard.PressAsync("Escape");
-        await page.WaitForFunctionAsync("() => !document.querySelector('#ts-search-dialog').open && document.activeElement?.id === 'ts-nav-toggle'");
+        await page.WaitForFunctionAsync("() => !document.querySelector('#ts-search-dialog').open");
+        await page.WaitForFunctionAsync("() => document.activeElement?.id === 'ts-nav-toggle'");
 
         await toggle.ClickAsync();
         await WaitForDrawerAsync(true);
