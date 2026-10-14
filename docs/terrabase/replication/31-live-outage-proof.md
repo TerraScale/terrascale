@@ -44,15 +44,17 @@ reads (never writes) treat the proxy's answer without TerraBase's identity, and 
 - It runs under the suite's assembly timeout (10 minutes) with no override of its own.
 - Run it alone: never with `terrabase-e2e` or another run against the same app.
 
-The other `fly-outage` scenarios (region down, restart, ack-then-stop, restarted backlog, deleted database) stop machines
-in parallel with each other, so they are a separate run, never at the same time as this one:
+The other `fly-outage` scenarios also stop the app's machines and can run concurrently with each other. They are not
+part of this target and must not run against the disposable app during this proof.
 
-```sh
-TERRABASE_E2E_FLY_OUTAGE=1 E2E_LABEL=fly-outage-broad nice -n 19 make terrabase-e2e \
-  TEST_ARGS="--treenode-filter '/*/*/*/*[(Category=fly-outage)&(Category!=replication-matrix-fly-outage)]'"
-```
+## Coverage update
 
-A failure there is not evidence about this proof, and a pass there is not this proof.
+The region-down/rejoin replacement is `ReplicationMatrixTests.Each_region_rejoins_with_writes_and_tombstones_from_both_survivors`
+(three local cases), plus `FlyOutageE2ETests.Each_region_machine_stopped_then_started_catches_up_on_writes_tombstones_and_conflicts_from_both_survivors`
+(one Fly case covering gru, sjc and fra sequentially). Both use the same proof: survivor writes, deletes and conflicting
+patches, then backlog, retained tombstone ETags, settled conflict and listing digest. The Fly case is skipped without
+the pinned disposable target and explicit fault-run environment; the strict target treats that skip as failure.
+No live run is recorded yet.
 
 ## Recovery after a failure or cancellation
 
