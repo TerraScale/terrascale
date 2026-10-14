@@ -53,6 +53,7 @@
 </script>
 
 <section class="hero">
+  <div class="hero__stage">
   <div class="hero__globe" aria-hidden="true">
     <div class="hero__globe-frame">
       <div class="hero__globe-map"></div>
@@ -113,16 +114,17 @@
     <p class="hero__subtitle">
       {$dict.hero.subtitle}
     </p>
-
-    <ul class="hero__highlights" aria-label={$dict.hero.highlightsAria}>
-      {#each highlights as h (h.label)}
-        <li class="hero__highlight">
-          <Icon name={h.icon} className="hero__highlight-icon" />
-          <span>{h.label}</span>
-        </li>
-      {/each}
-    </ul>
   </div>
+  </div>
+
+  <ul class="hero__highlights" aria-label={$dict.hero.highlightsAria}>
+    {#each highlights as h (h.label)}
+      <li class="hero__highlight">
+        <Icon name={h.icon} className="hero__highlight-icon" />
+        <span>{h.label}</span>
+      </li>
+    {/each}
+  </ul>
 </section>
 
 <style>
@@ -131,25 +133,33 @@
     isolation: isolate;
     overflow: hidden;
     margin-top: -60px;
-    padding: 140px 0 96px;
-    display: flex;
-    align-items: center;
+    padding: 84px 0 72px;
+    display: grid;
+    justify-items: center;
+    gap: 32px;
+  }
+
+  /* The map and the copy share one grid cell; the chips sit below the map. */
+  .hero__stage {
+    display: grid;
+    width: 100%;
+  }
+
+  .hero__stage > * {
+    grid-area: 1 / 1;
   }
 
   .hero__globe {
-    position: absolute;
-    inset: 60px 0 0;
     z-index: -1;
     display: grid;
     place-items: center;
     pointer-events: none;
-    container-type: size;
   }
 
-  /* Fit the whole map inside the hero (width- or height-bound), never crop it. */
+  /* The map spans the viewport width (capped), so it is never cropped. */
   .hero__globe-frame {
     position: relative;
-    width: min(100cqw - 32px, (100cqh - 32px) * 119 / 60);
+    width: min(100% - 32px, 1600px);
     aspect-ratio: 119 / 60;
   }
 
@@ -290,8 +300,10 @@
   .hero__inner {
     position: relative;
     z-index: 1;
+    align-self: start;
+    padding-top: clamp(24px, 6vw, 88px);
     width: 100%;
-    padding: 0 clamp(16px, 2.5vw, 40px);
+    padding-inline: clamp(16px, 2.5vw, 40px);
     display: grid;
     justify-items: center;
     gap: 24px;
@@ -349,8 +361,8 @@
 
   .hero__highlights {
     list-style: none;
-    margin: 16px 0 0;
-    padding: 0;
+    margin: 0;
+    padding: 0 16px;
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
@@ -382,12 +394,15 @@
 
   @media (max-width: 640px) {
     .hero {
-      padding: 108px 0 64px;
+      padding: 76px 0 56px;
+      gap: 24px;
     }
-    /* Sit the full map behind the brand and headline on phones. */
+    /* Edge to edge on phones, behind the brand and headline. */
     .hero__globe {
       place-items: start center;
-      padding-top: 24px;
+    }
+    .hero__globe-frame {
+      width: 100%;
     }
     .hero__pin-label { display: none; }
     .hero__brand-mark {
