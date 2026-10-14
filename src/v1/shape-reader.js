@@ -52,10 +52,10 @@ export function decodeFreeShapePage(value, headers) {
     }
   }
   for (const change of page.changes) {
-    const ids = new Set();
+    let previousId;
     for (const op of change.ops) {
-      if (ids.has(op.id)) malformed("duplicate shape document");
-      ids.add(op.id);
+      if (previousId !== undefined && op.id <= previousId) malformed("shape document order");
+      previousId = op.id;
     }
   }
   return page;
@@ -70,6 +70,8 @@ export async function readShapePage(transport, params, request, signal) {
   const isResume = (request.offset ?? "-1") === "-1" && request.cursor !== undefined;
   if (isResume && (request.handle !== undefined || request.live !== undefined)) throw new TypeError("Shape resume requires offset=-1 without handle or live.");
   const query = encodeShapeRequest(isResume ? { ...request, cursor: undefined } : request);
+  // Canonical filter size is checked by the producer; check our exact wire spelling here.
+  if (new TextEncoder().encode(query.get("where") ?? "").byteLength > 8192) throw new TypeError("Shape filters are limited to 8 KiB of UTF-8.");
   if (query.get("offset") === "-1" && query.has("handle")) throw new TypeError("Shape bootstrap must omit handle.");
   /** @type {Record<string,string>} */
   const headers = {};
@@ -94,7 +96,7 @@ export async function readShapePage(transport, params, request, signal) {
     }
     const handle = requireShapeHandle(target.searchParams.get("handle"));
     const offset = requireShapeOffset(target.searchParams.get("offset"));
-    if (offset === "-1" || (!isResume && !offset.startsWith("snap.")) || (isResume && offset.startsWith("snap."))) malformed("shape redirect offset");
+    if (offset === "-1" || (!isResume && !/^snap\.[0-9]+\.0$/u.test(offset)) || (isResume && offset.startsWith("snap."))) malformed("shape redirect offset");
     if (target.searchParams.has("where") !== query.has("where")) malformed("shape redirect filter");
     // Keep the caller's validated filter: the server's canonical spelling must not broaden it.
     query.delete("cursor");

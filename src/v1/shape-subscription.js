@@ -11,7 +11,7 @@ import { readShapePage } from "./shape-reader.js";
 /**
  * @typedef {object} V1ShapeSubscribeOptions
  * @property {AbortSignal | undefined} [signal] Closes the subscription when aborted; cancellation settles `done`.
- * @property {((subscription: V1ShapeSubscription) => void) | undefined} [onUpdate] Runs after each validated response, resets included.
+ * @property {((subscription: V1ShapeSubscription) => void) | undefined} [onUpdate] Runs after validated responses and freshness changes; throwing stops the subscription and rejects `done`.
  */
 /** @typedef {{ readonly version: string; readonly document: JsonObject }} V1ShapeDocument */
 const retryBaseMilliseconds = 250;
@@ -106,6 +106,8 @@ export class V1ShapeSubscription {
     if (signal?.aborted === true) this.close();
     else signal?.addEventListener("abort", this.#onExternalAbort);
     this.#done = this.#run();
+    // Callback-only consumers must not trigger a process-level unhandled rejection.
+    void this.#done.catch(() => {});
   }
   /** A copy per read: callers cannot change the documents this subscription holds. */
   get state() { return new Map(this.#documents); }
@@ -168,6 +170,10 @@ export class V1ShapeSubscription {
     if (changed && this.#resume !== undefined) {
       // One attempt on the new lineage; its own 409 falls through to #reset above.
       this.#resumeAttempt = true;
+      if (this.#upToDate) {
+        this.#upToDate = false;
+        this.#onUpdate?.(this);
+      }
       return;
     }
     this.#reset();

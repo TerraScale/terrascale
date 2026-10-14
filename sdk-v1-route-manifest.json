@@ -15,7 +15,7 @@
       }
     },
     "deferredVectors": {
-      "presigned-manifest": "FR-22 fixes invalid binding/JSON escape and defines manifest/302 delivery; owner explicitly deferred."
+      "presigned-manifest": "Owner explicitly deferred manifest/302 delivery to the FR-22 follow-up."
     },
     "routes": [
       {

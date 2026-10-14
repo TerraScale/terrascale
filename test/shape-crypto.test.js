@@ -330,6 +330,9 @@ describe("TBS1 request and object guards", () => {
     await expect(decryptShapeObject(bytes().subarray(0, 69), request())).rejects.toThrow("header is short");
     await expect(decryptShapeObject(new Uint8Array(), request())).rejects.toThrow("header is short");
   });
+  test("rejects an oversized sealed object before copying or decrypting it", async () => {
+    await expect(decryptShapeObject(new Uint8Array(8388859), request())).rejects.toThrow("maximum sealed size");
+  });
 
   test("rejects a key that is not 32 bytes", async () => {
     await expect(decryptShapeObject(bytes(), { ...request(), key: new Uint8Array(31) })).rejects.toThrow("32 bytes");

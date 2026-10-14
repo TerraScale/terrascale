@@ -259,7 +259,7 @@ export class V1Transport {
       bytes.set(part, offset);
       offset += part.byteLength;
     }
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   }
 
   /**

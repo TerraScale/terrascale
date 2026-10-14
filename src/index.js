@@ -21,6 +21,7 @@ export {
 export { v1Filter } from "./v1/filter.js";
 export { V1ShapeSubscription } from "./v1/shape-subscription.js";
 /** @typedef {import("./v1/shape-subscription.js").V1ShapeSubscribeOptions} V1ShapeSubscribeOptions */
+/** @typedef {import("./v1/shape-subscription.js").V1ShapeDocument} V1ShapeDocument */
 /** @typedef {import("./v1/shape-reader.js").V1SealedShapePosition} V1SealedShapePosition */
 export { generateId, isValidId, requireId } from "./ids.js";
 /** @typedef {import("./ids.js").EntityId} EntityId */

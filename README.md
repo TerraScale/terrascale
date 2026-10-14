@@ -179,7 +179,8 @@ feed, not authorized bounded-query snapshots or the planned reactive WebSocket A
 `collection.subscribeShape({ where? }, { onUpdate?, signal? })` follows a collection's
 sealed snapshot, log chunks, and live long-polls. Its `state` is a map from document
 id to `{ version, document }`; `upToDate` becomes true only after a fresh response
-reports `up_to_date`. Each callback sees the complete applied response.
+reports `up_to_date`. Each callback sees the complete applied response or a
+freshness change; freshness is cleared while a changed-lineage resume is pending.
 
 ```js
 const shape = todos.subscribeShape({ where: v1Filter.eq("/done", false) }, {
@@ -194,8 +195,11 @@ try {
 }
 ```
 
-`close()` cancels a pending read. Terminal errors reject `done` using the existing
-TerraBase error types; attach a handler when starting a subscription. Document
+`close()` cancels a pending read. Server errors reject `done` using the existing
+TerraBase error types; malformed responses and network failures also stop it.
+Observe `done` to detect terminal errors. A throwing `onUpdate` stops the
+subscription and rejects `done` with the callback's error; already applied state
+remains available. Document
 upserts replace the prior value and deletes of unknown ids are harmless. Repeated
 events are applied: a sealed value can be newer than its event, including after
 failover. There are no durable local writes or offline mutation queue.
@@ -224,7 +228,7 @@ live endpoint availability, and automatic region discovery remain unqualified.
 No TerraBase binary is downloaded or run by these tests. The existing historical
 `shape()` method keeps its contract. Manifest/object delivery and 302 redirects
 are deferred to FR-22; vector `presigned-manifest` is explicitly skipped until its
-invalid JSON binding escape is corrected upstream.
+delivery contract is ready upstream.
 
 Failures throw `TerraBaseV1Error` with status, code, optional transaction `op`,
 parsed `body`, raw `responseText`, response `headers`, and a received

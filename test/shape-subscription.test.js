@@ -275,6 +275,69 @@ describe("V1ShapeSubscription", () => {
     }
   });
 
+  test("503 during resume honors Retry-After and keeps the token, state and pending freshness", async () => {
+    vi.useFakeTimers();
+    try {
+      const { fetch, requests } = fakeFetch([
+        vector("bootstrap"), vector("snapshot-first-page"), vector("snapshot-last-page"),
+        () => log({ next: "2", upToDate: true }),
+        () => conflict(otherHandle),
+        () => json(503, { error: { code: "unavailable", message: "later" } }, { "retry-after": "2" }),
+        () => redirect(otherHandle, "2"),
+        () => log({ target: otherHandle, next: "2", upToDate: true }),
+      ]);
+      /** @type {boolean[]} */
+      const freshness = [];
+      const subscription = subscribe(fetch, {}, { onUpdate: (/** @type {V1ShapeSubscription} */ current) => {
+        freshness.push(current.upToDate);
+        if (freshness.length === 5) current.close();
+      } });
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(requests).toHaveLength(6);
+      expect(subscription.upToDate).toBe(false);
+      expect(subscription.state).toEqual(snapshotDocuments);
+      expect(freshness).toEqual([false, false, true, false]);
+      await vi.advanceTimersByTimeAsync(1);
+      await subscription.done;
+      expect(requests[5]?.url.searchParams.get("cursor")).toBe(resume);
+      expect(requests[6]?.url.searchParams.get("cursor")).toBe(resume);
+      expect(subscription.state).toEqual(snapshotDocuments);
+      expect(freshness).toEqual([false, false, true, false, true]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a throwing callback rejects done after the response has been committed", async () => {
+    const failure = new Error("callback failed");
+    const { fetch, requests } = fakeFetch([
+      () => redirect(handle, "snap.2.0"),
+      () => snapshot({ ops: operations("snapshot-first-page") }),
+    ]);
+    const subscription = subscribe(fetch, {}, { onUpdate: () => { throw failure; } });
+    await expect(subscription.done).rejects.toBe(failure);
+    expect(subscription.state.size).toBeGreaterThan(0);
+    expect(requests).toHaveLength(2);
+  });
+
+  test("a terminal failure is internally handled while remaining observable through done", async () => {
+    const { fetch } = fakeFetch([() => json(401, { error: { code: "unauthorized", message: "no" } })]);
+    const subscription = subscribe(fetch, {}, { onUpdate: () => {} });
+    // Let an unhandled rejection surface before the consumer attaches its handler.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await expect(subscription.done).rejects.toMatchObject({ status: 401 });
+  });
+
+  test("terminal completion removes the external abort listener", async () => {
+    const controller = new AbortController();
+    const add = vi.spyOn(controller.signal, "addEventListener");
+    const remove = vi.spyOn(controller.signal, "removeEventListener");
+    const { fetch } = fakeFetch([() => json(401, { error: { code: "unauthorized", message: "no" } })]);
+    const subscription = subscribe(fetch, {}, { signal: controller.signal });
+    await expect(subscription.done).rejects.toMatchObject({ status: 401 });
+    expect(remove).toHaveBeenCalledWith("abort", add.mock.calls[0]?.[1]);
+  });
+
   test("terminal auth failures are never retried", async () => {
     const { fetch, requests } = fakeFetch([() => json(401, { error: { code: "unauthorized", message: "no" } })]);
     const subscription = subscribe(fetch);

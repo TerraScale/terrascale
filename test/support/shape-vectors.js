@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 /** @type {any} Self-contained upstream conformance data, not product-boundary qualification. */
 export const shapeVectors = JSON.parse(readFileSync(new URL("../fixtures/shape-vectors.json", import.meta.url), "utf8"));
 export const skippedShapeVectorIds = new Set([
-  "presigned-manifest", // Owner deferred FR-22: invalid \\^@ JSON escape and undefined manifest/302 delivery.
+  "presigned-manifest", // Owner deferred manifest/302 delivery to the FR-22 follow-up.
 ]);
 /** @param {string} group @returns {any[]} */
 export function vectors(group) {

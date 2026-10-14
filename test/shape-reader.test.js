@@ -5,6 +5,7 @@ import { readShapePage, decodeFreeShapePage, decryptSealedShapePage } from "../s
 import { shapeVectors, vectors, skippedShapeVectorIds, shapeVectorDigest } from "./support/shape-vectors.js";
 import { shapeProtocolContract } from "../scripts/terrabase-contract.mjs";
 import { requireShapeOffset } from "../src/v1/shapes.js";
+import { v1Filter } from "../src/v1/filter.js";
 /** @type {Record<string, string>} */
 const params = { database: "demo", collection: "notes" };
 /** @param {string} id */
@@ -92,6 +93,40 @@ describe("origin free shape reads", () => {
     const body = structuredClone(vector("closed-commit-upsert-delete").response.body);
     body.changes.push(body.changes[0]);
     expect(() => decodeFreeShapePage(body, new Headers())).toThrow(/commit order/u);
+  });
+  test("bootstrap rejects a redirect past the first snapshot page", async () => {
+    const t = transport(() => new Response(null, { status: 307, headers: { location: `?handle=${handle}&offset=snap.2.MA` } }));
+    await expect(readShapePage(t, params, {}, undefined)).rejects.toThrow(/redirect offset/u);
+  });
+  test("rejects unsorted operations, backwards snapshot pages, and a stalled closed chunk", () => {
+    const body = structuredClone(vector("closed-commit-upsert-delete").response.body);
+    body.changes[0].ops.reverse();
+    expect(() => decodeFreeShapePage(body, new Headers())).toThrow(/document order/u);
+    const snapshot = structuredClone(vector("snapshot-first-page").response.body);
+    snapshot.offset = "snap.2.Mg";
+    snapshot.next_offset = "snap.2.MQ";
+    expect(() => decodeFreeShapePage(snapshot, new Headers())).toThrow(/snapshot progression/u);
+    body.changes = []; body.next_offset = body.offset; body.covered_offset = body.offset;
+    expect(() => decodeFreeShapePage(body, new Headers())).toThrow(/log coverage/u);
+  });
+  test("rejects oversized wire filters before a request", async () => {
+    let calls = 0;
+    const t = transport(() => { calls++; throw new Error("unexpected request"); });
+    const where = v1Filter.and(...Array.from({ length: 20 }, (_, index) => v1Filter.eq(`/field${index}`, "é".repeat(400))));
+    await expect(readShapePage(t, params, { where }, undefined)).rejects.toThrow(/8 KiB/u);
+    expect(calls).toBe(0);
+  });
+  test("origin JSON rejects a leading UTF-8 BOM", async () => {
+    const row = vector("closed-commit-upsert-delete");
+    const t = transport(() => new Response(`\ufeff${row.response.body_utf8}`, { headers: row.response.headers }));
+    await expect(readShapePage(t, params, row.request.query, undefined)).rejects.toThrow();
+  });
+  test("a live request behind the head accepts a closed chunk with a live bucket", async () => {
+    const row = vector("closed-commit-upsert-delete");
+    const t = transport(() => new Response(row.response.body_utf8, { headers: { ...row.response.headers, "TB-Shape-Cursor": "52" } }));
+    const page = await readShapePage(t, params, { ...row.request.query, live: true, cursor: "51" }, undefined);
+    expect(page.upToDate).toBe(false);
+    expect(page.cursor).toBe("52");
   });
 });
 
