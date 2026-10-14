@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from '@/components/Icon.svelte'
+  import RegionFlag from '@/components/RegionFlag.svelte'
   import { tokenize, CODE_SAMPLES, LANG_META, type Lang } from '@/lib/highlight'
   import { dict } from '@/lib/i18n'
 
@@ -30,13 +31,13 @@
   <div class="code__inner">
     <div class="code__grid">
       <div class="code__copy">
-        <div class="code__eyebrow">
+        <span class="ts-eyebrow code__eyebrow">
           <Icon name="code2" className="code__eyebrow-icon" />
           {$dict.code.eyebrow}
-        </div>
+        </span>
         <h2 class="code__headline">
           {$dict.code.headlineLead}<br />
-          <span class="ts-text-gradient">{$dict.code.headlineAccent}</span>
+          <span class="code__accent">{$dict.code.headlineAccent}</span>
         </h2>
         <p class="code__text">
           {$dict.code.text}
@@ -47,19 +48,33 @@
               <span class="code__bullet-check">
                 <Icon name="check" className="code__bullet-icon" />
               </span>
-              <span>{bullet}</span>
+              {#if bullet.endsWith('gru, sjc')}
+                <span>{bullet.slice(0, -8)}</span><RegionFlag code="gru" /><RegionFlag code="sjc" />
+              {:else}
+                <span>{bullet}</span>
+              {/if}
             </li>
           {/each}
         </ul>
       </div>
 
       <div class="code__terminal">
-        <div class="code__chrome">
-          <div class="code__chrome-left">
-            <span class="code__dot code__dot--red"></span>
-            <span class="code__dot code__dot--yellow"></span>
-            <span class="code__dot code__dot--green"></span>
-            <span class="code__filename">~/app/queries.{ext}</span>
+        <div class="code__head">
+          <span class="code__filename">~/app/queries.{ext}</span>
+          <div class="code__tabs" role="tablist" aria-label={$dict.code.tablistLabel}>
+            {#each LANG_META as l (l.id)}
+              <button
+                type="button"
+                class="code__tab"
+                class:is-active={lang === l.id}
+                role="tab"
+                aria-selected={lang === l.id}
+                on:click={() => (lang = l.id)}
+              >
+                <img src={l.icon} alt="" width="14" height="14" class="code__tab-icon" />
+                {l.label}
+              </button>
+            {/each}
           </div>
           <button
             type="button"
@@ -73,22 +88,6 @@
           </button>
         </div>
 
-        <div class="code__tabs" role="tablist" aria-label={$dict.code.tablistLabel}>
-          {#each LANG_META as l (l.id)}
-            <button
-              type="button"
-              class="code__tab"
-              class:is-active={lang === l.id}
-              role="tab"
-              aria-selected={lang === l.id}
-              on:click={() => (lang = l.id)}
-            >
-              <img src={l.icon} alt="" width="13" height="13" class="code__tab-icon" />
-              {l.label}
-            </button>
-          {/each}
-        </div>
-
         <pre class="code__pre"><code>{#each tokens as t, i (i)}{#if t.className}<span class={t.className}>{t.text}</span>{:else}{t.text}{/if}{/each}</code></pre>
       </div>
     </div>
@@ -98,75 +97,58 @@
 <style>
   .code {
     padding: 80px 0;
-    position: relative;
+    border-top: 1px solid var(--ts-divider);
   }
 
   .code__inner {
-    max-width: 1240px;
-    margin: 0 auto;
-    padding: 0 40px;
+    padding: 0 clamp(16px, 2.5vw, 40px);
   }
 
   .code__grid {
     display: grid;
-    grid-template-columns: 1fr 1.2fr;
-    gap: 72px;
+    grid-template-columns: minmax(0, 6fr) minmax(0, 7fr);
+    gap: 64px;
     align-items: center;
   }
 
-  .code__eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 12px;
-    border-radius: 4px;
-    margin-bottom: 20px;
-    background: rgba(var(--ts-primary-rgb), 0.1);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.25);
-    color: var(--ts-primary-light);
-    font-family: var(--ts-font-accent);
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    line-height: 1;
+  .code__copy {
+    display: grid;
+    gap: 16px;
+    align-content: start;
   }
 
   :global(.code__eyebrow-icon) {
-    width: 12px;
-    height: 12px;
+    width: 14px;
+    height: 14px;
   }
 
   .code__headline {
-    font-size: clamp(1.8rem, 2.5vw + 0.5rem, 2.8rem);
-    font-weight: 700;
+    font-size: clamp(30px, 3.2vw, 48px);
+    font-weight: 600;
     color: var(--ts-text);
-    line-height: 1.14;
-    letter-spacing: -0.02em;
-    margin: 0 0 20px;
+    line-height: 1.08;
+    letter-spacing: -0.035em;
+    margin: 0;
   }
 
-  @media (min-width: 961px) {
-    .code__headline {
-      white-space: nowrap;
-    }
+  .code__accent {
+    color: var(--ts-primary);
   }
 
   .code__text {
-    font-family: var(--ts-font-accent);
-    font-size: 17px;
+    font-size: 16px;
     color: var(--ts-text-muted);
     line-height: 1.7;
-    margin: 0 0 32px;
+    max-width: 56ch;
+    margin: 0;
   }
 
   .code__bullets {
     list-style: none;
     padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
+    margin: 16px 0 0;
+    display: grid;
+    gap: 12px;
   }
 
   .code__bullet {
@@ -174,137 +156,77 @@
     align-items: center;
     gap: 12px;
     color: var(--ts-text);
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .code__bullet-check {
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
     border-radius: 4px;
-    background: var(--ts-secondary);
-    color: var(--ts-bg-base);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    background: color-mix(in oklab, #6bca92 18%, transparent);
+    color: #6bca92;
+    display: inline-grid;
+    place-items: center;
     flex-shrink: 0;
   }
 
   :global(.code__bullet-icon) {
-    width: 12px;
-    height: 12px;
+    width: 14px;
+    height: 14px;
   }
 
   .code__terminal {
-    position: relative;
-    background: var(--ts-code-bg);
-    border: 1px solid var(--ts-glass-border);
+    min-width: 0;
+    background: var(--ts-bg-surface);
+    border: 1px solid var(--ts-divider);
     border-radius: 10px;
     overflow: hidden;
-    box-shadow:
-      0 20px 60px rgba(0, 0, 0, 0.5),
-      0 0 80px rgba(var(--ts-primary-rgb), 0.08);
   }
 
-  .code__chrome {
+  .code__head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    background: rgba(0, 0, 0, 0.3);
-    border-bottom: 1px solid var(--ts-glass-border);
-  }
-
-  .code__chrome-left {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .code__dot {
-    width: 11px;
-    height: 11px;
-    border-radius: 6px;
-    display: inline-block;
-  }
-  .code__dot--red {
-    background: #ff5f57;
-  }
-  .code__dot--yellow {
-    background: #febc2e;
-  }
-  .code__dot--green {
-    background: #28c840;
+    gap: 16px;
+    height: 40px;
+    padding: 0 8px 0 16px;
+    border-bottom: 1px solid var(--ts-divider);
+    color: var(--ts-text-muted);
+    font-family: var(--ts-font-mono);
+    font-size: 12px;
   }
 
   .code__filename {
-    margin-left: 12px;
-    font-family: var(--ts-font-mono);
-    font-size: 11px;
-    color: var(--ts-text-muted);
-  }
-
-  .code__copy-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    border-radius: 4px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--ts-text-muted);
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    font-family: var(--ts-font-mono);
-    transition: all 150ms ease;
-  }
-
-  .code__copy-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--ts-text);
-  }
-
-  .code__copy-btn.is-copied {
-    background: rgba(16, 185, 129, 0.15);
-    border-color: rgba(16, 185, 129, 0.35);
-    color: #34d399;
-  }
-
-  :global(.code__copy-icon) {
-    width: 11px;
-    height: 11px;
+    white-space: nowrap;
   }
 
   .code__tabs {
     display: flex;
-    gap: 2px;
-    padding: 10px 12px 0;
-    background: rgba(0, 0, 0, 0.15);
-    border-bottom: 1px solid var(--ts-glass-border);
+    gap: 4px;
+    margin-left: auto;
     overflow-x: auto;
+    scrollbar-width: none;
   }
 
   .code__tab {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    padding: 8px 14px;
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    border-top-left-radius: 5px;
-    border-top-right-radius: 5px;
-    color: var(--ts-text-muted);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
+    gap: 8px;
+    height: 39px;
     margin-bottom: -1px;
-    font-family: var(--ts-font-mono);
+    padding: 0;
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    color: var(--ts-text-muted);
+    font-family: var(--ts-font-accent);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1;
     white-space: nowrap;
+    cursor: pointer;
     transition:
-      color 150ms,
-      background 150ms,
-      border-color 150ms;
+      color 150ms ease,
+      border-color 150ms ease;
   }
 
   .code__tab:hover {
@@ -312,14 +234,17 @@
   }
 
   .code__tab.is-active {
-    background: var(--ts-code-bg);
-    border-bottom-color: var(--ts-primary);
     color: var(--ts-text);
+    border-bottom-color: var(--ts-primary);
+  }
+
+  .code__tab:focus-visible {
+    outline-offset: -2px;
   }
 
   .code__tab-icon {
-    width: 13px;
-    height: 13px;
+    width: 14px;
+    height: 14px;
     filter: grayscale(1) opacity(0.7);
     transition: filter 150ms ease;
   }
@@ -328,15 +253,51 @@
     filter: none;
   }
 
+  .code__copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ts-text-muted);
+    font-family: var(--ts-font-accent);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+
+  .code__copy-btn:hover {
+    background: var(--ts-bg-surface);
+    color: var(--ts-text);
+  }
+
+  .code__copy-btn.is-copied {
+    color: #6bca92;
+  }
+
+  :global(.code__copy-icon) {
+    width: 14px;
+    height: 14px;
+  }
+
   .code__pre {
     margin: 0;
-    padding: 24px;
-    font-family: var(--ts-font-mono);
-    font-size: 13.5px;
-    line-height: 1.75;
-    color: #cbd5e1;
+    padding: 16px;
+    height: 520px;
     overflow: auto;
-    max-height: 480px;
+    font-family: var(--ts-font-mono);
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--ts-text);
+    tab-size: 2;
     white-space: pre;
   }
 
@@ -344,16 +305,32 @@
     font-family: inherit;
   }
 
-  @media (max-width: 960px) {
+  @media (max-width: 1280px) {
+    .code__grid {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 40px;
+    }
+  }
+
+  @media (max-width: 640px) {
     .code {
-      padding: 60px 0;
+      padding: 64px 0;
     }
     .code__inner {
-      padding: 0 20px;
+      padding: 0 clamp(16px, 2.5vw, 40px);
     }
-    .code__grid {
-      grid-template-columns: 1fr;
-      gap: 40px;
+    .code__head {
+      overflow-x: auto;
+    }
+    .code__filename {
+      display: none;
+    }
+    .code__tabs {
+      margin-left: 0;
+    }
+    .code__pre {
+      height: 380px;
+      font-size: 12px;
     }
   }
 </style>
