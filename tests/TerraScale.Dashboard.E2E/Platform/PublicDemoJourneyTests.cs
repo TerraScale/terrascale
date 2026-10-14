@@ -101,7 +101,7 @@ public sealed class PublicDemoJourneyTests
         var signIn = await client.GetStringAsync("/auth/sign-in");
         await Assert.That(signIn).Contains("role=\"switch\" aria-checked=\"true\"");
         await Assert.That(signIn).Contains("role=\"switch\" aria-checked=\"false\"");
-        foreach (var path in new[] { "/api/v1/auth-management/users", "/api/v1/auth-management/settings", "/api/v1/auth-management/instance" })
+        foreach (var path in new[] { "/api/v1/auth-management/users", "/api/v1/auth-management/settings", "/api/v1/auth-management/instance", "/api/v1/auth-management/emails" })
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["name"] = "x" }) };
             request.Headers.Add("Origin", demo.Origin.GetLeftPart(UriPartial.Authority));
