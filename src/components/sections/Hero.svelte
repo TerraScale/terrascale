@@ -36,6 +36,8 @@
   const gru = REGIONS.find((r) => r.id === 'gru')
   const sjc = REGIONS.find((r) => r.id === 'sjc')
   const arcD = gru && sjc ? arcPath(gru, sjc) : ''
+  // Same curve traced back, so replication pulses run both ways.
+  const arcBackD = gru && sjc ? arcPath(sjc, gru) : ''
 </script>
 
 <section class="hero">
@@ -49,13 +51,16 @@
         preserveAspectRatio="none"
         aria-hidden="true"
       >
+        <path pathLength="1" d={arcD} class="hero__line hero__line--halo" />
         <path pathLength="1" d={arcD} class="hero__line" />
+        <path pathLength="1" d={arcD} class="hero__pulse" />
+        <path pathLength="1" d={arcBackD} class="hero__pulse hero__pulse--back" />
       </svg>
 
       {#each REGIONS as r (r.id)}
         <span
           class="hero__pin"
-          class:hero__pin--left={r.id === 'sjc'}
+          class:hero__pin--arrival={r.id === 'sjc'}
           style="left: {(r.x / vbW) * 100}%; top: {(r.y / vbH) * 100}%;"
           title={regionLabel[r.id] ?? r.city}
         >
@@ -136,11 +141,13 @@
     display: grid;
     place-items: center;
     pointer-events: none;
+    container-type: size;
   }
 
+  /* Fit the whole map inside the hero (width- or height-bound), never crop it. */
   .hero__globe-frame {
     position: relative;
-    width: max(100%, 1100px);
+    width: min(100cqw - 32px, (100cqh - 32px) * 119 / 60);
     aspect-ratio: 119 / 60;
   }
 
@@ -156,6 +163,11 @@
     background: rgb(255 255 255 / 0.16);
     -webkit-mask: url(/world-map.svg) center / 100% 100% no-repeat;
     mask: url(/world-map.svg) center / 100% 100% no-repeat;
+    animation: ts-map-in 1.2s ease-out both;
+  }
+
+  @keyframes ts-map-in {
+    from { opacity: 0; scale: 0.985; }
   }
 
   .hero__globe-lines {
@@ -169,11 +181,39 @@
     stroke-linecap: round;
     stroke-dasharray: 1;
     stroke-dashoffset: 1;
-    animation: ts-line-draw 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.3s forwards;
+    animation: ts-line-draw 1.6s cubic-bezier(0.65, 0, 0.35, 1) 0.4s forwards;
+  }
+
+  .hero__line--halo {
+    stroke-width: 0.9;
+    opacity: 0.18;
   }
 
   @keyframes ts-line-draw {
     to { stroke-dashoffset: 0; }
+  }
+
+  /* A short bright dash that travels the arc; the gap (2) is longer than the
+     path (1), so only one dash is ever on screen. */
+  .hero__pulse {
+    fill: none;
+    stroke: var(--ts-primary-light);
+    stroke-width: 0.4;
+    stroke-linecap: round;
+    stroke-dasharray: 0.07 2;
+    stroke-dashoffset: 0.07;
+    opacity: 0;
+    animation: ts-pulse 3.6s cubic-bezier(0.45, 0, 0.55, 1) 2s infinite;
+  }
+
+  .hero__pulse--back {
+    animation-delay: 3.8s;
+  }
+
+  @keyframes ts-pulse {
+    0% { stroke-dashoffset: 0.07; opacity: 0; }
+    8%, 44% { opacity: 1; }
+    50%, 100% { stroke-dashoffset: -1; opacity: 0; }
   }
 
   .hero__pin {
@@ -183,8 +223,19 @@
     translate: -50% -50%;
     border-radius: 50%;
     background: var(--ts-primary);
-    box-shadow: 0 0 0 3px var(--ts-bg-base);
+    box-shadow: 0 0 0 3px var(--ts-bg-base), 0 0 16px 2px rgba(var(--ts-primary-rgb), 0.55);
     pointer-events: none;
+    /* gru pops in as the arc starts, sjc as it lands. */
+    --pin-delay: 0.3s;
+    animation: ts-pin-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) var(--pin-delay) both;
+  }
+
+  .hero__pin--arrival {
+    --pin-delay: 1.8s;
+  }
+
+  @keyframes ts-pin-pop {
+    from { opacity: 0; scale: 0; }
   }
 
   .hero__pin-core,
@@ -201,7 +252,7 @@
     inset: -6px;
     border: 1px solid var(--ts-primary);
     opacity: 0;
-    animation: ts-pin-ping 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+    animation: ts-pin-ping 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) var(--pin-delay) infinite;
   }
 
   @keyframes ts-pin-ping {
@@ -209,9 +260,10 @@
     70%, 100% { opacity: 0; scale: 1.8; }
   }
 
+  /* Labels sit left of the pins so gru's clears the hero CTAs. */
   .hero__pin-label {
     position: absolute;
-    left: 16px;
+    right: 16px;
     top: 50%;
     translate: 0 -50%;
     display: inline-flex;
@@ -222,11 +274,6 @@
     border-radius: 4px;
     background: var(--ts-bg-card);
     line-height: 1;
-  }
-
-  .hero__pin--left .hero__pin-label {
-    left: auto;
-    right: 16px;
   }
 
   .hero__inner {
@@ -350,8 +397,11 @@
     .hero {
       padding: 108px 0 64px;
     }
-    .hero__globe { inset: 60px 0 auto; }
-    .hero__globe-frame { width: 900px; }
+    /* Sit the full map behind the brand and headline on phones. */
+    .hero__globe {
+      place-items: start center;
+      padding-top: 24px;
+    }
     .hero__pin-label { display: none; }
     .hero__brand-mark {
       width: 32px;
@@ -377,6 +427,13 @@
     .hero__line {
       animation: none;
       stroke-dashoffset: 0;
+    }
+    .hero__globe-map,
+    .hero__pin {
+      animation: none;
+    }
+    .hero__pulse {
+      display: none;
     }
     .hero__pin-ring {
       animation: none !important;
