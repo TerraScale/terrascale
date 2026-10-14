@@ -68,6 +68,11 @@ internal sealed class AntiEntropy : BackgroundService
                 stoppingToken.ThrowIfCancellationRequested();
                 throw;
             }
+            catch (Exception error) when (!stoppingToken.IsCancellationRequested)
+            {
+                // A fault escaping this worker stops the host (exit 134): a round that fails (busy storage while listing) waits for the next.
+                _logger.ZLogWarning(error, $"Anti-entropy round failed; the next round tries again");
+            }
         }
     }
 
