@@ -178,29 +178,79 @@ dialog.ts-org-wizard {
   }
 }
 
-.ts-org-page > .ts-tabs { margin-bottom: var(--ts-s5); }
+/* Organization pages: identity header, KPI tiles, and two-column boxed cards. */
+.ts-org-page { gap: var(--ts-s5); }
 .ts-org-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--ts-s4);
-  margin-bottom: var(--ts-s5);
 }
+.ts-org-identity { display: flex; align-items: center; gap: var(--ts-s4); min-width: 0; }
+.ts-org-heading { min-width: 0; }
+.ts-org-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface-2);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-lg);
+  font-weight: 600;
+}
+.ts-org-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ts-s3); }
 .ts-org-title { font-size: var(--ts-fs-2xl); letter-spacing: -0.03em; }
-.ts-org-subtitle { margin-top: var(--ts-s2); }
-.ts-org-overview { display: grid; gap: var(--ts-s5); }
-.ts-org-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: var(--ts-s5); align-items: start; }
-.ts-org-grid > * { min-width: 0; }
+.ts-org-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ts-s2); margin-top: var(--ts-s2); color: var(--ts-ink-3); font-size: var(--ts-fs-sm); }
+.ts-org-id { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+.ts-org-id code { overflow: hidden; color: var(--ts-ink-2); font-family: var(--ts-font-mono); text-overflow: ellipsis; }
+.ts-org-kpi-icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface-3);
+  color: var(--ts-ink-2);
+}
+.ts-org-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--ts-s4); align-items: start; }
+.ts-org-col { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--ts-s4); min-width: 0; }
+.ts-org-cell { min-width: 0; flex-wrap: nowrap; }
+.ts-org-initial {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--ts-radius-sm);
+  background: var(--ts-surface-3);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
+}
 .ts-org-preview { list-style: none; margin: 0; padding: 0; }
-.ts-org-preview li { display: flex; align-items: center; justify-content: space-between; gap: var(--ts-s4); padding: var(--ts-s4) var(--ts-s5); }
+.ts-org-preview li { display: flex; align-items: center; justify-content: space-between; gap: var(--ts-s3); padding: var(--ts-s3) var(--ts-s5); }
 .ts-org-preview li + li { border-top: 1px solid var(--ts-line); }
-.ts-org-preview .ts-list-main { min-width: 0; overflow-wrap: anywhere; }
-.ts-org-danger { border: 1px solid var(--ts-danger); border-radius: var(--ts-radius); padding: var(--ts-s5); }
+.ts-org-preview .ts-list-main { min-width: 0; }
+.ts-org-card-foot { padding: var(--ts-s3) var(--ts-s5); border-top: 1px solid var(--ts-line); font-size: var(--ts-fs-sm); }
+.ts-org-plan-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ts-s3); }
+.ts-org-plan-row strong { font-size: var(--ts-fs-xl); font-weight: 600; }
+.ts-org-price { margin-left: auto; font-family: var(--ts-font-mono); font-size: var(--ts-fs-lg); }
+.ts-org-price small { color: var(--ts-ink-3); font-family: var(--ts-font-sans); font-size: var(--ts-fs-sm); }
+.ts-org-danger { border-color: var(--ts-danger); }
 .ts-org-danger .ts-card-title { color: var(--ts-danger); }
 .ts-org-danger .ts-card-body { display: grid; justify-items: start; gap: var(--ts-s4); }
 .ts-org-danger .ts-dialog-content { justify-items: stretch; }
+@media (max-width: 68.75rem) {
+  .ts-org-grid { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 47.99rem) {
   .ts-org-header { flex-wrap: wrap; }
-  .ts-org-grid { grid-template-columns: minmax(0, 1fr); }
-  .ts-org-preview li { flex-wrap: wrap; }
+  .ts-org-identity { align-items: flex-start; }
+  .ts-org-mark { width: 40px; height: 40px; font-size: var(--ts-fs-md); }
+  .ts-org-id code { max-width: 180px; }
+  .ts-org-preview li, .ts-org-card-foot { padding-inline: var(--ts-s4); }
 }
