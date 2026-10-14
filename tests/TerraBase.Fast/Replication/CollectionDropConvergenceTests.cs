@@ -372,12 +372,12 @@ public sealed class CollectionDropConvergenceTests
         await DeliverCapturedAsync(apiB.Server, database, created);
         await DeclareDefinitionsAsync(apiB, tenant, managed);
         await PutDocumentAsync(dataA, managed, "items", "old", """{"v":1}""");
-        var written = await GroupsAsync(apiA.Server, database, after: created[^1].ChangeId, ready: groups => groups.Count >= 1);
-        var originA = OriginOf(written[0]);
-        await Assert.That(written.All(group => OriginOf(group) == originA)).IsTrue();
+        var written = await GroupsAsync(apiA.Server, database, after: created.Groups[^1].ChangeId, ready: groups => groups.Count >= 1);
+        var originA = OriginOf(written.Groups[0]);
+        await Assert.That(written.Groups.All(group => OriginOf(group) == originA)).IsTrue();
         await DeliverCapturedAsync(apiB.Server, database, written);
 
-        IReadOnlyList<OriginGroup> wrote = [];
+        SourceGroups wrote = new(Ulid.Empty, []);
         if (writeBeforeDrop)
         {
             await PutDocumentAsync(dataB, managed, "items", "new", """{"v":2}""");
@@ -390,8 +390,8 @@ public sealed class CollectionDropConvergenceTests
             drop.EnsureSuccessStatusCode();
         }
 
-        var dropped = await GroupsAsync(apiA.Server, database, after: written[^1].ChangeId, ready: groups => groups.Count >= 1);
-        await Assert.That(dropped.All(group => OriginOf(group) == originA)).IsTrue();
+        var dropped = await GroupsAsync(apiA.Server, database, after: written.Groups[^1].ChangeId, ready: groups => groups.Count >= 1);
+        await Assert.That(dropped.Groups.All(group => OriginOf(group) == originA)).IsTrue();
 
         if (!writeBeforeDrop)
         {
@@ -400,9 +400,9 @@ public sealed class CollectionDropConvergenceTests
             await DeliverCapturedAsync(apiA.Server, database, wrote);
         }
 
-        var originB = OriginOf(wrote[0]);
+        var originB = OriginOf(wrote.Groups[0]);
         await Assert.That(originB == originA).IsFalse();
-        await Assert.That(wrote.All(group => OriginOf(group) == originB)).IsTrue();
+        await Assert.That(wrote.Groups.All(group => OriginOf(group) == originB)).IsTrue();
         await DeliverCapturedAsync(apiB.Server, database, dropped);
 
         var a = new Node(apiA.Server, database);
@@ -438,8 +438,8 @@ public sealed class CollectionDropConvergenceTests
             response.EnsureSuccessStatusCode();
         }
 
-        var dropped = await GroupsAsync(apiA.Server, database, created[^1].ChangeId, groups => groups.Count > 0);
-        var drop = dropped.SelectMany(group => group.Deltas).Single(delta => delta.Collection == DocumentDelta.Collections);
+        var dropped = await GroupsAsync(apiA.Server, database, created.Groups[^1].ChangeId, groups => groups.Count > 0);
+        var drop = dropped.Groups.SelectMany(group => group.Deltas).Single(delta => delta.Collection == DocumentDelta.Collections);
         var at = new EntryVersion(new Hlc(drop.Stamp.Value + 1), High);
         var tombstone = new ChangeDelta("items", ReplicationDocuments.Id("tombstone"), at.Stamp, DocumentState.Bottom.Delete(at));
         var a = new Node(apiA.Server, database);
@@ -451,7 +451,7 @@ public sealed class CollectionDropConvergenceTests
         await PutDocumentAsync(dataB, managed, "items", "first", """{"v":1}""");
         await PutDocumentAsync(dataB, managed, "items", "second", """{"v":2}""");
         var wrote = await GroupsAsync(apiB.Server, database, 0, groups => groups.Count >= 2);
-        var stamps = wrote.SelectMany(group => group.Deltas).Select(delta => delta.Stamp.Value).ToArray();
+        var stamps = wrote.Groups.SelectMany(group => group.Deltas).Select(delta => delta.Stamp.Value).ToArray();
         await Assert.That(stamps.Length).IsEqualTo(2);
         await Assert.That(stamps[0]).IsGreaterThan(drop.Stamp.Value);
         await Assert.That(stamps[1]).IsGreaterThan(stamps[0]);
@@ -484,8 +484,8 @@ public sealed class CollectionDropConvergenceTests
             response.EnsureSuccessStatusCode();
         }
 
-        var dropped = await GroupsAsync(apiA.Server, database, created[^1].ChangeId, groups => groups.Count > 0);
-        var drop = dropped.SelectMany(group => group.Deltas).Single(delta => delta.Collection == DocumentDelta.Collections);
+        var dropped = await GroupsAsync(apiA.Server, database, created.Groups[^1].ChangeId, groups => groups.Count > 0);
+        var drop = dropped.Groups.SelectMany(group => group.Deltas).Single(delta => delta.Collection == DocumentDelta.Collections);
         await DeliverCapturedAsync(apiB.Server, database, dropped);
         using var dataB = await apiB.CreateClientAsync(tenant.OrganizationId, "documents:write", "documents:read");
         await ManagementApi.CreateCollectionAsync(dataB, managed, "items");
@@ -499,9 +499,9 @@ public sealed class CollectionDropConvergenceTests
         }
 
         var recreated = await GroupsAsync(apiB.Server, database, 0, groups => groups.Count >= 5);
-        var metadata = recreated.SelectMany(group => group.Deltas).Single(delta => delta.Collection == DocumentDelta.Collections);
+        var metadata = recreated.Groups.SelectMany(group => group.Deltas).Single(delta => delta.Collection == DocumentDelta.Collections);
         await Assert.That(metadata.State.Clear).IsNull().Because("the retained drop is not overwritten by a fresh live clear");
-        await Assert.That(recreated.SelectMany(group => group.Deltas).All(delta => delta.Stamp.Value > drop.Stamp.Value)).IsTrue();
+        await Assert.That(recreated.Groups.SelectMany(group => group.Deltas).All(delta => delta.Stamp.Value > drop.Stamp.Value)).IsTrue();
         await DeliverCapturedAsync(apiA.Server, database, recreated);
         var a = new Node(apiA.Server, database);
         var b = new Node(apiB.Server, database);
@@ -630,7 +630,7 @@ public sealed class CollectionDropConvergenceTests
             await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         }
 
-        var detached = await GroupsAsync(apiA.Server, database, attached[^1].ChangeId, groups => groups.Count > 0);
+        var detached = await GroupsAsync(apiA.Server, database, attached.Groups[^1].ChangeId, groups => groups.Count > 0);
         await DeliverCapturedAsync(apiB.Server, database, detached);
         foreach (var data in new[] { dataA, dataB })
         {
@@ -646,7 +646,14 @@ public sealed class CollectionDropConvergenceTests
     private static async Task<TerraBaseTestServer> StartQuietAsync(string region) =>
         await TerraBaseTestServer.StartAsync(
             settings: values => values["region"] = region,
-            services: services => services.AddSingleton<IChangeGroupSource>(new FakeChangeGroupSource()));
+            services: services => services.AddSingleton<IChangeGroupSource>(provider =>
+                new FakeChangeGroupSource(async (database, token) =>
+                {
+                    var engine = provider.GetRequiredService<IStorageEngine>();
+                    return database == ChangeGroups.System
+                        ? (await engine.OpenSystemDatabaseAsync(token)).Incarnation
+                        : (await engine.OpenDatabaseAsync(database, token))?.Incarnation;
+                })));
 
     private static async Task<ReplicationTenant> ReplicatedTenantAsync(TerraBaseTestServer seed, TerraBaseTestServer peer)
     {
@@ -713,20 +720,20 @@ public sealed class CollectionDropConvergenceTests
         return origins is [{ } origin] ? origin : throw new InvalidOperationException("a change group's deltas must share one origin");
     }
 
-    // Pushes one batch per origin, with the change ids the source numbered them with.
-    private static async Task DeliverCapturedAsync(TerraBaseTestServer server, TenantContext database, IReadOnlyList<OriginGroup> groups)
+    // Pushes one batch per origin, with the change ids the source numbered them with and the source's incarnation.
+    private static async Task DeliverCapturedAsync(TerraBaseTestServer server, TenantContext database, SourceGroups source)
     {
-        foreach (var origin in groups.Select(OriginOf).Distinct())
+        foreach (var origin in source.Groups.Select(OriginOf).Distinct())
         {
-            await PushAsync(server, database, origin, [.. groups.Where(group => OriginOf(group) == origin)]);
+            await PushAsync(server, database, source.Incarnation, origin, [.. source.Groups.Where(group => OriginOf(group) == origin)]);
         }
     }
 
     // A push stream is one origin's groups; the receiver refuses only its own node or a zero origin, so synthetic origins are accepted.
-    private static async Task PushAsync(TerraBaseTestServer server, TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups)
+    private static async Task PushAsync(TerraBaseTestServer server, TenantContext database, Ulid incarnation, ReplicaId origin, IReadOnlyList<OriginGroup> groups)
     {
         using var deadline = new CancellationTokenSource(Deadline);
-        using var channel = PeerChannel.Create(server.BaseAddress);
+        using var channel = PeerChannel.Create(server.BaseAddress, PeerTls.Credential);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
         using var call = client.Push(cancellationToken: deadline.Token);
         await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = origin.Value, Region = "gru" } });
@@ -735,7 +742,7 @@ public sealed class CollectionDropConvergenceTests
         {
             Batch = new Batch
             {
-                Database = ChangeGroups.Wire(database),
+                Database = ChangeGroups.Wire(database, incarnation),
                 LastChangeId = (ulong)groups[^1].ChangeId,
                 Groups = ChangeGroups.Encode(groups),
             },
@@ -748,18 +755,29 @@ public sealed class CollectionDropConvergenceTests
     }
 
     // Waits until the server's CDC source holds groups after <paramref name="after"/> that satisfy <paramref name="ready"/>.
-    private static async Task<IReadOnlyList<OriginGroup>> GroupsAsync(
+    private static async Task<SourceGroups> GroupsAsync(
         TerraBaseTestServer server, TenantContext database, long after, Func<IReadOnlyList<OriginGroup>, bool> ready)
     {
         var source = server.Services.GetRequiredService<IChangeGroupSource>();
-        IReadOnlyList<OriginGroup> groups = [];
+        SourceGroups groups = new(Ulid.Empty, []);
         await TerraBaseTestServer.EventuallyAsync(async token =>
         {
-            groups = await source.ReadAsync(database, after, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token);
-            return ready(groups);
+            var incarnation = await IncarnationAsync(server, database, token);
+            if (await source.ReadAsync(database, incarnation, after, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, token) is not { } read)
+            {
+                return false;
+            }
+
+            groups = read;
+            return ready(read.Groups);
         });
         return groups;
     }
+
+    // The incarnation of the database's copy on the server, which its change groups, digests and pushes name.
+    private static async Task<Ulid> IncarnationAsync(TerraBaseTestServer server, TenantContext database, CancellationToken cancellationToken) =>
+        (await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, cancellationToken))?.Incarnation
+        ?? throw new InvalidOperationException("the database is not open on this node");
 
     private static async Task DeclareDefinitionsAsync(ManagementApi api, ReplicationTenant tenant, ManagedDatabaseRef managed)
     {
@@ -793,9 +811,12 @@ public sealed class CollectionDropConvergenceTests
     private static async Task<string> DigestAsync(Node node)
     {
         using var deadline = new CancellationTokenSource(Deadline);
-        using var channel = PeerChannel.Create(node.Server.BaseAddress);
+        using var channel = PeerChannel.Create(node.Server.BaseAddress, PeerTls.Credential);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
-        var digest = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(node.Database) }, cancellationToken: deadline.Token);
+        var incarnation = await IncarnationAsync(node.Server, node.Database, deadline.Token);
+        var digest = await client.DigestAsync(new DigestRequest { Database = ChangeGroups.Wire(node.Database, incarnation) }, cancellationToken: deadline.Token);
+        await Assert.That(digest.Held).IsTrue();
+        await Assert.That(new Ulid(digest.Incarnation.Span)).IsEqualTo(incarnation);
         return Convert.ToHexString(digest.Buckets.ToByteArray());
     }
 
@@ -852,6 +873,9 @@ public sealed class CollectionDropConvergenceTests
     {
         private readonly Dictionary<ReplicaId, long> _delivered = [];
 
+        // The pushed origins have no copy here, so the node names its batches with one incarnation of its own.
+        private readonly Ulid _incarnation = Ulid.NewUlid();
+
         public TerraBaseTestServer Server => server;
 
         public TenantContext Database => database;
@@ -861,7 +885,7 @@ public sealed class CollectionDropConvergenceTests
             var first = _delivered.GetValueOrDefault(origin) + 1;
             _delivered[origin] = first + groups.Length - 1;
             var numbered = groups.Select((deltas, index) => Group(first + index, deltas)).ToList();
-            await PushAsync(server, database, origin, numbered);
+            await PushAsync(server, database, _incarnation, origin, numbered);
         }
     }
 
