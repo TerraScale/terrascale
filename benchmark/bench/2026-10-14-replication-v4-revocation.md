@@ -68,6 +68,17 @@ receipt of gru's 204.
 | Bound | Observed ≤ 640 ms after the revoke's 204, under no partition. Not bounded in code: it is the catalog replication lag, so a partitioned region keeps accepting the key until it rejoins |
 | Evidence | `benchmark/bench/2026-10-14-replication-vtest/evidence/v4-revoke-3c459a5f.jsonl` (raw per trial) and `v4-revoke-3c459a5f-stderr.txt`, script `scripts/revoke-timing.py`, on branch `feat/repl-v5-harness` (PR #303) |
 
+**F3 fix candidate (not merged): PR #316** (`fix/shape-key-stale-credential-fail-closed` @ `dab115c3`, exact-head CI
+green). Live proof on candidate `84d1e099` (main `35b14217` + #307 + #309 + #314 + #283 + #316 @ `41e715bc`), from
+`benchmark/bench/2026-10-14-f3-shape-key-partition/live/raw/run2-84d1e099.jsonl` on that PR:
+- before the cut, the key endpoint answers 200 and a real TBS1 snapshot (4,273 B) decrypts to the origin's content;
+- a partitioned region last released the revoked key at 546.8 s (for epoch E+1), then refused at 552 s with
+  `catalog_stale`, `no-store`, retryable;
+- E+2 chunks open only with the control key; no revoked E or E+1 key decrypts them;
+- after the heal, the revoked key gets 401 on keys and manifest in all 3 regions.
+
+Row 11 stays **NOT ACCEPTED** here until #316 is merged and live, and this row is re-measured on merged main.
+
 **F3 (Low):** the revocation's 204 does not wait for the other regions. A revoked API key stays usable in another region
 for the catalog replication lag (≤ 640 ms observed; unbounded during a partition). Options: document the bound in
 `shape-reads.md` section 13 and the API-key docs, or make revocation wait for remote durability like document writes (A3).
