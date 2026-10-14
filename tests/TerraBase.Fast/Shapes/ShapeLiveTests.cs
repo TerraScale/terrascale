@@ -606,10 +606,17 @@ public sealed class ShapeLiveTests
         {
             _ = Interlocked.Increment(ref _calls);
             _entered.TrySetResult();
-            using var canceledLease = cancellationToken.Register(() => _canceled.TrySetResult());
             if (Hold is not null)
             {
-                await Hold.Opened.WaitAsync(cancellationToken);
+                try
+                {
+                    await Hold.Opened.WaitAsync(cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    _canceled.TrySetResult();
+                    throw;
+                }
             }
 
             if (Refusal is { } refusal)
@@ -668,10 +675,17 @@ public sealed class ShapeLiveTests
             }
 
             _readEntered.TrySetResult();
-            using var canceledLease = cancellationToken.Register(() => _canceled.TrySetResult());
             if (hold is not null)
             {
-                await hold.Opened.WaitAsync(ignoreCancel ? CancellationToken.None : cancellationToken);
+                try
+                {
+                    await hold.Opened.WaitAsync(ignoreCancel ? CancellationToken.None : cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    _canceled.TrySetResult();
+                    throw;
+                }
             }
 
             var head = sealer.Head(store);
