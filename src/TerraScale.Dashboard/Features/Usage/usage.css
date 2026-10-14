@@ -1,21 +1,46 @@
 /* Usage: allowance and sample capacity gauges, history totals, and storage
    share list. */
 
-.ts-usage-gauges,
 .ts-usage-sample-gauges {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   gap: var(--ts-s4);
 }
 
+/* Allowance meters: compact cards, three across until the page is narrow. */
 .ts-usage-gauges {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ts-s4);
   margin-block-end: var(--ts-s3);
+}
+
+@container page (width < 768px) {
+  .ts-usage-gauges {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .ts-usage-gauge {
   display: flex;
   align-items: center;
   gap: var(--ts-s4);
+}
+
+.ts-usage-gauges > .ts-usage-gauge {
+  display: grid;
+  min-width: 0;
+  gap: var(--ts-s3);
+}
+
+.ts-usage-gauges .ts-stack-sm {
+  gap: var(--ts-s1);
+}
+
+.ts-usage-gauges .ts-usage-gauge-value {
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-md);
+  font-weight: 500;
 }
 
 .ts-usage-ring {
