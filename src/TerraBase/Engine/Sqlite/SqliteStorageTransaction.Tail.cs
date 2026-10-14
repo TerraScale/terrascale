@@ -81,10 +81,9 @@ internal sealed partial class SqliteStorageTransaction
             return (groups, quiet, null);
         }
 
-        var proof = store.IsSystem ? ReadCatalogVersionProof() : null;
         var bytes = 0;
         long? first = null;
-        var transaction = new TailTransaction();
+        var transaction = new TailTransaction(store.IsSystem);
         for (var from = after; ;)
         {
             var command = Command(TailPage);
@@ -111,18 +110,6 @@ internal sealed partial class SqliteStorageTransaction
                     {
                         if (transaction.Deltas.Count > 0)
                         {
-                            if (proof is not null && !transaction.Deltas.Any(delta => delta.Collection == ManagementCatalog.Collection && delta.Id == ManagementCatalog.VersionId))
-                            {
-                                if (transaction.Deltas.Count == IStorageTransaction.MaxSystemGroupChanges)
-                                {
-                                    throw new InvalidDataException("a system group has no room for its catalog version proof");
-                                }
-
-                                // Preserve the received state; its proof is not a new mint or this origin's applied frontier.
-                                var stamp = transaction.Deltas.MaxBy(delta => delta.Stamp.Value)!.Stamp;
-                                transaction.Deltas.Insert(0, new ChangeDelta(ManagementCatalog.Collection, ManagementCatalog.VersionId, stamp, proof));
-                            }
-
                             var size = transaction.Deltas.Sum(delta => DocumentStateEncoding.Encode(delta.State).Length);
                             if (groups.Count > 0 && bytes + size > maxBytes)
                             {
@@ -142,7 +129,7 @@ internal sealed partial class SqliteStorageTransaction
                             quiet = from;
                         }
 
-                        transaction = new TailTransaction();
+                        transaction = new TailTransaction(store.IsSystem);
                         continue;
                     }
 
@@ -403,7 +390,7 @@ internal sealed partial class SqliteStorageTransaction
     // The rows of one Turso transaction, as far as the tailer needs them: its local groups' deltas, and the after-image of
     // each document row, so that every state row pairs with the last document row before it (R2a: a request may rewrite a
     // document's row several times and writes its state row once, at its end).
-    private sealed class TailTransaction
+    private sealed class TailTransaction(bool isSystem)
     {
         // Document rows before the first local state row, undecoded: a transaction of remote joins never decodes them.
         private List<(string Table, byte[] Image)>? _rows = [];
@@ -467,7 +454,15 @@ internal sealed partial class SqliteStorageTransaction
 
             var full = DocumentStateEncoding.DecodeStored(stored, document is null ? [] : Encoding.UTF8.GetBytes(document));
             var at = new Hlc(unchecked((ulong)stamp));
-            Deltas.Add(new ChangeDelta(collection, id, at, full.DeltaAt(at)));
+            if (isSystem && collection == ManagementCatalog.Collection && id == ManagementCatalog.VersionId)
+            {
+                // The captured dependency retains its original state, even when its stamps precede or exceed this group.
+                Deltas.Insert(0, new ChangeDelta(collection, id, at, full));
+            }
+            else
+            {
+                Deltas.Add(new ChangeDelta(collection, id, at, full.DeltaAt(at)));
+            }
         }
 
         // id, doc: a client collection table's row; collection, id, body: a row of the system database's one documents table.

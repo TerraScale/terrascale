@@ -189,11 +189,13 @@ internal sealed partial class SqliteStorageTransaction
         var (changes, limit) = store.IsSystem
             ? (IStorageTransaction.MaxSystemGroupChanges, IStorageTransaction.MaxSystemGroupBytes)
             : (IStorageTransaction.MaxChangeGroupChanges, IStorageTransaction.MaxChangeGroupBytes);
-        if (store.IsSystem && !_pending.ContainsKey((ManagementCatalog.Collection, ManagementCatalog.VersionId)))
+        if (store.IsSystem && !_pending.ContainsKey((ManagementCatalog.Collection, ManagementCatalog.VersionId))
+            && (collection != ManagementCatalog.Collection || id != ManagementCatalog.VersionId))
         {
-            // Leave room for the immutable dependency the tailer adds, including its encoded state and keys.
+            // Leave room for the captured immutable dependency, including its stored state, body and keys.
             _catalogProofBytes ??= ReadCatalogVersionProof() is { } proof
-                ? DocumentStateEncoding.Encode(proof).Length + StrictUtf8.GetByteCount(ManagementCatalog.Collection) + StrictUtf8.GetByteCount(ManagementCatalog.VersionId)
+                ? DocumentStateEncoding.EncodeStored(proof).Length + proof.Materialize()!.Length
+                    + StrictUtf8.GetByteCount(ManagementCatalog.Collection) + StrictUtf8.GetByteCount(ManagementCatalog.VersionId)
                 : 0;
             if (_catalogProofBytes > 0)
             {
@@ -221,11 +223,27 @@ internal sealed partial class SqliteStorageTransaction
             return;
         }
 
+        var proof = store.IsSystem && !_pending.ContainsKey((ManagementCatalog.Collection, ManagementCatalog.VersionId)) ? ReadCatalogVersionProof() : null;
+        var proofAt = default(EntryVersion);
         foreach (var ((collection, id), (state, at, bodyBytes)) in _pending)
         {
             var stored = DocumentStateEncoding.EncodeStored(state);
             Capture(collection, id, stored.Length, bodyBytes);
             WriteState(collection, id, state, at, stored);
+            if (proof is not null && at.Stamp.Value > proofAt.Stamp.Value)
+            {
+                proofAt = at;
+            }
+        }
+
+        if (proof is not null)
+        {
+            // Capture the immutable dependency in this transaction: no Tick and no later change to an issued cursor.
+            var body = StrictUtf8.GetString(proof.Materialize()!);
+            var stored = DocumentStateEncoding.EncodeStored(proof);
+            Capture(ManagementCatalog.Collection, ManagementCatalog.VersionId, stored.Length, StrictUtf8.GetByteCount(body));
+            PutRow(ManagementCatalog.Collection, ManagementCatalog.VersionId, body);
+            WriteState(ManagementCatalog.Collection, ManagementCatalog.VersionId, proof, proofAt, stored);
         }
 
         _pending.Clear();
