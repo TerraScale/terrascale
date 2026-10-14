@@ -321,7 +321,7 @@ internal sealed partial class SqliteStorageTransaction(
 
     // Client commits keep per-commit limits and metadata documents; _system is never a client database.
     private DocumentState CollectionState(string name) =>
-        _pending.TryGetValue((DocumentDelta.Collections, name), out var pending) ? pending.State : ReadState(DocumentDelta.Collections, name);
+        _pending.TryGetValue((DocumentDelta.Collections, name), out var pending) ? pending.State : ReadState(DocumentDelta.Collections, name, localWrite: true);
 
     private ClearEntry? CollectionDrop(string name) => CollectionState(name).Clear is { Deleted: true } drop ? drop : null;
 

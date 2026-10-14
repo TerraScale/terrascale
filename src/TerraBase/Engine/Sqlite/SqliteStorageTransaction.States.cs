@@ -52,15 +52,17 @@ internal sealed partial class SqliteStorageTransaction
             return (pending.State, pending.At);
         }
 
-        var state = ReadState(collection, id);
+        var state = ReadState(collection, id, localWrite: true);
         var member = Member;
         var stamp = member.Clock.Tick(state.MaxStamp);
         return (state, new EntryVersion(stamp, member.Id));
     }
 
     // Worker-only: the stored state of a document, or the empty state. Its admission is held in `memory`, the transaction's
-    // by default; a caller that keeps nothing past one document passes a shorter-lived owner.
-    private DocumentState ReadState(string collection, string id, QosContext.ResultMemory? memory = null)
+    // by default; a caller that keeps nothing past one document passes a shorter-lived owner. A `localWrite` read inside a
+    // client request (QosContext.Current set) is not charged again: the request admitted its body, metadata and results,
+    // while the old state it overwrites stays uncharged as before stored-state admission. Its preflight and digest still hold.
+    private DocumentState ReadState(string collection, string id, QosContext.ResultMemory? memory = null, bool localWrite = false)
     {
         if (!HasTable(collection))
         {
@@ -106,9 +108,11 @@ internal sealed partial class SqliteStorageTransaction
             throw new StorageBusyException();
         }
 
-        // Retain raw bytes and derived graphs through join, persistence, and unconditional transaction cleanup.
-        (memory ?? _stateReadMemory)?.Reserve(16 * (decodedBytes + documentBytes) + 2 * keyBytes + 2048,
-            store.IsSystem ? null : QosContext.Current);
+        // Retain raw bytes and derived graphs through join, persistence, and unconditional transaction cleanup. An explicit
+        // owner (a collection drop's document) uses the process lane: a downgraded organization can still drop its data.
+        var owner = memory ?? (localWrite && QosContext.Current is not null ? null : _stateReadMemory);
+        owner?.Reserve(16 * (decodedBytes + documentBytes) + 2 * keyBytes + 2048,
+            store.IsSystem || memory is not null ? null : QosContext.Current);
         store.Checkpoint?.Invoke("state.payload", store.Tenant ?? ChangeGroups.System);
 
         CountRead("point");

@@ -312,8 +312,9 @@ internal sealed partial class SqliteStorageTransaction
                 {
                     (_, quiet, _) = ReadChangeGroups(at, 1, 1, self, cancellationToken);
                 }
-                catch (InvalidDataException error) when (!StoredDataCorruption.Is(error))
+                catch (InvalidDataException)
                 {
+                    // ReadChangeGroups marked and noted the fault, so the commit refuses everything this pass wrote.
                     continue;
                 }
 

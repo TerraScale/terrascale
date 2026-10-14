@@ -156,8 +156,8 @@ public sealed class DocumentCacheTests
         await Assert.That(await GetAsync(second, "shop", "items", "same")).IsEqualTo((secondVersion, "second"));
         await ListAsync(first, "shop", "items");
         await ListAsync(second, "shop", "items");
-        await StorageFixture.ExecuteAsync(firstFile, """UPDATE "items" SET doc = '{"name":"disk-first"}';""");
-        await StorageFixture.ExecuteAsync(secondFile, """UPDATE "items" SET doc = '{"name":"disk-second"}';""");
+        await StorageFixture.ReplaceBodiesAsync(firstFile, "items", """{"name":"disk-first"}""");
+        await StorageFixture.ReplaceBodiesAsync(secondFile, "items", """{"name":"disk-second"}""");
 
         await Assert.That(await GetAsync(first, "shop", "items", "same")).IsEqualTo((firstVersion, "first"));
         await Assert.That(await GetAsync(second, "shop", "items", "same")).IsEqualTo((secondVersion, "second"));
@@ -165,7 +165,7 @@ public sealed class DocumentCacheTests
         await Assert.That(await ListAsync(second, "shop", "items")).IsEquivalentTo([$"{StorageFixture.Id("same")}:second"]);
         // Stamp stripes may conservatively invalidate unrelated entries. Restore the second file before
         // writing the first tenant so this verifies data isolation without requiring collision-free stamps.
-        await StorageFixture.ExecuteAsync(secondFile, """UPDATE "items" SET doc = '{"name":"second"}';""");
+        await StorageFixture.ReplaceBodiesAsync(secondFile, "items", """{"name":"second"}""");
         var updated = await PutAsync(first, "shop", "items", "same", "updated");
         await Assert.That(await GetAsync(first, "shop", "items", "same")).IsEqualTo((updated, "updated"));
         await Assert.That(await ListAsync(first, "shop", "items")).IsEquivalentTo([$"{StorageFixture.Id("same")}:updated"]);
@@ -380,12 +380,12 @@ public sealed class DocumentCacheTests
         var other = await PutAsync(tenant, "shop", "people", "p2", "first");
 
         var miss = await GetAsync(tenant, "shop", "people", "p1");
-        await StorageFixture.ExecuteAsync(file, """UPDATE "people" SET doc = '{"name":"disk"}';""");
+        await StorageFixture.ReplaceBodiesAsync(file, "people", """{"name":"disk"}""");
         var hit = await GetAsync(tenant, "shop", "people", "p1");
         var neverRead = await GetAsync(tenant, "shop", "people", "p2");
         var written = await PutAsync(tenant, "shop", "people", "p1", "second");
         var afterWrite = await GetAsync(tenant, "shop", "people", "p1");
-        await StorageFixture.ExecuteAsync(file, """UPDATE "people" SET doc = '{"name":"disk"}';""");
+        await StorageFixture.ReplaceBodiesAsync(file, "people", """{"name":"disk"}""");
         var cachedAgain = await GetAsync(tenant, "shop", "people", "p1");
         using var deleted = await client.DeleteAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/by-key?id={StorageFixture.Id("p1")}", UriKind.Relative));
         using var afterDelete = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/by-key?id={StorageFixture.Id("p1")}", UriKind.Relative));
@@ -414,7 +414,7 @@ public sealed class DocumentCacheTests
         await PutAsync(tenant, "shop", "items", "b", "first");
 
         var miss = await ListAsync(tenant, "shop", "items");
-        await StorageFixture.ExecuteAsync(file, """UPDATE "items" SET doc = '{"name":"disk"}';""");
+        await StorageFixture.ReplaceBodiesAsync(file, "items", """{"name":"disk"}""");
         var hit = await ListAsync(tenant, "shop", "items");
         // A write to another document of the collection invalidates every page of it.
         await PutAsync(tenant, "shop", "items", "c", "first");

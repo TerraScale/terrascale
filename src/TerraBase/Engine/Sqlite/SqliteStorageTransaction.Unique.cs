@@ -40,7 +40,7 @@ internal sealed partial class SqliteStorageTransaction
         RunAsync(() => ReadUniqueConstraints(collection), cancellationToken);
 
     private bool UniqueDefinitionActive(string collection) => CollectionDrop(collection) is not { } drop
-        || (_pending.TryGetValue((DocumentDelta.Unique, collection), out var pending) ? pending.State : ReadState(DocumentDelta.Unique, collection))
+        || (_pending.TryGetValue((DocumentDelta.Unique, collection), out var pending) ? pending.State : ReadState(DocumentDelta.Unique, collection, localWrite: true))
             .Clear?.Version > drop.Version;
 
     private IReadOnlyList<UniqueConstraint> ReadUniqueConstraints(string collection)
