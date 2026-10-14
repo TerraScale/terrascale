@@ -234,7 +234,7 @@ public static class AccessTokenEndpoints
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
             try { await tokens.RevokeAsync(context, id, http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-            return AuthEndpoints.SeeOther("/profile?tab=access-tokens");
+            return AuthEndpoints.SeeOther("/profile?tab=danger");
         });
         return endpoints;
     }

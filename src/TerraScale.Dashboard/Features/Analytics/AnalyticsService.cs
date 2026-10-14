@@ -5,8 +5,9 @@ using TerraScale.Dashboard.UI;
 namespace TerraScale.Dashboard.Features.Analytics;
 
 public sealed record AnalyticsTotals(long Requests, long Errors, long Operations, long? StorageBytes, long ClientBytes,
-    long ReplicationSentBytes, long ReplicationReceivedBytes, double? LatestP95Ms);
-public sealed record AnalyticsChart(string Title, AnalyticsLinePlot Plot);
+    long ReplicationSentBytes, long ReplicationReceivedBytes, double? LatestP95Ms, IReadOnlyList<AnalyticsRegionRow> Regions);
+public sealed record AnalyticsRegionRow(string Code, string Flag, long Requests, double? LatestP95Ms);
+public sealed record AnalyticsChart(string Title, AnalyticsLinePlot Plot, AnalyticsSelection Selection);
 public sealed record AnalyticsPage(ShellModel Shell, AnalyticsSelection Selection, AnalyticsTotals? Totals, IReadOnlyList<AnalyticsChart> Charts, string Error = "", string Empty = "No analytics measurements for these filters.");
 
 public sealed class AnalyticsService(IAnalyticsBackend backend)
@@ -40,6 +41,7 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
         var errors = new long[starts.Length]; var storage = new long[starts.Length]; var pointCounts = new int[starts.Length]; var storageSamples = new int[starts.Length]; var storageMissing = Enumerable.Repeat(true, starts.Length).ToArray(); var sent = new long[starts.Length]; var received = new long[starts.Length]; var replicationSent = new long[starts.Length]; var replicationReceived = new long[starts.Length];
         long requestTotal = 0, operationTotal = 0, errorTotal = 0, clientTotal = 0, replicationSentTotal = 0, replicationReceivedTotal = 0;
         double? p95 = null;
+        var regions = new Dictionary<string, (long Requests, double? LatestP95Ms)>(StringComparer.Ordinal);
         foreach (var point in points)
         {
             var index = indices[point.Start.ToUniversalTime()];
@@ -70,7 +72,16 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
                 series.Missing![index] = false;
             }
             if (index == starts.Length - 1 && point.P95Ms is { } latest) p95 = Math.Max(p95 ?? 0, latest);
+            var regionCode = point.Region.ToLowerInvariant();
+            if (regionCode.Length > 0)
+            {
+                var row = regions.GetValueOrDefault(regionCode);
+                var pointRequests = point.Requests.Values.Aggregate(0L, (sum, count) => checked(sum + Nonnegative(count)));
+                regions[regionCode] = (checked(row.Requests + pointRequests), index == starts.Length - 1 ? MaxLatency(row.LatestP95Ms, point.P95Ms) : row.LatestP95Ms);
+            }
         }
+        var regionRows = regions.Select(item => new AnalyticsRegionRow(item.Key, RegionFlag(item.Key), item.Value.Requests, item.Value.LatestP95Ms))
+            .OrderBy(row => RegionRank(row.Code)).ThenBy(row => row.Code, StringComparer.Ordinal).ToArray();
         for (var index = 0; index < starts.Length; index++) storageMissing[index] = pointCounts[index] == 0 || storageSamples[index] != pointCounts[index];
         var charts = new List<AnalyticsChart>();
         Add("Requests by type", requests.Select(item => new AnalyticsSeries(item.Key, item.Value)).ToArray());
@@ -80,9 +91,9 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
         Add("Storage (bytes)", new AnalyticsSeries("Storage", storage, storageMissing));
         Add("Client bandwidth (bytes)", new AnalyticsSeries("Sent", sent), new AnalyticsSeries("Received", received));
         Add("Replication bandwidth (bytes)", new AnalyticsSeries("Sent", replicationSent), new AnalyticsSeries("Received", replicationReceived));
-        return (new(requestTotal, errorTotal, operationTotal, storageMissing[^1] ? null : storage[^1], clientTotal, replicationSentTotal, replicationReceivedTotal, p95), charts);
+        return (new(requestTotal, errorTotal, operationTotal, storageMissing[^1] ? null : storage[^1], clientTotal, replicationSentTotal, replicationReceivedTotal, p95, regionRows), charts);
 
-        void Add(string title, params AnalyticsSeries[] series) => charts.Add(new(title, AnalyticsLinePlot.For(title + ", " + selection.Range, selection.Range, starts, series)));
+        void Add(string title, params AnalyticsSeries[] series) => charts.Add(new(title, AnalyticsLinePlot.For(title + ", " + selection.Range, selection.Range, starts, series), selection));
         void AddCounters(SortedDictionary<string, long[]> target, IReadOnlyDictionary<string, long> values, int index, ref long total)
         {
             foreach (var counter in values)
@@ -93,4 +104,7 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
         }
     }
     private static long Nonnegative(long value) => value >= 0 ? value : throw new JsonException("Negative analytics measurement.");
+    private static double? MaxLatency(double? left, double? right) => left is null ? right : right is null ? left : Math.Max(left.Value, right.Value);
+    private static int RegionRank(string code) => code switch { "gru" => 0, "fra" => 1, "sjc" => 2, _ => 3 };
+    private static string RegionFlag(string code) => code switch { "gru" => "br", "fra" => "de", "sjc" => "us", _ => "" };
 }

@@ -1,0 +1,8 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Analytics.AnalyticsPage>
+@inject AssetUrls Assets
+@using System.Globalization
+@using TerraScale.Dashboard.Features.Home
+<section class="ts-card" id="analytics-regions" aria-labelledby="analytics-regions-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="analytics-regions-title">By region</h2><p class="ts-card-description">Requests and approximate p95 latency per database region · @Model.Selection.Range</p></div></header><div class="ts-card-body">
+@if (Model.Totals!.Regions.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No region measurements for these filters.</p></div> }
+else { <div class="ts-table-wrap" role="region" aria-label="Analytics by region table" tabindex="0"><table class="ts-table"><caption class="ts-sr-only">Requests and approximate p95 latency per database region</caption><thead><tr><th>Region</th><th class="ts-num">Requests</th><th class="ts-num">p95 latency</th></tr></thead><tbody>@foreach (var region in Model.Totals!.Regions) { <tr><th scope="row"><span class="ts-db-region">@if (region.Flag.Length > 0) { <img class="ts-db-region-flag" src="@Assets.Url("flags/" + region.Flag + ".svg")" alt="" aria-hidden="true" /> }<span class="ts-mono">@region.Code</span></span></th><td class="ts-num">@region.Requests.ToString(CultureInfo.InvariantCulture)</td><td class="ts-num">@HomeMetricFormat.Latency(region.LatestP95Ms)</td></tr> }</tbody></table></div> }
+</div></section>
