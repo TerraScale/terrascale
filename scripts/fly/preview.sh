@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# PR previews in the Fly org terrascale-previews-515: app ts-pr-<n>, one multi-container machine (TerraBase + ts-auth) with
-# a 1 GB volume, stopped when idle and started by the next request. FLY_API_TOKEN is an org token for terrascale-previews-515.
-# The containers share one network namespace, so each service keeps its own ports: ts-auth at https://ts-pr-<n>.fly.dev
-# (8090), TerraBase's public API at https://ts-pr-<n>.fly.dev:8443 (8080). ts-auth reaches TerraBase's internal listener
-# at top1.nearest.of.ts-pr-<n>.internal:8081, its own machine (App.TerraBaseOrigin).
+# PR previews in the Fly org terrascale-previews-515: app ts-pr-<n>, a two-region TerraBase cell (TerraBase acknowledges a
+# write only once a peer in another placed region has it), each machine with its own 1 GB volume. FLY_API_TOKEN is an org
+# token for terrascale-previews-515.
+# - gru: one multi-container machine (TerraBase + ts-auth), stopped when idle and started by the next request. The
+#   containers share one network namespace, so each service keeps its own ports: ts-auth at https://ts-pr-<n>.fly.dev
+#   (8090), TerraBase's public API at https://ts-pr-<n>.fly.dev:8443 (8080). ts-auth reaches TerraBase's internal listener
+#   at top1.nearest.of.ts-pr-<n>.internal:8081, its own machine (App.TerraBaseOrigin).
+# - sjc: a TerraBase-only replica that never autostops, so gru's writes always find their remote peer. It serves 8443 too.
 #
-#   scripts/fly/preview.sh app <pr>                         create the app, its IPs and volume (before images are pushed)
-#   scripts/fly/preview.sh machine <pr> <terrabase-image> <auth-image>   create or update the machine
+#   scripts/fly/preview.sh app <pr>                         create the app, its IPs and volumes (before images are pushed)
+#   scripts/fly/preview.sh machine <pr> <terrabase-image> <auth-image>   create or update both machines
 #   scripts/fly/preview.sh destroy <pr>                     delete the app and everything in it; succeeds if already gone
 #   scripts/fly/preview.sh expired                          print the JSON array of PRs whose preview must go: closed PRs,
 #                                                           and open PRs whose oldest machine (or, with no machine, oldest
@@ -36,6 +39,14 @@ buckets() {
     NF != 3 || $2 != "│" || $3 != org { exit 1 }
     $1 ~ /^terrascale-ts-pr-[1-9][0-9]*$/ && length($1) <= 26 { print substr($1, 18) }
   ' <<<"$table"
+}
+
+# Reads a Fly machine or volume JSON list ($1: the volumes' required name, or empty) and prints it when it holds at most one
+# entry per preview region (gru, sjc) and nothing else; any other capacity is unknown, so it fails rather than being reused.
+per_region() {
+  jq -e --arg name "$1" 'if type == "array" and all(.[]; (.id | type == "string" and length > 0)
+    and (.region == "gru" or .region == "sjc") and ($name == "" or .name == $name))
+    and (map(.region) | length == (unique | length)) then . else error("unexpected Fly listing") end'
 }
 
 # Reads a Fly machine or volume JSON list; prints its oldest created_at as epoch seconds, or nothing for []. Any other
@@ -82,9 +93,12 @@ case ${1:-} in
       flyctl ips allocate-v4 --shared -a "$app"
       flyctl ips allocate-v6 -a "$app"
     fi
-    if [[ $(flyctl volumes list -a "$app" --json | jq length) == 0 ]]; then
-      flyctl volumes create data -a "$app" -r gru -s 1 --yes
-    fi
+    volumes=$(flyctl volumes list -a "$app" --json | per_region data)
+    for region in gru sjc; do
+      if ! jq -e --arg region "$region" 'any(.[]; .region == $region)' <<<"$volumes" >/dev/null; then
+        flyctl volumes create data -a "$app" -r "$region" -s 1 --yes
+      fi
+    done
     # Throwaway keys for this preview only, set once so updates keep reading what earlier pushes encrypted.
     secrets=$(flyctl secrets list -a "$app" --json | jq -r '.[].name')
     for key in TS_AUTH_MASTER_KEY TS_AUTH_AUDIT_SIGNING_KEY; do
@@ -112,43 +126,65 @@ case ${1:-} in
     ;;
   machine)
     app=ts-pr-$2 terrabase=$3 auth=$4
-    volume=$(flyctl volumes list -a "$app" --json | jq -r '.[0].id')
-    # App secrets reach a container only when its config maps them (staged secrets alone never arrive).
-    config=$(jq -n --arg terrabase "$terrabase" --arg auth "$auth" --arg volume "$volume" --arg app "$app" '{
-      guest: {cpu_kind: "shared", cpus: 1, memory_mb: 1024},
-      mounts: [{volume: $volume, path: "/data"}],
-      containers: [
+    # Both listings are checked before anything changes, so unknown capacity never gains a duplicate machine.
+    volumes=$(flyctl volumes list -a "$app" --json | per_region data)
+    jq -e 'map(.region) | sort == ["gru", "sjc"]' <<<"$volumes" >/dev/null || {
+      echo "preview: $app needs one gru and one sjc volume" >&2; exit 1
+    }
+    listing=$(api "$machines/apps/$app/machines" | per_region '')
+    declare -A ids
+    # sjc first: gru's ts-auth starts writing as soon as its machine starts.
+    for region in sjc gru; do
+      volume=$(jq -er --arg region "$region" '.[] | select(.region == $region) | .id' <<<"$volumes")
+      # App secrets reach a container only when its config maps them (staged secrets alone never arrive).
+      config=$(jq -n --arg region "$region" --arg terrabase "$terrabase" --arg auth "$auth" --arg volume "$volume" --arg app "$app" '
         {name: "terrabase", image: $terrabase, secrets: ([
           "AWS_ENDPOINT_URL_S3", "AWS_REGION", "BUCKET_NAME", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "TERRABASE_MASTER_KEY", "TERRABASE_PEER_SECRET"
-        ] | map({env_var: ., name: .}))},
-        {name: "ts-auth", image: $auth, env: {TS_AUTH_PUBLIC_ORIGIN: "https://\($app).fly.dev"},
-          secrets: (["TS_AUTH_MASTER_KEY", "TS_AUTH_AUDIT_SIGNING_KEY", "TERRABASE_PEER_SECRET"] | map({env_var: ., name: .})),
-          depends_on: [{name: "terrabase", condition: "started"}]}
-      ],
-      services: [
-        {
-          protocol: "tcp", internal_port: 8090, autostop: "stop", autostart: true, min_machines_running: 0,
-          ports: [{port: 443, handlers: ["tls", "http"]}, {port: 80, handlers: ["http"], force_https: true}]
-        },
-        {
-          protocol: "tcp", internal_port: 8080, autostop: "stop", autostart: true, min_machines_running: 0,
-          ports: [{port: 8443, handlers: ["tls", "http"]}]
-        }
-      ]
-    }')
-    id=$(api "$machines/apps/$app/machines" | jq -r '.[0].id // empty')
-    if [[ -z $id ]]; then
-      created=$(api -X POST "$machines/apps/$app/machines" -d "$(jq -n --argjson config "$config" '{region: "gru", config: $config}')")
-      jq '{id, state}' <<<"$created"
-      id=$(jq -er .id <<<"$created")
-    else
-      api -X POST "$machines/apps/$app/machines/$id" -d "$(jq -n --argjson config "$config" '{config: $config}')" | jq '{id, state}'
-    fi
-    # ts-auth bootstraps its issuer during startup; its readiness includes storage and usable signing keys.
-    for origin in "https://$app.fly.dev:8443" "https://$app.fly.dev"; do
-      curl -fsS --retry 20 --retry-delay 2 --retry-all-errors --max-time 5 -o /dev/null "$origin/readyz" || {
+        ] | map({env_var: ., name: .}))} as $terrabase_container
+        | if $region == "gru" then {
+          guest: {cpu_kind: "shared", cpus: 1, memory_mb: 1024},
+          mounts: [{volume: $volume, path: "/data"}],
+          containers: [
+            $terrabase_container,
+            {name: "ts-auth", image: $auth, env: {TS_AUTH_PUBLIC_ORIGIN: "https://\($app).fly.dev"},
+              secrets: (["TS_AUTH_MASTER_KEY", "TS_AUTH_AUDIT_SIGNING_KEY", "TERRABASE_PEER_SECRET"] | map({env_var: ., name: .})),
+              depends_on: [{name: "terrabase", condition: "started"}]}
+          ],
+          services: [
+            {
+              protocol: "tcp", internal_port: 8090, autostop: "stop", autostart: true, min_machines_running: 0,
+              ports: [{port: 443, handlers: ["tls", "http"]}, {port: 80, handlers: ["http"], force_https: true}]
+            },
+            {
+              protocol: "tcp", internal_port: 8080, autostop: "stop", autostart: true, min_machines_running: 0,
+              ports: [{port: 8443, handlers: ["tls", "http"]}]
+            }
+          ]
+        } else {
+          guest: {cpu_kind: "shared", cpus: 1, memory_mb: 512},
+          mounts: [{volume: $volume, path: "/data"}],
+          containers: [$terrabase_container],
+          # "off": Fly Proxy never stops it, so the remote peer stays up while gru idles and restarts.
+          services: [{protocol: "tcp", internal_port: 8080, autostop: "off", autostart: true,
+            ports: [{port: 8443, handlers: ["tls", "http"]}]}]
+        } end')
+      id=$(jq -r --arg region "$region" '.[] | select(.region == $region) | .id' <<<"$listing")
+      if [[ -z $id ]]; then
+        created=$(api -X POST "$machines/apps/$app/machines" -d "$(jq -n --arg region "$region" --argjson config "$config" '{region: $region, config: $config}')")
+        jq '{id, state}' <<<"$created"
+        id=$(jq -er .id <<<"$created")
+      else
+        api -X POST "$machines/apps/$app/machines/$id" -d "$(jq -n --argjson config "$config" '{config: $config}')" | jq '{id, state}'
+      fi
+      ids[$region]=$id
+    done
+    # Each TerraBase is checked on its own machine (fly-force-instance-id), then ts-auth, whose readiness includes storage
+    # and usable signing keys: it bootstraps its issuer during startup.
+    for check in "${ids[gru]} https://$app.fly.dev:8443" "${ids[sjc]} https://$app.fly.dev:8443" "${ids[gru]} https://$app.fly.dev"; do
+      id=${check%% *} origin=${check#* }
+      curl -fsS --retry 20 --retry-delay 2 --retry-all-errors --max-time 5 -H "fly-force-instance-id: $id" -o /dev/null "$origin/readyz" || {
         status=$?
-        echo "preview readiness failed at $origin/readyz" >&2
+        echo "preview readiness failed at $origin/readyz on machine $id" >&2
         # Public CI never receives message contents: the summary prints only allowlisted diagnostic fields.
         if ! timeout 20s flyctl logs -a "$app" --machine "$id" --no-tail --json 2>/dev/null \
           | python3 "$(dirname "${BASH_SOURCE[0]}")/preview-log-summary.py"; then

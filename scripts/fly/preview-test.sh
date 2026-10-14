@@ -15,7 +15,8 @@ case "$1 $2" in
   "apps list") test ! -e "$STATE/fail-apps"; cat "$STATE/apps" ;;
   "storage list") test ! -e "$STATE/fail-list"; cat "$STATE/buckets" ;;
   "ips list") echo '[{}]' ;;
-  "volumes list") if [[ -e $STATE/volumes-$4 ]]; then cat "$STATE/volumes-$4"; else echo '[{"id":"vol-test"}]'; fi ;;
+  "volumes list") if [[ -e $STATE/volumes-$4 ]]; then cat "$STATE/volumes-$4"; else cat "$STATE/volumes"; fi ;;
+  "volumes create") echo "$*" >> "$STATE/volume-creates" ;;
   "secrets list") jq -Rn '[inputs | {name: .}]' < "$STATE/secrets" ;;
   "secrets set")
     # Record names only; never write generated secret values to a log.
@@ -52,18 +53,25 @@ if [[ $* == *'%{http_code}'* ]]; then
   printf '{"organization":{"slug":"%s"}}' "$(cat "$STATE/org")" > "$2"
   cat "$STATE/code"
 elif [[ $* =~ /apps/(ts-pr-[0-9]+)/machines$ && -e $STATE/machines-${BASH_REMATCH[1]} ]]; then
+  test ! -e "$STATE/fail-machines" || exit 22
   cat "$STATE/machines-${BASH_REMATCH[1]}"
 elif [[ $* == *'/healthz'* || $* == *'/readyz'* ]]; then
-  printf '%s\n' "${*: -1}" >> "$STATE/checks"
-  [[ ! -e $STATE/fail-ready || $* != *'/readyz'* ]] || exit 22
+  # Records "<pinned machine> <url>"; fail-ready fails every /readyz, or only those pinned to the machine it names.
+  [[ $* =~ fly-force-instance-id:\ ([^ ]+) ]] || exit 1
+  printf '%s %s\n' "${BASH_REMATCH[1]}" "${*: -1}" >> "$STATE/checks"
+  [[ ! -e $STATE/fail-ready || $* != *'/readyz'* ]] || [[ -s $STATE/fail-ready && $(cat "$STATE/fail-ready") != "${BASH_REMATCH[1]}" ]] || exit 22
 elif [[ $* == *' -X POST '* ]]; then
   while (($#)); do
-    if [[ $1 == -d ]]; then printf '%s\n' "$2" > "$STATE/request"; break; fi
+    case $1 in -X) url=$3 ;; -d) body=$2 ;; esac
     shift
   done
-  echo '{"id":"machine-test","state":"created"}'
+  # A create names its region; an update names its machine.
+  if [[ $url == */machines ]]; then id=machine-$(jq -r .region <<<"$body"); else id=${url##*/}; fi
+  printf '%s\n' "$body" > "$STATE/request-$id"
+  echo "${url##*/apps/ts-pr-123/} $id" >> "$STATE/posts"
+  echo "{\"id\":\"$id\",\"state\":\"created\"}"
 else
-  if [[ -e $STATE/existing ]]; then echo '[{"id":"machine-test"}]'; else echo '[]'; fi
+  echo '[]'
 fi
 FAKE
 cat > "$state/bin/gh" <<'FAKE'
@@ -74,8 +82,43 @@ FAKE
 chmod +x "$state/bin/"*
 export PATH="$state/bin:$PATH" FLY_API_TOKEN=fixture GITHUB_REPOSITORY=fixture/repo
 printf '%s\n' TS_AUTH_MASTER_KEY TS_AUTH_AUDIT_SIGNING_KEY BUCKET_NAME TERRABASE_MASTER_KEY TERRABASE_PEER_SECRET > "$state/secrets"
+both_volumes='[{"id":"vol-gru","name":"data","region":"gru"},{"id":"vol-sjc","name":"data","region":"sjc"}]'
+echo "$both_volumes" > "$state/volumes"
 "$here/preview.sh" app 123
 test ! -e "$state/set"
+test ! -e "$state/volume-creates"
+# A preview from before the sjc replica keeps its gru volume and gains exactly one sjc volume.
+echo '[{"id":"vol-gru","name":"data","region":"gru"}]' > "$state/volumes"
+"$here/preview.sh" app 123
+test "$(cat "$state/volume-creates")" = 'volumes create data -a ts-pr-123 -r sjc -s 1 --yes'
+rm "$state/volume-creates"
+echo '[]' > "$state/volumes"
+"$here/preview.sh" app 123
+test "$(cat "$state/volume-creates")" = $'volumes create data -a ts-pr-123 -r gru -s 1 --yes\nvolumes create data -a ts-pr-123 -r sjc -s 1 --yes'
+rm "$state/volume-creates"
+# Unknown capacity (another region, a duplicate, another name, a malformed listing) stops before anything is created,
+# in app and in machine.
+bad_inventories=('{}' '[{}]' '[{"id":"vol-fra","name":"data","region":"fra"}]'
+  '[{"id":"vol-a","name":"data","region":"gru"},{"id":"vol-b","name":"data","region":"gru"}]'
+  '[{"id":"vol-x","name":"other","region":"sjc"}]')
+for bad in "${bad_inventories[@]}"; do
+  printf '%s' "$bad" > "$state/volumes"
+  if "$here/preview.sh" app 123 2>/dev/null; then echo "preview: accepted volumes $bad" >&2; exit 1; fi
+  if "$here/preview.sh" machine 123 registry.fly.io/test:terrabase registry.fly.io/test:auth >/dev/null 2>&1; then
+    echo "preview: machine accepted volumes $bad" >&2; exit 1
+  fi
+done
+test ! -e "$state/volume-creates"
+test ! -e "$state/posts"
+# machine never creates a volume: a missing one is an error.
+for region in gru sjc; do
+  printf '[{"id":"vol-%s","name":"data","region":"%s"}]' "$region" "$region" > "$state/volumes"
+  if "$here/preview.sh" machine 123 registry.fly.io/test:terrabase registry.fly.io/test:auth >/dev/null 2>&1; then
+    echo 'preview: machine ran without both regional volumes' >&2; exit 1
+  fi
+  test ! -e "$state/posts"
+done
+echo "$both_volumes" > "$state/volumes"
 sed -i '/TS_AUTH_AUDIT_SIGNING_KEY/d' "$state/secrets"
 "$here/preview.sh" app 123
 test "$(cat "$state/set")" = TS_AUTH_AUDIT_SIGNING_KEY
@@ -101,22 +144,64 @@ fi
 test ! -e "$(cat "$state/peer-file")"
 rm "$state/fail-secret"
 
-for mode in create update; do
-  [[ $mode != update ]] || touch "$state/existing"
-  "$here/preview.sh" machine 123 registry.fly.io/test:terrabase registry.fly.io/test:auth >/dev/null
-  jq -e '
-    .config.guest == {cpu_kind: "shared", cpus: 1, memory_mb: 1024}
-    and .config.mounts == [{volume: "vol-test", path: "/data"}]
-    and (.config.containers[] | select(.name == "ts-auth") |
-      .secrets == (["TS_AUTH_MASTER_KEY", "TS_AUTH_AUDIT_SIGNING_KEY", "TERRABASE_PEER_SECRET"] | map({env_var: ., name: .}))
-      and .env.TS_AUTH_PUBLIC_ORIGIN == "https://ts-pr-123.fly.dev")
-    and (.config.containers[] | select(.name == "terrabase") |
-      (.secrets | map(.name) | sort) == (["AWS_ENDPOINT_URL_S3", "AWS_REGION", "BUCKET_NAME",
-        "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "TERRABASE_MASTER_KEY", "TERRABASE_PEER_SECRET"] | sort))
-    and all(.config.services[]; .autostop == "stop" and .autostart and .min_machines_running == 0)
-  ' "$state/request" >/dev/null
+gru_config='
+  .config.guest == {cpu_kind: "shared", cpus: 1, memory_mb: 1024}
+  and .config.mounts == [{volume: "vol-gru", path: "/data"}]
+  and (.config.containers | map(.name)) == ["terrabase", "ts-auth"]
+  and (.config.containers[] | select(.name == "ts-auth") |
+    .secrets == (["TS_AUTH_MASTER_KEY", "TS_AUTH_AUDIT_SIGNING_KEY", "TERRABASE_PEER_SECRET"] | map({env_var: ., name: .}))
+    and .env.TS_AUTH_PUBLIC_ORIGIN == "https://ts-pr-123.fly.dev")
+  and (.config.services | map(.internal_port)) == [8090, 8080]
+  and all(.config.services[]; .autostop == "stop" and .autostart and .min_machines_running == 0)'
+sjc_config='
+  .config.guest == {cpu_kind: "shared", cpus: 1, memory_mb: 512}
+  and .config.mounts == [{volume: "vol-sjc", path: "/data"}]
+  and (.config.containers | map(.name)) == ["terrabase"]
+  and .config.services == [{protocol: "tcp", internal_port: 8080, autostop: "off", autostart: true,
+    ports: [{port: 8443, handlers: ["tls", "http"]}]}]'
+terrabase_secrets='
+  .config.containers[] | select(.name == "terrabase") |
+    (.secrets | map(.name) | sort) == (["AWS_ENDPOINT_URL_S3", "AWS_REGION", "BUCKET_NAME",
+      "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "TERRABASE_MASTER_KEY", "TERRABASE_PEER_SECRET"] | sort)
+    and .image == "registry.fly.io/test:terrabase"'
+gru='{"id":"machine-gru","region":"gru"}' sjc='{"id":"machine-sjc","region":"sjc"}'
+# create: none exist; upgrade: a preview from before the sjc replica; update: both exist. Each region ends with one machine.
+for mode in create upgrade update; do
+  case $mode in
+    create) echo '[]' ;;
+    upgrade) echo "[$gru]" ;;
+    update) echo "[$sjc,$gru]" ;;
+  esac > "$state/machines-ts-pr-123"
+  rm -f "$state/posts" "$state/checks" "$state"/request-*
+  test "$("$here/preview.sh" machine 123 registry.fly.io/test:terrabase registry.fly.io/test:auth | tail -n 1)" = https://ts-pr-123.fly.dev
+  case $mode in
+    create) test "$(cat "$state/posts")" = $'machines machine-sjc\nmachines machine-gru' ;;
+    upgrade) test "$(cat "$state/posts")" = $'machines machine-sjc\nmachines/machine-gru machine-gru' ;;
+    update) test "$(cat "$state/posts")" = $'machines/machine-sjc machine-sjc\nmachines/machine-gru machine-gru' ;;
+  esac
+  jq -e "($gru_config) and ($terrabase_secrets)" "$state/request-machine-gru" >/dev/null
+  jq -e "($sjc_config) and ($terrabase_secrets)" "$state/request-machine-sjc" >/dev/null
+  [[ $mode != create ]] || jq -e '.region == "gru"' "$state/request-machine-gru" >/dev/null
+  [[ $mode != create ]] || jq -e '.region == "sjc"' "$state/request-machine-sjc" >/dev/null
+  # Both TerraBase replicas, each pinned to its own machine, then ts-auth on gru: the original checks, in order.
+  test "$(cat "$state/checks")" = $'machine-gru https://ts-pr-123.fly.dev:8443/readyz\nmachine-sjc https://ts-pr-123.fly.dev:8443/readyz\nmachine-gru https://ts-pr-123.fly.dev/readyz'
 done
-test "$(cat "$state/checks")" = $'https://ts-pr-123.fly.dev:8443/readyz\nhttps://ts-pr-123.fly.dev/readyz\nhttps://ts-pr-123.fly.dev:8443/readyz\nhttps://ts-pr-123.fly.dev/readyz'
+# Unknown machines (another region, a duplicate, a malformed or failed listing) stop before any machine changes.
+for bad in '{}' '[{}]' '[{"id":"machine-fra","region":"fra"}]' "[$gru,{\"id\":\"machine-gru2\",\"region\":\"gru\"}]" "[{\"region\":\"sjc\"}]"; do
+  printf '%s' "$bad" > "$state/machines-ts-pr-123"
+  rm -f "$state/posts"
+  if "$here/preview.sh" machine 123 registry.fly.io/test:terrabase registry.fly.io/test:auth >/dev/null 2>&1; then
+    echo "preview: machine accepted machines $bad" >&2; exit 1
+  fi
+  test ! -e "$state/posts"
+done
+echo "[$sjc,$gru]" > "$state/machines-ts-pr-123"
+touch "$state/fail-machines"
+if "$here/preview.sh" machine 123 registry.fly.io/test:terrabase registry.fly.io/test:auth >/dev/null 2>&1; then
+  echo 'preview: machine continued after its listing failed' >&2; exit 1
+fi
+test ! -e "$state/posts"
+rm "$state/fail-machines"
 touch "$state/fail-ready"
 python3 - "$state/logs" <<'PY'
 import json
@@ -184,7 +269,7 @@ assert summarize(malformed + pretty)[-1] == {
 assert summarize("[" * 10000) == [{"log_counts": dict(empty, unparsed=1)}]
 assert summarize(json.dumps({"message": "[" * 10000})) == [{"log_counts": dict(empty, entries=1)}]
 PY
-grep -qx 'logs -a ts-pr-123 --machine machine-test --no-tail --json' "$state/flyctl"
+grep -qx 'logs -a ts-pr-123 --machine machine-gru --no-tail --json' "$state/flyctl"
 touch "$state/fail-logs"
 readiness_status=0
 "$here/preview.sh" machine 123 registry.fly.io/test:terrabase registry.fly.io/test:auth > "$state/no-logs" 2> "$state/log-error" || readiness_status=$?
@@ -195,6 +280,21 @@ if grep -qx 'https://ts-pr-123.fly.dev' "$state/failed"; then
   echo 'preview: printed a URL after a failed readiness check' >&2
   exit 1
 fi
+# A failing sjc replica fails the preview with its own machine's diagnostics, before ts-auth is checked, and no URL.
+echo machine-sjc > "$state/fail-ready"
+: > "$state/flyctl"
+rm "$state/checks"
+readiness_status=0
+"$here/preview.sh" machine 123 registry.fly.io/test:terrabase registry.fly.io/test:auth > "$state/failed-sjc" 2>/dev/null || readiness_status=$?
+test "$readiness_status" = 22
+test "$(grep -c '^logs ' "$state/flyctl")" = 1
+grep -qx 'logs -a ts-pr-123 --machine machine-sjc --no-tail --json' "$state/flyctl"
+test "$(cat "$state/checks")" = $'machine-gru https://ts-pr-123.fly.dev:8443/readyz\nmachine-sjc https://ts-pr-123.fly.dev:8443/readyz'
+if grep -qx 'https://ts-pr-123.fly.dev' "$state/failed-sjc"; then
+  echo 'preview: printed a URL after the sjc replica failed' >&2
+  exit 1
+fi
+rm "$state/fail-ready"
 
 fails() { if "$@"; then echo "preview: '$*' succeeded but must fail" >&2; exit 1; fi; }
 destroyed() { test "$(cat "$state/destroy" 2>/dev/null)" = "$1"; rm -f "$state/destroy"; }
@@ -250,7 +350,7 @@ test ! -s "$state/flyctl"
 
 # Sweep: closed PRs go regardless of age, machines or app (6 has only a leftover bucket); open PRs go after 24 hours,
 # dated by their oldest machine, else their oldest volume (4 old, 7 young); 9 has neither and stays until close.
-rm "$state/existing"
+rm "$state/machines-ts-pr-123"
 ago() { echo "[{\"created_at\":\"$(date -u -d "$1 hours ago" +%FT%TZ)\"}]"; }
 printf '%s\n' '[{"Name":"ts-pr-1"},{"Name":"ts-pr-2"},{"Name":"ts-pr-3"},{"Name":"ts-pr-4"},{"Name":"ts-pr-05"},{"Name":"ts-pr-7"},{"Name":"ts-pr-9"},{"Name":"ts-terrabase"}]' > "$state/apps"
 bucket terrascale-ts-pr-1 terrascale-ts-pr-6 terrascale-ts-pr-8
