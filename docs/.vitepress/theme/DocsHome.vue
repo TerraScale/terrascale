@@ -6,10 +6,10 @@ import dotnetExample from '../../public/examples/terrabase-dotnet/Program.cs?raw
 const { localeIndex } = useData()
 const prefix = computed(() => localeIndex.value === 'root' ? '' : `/${localeIndex.value}`)
 const entries = [
-  { number: '01', title: 'Write your first document', detail: 'Install the JavaScript SDK and run a complete CRUD journey.', link: '/getting-started/javascript', tone: 'blue' },
-  { number: '02', title: 'Query and paginate', detail: 'Filter JSON documents, preserve versions, and follow opaque cursors.', link: '/guides/queries', tone: 'cyan' },
-  { number: '03', title: 'Connect safely', detail: 'Scope credentials to your application and handle failed requests.', link: '/guides/authentication', tone: 'violet' },
-  { number: '04', title: 'Understand the contract', detail: 'Check SDK availability, service limits, and replication boundaries.', link: '/guides/sdks', tone: 'indigo' },
+  { number: '01', title: 'Write your first document', detail: 'Install the JavaScript SDK and run a complete CRUD journey.', link: '/getting-started/javascript', tone: 'blue', icon: 'rocket' },
+  { number: '02', title: 'Query and paginate', detail: 'Filter JSON documents, preserve versions, and follow opaque cursors.', link: '/guides/queries', tone: 'cyan', icon: 'filter' },
+  { number: '03', title: 'Connect safely', detail: 'Scope credentials to your application and handle failed requests.', link: '/guides/authentication', tone: 'violet', icon: 'key-round' },
+  { number: '04', title: 'Understand the contract', detail: 'Check SDK availability, service limits, and replication boundaries.', link: '/guides/sdks', tone: 'indigo', icon: 'book-open' },
 ]
 
 // Opens the local search through the same Ctrl K keydown that VitePress listens for on window.
@@ -65,7 +65,7 @@ onBeforeUnmount(() => clearTimeout(statusTimer))
       </div>
       <div class="docs-cards">
         <a v-for="entry in entries" :key="entry.number" class="docs-card" :href="`${prefix}${entry.link}`" :data-tone="entry.tone">
-          <span class="docs-tile" aria-hidden="true">{{ entry.number }}</span>
+          <span class="docs-tile" aria-hidden="true"><svg viewBox="0 0 24 24"><use :href="`/brand/docs-icons.svg#i-${entry.icon}`" /></svg></span>
           <h3>{{ entry.title }} <span aria-hidden="true">→</span></h3>
           <p>{{ entry.detail }}</p>
         </a>

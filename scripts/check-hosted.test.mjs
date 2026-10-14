@@ -4,7 +4,7 @@ import timers from 'node:timers/promises';
 import { checkResponse } from './check-hosted.mjs';
 
 test('new assets must match every check after one propagation retry', async (t) => {
-  const sleep = t.mock.method(timers, 'setTimeout', async (ms) => assert.equal(ms, 5_000));
+  const sleep = t.mock.method(timers, 'setTimeout', async (ms) => assert.equal(ms, 30_000));
   t.mock.method(console, 'warn', () => {});
   let calls = 0;
   t.mock.method(globalThis, 'fetch', async () => new Response(++calls === 1 ? 'not ready' : 'checked bytes', {
@@ -16,7 +16,7 @@ test('new assets must match every check after one propagation retry', async (t) 
 });
 
 test('two identical content failures remain fatal and are not retried again', async (t) => {
-  const sleep = t.mock.method(timers, 'setTimeout', async (ms) => assert.equal(ms, 5_000));
+  const sleep = t.mock.method(timers, 'setTimeout', async (ms) => assert.equal(ms, 30_000));
   t.mock.method(console, 'warn', () => {});
   let calls = 0;
   t.mock.method(globalThis, 'fetch', async () => {

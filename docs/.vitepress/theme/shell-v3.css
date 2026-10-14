@@ -104,7 +104,7 @@
   .Layout .VPDoc:not(.has-aside) > .container > .content { padding: 0; }
 }
 .Layout .VPDoc .content-container { max-width: none !important; }
-.Layout .vp-doc > :is(p, ul, ol, blockquote) { max-width: 80ch; }
+.Layout .vp-doc > div > :is(p, ul, ol, blockquote) { max-width: 80ch; }
 
 /* ---------- Right-hand TOC: ink + 1px rule on the active heading ---------- */
 @media (min-width: 1280px) {
@@ -191,8 +191,8 @@ body .VPLocalSearchBox .excerpt-gradient-top { display: none; }
   .Layout .VPNavBarTitle .logo { content: url('/favicon.svg'); width: 24px; height: 24px; margin-right: 0; }
   .Layout .VPNavBarTitle .title > span { display: none; }
   .Layout .VPNavBarAppearance { display: flex; align-items: center; }
-  .Layout .VPLocalNav { height: 0; padding: 0; border: 0; }
-  .Layout .VPLocalNav .VPOutlineDropdown { display: none; }
+  .Layout .VPLocalNav { height: 0; padding: 0; border: 0; z-index: calc(var(--vp-z-index-nav) + 1); }
+  .Layout .VPLocalNav .VPLocalNavOutlineDropdown { display: none; }
   .Layout .VPLocalNav .menu {
     position: fixed; top: 8px; left: 8px; z-index: var(--vp-z-index-nav);
     width: 40px; height: 40px; justify-content: center; padding: 0;
