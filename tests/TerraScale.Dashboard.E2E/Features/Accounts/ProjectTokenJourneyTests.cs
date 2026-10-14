@@ -59,7 +59,7 @@ public sealed class ProjectTokenJourneyTests
             try
             {
                 await scenario.environment.InitializeAsync();
-                scenario.host = scenario.environment.CreateHost(Root, 0, "http://127.0.0.1", builder =>
+                scenario.host = scenario.environment.CreateTestHost(Root, 0, "http://127.0.0.1", builder =>
                 {
                     var auth = (TestAuth)builder.Services.Last(service => service.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
                     scenario.Issuer = new(auth.ResolveAccessToken);

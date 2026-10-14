@@ -27,6 +27,10 @@ for project_file in root.rglob("*.csproj"):
 app = root / "src/TerraScale.Dashboard"
 assert not [path for path in app.rglob("*.cs") if not {"bin", "obj"}.intersection(path.relative_to(app).parts)
             and "TerraScale.Dashboard.E2E" in path.read_text()], "Test providers must stay out of the production application"
+# The user-authorized DEMO=true providers live in Demo/; only Program.cs selects them.
+assert not [path for path in app.rglob("*.cs") if not {"bin", "obj", "Demo"}.intersection(path.relative_to(app).parts)
+            and path.name != "Program.cs" and "TerraScale.Dashboard.Demo" in path.read_text()], \
+    "Only Program.cs may reach the in-memory demo providers"
 assert not [item.get("Include") for item in ET.parse(app / "TerraScale.Dashboard.csproj").iter()
             if any(outside in (item.get("Include") or "") for outside in ("..", "$(RepositoryRoot)"))], \
     "The application must not include files from outside its project"
@@ -64,4 +68,4 @@ assert "test-unit:" not in makefile and "python3 -m unittest" not in makefile, \
     "Dashboard test targets must not run isolated unit suites"
 assert not re.search(r"\bgo\s+(?:test|build|run)\b|scripts/check-e2e-shards\.sh", makefile), \
     "TUnit must own performance and discovery targets as well as the main E2E suite"
-print(f"PASS: TUnit application/HTTP contract boundary ({count} classes); demo sources excluded from production")
+print(f"PASS: TUnit application/HTTP contract boundary ({count} classes); demo providers confined to src Demo/")

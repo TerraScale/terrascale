@@ -43,7 +43,7 @@ public sealed class PageAuditHost : IAsyncDisposable
 
     private WebApplication Create(string root)
     {
-        var app = environment.CreateHost(root, 0, "http://127.0.0.1", builder =>
+        var app = environment.CreateTestHost(root, 0, "http://127.0.0.1", builder =>
             builder.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(clock)));
         app.MapPost("/__test/oct13/page-audit/seed", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Demo services exist only in test sources. Its port is the
+# The application's in-memory demo host (src/TerraScale.Dashboard/Demo). Its port is the
 # worktree development port + 2000; all interfaces admit the Tailscale network.
 # .NET 10 file-app watch cannot reload its transient project after new files
-# appear. Materialize the same test host outside the repo for a stable watch
+# appear. Materialize a launcher for the demo host outside the repo for a stable watch
 # graph; the solution still contains exactly one committed application project.
 # This machine's tailnet name, so the demo is reachable over Tailscale.
 dashboard_demo_host=$(tailscale status --json | python3 -c 'import json, sys; name = json.load(sys.stdin)["Self"]["DNSName"].rstrip("."); assert name, "tailscale is not logged in"; print(name)')
@@ -15,13 +15,14 @@ from xml.sax.saxutils import quoteattr
 import sys
 root, target = map(Path, sys.argv[1:])
 (target / 'Program.cs').write_text('''using System.Security.Cryptography;
+using TerraScale.Dashboard.Demo;
 using System.Text;
 var root = args[0];
 var host = args[1];
 var port = 7500 + (int)(Convert.ToUInt32(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(root)))[..8], 16) % 1000);
 var environment = new DemoEnvironment();
 await environment.InitializeAsync();
-await using var app = environment.CreateHost(root, port, $"http://{host}:{port}");
+await using var app = environment.CreateHost(Path.Combine(root, "src", "TerraScale.Dashboard"), port, $"http://{host}:{port}");
 Console.WriteLine($"Test-only demo: http://{host}:{port}; user@example.com / test-password; code 123456");
 await app.RunAsync();
 ''')
@@ -29,7 +30,6 @@ await app.RunAsync();
   <PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><PublishAot>false</PublishAot></PropertyGroup>
   <ItemGroup>
     <ProjectReference Include={quoteattr(str(root / 'src/TerraScale.Dashboard/TerraScale.Dashboard.csproj'))} />
-    <Compile Include={quoteattr(str(root / 'tests/TerraScale.Dashboard.E2E/Demo/**/*.cs'))} />
   </ItemGroup>
 </Project>
 ''')

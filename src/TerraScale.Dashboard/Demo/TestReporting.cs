@@ -9,6 +9,8 @@ using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 
+namespace TerraScale.Dashboard.Demo;
+
 // Test-only producer protocol. Real dashboard HTTP endpoints, reporting
 // adapters, SDK retention requests and persisted CAS writes remain in use.
 sealed class TestReportingTransport(TestState state, TestWorkspace workspace, Func<string, (string UserId, string Email)?> resolveToken, HttpMessageHandler stripe,

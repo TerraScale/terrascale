@@ -8,6 +8,8 @@ using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
 
+namespace TerraScale.Dashboard.Demo;
+
 // Faults the actual app persistence boundary only in the test executable. Each
 // control is scoped to a freshly authorized owner, never an arbitrary org ID.
 sealed class TestBillingCheckoutPersistence(IDashboardState underlying) : IDashboardState

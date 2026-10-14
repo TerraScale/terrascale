@@ -12,7 +12,7 @@ public sealed class FreeBillingJourneyTests
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
         using var vendor = new RejectVendorCalls();
-        await using var app = environment.CreateHost(new DashboardE2EFixture().Root, 0, "http://127.0.0.1", builder =>
+        await using var app = environment.CreateTestHost(new DashboardE2EFixture().Root, 0, "http://127.0.0.1", builder =>
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(vendor)));
         await app.StartAsync();
         using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })

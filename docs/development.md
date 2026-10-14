@@ -29,9 +29,8 @@ when its artwork changes, regenerate it with `npm run build:region-map` in
 
 The production development host requires automatically delivered platform
 identity and persistent services. The demo launcher creates a temporary
-test host from sources under `tests/TerraScale.Dashboard.E2E/Demo`; demo
-stores, identities and vendor protocol fixtures are excluded from application
-compilation.
+host around the application's in-memory demo providers
+(`src/TerraScale.Dashboard/Demo`, also served by `DEMO=true`).
 Use the Tailscale URL and worktree-specific port printed by the launcher.
 Both launchers bind all interfaces and watch C#/Razor and browser assets.
 Same-origin Datastar SSE updates CSS and refreshes pages when source changes.
@@ -46,8 +45,9 @@ Their transports reject unknown external origins.
 All dashboard tests use **TUnit**, and all tests exercise the running
 application through browser, HTTP, MCP or customer SDK boundaries. Do not
 create isolated service/component/unit tests or introduce another runner.
-Test providers and protocol controls belong under
-`tests/TerraScale.Dashboard.E2E/Demo`. Journey tests belong under
+Scenario and protocol controls belong under
+`tests/TerraScale.Dashboard.E2E/Demo`; the shared in-memory providers are in
+`src/TerraScale.Dashboard/Demo`. Journey tests belong under
 `tests/TerraScale.Dashboard.E2E`, in `*JourneyTests.cs` files.
 Node browser journeys are in `tests/TerraScale.Dashboard.E2E/browser`.
 

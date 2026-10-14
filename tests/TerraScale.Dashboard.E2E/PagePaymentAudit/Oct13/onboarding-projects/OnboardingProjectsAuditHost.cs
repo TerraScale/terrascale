@@ -15,7 +15,7 @@ internal sealed class OnboardingProjectsAuditHost(WebApplication app, string ori
     {
         var environment = new DemoEnvironment();
         await environment.InitializeAsync();
-        var app = environment.CreateHost(root, 0, "http://127.0.0.1", builder =>
+        var app = environment.CreateTestHost(root, 0, "http://127.0.0.1", builder =>
             builder.Services.AddSingleton<IStartupFilter>(new AuditAssets(root)));
         try
         {

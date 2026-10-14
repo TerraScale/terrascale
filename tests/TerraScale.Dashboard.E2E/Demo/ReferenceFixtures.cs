@@ -12,7 +12,6 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.E2E;
 
-public sealed record ReferencePrincipal(string Subject, string Name, string Email, string Password, string SourceAccountId = "", string Phone = "", string Locale = "en");
 public sealed record ReferencePersonas(ReferencePrincipal Routes, ReferencePrincipal Seeded);
 
 // These are the actual identities and illustrative records used by the Go

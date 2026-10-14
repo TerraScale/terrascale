@@ -4,6 +4,7 @@ swap_size_mb = 900
 
 # The image reads its identity from OCI Vault delivery and discovers ts-auth and
 # TerraBase itself (docs/zero-configuration.md): there is no [env] to set.
+# While the Fly secret DEMO=true is set it serves the in-memory public demo (README).
 
 [http_service]
   internal_port = 8080
@@ -15,7 +16,7 @@ swap_size_mb = 900
   min_machines_running = 1
 
 [[vm]]
-  size = "shared-cpu-2x"
+  size = "shared-cpu-1x"
   memory = "512mb"
 
 [[http_service.checks]]

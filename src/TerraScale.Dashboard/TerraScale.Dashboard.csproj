@@ -12,6 +12,8 @@
     <PackageReference Include="Scalar.AspNetCore" />
     <PackageReference Include="Stripe.net" />
     <PackageReference Include="TerraScale.DotNet" />
+    <!-- The E2E suite drives the in-memory providers of Demo/ (DEMO=true) directly. -->
+    <InternalsVisibleTo Include="TerraScale.Dashboard.E2E" />
     <!-- web/ is also the asset build's npm project; its manifests are build inputs, never shipped. -->
     <Content Remove="web/package.json;web/package-lock.json" />
     <None Update="**/*" Watch="false" />

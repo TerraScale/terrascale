@@ -102,9 +102,11 @@ public static class BillingEndpoints
     {
         const int bodyLimit = 1 << 20;
         const int rejectionDrainAllowance = 64 * 1024;
-        if (http.Request.ContentLength > bodyLimit) return Results.StatusCode(413);
+        // Raise the limit before any early 413 so Kestrel can drain a slightly
+        // oversized known-length upload instead of resetting the sender mid-write.
         if (http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
             limit.MaxRequestBodySize = bodyLimit + rejectionDrainAllowance;
+        if (http.Request.ContentLength > bodyLimit) return Results.StatusCode(413);
         using var payload = new MemoryStream();
         var buffer = new byte[8192];
         long received = 0;

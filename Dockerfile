@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# The final stage is the actual application. Test providers never enter its publish output.
+# The final stage is the actual application. Only DEMO=true selects its in-memory demo providers.
 
 FROM node:24-bookworm-slim AS node-modules
 # The asset build's npm project.

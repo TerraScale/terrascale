@@ -14,7 +14,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TerraScale.Dashboard;
-using TerraScale.Dashboard.E2E;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Billing;
@@ -24,10 +23,11 @@ using TerraScale.Dashboard.Features.Organizations;
 using TerraScale.Dashboard.Features.Home;
 using TerraScale.Dashboard.Features.Onboarding;
 using TerraScale.Dashboard.Features.Profile;
-using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
+
+namespace TerraScale.Dashboard.Demo;
 
 public sealed class DemoEnvironment
 {
@@ -58,6 +58,11 @@ public sealed class DemoEnvironment
 
     internal TestWorkspace Workspace => workspace;
     internal TestAuthApiKeys ApiKeys => apiKeys;
+    // The E2E suite seeds its reference fixtures through these.
+    internal TestState State => state;
+    internal TestAuth Auth => auth;
+    internal TestDatabases Databases => databases;
+    internal TestDocuments Documents => documents;
 
     public async Task InitializeAsync()
     {
@@ -80,15 +85,10 @@ public sealed class DemoEnvironment
         await state.PutAsync(AccountService.AccountsCollection, account.Id, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Absent, default);
     }
 
-    public async Task<ReferencePersonas> InitializeReferenceAsync(string root)
+    // contentRoot holds web/static: the project directory, or the published application directory.
+    public WebApplication CreateHost(string contentRoot, int port, string origin, Action<WebApplicationBuilder>? configureScenario = null)
     {
-        await InitializeAsync();
-        return await ReferenceFixtures.InitializeAsync(root, state, workspace, auth.RegisterFixturePrincipal, databases.SeedFixtureDatabase, documents);
-    }
-
-    public WebApplication CreateHost(string root, int port, string origin, Action<WebApplicationBuilder>? configureScenario = null)
-    {
-        var hostArgs = new[] { "--contentRoot", Path.Combine(root, "src", "TerraScale.Dashboard"), "--environment", "Development", "--urls", $"http://0.0.0.0:{port}" };
+        var hostArgs = new[] { "--contentRoot", contentRoot, "--environment", "Development", "--urls", $"http://0.0.0.0:{port}" };
         stripe.SetOrigin(origin);
         var app = DashboardApplication.Build(hostArgs, builder =>
         {
@@ -116,14 +116,6 @@ public sealed class DemoEnvironment
             builder.Logging.AddConsole().SetMinimumLevel(LogLevel.Warning);
             configureScenario?.Invoke(builder);
         });
-        app.MapGet("/__test/session", async (HttpContext context, DashboardSessions sessions) =>
-            await sessions.ReadAsync(context) is { } session ? Results.Json(new { session.UserId }) : (IResult)Results.Unauthorized());
-        app.MapGet("/__test/signals", async (HttpContext context) =>
-        {
-            await DatastarEvents.PatchSignalsAsync(context, new { count = 1 });
-            await DatastarEvents.PatchSignalsAsync(context, new { count = 2 });
-        });
-        app.MapGet("/__test/elements", (HttpContext context) => DatastarEvents.PatchElementsAsync(context, TerraScale.Dashboard.UI.Slices.RegionMap.Create()));
         app.MapGet("/__test/checkout", (string id) => Results.Redirect(stripe.Complete(id)));
         app.MapGet("/__test/oidc", (string? state) => state is { Length: 64 } && state.All(char.IsAsciiHexDigitLower)
             ? (IResult)Results.Redirect("/login/callback?state=" + Uri.EscapeDataString(state) + "&code=test-code")
@@ -133,12 +125,11 @@ public sealed class DemoEnvironment
         imports.MapRoutes(app);
         billingPlans.MapRoutes(app);
         checkoutPersistence.MapRoutes(app);
-        BillingWebhookScenario.MapRoutes(app);
-        InvitationExpiryScenario.MapRoutes(app);
-        OrganizationProviderScenario.MapRoutes(app);
         return app;
     }
 }
+
+public sealed record ReferencePrincipal(string Subject, string Name, string Email, string Password, string SourceAccountId = "", string Phone = "", string Locale = "en");
 
 sealed class TestIdentity : IDashboardIdentity
 {
@@ -815,7 +806,7 @@ sealed class TestDocuments : IDocumentBackend
     private static Exception ProviderError(Type type, HttpStatusCode status, string message) => (Exception)Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.NonPublic, binder: null, args: [status, message, status == HttpStatusCode.PreconditionFailed ? "precondition_failed" : "name_taken", null], culture: null)!;
 }
 
-// Protocol fixtures are confined to this test binary. Production billing still
+// Protocol fixtures serve only the E2E suite and DEMO=true. Billing still
 // runs the official Stripe SDK, including its real request serialization.
 sealed class TestHttpFactory(HttpMessageHandler transport) : IHttpClientFactory
 {

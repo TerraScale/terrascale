@@ -103,7 +103,7 @@ public sealed class ReviewLiveInvitationAuthorityJourneyTests
 
         private async Task<Uri> HostAsync(string publicOrigin)
         {
-            var app = environment.CreateHost(Root, 0, publicOrigin, builder =>
+            var app = environment.CreateTestHost(Root, 0, publicOrigin, builder =>
             {
                 auth ??= (TestAuth)builder.Services.Last(service => service.ServiceType == typeof(IAuthGateway)).ImplementationInstance!;
                 Producer ??= new(auth.ResolveAccessToken);

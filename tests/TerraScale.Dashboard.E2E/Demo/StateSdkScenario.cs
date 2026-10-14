@@ -94,7 +94,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
         return await StartHostsAsync();
     }
 
-    private WebApplication Host() => environment.CreateHost(root, 0, "http://127.0.0.1", builder =>
+    private WebApplication Host() => environment.CreateTestHost(root, 0, "http://127.0.0.1", builder =>
     {
         var previousIdentity = (IDashboardIdentity)builder.Services.Last(service => service.ServiceType == typeof(IDashboardIdentity)).ImplementationInstance!;
         identity ??= new(previousIdentity, protocol);
