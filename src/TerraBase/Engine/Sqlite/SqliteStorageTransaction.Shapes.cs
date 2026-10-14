@@ -459,7 +459,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             using var admission = memory.TryReserve(MemoryLane.Bulk, bytes, store.Tenant) ?? throw new QosMemoryException();
             using var tokenAdmission = new ShapeMemory(memory, store.Tenant);
             long tokenBytes = 0;
-            var capture = new TailTransaction();
+            var capture = new TailTransaction(store.IsSystem);
             var rows = Command("""
                 SELECT change_type, table_name, after FROM turso_cdc
                 WHERE change_id > $after AND change_id <= $end ORDER BY change_id;
