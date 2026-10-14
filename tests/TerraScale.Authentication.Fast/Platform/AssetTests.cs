@@ -9,8 +9,10 @@ public sealed class AssetTests
     [Arguments("/admin/admin.css", "text/css")]
     [Arguments("/admin/datastar.js", "text/javascript")]
     [Arguments("/admin/logo.svg", "image/svg+xml")]
+    [Arguments("/admin/logo-icon-blue.svg", "image/svg+xml")]
     [Arguments("/fonts/oxanium-latin-wght-normal.woff2", "font/woff2")]
     [Arguments("/fonts/jetbrains-mono-latin-wght-normal.woff2", "font/woff2")]
+    [Arguments("/fonts/Geist-Variable.woff2", "font/woff2")]
     public async Task Bundled_assets_are_served_with_locked_down_headers(string path, string contentType)
     {
         await using var server = await AuthTestServer.StartAsync();
