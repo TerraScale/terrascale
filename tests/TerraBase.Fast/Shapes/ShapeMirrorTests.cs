@@ -796,8 +796,7 @@ public sealed class ShapeMirrorTests
             return new ShapeBody(chunk.Body.ToArray(), chunk.EndOffset.ToString(CultureInfo.InvariantCulture), false);
         }
 
-        private static ShapeSealer Sealer(IServiceProvider services) => new(services.GetRequiredService<IMemoryBudget>(),
-            NullLogger<ShapeSealer>.Instance, new SqliteShapeStorage(services.GetRequiredService<SqliteStorageEngine>()));
+        private static IShapeSealer Sealer(IServiceProvider services) => services.GetRequiredService<IShapeSealer>();
     }
 
     /// <summary>Serves the snapshot pages the production store wrote; a page that was never stored is refetched, not invented.</summary>
@@ -835,8 +834,7 @@ public sealed class ShapeMirrorTests
     {
         public IDatabaseStore Store { get; } = store;
 
-        public ShapeSealer Sealer => new(server.Services.GetRequiredService<IMemoryBudget>(), NullLogger<ShapeSealer>.Instance,
-            new SqliteShapeStorage(server.Services.GetRequiredService<SqliteStorageEngine>()));
+        public IShapeSealer Sealer => server.Services.GetRequiredService<IShapeSealer>();
 
         public static async Task<Database> OpenAsync(TerraBaseTestServer server, TenantContext tenant)
         {

@@ -47,7 +47,8 @@ internal interface IShapeStorageTransaction
 {
     /// <summary>
     /// Seals one whole-commit prefix, returning its end, this transaction's committed head and the bytes of the chunk this call
-    /// inserted with its admission (null when reused or nothing was sealed). The caller disposes it after commit or failure. With <paramref name="remote"/> nothing is sealed while
+    /// inserted with its admission (null when reused or nothing was sealed). The caller disposes it after commit or failure.
+    /// With <paramref name="remote"/> nothing is sealed while
     /// the remote durable frontier is below the head (values_at): the end is then <paramref name="offset"/>.
     /// </summary>
     ValueTask<(long Offset, long Head, ShapeSealedChunk? Chunk)> SealShapeChunkAsync(ShapeSealDefinition shape, long offset, long? through, bool remote,
@@ -242,8 +243,7 @@ internal sealed class ShapeSealer(
             while (!store.IsClosed)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var sealedFrom = offset;
-            var sequence = store.CommitSequence;
+                var sequence = store.CommitSequence;
                 var refused = false;
                 try
                 {

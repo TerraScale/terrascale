@@ -401,7 +401,7 @@ public sealed class ShapeSealTests
         var memory = new ObservedBudget(api.Server.Services.GetRequiredService<IMemoryBudget>());
         var storage = new ObservedShapeStorage(db.Storage);
         var published = new List<(long Offset, long EndOffset, byte[] Body, long SealedAt, long Admitted)>();
-        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, storage,
+        var sealer = new ShapeSealer(memory, NullLogger<ShapeSealer>.Instance, storage, new LocalDurability(),
             onSealed: (_, _, chunk) => published.Add((chunk.Offset, chunk.EndOffset, chunk.Body.ToArray(), chunk.SealedAt, memory.ReservedBytes)));
 
         await Assert.That(await sealer.SealUpToHeadAsync(db.Store, shape, start, CancellationToken.None)).IsEqualTo(head);
