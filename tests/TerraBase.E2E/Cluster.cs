@@ -260,6 +260,56 @@ public sealed class Cluster : IAsyncDisposable
         ? Flyctl.RunAsync("machine", "kill", Disposable.Machines[region], "--app", Disposable.App)
         : throw new NotSupportedException("a local SIGKILL needs separate processes (RegionProcesses)");
 
+    /// <summary>
+    /// Fly only: steps <paramref name="region"/>'s machine wall clock by <paramref name="skew"/> (<c>date -s</c> as root; the
+    /// VM runs no NTP daemon). Step back by the negative to restore; each step lags by the command's run time (about 1 ms).
+    /// </summary>
+    public Task<string> StepClockAsync(string region, TimeSpan skew) => FlyScriptAsync(region, $"""
+        now=$(date +%s%N); new=$((now + {(long)skew.TotalMilliseconds} * 1000000))
+        date -s "@$((new / 1000000000)).$(printf %09d $((new % 1000000000)))" > /dev/null
+        echo "stepped {(long)skew.TotalMilliseconds} ms: $now -> $(date +%s%N)"
+        """);
+
+    /// <summary>
+    /// Fly only: makes <paramref name="region"/> lose the document <paramref name="id"/> as a crash after a lost apply would:
+    /// freezes the machine's terrabase (SIGSTOP), deletes the id's rows from every table keyed by <c>id</c> in each database
+    /// file (sqlite3, installed into the test-only image's ephemeral rootfs), then SIGKILLs it; the on-failure restart policy
+    /// brings it back on the edited volume. Returns once the region is ready again.
+    /// </summary>
+    public async Task<string> LoseDocumentAsync(string region, string id)
+    {
+        var output = await FlyScriptAsync(region, $$"""
+            command -v sqlite3 > /dev/null || { apt-get update -qq > /dev/null 2>&1; apt-get install -y -qq sqlite3 > /dev/null 2>&1; } || exit 1
+            pid=$(grep -l '^terrabase$' /proc/[0-9]*/comm | head -1 | cut -d/ -f3)
+            [ -n "$pid" ] || exit 1
+            # From here the process is always killed, whatever the edit does: 2 s after this session ends, so its output returns.
+            trap 'nohup sh -c "sleep 2; kill -KILL $pid" > /dev/null 2>&1 &' EXIT
+            kill -STOP "$pid"
+            for f in /data/data/*/*/*.db; do
+              for t in $(sqlite3 "$f" "SELECT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) c WHERE m.type = 'table' AND c.name = 'id'"); do
+                n=$(sqlite3 "$f" "DELETE FROM \"$t\" WHERE id = '{{id}}'; SELECT changes();")
+                [ "$n" = 0 ] || echo "deleted $n from $t in $f"
+              done
+            done
+            """);
+        _ = await Converge.UntilAsync(async () =>
+        {
+            try
+            {
+                return await Docs.StatusAsync(this[region], new Uri("/readyz", UriKind.Relative));
+            }
+            catch (Exception error) when (error is HttpRequestException or RegionMismatchException)
+            {
+                return HttpStatusCode.ServiceUnavailable;
+            }
+        }, status => status == HttpStatusCode.OK, $"{region} ready after its SIGKILL", TimeSpan.FromMinutes(4));
+        return output;
+    }
+
+    // The script travels base64-encoded, so its quotes survive flyctl's command line and sh -c.
+    private Task<string> FlyScriptAsync(string region, string script) =>
+        FlySshAsync(region, $"echo {Convert.ToBase64String(Encoding.UTF8.GetBytes(script))} | base64 -d | sh");
+
     private Task<string> FlySshAsync(string region, string command) =>
         Flyctl.RunAsync("ssh", "console", "--app", Disposable.App, "--machine", Disposable.Machines[region], "-C", $"sh -c '{command}'");
 

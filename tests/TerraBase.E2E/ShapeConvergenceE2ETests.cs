@@ -79,28 +79,64 @@ public sealed class ShapeConvergenceE2ETests
     }
 
     [Test]
+    [Category("fly-outage")]
     [Scenario(Nodes.InProcess, Faults.NodeStop | Faults.FileTampering)]
     public async Task Shape_clients_converge_after_anti_entropy_repairs_a_lost_document()
     {
-        Skip.When(Cluster.FlyRequested, "edits a local node's database file");
+        SkipOnFlyUnlessFaultRun();
         await using var cluster = await Cluster.StartAsync(All);
         var readers = Readers(cluster);
         var documents = await WriteAsync(cluster, [.. All], 10);
         _ = await ConvergedAsync(cluster, readers, documents, "before the loss");
-        await cluster.StopAsync(Cluster.Sjc);
-        await RepairAndContractE2ETests.DeleteRowsAsync(cluster.DatabaseFile(Cluster.Sjc), documents[4].Id);
-        await cluster.StartAgainAsync(Cluster.Sjc);
+        var lost = documents[4].Id;
+        var started = Stopwatch.GetTimestamp();
+        if (Cluster.FlyRequested)
+        {
+            Console.WriteLine($"V2 loss on {cluster.Identity(Cluster.Sjc)}: {await cluster.LoseDocumentAsync(Cluster.Sjc, lost)}");
+        }
+        else
+        {
+            await cluster.StopAsync(Cluster.Sjc);
+            await RepairAndContractE2ETests.DeleteRowsAsync(cluster.DatabaseFile(Cluster.Sjc), lost);
+            await cluster.StartAgainAsync(Cluster.Sjc);
+        }
+
+        var missing = await Docs.ReadAsync(cluster[Cluster.Sjc], cluster.Document(lost)) is null;
+        Console.WriteLine($"V2 sjc back after {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0} ms; lost document {lost} absent on sjc: {missing}");
+        await Assert.That(missing).IsTrue().Because("sjc must really have lost the acknowledged document before the repair");
         _ = await ConvergedAsync(cluster, readers, documents, "after the anti-entropy repair", TimeSpan.FromSeconds(200));
     }
 
     [Test]
+    [Category("fly-outage")]
     [Scenario(Nodes.InProcess, Faults.ClockSkew)]
     [Arguments(Cluster.Sjc, 2000)]
     [Arguments(Cluster.Fra, -2000)]
     public async Task Shape_clients_converge_under_clock_skew(string skewed, int skewMilliseconds)
     {
-        Skip.When(Cluster.FlyRequested, "clock skew is set on the local nodes only");
-        await using var cluster = await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [skewed] = TimeSpan.FromMilliseconds(skewMilliseconds) });
+        SkipOnFlyUnlessFaultRun();
+        var skew = TimeSpan.FromMilliseconds(skewMilliseconds);
+        await using var cluster = Cluster.FlyRequested ? await Cluster.StartAsync(All) : await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [skewed] = skew });
+        if (Cluster.FlyRequested)
+        {
+            Console.WriteLine($"V2 skew {cluster.Identity(skewed)}: {await cluster.StepClockAsync(skewed, skew)}");
+        }
+
+        try
+        {
+            await SkewedAsync(cluster, skewed, skewMilliseconds);
+        }
+        finally
+        {
+            if (Cluster.FlyRequested)
+            {
+                Console.WriteLine($"V2 restore {cluster.Identity(skewed)}: {await cluster.StepClockAsync(skewed, -skew)}");
+            }
+        }
+    }
+
+    private static async Task SkewedAsync(Cluster cluster, string skewed, int skewMilliseconds)
+    {
         var readers = Readers(cluster);
         var documents = await WriteAsync(cluster, [.. All], 10);
         var shared = EntityIds.New().ToString();
@@ -113,6 +149,9 @@ public sealed class ShapeConvergenceE2ETests
         documents.Add((shared, settled.Value!.AsObject()));
         _ = await ConvergedAsync(cluster, readers, documents, $"clock skew {skewed} {skewMilliseconds:+0;-0} ms");
     }
+
+    private static void SkipOnFlyUnlessFaultRun() =>
+        Skip.When(Cluster.FlyRequested && !Cluster.FlyMachineFaults, "kills or skews Fly machines: run alone on a pinned disposable app (TERRABASE_E2E_FLY_OUTAGE=1)");
 
     private static Dictionary<string, ShapeReader> Readers(Cluster cluster) =>
         cluster.Regions.ToDictionary(region => region, region => new ShapeReader(cluster[region], $"{cluster.DatabasePath}/collections/{cluster.Collection}"), StringComparer.Ordinal);
