@@ -143,13 +143,13 @@ internal sealed class ShapeSnapshots(
             catch (StorageBusyException) when (durability.Confirms)
             {
                 // The head is not remote durable yet: a retained snapshot within the frontier and the floor still answers.
-                var published = await PublishedSnapshotAsync(reader, shape.Handle, cancellationToken).ConfigureAwait(false);
-                if (published.Offset < await storage.ShapeSnapshotFloorAsync(shape.Handle, cancellationToken).ConfigureAwait(false))
+                var retained = await PublishedSnapshotAsync(reader, shape.Handle, cancellationToken).ConfigureAwait(false);
+                if (retained.Offset < await storage.ShapeSnapshotFloorAsync(shape.Handle, cancellationToken).ConfigureAwait(false))
                 {
                     throw;
                 }
 
-                return published;
+                return retained;
             }
 
             var newest = await storage.NewestShapeSnapshotAsync(shape.Handle, cancellationToken).ConfigureAwait(false);

@@ -366,8 +366,8 @@ lands after #211. There is no runtime switch. Until then, every resume answers `
   reads of previously sealed objects; availability after proof loss is not guaranteed.
 - **Wake.** A seal that waits for `F` wakes on the next commit or after 1 second, whichever comes first, then retries,
   for at most 20 s; a read whose seal is still waiting then answers `503 unavailable`, and the background sealer backs
-  off before its next pass. A
-  stall on a joined commit also moves when a link to its origin connects, which signals no commit, so the 1 second poll
+  off before its next pass. A stall on a joined commit also moves when a link to its origin connects, which signals no
+  commit, so the 1 second poll
   is what sees it.
 - **Retention.** Three paths apply the hold: the replication tailer's trim, the continuous-backup tap's truncate, and the
   peer-ack path. Each keeps every row after the walked point while the first unwalked row is younger than 24 hours, once

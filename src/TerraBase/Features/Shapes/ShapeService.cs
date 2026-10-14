@@ -207,16 +207,15 @@ internal sealed class ShapeService(
                 return new MustRefetch(below.Message);
             }
 
-            // Committed here but not yet held by another region: never served, and never a reason to refetch (section 10).
-            // Above the head it names no snapshot. F is read first: it only rises and never passes the head.
-            if (snapshot > await sealer.FrontierAsync(store, cancellationToken).ConfigureAwait(false)
-                && snapshot <= await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false))
-            {
-                return new Unavailable("the snapshot is not remote durable yet; retry later");
-            }
-
             if (await snapshots.ReadPageAsync(store, lineage.Handle, snapshot, afterId, cancellationToken).ConfigureAwait(false) is not { } page)
             {
+                // A refused page can be committed but not remote durable. Published pages need no extra head reads.
+                if (snapshot > await sealer.FrontierAsync(store, cancellationToken).ConfigureAwait(false)
+                    && snapshot <= await ReadHeadAsync(store, cancellationToken).ConfigureAwait(false))
+                {
+                    return new Unavailable("the snapshot is not remote durable yet; retry later");
+                }
+
                 return new MustRefetch("the snapshot page is not sealed for this handle");
             }
 
