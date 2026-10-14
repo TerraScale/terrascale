@@ -100,6 +100,7 @@ internal sealed class ShapeMirror(IStorageEngine engine, IShapeStorage storage, 
     // Runs inside origin maintenance, so it only queues: Tigris I/O belongs to the worker, and a refusal waits for the next trim or hourly sweep.
     internal ValueTask FloorTrimmedAsync(IDatabaseStore store, string handle, long floor, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (store.Tenant is { } tenant && _objects is not null)
         {
             ValidateHandle(handle);
