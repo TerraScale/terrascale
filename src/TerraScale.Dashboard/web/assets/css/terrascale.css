@@ -23,6 +23,7 @@
 @import "../../../Features/Organizations/access.css" layer(features);
 @import "../../../Features/ApiKeys/api-keys.css" layer(features);
 @import "../../../Features/AuthenticationManagement/authentication.css" layer(features);
+@import "../../../Features/Analytics/analytics.css" layer(features);
 @import "../../../Features/Organizations/audit.css" layer(features);
 @import "../../../Features/Usage/usage.css" layer(features);
 @import "../../../Features/QuerySubscriptions/subscriptions.css" layer(features);
