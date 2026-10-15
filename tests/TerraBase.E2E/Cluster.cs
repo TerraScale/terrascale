@@ -260,6 +260,68 @@ public sealed class Cluster : IAsyncDisposable
         ? Flyctl.RunAsync("machine", "kill", Disposable.Machines[region], "--app", Disposable.App)
         : throw new NotSupportedException("a local SIGKILL needs separate processes (RegionProcesses)");
 
+    /// <summary>
+    /// Fly only: steps <paramref name="region"/>'s machine wall clock by <paramref name="skew"/> (<c>date -s</c> as root; the
+    /// VM runs no NTP daemon). Step back by the negative to restore; each step lags by the command's run time (about 1 ms).
+    /// </summary>
+    public Task<string> StepClockAsync(string region, TimeSpan skew) => FlyScriptAsync(region, $"""
+        now=$(date +%s%N); new=$((now + {(long)skew.TotalMilliseconds} * 1000000))
+        date -s "@$((new / 1000000000)).$(printf %09d $((new % 1000000000)))" > /dev/null
+        echo "stepped {(long)skew.TotalMilliseconds} ms: $now -> $(date +%s%N)"
+        """);
+
+    /// <summary>
+    /// Fly only: makes <paramref name="region"/> lose the acknowledged document <paramref name="id"/>, as a lost apply would.
+    /// The running terrabase holds its database files locked, so the machine is first updated to idle
+    /// (<c>sleep infinity</c>; terrabase stops on SIGTERM), then the id's rows are deleted from every table keyed by
+    /// <c>id</c> in each database file (sqlite3, installed into the test-only image's ephemeral rootfs), and terrabase is
+    /// started again. Returns the edit's output once the region is ready again.
+    /// </summary>
+    public async Task<string> LoseDocumentAsync(string region, string id)
+    {
+        var machine = Disposable.Machines[region];
+        _ = await Flyctl.RunAsync("machine", "update", machine, "--app", Disposable.App, "--entrypoint", "sleep infinity", "--skip-health-checks", "--yes");
+        try
+        {
+            var output = await FlyScriptAsync(region, $$"""
+                apt-get update -qq > /dev/null 2>&1; apt-get install -y -qq sqlite3 > /dev/null 2>&1
+                for f in /data/data/*/*/*.db; do
+                  for t in $(sqlite3 "$f" "SELECT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) c WHERE m.type = 'table' AND c.name = 'id'" 2>&1); do
+                    n=$(sqlite3 "$f" "DELETE FROM \"$t\" WHERE id = '{{id}}'; SELECT changes();" 2>&1)
+                    [ "$n" = 0 ] || echo "deleted $n from $t in $f"
+                  done
+                done
+                """);
+            await RestoreEntrypointAsync();
+            _ = await Converge.UntilAsync(async () =>
+            {
+                try
+                {
+                    return await Docs.StatusAsync(this[region], new Uri("/readyz", UriKind.Relative));
+                }
+                catch (Exception error) when (error is HttpRequestException or RegionMismatchException)
+                {
+                    return HttpStatusCode.ServiceUnavailable;
+                }
+            }, status => status == HttpStatusCode.OK, $"{region} ready on its edited volume", TimeSpan.FromMinutes(4));
+            return output;
+        }
+        catch
+        {
+            await RestoreEntrypointAsync();
+            throw;
+        }
+
+        // The image's own entrypoint: a merged --machine-config cannot clear the override.
+        Task<string> RestoreEntrypointAsync()
+        {
+            return Flyctl.RunAsync("machine", "update", machine, "--app", Disposable.App, "--entrypoint", "/app/terrabase", "--skip-health-checks", "--yes");
+        }
+    }
+    // The script travels base64-encoded, so its quotes survive flyctl's command line and sh -c.
+    private Task<string> FlyScriptAsync(string region, string script) =>
+        FlySshAsync(region, $"echo {Convert.ToBase64String(Encoding.UTF8.GetBytes(script))} | base64 -d | sh");
+
     private Task<string> FlySshAsync(string region, string command) =>
         Flyctl.RunAsync("ssh", "console", "--app", Disposable.App, "--machine", Disposable.Machines[region], "-C", $"sh -c '{command}'");
 
