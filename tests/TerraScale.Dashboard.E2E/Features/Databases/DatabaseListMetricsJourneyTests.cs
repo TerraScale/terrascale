@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 
@@ -56,7 +57,16 @@ public sealed class DatabaseListMetricsJourneyTests(DashboardRootFixture fixture
             return Task.FromResult<IResult?>(Results.Json(new { projectId, range = "7d", from = to.AddSeconds(-604800), to, bucketSeconds = bucket, items }));
         });
         using var client = scenario.CreateClient();
+        using var producer = scenario.CreateProviderClient();
         await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
+        using var identity = JsonDocument.Parse(await client.GetStringAsync("/api/v1/auth/me"));
+        using (var plan = await producer.PostAsJsonAsync("/__test/control", new
+        {
+            command = "plan",
+            organizationId = identity.RootElement.GetProperty("organizationId").GetString()!,
+            value = TerraScale.Dashboard.Features.Accounts.OrganizationRecord.StarterPlanId
+        }))
+            await Assert.That(plan.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         foreach (var name in new[] { "measured-list", "quiet-list", "current-list" })
         {
