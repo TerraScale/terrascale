@@ -13,32 +13,28 @@ public sealed class CatalogE2ETests
 {
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E12_database_created_in_sjc_is_usable_from_gru_and_one_same_name_database_survives_expected_to_fail()
+    public async Task E12_database_created_in_sjc_is_usable_from_gru_and_one_same_name_database_survives()
     {
-        await Gaps.RunAsync("E12", async () =>
+        await using var cluster = await Cluster.StartAsync();
+        await cluster.OwningDatabasesAsync(async created =>
         {
-            await using var cluster = await Cluster.StartAsync();
-            await cluster.OwningDatabasesAsync(async created =>
-            {
-                var name = NewName();
-                created.Add((Cluster.Sjc, name));
-                _ = await CreateAsync(cluster, Cluster.Sjc, name);
-                var path = $"{cluster.ProjectPath}/databases/{name}";
-                _ = await Converge.UntilAsync(() => Docs.StatusAsync(cluster[Cluster.Gru], Relative(path)), status => status == HttpStatusCode.OK, "sjc's database on gru");
-                _ = await Docs.PostAsync(cluster[Cluster.Gru], Relative($"{path}/collections"), new JsonObject { ["name"] = "items" });
-                await Docs.PutAsync(cluster[Cluster.Gru], Relative($"{path}/collections/items/documents/by-key?id={EntityIds.New()}"), new JsonObject { ["from"] = "gru" });
+            var name = NewName();
+            created.Add((Cluster.Sjc, name));
+            _ = await CreateAsync(cluster, Cluster.Sjc, name);
+            var path = $"{cluster.ProjectPath}/databases/{name}";
+            _ = await Converge.UntilAsync(() => Docs.StatusAsync(cluster[Cluster.Gru], Relative(path)), status => status == HttpStatusCode.OK, "sjc's database on gru");
+            _ = await Docs.PostAsync(cluster[Cluster.Gru], Relative($"{path}/collections"), new JsonObject { ["name"] = "items" });
+            await Docs.PutAsync(cluster[Cluster.Gru], Relative($"{path}/collections/items/documents/by-key?id={EntityIds.New()}"), new JsonObject { ["from"] = "gru" });
 
-                // Same name in both regions at once: a region that already sees the other's answers 409, which is fine.
-                var twin = NewName();
-                created.Add((Cluster.Gru, twin));
-                created.Add((Cluster.Sjc, twin));
-                _ = await Task.WhenAll(CreateAsync(cluster, Cluster.Gru, twin, HttpStatusCode.Conflict), CreateAsync(cluster, Cluster.Sjc, twin, HttpStatusCode.Conflict));
-                var twinPath = Relative($"{cluster.ProjectPath}/databases/{twin}");
-                _ = await Converge.UntilAsync(
-                    async () => (Gru: await IdAsync(cluster[Cluster.Gru], twinPath), Sjc: await IdAsync(cluster[Cluster.Sjc], twinPath)),
-                    pair => pair.Gru is not null && pair.Gru == pair.Sjc, "both regions serve one database of the twin name");
-
-            });
+            // Same name in both regions at once: a region that already sees the other's answers 409, which is fine.
+            var twin = NewName();
+            created.Add((Cluster.Gru, twin));
+            created.Add((Cluster.Sjc, twin));
+            _ = await Task.WhenAll(CreateAsync(cluster, Cluster.Gru, twin, HttpStatusCode.Conflict), CreateAsync(cluster, Cluster.Sjc, twin, HttpStatusCode.Conflict));
+            var twinPath = Relative($"{cluster.ProjectPath}/databases/{twin}");
+            _ = await Converge.UntilAsync(
+                async () => (Gru: await IdAsync(cluster[Cluster.Gru], twinPath), Sjc: await IdAsync(cluster[Cluster.Sjc], twinPath)),
+                pair => pair.Gru is not null && pair.Gru == pair.Sjc, "both regions serve one database of the twin name");
         });
     }
 
