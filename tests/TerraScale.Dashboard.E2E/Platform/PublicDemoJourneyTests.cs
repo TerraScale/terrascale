@@ -87,9 +87,13 @@ public sealed class PublicDemoJourneyTests
             await Assert.That(html).Contains($"data-auth-section=\"{section.Key}\"");
             await Assert.That(html).DoesNotContain(AuthenticationConsole.Unavailable).Because($"{section.Key} shows synthetic data, not the unavailable state.");
             await Assert.That(html).DoesNotContain("unavailable</p>").Because(section.Key);
-            if (section.Fields is not null || section.Key is "overview" or "sessions" or "audit" or "emails")
+            if (section.Fields is not null || section.Key is "overview" or "sessions" or "audit")
                 await Assert.That(Regex.IsMatch(html, @"<tbody>\s*<tr>")).IsTrue().Because($"{section.Key} lists fixture rows.");
         }
+        var preview = await client.GetStringAsync("/auth/emails/preview?template=Magic%20link&locale=en");
+        await Assert.That(preview).Contains("Preview of Magic link");
+        await Assert.That(preview).Contains("auth-email-subject");
+        await Assert.That(preview).Contains("Sign in to Northwind");
         var users = await client.GetStringAsync("/auth/users?q=globex");
         await Assert.That(users).Contains("Alan Turing").Because("Read-only search filters the rows.");
         await Assert.That(users).DoesNotContain("<td class=\"ts-table-strong\">Ada Lovelace</td>");
@@ -97,7 +101,7 @@ public sealed class PublicDemoJourneyTests
         var signIn = await client.GetStringAsync("/auth/sign-in");
         await Assert.That(signIn).Contains("role=\"switch\" aria-checked=\"true\"");
         await Assert.That(signIn).Contains("role=\"switch\" aria-checked=\"false\"");
-        foreach (var path in new[] { "/api/v1/auth-management/users", "/api/v1/auth-management/settings", "/api/v1/auth-management/instance" })
+        foreach (var path in new[] { "/api/v1/auth-management/users", "/api/v1/auth-management/settings", "/api/v1/auth-management/instance", "/api/v1/auth-management/emails" })
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["name"] = "x" }) };
             request.Headers.Add("Origin", demo.Origin.GetLeftPart(UriPartial.Authority));

@@ -288,12 +288,10 @@ button.ts-idp-provider:focus-visible {
   border-bottom: 0;
 }
 
+/* Done marker: a small semantic check, not a badge. */
 .ts-idp-check-icon {
   display: inline-grid;
   flex: none;
-  place-items: center;
-  width: 32px;
-  height: 32px;
   color: var(--ts-success);
 }
 
@@ -303,13 +301,83 @@ button.ts-idp-provider:focus-visible {
   text-decoration-color: var(--ts-ink-3);
 }
 
-.ts-idp-experience {
-  display: grid;
-  gap: var(--ts-s2);
+/* Overview: stat separators, label/value rows with hairlines, neutral method badges. */
+.ts-idp-stats::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: var(--ts-s5);
+  height: 1px;
+  background: var(--ts-line);
 }
 
-.ts-idp-experience > .ts-idp-chips + .ts-label {
-  margin-top: var(--ts-s2);
+.ts-idp-stats .ts-stat {
+  padding-top: var(--ts-s5);
+}
+
+.ts-idp-stat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--ts-chart-1);
+  flex: none;
+}
+
+.ts-idp-experience,
+.ts-idp-endpoints {
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
+  gap: 0 var(--ts-s6);
+}
+
+.ts-idp-experience > dt,
+.ts-idp-experience > dd,
+.ts-idp-endpoints > dt,
+.ts-idp-endpoints > dd {
+  padding: var(--ts-s3) 0;
+  border-bottom: 1px solid var(--ts-line);
+}
+
+.ts-idp-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s1);
+}
+
+.ts-idp-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--ts-s2);
+  border-radius: var(--ts-radius-sm);
+  background: var(--ts-surface-3);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
+}
+
+.ts-idp-issuer .ts-idp-copy-value {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@container page (width < 768px) {
+  .ts-idp-experience,
+  .ts-idp-endpoints {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .ts-idp-experience > dt,
+  .ts-idp-endpoints > dt {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  .ts-idp-experience > dd,
+  .ts-idp-endpoints > dd {
+    padding-top: var(--ts-s1);
+  }
 }
 
 /* Numbered steps (quickstart and step-up flow). */
@@ -451,9 +519,140 @@ button.ts-idp-provider:focus-visible {
 }
 
 .ts-idp-preview-button {
-  display: block;
   width: 100%;
   height: var(--ts-control-h);
+}
+
+.ts-idp-preview-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ts-s3);
+  width: 100%;
+}
+
+.ts-idp-preview-url {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s1);
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-idp-preview-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  font-weight: 600;
+}
+
+.ts-idp-color-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-idp-color-row > .ts-idp-color {
+  flex: none;
+  width: var(--ts-control-h);
+}
+
+.ts-segment[aria-pressed="true"] {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+}
+
+.ts-idp-form-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ts-s4);
+}
+
+.ts-idp-span {
+  grid-column: 1 / -1;
+}
+
+/* Template fields beside a rendered email; the preview is light like most inboxes. */
+.ts-idp-email {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
+  align-items: start;
+  gap: var(--ts-s6);
+}
+
+.ts-idp-email-preview {
+  display: grid;
+  gap: var(--ts-s4);
+  margin: 0;
+  padding: var(--ts-s6);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: #f4f5f7;
+  color: #16181d;
+}
+
+.ts-idp-email-meta {
+  display: grid;
+  gap: 2px;
+  color: #5a6070;
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-idp-email-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  font-weight: 600;
+}
+
+.ts-idp-email-brand > span {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: #2158e8;
+}
+
+.ts-idp-email-card {
+  display: grid;
+  gap: var(--ts-s3);
+  padding: var(--ts-s6);
+  border: 1px solid #e3e5ea;
+  border-radius: 10px;
+  background: #fff;
+  color: #3a3f4b;
+  font-size: var(--ts-fs-sm);
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+.ts-idp-email-heading {
+  color: #16181d;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.ts-idp-email-button {
+  justify-self: start;
+  padding: 9px 18px;
+  border-radius: 999px;
+  background: #2158e8;
+  color: #fff;
+  font-weight: 500;
+}
+
+.ts-idp-email-foot {
+  padding-top: var(--ts-s3);
+  border-top: 1px solid #e3e5ea;
+  color: #5f6574;
+  font-size: var(--ts-fs-xs);
+}
+
+@media (max-width: 79.99rem) {
+  .ts-idp-email,
+  .ts-idp-form-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .ts-idp-preview-link {
@@ -687,3 +886,8 @@ button.ts-idp-provider:focus-visible {
 @media (max-width: 47.99rem) {
   .ts-idp-mobile-nav { padding-left: 64px; min-height: 64px; }
 }
+
+.ts-idp-stat-dot[data-hue="2"] { background: var(--ts-chart-2); }
+.ts-idp-stat-dot[data-hue="3"] { background: var(--ts-chart-3); }
+.ts-idp-stat-dot[data-hue="4"] { background: var(--ts-chart-4); }
+.ts-idp-stat-dot[data-hue="5"] { background: var(--ts-chart-5); }
