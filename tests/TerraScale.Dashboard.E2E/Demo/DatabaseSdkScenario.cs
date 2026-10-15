@@ -354,7 +354,7 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
             {
                 var path = http.Request.Path.Value!;
                 if (http.Request.Method == "GET" && path.StartsWith("/v1/projects/", StringComparison.Ordinal) &&
-                    (path.EndsWith("/replication", StringComparison.Ordinal) || path.Contains("/schema/", StringComparison.Ordinal)))
+                    (path.EndsWith("/replication", StringComparison.Ordinal) || path.EndsWith("/analytics", StringComparison.Ordinal) || path.Contains("/schema/", StringComparison.Ordinal)))
                 {
                     var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
                     var projectId = parts.Length >= 4 ? parts[2] : "";
@@ -392,10 +392,11 @@ public sealed class DatabaseSdkScenario : IAsyncDisposable
                 }
                 if (path.StartsWith("/v1/projects/", StringComparison.Ordinal))
                 {
-                    if (http.Request.Method == "GET" && path.EndsWith("/replication", StringComparison.Ordinal))
+                    // Analytics shares the replication reporting envelope; both answer with no measurements by default.
+                    if (http.Request.Method == "GET" && (path.EndsWith("/replication", StringComparison.Ordinal) || path.EndsWith("/analytics", StringComparison.Ordinal)))
                     {
                         var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-                        Require(parts.Length == 4 && parts[3] == "replication", "Canonical project replication route");
+                        Require(parts.Length == 4 && parts[3] is "replication" or "analytics", "Canonical project reporting route");
                         var range = http.Request.Query["range"].ToString();
                         var (bucketSeconds, durationSeconds) = range switch
                         {

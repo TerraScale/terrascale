@@ -1,4 +1,6 @@
+using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.Databases;
@@ -25,8 +27,11 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
 
 public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Database, string Tab, IReadOnlyList<DatabaseRegion> Choices,
     IReadOnlyList<CollectionStats> Contents, string Error = "", string RegionsError = "", bool OpenDelete = false, bool Created = false, TerraScale.Dashboard.Features.Backups.BackupPage? Backups = null,
-    bool ContentsAvailable = false, TerraScale.Dashboard.Features.Usage.UsageReplication? Measurements = null, string Range = "24h")
+    bool ContentsAvailable = false, TerraScale.Dashboard.Features.Usage.UsageReplication? Measurements = null, string Range = "24h", DatabaseActivity? Activity = null)
 {
+    // Each activity card keeps its own range; changing one keeps the others as they are.
+    public string RangePath(string key, string range) => DatabaseService.Path(Database.Id) + "?" +
+        string.Join('&', Activity!.Cards.Select(card => card.Key + "=" + (card.Key == key ? range : card.Range))) + "#activity";
     public AccountContext Context => Shell.Context;
     public IReadOnlyList<DatabaseRecord> Branches => Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal).ToArray();
     public string Placement => DatabaseService.Regions(Database).Count == 0 ? DatabasesPage.RegionDisplay("")
@@ -58,8 +63,82 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
     };
 }
 
-public sealed record DatabaseReplicationModel(TerraScale.Dashboard.Features.Usage.UsageReplication Reading, string ProjectId, string DatabaseId, string Range)
+// One activity card with its own range; Plot is null when Message says why there is no chart.
+public sealed record DatabaseActivityCard(string Key, string Title, string Range, AnalyticsLinePlot? Plot, string Message, bool Failed = false);
+
+// Per-region activity for one database, read from the same TerraBase analytics route as /analytics, once per distinct card range.
+public sealed record DatabaseActivity(IReadOnlyList<DatabaseActivityCard> Cards, IReadOnlyList<AnalyticsRegionRow> Regions)
 {
+    public static readonly (string Key, string Title)[] Kinds = [("reads", "Reads"), ("writes", "Writes (put, patch, delete)"), ("storage", "Storage (bytes)"), ("latency", "p95 latency (µs)")];
+    // TerraBase meters committed document operations as read, put, patch and delete.
+    private static readonly string[] WriteOperations = ["put", "patch", "delete"];
+
+    // rangeFor returns an already normalized range for each card key.
+    public static async Task<DatabaseActivity> LoadAsync(IAnalyticsBackend backend, AccountContext context, string databaseId, Func<string, string> rangeFor, CancellationToken cancellationToken)
+    {
+        var cards = Kinds.Select(kind => new DatabaseActivityCard(kind.Key, kind.Title, rangeFor(kind.Key), null, "")).ToArray();
+        IReadOnlyList<AnalyticsRegionRow> latencyRegions = [];
+        foreach (var range in cards.Select(card => card.Range).Distinct().ToArray())
+        {
+            void Set(Func<DatabaseActivityCard, DatabaseActivityCard> update) { for (var i = 0; i < cards.Length; i++) if (cards[i].Range == range) cards[i] = update(cards[i]); }
+            try
+            {
+                var selection = AnalyticsSelection.For(context, "", databaseId, "", range);
+                var batch = await backend.ReadAsync(selection, cancellationToken);
+                if (batch.State == AnalyticsSourceState.Unavailable) { Set(card => card with { Message = "Activity measurements are unavailable." }); continue; }
+                if (batch.State == AnalyticsSourceState.NotMetered || batch.Points.Count == 0) { Set(card => card with { Message = "No activity measurements for this database in the last " + range + "." }); continue; }
+                // Build validates buckets and values the same way the analytics page does; the backend already bounds buckets to the reporting window.
+                var regions = AnalyticsService.Build(selection, batch.Points).Totals.Regions;
+                if (cards.Any(card => card.Key == "latency" && card.Range == range)) latencyRegions = regions;
+                var bucket = range switch { "1h" => 60, "24h" => 3600, "7d" => 21600, _ => 86400 };
+                var first = batch.Points.Min(point => point.Start.ToUniversalTime());
+                var last = batch.Points.Max(point => point.Start.ToUniversalTime());
+                var starts = Enumerable.Range(0, checked((int)((last - first).TotalSeconds / bucket) + 1)).Select(index => first.AddSeconds((long)index * bucket)).ToArray();
+                var plots = cards.Where(card => card.Range == range).ToDictionary(card => card.Key, card => AnalyticsLinePlot.For(card.Title + ", " + range, range, starts, regions.Select(region =>
+                {
+                    var values = new long[starts.Length];
+                    var missing = Enumerable.Repeat(true, starts.Length).ToArray();
+                    foreach (var point in batch.Points.Where(sample => sample.Region.Equals(region.Code, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        if (Measure(card.Key, point) is not { } value) continue;
+                        var index = (int)((point.Start.ToUniversalTime() - first).TotalSeconds / bucket);
+                        // Counters add up within a bucket; gauges (storage, p95) keep the highest observation and are never summed.
+                        values[index] = missing[index] ? value : card.Key is "reads" or "writes" ? checked(values[index] + value) : Math.Max(values[index], value);
+                        missing[index] = false;
+                    }
+                    return new AnalyticsSeries(region.Code, values, missing);
+                }).Where(series => series.Missing!.Contains(false)).ToArray()));
+                Set(card => card with { Plot = plots[card.Key], Message = "No " + card.Title.Split(' ')[0].ToLowerInvariant() + " samples in the last " + range + "." });
+            }
+            catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
+                error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            { Set(card => card with { Plot = null, Message = "Could not load activity measurements. Reload the page to retry.", Failed = true }); }
+        }
+        return new(cards, latencyRegions);
+    }
+
+    // Missing operation names stay missing; they are never reported as zero.
+    private static long? Measure(string key, AnalyticsPoint point) => key switch
+    {
+        "reads" => point.Operations.TryGetValue("read", out var reads) ? (long?)reads : null,
+        "writes" => WriteOperations.Any(point.Operations.ContainsKey) ? (long?)WriteOperations.Sum(name => point.Operations.GetValueOrDefault(name)) : null,
+        "storage" => point.StorageBytes,
+        _ => point.P95Ms is { } ms ? checked((long)Math.Round(ms * 1000, MidpointRounding.AwayFromZero)) : null,
+    };
+}
+
+public sealed record DatabaseReplicationModel(TerraScale.Dashboard.Features.Usage.UsageReplication Reading, string ProjectId, string DatabaseId, string Range, DatabaseRecord? Database = null, DatabaseActivity? Activity = null)
+{
+    // Map hubs exist only where overlays.css positions a node; other regions stay in the cards and tables.
+    public static readonly IReadOnlyDictionary<string, (double X, double Y)> Hubs = new Dictionary<string, (double, double)>(StringComparer.OrdinalIgnoreCase) { ["gru"] = (50.00, 59.76), ["fra"] = (71.16, 20.32), ["sjc"] = (21.21, 28.83), ["sfo"] = (21.00, 28.58) };
+    public IReadOnlyList<TerraScale.Dashboard.Features.Usage.UsageReplica> Replicas => Reading.Regions.Where(row => row.DatabaseId == DatabaseId).OrderBy(row => Regions.Rank(row.Region)).ToArray();
+    public static string Tone(string status) => status switch { "healthy" or "operational" => "success", "lagging" or "degraded" => "warning", "diverged" or "stopped" or "down" => "danger", _ => "neutral" };
+    public string Arc(string to)
+    {
+        var (x1, y1) = Hubs[Database!.Region]; var (x2, y2) = Hubs[to];
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"M {x1:0.00} {y1:0.00} Q {(x1 + x2) / 2:0.00} {Math.Min(y1, y2) - 12:0.00} {x2:0.00} {y2:0.00}");
+    }
+    public double? P95(string region) => Activity?.Regions.FirstOrDefault(row => row.Code.Equals(region, StringComparison.OrdinalIgnoreCase))?.LatestP95Ms;
     public string AnalyticsPath => "/analytics?database=" + Uri.EscapeDataString(DatabaseId) + "&project=" + Uri.EscapeDataString(ProjectId) + "&range=" + Range;
 }
 
