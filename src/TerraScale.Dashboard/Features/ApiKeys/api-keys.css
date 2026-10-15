@@ -210,9 +210,10 @@ dialog.ts-credential-dialog {
 }
 
 .ts-apikeys-kinds .ts-tab {
-  padding: var(--ts-s1) var(--ts-s2);
-  border: 0;
-  border-radius: 8px;
+  height: var(--ts-control-h);
+  padding: 0 var(--ts-s3);
+  border: 1px solid var(--ts-control-line);
+  border-radius: var(--ts-radius-pill);
   background: transparent;
   cursor: pointer;
   font-size: var(--ts-fs-sm);
