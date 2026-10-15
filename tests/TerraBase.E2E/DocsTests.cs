@@ -116,11 +116,11 @@ public sealed class DocsTests
     private static HttpClient Client(Func<HttpRequestMessage, HttpResponseMessage> answer) =>
         new(new Stand(answer)) { BaseAddress = new Uri("http://region.test") };
 
-    // Retry-After zero: the retry is exercised without waiting.
+    // Match the server's positive Retry-After for a refusal before execution.
     private static HttpResponseMessage Refused(string code)
     {
         var response = Unavailable($"{{\"error\":{{\"code\":\"{code}\",\"message\":\"m\"}}}}");
-        response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.Zero);
+        response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(1));
         return response;
     }
 

@@ -161,7 +161,8 @@ internal static class Docs
     }
 
     // Tenant admission answers 429 tenant_busy with Retry-After before it runs the request (QosExtensions, CommitEndpoint),
-    // so sending it again cannot repeat it. Any other answer is returned: tenant_memory can come after the request ran.
+    // so sending it again cannot repeat it. The outage probe alone also retries two explicit pre-execution 503 codes.
+    // Every other answer is returned: tenant_memory and write_outcome_unknown can come after the request ran.
     // A wait that would pass the convergence deadline returns the 429, and the caller reports it; token cancels the wait.
     internal static async Task<HttpResponseMessage> AdmittedAsync(Func<Task<HttpResponseMessage>> send, CancellationToken token = default, bool refusedBeforeRun = false)
     {
@@ -177,7 +178,7 @@ internal static class Docs
                     && ExecutedNothing(await response.Content.ReadAsStringAsync(token)))
                 {
                     var refusedWait = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(1);
-                    if (refusedWait >= TimeSpan.Zero && refusedWait <= Converge.Deadline - clock.Elapsed)
+                    if (refusedWait > TimeSpan.Zero && refusedWait <= Converge.Deadline - clock.Elapsed)
                     {
                         wait = refusedWait;
                     }
