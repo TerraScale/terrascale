@@ -358,8 +358,9 @@ public sealed class RemoteAckTests
             // write on, no refill is in flight and every later batch is live.
             pair.Refill.Below(marker.ChangeId);
             await pair.Refill.Retained.Task.WaitAsync(pair.Token);
-            var persisted = await pair.Source.AckedAsync(pair.Database, pair.PeerNode, pair.Token);
-            await Assert.That(persisted is { } acked && acked.Incarnation == marker.Incarnation && acked.Acked >= marker.ChangeId).IsTrue();
+            // The pass reads from the refill's ack in memory; the sender persists that ack behind the stream.
+            await TerraBaseTestServer.EventuallyAsync(async token => await pair.Source.AckedAsync(pair.Database, pair.PeerNode, token) is { } acked
+                && acked.Incarnation == marker.Incarnation && acked.Acked >= marker.ChangeId);
             await Assert.That(waiting.IsCompleted).IsFalse().Because("a refill covered the write, and the next live ACK must arrive while it waits");
             using (var later = await pair.Client.PutAsJsonAsync(pair.Document(EntityIds.New().ToString()), new { n = 2 }, pair.Token))
             {
