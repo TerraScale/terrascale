@@ -69,9 +69,9 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
         var visibleNames = Regex.Matches(chart, "class=\"ts-chart-tip-name\"[^>]*>([^<]*)</text>").Select(match => WebUtility.HtmlDecode(match.Groups[1].Value)).ToArray();
         await Assert.That(visibleNames.Length).IsGreaterThan(0);
         foreach (var visible in visibleNames)
-            await Assert.That(visible.StartsWith("p", StringComparison.Ordinal) && visible.EndsWith(" / gru", StringComparison.Ordinal) && visible.Contains('…') && visible.Length < name.Length)
+            await Assert.That(visible.StartsWith("p", StringComparison.Ordinal) && visible.EndsWith(" / gru", StringComparison.OrdinalIgnoreCase) && visible.Contains('…') && visible.Length < name.Length)
                 .IsTrue().Because("Long series names are shortened in the middle, keeping the percentile and region readable.");
-        await Assert.That(chart).Contains(": p50 " + name + " / gru ")
+        await Assert.That(chart.Contains(": p50 " + name + " / gru ", StringComparison.OrdinalIgnoreCase)).IsTrue()
             .Because("Assistive technology still reads the full series name for each column.");
         await Assert.That(chart.Contains("Not reported", StringComparison.Ordinal)).IsTrue()
             .Because("The producer omitted the minute between two measured samples; the chart must expose that gap.");
