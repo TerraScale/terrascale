@@ -107,14 +107,14 @@ public sealed class ProjectTokenTests
         try
         {
             var collections = Uri($"/v1/projects/{project}/databases/main/collections");
-            await ErrorAssert.ErrorAsync(client.GetAsync(collections), HttpStatusCode.TooManyRequests, "tenant_busy");
+            await ErrorAssert.ErrorAsync(client.GetAsync(collections), HttpStatusCode.TooManyRequests, "tenant_busy", "organization request budget exceeded");
             using (var onClient = await client.PutAsJsonAsync(Uri($"/admin/projects/{project}/plan"), new { plan = "enterprise" }))
             {
                 await Assert.That(onClient.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             }
 
             await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{project}/plan"), new { plan = "unlimited" }),
-                HttpStatusCode.BadRequest, "invalid_request");
+                HttpStatusCode.BadRequest, "invalid_request", "plan must be hobby, pro or enterprise");
             using (var set = await api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{project}/plan"), new { plan = "enterprise" }))
             {
                 await Assert.That(set.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -135,9 +135,9 @@ public sealed class ProjectTokenTests
         var owned = await api.CreateManagedDatabaseAsync("owned");
         await api.VerifyProjectBindingAsync(owned.Organization, owned.Project);
         await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{owned.Project}/plan"), new { plan = "enterprise" }),
-            HttpStatusCode.NotFound, "not_found");
+            HttpStatusCode.NotFound, "not_found", "the resource does not exist");
         await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{EntityIds.New()}/plan"), new { plan = "enterprise" }),
-            HttpStatusCode.NotFound, "not_found");
+            HttpStatusCode.NotFound, "not_found", "the resource does not exist");
     }
 
     [Test]
