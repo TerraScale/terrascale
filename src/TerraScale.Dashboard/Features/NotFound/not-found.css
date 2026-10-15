@@ -49,3 +49,32 @@
   height: clamp(44px, 3.5vw, 56px);
   font-size: clamp(14px, 1vw, 18px);
 }
+
+/* Signed-in 404: renders inside the app shell, centered, with no brand mark. */
+.ts-notfound-shell {
+  display: grid;
+  place-items: center;
+  min-height: 70vh;
+}
+
+.ts-notfound-shell .ts-notfound-copy {
+  gap: var(--ts-s4);
+  max-width: 520px;
+}
+
+.ts-notfound-shell .ts-notfound-copy .ts-notfound-num {
+  font-size: 120px;
+}
+
+.ts-notfound-shell .ts-notfound-copy .ts-auth-title {
+  font-size: 24px;
+}
+
+.ts-notfound-shell .ts-notfound-copy .ts-btn {
+  height: 36px;
+  font-size: 14px;
+}
+
+.ts-notfound-shell .ts-notfound-copy .ts-auth-subtitle {
+  font-size: var(--ts-fs-lg);
+}

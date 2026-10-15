@@ -167,16 +167,14 @@ public static class DashboardApplication
         app.MapDashboardMcp();
         app.MapDevelopmentUpdates();
         app.MapDashboardContracts();
-        app.MapFallback((HttpContext context) =>
+        app.MapFallback(async (HttpContext context, DashboardSessions sessions, AccountService accounts) =>
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             if (context.Request.Method != "GET" || context.Request.Path.StartsWithSegments("/api") ||
                 context.Request.Headers.Accept.Any(value => value is not null && (value.Contains("application/json") || value.Contains("text/event-stream"))) ||
                 context.Request.Headers.ContainsKey("Datastar-Request"))
                 return (IResult)Results.NotFound();
-            var view = Features.NotFound.NotFound.Create(new DocumentModel("Page not found", DocumentModel.NonceFor(context)));
-            view.StatusCode = StatusCodes.Status404NotFound;
-            return view;
+            return await Features.NotFound.NotFoundEndpoints.PageAsync(context, sessions, accounts);
         });
         return app;
     }
