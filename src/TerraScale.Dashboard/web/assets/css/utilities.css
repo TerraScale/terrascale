@@ -1,0 +1,6 @@
+/* Page titles keep the prototype phone and tablet scale across feature styles. */
+@media (max-width: 900px) {
+  .ts-page h1 {
+    font-size: var(--ts-fs-2xl);
+  }
+}

@@ -144,15 +144,23 @@
   overflow: hidden;
 }
 
-/* The bottom hairline starts where the content does, not at the shift. */
+/* The top and bottom hairlines start where the content does, not at the shift. */
+.ts-stats::before,
 .ts-stats::after {
   content: "";
   position: absolute;
   right: 0;
-  bottom: 0;
   left: var(--ts-s5);
   height: 1px;
   background: var(--ts-line);
+}
+
+.ts-stats::before {
+  top: 0;
+}
+
+.ts-stats::after {
+  bottom: 0;
 }
 
 .ts-stat {
@@ -170,9 +178,11 @@
   align-items: center;
   gap: var(--ts-s2);
   color: var(--ts-ink-3);
-  font-size: var(--ts-fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-family: var(--ts-font-mono);
+  font-size: 11.5px;
+  line-height: 16px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -273,9 +283,10 @@
     padding: var(--ts-s3) var(--ts-s3) var(--ts-s3) var(--ts-s5);
   }
 
-  .ts-stat-value {
-    font-size: var(--ts-fs-2xl);
+  .ts-stat:nth-child(n + 3) {
+    border-top: 1px solid var(--ts-line);
   }
+
 }
 
 /* Empty states. */

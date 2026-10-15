@@ -64,7 +64,7 @@
   --ts-fs-md: 14px;
   --ts-fs-lg: 16px;
   --ts-fs-xl: 20px;
-  --ts-fs-2xl: 26px;
+  --ts-fs-2xl: 24px;
   --ts-fs-3xl: 32px;
 
   /* Spacing on a 4px grid. */
@@ -111,7 +111,7 @@
   --ts-z-tooltip: 60;
 
   /* Shell. */
-  --ts-sidebar-width: 264px;
+  --ts-sidebar-width: 248px;
 }
 
 /* Section tones: every navigation destination owns one, and the page it

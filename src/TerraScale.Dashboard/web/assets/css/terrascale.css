@@ -34,3 +34,5 @@
 @import "../../../Features/Auth/auth.css" layer(features);
 @import "../../../Features/Onboarding/onboarding.css" layer(features);
 @import "../../../Features/NotFound/not-found.css" layer(features);
+
+@import "utilities.css" layer(utilities);
