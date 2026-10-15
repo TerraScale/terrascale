@@ -229,7 +229,7 @@ public sealed class Cluster : IAsyncDisposable
             return;
         }
 
-        using var listed = JsonDocument.Parse(await Flyctl.RunAsync("machine", "list", "--app", Disposable.App, "--json"));
+        using var listed = JsonDocument.Parse(await Flyctl.RunAsync(["machine", "list", "--app", Disposable.App, "--json"]));
         var ips = listed.RootElement.EnumerateArray().ToDictionary(machine => machine.GetProperty("id").GetString()!, machine => machine.GetProperty("private_ip").GetString()!);
         foreach (var other in others)
         {
@@ -260,7 +260,7 @@ public sealed class Cluster : IAsyncDisposable
 
     /// <summary>Fly only: SIGKILLs <paramref name="region"/>'s machine (<c>flyctl machine kill</c>); <see cref="StartAgainAsync"/> brings it back.</summary>
     public Task KillAsync(string region) => _local is null
-        ? Flyctl.RunAsync("machine", "kill", Disposable.Machines[region], "--app", Disposable.App)
+        ? Flyctl.RunAsync(["machine", "kill", Disposable.Machines[region], "--app", Disposable.App])
         : throw new NotSupportedException("a local SIGKILL needs separate processes (RegionProcesses)");
 
     /// <summary>
@@ -326,7 +326,7 @@ public sealed class Cluster : IAsyncDisposable
         FlySshAsync(region, $"echo {Convert.ToBase64String(Encoding.UTF8.GetBytes(script))} | base64 -d | sh");
 
     private Task<string> FlySshAsync(string region, string command) =>
-        Flyctl.RunAsync("ssh", "console", "--app", Disposable.App, "--machine", Disposable.Machines[region], "-C", $"sh -c '{command}'");
+        Flyctl.RunAsync(["ssh", "console", "--app", Disposable.App, "--machine", Disposable.Machines[region], "-C", $"sh -c '{command}'"]);
 
     public async ValueTask DisposeAsync()
     {

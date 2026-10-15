@@ -164,7 +164,10 @@ internal static class Docs
     // so sending it again cannot repeat it. The outage probe alone also retries two explicit pre-execution 503 codes.
     // Every other answer is returned: tenant_memory and write_outcome_unknown can come after the request ran.
     // A wait that would pass the convergence deadline returns the 429, and the caller reports it; token cancels the wait.
-    internal static async Task<HttpResponseMessage> AdmittedAsync(Func<Task<HttpResponseMessage>> send, CancellationToken token = default, bool refusedBeforeRun = false)
+    internal static Task<HttpResponseMessage> AdmittedAsync(Func<Task<HttpResponseMessage>> send, CancellationToken token = default) =>
+        AdmittedAsync(send, refusedBeforeRun: false, token: token);
+
+    private static async Task<HttpResponseMessage> AdmittedAsync(Func<Task<HttpResponseMessage>> send, bool refusedBeforeRun, CancellationToken token = default)
     {
         var clock = Stopwatch.StartNew();
         while (true)
