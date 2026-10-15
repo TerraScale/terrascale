@@ -25,7 +25,7 @@ public sealed record StartImportRequest(string? PreviewId);
 /// <param name="Bytes">Declared size.</param>
 /// <param name="Sha256">Declared SHA-256.</param>
 /// <param name="ReceivedBytes">Bytes staged so far.</param>
-/// <param name="Staged">Whether the complete source is staged.</param>
+/// <param name="Staged">Whether the complete source is staged for this job; always false once completed.</param>
 /// <param name="RetainedUntil">When a failed or cancelled job's staged source is deleted.</param>
 public sealed record ImportSourceBody(string Format, long Bytes, string Sha256, long ReceivedBytes, bool Staged, DateTimeOffset? RetainedUntil);
 
