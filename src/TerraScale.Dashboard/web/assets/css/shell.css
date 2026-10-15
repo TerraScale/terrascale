@@ -2,7 +2,6 @@
    account menu, and the mobile drawer. */
 
 .ts-shell {
-  --ts-sidebar-width: 256px;
   display: grid;
   grid-template-columns: var(--ts-sidebar-width) minmax(0, 1fr);
   min-height: 100dvh;
