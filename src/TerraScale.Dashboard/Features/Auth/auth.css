@@ -213,6 +213,11 @@
   gap: var(--ts-s4);
 }
 
+.ts-login-footer > a {
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-xs);
+}
+
 .ts-login-footer .ts-auth-locale .ts-select {
   width: 130px;
   height: 28px;
