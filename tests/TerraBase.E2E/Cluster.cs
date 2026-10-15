@@ -283,7 +283,7 @@ public sealed class Cluster : IAsyncDisposable
     public async Task<string> LoseDocumentAsync(string region, string id)
     {
         var machine = Disposable.Machines[region];
-        _ = await Flyctl.RunAsync("machine", "update", machine, "--app", Disposable.App, "--entrypoint", "sleep infinity", "--skip-health-checks", "--yes");
+        _ = await Flyctl.RunAsync(["machine", "update", machine, "--app", Disposable.App, "--entrypoint", "sleep infinity", "--skip-health-checks", "--yes"]);
         try
         {
             var output = await FlyScriptAsync(region, $$"""
@@ -318,7 +318,7 @@ public sealed class Cluster : IAsyncDisposable
         // The image's own entrypoint: a merged --machine-config cannot clear the override.
         Task<string> RestoreEntrypointAsync()
         {
-            return Flyctl.RunAsync("machine", "update", machine, "--app", Disposable.App, "--entrypoint", "/app/terrabase", "--skip-health-checks", "--yes");
+            return Flyctl.RunAsync(["machine", "update", machine, "--app", Disposable.App, "--entrypoint", "/app/terrabase", "--skip-health-checks", "--yes"]);
         }
     }
     // The script travels base64-encoded, so its quotes survive flyctl's command line and sh -c.
