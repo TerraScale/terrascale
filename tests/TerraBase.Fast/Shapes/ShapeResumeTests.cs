@@ -37,7 +37,7 @@ public sealed partial class ShapeResumeTests
         {
             var head = await ResumeAsync(api.Client, path, synced.Cursor, header);
             await Assert.That(head.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect).Because(head.Message ?? "no refusal message");
-            await Assert.That(head.CacheControl).IsEqualTo("no-store");
+            await Assert.That(head.CacheControl).IsEqualTo("no-store, private");
             await Assert.That(head.Location).IsEqualTo($"{path}?handle={synced.Handle}&offset={synced.Offset}");
         }
 
@@ -91,7 +91,7 @@ public sealed partial class ShapeResumeTests
         durability.Confirms = true;
         var capped = await ResumeAsync(api.Client, path, synced.Cursor);
         await Assert.That(capped.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect).Because(capped.Message ?? "no refusal message");
-        await Assert.That(capped.CacheControl).IsEqualTo("no-store");
+        await Assert.That(capped.CacheControl).IsEqualTo("no-store, private");
         await Assert.That(capped.Location).IsEqualTo($"{path}?handle={synced.Handle}&offset=0");
     }
 
@@ -294,7 +294,7 @@ public sealed partial class ShapeResumeTests
         await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(reply.Code).IsEqualTo("must_refetch");
         await Assert.That(reply.Handle).IsEqualTo(handle);
-        await Assert.That(reply.CacheControl).IsEqualTo("no-store");
+        await Assert.That(reply.CacheControl).IsEqualTo("no-store, private");
     }
 
     // Re-encodes the envelope's R8 cursor after `change`, keeping its marker and scope bytes.
