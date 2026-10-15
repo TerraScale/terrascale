@@ -303,6 +303,10 @@ public sealed class PeerStreamFaultIsolationTests
 
         var peer = receiver.Api.Server.Services.GetRequiredService<LocalReplica>().Id;
         var production = sender.Api.Server.Services.GetRequiredService<FaultAwareReplicaSource>();
+        // The stream ACK advances before #324's background writer persists the resume cursor.
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+            await production.AckedAsync(sender.Database, peer, token) is { } cursor
+            && cursor.Incarnation == marker.Incarnation && cursor.Acked >= marker.ChangeId, Deadline);
         var persisted = await production.AckedAsync(sender.Database, peer, deadline.Token)
             ?? throw new InvalidOperationException("the healthy tenant ACK cursor was refused");
         await Assert.That(persisted.Incarnation).IsEqualTo(marker.Incarnation);
