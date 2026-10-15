@@ -301,8 +301,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         var reading = responses.Reader.ReadAsync(activity.Token).AsTask();
         var pending = 0;
         ExceptionDispatchInfo? failure = null;
-        using var writer = new LinkWriter(call.RequestStream, _time, ReserveAsync);
         var ledger = new Ledger();
+        using var writer = new LinkWriter(call.RequestStream, _time, ReserveAsync);
         var receiving = ReceiveAsync();
         var heartbeats = HeartbeatAsync();
         var progress = ProgressAsync();
