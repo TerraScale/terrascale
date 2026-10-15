@@ -1,9 +1,11 @@
+using System.Diagnostics.Metrics;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using ReplicaCluster = TerraBase.Fast.Replication.PeerStreamTests.Cluster;
 using ReplicaMachine = TerraBase.Fast.Replication.PeerStreamTests.Machine;
 
@@ -23,7 +25,11 @@ public sealed class CollectionDropMemoryTests
     [Arguments(true)]
     public async Task A_drop_under_a_tight_foreground_budget_releases_each_document_before_the_next(bool unique)
     {
-        await using var cluster = await ReplicaCluster.StartAsync(cdc: true, "gru", "sjc");
+        await using var cluster = await ReplicaCluster.StartAsync(cdc: true, clock: null, configure: (_, services) =>
+        {
+            var memory = services.Last(service => service.ServiceType == typeof(IMemoryBudget));
+            services.AddSingleton<IMemoryBudget>(provider => new ForegroundBudget((IMemoryBudget)memory.ImplementationFactory!(provider)));
+        }, "gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         // About 4 KiB is admitted per small document, so all of them together need several times the headroom.
         var ids = await SeedAsync(gru, MaxWrites, unique);
@@ -90,31 +96,74 @@ public sealed class CollectionDropMemoryTests
         await Assert.That(await gru.UntilAckedAsync(gru.Cluster.Database, sjc.Node, await gru.HeadAsync(gru.Cluster.Database))).IsTrue();
     }
 
-    // Holds the machine's foreground budget until at least `headroom` and less than `headroom` + 1 KiB stay free.
-    private static Held Hold(ReplicaMachine machine, long headroom)
+    // A separate cap cannot regain headroom when unrelated background reservations are released.
+    private static IDisposable Hold(ReplicaMachine machine, long headroom) =>
+        ((ForegroundBudget)machine.Api.Server.Services.GetRequiredService<IMemoryBudget>()).Hold(headroom);
+
+    private sealed class ForegroundBudget(IMemoryBudget inner) : IMemoryBudget
     {
-        var budget = machine.Api.Server.Services.GetRequiredService<IMemoryBudget>();
-        var held = new Held();
-        using var kept = headroom == 0 ? null : budget.TryReserve(MemoryLane.Foreground, headroom)
-            ?? throw new InvalidOperationException("the foreground budget has no headroom to keep");
-        for (var chunk = 1L << 40; chunk >= 1024; chunk /= 2)
+        private Limit? _limit;
+
+        public IDisposable Hold(long headroom)
         {
-            while (budget.TryReserve(MemoryLane.Foreground, chunk) is { } reservation)
+            var limit = new Limit(this, headroom);
+            if (Interlocked.CompareExchange(ref _limit, limit, null) is not null)
             {
-                held.Add(reservation);
+                limit.Dispose();
+                throw new InvalidOperationException("the foreground budget is already held");
+            }
+            return limit;
+        }
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, QosContext.Current);
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant)
+        {
+            if (lane != MemoryLane.Foreground || Volatile.Read(ref _limit) is not { } limit)
+            {
+                return inner.TryReserve(lane, bytes, tenant);
+            }
+
+            if (limit.Budget.TryReserve(lane, bytes, tenant: null) is not { } capped)
+            {
+                return null;
+            }
+            if (inner.TryReserve(lane, bytes, tenant) is not { } admitted)
+            {
+                capped.Dispose();
+                return null;
+            }
+            return new Reservation(capped, admitted);
+        }
+
+        private sealed class Limit : IDisposable
+        {
+            private readonly ForegroundBudget _owner;
+            private readonly Meter _meter = new("CollectionDropMemoryTests");
+
+            public Limit(ForegroundBudget owner, long headroom)
+            {
+                _owner = owner;
+                Budget = new MemoryBudget(headroom, _meter);
+            }
+
+            public MemoryBudget Budget { get; }
+
+            public void Dispose()
+            {
+                _ = Interlocked.CompareExchange(ref _owner._limit, null, this);
+                _meter.Dispose();
             }
         }
 
-        return held;
-    }
-
-    private sealed class Held : List<IMemoryReservation>, IDisposable
-    {
-        public void Dispose()
+        private sealed class Reservation(IMemoryReservation capped, IMemoryReservation admitted) : IMemoryReservation
         {
-            foreach (var reservation in this)
+            public long Bytes => admitted.Bytes;
+
+            public void Dispose()
             {
-                reservation.Dispose();
+                admitted.Dispose();
+                capped.Dispose();
             }
         }
     }
