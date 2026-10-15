@@ -36,16 +36,6 @@
   }
 }
 
-/* Keep controls centered and the create action right-aligned when wrapping. */
-.ts-apikeys-page .ts-card-head {
-  align-items: center;
-}
-
-.ts-apikeys-page .ts-card-actions {
-  margin-left: auto;
-  justify-content: flex-end;
-}
-
 /* Credential type badge: the icon keeps its size in narrow table cells. */
 .ts-apikeys-type > svg {
   flex: none;
@@ -78,14 +68,11 @@
   gap: var(--ts-s1);
 }
 
-/* Keep the form and create action together when they fit. If the form itself
-   must wrap, let it take the available header width before the create action. */
-.ts-apikeys-page .ts-card-actions > .ts-apikeys-filters {
-  flex: 0 0 auto;
+/* Toolbar below the card header: search, type tabs, then the selects. */
+.ts-apikeys-filters {
   max-width: 100%;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
 }
 
 .ts-apikeys-filters > .ts-input {
@@ -208,11 +195,6 @@ dialog.ts-credential-dialog {
   }
 
   /* Filters stack full width, one control per row. */
-  .ts-apikeys-page .ts-card-actions > .ts-apikeys-filters {
-    flex-basis: 100%;
-    flex-wrap: wrap;
-  }
-
   .ts-apikeys-filters > .ts-input,
   .ts-apikeys-filters > .ts-select {
     flex-basis: 100%;
@@ -221,14 +203,17 @@ dialog.ts-credential-dialog {
 }
 
 .ts-apikeys-kinds {
+  flex: 0 1 auto;
+  max-width: 100%;
   gap: var(--ts-s1);
   border-bottom: 0;
 }
 
 .ts-apikeys-kinds .ts-tab {
-  padding: var(--ts-s1) var(--ts-s2);
-  border: 0;
-  border-radius: 8px;
+  height: var(--ts-control-h);
+  padding: 0 var(--ts-s3);
+  border: 1px solid var(--ts-control-line);
+  border-radius: var(--ts-radius-pill);
   background: transparent;
   cursor: pointer;
   font-size: var(--ts-fs-sm);
