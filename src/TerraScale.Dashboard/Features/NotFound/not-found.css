@@ -54,10 +54,10 @@
 .ts-notfound-shell {
   display: grid;
   place-items: center;
-  min-height: 70vh;
 }
 
 .ts-notfound-shell .ts-notfound-copy {
+  min-height: 70vh;
   gap: var(--ts-s4);
   max-width: 520px;
 }

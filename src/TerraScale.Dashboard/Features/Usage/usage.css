@@ -127,10 +127,17 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-block-end: var(--ts-s6);
+  margin-inline-start: 0;
   border-block: 1px solid var(--ts-line);
 }
 
+.ts-usage-replication .ts-stats::before,
+.ts-usage-replication .ts-stats::after {
+  content: none;
+}
+
 .ts-usage-replication .ts-stat {
+  margin-inline-start: 0;
   padding-block: var(--ts-s4);
 }
 
