@@ -86,7 +86,12 @@ for region in gru sjc fra; do
   fi
   # --ha=false: a deploy never adds Fly's default second machine. An unavailable region can be repaired by its new
   # image, but any deployment or live-check failure stops here. Storage-format recovery never wipes data automatically.
-  if ! { flyctl deploy -a "$app" -c "$config" --image "$image" --regions "$region" --ha=false --yes --wait-timeout 3m && live; }; then
+  vm_args=()
+  if [[ $app == ts-terrabase && $region == gru ]]; then
+    # All auth replicas use this write authority; shared CPU credits exhaust under its sustained load.
+    vm_args=(--vm-size performance-1x --vm-memory 2048)
+  fi
+  if ! { flyctl deploy -a "$app" -c "$config" --image "$image" --regions "$region" --ha=false --yes --wait-timeout 3m "${vm_args[@]}" && live; }; then
     echo "$app $region rollout failed; no automatic volume reset was attempted." >&2
     exit 1
   fi

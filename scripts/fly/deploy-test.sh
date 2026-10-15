@@ -90,6 +90,10 @@ steps() { grep -oE "^deploy .*--regions [a-z]+|^reset [a-z]+( --image)?" "$tmp/$
 
 run equal ts-terrabase "" || fail "equal formats failed: $(cat "$tmp/equal/out")"
 [[ $(steps equal) == "deploy gru,deploy sjc,deploy fra" ]] || fail "equal: $(steps equal)"
+grep -q '^deploy .*--regions gru .*--vm-size performance-1x --vm-memory 2048$' "$tmp/equal/calls" \
+  || fail "TerraBase authority lost its dedicated CPU sizing"
+! grep -E '^deploy .*--regions (sjc|fra) ' "$tmp/equal/calls" | grep -q -- '--vm-' \
+  || fail "non-authority TerraBase regions received authority sizing"
 grep -q "runs abc, storage format 2-new" "$tmp/equal/out" || fail "equal recorded: $(cat "$tmp/equal/out")"
 run digest ts-terrabase "" digest || fail "reset clone's digest-pinned image failed normal retry"
 [[ $(steps digest) == "deploy gru,deploy sjc,deploy fra" ]] || fail "digest retry changed rollout order"
@@ -123,6 +127,7 @@ grep -q 'could not inspect' "$tmp/list-failed/out" || fail "failed lookup was no
 ! run auth ts-auth "m-gru" || fail "ts-auth kept rolling out after a failed live check"
 [[ $(steps auth) == "deploy gru" ]] || fail "auth: $(steps auth)"
 ! grep -q "^docker" "$tmp/auth/calls" || fail "auth read a storage format"
+! grep -q -- '--vm-' "$tmp/auth/calls" || fail "auth received TerraBase authority sizing"
 
 run start-normal ts-auth "" start-normal || fail "normal explicit start failed: $(cat "$tmp/start-normal/out")"
 [[ $(steps start-normal) == "deploy gru,deploy sjc,deploy fra" ]] || fail "normal start stopped the rollout"
