@@ -3,6 +3,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
@@ -75,6 +76,29 @@ internal sealed partial class EngineManagementService : IProjectCatalog
             await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) is { } organization
                 ? organization
                 : ManagementErrors.NotFound, static error => error, cancellationToken);
+
+    public async ValueTask<SetPlanResult> SetEnrolledPlanAsync(string projectId, PlanTier plan, CancellationToken cancellationToken) =>
+        await WriteAsync<SetPlanResult>(async transaction =>
+        {
+            // Enrollment writes a binding without an authority organization and an organization without members, so no owner
+            // can set this plan; a legacy binding names the organization whose owners do.
+            if (await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) is not { } organizationId
+                || !await IsProjectBoundAsync(transaction, projectId, organizationId, cancellationToken).ConfigureAwait(false)
+                || await GetAsync(transaction, Bindings(projectId), "ts_auth", TerraBaseJsonContext.Default.ProjectCatalogBinding, cancellationToken)
+                    .ConfigureAwait(false) is not { AuthorityOrganizationId: null }
+                || await GetAsync(transaction, Organizations, organizationId, TerraBaseJsonContext.Default.Organization, cancellationToken)
+                    .ConfigureAwait(false) is not { } organization)
+            {
+                return ManagementErrors.NotFound;
+            }
+
+            organization = organization with { Plan = plan };
+            await PutAsync(transaction, Organizations, organization.Id, organization, TerraBaseJsonContext.Default.Organization, cancellationToken)
+                .ConfigureAwait(false);
+            await RecordAsync(transaction, organizationId, OperatorHandler.KeyId, "settings.plan_updated", projectId, PlanName(plan), cancellationToken)
+                .ConfigureAwait(false);
+            return organization;
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<VerifyProjectBindingResult> VerifyBindingAsync(
         string userId, string organizationId, string projectId, string authorityOrganizationId, string token, CancellationToken cancellationToken)
