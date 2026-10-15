@@ -217,7 +217,7 @@ internal static class BackupQualificationRun
             ops = new[] { new { op = "put", collection = cluster.Collection, id, document = body } },
         }, token);
         await RecordAcknowledgementsAsync(committed, versions, token);
-        _ = await Converge.ListedAsync(cluster, Docs.Digest(bodies.Select(pair => (pair.Key, pair.Value))), "checkpoint marker");
+        _ = await Converge.ListedAsync(cluster, Docs.Digest(bodies.Select(pair => (pair.Key, pair.Value))), "checkpoint marker", token);
         // The shipper stamps its commit row with its own wall clock in whole seconds, not with the marker's HLC version, and
         // a restore at T holds it only once that second ends by T. Kestrel's Date is a cache its heartbeat refreshes every
         // second, so a served Date can predate the commit; one that changes after the marker was listed everywhere was set
@@ -225,7 +225,7 @@ internal static class BackupQualificationRun
         var dates = await Task.WhenAll(cluster.Regions.Select(async region =>
         {
             var served = await ServedAtAsync(cluster[region], cluster.DatabasePath, token);
-            return await Converge.UntilAsync(() => ServedAtAsync(cluster[region], cluster.DatabasePath, token), date => date > served, $"a refreshed {region} server Date");
+            return await Converge.UntilAsync(() => ServedAtAsync(cluster[region], cluster.DatabasePath, token), date => date > served, $"a refreshed {region} server Date", token);
         }));
         return dates.Max().AddSeconds(1);
     }
@@ -269,7 +269,7 @@ internal static class BackupQualificationRun
         await Docs.EnsureSuccessAsync(window);
         return await window.Content.ReadFromJsonAsync<JsonElement>(token);
     }, window => window is { } found && found.GetProperty("latest").GetDateTimeOffset() >= from,
-        "a newer shipped backup checkpoint") is { } shipped ? shipped : throw new InvalidOperationException("no shipped checkpoint");
+        "a newer shipped backup checkpoint", token) is { } shipped ? shipped : throw new InvalidOperationException("no shipped checkpoint");
 
     private static async Task<Dictionary<string, Document>> CaptureVersionsAsync(HttpClient client, Cluster cluster, string organization, string project, string database,
         Dictionary<string, string> acknowledged, Dictionary<string, string> acknowledgedVersions, CancellationToken token)

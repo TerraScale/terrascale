@@ -178,13 +178,15 @@ public sealed class Cluster : IAsyncDisposable
 
     /// <summary>
     /// Takes <paramref name="region"/> down: the local node stops and keeps its data directory, or Fly stops the region's
-    /// machine. Requests to the region fail until <see cref="StartAgainAsync"/>.
+    /// machine. Requests to the region fail until <see cref="StartAgainAsync"/>. The token cancels flyctl; a local stop is
+    /// not canceled once begun.
     /// </summary>
-    public async Task StopAsync(string region)
+    public async Task StopAsync(string region, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         if (_local is null)
         {
-            await Flyctl.RunAsync("machine", "stop", Disposable.Machines[region], "--app", Disposable.App);
+            await Flyctl.RunAsync(["machine", "stop", Disposable.Machines[region], "--app", Disposable.App], token);
             return;
         }
 
@@ -196,11 +198,12 @@ public sealed class Cluster : IAsyncDisposable
         $"machine faults on Fly need a pinned disposable app ({FlyRevisionVariable} and {DisposableTarget.AppVariable})");
 
     /// <summary>Brings <paramref name="region"/> back on the same data (the same volume on Fly) after <see cref="StopAsync"/>.</summary>
-    public async Task StartAgainAsync(string region)
+    public async Task StartAgainAsync(string region, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         if (_local is null)
         {
-            await Flyctl.StartStoppedAsync(Disposable.App, Disposable.Machines[region]);
+            await Flyctl.StartStoppedAsync(Disposable.App, Disposable.Machines[region], token: token);
             return;
         }
 
@@ -226,7 +229,7 @@ public sealed class Cluster : IAsyncDisposable
             return;
         }
 
-        using var listed = JsonDocument.Parse(await Flyctl.RunAsync("machine", "list", "--app", Disposable.App, "--json"));
+        using var listed = JsonDocument.Parse(await Flyctl.RunAsync(["machine", "list", "--app", Disposable.App, "--json"]));
         var ips = listed.RootElement.EnumerateArray().ToDictionary(machine => machine.GetProperty("id").GetString()!, machine => machine.GetProperty("private_ip").GetString()!);
         foreach (var other in others)
         {
@@ -257,7 +260,7 @@ public sealed class Cluster : IAsyncDisposable
 
     /// <summary>Fly only: SIGKILLs <paramref name="region"/>'s machine (<c>flyctl machine kill</c>); <see cref="StartAgainAsync"/> brings it back.</summary>
     public Task KillAsync(string region) => _local is null
-        ? Flyctl.RunAsync("machine", "kill", Disposable.Machines[region], "--app", Disposable.App)
+        ? Flyctl.RunAsync(["machine", "kill", Disposable.Machines[region], "--app", Disposable.App])
         : throw new NotSupportedException("a local SIGKILL needs separate processes (RegionProcesses)");
 
     /// <summary>
@@ -280,7 +283,7 @@ public sealed class Cluster : IAsyncDisposable
     public async Task<string> LoseDocumentAsync(string region, string id)
     {
         var machine = Disposable.Machines[region];
-        _ = await Flyctl.RunAsync("machine", "update", machine, "--app", Disposable.App, "--entrypoint", "sleep infinity", "--skip-health-checks", "--yes");
+        _ = await Flyctl.RunAsync(["machine", "update", machine, "--app", Disposable.App, "--entrypoint", "sleep infinity", "--skip-health-checks", "--yes"]);
         try
         {
             var output = await FlyScriptAsync(region, $$"""
@@ -315,7 +318,7 @@ public sealed class Cluster : IAsyncDisposable
         // The image's own entrypoint: a merged --machine-config cannot clear the override.
         Task<string> RestoreEntrypointAsync()
         {
-            return Flyctl.RunAsync("machine", "update", machine, "--app", Disposable.App, "--entrypoint", "/app/terrabase", "--skip-health-checks", "--yes");
+            return Flyctl.RunAsync(["machine", "update", machine, "--app", Disposable.App, "--entrypoint", "/app/terrabase", "--skip-health-checks", "--yes"]);
         }
     }
     // The script travels base64-encoded, so its quotes survive flyctl's command line and sh -c.
@@ -323,7 +326,7 @@ public sealed class Cluster : IAsyncDisposable
         FlySshAsync(region, $"echo {Convert.ToBase64String(Encoding.UTF8.GetBytes(script))} | base64 -d | sh");
 
     private Task<string> FlySshAsync(string region, string command) =>
-        Flyctl.RunAsync("ssh", "console", "--app", Disposable.App, "--machine", Disposable.Machines[region], "-C", $"sh -c '{command}'");
+        Flyctl.RunAsync(["ssh", "console", "--app", Disposable.App, "--machine", Disposable.Machines[region], "-C", $"sh -c '{command}'"]);
 
     public async ValueTask DisposeAsync()
     {
@@ -346,7 +349,7 @@ public sealed class Cluster : IAsyncDisposable
     public Uri MetricsAddress(string region) => RequireLocal().MetricsAddress(region);
 
     /// <summary>Local nodes only: connected outbound peer streams reported by the internal listener.</summary>
-    public Task<JsonElement> ReplicationAsync(string region) => RequireLocal().ReplicationAsync(region);
+    public Task<JsonElement> ReplicationAsync(string region, CancellationToken token = default) => RequireLocal().ReplicationAsync(region, token);
 
     /// <summary>
     /// Local nodes only: sends the peer traffic between <paramref name="a"/> and <paramref name="b"/> through the link
@@ -404,9 +407,9 @@ public sealed class Cluster : IAsyncDisposable
         var path = backup ? "" : $"{projectPath}/databases/{Required("TERRABASE_E2E_FLY_DATABASE")}";
         if (target is not null)
         {
-            using var apps = JsonDocument.Parse(await Flyctl.RunAsync("apps", "list", "--org", target.Org, "--json"));
+            using var apps = JsonDocument.Parse(await Flyctl.RunAsync(["apps", "list", "--org", target.Org, "--json"]));
             DisposableTarget.CheckApp(target, apps.RootElement);
-            using var listed = JsonDocument.Parse(await Flyctl.RunAsync("machine", "list", "--app", target.App, "--json"));
+            using var listed = JsonDocument.Parse(await Flyctl.RunAsync(["machine", "list", "--app", target.App, "--json"]));
             DisposableTarget.CheckMachines(target, listed.RootElement);
         }
 
@@ -794,9 +797,13 @@ public sealed class Cluster : IAsyncDisposable
         public Uri MetricsAddress(string region) =>
             (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.MetricsAddress;
 
-        public Task<JsonElement> ReplicationAsync(string region) =>
-            (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.Client
-                .GetFromJsonAsync<JsonElement>(new Uri("/replication", UriKind.Relative));
+        public async Task<JsonElement> ReplicationAsync(string region, CancellationToken token)
+        {
+            var client = (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.Client;
+            using var response = await client.GetAsync(new Uri("/replication", UriKind.Relative), token);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<JsonElement>(token);
+        }
 
         public string ProjectPath => $"/v1/projects/{_project}";
 

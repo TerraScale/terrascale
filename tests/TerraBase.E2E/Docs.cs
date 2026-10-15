@@ -28,6 +28,15 @@ internal static class Docs
         await EnsureSuccessAsync(response);
     }
 
+    // PUT that is also sent again after 503 remote_region_unavailable or confirmation_busy, which the write route answers
+    // before it executes anything; write_outcome_unknown (or any other 503) is never sent again. Answers the write's
+    // durability as the region acknowledged it (remote_durable, local_durable), or null when the answer names none.
+    public static async Task<string?> PutRefusedBeforeRunAsync(HttpClient client, Uri uri, JsonNode body, CancellationToken token = default)
+    {
+        using var response = await SendAdmittedAsync(() => client.PutAsync(uri, Json(body, "application/json"), token), refusedBeforeRun: true, token: token);
+        return (await BodyAsync(response, token))?["durability"]?.GetValue<string>();
+    }
+
     public static async Task PatchAsync(HttpClient client, Uri uri, JsonNode merge, CancellationToken token = default)
     {
         using var response = await AdmittedAsync(() => client.PatchAsync(uri, Json(merge, "application/merge-patch+json"), token), token);
@@ -75,6 +84,19 @@ internal static class Docs
     {
         using var response = await AdmittedAsync(() => client.GetAsync(uri, token), token);
         return response.StatusCode == HttpStatusCode.NotFound ? null : await BodyAsync(response, token);
+    }
+
+    // A deleted document's answer: 404 with its retained tombstone's ETag, or null for a document never written (or collected).
+    public static async Task<string?> TombstoneAsync(HttpClient client, Uri uri, CancellationToken token = default)
+    {
+        using var response = await AdmittedAsync(() => client.GetAsync(uri, token), token: token);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return response.Headers.ETag?.Tag;
+        }
+
+        await EnsureSuccessAsync(response);
+        throw new HttpRequestException($"GET {uri} answered {(int)response.StatusCode}, not the deleted document's 404", null, response.StatusCode);
     }
 
     public static async Task<HttpStatusCode> StatusAsync(HttpClient client, Uri uri, CancellationToken token = default)
@@ -139,9 +161,13 @@ internal static class Docs
     }
 
     // Tenant admission answers 429 tenant_busy with Retry-After before it runs the request (QosExtensions, CommitEndpoint),
-    // so sending it again cannot repeat it. Any other answer is returned: tenant_memory can come after the request ran.
+    // so sending it again cannot repeat it. The outage probe alone also retries two explicit pre-execution 503 codes.
+    // Every other answer is returned: tenant_memory and write_outcome_unknown can come after the request ran.
     // A wait that would pass the convergence deadline returns the 429, and the caller reports it; token cancels the wait.
-    internal static async Task<HttpResponseMessage> AdmittedAsync(Func<Task<HttpResponseMessage>> send, CancellationToken token = default)
+    internal static Task<HttpResponseMessage> AdmittedAsync(Func<Task<HttpResponseMessage>> send, CancellationToken token = default) =>
+        SendAdmittedAsync(send, refusedBeforeRun: false, token: token);
+
+    private static async Task<HttpResponseMessage> SendAdmittedAsync(Func<Task<HttpResponseMessage>> send, bool refusedBeforeRun, CancellationToken token = default)
     {
         var clock = Stopwatch.StartNew();
         while (true)
@@ -151,6 +177,15 @@ internal static class Docs
             try
             {
                 wait = await BusyWaitAsync(response, Converge.Deadline - clock.Elapsed, token);
+                if (wait is null && refusedBeforeRun && response.StatusCode == HttpStatusCode.ServiceUnavailable
+                    && ExecutedNothing(await response.Content.ReadAsStringAsync(token)))
+                {
+                    var refusedWait = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(1);
+                    if (refusedWait > TimeSpan.Zero && refusedWait <= Converge.Deadline - clock.Elapsed)
+                    {
+                        wait = refusedWait;
+                    }
+                }
             }
             catch
             {
@@ -187,6 +222,19 @@ internal static class Docs
         catch (JsonException)
         {
             return null;
+        }
+    }
+
+    // Only the error code itself counts: a code named in a message, a body that is not JSON or the proxy's own 503 may have run.
+    private static bool ExecutedNothing(string answer)
+    {
+        try
+        {
+            return JsonNode.Parse(answer)?["error"]?["code"]?.GetValue<string>() is "remote_region_unavailable" or "confirmation_busy";
+        }
+        catch (Exception error) when (error is JsonException or InvalidOperationException)
+        {
+            return false;
         }
     }
 

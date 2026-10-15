@@ -181,10 +181,11 @@ terrabase-replication-matrix: terrabase-build
 	dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/*/*[Category=replication-matrix]' --minimum-expected-tests 16 --output detailed --no-ansi $(TEST_ARGS)
 
 # The local-only category: scenarios that only local nodes may run (every node stopped at once, whole databases created
-# and restored, a cursor's issuer stopped under the local stand-in for Fly's proxy) and the proxy/pin harness checks.
+# and restored, a cursor's issuer stopped under the local stand-in for Fly's proxy) and the proxy/pin and live outage
+# proof harness checks.
 # CI's required TerraBase test stage runs it; the deploy E2E job excludes the category with a visible filter. Exactly
 # $(E2E_LOCAL_TESTS) tests, each an actual pass or a harness check: a skip, a failure or a missing test fails the target.
-E2E_LOCAL_TESTS := 37
+E2E_LOCAL_TESTS := 55
 terrabase-e2e-local: terrabase-build
 	rm -f "$(E2E_RESULTS)"
 	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL -u TERRABASE_E2E_FLY_URL TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/*/*[Category=local-only]' --minimum-expected-tests $(E2E_LOCAL_TESTS) --output detailed --no-ansi $(TEST_ARGS) || status=$$?; \
