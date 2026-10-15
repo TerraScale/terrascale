@@ -41,7 +41,7 @@
                     {
                         <div class="ts-field">
                             <label class="ts-label" for="email">Email</label>
-                            <input class="ts-input@(Model.Mode == "login" ? "" : " ts-input-lg")" type="email" id="email" name="email" value="@Model.Email" autocomplete="email" placeholder="name@@company.com" required autofocus="@(Model.Mode == "code" ? "autofocus" : null)" aria-invalid="@(Model.EmailError.Length != 0 ? "true" : null)" aria-describedby="@(Model.EmailError.Length != 0 ? "email-error" : null)" />
+                            <input class="ts-input" type="email" id="email" name="email" value="@Model.Email" autocomplete="email" placeholder="name@@company.com" required autofocus="@(Model.Mode == "code" ? "autofocus" : null)" aria-invalid="@(Model.EmailError.Length != 0 ? "true" : null)" aria-describedby="@(Model.EmailError.Length != 0 ? "email-error" : null)" />
                             @if (Model.EmailError.Length != 0) { <p class="ts-field-error" id="email-error">@Model.EmailError</p> }
                         </div>
                     }
@@ -58,7 +58,7 @@
                         <div class="ts-field"><label class="ts-label" for="confirmPassword">Confirm new password</label>@(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.PasswordInput, TerraScale.Dashboard.UI.PasswordField>(new("confirmPassword", "new-password", Model.ConfirmPasswordError)))
                         @if (Model.ConfirmPasswordError.Length != 0) { <p class="ts-field-error" id="confirmPassword-error">@Model.ConfirmPasswordError</p> }</div>
                     }
-                    <button class="ts-btn ts-btn-primary ts-btn-block@(Model.Mode == "login" ? "" : " ts-btn-lg")" type="submit">@(Model.Mode switch { "login" => "Sign in", "code-verify" => "Continue", "reset-complete" => "Change password", _ => "Email me a code" })</button>
+                    <button class="ts-btn ts-btn-primary ts-btn-block" type="submit">@(Model.Mode switch { "login" => "Sign in", "code-verify" => "Continue", "reset-complete" => "Change password", _ => "Email me a code" })</button>
                 </form>
                 }
                 @if (Model.Mode == "login")
