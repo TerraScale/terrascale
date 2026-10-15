@@ -105,11 +105,21 @@
   }
 }
 
-.ts-import-formats > .ts-check {
+.ts-import-format {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
   padding: var(--ts-s3);
-  border: 1px solid var(--ts-line);
-  border-radius: var(--ts-radius);
+  border: 1px solid var(--ts-control-line);
+  border-radius: var(--ts-radius-lg);
+  cursor: pointer;
+  transition: background-color var(--ts-fast) var(--ts-ease), border-color var(--ts-fast) var(--ts-ease);
 }
-.ts-import-formats > .ts-check:has(input:checked) { border-color: var(--ts-accent); }
+.ts-import-format:hover { background: var(--ts-hover); }
+.ts-import-format:has(input:checked) { border-color: var(--ts-accent); background: var(--ts-accent-soft); }
+.ts-import-format:has(input:focus-visible) { outline: 2px solid var(--ts-focus); outline-offset: 2px; }
+.ts-import-format input { margin: 0; accent-color: var(--ts-accent); }
+.ts-import-format strong { display: block; color: var(--ts-ink); font-weight: 500; }
+.ts-import-format small { color: var(--ts-ink-3); font-size: var(--ts-fs-xs); }
 .ts-imports [data-import-issues="blocking"] { color: var(--ts-danger); }
 .ts-imports [data-import-issues="warning"] { color: var(--ts-warning); }

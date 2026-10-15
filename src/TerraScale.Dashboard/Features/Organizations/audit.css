@@ -11,7 +11,7 @@
 }
 
 .ts-audit-filters {
-  padding-bottom: var(--ts-s4);
+  padding: var(--ts-s4) var(--ts-s5);
   border-bottom: 1px solid var(--ts-line);
 }
 
