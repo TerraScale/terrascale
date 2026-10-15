@@ -107,3 +107,15 @@
 .ts-access-share-value {
   font-variant-numeric: tabular-nums;
 }
+
+/* Invitations and their form share the lower member-page row. */
+.ts-access-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
+  gap: var(--ts-s5);
+  align-items: start;
+}
+.ts-access-bottom .ts-access-invite { display: grid; }
+@media (max-width: 900px) {
+  .ts-access-bottom { grid-template-columns: minmax(0, 1fr); }
+}

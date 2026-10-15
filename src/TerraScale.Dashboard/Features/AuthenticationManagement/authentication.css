@@ -228,6 +228,12 @@ button.ts-idp-provider:focus-visible {
   gap: var(--ts-s3);
 }
 
+/* Group titles are small rows, not page-card titles (prototype pa-group-head). */
+.ts-idp-setting-card .ts-card-title {
+  font-size: var(--ts-fs-md);
+  font-weight: 500;
+}
+
 .ts-idp-settings {
   display: grid;
   list-style: none;
@@ -383,25 +389,29 @@ button.ts-idp-provider:focus-visible {
 /* Numbered steps (quickstart and step-up flow). */
 .ts-idp-steps {
   display: grid;
-  gap: var(--ts-s6);
+  gap: var(--ts-s2);
   list-style: none;
 }
 
 .ts-idp-step {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 32px minmax(0, 1fr);
   gap: var(--ts-s4);
+  padding: var(--ts-s4);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
 }
 
 .ts-idp-step-marker {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid color-mix(in oklab, var(--ts-ink-2) 45%, transparent);
-  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface-3);
   color: var(--ts-ink-2);
-  font-size: var(--ts-fs-sm);
+  font-size: var(--ts-fs-xs);
   font-weight: 700;
 }
 
