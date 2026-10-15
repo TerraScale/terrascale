@@ -361,17 +361,58 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         var incarnation = expected
             ?? (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is { } store ? (Ulid?)store.Incarnation : null);
         if (incarnation is not { } named
-            || await BeginAsync(database, named, write: false, cancellationToken).ConfigureAwait(false) is not (_, var transaction))
+            || await BeginAsync(database, named, write: false, cancellationToken).ConfigureAwait(false) is not (var opened, var transaction))
         {
             return null;
         }
 
         await using (transaction.ConfigureAwait(false))
         {
-            // One snapshot: the head is the change id the digests cover.
+            // One snapshot: the head is the change id the digests cover, and the feed head the seq they cover.
             var buckets = await transaction.ReadDigestsAsync(cancellationToken).ConfigureAwait(false);
-            return new ReplicaDigest(named, await transaction.GetHeadAsync(cancellationToken).ConfigureAwait(false), buckets);
+            var head = await transaction.GetHeadAsync(cancellationToken).ConfigureAwait(false);
+            var feed = opened.IsSystem ? 0 : await transaction.ReadShapeFrontierAsync(remote: false, cancellationToken).ConfigureAwait(false);
+            return new ReplicaDigest(named, head, buckets, feed);
         }
+    }
+
+    public async ValueTask<bool> MatchedAsync(TenantContext database, ReplicaDigest digest, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(digest);
+        if (digest.Head <= 0 || await BeginAsync(database, digest.Incarnation, write: false, cancellationToken).ConfigureAwait(false) is not (var store, var read))
+        {
+            return false;
+        }
+
+        // Read first: a frontier already at the digest's feed head, the usual case, takes no writer.
+        await using (read.ConfigureAwait(false))
+        {
+            if (store.IsSystem || !store.RequiresRemoteProof
+                || await read.ReadShapeFrontierAsync(remote: true, cancellationToken).ConfigureAwait(false) >= digest.Feed)
+            {
+                return false;
+            }
+        }
+
+        if (await BeginAsync(database, digest.Incarnation, write: true, cancellationToken).ConfigureAwait(false) is not (_, var transaction))
+        {
+            return false;
+        }
+
+        bool moved;
+        await using (transaction.ConfigureAwait(false))
+        {
+            moved = await transaction.RebaseShapeFrontierAsync(digest.Head, digest.Feed, cancellationToken).ConfigureAwait(false);
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        if (moved)
+        {
+            // Wakes shape sealing and live reads waiting for the frontier.
+            store.MoveCommitCount();
+        }
+
+        return moved;
     }
 
     public async ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)?> ReadBucketsAsync(

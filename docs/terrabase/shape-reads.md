@@ -382,7 +382,7 @@ lands after #211. There is no runtime switch. Until then, every resume answers `
   that moment, so a replica that only joins another region's writes releases them without an ack of its own. These bounds
   constrain this hold; other retention anchors can still retain more capture. Expiration or eviction can make an
   unproven prefix permanently unavailable; it never certifies it.
-- **Fail closed.** For this incarnation, the walk stops and holds `F` where it is. Exact cases:
+- **Fail closed.** For this incarnation, the walk stops and holds `F` where it is until a digest match (below). Exact cases:
   - **Own commit, no proof.** An own commit advances only from a live acknowledgement range `(From, To]` whose
     `ProveAsync` commits. `ProveAsync` runs before `AckAsync` records the ack, and checks the incarnation under the writer
     itself. A range goes unproven when: the process crashes after the ack is received and before the proof transaction
@@ -406,6 +406,11 @@ lands after #211. There is no runtime switch. Until then, every resume answers `
     at that row and retries it on each pass. Seals wait for the frontier and snapshots remain unpublished.
   - **Feed seq gap.** A seq that does not continue `F + 1`, as with a copied or restored feed whose capture does not
     continue from `F`. Permanent for this incarnation, so retention holds nothing for it.
+- **Digest match.** The walk's stops above end once an anti-entropy round (every 60 s) finds a machine of another placed
+  region answering bucket digests equal to this copy's: that machine holds every value of the snapshot the digests were
+  read in, so `F` rises to that snapshot's feed head and the walk goes on from its last change id. Only forward, only for
+  the incarnation compared, and only while the change log still holds the rows after that snapshot. Writes that never
+  stop arriving can keep the digests from matching.
 - **Starvation.** A head ahead of `F` is never persisted. In a cell, a seal waits for `F` to cover the head it
   materializes at, and a snapshot publishes only when `F ≥ S`. While any case above holds `F`, seals and snapshot
   publication wait. `-1` keeps answering the newest published snapshot, and a snapshot request with no published

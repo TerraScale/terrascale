@@ -111,8 +111,45 @@ internal sealed partial class SqliteStorageTransaction
             return false;
         }
 
+        WriteShapeFrontier(frontier, scanned, text);
+        return frontier > start;
+    }
+
+    /// <summary>
+    /// Raises the frontier to <paramref name="seq"/>, the feed head read in the same snapshot as <paramref name="changeId"/>
+    /// (its newest captured change id), once a machine of another placed region answered bucket digests equal to that
+    /// snapshot's: it holds every value at it, including what the walk cannot prove (a repair, an origin of a past epoch).
+    /// Uncaptured. True when it moved.
+    /// </summary>
+    internal async ValueTask<bool> RebaseShapeFrontierAsync(long changeId, long seq, CancellationToken cancellationToken)
+    {
+        if (store.IsSystem || changeId <= 0)
+        {
+            return false;
+        }
+
+        await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
+        return await RunAsync(() =>
+        {
+            var (frontier, scanned, ranges) = ShapeFrontier() ?? (0, 0, []);
+            // Only forward, and only where the walk can go on: the rows past the snapshot are still captured.
+            if (scanned >= changeId || seq <= frontier || seq > ShapeFeedHead()
+                || (Command("SELECT min(change_id) FROM turso_cdc;").ExecuteScalar() is long oldest && oldest > changeId + 1))
+            {
+                return false;
+            }
+
+            _ = ranges.RemoveAll(range => range.To <= changeId);
+            WriteShapeFrontier(seq, changeId, RangesText(ranges));
+            return true;
+        }, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    // Worker-only: persists the sentinel row under this file's incarnation.
+    private void WriteShapeFrontier(long frontier, long scanned, string ranges)
+    {
         var incarnation = Command(SqliteStatements.Incarnation).ExecuteScalar() as string ?? throw new InvalidDataException("database incarnation is missing");
-        var body = Encoding.UTF8.GetBytes(string.Create(CultureInfo.InvariantCulture, $"2 {incarnation} {scanned}{text}"));
+        var body = Encoding.UTF8.GetBytes(string.Create(CultureInfo.InvariantCulture, $"2 {incarnation} {scanned}{ranges}"));
         var update = Command("UPDATE _tb_shape_chunk SET end_offset = $frontier, body = $body WHERE handle = $handle AND offset = 0;");
         update.Parameters.AddWithValue("$handle", ShapeFrontierHandle);
         update.Parameters.AddWithValue("$frontier", frontier);
@@ -125,8 +162,6 @@ internal sealed partial class SqliteStorageTransaction
             insert.Parameters.AddWithValue("$body", body);
             insert.ExecuteNonQuery();
         }
-
-        return frontier > start;
     }
 
     // The ranges in body form, ordered: " from:to" each.

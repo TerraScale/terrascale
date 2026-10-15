@@ -1090,6 +1090,38 @@ public sealed class RemoteAckTests
     }
 
     [Test]
+    public async Task Equal_digests_of_another_region_release_a_frontier_its_walk_stopped_at_for_good()
+    {
+        await using var pair = await Pair.StartAsync();
+        // As after the origin restarts under a new epoch: no live link names the joined row's origin, so the peer's walk stops
+        // there on every pass, and only another proof can serve the peer's shapes again.
+        pair.PeerProof.Blind = true;
+        var id = EntityIds.New().ToString();
+        using (var put = await pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token))
+        {
+            await Assert.That(put.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        }
+
+        var store = await pair.PeerStoreAsync();
+        var stopped = await pair.PeerSealer.FrontierAsync(store, pair.Token);
+        var bootstrap = new Uri($"{pair.DatabasePath}/collections/{Collection}/shape?offset=-1", UriKind.Relative);
+        using (var busy = await pair.PeerClient.GetAsync(bootstrap, pair.Token))
+        {
+            await Assert.That(busy.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests)
+                .Because($"no snapshot can seal above the stopped frontier: {await pair.PeerFrontierAsync()}");
+        }
+
+        // An anti-entropy round finds the origin's digests equal: gru holds every value the peer has.
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            await pair.PeerAntiEntropy.RunRoundAsync(token);
+            using var response = await pair.PeerClient.GetAsync(bootstrap, token);
+            return response.StatusCode == HttpStatusCode.TemporaryRedirect;
+        }, timeout: TimeSpan.FromSeconds(30));
+        await Assert.That(await pair.PeerSealer.FrontierAsync(store, pair.Token)).IsGreaterThan(stopped);
+    }
+
+    [Test]
     public async Task A_frontier_hold_past_the_row_bound_ends_the_hold_while_changes_are_young()
     {
         await using var api = await Documents.DocumentApi.StartAsync();
@@ -1378,6 +1410,8 @@ public sealed class RemoteAckTests
             }, "a test reading persisted chunks", Token);
 
         public Task<string> PeerFrontierAsync() => FrontierStateAsync(_peer!.Server);
+
+        public AntiEntropy PeerAntiEntropy => _peer!.Server.Services.GetRequiredService<AntiEntropy>();
 
         public Task<string> OriginFrontierAsync() => FrontierStateAsync(_origin!.Server);
 
