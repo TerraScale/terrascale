@@ -146,6 +146,21 @@ public sealed class Cluster : IAsyncDisposable
 
     internal Task ShipBackupAsync(CancellationToken token) => _local is null ? Task.CompletedTask : _local.ShipBackupAsync(token);
 
+    /// <summary>
+    /// gru, sjc and fra whose shapes mirror to an object store (FR-22): local nodes share one fake bucket; Fly's machines
+    /// already mirror to the app's Tigris bucket, so on Fly this is an ordinary collection-owning cluster.
+    /// </summary>
+    internal static Task<Cluster> StartMirroredAsync() =>
+        FlyRequested ? StartFlyAsync([Gru, Sjc, Fra]) : StartLocalAsync([Gru, Sjc, Fra], new Dictionary<string, TimeSpan>(), new FakeS3());
+
+    /// <summary>
+    /// A client of the object store behind presigned shape URLs, carrying no TerraBase credential: on Fly the public internet,
+    /// locally the region's route to its fake bucket. The caller disposes it.
+    /// </summary>
+    internal HttpClient ObjectClient(string region) => _local is null
+        ? new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = Converge.Deadline }
+        : _local.ObjectClient(region);
+
     /// <summary>Starts <paramref name="regions"/> with <paramref name="skews"/> setting a local node's clock ahead (positive) or behind its peers.</summary>
     public static Task<Cluster> StartAsync(string[] regions, IReadOnlyDictionary<string, TimeSpan>? skews)
     {
@@ -549,7 +564,8 @@ public sealed class Cluster : IAsyncDisposable
         DelegatingHandler pin = machine is null
             ? new RegionPin(region)
             : new MachinePin(region, machine, served is null ? null : (served, servedMachine));
-        pin.InnerHandler = new SocketsHttpHandler();
+        // Never follow a redirect: the shape bootstrap's 307 is an answer to check, and a followed one drops the bearer.
+        pin.InnerHandler = new SocketsHttpHandler { AllowAutoRedirect = false };
         var client = new HttpClient(pin) { BaseAddress = url, Timeout = Timeout.InfiniteTimeSpan };
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key);
         return client;
@@ -661,6 +677,10 @@ public sealed class Cluster : IAsyncDisposable
                 return true;
             }, CancellationToken.None, "an e2e storage stall");
         }
+
+        public HttpClient ObjectClient(string region) =>
+            (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.Services
+                .GetRequiredService<IHttpClientFactory>().CreateClient(S3ObjectStore.HttpClientName);
 
         public string DataDirectory(string region) => _nodes[region].DataDirectory;
 
