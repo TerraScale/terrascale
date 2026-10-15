@@ -9,7 +9,7 @@
 | --- | --- |
 | Every answer of `GET …/collections/{collection}/shape` (origin, T0): `200` (snapshot page, chunk, fresh, live), `304`, both `307`s, every error including `401` and `403` | `private, no-store` |
 | Shape key endpoint | `private, no-store` (key errors included) |
-| Shape manifest endpoint (FR-22, pending integration) | `private, no-store` |
+| Shape manifest endpoint (FR-22) | `private, no-store` |
 | TBS1 ciphertext objects in Tigris (T1) | `public, max-age=31536000, immutable` (FR-22, `ShapeObjectStore.CacheControl`) |
 
 Only TBS1 ciphertext is ever shared-cacheable. Origin bodies are tenant plaintext, and every origin answer depends on
@@ -22,7 +22,7 @@ application errors remain `no-store`. None carries tenant plaintext from a shape
 
 ## As built
 
-- `OriginNoStore` endpoint metadata marks `getShape` and `getShapeKey`. `UseTerraBaseShapeNoStore`, registered right after routing, adds a
+- `OriginNoStore` endpoint metadata marks `getShape`, `getShapeKey` and `getShapeManifest`. `UseTerraBaseShapeNoStore`, registered right after routing, adds a
   `Response.OnStarting` callback for marked routes that sets `private, no-store` last. It therefore also covers `401`,
   `403`, `429` and the errors that `BadRequests` and `ErrorResponse` write as `no-store`, and survives
   `Response.Clear`. Other routes keep their own headers; the global error writers are unchanged.
@@ -36,8 +36,8 @@ application errors remain `no-store`. None carries tenant plaintext from a shape
 
 ## T1 (Tigris) requirements, from V4 (#301)
 
-FR-22 (#283, open) sets the Tigris header at the one-time conditional PUT. After #283 merges, these must hold and be
-tested against `FakeS3` and live Tigris before FR-24 qualification completes:
+FR-22 (#283) sets the Tigris header at the one-time conditional PUT. Fast regressions and the isolated Tigris proof
+cover the following; production header qualification runs through the live E2E suite (#320):
 
 1. `public, max-age=31536000, immutable` only on TBS1 objects; PUT is `If-None-Match: *`, so a key never maps to
    other bytes.
@@ -51,7 +51,7 @@ tested against `FakeS3` and live Tigris before FR-24 qualification completes:
 5. Presigned URLs expire at `(E_now + 1) × 600` (#283 does). Tigris sets the headers of its own `403` and `404`
    answers; TerraBase cannot. The FR-24 isolated proof records them; no error-cache behavior is claimed before that evidence exists.
 
-Enabled only after A1 (#271) enforces the peer credential, so a forged peer write cannot be sealed and shared.
+Merge is held until A1 (#271) enforces the peer credential, so a forged peer write cannot be sealed and shared.
 
 TBS1 exposes exact sizes, epoch (seal time to ten minutes), and the project-wide KID (including its ULID creation
 time). These link objects until key rotation, as measured in V4 finding F2. Shared caching does not hide this metadata.

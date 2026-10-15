@@ -451,6 +451,9 @@ public sealed class ShapeApiTests
             (HttpStatusCode.Unauthorized, await GetShapeAsync(anonymous, page, ("If-None-Match", etag))),
             (HttpStatusCode.Unauthorized, await GetShapeAsync(anonymous, Shape(api, "/keys?handle=" + Handle))),
             (HttpStatusCode.Forbidden, await GetShapeAsync(writeOnly, Shape(api, "/keys?handle=" + Handle))),
+            (HttpStatusCode.Unauthorized, await GetShapeAsync(anonymous, Shape(api, "/manifest?handle=" + Handle + "&offset=0"))),
+            (HttpStatusCode.Forbidden, await GetShapeAsync(writeOnly, Shape(api, "/manifest?handle=" + Handle + "&offset=0"))),
+            (HttpStatusCode.BadRequest, await GetShapeAsync(api.Client, Shape(api, "/manifest?offset=bad"))),
         };
 
         foreach (var (status, reply) in answers)
@@ -469,10 +472,12 @@ public sealed class ShapeApiTests
         await using var api = await StartWithFixturesAsync(services =>
             services.AddSingleton<IShapeChunks>(new FailingChunks(status)));
 
-        var reply = await GetShapeAsync(api.Client, Shape(api, $"?handle={Handle}&offset=0"));
-
-        await Assert.That((int)reply.Status).IsEqualTo(status);
-        await Assert.That(reply.CacheControl).IsEqualTo("private, no-store");
+        foreach (var suffix in new[] { "", "/manifest" })
+        {
+            var reply = await GetShapeAsync(api.Client, Shape(api, $"{suffix}?handle={Handle}&offset=0"));
+            await Assert.That((int)reply.Status).IsEqualTo(status);
+            await Assert.That(reply.CacheControl).IsEqualTo("private, no-store");
+        }
     }
 
     [Test]
