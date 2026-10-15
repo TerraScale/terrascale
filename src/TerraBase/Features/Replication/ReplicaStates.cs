@@ -13,7 +13,8 @@ public sealed record BucketCursor(int Bucket, string Collection, string Id);
 /// <param name="Incarnation">The copy the digests were read from.</param>
 /// <param name="Head">Its newest change id, or 0, read in the same snapshot as the digests.</param>
 /// <param name="Buckets">4096 × (h1, h2), little-endian: the XOR of each bucket's document digests.</param>
-public sealed record ReplicaDigest(Ulid Incarnation, long Head, byte[] Buckets);
+/// <param name="Feed">Its feed head (<c>seq</c>), or 0, read in the same snapshot.</param>
+public sealed record ReplicaDigest(Ulid Incarnation, long Head, byte[] Buckets, long Feed);
 
 /// <summary>
 /// What anti-entropy reads of this machine's copy of a database (docs/terrabase/multi-region-replication.md section 10):
@@ -27,6 +28,13 @@ public interface IReplicaStates
     /// Each bucket XORs digests of (collection, id, state without bookkeeping, materialized document).
     /// </summary>
     ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// A machine of another placed region answered digests equal to <paramref name="digest"/>: it holds every value of that
+    /// snapshot, so the shape frontier (FR-25) rises to its feed head when the copy in place is still that incarnation.
+    /// True when the frontier moved.
+    /// </summary>
+    ValueTask<bool> MatchedAsync(TenantContext database, ReplicaDigest digest, CancellationToken cancellationToken);
 
     /// <summary>
     /// The whole states of <paramref name="buckets"/> of <paramref name="incarnation"/> after <paramref name="after"/>: at most

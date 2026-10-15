@@ -2764,6 +2764,9 @@ public sealed class PeerStreamTests
             return _lost.ContainsKey(database) ? null : await states.DigestAsync(database, expected, cancellationToken);
         }
 
+        public ValueTask<bool> MatchedAsync(TenantContext database, ReplicaDigest digest, CancellationToken cancellationToken) =>
+            states.MatchedAsync(database, digest, cancellationToken);
+
         // An empty page, then refused reads: the closing pin check detects that the source lost the database.
         public ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)?> ReadBucketsAsync(
             TenantContext database, Ulid incarnation, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken)

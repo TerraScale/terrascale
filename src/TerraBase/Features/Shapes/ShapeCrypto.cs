@@ -37,13 +37,6 @@ internal interface IShapeKeyRetention
     ValueTask<bool> HasObjectAsync(TenantContext database, string handle, long epoch, string keyId, CancellationToken cancellationToken);
 }
 
-/// <summary>No T1 objects exist before the mirror, so no historic pair is proven: fail closed.</summary>
-internal sealed class NoShapeKeyRetention : IShapeKeyRetention
-{
-    public ValueTask<bool> HasObjectAsync(TenantContext database, string handle, long epoch, string keyId, CancellationToken cancellationToken) =>
-        ValueTask.FromResult(false);
-}
-
 /// <summary>Encrypt-then-cache for T1 shape objects (<c>docs/terrabase/shape-reads.md</c> sections 12 and 13).</summary>
 internal interface IShapeCrypto
 {

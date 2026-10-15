@@ -419,8 +419,9 @@ internal sealed class ImportJobs(IDocumentService documents, ImportStaging stagi
     {
         var (job, state) = (records.Job, records.State);
         var received = Math.Min(staging.Received(job.DatabaseId), job.SourceBytes);
+        // A completed job has released its source: the runner deletes it right after persisting completed (the sweep retries).
         return new ImportJobBody(job.Id, job.ProjectId, job.Database, job.Region, state.State, state.CancelRequested, job.Options,
-            new ImportSourceBody(job.Format, job.SourceBytes, job.SourceSha256, received, received == job.SourceBytes && state.State != ImportStates.AwaitingSource, state.RetainedUntil),
+            new ImportSourceBody(job.Format, job.SourceBytes, job.SourceSha256, received, received == job.SourceBytes && state.State is not (ImportStates.AwaitingSource or ImportStates.Completed), state.RetainedUntil),
             job.Preview, state.ConfirmedPreviewId, state.Progress, state.Validation, state.Error, job.CreatedAt, state.UpdatedAt, state.StartedAt, state.FinishedAt);
     }
 

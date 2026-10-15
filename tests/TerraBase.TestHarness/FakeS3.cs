@@ -28,6 +28,8 @@ public sealed class FakeS3
     public const string CustomerAccessKey = "customer-access";
     public const string CustomerSecretKey = "customer-secret";
     private const string ObjectStorage = "https://objectstorage.test";
+    private const string PlatformAccessKey = "test-access-key";
+    private const string PlatformSecretKey = "test-secret-key";
     private static readonly XNamespace S3 = "http://s3.amazonaws.com/doc/2006-03-01/";
     private static readonly IComparer<byte[]> S3KeyOrder = Comparer<byte[]>.Create((left, right) => left.AsSpan().SequenceCompareTo(right));
 
@@ -264,8 +266,8 @@ public sealed class FakeS3
         settings["backup-endpoint"] = ObjectStorage;
         settings["backup-region"] = "test-region-1";
         settings["backup-bucket"] = Bucket;
-        settings["backup-access-key-id"] = "test-access-key";
-        settings["backup-secret-key"] = "test-secret-key";
+        settings["backup-access-key-id"] = PlatformAccessKey;
+        settings["backup-secret-key"] = PlatformSecretKey;
         settings["master-key"] = Convert.ToBase64String(_masterKey);
     }
 
@@ -344,6 +346,12 @@ public sealed class FakeS3
         if (customer && !S3SignatureVerifies(request, body))
         {
             Interlocked.Increment(ref _badSignatures);
+            return S3Error(HttpStatusCode.Forbidden, "SignatureDoesNotMatch");
+        }
+
+        // A presigned platform URL carries its SigV4 in the query; it is verified before the object is touched.
+        if (!customer && uri.Query.Contains("X-Amz-", StringComparison.OrdinalIgnoreCase) && !PresignedSignatureVerifies(request))
+        {
             return S3Error(HttpStatusCode.Forbidden, "SignatureDoesNotMatch");
         }
 
@@ -440,7 +448,20 @@ public sealed class FakeS3
                 return S3Error(HttpStatusCode.Forbidden, "AccessDenied");
             }
 
-            objects[key] = body;
+            // Attached before the store, so a reader that finds the object also finds its metadata.
+            _uploadedMetadata.AddOrUpdate(body, new(UploadHeaders(request), ETag(body)));
+            if (Header(request, "If-None-Match") == "*")
+            {
+                if (!objects.TryAdd(key, body))
+                {
+                    return S3Error(HttpStatusCode.PreconditionFailed, "PreconditionFailed");
+                }
+            }
+            else
+            {
+                objects[key] = body;
+            }
+
             var put = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([]) };
             put.Headers.ETag = new(ETag(body));
             return put;
@@ -480,6 +501,11 @@ public sealed class FakeS3
             };
             get.Headers.ETag = new(ETag(stored));
             get.Content.Headers.LastModified = new DateTimeOffset(2026, 10, 7, 0, 0, 0, TimeSpan.Zero);
+            foreach (var (name, value) in _uploadedMetadata.TryGetValue(stored, out var uploaded) ? uploaded.Metadata : [])
+            {
+                get.Headers.Add(name, value);
+            }
+
             if (customer)
             {
                 CustomerGetResponseCreated?.Invoke(key, get);
@@ -536,9 +562,7 @@ public sealed class FakeS3
         if (query["uploadId"] is not { } id)
         {
             id = Guid.NewGuid().ToString("N");
-            _uploads[id] = new Upload(customer, key, Time.GetUtcNow(), [.. request.Headers
-                .Where(header => header.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase))
-                .Select(header => KeyValuePair.Create(header.Key.ToLowerInvariant(), string.Join(",", header.Value)))]);
+            _uploads[id] = new Upload(customer, key, Time.GetUtcNow(), UploadHeaders(request));
             Interlocked.Increment(ref _startedUploads);
             return Xml(HttpStatusCode.OK, new XElement(S3 + "InitiateMultipartUploadResult",
                 new XElement(S3 + "Bucket", bucket), new XElement(S3 + "Key", key), new XElement(S3 + "UploadId", id)));
@@ -660,6 +684,29 @@ public sealed class FakeS3
 
     private static string Child(XElement element, string name) => element.Elements().Single(child => child.Name.LocalName == name).Value;
 
+    // Presigned platform URL (SigV4 in the query): the signature covers every query parameter but X-Amz-Signature, the payload
+    // is UNSIGNED-PAYLOAD, and the URL is valid from X-Amz-Date for 1 to 600 seconds on this fake's clock.
+    private bool PresignedSignatureVerifies(HttpRequestMessage request)
+    {
+        var uri = request.RequestUri!;
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        var credential = query["X-Amz-Credential"]?.Split('/');
+        if (query["X-Amz-Algorithm"] != "AWS4-HMAC-SHA256" || credential is not [PlatformAccessKey, _, "test-region-1", "s3", "aws4_request"]
+            || query["X-Amz-SignedHeaders"] != "host" || query["X-Amz-Signature"] is not { } signature
+            || query["X-Amz-Date"] is not { } date || !DateTimeOffset.TryParseExact(date, "yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var signedAt)
+            || query["X-Amz-Expires"] is not { } expires || !int.TryParse(expires, NumberStyles.None, CultureInfo.InvariantCulture, out var lifetime) || lifetime is < 1 or > 600)
+        {
+            return false;
+        }
+
+        if (date[..8] != credential[1] || Time.GetUtcNow() > signedAt.AddSeconds(lifetime))
+        {
+            return false;
+        }
+
+        return signature == SigV4Signature(request, PlatformSecretKey, credential, date, "host", "UNSIGNED-PAYLOAD", CanonicalQuery(uri, "X-Amz-Signature"));
+    }
+
     // Partial SigV4: checks customer credentials, payload hash and region, but not required SignedHeaders or
     // scope-date freshness. Path/query canonicalization covers current AWS-URL-safe ULID/digit keys only;
     // extend before testing keys or query values requiring percent encoding.
@@ -673,7 +720,7 @@ public sealed class FakeS3
         var fields = authorization["AWS4-HMAC-SHA256 ".Length..].Split(',')
             .Select(field => field.Trim().Split('=', 2)).ToDictionary(field => field[0], field => field[1], StringComparer.Ordinal);
         var credential = fields.GetValueOrDefault("Credential")?.Split('/');
-        if (credential is not [CustomerAccessKey, var day, "test-region-1", "s3", "aws4_request"]
+        if (credential is not [CustomerAccessKey, _, "test-region-1", "s3", "aws4_request"]
             || fields.GetValueOrDefault("SignedHeaders") is not { } signedHeaders || fields.GetValueOrDefault("Signature") is not { } signature
             || Header(request, "x-amz-date") is not { } date || Header(request, "x-amz-content-sha256") is not { } payloadHash)
         {
@@ -685,27 +732,42 @@ public sealed class FakeS3
             return false;
         }
 
+        return signature == SigV4Signature(request, CustomerSecretKey, credential, date, signedHeaders, payloadHash, CanonicalQuery(request.RequestUri!, null));
+    }
+
+    // The query in SigV4 canonical form: percent-encoded names and values, sorted, without the excluded parameter name.
+    private static string CanonicalQuery(Uri uri, string? excluded) => string.Join('&', uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
+        .Select(part => part.Split('=', 2))
+        .Select(parts => (Key: Uri.EscapeDataString(System.Web.HttpUtility.UrlDecode(parts[0])),
+            Value: Uri.EscapeDataString(System.Web.HttpUtility.UrlDecode(parts.Length == 2 ? parts[1] : ""))))
+        .Where(part => part.Key != excluded)
+        .OrderBy(part => part.Key, StringComparer.Ordinal).ThenBy(part => part.Value, StringComparer.Ordinal)
+        .Select(part => part.Key + "=" + part.Value));
+
+    // The SigV4 signature for a request, from the secret and the credential scope [access key, date, region, service, terminator].
+    private static string SigV4Signature(HttpRequestMessage request, string secret, string[] credential, string date, string signedHeaders, string payloadHash, string canonicalQuery)
+    {
         var uri = request.RequestUri!;
-        var query = uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
-            .Select(part => part.Split('=', 2))
-            .Select(parts => (Key: Uri.EscapeDataString(System.Web.HttpUtility.UrlDecode(parts[0])),
-                Value: Uri.EscapeDataString(System.Web.HttpUtility.UrlDecode(parts.Length == 2 ? parts[1] : ""))))
-            .OrderBy(part => part.Key, StringComparer.Ordinal).ThenBy(part => part.Value, StringComparer.Ordinal);
         var canonicalHeaders = signedHeaders.Split(';').Select(name =>
             $"{name}:{(name == "host" ? request.Headers.Host ?? uri.Authority : Header(request, name))?.Trim()}\n");
         var canonical = string.Join('\n', request.Method.Method,
             string.Join('/', uri.AbsolutePath.Split('/').Select(part => Uri.EscapeDataString(Uri.UnescapeDataString(part)))),
-            string.Join('&', query.Select(part => part.Key + "=" + part.Value)), string.Concat(canonicalHeaders), signedHeaders, payloadHash);
+            canonicalQuery, string.Concat(canonicalHeaders), signedHeaders, payloadHash);
         var scope = string.Join('/', credential[1..]);
         var signed = $"AWS4-HMAC-SHA256\n{date}\n{scope}\n{Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)))}";
-        var key = HMACSHA256.HashData(Encoding.UTF8.GetBytes("AWS4" + CustomerSecretKey), Encoding.UTF8.GetBytes(day));
+        var key = HMACSHA256.HashData(Encoding.UTF8.GetBytes("AWS4" + secret), Encoding.UTF8.GetBytes(credential[1]));
         foreach (var component in credential[2..])
         {
             key = HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(component));
         }
 
-        return signature == Convert.ToHexStringLower(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(signed)));
+        return Convert.ToHexStringLower(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(signed)));
     }
+
+    // The user metadata and Cache-Control an upload stores; HEAD and GET return them with the object.
+    private static KeyValuePair<string, string>[] UploadHeaders(HttpRequestMessage request) => [.. request.Headers
+        .Where(header => header.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Cache-Control", StringComparison.OrdinalIgnoreCase))
+        .Select(header => KeyValuePair.Create(header.Key.ToLowerInvariant(), string.Join(",", header.Value)))];
 
     private static string? Header(HttpRequestMessage request, string name) =>
         request.Headers.TryGetValues(name, out var values) || request.Content?.Headers.TryGetValues(name, out values) == true

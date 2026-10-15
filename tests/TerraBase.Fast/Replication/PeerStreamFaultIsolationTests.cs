@@ -338,8 +338,17 @@ public sealed class PeerStreamFaultIsolationTests
             }
 
             var changeId = await gate.Entered.Task.WaitAsync(deadline.Token);
-            await Assert.That(sender.Status(sender.Database)!.Acknowledged).IsEqualTo(before)
-                .Because("the positive cursor cannot advance while source bookkeeping is still pending");
+            if (stableReport)
+            {
+                await Assert.That(sender.Status(sender.Database)!.Acknowledged).IsEqualTo(before)
+                    .Because("a stable report cannot advance the ACK cursor");
+            }
+            else
+            {
+                var peer = receiver.Api.Server.Services.GetRequiredService<LocalReplica>().Id;
+                await Assert.That((await source.AckedAsync(sender.Database, peer, deadline.Token))!.Value.Acked).IsLessThan(changeId)
+                    .Because("background bookkeeping cannot advance the persisted resume cursor while it is pending");
+            }
             if (!stableReport)
             {
                 await Assert.That(changeId).IsGreaterThan(before);
