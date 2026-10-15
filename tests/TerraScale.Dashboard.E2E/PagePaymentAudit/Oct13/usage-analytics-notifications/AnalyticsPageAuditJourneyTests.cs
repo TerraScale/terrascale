@@ -66,7 +66,7 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
             await Assert.That(plot + left >= -48 - 0.2 && plot + left + width <= 272 + 8 + 0.2).IsTrue()
                 .Because("The whole tooltip stays inside the chart frame at the narrowest supported width, without horizontal overflow.");
         }
-        var visibleNames = Regex.Matches(chart, "class=\"ts-chart-tip-name\"[^>]*>([^<]*)</text>").Select(match => match.Groups[1].Value).ToArray();
+        var visibleNames = Regex.Matches(chart, "class=\"ts-chart-tip-name\"[^>]*>([^<]*)</text>").Select(match => WebUtility.HtmlDecode(match.Groups[1].Value)).ToArray();
         await Assert.That(visibleNames.Length).IsGreaterThan(0);
         foreach (var visible in visibleNames)
             await Assert.That(visible.StartsWith("p", StringComparison.Ordinal) && visible.EndsWith(" / gru", StringComparison.Ordinal) && visible.Contains('…') && visible.Length < name.Length)
