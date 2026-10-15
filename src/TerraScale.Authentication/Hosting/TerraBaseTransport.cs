@@ -25,7 +25,7 @@ public static class TerraBaseTransport
     // Same-region connects take milliseconds and cross-region ones a few hundred; two seconds allows one lost SYN.
     private static readonly TimeSpan DialTimeout = TimeSpan.FromSeconds(2);
 
-    // Every connection is replaced after this long, so ts-auth is back in its own region that long after it answers again.
+    // Regional fallback connections are replaced after this long, so ts-auth returns to its own region when it answers again.
     private static readonly TimeSpan ConnectionLifetime = TimeSpan.FromSeconds(30);
 
     /// <summary>The addresses of a host; Fly's DNS unless the host registers another (tests, to name loopback machines).</summary>
@@ -42,7 +42,11 @@ public static class TerraBaseTransport
         ArgumentNullException.ThrowIfNull(logger);
         peerSecret = string.IsNullOrEmpty(peerSecret) ? null : Validated(peerSecret);
         var handler = TerraBaseHttp.CreateHandler();
-        handler.PooledConnectionLifetime = ConnectionLifetime;
+        // Only a client with regional fallbacks needs periodic failback; the authority always stays in gru.
+        if (otherRegions.Count > 0)
+        {
+            handler.PooledConnectionLifetime = ConnectionLifetime;
+        }
         // HTTP/2 pings close a connection to a machine that vanished (a host failure) instead of waiting for TCP to give up.
         handler.KeepAlivePingDelay = TimeSpan.FromSeconds(5);
         handler.KeepAlivePingTimeout = TimeSpan.FromSeconds(5);

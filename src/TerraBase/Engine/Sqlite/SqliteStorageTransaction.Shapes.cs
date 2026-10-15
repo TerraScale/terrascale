@@ -87,7 +87,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         var count = 0;
         var emitted = 0;
         // Account for the largest v1 resume envelope without rehashing retained history for every candidate commit.
-        var resumeSize = new string('0', Base64Url.GetEncodedLength(17 + 17 + ChangeCursor.MaxOrigins * 56));
+        var resumeSize = new string('0', Base64Url.GetEncodedLength(17 + ChangeCursor.MaxBytes));
         var envelopeBytes = ShapeEnvelope(shape, offset, head, head, resumeSize, []).Length;
         while (covered < end)
         {
@@ -150,7 +150,7 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         insert.Parameters.AddWithValue("$offset", offset);
         insert.Parameters.AddWithValue("$end", covered);
         insert.Parameters.AddWithValue("$body", body);
-        insert.Parameters.AddWithValue("$at", store.Time.GetUtcNow().ToUnixTimeMilliseconds());
+        insert.Parameters.AddWithValue("$at", Member.Clock.UtcNow.ToUnixTimeMilliseconds());
         insert.ExecuteNonQuery();
         insert.Parameters.Clear();
         return (covered, head, body.Length);
@@ -372,7 +372,12 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
 
     private string ShapeResume(ReadOnlySpan<byte> scope, long covered, CancellationToken cancellationToken)
     {
-        var command = Command("SELECT origin, max(stamp), min(stamp) FROM _tb_feed WHERE seq <= $covered GROUP BY origin;");
+        // Each origin stops below its first row past covered: the persisted chain then holds covered rows only.
+        var command = Command("""
+            SELECT f.origin, max(f.stamp), min(f.stamp) FROM _tb_feed f
+            LEFT JOIN (SELECT origin, min(stamp) AS stamp FROM _tb_feed WHERE seq > $covered GROUP BY origin) u ON u.origin = f.origin
+            WHERE f.seq <= $covered AND (u.stamp IS NULL OR f.stamp < u.stamp) GROUP BY f.origin;
+            """);
         command.Parameters.AddWithValue("$covered", covered);
         Dictionary<ReplicaId, Hlc> stamps = [];
         CountRead("shape");
@@ -398,9 +403,9 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
             {
                 throw new InvalidDataException("a shape resume floor exceeds its origin head");
             }
-            return ShapePrefix(pair.Key, floor, pair.Value, covered, cancellationToken);
+            return PrefixThrough(pair.Key, floor, pair.Value, cancellationToken, "shape");
         });
-        var cursor = new FeedCursor(stamps, FeedCursor.At(store.Time.GetUtcNow())) { Issuer = Member.Id, Prefixes = prefixes };
+        var cursor = new FeedCursor(stamps, FeedCursor.At(Member.Clock.UtcNow)) { Issuer = Member.Id, Prefixes = prefixes };
         var r8 = Base64Url.DecodeFromChars(ChangeCursor.Encode(cursor));
         var bytes = new byte[17 + r8.Length];
         bytes[0] = 1;
@@ -417,27 +422,6 @@ internal sealed partial class SqliteStorageTransaction : IShapeStorageTransactio
         return command.ExecuteScalar() is long floor
             ? floor >= 0 ? new Hlc((ulong)floor) : throw new InvalidDataException("a shape resume floor is negative")
             : default;
-    }
-
-    private FeedPrefix ShapePrefix(ReplicaId origin, Hlc floor, Hlc stamp, long covered, CancellationToken cancellationToken)
-    {
-        var prefix = FeedPrefix.Empty(floor);
-        var command = Command("""
-            SELECT stamp, collection, id, deleted FROM _tb_feed
-            WHERE origin = $origin AND stamp > $floor AND stamp <= $stamp AND seq <= $covered ORDER BY stamp, seq;
-            """);
-        command.Parameters.AddWithValue("$origin", unchecked((long)origin.Value));
-        command.Parameters.AddWithValue("$floor", Version(floor));
-        command.Parameters.AddWithValue("$stamp", Version(stamp));
-        command.Parameters.AddWithValue("$covered", covered);
-        CountRead("shape");
-        using var reader = command.ExecuteReader();
-        while (reader.Read())
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            prefix = prefix.Append(new Hlc(checked((ulong)reader.GetInt64(0))), reader.GetString(1), reader.GetString(2), reader.GetInt64(3) != 0);
-        }
-        return prefix;
     }
 
     private void ValidateShapeCapture(IMemoryBudget memory, CancellationToken cancellationToken)

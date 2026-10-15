@@ -136,8 +136,8 @@ internal sealed partial class SqliteStorageTransaction : IShapeSnapshotStorage
             throw new ShapeSealOffsetException();
         }
 
-        // Ops, serialized response, growth/copies and framing are admitted before any row is materialized.
-        var workspace = memory.TryReserve(MemoryLane.Bulk, 8L * ShapeSnapshots.PageBytes, store.Tenant) ?? throw new StorageBusyException();
+        // Ops buffer and framing are admitted before any row is materialized; rows and the encoded page reserve their own bytes.
+        var workspace = memory.TryReserve(MemoryLane.Bulk, ShapeSnapshots.WorkspaceBytes, store.Tenant) ?? throw new StorageBusyException();
         IMemoryReservation? singletonMemory = null;
         try
         {

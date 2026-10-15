@@ -1,0 +1,18 @@
+{"event": "setup", "database": "f3-20261014210936", "database_id": "01M4Y3ZP43AP9KCXWT4974B6PH", "k_rev": "01M4Y3ZP7F2BREJXVGNX8186H9", "k_ctl": "01M4Y3ZPA7AM2YXFY6ZQH3Y7CP", "dummy_key_id": "01M4Y3ZJZXJDHBTMSTSX95P5KN", "utc": "2026-10-14T21:09:39Z"}
+{"event": "handles", "handles": {}, "utc": "2026-10-14T21:13:28Z"}
+{"event": "cleanup-key", "key": "rev", "id": "01M4Y3ZP7F2BREJXVGNX8186H9", "status": 204, "utc": "2026-10-14T21:13:29Z"}
+{"event": "cleanup-key", "key": "ctl", "id": "01M4Y3ZPA7AM2YXFY6ZQH3Y7CP", "status": 204, "utc": "2026-10-14T21:13:29Z"}
+{"event": "cleanup-database", "id": "01M4Y3ZP43AP9KCXWT4974B6PH", "patch": 200, "delete": 204, "utc": "2026-10-14T21:13:29Z"}
+{"event": "setup", "database": "f3-20261014211539", "database_id": "01M4Y4ARVF8VV6VAG7WPKZB0RH", "k_rev": "01M4Y4ARYP8Y43YY9AW15KW0ED", "k_ctl": "01M4Y4AS1M14ZFB9BW98BKP66H", "dummy_key_id": "01M4Y4ANQS88SP51R5HE0M8BXV", "utc": "2026-10-14T21:15:43Z"}
+{"event": "collection", "status": 201, "body": "{\"name\":\"probe\",\"created_at\":\"1792012543156\",\"id\":\"01M4Y4AS5M3G2DSG0D1CMA5QBN\"}", "utc": "2026-10-14T21:15:43Z"}
+{"event": "handles", "handles": {"gru": "h1-623afad3154b01b3", "sjc": "h1-34bd4b9ae300a301", "fra": "h1-981f59c7861e3003"}, "utc": "2026-10-14T21:15:43Z"}
+{"event": "probe", "phase": "baseline", "t_s": 0.0, "gru_rev": {"status": 409, "code": "must_refetch", "cache_control": "private, no-store", "retry_after": null, "key_in_body": false}, "gru_ctl": {"status": 409, "code": "must_refetch", "cache_control": "private, no-store", "retry_after": null, "key_in_body": false}, "sjc_rev": {"status": 401, "code": "invalid_key", "cache_control": "no-store", "retry_after": null, "key_in_body": false}, "sjc_ctl": {"status": 401, "code": "invalid_key", "cache_control": "no-store", "retry_after": null, "key_in_body": false}, "fra_rev": {"status": 401, "code": "invalid_key", "cache_control": "no-store", "retry_after": null, "key_in_body": false}, "fra_ctl": {"status": 404, "code": "unknown_collection", "cache_control": "no-store", "retry_after": null, "key_in_body": false}, "utc": "2026-10-14T21:15:44Z"}
+{"event": "cleanup-key", "key": "rev", "id": "01M4Y4ARYP8Y43YY9AW15KW0ED", "status": 204, "utc": "2026-10-14T21:15:45Z"}
+{"event": "cleanup-key", "key": "ctl", "id": "01M4Y4AS1M14ZFB9BW98BKP66H", "status": 204, "utc": "2026-10-14T21:15:45Z"}
+{"event": "cleanup-database", "id": "01M4Y4ARVF8VV6VAG7WPKZB0RH", "patch": 200, "delete": 204, "utc": "2026-10-14T21:15:45Z"}
+{"event": "setup", "database": "f3-20261014211415", "database_id": "01M4Y4869A0M0JZNPDDZYTKQXG", "k_rev": "01M4Y486CE89D3VSAVXVKX1ZPX", "k_ctl": "01M4Y486FCC6N5MS2B7MAHTJP1", "dummy_key_id": "01M4Y4835H1DED24FCQNRHGFDZ", "utc": "2026-10-14T21:14:18Z"}
+{"event": "collection", "status": 201, "body": "{\"name\":\"probe\",\"created_at\":\"1792012458601\",\"id\":\"01M4Y486K99RQ8P1N93Z7JRS8X\"}", "utc": "2026-10-14T21:14:18Z"}
+{"event": "handles", "handles": {}, "last": {"gru": [429, "{\"error\":{\"code\":\"shape_busy\",\"message\":\"shape reads are at capacity; retry later\"}}"], "sjc": [429, "{\"error\":{\"code\":\"shape_busy\",\"message\":\"shape reads are at capacity; retry later\"}}"], "fra": [429, "{\"error\":{\"code\":\"shape_busy\",\"message\":\"shape reads are at capacity; retry later\"}}"]}, "utc": "2026-10-14T21:15:15Z"}
+{"event": "cleanup-key", "key": "rev", "id": "01M4Y486CE89D3VSAVXVKX1ZPX", "status": 204, "utc": "2026-10-14T21:15:16Z"}
+{"event": "cleanup-key", "key": "ctl", "id": "01M4Y486FCC6N5MS2B7MAHTJP1", "status": 204, "utc": "2026-10-14T21:15:16Z"}
+{"event": "cleanup-database", "id": "01M4Y4869A0M0JZNPDDZYTKQXG", "patch": 200, "delete": 204, "utc": "2026-10-14T21:15:17Z"}

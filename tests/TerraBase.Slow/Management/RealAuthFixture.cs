@@ -16,6 +16,8 @@ using TerraBase.Features.UserAuth;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 using tsauth::TerraScale.Authentication.Configuration;
+using tsauth::TerraScale.Authentication.Features.Platform;
+using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraBase.Slow.Management;
@@ -26,6 +28,7 @@ namespace TerraBase.Slow.Management;
 /// <see cref="PublicOrigin"/> is served over TLS on a
 /// loopback port, and one service client gets client-credentials access tokens. Tokens, discovery and JWKS all come from
 /// ts-auth itself; the TerraBase under test reaches them through its production HTTP client, only connected to that port.
+/// ts-auth's GitHub OIDC client reaches <see cref="GitHub"/> instead of GitHub.
 /// </summary>
 internal sealed class RealAuthFixture : IAsyncDisposable
 {
@@ -40,6 +43,9 @@ internal sealed class RealAuthFixture : IAsyncDisposable
     private int _tlsPort;
 
     public string Subject { get; } = EntityIds.New().ToString();
+
+    /// <summary>GitHub Actions' OIDC issuer as ts-auth's own suite fakes it, for <see cref="GitHubActionsTokenAsync"/>.</summary>
+    public FakeGitHubActions GitHub { get; } = new();
 
     /// <summary>The <c>terrascale</c> tenant's issuer, which every platform access token names.</summary>
     public static string Issuer => PublicOrigin + "/terrascale";
@@ -96,6 +102,30 @@ internal sealed class RealAuthFixture : IAsyncDisposable
             Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["grant_type"] = "client_credentials" }),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{Subject}:{_clientSecret}")));
+        return await TokenAsync(request, token);
+    }
+
+    /// <summary>
+    /// What ci.yml's e2e job gets: the GitHub Actions workload is bound (as an operator does once), then a GitHub-signed token
+    /// of the e2e job on a push to main is exchanged at the token endpoint. Returns the access token and the bound project.
+    /// </summary>
+    public async Task<(string AccessToken, string Project)> GitHubActionsTokenAsync(CancellationToken token)
+    {
+        var (_, project, _) = await GitHubActionsBinding.BindAsync(_auth!.Services, token);
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/terrascale/oauth/token", UriKind.Relative))
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["grant_type"] = GitHubActionsGrant.GrantType,
+                ["client_id"] = GitHubActionsGrant.ClientId,
+                ["subject_token"] = GitHub.Mint(Issuer),
+            }),
+        };
+        return (await TokenAsync(request, token), project);
+    }
+
+    private async Task<string> TokenAsync(HttpRequestMessage request, CancellationToken token)
+    {
         using var response = await _tokens!.SendAsync(request, token);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(token);
@@ -132,6 +162,7 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         {
             builder.Services.AddSingleton(_storage.Client);
             builder.Services.AddSingleton(storage);
+            GitHub.Route(builder.Services);
             // The public origin over TLS, after ts-auth's own listeners, for TerraBase's discovery and JWKS fetches.
             builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0, listen => listen.UseHttps(_certificate)));
         });
@@ -202,6 +233,7 @@ internal sealed class RealAuthFixture : IAsyncDisposable
             finally
             {
                 _certificate.Dispose();
+                GitHub.Dispose();
             }
         }
     }

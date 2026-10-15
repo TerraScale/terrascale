@@ -1,0 +1,30 @@
+{
+  "review": "V4 shape-read security (FR-34)",
+  "date": "2026-10-14",
+  "commit": "4682879458008894ae1379e04eb4b39a24d9d56b",
+  "base": "a439e1d1",
+  "host": "mariogk-dev",
+  "configuration": "Debug",
+  "commands": [
+    {"command": "make terrabase-build", "exit": 0, "warnings": 0},
+    {"command": "make fmt-check", "exit": 0},
+    {"command": "dotnet run --project tests/TerraBase.Fast --no-build -- --treenode-filter /*/*/ShapeSecurityTests/*", "total": 5, "passed": 5, "failed": 0},
+    {"command": "dotnet run --project tests/TerraBase.Fast --no-build -- --treenode-filter /*/*/ShapeCryptoTests/*", "total": 23, "passed": 23, "failed": 0}
+  ],
+  "outcomes": [
+    {"row": 1, "property": "tenancy_cross_org_project_database", "test": "ShapeSecurityTests.No_other_organization_project_or_database_key_reaches_a_shape_its_key_or_its_etag", "result": "PASS", "refusals": 24, "status": 404, "code": "unknown_database"},
+    {"row": 2, "property": "tenancy_foreign_handle", "test": "ShapeSecurityTests.A_handle_from_another_tenant_collection_or_filter_is_refused_and_answers_only_the_callers_own_handle", "result": "PASS", "refusals": 6, "status": 409},
+    {"row": 3, "property": "tenancy_recreated_database", "test": "ShapeSecurityTests.A_database_deleted_and_recreated_under_the_same_name_refuses_the_old_handle_on_the_shape_and_key_routes", "result": "PASS", "refusals": 4, "status": 409},
+    {"row": 4, "property": "cache_policy_and_cache_keys", "test": "ShapeSecurityTests.Every_shape_response_class_carries_its_cache_policy_and_no_two_tenants_or_filters_share_a_cache_key", "result": "PASS", "shapes": 4, "distinct_urls": 4, "distinct_etags": 4, "error_classes_no_store": 8},
+    {"row": 5, "property": "key_endpoint_private_no_store", "test": "ShapeCryptoTests.The_key_endpoint_releases_the_current_epoch_key_derived_from_the_frozen_project_key", "result": "PASS"},
+    {"row": 6, "property": "t1_shared_cache_headers", "test": null, "result": "BLOCKED", "dependency": "FR-24 not written; FR-22 #283 and A1 #271 unmerged"},
+    {"row": 7, "property": "revocation_origin_refusal", "test": "ShapeSecurityTests.A_live_poll_admitted_before_its_key_is_revoked_delivers_at_most_one_answer_within_the_live_timeout", "result": "PASS", "accepted_after_revocation": 0},
+    {"row": 8, "property": "revocation_epoch_key_window", "test": "ShapeCryptoTests.A_revoked_holders_epoch_key_opens_objects_sealed_until_the_epoch_ends_and_none_sealed_after", "result": "PASS", "measured_window_seconds": 598, "bound_seconds_exclusive": 600},
+    {"row": 9, "property": "revocation_parked_live_poll", "test": "ShapeSecurityTests.A_live_poll_admitted_before_its_key_is_revoked_delivers_at_most_one_answer_within_the_live_timeout", "result": "PASS", "finding": "F1", "measured_delivery_after_revocation_ms": 110, "bound_seconds": 20},
+    {"row": 10, "property": "revocation_jwt", "test": null, "result": "NOT MEASURED", "spec_bound": "token lifetime + 30 s + <= 600 s"},
+    {"row": 11, "property": "revocation_cross_region", "test": "live ts-vtest-tb revoke-timing.py", "result": "MEASURED_NOT_ACCEPTED", "finding": "F3", "observed_max_ms": 639.8, "details": "2026-10-14-replication-v4-revocation.json"},
+    {"row": 12, "property": "tbs1_metadata", "test": "ShapeCryptoTests.A_sealed_object_reveals_only_its_epoch_key_id_salt_and_exact_plaintext_length_and_the_key_id_links_a_projects_shapes", "result": "PASS", "finding": "F2", "size_overhead_bytes": "70 + 20 per frame", "padding": false, "distinct_kid_across_handles": 1, "kid_reveals_key_creation_ms": true, "tenant_names_in_bytes": 0},
+    {"row": 13, "property": "manifest_and_tigris_metadata", "test": null, "result": "BLOCKED", "dependency": "FR-22 #283 unmerged"},
+    {"row": 14, "property": "internal_listener_peer_auth", "test": null, "result": "BLOCKED", "dependency": "A1 #271 unmerged; review only"}
+  ]
+}

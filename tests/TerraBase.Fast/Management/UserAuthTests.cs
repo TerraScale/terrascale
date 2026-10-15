@@ -184,6 +184,48 @@ public sealed class UserAuthTests
     }
 
     [Test]
+    public async Task A_project_token_whose_signing_key_is_withdrawn_reads_shapes_until_the_next_scheduled_refresh_and_never_after()
+    {
+        // V4 row 10: TerraBase has no revocation list, so withdrawing the signing key is ts-auth's only early cut-off.
+        var timers = new ManualTimers();
+        await using var api = await ManagementApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(timers));
+        var project = EntityIds.New().ToString();
+        var withdrawn = api.Issuer.Signing;
+        using var client = api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token =>
+        {
+            token.Claims["project_id"] = project;
+            token.Claims["scope"] = "databases:write documents:read documents:write";
+        }));
+        var database = $"/v1/projects/{project}/databases/main";
+        using (var created = await client.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"), new { name = "main" }))
+        {
+            created.EnsureSuccessStatusCode();
+        }
+
+        using (var collection = await client.PostAsJsonAsync(Uri(database + "/collections"), new { name = "items" }))
+        {
+            collection.EnsureSuccessStatusCode();
+        }
+
+        var shape = database + "/collections/items/shape?offset=-1";
+        var before = await ShapeStatusAsync(client, shape);
+
+        // ts-auth retires the key; until TerraBase's next scheduled refresh the cached key still verifies the token.
+        api.Issuer.Rotate();
+        api.Issuer.Withdraw(withdrawn);
+        var beforeRefresh = await ShapeStatusAsync(client, shape);
+        await timers.FireAsync(TsAuthKeys.RefreshInterval);
+        await timers.ScheduledAsync(TsAuthKeys.RefreshInterval);
+        var afterRefresh = await ShapeStatusAsync(client, shape);
+
+        await Assert.That(before).IsEqualTo(HttpStatusCode.TemporaryRedirect);
+        await Assert.That(beforeRefresh).IsEqualTo(HttpStatusCode.TemporaryRedirect).Because("the withdrawn key stays cached until the refresh");
+        await Assert.That(afterRefresh).IsEqualTo(HttpStatusCode.Unauthorized).Because("one scheduled refresh retires it");
+        // Measured bound for key withdrawal: one refresh interval (10 min) while ts-auth answers.
+        await Assert.That(TsAuthKeys.RefreshInterval).IsEqualTo(TimeSpan.FromMinutes(10));
+    }
+
+    [Test]
     public async Task One_deadline_bounds_a_fetch_that_ts_auth_never_finishes()
     {
         var timers = new ManualTimers();
@@ -425,6 +467,12 @@ public sealed class UserAuthTests
     private static async Task<HttpStatusCode> StatusAsync(HttpClient client, string path = Organizations)
     {
         using var response = await client.GetAsync(Uri(path));
+        return response.StatusCode;
+    }
+
+    private static async Task<HttpStatusCode> ShapeStatusAsync(HttpClient client, string target)
+    {
+        using var response = await client.GetAsync(Uri(target));
         return response.StatusCode;
     }
 

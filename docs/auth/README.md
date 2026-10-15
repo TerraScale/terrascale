@@ -387,7 +387,13 @@ and conditionally deletes a synthetic document in `storage_health`. It returns
 200 only on success, otherwise 503, without provisioning, repair or in-memory
 fallback. A background check runs every five seconds with a two-second
 deadline, and `/readyz` answers its latest result; a result older than fifteen
-seconds is not ready. Unknown `region` is omitted.
+seconds is not ready. Collection checks use the paginated catalog (one request
+for the normal 21 collections), rather than a concurrent request per collection
+against the shared gru authority. The synthetic conditional write/read/delete
+and signing metadata checks still run on every pass; the independent signing
+read runs concurrently with storage checks. Authority connections are reused
+without the 30-second regional failback lifetime (keepalive still detects a
+lost machine); regional fallback clients retain that lifetime. Unknown `region` is omitted.
 
 ## The global auth dataset
 

@@ -18,8 +18,9 @@ internal static class ErrorResponse
         Unauthorized e => new Response(StatusCodes.Status401Unauthorized, e.Code, e.Message, op),
         Forbidden e => new Response(StatusCodes.Status403Forbidden, e.Code, e.Message, op),
         QuotaExceeded e => new Response(StatusCodes.Status429TooManyRequests, e.Code, e.Message, op),
-        // A write refused before execution because no other region can confirm it now (decision 0013a): retrying is safe.
-        Unavailable { Code: "remote_region_unavailable" or "confirmation_busy" } e => new Response(StatusCodes.Status503ServiceUnavailable, e.Code, e.Message, op, retryAfter: true),
+        // A write refused before execution because no other region can confirm it now (decision 0013a), or a shape key
+        // withheld while this machine's catalog is unproven (catalog_stale): retrying is safe.
+        Unavailable { Code: "remote_region_unavailable" or "confirmation_busy" or "catalog_stale" } e => new Response(StatusCodes.Status503ServiceUnavailable, e.Code, e.Message, op, retryAfter: true),
         Unavailable e => new Response(StatusCodes.Status503ServiceUnavailable, e.Code, e.Message, op),
         PayloadTooLarge e => new Response(StatusCodes.Status413PayloadTooLarge, e.Code, e.Message, op),
         UnsupportedMediaType e => new Response(StatusCodes.Status415UnsupportedMediaType, e.Code, e.Message, op),
