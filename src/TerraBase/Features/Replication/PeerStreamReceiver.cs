@@ -15,7 +15,8 @@ namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// The receiving side of <c>Replication.Push</c>: joins each batch through the <see cref="IChangeGroupSink"/>, in stream
-/// order, and acks it after its durable commit. A newer stream from the same origin ends the older one and starts once
+/// order per database, and acks it after its durable commit. Databases apply beside each other, so one waiting on its busy
+/// writer holds back no other database's ack; the link loop alone writes answers. A newer stream from the same origin ends the older one and starts once
 /// it ended, so one origin's groups apply in order. A refill runs beside the stream: other databases' batches go on, while
 /// its own database's are refused until a refill of it commits, also on the origin's next stream when this one ends first.
 /// A batch that fails to apply is refused for its database only. An undecodable batch is refused for its database; the sender reconnects
@@ -24,6 +25,9 @@ namespace TerraBase.Features.Replication;
 internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 {
     private const int MaxRefills = 4;
+    // Databases with a batch or frontier in progress per stream: room for the sender's 32 outstanding batches, plus as many
+    // optional frontiers, which are dropped beyond it, so a compliant sender's batch is never refused for this bound.
+    private const int MaxApplying = 64;
     private const long BucketReadBytes = 16L * ReplicationProtocol.MaxApplicationBytes;
     // Two digests and one page's wire, decompressed, parsed and decoded payloads; held until the sink finishes.
     private const long RefillBytes = (2 * 4096 * 16) + (4L * ReplicationProtocol.MaxApplicationBytes);
@@ -138,6 +142,18 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         // them commits, so none joins before the repairs it follows.
         var refills = new Dictionary<(TenantContext Database, Ulid Incarnation), (Refill Frame, Task<int?> Done)>();
         HashSet<TenantContext> cut = [];
+        // Per database, its newest batch or frontier in progress; the next one of the database runs after it.
+        var applying = new Dictionary<TenantContext, (Task<AckFrame?> Done, bool Batch)>();
+        // Batches and frontiers in arrival order. A database's frames run one after another, so they also complete in this order.
+        var answers = new List<(TenantContext Database, Ulid Incarnation, Task<AckFrame?> Done)>();
+        // A client database's batch or refill also follows the catalog's frame in progress: the sender lists the system
+        // database first, and a database it registers is refused until that registration commits.
+        Task After(TenantContext database)
+        {
+            return Task.WhenAll(
+                applying.TryGetValue(database, out var own) ? own.Done : Task.CompletedTask,
+                database != ChangeGroups.System && applying.TryGetValue(ChangeGroups.System, out var catalog) ? catalog.Done : Task.CompletedTask);
+        }
         Task<bool>? reading = null;
         try
         {
@@ -157,7 +173,30 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             while (true)
             {
                 // A refill may take minutes: it runs beside the frames, so other databases' batches are still acked in time.
-                _ = await Task.WhenAny([reading, .. refills.Values.Select(refilling => refilling.Done)]).ConfigureAwait(false);
+                _ = await Task.WhenAny([reading, .. refills.Values.Select(refilling => refilling.Done), .. answers.Select(answer => answer.Done)])
+                    .ConfigureAwait(false);
+                // Before refills: a refill that waited for its database's batch is answered after it.
+                foreach (var answer in answers.Where(candidate => candidate.Done.IsCompleted).ToList())
+                {
+                    _ = answers.Remove(answer);
+                    if (applying.TryGetValue(answer.Database, out var newest) && newest.Done == answer.Done)
+                    {
+                        _ = applying.Remove(answer.Database);
+                    }
+
+                    if (await answer.Done.ConfigureAwait(false) is not { } response)
+                    {
+                        continue;
+                    }
+
+                    if (response.Ack is { Refused: false } applied)
+                    {
+                        last[answer.Database] = (answer.Incarnation, applied.ChangeId);
+                    }
+
+                    await responseStream.WriteAsync(response, stream.Token).ConfigureAwait(false);
+                }
+
                 foreach (var (tenant, (asked, done)) in refills.Where(entry => entry.Value.Done.IsCompleted).ToList())
                 {
                     var refilled = await done.ConfigureAwait(false) is not null;
@@ -208,7 +247,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                     _ = Incarnation(frontier.Database);
                     if (cut.Contains(at) || refills.Keys.Any(running => running.Database == at))
                     {
-                        // Release the sender's response budget without certifying progress across an unfinished refill.
+                        // Answer without certifying progress across an unfinished refill.
                         await responseStream.WriteAsync(new AckFrame
                         {
                             Stable = new StableReport { Database = frontier.Database, Stable = 0 },
@@ -216,29 +255,16 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                         continue;
                     }
 
-                    Hlc stable;
-                    try
+                    // A frontier is an optional proof the sender repeats: one behind its database's work, or past half the
+                    // bound, is dropped instead of queued.
+                    if (applying.ContainsKey(at) || applying.Count >= MaxApplying / 2)
                     {
-                        await _sink.RecordFrontierAsync(at, origin, new Hlc(frontier.Hlc), stream.Token).ConfigureAwait(false);
-                        stable = await _states.StableAsync(at, stream.Token).ConfigureAwait(false);
-                    }
-                    catch (Exception error) when (!stream.IsCancellationRequested)
-                    {
-                        if (at == ChangeGroups.System
-                            || await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, stream.Token).ConfigureAwait(false))
-                        {
-                            throw;
-                        }
-
-                        // No batch is in flight for a frontier: suppress the report instead of sending a refused batch ACK.
-                        _logger.ZLogWarning(error, $"The frontier of database {at.DatabaseId:@Database} from machine {origin.Value:@Origin} is refused; the stream continues with other databases");
                         continue;
                     }
 
-                    await responseStream.WriteAsync(new AckFrame
-                    {
-                        Stable = new StableReport { Database = frontier.Database, Stable = stable.Value },
-                    }, stream.Token).ConfigureAwait(false);
+                    var recorded = FrontierAsync(at, origin, frontier, stream.Token);
+                    applying[at] = (recorded, false);
+                    answers.Add((at, default, recorded));
                     continue;
                 }
 
@@ -253,8 +279,9 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                         continue;
                     }
 
-                    // Pinned to the copy the refill names: a replaced sender copy refuses it instead of certifying another.
-                    refills[tenant] = (refill, RefillAsync(tenant.Database, hello.Machine, new Hlc(refill.Horizon), tenant.Incarnation, stream.Token));
+                    // Pinned to the copy the refill names: a replaced sender copy refuses it instead of certifying another. It
+                    // starts once the database's, and the catalog's, batch or frontier in progress ended.
+                    refills[tenant] = (refill, RefillAsync(After(tenant.Database), tenant.Database, hello.Machine, new Hlc(refill.Horizon), tenant.Incarnation, stream.Token));
                     continue;
                 }
 
@@ -265,79 +292,21 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
                 // A batch that names no database or incarnation cannot be refused for one: it ends the stream.
                 var database = Tenant(batch.Database);
-                var source = (Database: database, Incarnation: Incarnation(batch.Database));
-                List<OriginGroup> groups;
-                try
+                var incarnation = Incarnation(batch.Database);
+                // Any refill of the database blocks its batches: it is still joining repairs, whichever copy it names. A sender
+                // awaits each batch's ack, so a second batch of a database in progress, or past the bound, is refused too.
+                var busy = applying.TryGetValue(database, out var pending);
+                if (refills.Keys.Any(running => running.Database == database) || cut.Contains(database)
+                    || (busy ? pending.Batch : applying.Count >= MaxApplying))
                 {
-                    // Any refill of the database blocks its batches: it is still joining repairs, whichever copy it names.
-                    if (refills.Keys.Any(running => running.Database == database) || cut.Contains(database))
-                    {
-                        await RefuseAsync(responseStream, batch.Database, stream.Token).ConfigureAwait(false);
-                        continue;
-                    }
-
-                    if (last.TryGetValue(database, out var previous) && previous.Incarnation == source.Incarnation && batch.LastChangeId <= previous.ChangeId)
-                    {
-                        throw new InvalidDataException("a stream's batches of one database have growing change ids");
-                    }
-
-                    groups = ChangeGroups.Decode(database, batch.Groups, batch.LastChangeId);
-                    if (previous.Incarnation == source.Incarnation && groups[0].ChangeId <= (long)previous.ChangeId)
-                    {
-                        throw new InvalidDataException("a stream's groups of one database have growing change ids");
-                    }
-                }
-                catch (InvalidDataException error)
-                {
-                    // Nothing of the batch applies and its database is refused: the sender holds that database, and the stream
-                    // goes on with the others.
-                    _logger.ZLogError(error, $"A batch of database {database.DatabaseId:@Database} from machine {origin.Value:@Origin} in {region:@Region} could not be decoded; it is refused");
-                    _undecodable.Add(1, new KeyValuePair<string, object?>("peer_region", region));
-                    await responseStream.WriteAsync(new AckFrame { Ack = new Ack { Database = batch.Database, Refused = true } }, stream.Token).ConfigureAwait(false);
+                    await RefuseAsync(responseStream, batch.Database, stream.Token).ConfigureAwait(false);
                     continue;
                 }
 
-                Hlc? applied;
-                Hlc stableAt = default;
-                try
-                {
-                    applied = await _sink.ApplyAsync(database, origin, groups, stream.Token).ConfigureAwait(false);
-                    if (applied is not null)
-                    {
-                        stableAt = await _states.StableAsync(database, stream.Token).ConfigureAwait(false);
-                    }
-                }
-                catch (Exception error) when (!stream.IsCancellationRequested)
-                {
-                    if (database == ChangeGroups.System
-                        || await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, stream.Token).ConfigureAwait(false))
-                    {
-                        throw;
-                    }
-
-                    // A batch that fails to apply here (a stored state that no longer decodes, the disk) refuses its database
-                    // only: the sender sends it again later, and the other databases go on.
-                    _logger.ZLogError(error, $"A batch of database {database.DatabaseId:@Database} from machine {origin.Value:@Origin} in {region:@Region} could not be applied; it is refused");
-                    applied = null;
-                }
-
-                if (applied is not null)
-                {
-                    last[database] = (source.Incarnation, batch.LastChangeId);
-                    Observe(groups, region);
-                }
-
-                await responseStream.WriteAsync(new AckFrame
-                {
-                    Ack = new Ack
-                    {
-                        Database = batch.Database,
-                        ChangeId = applied is null ? 0 : batch.LastChangeId,
-                        Applied = applied?.Value ?? 0,
-                        Refused = applied is null,
-                        Stable = applied is null ? 0 : stableAt.Value,
-                    },
-                }, stream.Token).ConfigureAwait(false);
+                var previous = last.GetValueOrDefault(database);
+                var joined = ApplyAsync(After(database), database, incarnation, previous, origin, batch, region, stream.Token);
+                applying[database] = (joined, true);
+                answers.Add((database, incarnation, joined));
             }
         }
         catch (OperationCanceledException) when (stream.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested)
@@ -358,7 +327,8 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 await CancelPreviousAsync(precedingStop, precedingEnded).ConfigureAwait(false);
             }
             // A cancelled replacement still joins its predecessor before the next replacement can start.
-            foreach (var pending in refills.Values.Select(refilling => (Task)refilling.Done).Append(reading ?? Task.CompletedTask).Append(precedingEnded))
+            foreach (var pending in refills.Values.Select(refilling => (Task)refilling.Done).Concat(answers.Select(answer => answer.Done))
+                .Append(reading ?? Task.CompletedTask).Append(precedingEnded))
             {
                 await pending.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }
@@ -450,8 +420,9 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     }
 
     // A refill that fails (the named machine unreachable, a deadline) refuses the database: the sender asks again later.
-    private async Task<int?> RefillAsync(TenantContext database, string machine, Hlc horizon, Ulid incarnation, CancellationToken cancellationToken)
+    private async Task<int?> RefillAsync(Task before, TenantContext database, string machine, Hlc horizon, Ulid incarnation, CancellationToken cancellationToken)
     {
+        await before.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         try
         {
             // Refuse excess work immediately; a queue or an admission wait here would grow with reconnecting databases.
@@ -484,6 +455,107 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             _ = Interlocked.Decrement(ref _refilling);
         }
     }
+
+    // Reserves the batch's bytes before decoding it and holds them until it applied, not until its ack is written; a batch
+    // without them is refused and sent again.
+    private async Task<AckFrame?> ApplyAsync(
+        Task before, TenantContext database, Ulid incarnation, (Ulid Incarnation, ulong ChangeId) previous, ReplicaId origin, Batch batch, string region,
+        CancellationToken cancellationToken)
+    {
+        var refused = new AckFrame { Ack = new Ack { Database = batch.Database, Refused = true } };
+        using var reservation = _memory.TryReserve(MemoryLane.Replication, BatchBytes(batch), tenant: null);
+        if (reservation is null)
+        {
+            return refused;
+        }
+
+        List<OriginGroup> groups;
+        try
+        {
+            if (previous.Incarnation == incarnation && batch.LastChangeId <= previous.ChangeId)
+            {
+                throw new InvalidDataException("a stream's batches of one database have growing change ids");
+            }
+
+            groups = ChangeGroups.Decode(database, batch.Groups, batch.LastChangeId);
+            if (previous.Incarnation == incarnation && groups[0].ChangeId <= (long)previous.ChangeId)
+            {
+                throw new InvalidDataException("a stream's groups of one database have growing change ids");
+            }
+        }
+        catch (InvalidDataException error)
+        {
+            // Nothing of the batch applies and its database is refused: the sender holds that database, and the stream
+            // goes on with the others.
+            _logger.ZLogError(error, $"A batch of database {database.DatabaseId:@Database} from machine {origin.Value:@Origin} in {region:@Region} could not be decoded; it is refused");
+            _undecodable.Add(1, new KeyValuePair<string, object?>("peer_region", region));
+            return refused;
+        }
+
+        await before.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        Hlc? applied;
+        Hlc stableAt = default;
+        try
+        {
+            applied = await _sink.ApplyAsync(database, origin, groups, cancellationToken).ConfigureAwait(false);
+            if (applied is not null)
+            {
+                stableAt = await _states.StableAsync(database, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            if (database == ChangeGroups.System
+                || await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false))
+            {
+                throw;
+            }
+
+            // A batch that fails to apply here (a stored state that no longer decodes, the disk) refuses its database
+            // only: the sender sends it again later, and the other databases go on.
+            _logger.ZLogError(error, $"A batch of database {database.DatabaseId:@Database} from machine {origin.Value:@Origin} in {region:@Region} could not be applied; it is refused");
+            return refused;
+        }
+
+        if (applied is null)
+        {
+            return refused;
+        }
+
+        Observe(groups, region);
+        return new AckFrame
+        {
+            Ack = new Ack { Database = batch.Database, ChangeId = batch.LastChangeId, Applied = applied.Value.Value, Stable = stableAt.Value },
+        };
+    }
+
+    // Null when the frontier is refused: no batch is in flight for it, so the report is suppressed instead of a refused ack.
+    private async Task<AckFrame?> FrontierAsync(TenantContext database, ReplicaId origin, Frontier frontier, CancellationToken cancellationToken)
+    {
+        Hlc stable;
+        try
+        {
+            await _sink.RecordFrontierAsync(database, origin, new Hlc(frontier.Hlc), cancellationToken).ConfigureAwait(false);
+            stable = await _states.StableAsync(database, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            if (database == ChangeGroups.System
+                || await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false))
+            {
+                throw;
+            }
+
+            _logger.ZLogWarning(error, $"The frontier of database {database.DatabaseId:@Database} from machine {origin.Value:@Origin} is refused; the stream continues with other databases");
+            return null;
+        }
+
+        return new AckFrame { Stable = new StableReport { Database = frontier.Database, Stable = stable.Value } };
+    }
+
+    // The wire bytes, then the decompressed, parsed and decoded groups of the size the envelope declares (Decode refuses more).
+    private static long BatchBytes(Batch batch) =>
+        batch.Groups.Length + (3L * Math.Min(ApplicationEnvelope.DecodedLength(batch.Groups.Span), ReplicationProtocol.MaxApplicationBytes));
 
     private async Task CancelPreviousAsync(CancellationTokenSource stop, Task ended)
     {

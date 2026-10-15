@@ -1037,6 +1037,89 @@ public sealed class PeerStreamTests
         }
     }
 
+    // A busy database's writer holds back only that database: another database's batch on the same stream is acked once it
+    // commits, and the held one only after its own durable commit.
+    [Test]
+    public async Task A_database_waiting_for_its_writer_does_not_hold_back_another_databases_ack_on_the_same_stream()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var sjc = cluster["sjc"];
+        var peer = (await cluster.Members.ListAsync(CancellationToken.None)).Single(member => member.Region == "gru").Name;
+        var held = await sjc.CreateOtherDatabaseAsync();
+        var healthy = await sjc.CreateOtherDatabaseAsync();
+        var (heldId, healthyId) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        using var push = await RawPush.StartAsync(sjc, peer);
+        // A first batch makes the held database's local copy.
+        await push.BatchAsync(held, 1, EntityIds.New().ToString());
+        await Assert.That((await push.AckAsync()) is { ChangeId: 1, Refused: false }).IsTrue();
+        var store = await sjc.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(held, CancellationToken.None)
+            ?? throw new InvalidOperationException("the held database is missing");
+        var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+        try
+        {
+            await push.BatchAsync(held, 2, heldId);
+            await push.BatchAsync(healthy, 1, healthyId);
+            var first = await push.AckAsync();
+            await Assert.That(first.Database).IsEqualTo(await push.WireAsync(healthy));
+            await Assert.That(first is { ChangeId: 1, Refused: false }).IsTrue();
+            await Assert.That(await sjc.ReadAsync(healthy, healthyId)).IsEqualTo("""{"n":1}""");
+            await Assert.That(await sjc.ReadAsync(held, heldId)).IsNull().Because("the held database's batch waits for its writer, unacknowledged");
+        }
+        finally
+        {
+            await writer.DisposeAsync();
+        }
+
+        var released = await push.AckAsync();
+        await Assert.That(released.Database).IsEqualTo(await push.WireAsync(held));
+        await Assert.That(released is { ChangeId: 2, Refused: false }).IsTrue();
+        await Assert.That(await sjc.ReadAsync(held, heldId)).IsEqualTo("""{"n":1}""");
+    }
+
+    // The sender lists the catalog first: a database its catalog batch registers is applied after that batch commits, not
+    // refused as unregistered, also while the catalog's writer is busy. The database is created on gru only, so sjc's
+    // catalog has no registration of it until the pushed batch commits.
+    [Test]
+    public async Task A_database_the_catalog_batch_registers_applies_after_that_batch_while_the_catalogs_writer_is_busy()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var created = cluster.Database with { DatabaseId = EntityIds.New().ToString() };
+        var (status, body) = await gru.CommitAsync(new { op = "create_database", organization = created.OrganizationId, project = created.ProjectId, name = "registered", id = created.DatabaseId, replica_regions = new[] { sjc.Region } });
+        await Assert.That(status).IsEqualTo(HttpStatusCode.OK).Because(body);
+        var directory = sjc.Api.Server.Services.GetRequiredService<ITenantDirectory>();
+        await Assert.That(await directory.RegisteredAsync(created, CancellationToken.None) is false).IsTrue();
+        var catalog = await gru.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        var registration = (await gru.CdcSource.ReadAsync(ChangeGroups.System, catalog.Incarnation, 0, 1024, 1048576, CancellationToken.None))!.Groups;
+        var id = EntityIds.New().ToString();
+        using var push = await RawPush.StartAsync(sjc, gru.Name);
+        push.Pin(ChangeGroups.System, catalog.Incarnation);
+        var system = await sjc.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        var writer = await system.BeginTransactionAsync(write: true, CancellationToken.None);
+        try
+        {
+            await push.GroupsAsync(ChangeGroups.System, registration);
+            await push.BatchAsync(created, 1, id);
+            // The link loop answers a heartbeat once it read every frame before it: both batches run while the writer is held,
+            // and the database's batch, waiting for the catalog's, has no answer yet.
+            await Assert.That(await push.HeartbeatAsync()).IsTrue();
+        }
+        finally
+        {
+            await writer.DisposeAsync();
+        }
+
+        var first = await push.AckAsync();
+        await Assert.That(first.Database).IsEqualTo(await push.WireAsync(ChangeGroups.System));
+        await Assert.That(first is { Refused: false }).IsTrue();
+        await Assert.That(first.ChangeId).IsEqualTo((ulong)registration[^1].ChangeId);
+        var second = await push.AckAsync();
+        await Assert.That(second.Database).IsEqualTo(await push.WireAsync(created));
+        await Assert.That(second is { ChangeId: 1, Refused: false }).IsTrue();
+        await Assert.That(await directory.RegisteredAsync(created, CancellationToken.None) is true).IsTrue();
+        await Assert.That(await sjc.ReadAsync(created, id)).IsEqualTo("""{"n":1}""");
+    }
+
     [Test]
     public async Task Many_databases_share_bounded_refill_admission_across_origins_while_healthy_batches_progress()
     {
@@ -1266,8 +1349,11 @@ public sealed class PeerStreamTests
         var otherId = EntityIds.New().ToString();
         await push.BatchAsync(cluster.Database, 1, id);
         await push.BatchAsync(other, 1, otherId);
-        await Assert.That(await push.AckAsync()).IsEqualTo(new Ack { Database = await push.WireAsync(cluster.Database), Refused = true });
-        var acknowledged = await push.AckAsync();
+        // Databases apply beside each other, so their acks may come in either order.
+        Ack[] answers = [await push.AckAsync(), await push.AckAsync()];
+        await Assert.That(answers.Single(ack => ack.Database.DatabaseId == cluster.Database.DatabaseId))
+            .IsEqualTo(new Ack { Database = await push.WireAsync(cluster.Database), Refused = true });
+        var acknowledged = answers.Single(ack => ack.Database.DatabaseId == other.DatabaseId);
         await Assert.That(acknowledged.Database).IsEqualTo(await push.WireAsync(other));
         await Assert.That(acknowledged is { ChangeId: 1, Refused: false }).IsTrue();
         await Assert.That(await sjc.ReadAsync(other, otherId)).IsEqualTo("""{"n":1}""");
@@ -2916,6 +3002,21 @@ public sealed class PeerStreamTests
                     Groups = ChangeGroups.Encode([new OriginGroup((long)changeId, [Put(_origin, LastStamp, id, """{"n":1}""")])]),
                 },
             });
+        }
+
+        // The groups as one batch at the last one's change id.
+        public async Task GroupsAsync(TenantContext database, IReadOnlyList<OriginGroup> groups) =>
+            await _call.RequestStream.WriteAsync(new PushFrame
+            {
+                Batch = new Batch { Database = await WireAsync(database), LastChangeId = (ulong)groups[^1].ChangeId, Groups = ChangeGroups.Encode(groups) },
+            });
+
+        // Whether the next answer is the heartbeat's: an empty frame.
+        public async Task<bool> HeartbeatAsync()
+        {
+            await _call.RequestStream.WriteAsync(new PushFrame { Heartbeat = new Heartbeat() });
+            using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
+            return await _call.ResponseStream.MoveNext(timeout.Token) && _call.ResponseStream.Current.KindCase == AckFrame.KindOneofCase.None;
         }
 
         // The next ack, within the sender's progress timeout.
