@@ -195,6 +195,7 @@ jobs:
           python3 terrascale/scripts/ci/latest-main-test.py
           bash terrascale/scripts/fly/deploy-test.sh
           bash terrascale/scripts/fly/preview-test.sh
+          python3 terrascale/scripts/ci/preview-lifecycle-test.py
           bash terrascale/scripts/fly/volume-reset-test.sh
           bash terrascale/scripts/terrabase/storage-format-check-test.sh
           bash terrascale/scripts/terrabase/e2e-summary-test.sh
@@ -319,7 +320,18 @@ jobs:
       - *checkout-ts-dotnet
       - &setup-flyctl
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
+      - name: Read current PR lifecycle
+        id: pull-request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          state=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .state)
+          case "$state" in open|closed) ;; *) exit 1 ;; esac
+          printf 'state=%s\n' "$state" >> "$GITHUB_OUTPUT"
       - name: Create the preview app
+        if: steps.pull-request.outputs.state == 'open'
         run: terrascale/scripts/fly/preview.sh app ${{ github.event.pull_request.number }}
       - *setup-builder
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -328,6 +340,7 @@ jobs:
           username: x
           password: ${{ secrets.FLY_TOKEN_PREVIEWS }}
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        if: steps.pull-request.outputs.state == 'open'
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -338,6 +351,7 @@ jobs:
           build-args: TERRABASE_REVISION=${{ github.sha }}
           push: true
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        if: steps.pull-request.outputs.state == 'open'
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -349,10 +363,12 @@ jobs:
           build-args: TS_AUTH_REVISION=${{ github.sha }}
           push: true
       - name: Start or update the preview machine
+        if: steps.pull-request.outputs.state == 'open'
         run: >-
           terrascale/scripts/fly/preview.sh machine ${{ github.event.pull_request.number }}
           "registry.fly.io/$APP:terrabase-${{ github.sha }}" "registry.fly.io/$APP:ts-auth-${{ github.sha }}"
       - name: Comment the preview URL
+        if: steps.pull-request.outputs.state == 'open'
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
