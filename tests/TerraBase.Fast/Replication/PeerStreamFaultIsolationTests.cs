@@ -251,6 +251,10 @@ public sealed class PeerStreamFaultIsolationTests
         await node.PutAsync(node.Second, "proved", deadline.Token);
         var head = await source.HeadAsync(node.Database, node.Pin(node.Database), deadline.Token)
             ?? throw new InvalidOperationException("the healthy source head was refused");
+        var digest = await source.DigestAsync(node.Database, node.Pin(node.Database), deadline.Token)
+            ?? throw new InvalidOperationException("the healthy source digest was refused");
+        var secondDigest = await source.DigestAsync(node.Second, node.Pin(node.Second), deadline.Token)
+            ?? throw new InvalidOperationException("the healthy second digest was refused");
         var none = new HashSet<ReplicaId>();
         await Assert.That(await source.ProveAsync(node.Database, node.Pin(node.Database), 0, head, none, deadline.Token)).IsTrue();
         await Assert.That(await source.ProveAsync(node.Database, Ulid.NewUlid(), 0, head, none, deadline.Token)).IsFalse()
@@ -259,6 +263,8 @@ public sealed class PeerStreamFaultIsolationTests
         await node.FaultAsync(node.Database, nodeFault: false, deadline.Token);
         await Assert.That(await source.ProveAsync(node.Database, node.Pin(node.Database), 0, head, none, deadline.Token)).IsFalse()
             .Because("an established copy fault refuses the proof instead of advancing a faulted frontier");
+        await Assert.That(await source.MatchedAsync(node.Database, digest, deadline.Token)).IsFalse()
+            .Because("equal-digest publication must refuse the faulted tenant copy too");
         var second = await source.HeadAsync(node.Second, node.Pin(node.Second), deadline.Token)
             ?? throw new InvalidOperationException("the healthy second head was refused");
         await Assert.That(await source.ProveAsync(node.Second, node.Pin(node.Second), 0, second, none, deadline.Token)).IsTrue()
@@ -267,6 +273,8 @@ public sealed class PeerStreamFaultIsolationTests
         await node.FaultAsync(node.Database, nodeFault: true, deadline.Token);
         _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () =>
             await source.ProveAsync(node.Second, node.Pin(node.Second), 0, second, none, deadline.Token));
+        _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () =>
+            await source.MatchedAsync(node.Second, secondDigest, deadline.Token));
     }
 
     [Test]
