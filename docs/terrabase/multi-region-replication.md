@@ -48,4 +48,5 @@ elsewhere ("section 15") are the file number prefixes.
 - [21. Slice plan: R10a as built](replication/21-r10a-as-built.md)
 - [21. Slice plan: Order and parallelism](replication/21-order-and-parallelism.md)
 - [21. Slice plan: Replication outage window](replication/21-replication-outage-window.md)
+- [21. Slice plan: Sender ACK bookkeeping as built](replication/21-sender-ack-bookkeeping.md)
 - [22. Open questions and risks](replication/22-open-questions-and-risks.md)

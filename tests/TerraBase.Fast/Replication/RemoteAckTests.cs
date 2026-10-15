@@ -358,8 +358,9 @@ public sealed class RemoteAckTests
             // write on, no refill is in flight and every later batch is live.
             pair.Refill.Below(marker.ChangeId);
             await pair.Refill.Retained.Task.WaitAsync(pair.Token);
-            var persisted = await pair.Source.AckedAsync(pair.Database, pair.PeerNode, pair.Token);
-            await Assert.That(persisted is { } acked && acked.Incarnation == marker.Incarnation && acked.Acked >= marker.ChangeId).IsTrue();
+            // The pass reads from the refill's ack in memory; the sender persists that ack behind the stream.
+            await TerraBaseTestServer.EventuallyAsync(async token => await pair.Source.AckedAsync(pair.Database, pair.PeerNode, token) is { } acked
+                && acked.Incarnation == marker.Incarnation && acked.Acked >= marker.ChangeId);
             await Assert.That(waiting.IsCompleted).IsFalse().Because("a refill covered the write, and the next live ACK must arrive while it waits");
             using (var later = await pair.Client.PutAsJsonAsync(pair.Document(EntityIds.New().ToString()), new { n = 2 }, pair.Token))
             {
@@ -414,8 +415,9 @@ public sealed class RemoteAckTests
             response = await pending.WaitAsync(pair.Token);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because("a refill at the copy's head would cover the write and never certify it");
             await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString()).IsEqualTo("remote_durable");
-            var acked = await pair.Source.AckedAsync(copy, pair.PeerNode, pair.Token);
-            await Assert.That(acked is { RequiresRefill: false } && acked.Value.Incarnation == marker.Incarnation && acked.Value.Acked >= marker.ChangeId).IsTrue();
+            // The sender persists the ack behind the stream, after the wait it released.
+            await TerraBaseTestServer.EventuallyAsync(async token => await pair.Source.AckedAsync(copy, pair.PeerNode, token) is { RequiresRefill: false } acked
+                && acked.Incarnation == marker.Incarnation && acked.Acked >= marker.ChangeId);
             using var remote = await pair.PeerClient.GetAsync(pair.Document(id, "copy"), pair.Token);
             await Assert.That(remote.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That((await remote.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
@@ -432,9 +434,99 @@ public sealed class RemoteAckTests
     }
 
     [Test]
+    public async Task An_ack_confirms_and_the_link_ships_on_while_the_sender_writer_is_held()
+    {
+        await using var pair = await Pair.StartAsync();
+        _ = await pair.CopyAsync("copy");
+        var id = EntityIds.New().ToString();
+        using var held = pair.PeerAck.Hold(id);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
+        var taken = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<bool>? holding = null;
+        try
+        {
+            await held.Applied.Task.WaitAsync(pair.Token);
+            var marker = await pair.ReachedWait.Task.WaitAsync(pair.Token);
+            _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            // The sender's own writer of db, held as a busy machine holds it: proofs and acks of db need it, the wait does not.
+            holding = (await pair.OriginSqliteAsync()).WithWritersHeldAsync(async () =>
+            {
+                taken.TrySetResult();
+                await release.Task.WaitAsync(pair.Token);
+                return true;
+            }, pair.Token, "a test holding the sender's writer");
+            await taken.Task.WaitAsync(pair.Token);
+
+            held.Release.TrySetResult();
+            using (var response = await pending.WaitAsync(pair.Token))
+            {
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString()).IsEqualTo("remote_durable");
+            }
+
+            // The same link ships and confirms another database's batch while db's ack still waits for its writer.
+            using (var other = await pair.Client.PutAsJsonAsync(pair.Document(EntityIds.New().ToString(), "copy"), new { n = 2 }, pair.Token))
+            {
+                await Assert.That(other.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                await Assert.That((await other.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString()).IsEqualTo("remote_durable");
+            }
+
+            await Assert.That(holding.IsCompleted).IsFalse();
+            await Assert.That((await pair.Source.AckedAsync(pair.Database, pair.PeerNode, pair.Token))!.Value.Acked).IsLessThan(marker.ChangeId)
+                .Because("the ack is persisted only once the writer is free");
+
+            release.TrySetResult();
+            await Assert.That(await holding).IsTrue();
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                await pair.Source.AckedAsync(pair.Database, pair.PeerNode, token) is { } cursor && cursor.Incarnation == marker.Incarnation && cursor.Acked >= marker.ChangeId);
+        }
+        finally
+        {
+            release.TrySetResult();
+            held.Release.TrySetResult();
+            if (holding is not null)
+            {
+                _ = await holding;
+            }
+
+            using var response = await pending.WaitAsync(pair.Token);
+        }
+    }
+
+    [Test]
+    public async Task A_copy_replaced_after_ack_validation_does_not_retract_remote_durability()
+    {
+        await using var pair = await Pair.StartAsync();
+        var id = EntityIds.New().ToString();
+        using var held = pair.PeerAck.Hold(id);
+        var pending = pair.Client.PutAsJsonAsync(pair.Document(id), new { n = 1 }, pair.Token);
+        try
+        {
+            await held.Applied.Task.WaitAsync(pair.Token);
+            var marker = await pair.ReachedWait.Task.WaitAsync(pair.Token);
+            _ = await pair.WaitEntered.Task.WaitAsync(pair.Token);
+            pair.Refusal.ArmPersistenceOnly(pair.Database);
+            held.Release.TrySetResult();
+            await pair.Refusal.Rejected.Task.WaitAsync(pair.Token);
+            using var response = await pending.WaitAsync(pair.Token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>(pair.Token)).GetProperty("durability").GetString())
+                .IsEqualTo("remote_durable");
+            await Assert.That((await pair.Source.AckedAsync(pair.Database, pair.PeerNode, pair.Token))!.Value.Acked)
+                .IsLessThan(marker.ChangeId).Because("a replaced copy refuses persistence even after a valid remote confirmation");
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+            using var response = await pending.WaitAsync(pair.Token);
+        }
+    }
+
+    [Test]
     [Arguments(PlanTier.Hobby)]
     [Arguments(PlanTier.Pro)]
-    public async Task A_refused_ack_persistence_after_the_receiver_commits_answers_unknown(PlanTier plan)
+    public async Task An_ack_for_a_replaced_copy_after_the_receiver_commits_answers_unknown(PlanTier plan)
     {
         await using var pair = await Pair.StartAsync(plan: plan);
         var id = EntityIds.New().ToString();
@@ -1680,13 +1772,23 @@ public sealed class RemoteAckTests
         }
     }
 
+    // Answers as if the copy in place were another: the ack's incarnation check and its persistence are refused.
     private sealed class AckRefusal
     {
         private TenantContext? _database;
+        private int _head = 1;
 
         public TaskCompletionSource Rejected { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public void Arm(TenantContext database) => Volatile.Write(ref _database, database);
+
+        public void ArmPersistenceOnly(TenantContext database)
+        {
+            Volatile.Write(ref _head, 0);
+            Arm(database);
+        }
+
+        public bool RefusesHead(TenantContext database) => Volatile.Read(ref _head) != 0 && Refuses(database);
 
         public bool Refuses(TenantContext database) => Volatile.Read(ref _database) is { } target && (target with { Plan = PlanTier.Hobby }) == (database with { Plan = PlanTier.Hobby });
     }
@@ -1768,6 +1870,12 @@ public sealed class RemoteAckTests
 
         public async ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken)
         {
+            if (refusal.RefusesHead(database))
+            {
+                refusal.Rejected.TrySetResult();
+                return null;
+            }
+
             if (pair.HoldHead is { } held && database.ProjectId == pair.Database.ProjectId && database.DatabaseId != pair.Database.DatabaseId)
             {
                 await held.Task.WaitAsync(cancellationToken);

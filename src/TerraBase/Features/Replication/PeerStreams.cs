@@ -301,10 +301,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         var reading = responses.Reader.ReadAsync(activity.Token).AsTask();
         var pending = 0;
         ExceptionDispatchInfo? failure = null;
+        var ledger = new Ledger();
         using var writer = new LinkWriter(call.RequestStream, _time, ReserveAsync);
         var receiving = ReceiveAsync();
         var heartbeats = HeartbeatAsync();
         var progress = ProgressAsync();
+        var bookkeeping = BookkeepAsync();
         Task? changed = null;
         try
         {
@@ -337,11 +339,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             await receiving.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             await heartbeats.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             await progress.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await bookkeeping.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             await ((Task)reading).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
 
         // Process each database's responses before shipping the next one: a large placement cannot fill the queue while
         // the pass waits on another database's writer. InFlight was published before this consumer sees a batch's ack.
+        // Nothing here takes a database's writer: the ledger records what needs one.
         async ValueTask DrainAsync()
         {
             while (reading.IsCompleted)
@@ -354,13 +358,15 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
                 if (response.Stable is { } report)
                 {
-                    // A report for a frontier of a replaced copy says nothing of the copy in place.
-                    _ = await _source.RecordStableAsync(
-                        ChangeGroups.Tenant(report.Database), ChangeGroups.RequiredIncarnation(report.Database), peer, new Hlc(report.Stable), activity.Token).ConfigureAwait(false);
+                    // A report for a frontier of a replaced copy says nothing of the copy in place: the source refuses it.
+                    await ledger.AddAsync(
+                        ChangeGroups.Tenant(report.Database), ChangeGroups.RequiredIncarnation(report.Database),
+                        null, null, report.Stable, activity.Token)
+                        .ConfigureAwait(false);
                 }
                 else
                 {
-                    await AckedAsync(link, response.Ack, peer, activity.Token).ConfigureAwait(false);
+                    await AckedAsync(link, response.Ack, ledger, activity.Token).ConfigureAwait(false);
                 }
 
                 pending--;
@@ -368,8 +374,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
         }
 
-        // At most 32 response-producing frames await durable processing, leaving room to read their replies and heartbeats
-        // even while local storage is busy. The budget is released by the single consumer, not by mere receipt.
+        // At most 32 response-producing frames await processing, leaving room to read their replies and heartbeats even while
+        // local storage is busy. The budget is released by the single consumer, not by mere receipt.
         async ValueTask ReserveAsync()
         {
             while (pending >= MaxPendingResponses)
@@ -459,6 +465,54 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 while (await timer.WaitForNextTickAsync(activity.Token).ConfigureAwait(false))
                 {
                     CheckProgress();
+                }
+            }
+            catch (Exception error)
+            {
+                await FailAsync(error).ConfigureAwait(false);
+            }
+        }
+
+        // Persists the ledger behind the stream: a busy writer delays only the resume cursor, retention and shape publication,
+        // never the waits an ack released. Shipping waits only when the bounded ledger fills. A lost stream resends from the
+        // persisted ack, so it is acked and proved again. A refused ack is not reset here: the next pass's read finds the copy
+        // replaced and starts over.
+        async Task BookkeepAsync()
+        {
+            try
+            {
+                while (true)
+                {
+                    foreach (var ((database, incarnation), due) in await ledger.TakeAsync(activity.Token).ConfigureAwait(false))
+                    {
+                        // Shape reads publish from the same proof. Proved before the ack is recorded, which cuts the change log down
+                        // to the frontier this moves (FR-25); ProveAsync checks the incarnation itself. A failure only delays
+                        // publication until the next ack of the run, which covers the same range: it never fails the stream.
+                        foreach (var (from, through) in due.Proofs)
+                        {
+                            try
+                            {
+                                var held = await HeldOriginsAsync(database, activity.Token).ConfigureAwait(false);
+                                _ = await _source.ProveAsync(database, incarnation, from, through, held, activity.Token)
+                                    .ConfigureAwait(false);
+                            }
+                            catch (Exception error) when (!activity.IsCancellationRequested)
+                            {
+                                _logger.ZLogWarning(error,
+                                    $"Recording a remote durable proof for shape reads failed; the next ack retries");
+                            }
+                        }
+
+                        var recorded = due.Acked is { } acked
+                            ? await _source.AckAsync(database, incarnation, peer, acked, new Hlc(due.Stable), activity.Token)
+                                .ConfigureAwait(false)
+                            : await _source.RecordStableAsync(database, incarnation, peer, new Hlc(due.Stable), activity.Token)
+                                .ConfigureAwait(false);
+                        if (!recorded)
+                        {
+                            _logger.ZLogDebug($"Peer bookkeeping for a replaced database {database.DatabaseId:@Database} was refused");
+                        }
+                    }
                 }
             }
             catch (Exception error)
@@ -625,17 +679,17 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         return sent;
     }
 
-    private async ValueTask AckedAsync(Link link, Ack? ack, ReplicaId peer, CancellationToken cancellationToken)
+    private async ValueTask AckedAsync(Link link, Ack? ack, Ledger ledger, CancellationToken cancellationToken)
     {
         var database = ChangeGroups.Tenant(ack?.Database);
-        Cursor? cursor;
         Ulid incarnation;
         bool live;
         long from;
         lock (link.Gate)
         {
-            cursor = link.Cursors.GetValueOrDefault(database);
-            if (cursor?.InFlight is not { } inFlight || cursor.Incarnation is not { } pinned || ChangeGroups.RequiredIncarnation(ack!.Database) != pinned
+            var cursor = link.Cursors.GetValueOrDefault(database);
+            if (cursor?.InFlight is not { } inFlight || cursor.Incarnation is not { } pinned
+                || ChangeGroups.RequiredIncarnation(ack!.Database) != pinned
                 || (!ack.Refused && ack.ChangeId != (ulong)inFlight))
             {
                 throw new InvalidDataException("the peer acknowledged a batch that is not in flight");
@@ -653,46 +707,21 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 return;
             }
 
-            (cursor.Acked, cursor.Live) = (inFlight, null);
+            // The stream goes on from the peer's ack in memory; the ledger persists it behind the stream.
+            (cursor.Acked, cursor.Live, cursor.RequiresRefill) = (inFlight, live ? (incarnation, from) : null, false);
         }
 
-        // Shape reads publish from the same proof, whether or not a client write still waits for it. Proved before the ack is
-        // recorded, which cuts the change log down to the frontier this moves (FR-25); ProveAsync checks the incarnation itself.
-        // A failure only delays publication until the next ack of the run, which covers the same range: it never fails the stream.
-        if (live && (await PlacementAsync(database, cancellationToken).ConfigureAwait(false))?.Includes(link.Peer.Region) == true)
-        {
-            try
-            {
-                var held = await HeldOriginsAsync(database, cancellationToken).ConfigureAwait(false);
-                _ = await _source.ProveAsync(database, incarnation, from, (long)ack.ChangeId, held, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
-            {
-                _logger.ZLogWarning(error, $"Recording a remote durable proof for shape reads failed; the next ack retries");
-            }
-        }
-
-        // Recorded only while the copy in place is still the one the batch came from; otherwise the cursor starts over.
-        if (!await _source.AckAsync(database, incarnation, peer, (long)ack.ChangeId, new Hlc(ack.Stable), cancellationToken).ConfigureAwait(false))
-        {
-            Reset(link, cursor);
-            return;
-        }
-
-        lock (link.Gate)
-        {
-            cursor.RequiresRefill = false;
-            if (live)
-            {
-                cursor.Live = (incarnation, from);
-            }
-        }
-
-        // The conditional writer accepted the pinned ACK. Recheck placement before releasing any client wait.
-        if (live && (await PlacementAsync(database, cancellationToken).ConfigureAwait(false))?.Includes(link.Peer.Region) == true)
+        // The peer holds the range durably whatever this machine's bookkeeping does: a client wait needs only placement and
+        // the copy the batch came from still in place (HeadAsync reads its incarnation without the writer).
+        var placed = live && (await PlacementAsync(database, cancellationToken).ConfigureAwait(false))?.Includes(link.Peer.Region) == true;
+        if (placed && await _source.HeadAsync(database, incarnation, cancellationToken).ConfigureAwait(false) is not null)
         {
             _acks.Acked(database, incarnation, from, (long)ack.ChangeId);
         }
+
+        await ledger.AddAsync(
+            database, incarnation, placed ? (from, (long)ack.ChangeId) : null, (long)ack.ChangeId, ack.Stable, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     // Forgets a cursor's incarnation and position: the next pass reads both again from the copy in place.
@@ -779,6 +808,91 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         }
 
         public void Dispose() => _writing.Dispose();
+    }
+
+    // One stream's responses that need a database's writer, coalesced per copy: the live ranges to prove, the newest ack and
+    // the highest stable stamp. Pending and active batches each hold at most MaxDue copies of at most
+    // RemoteAckWaiter.MaxRanges ranges; the consumer waits for capacity rather than dropping a proof.
+    private sealed class Ledger
+    {
+        private const int MaxDue = 1024;
+
+        private readonly Lock _gate = new();
+        private Dictionary<(TenantContext Database, Ulid Incarnation), Due> _due = [];
+        private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async ValueTask AddAsync(
+            TenantContext database, Ulid incarnation, (long From, long To)? proof,
+            long? acked, ulong stable, CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                Task changed;
+                lock (_gate)
+                {
+                    if ((_due.TryGetValue((database, incarnation), out var due) || _due.Count < MaxDue)
+                        && (due is null || due.CanKeep(proof)))
+                    {
+                        due ??= _due[(database, incarnation)] = new Due();
+                        if (proof is { } range)
+                        {
+                            RemoteAckWaiter.Keep(due.Proofs, range.From, range.To);
+                        }
+
+                        (due.Acked, due.Stable) = (acked ?? due.Acked, Math.Max(due.Stable, stable));
+                        Signal();
+                        return;
+                    }
+
+                    changed = _changed.Task;
+                }
+
+                await changed.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        public async ValueTask<Dictionary<(TenantContext Database, Ulid Incarnation), Due>> TakeAsync(CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                Task changed;
+                lock (_gate)
+                {
+                    if (_due.Count > 0)
+                    {
+                        var taken = _due;
+                        _due = [];
+                        Signal();
+                        return taken;
+                    }
+
+                    changed = _changed.Task;
+                }
+
+                await changed.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        // The caller holds _gate.
+        private void Signal()
+        {
+            _changed.TrySetResult();
+            _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+    }
+
+    private sealed class Due
+    {
+        public List<(long From, long To)> Proofs { get; } = [];
+
+        public bool CanKeep((long From, long To)? proof) =>
+            proof is not { } range || Proofs.Count < RemoteAckWaiter.MaxRanges
+            || Proofs.Any(known => range.From <= known.To && known.From <= range.To);
+
+        // The newest ack of the copy, or null when only a stable report is due.
+        public long? Acked { get; set; }
+
+        public ulong Stable { get; set; }
     }
 
     private sealed class Link(ClusterMember peer)
