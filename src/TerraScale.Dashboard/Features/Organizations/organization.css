@@ -169,13 +169,9 @@ dialog.ts-org-wizard {
 }
 
 @media (max-width: 30rem) {
-  .ts-org-step:not(.ts-org-step-current) .ts-org-step-label {
-    display: none;
-  }
-
-  .ts-org-step {
-    justify-content: center;
-  }
+  .ts-org-steps { grid-template-columns: minmax(0, 1fr); }
+  .ts-org-step { justify-content: flex-start; }
+  .ts-org-step-label { white-space: normal; overflow: visible; }
 }
 
 /* Organization pages: identity header, KPI tiles, and two-column boxed cards. */

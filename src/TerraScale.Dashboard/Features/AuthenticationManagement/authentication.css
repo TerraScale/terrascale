@@ -818,6 +818,7 @@ button.ts-idp-provider:focus-visible {
 
 /* Danger zone: its own last tab; each card is a red-bordered row. */
 .ts-idp-danger {
+  padding: var(--ts-s5);
   border: 1px solid color-mix(in oklab, var(--ts-danger) 45%, transparent);
   border-radius: var(--ts-radius-lg);
 }

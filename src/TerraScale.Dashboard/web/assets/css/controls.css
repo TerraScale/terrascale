@@ -253,6 +253,14 @@ select.ts-input,
   cursor: pointer;
 }
 
+/* Keep long selected labels legible without clipping the final word. */
+select.ts-input:not([multiple]),
+select.ts-select:not([multiple]) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Native popup menus need an opaque surface as well as readable text. */
 select.ts-input option,
 select.ts-select option {
