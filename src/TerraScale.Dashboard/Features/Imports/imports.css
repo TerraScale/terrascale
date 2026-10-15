@@ -43,22 +43,29 @@
   display: flex;
   align-items: start;
   gap: var(--ts-s3);
+  padding: var(--ts-s4);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
   counter-increment: import-step;
 }
 
 .ts-import-outline > li::before {
-  content: counter(import-step);
+  content: counter(import-step, decimal-leading-zero);
   display: grid;
   place-items: center;
   flex: none;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--ts-line);
+  width: 32px;
+  height: 32px;
   border-radius: var(--ts-radius);
-  background: var(--ts-surface-2);
-  color: var(--ts-ink-2);
-  font-family: var(--ts-font-mono);
+  background: color-mix(in oklab, var(--hue) 16%, transparent);
+  color: color-mix(in oklab, var(--hue) 60%, var(--ts-ink));
+  font: 500 var(--ts-fs-xs) / 1 var(--ts-font-mono);
 }
+
+.ts-import-outline > li:nth-child(1) { --hue: var(--ts-chart-1); }
+.ts-import-outline > li:nth-child(2) { --hue: var(--ts-chart-2); }
+.ts-import-outline > li:nth-child(3) { --hue: var(--ts-chart-3); }
 
 .ts-import-issues {
   padding: 0;
@@ -82,7 +89,7 @@
   min-width: 0;
 }
 
-.ts-imports .ts-code {
+.ts-imports .ts-snippet-body {
   max-width: 100%;
   overflow-x: auto;
 }
