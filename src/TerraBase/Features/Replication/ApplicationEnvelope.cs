@@ -104,6 +104,10 @@ public static class ApplicationEnvelope
             : throw new InvalidDataException("decoded envelope does not match its declared length and checksum");
     }
 
+    /// <summary>The decoded length an envelope's header declares, unchecked; zero when it has no header.</summary>
+    public static int DecodedLength(ReadOnlySpan<byte> envelope) =>
+        envelope.Length < HeaderBytes ? 0 : (int)Math.Min(BinaryPrimitives.ReadUInt32LittleEndian(envelope[24..]), int.MaxValue);
+
     // CRC-32C (Castagnoli) as in the Rust crc32c crate: initial and final value all ones.
     private static uint Crc32C(ReadOnlySpan<byte> data)
     {
