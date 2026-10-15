@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
 
@@ -16,6 +17,9 @@ public interface IProjectCatalog
 
     /// <summary>The organization that registered <paramref name="projectId"/>, whether or not ts-auth bound it yet.</summary>
     ValueTask<ResolveProjectResult> ProjectOrganizationAsync(string projectId, CancellationToken cancellationToken);
+
+    /// <summary>Sets the plan of the storage organization a signed project enrolled; legacy-bound projects keep their owners' plan.</summary>
+    ValueTask<SetPlanResult> SetEnrolledPlanAsync(string projectId, PlanTier plan, CancellationToken cancellationToken);
 
     /// <summary>Verifies a legacy owner's sign-in token with ts-auth before binding existing storage to its project.</summary>
     ValueTask<VerifyProjectBindingResult> VerifyBindingAsync(

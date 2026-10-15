@@ -5,7 +5,9 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using TerraBase.Features.Management;
+using TerraBase.Features.Qos;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -78,6 +80,64 @@ public sealed class ProjectTokenTests
             .IsEquivalentTo([database.Id]);
         var preserved = await data.GetFromJsonAsync<JsonElement>(Uri(database.Data + "/collections/people/documents/by-key?id=" + System.Uri.EscapeDataString(id!)));
         await Assert.That(preserved.GetProperty("document").GetProperty("name").GetString()).IsEqualTo("Preserved");
+    }
+
+    // An enrolled project's organization has no owner to set its plan; the internal listener's operator sizes it, and
+    // admission applies the new plan at once. Projects bound to an owned organization keep the owner route.
+    [Test]
+    public async Task The_operator_sets_an_enrolled_projects_plan_and_admission_applies_it()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var project = EntityIds.New().ToString();
+        using var client = api.WithToken(Token(api, EntityIds.New().ToString(), project, AllScopes));
+        using (var created = await client.PostAsJsonAsync(Uri($"/v1/projects/{project}/databases"), new { name = "main" }))
+        {
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        }
+
+        if (await api.Server.Services.GetRequiredService<IProjectCatalog>().ProjectOrganizationAsync(project, CancellationToken.None) is not string organization)
+        {
+            throw new InvalidOperationException("the project did not enroll");
+        }
+
+        var admission = api.Server.Services.GetRequiredService<IQosAdmission>();
+        var hobby = new TenantContext(organization, PlanTier.Hobby);
+        List<IDisposable> held = [.. Enumerable.Range(0, QosPolicy.For(PlanTier.Hobby).Concurrency)
+            .Select(_ => admission.TryEnter(hobby, out _) ?? throw new InvalidOperationException("fixture admission failed"))];
+        try
+        {
+            var collections = Uri($"/v1/projects/{project}/databases/main/collections");
+            await ErrorAssert.ErrorAsync(client.GetAsync(collections), HttpStatusCode.TooManyRequests, "tenant_busy", "organization request budget exceeded");
+            using (var onClient = await client.PutAsJsonAsync(Uri($"/admin/projects/{project}/plan"), new { plan = "enterprise" }))
+            {
+                await Assert.That(onClient.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            }
+
+            await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{project}/plan"), new { plan = "unlimited" }),
+                HttpStatusCode.BadRequest, "invalid_request", "plan must be hobby, pro or enterprise");
+            using (var set = await api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{project}/plan"), new { plan = "enterprise" }))
+            {
+                await Assert.That(set.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That((await set.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()).IsEqualTo(organization);
+            }
+
+            using var admitted = await client.GetAsync(collections);
+            await Assert.That(admitted.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+        finally
+        {
+            foreach (var lease in held)
+            {
+                lease.Dispose();
+            }
+        }
+
+        var owned = await api.CreateManagedDatabaseAsync("owned");
+        await api.VerifyProjectBindingAsync(owned.Organization, owned.Project);
+        await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{owned.Project}/plan"), new { plan = "enterprise" }),
+            HttpStatusCode.NotFound, "not_found", "the resource does not exist");
+        await ErrorAssert.ErrorAsync(api.Server.Client.PutAsJsonAsync(Uri($"/admin/projects/{EntityIds.New()}/plan"), new { plan = "enterprise" }),
+            HttpStatusCode.NotFound, "not_found", "the resource does not exist");
     }
 
     [Test]

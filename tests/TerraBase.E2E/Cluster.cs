@@ -381,12 +381,13 @@ public sealed class Cluster : IAsyncDisposable
             if (backup)
             {
                 owned = $"{projectPath}/databases/e2e-backup-{EntityIds.New().ToString().ToLowerInvariant()}";
-                using var created = await clients[Gru].PostAsJsonAsync(new Uri($"{projectPath}/databases", UriKind.Relative), new
+                var database = new
                 {
                     name = owned.Split('/')[^1],
                     homeRegion = Gru,
                     replicaRegions = regions.Where(region => region != Gru).ToArray(),
-                });
+                };
+                using var created = await Docs.AdmittedAsync(() => clients[Gru].PostAsJsonAsync(new Uri($"{projectPath}/databases", UriKind.Relative), database));
                 await Docs.EnsureSuccessAsync(created);
                 path = owned;
             }
@@ -465,7 +466,7 @@ public sealed class Cluster : IAsyncDisposable
 
     internal static async Task CreateCollectionAsync(Dictionary<string, HttpClient> clients, string path, string collection)
     {
-        using var created = await clients[Gru].PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = collection });
+        using var created = await Docs.AdmittedAsync(() => clients[Gru].PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = collection }));
         await Docs.EnsureSuccessAsync(created);
         var uri = new Uri($"{path}/collections/{collection}", UriKind.Relative);
         foreach (var (region, client) in clients.Where(pair => pair.Key != Gru))
@@ -477,7 +478,7 @@ public sealed class Cluster : IAsyncDisposable
     // A missing collection is already gone, so only the answers that leave data behind fail the cleanup.
     private static async Task DeleteCollectionAsync(HttpClient gru, string path, string collection)
     {
-        using var deleted = await gru.DeleteAsync(new Uri($"{path}/collections/{collection}", UriKind.Relative));
+        using var deleted = await Docs.AdmittedAsync(() => gru.DeleteAsync(new Uri($"{path}/collections/{collection}", UriKind.Relative)));
         if (deleted.StatusCode != HttpStatusCode.NotFound)
         {
             await Docs.EnsureSuccessAsync(deleted);
@@ -492,7 +493,7 @@ public sealed class Cluster : IAsyncDisposable
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(1));
         var uri = new Uri(path, UriKind.Relative);
-        using var existing = await regions(via).GetAsync(uri, deadline.Token);
+        using var existing = await Docs.AdmittedAsync(() => regions(via).GetAsync(uri, deadline.Token), deadline.Token);
         if (existing.StatusCode == HttpStatusCode.NotFound)
         {
             return;
@@ -503,7 +504,8 @@ public sealed class Cluster : IAsyncDisposable
         var home = regions(record.GetProperty("homeRegion").GetString()!);
         if (record.GetProperty("replicaRegions").GetArrayLength() > 0)
         {
-            using var unreplicated = await home.PatchAsJsonAsync(uri, new { replicaRegions = Array.Empty<string>() }, deadline.Token);
+            using var unreplicated = await Docs.AdmittedAsync(
+                () => home.PatchAsJsonAsync(uri, new { replicaRegions = Array.Empty<string>() }, deadline.Token), deadline.Token);
             if (unreplicated.StatusCode == HttpStatusCode.NotFound)
             {
                 return;
@@ -512,7 +514,7 @@ public sealed class Cluster : IAsyncDisposable
             await Docs.EnsureSuccessAsync(unreplicated);
         }
 
-        using var deleted = await home.DeleteAsync(uri, deadline.Token);
+        using var deleted = await Docs.AdmittedAsync(() => home.DeleteAsync(uri, deadline.Token), deadline.Token);
         if (deleted.StatusCode != HttpStatusCode.NotFound)
         {
             await Docs.EnsureSuccessAsync(deleted);
