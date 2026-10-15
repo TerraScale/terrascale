@@ -28,10 +28,12 @@ tombstone. A 404 without an ETag is reported as `no-tombstone(never-written-or-c
 
 ## Writes that are sent again
 
-Only the probe write is sent again, and only after a refusal that executed nothing: 429 from tenant admission, or 503
-whose JSON `error.code` is `remote_region_unavailable` or `confirmation_busy`. `write_outcome_unknown`, any other 503,
-a body that is not JSON and the proxy's own 503 are sent exactly once and fail the test. While a restarted machine boots,
-reads (never writes) treat the proxy's answer without TerraBase's identity, and 503, as not there yet.
+Every request is sent again only after 429 whose JSON `error.code` is `tenant_busy`, with a positive `Retry-After`
+that fits the convergence deadline. The probe write is also sent again after 503 whose JSON `error.code` is
+`remote_region_unavailable` or `confirmation_busy`, which the write route answers before it executes anything.
+`write_outcome_unknown`, any other 503, a body that is not JSON and the proxy's own 503 are sent exactly once and fail
+the test. While a restarted machine boots, reads (never writes) treat the proxy's answer without TerraBase's
+identity, and 503, as not there yet.
 
 ## The target is strict
 
