@@ -1076,6 +1076,41 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.ReadAsync(held, heldId)).IsEqualTo("""{"n":1}""");
     }
 
+    // A refusal follows its database's frontier in progress: a malformed batch behind a frontier waiting for the writer is
+    // refused only after the frontier's stable report. A heartbeat's empty answer needs no frontier, so it comes first.
+    [Test]
+    public async Task A_refused_batch_behind_an_in_flight_frontier_is_answered_after_the_frontier_report()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var sjc = cluster["sjc"];
+        var peer = (await cluster.Members.ListAsync(CancellationToken.None)).Single(member => member.Region == "gru").Name;
+        var held = await sjc.CreateOtherDatabaseAsync();
+        using var push = await RawPush.StartAsync(sjc, peer);
+        // A first batch makes the local copy: a frontier of a database without one records nothing and never waits.
+        await push.BatchAsync(held, 1, EntityIds.New().ToString());
+        await Assert.That((await push.AckAsync()) is { ChangeId: 1, Refused: false }).IsTrue();
+        var store = await sjc.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(held, CancellationToken.None)
+            ?? throw new InvalidOperationException("the held database is missing");
+        var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+        try
+        {
+            await push.FrontierAsync(held, Stamp());
+            await push.MalformedBatchAsync(held, 2);
+            await Assert.That(await push.HeartbeatAsync()).IsTrue().Because("the heartbeat's empty answer is the first one while the writer is held");
+        }
+        finally
+        {
+            await writer.DisposeAsync();
+        }
+
+        var stable = await push.FrameAsync();
+        await Assert.That(stable.KindCase).IsEqualTo(AckFrame.KindOneofCase.Stable);
+        await Assert.That(stable.Stable.Database).IsEqualTo(await push.WireAsync(held));
+        var refused = await push.AckAsync();
+        await Assert.That(refused is { Refused: true }).IsTrue();
+        await Assert.That(refused.Database).IsEqualTo(await push.WireAsync(held));
+    }
+
     // The sender lists the catalog first: a database its catalog batch registers is applied after that batch commits, not
     // refused as unregistered, also while the catalog's writer is busy. The database is created on gru only, so sjc's
     // catalog has no registration of it until the pushed batch commits.
@@ -3024,6 +3059,24 @@ public sealed class PeerStreamTests
         {
             using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
             return await _call.ResponseStream.MoveNext(timeout.Token) ? _call.ResponseStream.Current.Ack : throw new IOException("the stream ended");
+        }
+
+        // A frontier of the database at `hlc`; it has no answer of its own until its stable report.
+        public async Task FrontierAsync(TenantContext database, ulong hlc) =>
+            await _call.RequestStream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = await WireAsync(database), Hlc = hlc } });
+
+        // A batch whose groups are no application envelope: it is refused, once its database's frontier in progress ended.
+        public async Task MalformedBatchAsync(TenantContext database, ulong changeId) =>
+            await _call.RequestStream.WriteAsync(new PushFrame
+            {
+                Batch = new Batch { Database = await WireAsync(database), LastChangeId = changeId, Groups = ByteString.CopyFromUtf8("not an envelope") },
+            });
+
+        // The next answer of any kind, within the sender's progress timeout.
+        public async Task<AckFrame> FrameAsync()
+        {
+            using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
+            return await _call.ResponseStream.MoveNext(timeout.Token) ? _call.ResponseStream.Current : throw new IOException("the stream ended");
         }
 
         public void Dispose()

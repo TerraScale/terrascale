@@ -423,6 +423,11 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private async Task<int?> RefillAsync(Task before, TenantContext database, string machine, Hlc horizon, Ulid incarnation, CancellationToken cancellationToken)
     {
         await before.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (!before.IsCompletedSuccessfully)
+        {
+            return null;
+        }
+
         try
         {
             // Refuse excess work immediately; a queue or an admission wait here would grow with reconnecting databases.
@@ -464,7 +469,9 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     {
         var refused = new AckFrame { Ack = new Ack { Database = batch.Database, Refused = true } };
         using var reservation = _memory.TryReserve(MemoryLane.Replication, BatchBytes(batch), tenant: null);
-        if (reservation is null)
+        // Even a refusal follows its database's frontier; failed catalog work starts no dependent application.
+        await before.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (reservation is null || !before.IsCompletedSuccessfully)
         {
             return refused;
         }
@@ -492,7 +499,6 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             return refused;
         }
 
-        await before.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         Hlc? applied;
         Hlc stableAt = default;
         try
