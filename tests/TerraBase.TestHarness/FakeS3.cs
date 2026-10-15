@@ -781,7 +781,7 @@ public sealed class FakeS3
     // The user metadata, Cache-Control and content headers an upload stores; HEAD and GET return them with the object.
     private static KeyValuePair<string, string>[] UploadHeaders(HttpRequestMessage request) => [.. request.Headers
         .Concat(request.Content?.Headers ?? Enumerable.Empty<KeyValuePair<string, IEnumerable<string>>>())
-        .Where(header => header.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Cache-Control", StringComparison.OrdinalIgnoreCase) || header.Key is "Content-Type" or "Content-Encoding" or "Content-Disposition")
+        .Where(header => header.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Cache-Control", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Content-Disposition", StringComparison.OrdinalIgnoreCase))
         .Select(header => KeyValuePair.Create(header.Key.ToLowerInvariant(), string.Join(",", header.Value)))];
 
     private static string? Header(HttpRequestMessage request, string name) =>
