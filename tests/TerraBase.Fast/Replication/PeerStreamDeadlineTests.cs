@@ -305,6 +305,8 @@ public sealed class PeerStreamDeadlineTests
     public async Task Thirty_two_unanswered_frontiers_do_not_consume_the_healthy_batch_budget()
     {
         var time = new ObservedTime();
+        // Commit-woken passes must not straddle the clock advances that drive these frontier rounds.
+        var wakes = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var answered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         answered.SetResult();
         await using var peer = await FakePeer.StartAsync(silentStreams: 0, batchRelease: answered);
@@ -324,7 +326,7 @@ public sealed class PeerStreamDeadlineTests
                     ?? throw new InvalidOperationException("the source head was refused");
                 await Assert.That(await source.AckAsync(database, pin, replica, head, default, CancellationToken.None)).IsTrue();
             }
-        }, sourceFactory: provider => source = new ResetSource(provider.GetRequiredService<FaultAwareReplicaSource>()));
+        }, sourceFactory: provider => source = new ResetSource(provider.GetRequiredService<FaultAwareReplicaSource>()) { Wakes = wakes.Task });
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
         await time.UntilTimerAsync(Idle, after: 0, period: Idle);
         for (var round = 0; round < 16; round++)
@@ -347,10 +349,13 @@ public sealed class PeerStreamDeadlineTests
             await time.UntilChangeAsync(ReplicationProtocol.ProgressTimeout, changes);
             if (round < 15)
             {
+                // The pass this heartbeat second woke must re-arm its wait now: armed after the advance, no frontier pass would follow it.
+                await time.UntilTimerAsync(Idle, after: 0, period: Timeout.InfiniteTimeSpan, createdAt: time.GetUtcNow());
                 time.Advance(TimeSpan.FromSeconds(4));
             }
         }
 
+        wakes.SetResult();
         await PutStoredAsync(api, databases[1], "sentinel");
         PushFrame sentinel;
         do
@@ -887,6 +892,7 @@ public sealed class PeerStreamDeadlineTests
     // Storage stays real; only the prepared read boundary and one tenant-local bookkeeping error are controlled.
     private sealed class ResetSource(FaultAwareReplicaSource inner) : IChangeGroupSource
     {
+        public Task Wakes { get; init; } = Task.CompletedTask;
         public TenantContext[] Databases { get; set; } = [];
         public TenantContext? ResetDatabase { get; set; }
         public TenantContext? HoldDatabase { get; set; }
@@ -941,7 +947,11 @@ public sealed class PeerStreamDeadlineTests
         public ValueTask<bool> ProveAsync(TenantContext database, Ulid incarnation, long from, long through, IReadOnlySet<ReplicaId> held, CancellationToken cancellationToken) => inner.ProveAsync(database, incarnation, from, through, held, cancellationToken);
         public ValueTask<bool?> RetainsAsync(TenantContext database, Ulid incarnation, long after, CancellationToken cancellationToken) => inner.RetainsAsync(database, incarnation, after, cancellationToken);
         public ValueTask<long?> HeadAsync(TenantContext database, Ulid incarnation, CancellationToken cancellationToken) => inner.HeadAsync(database, incarnation, cancellationToken);
-        public Task ChangedAsync(CancellationToken cancellationToken) => inner.ChangedAsync(cancellationToken);
+        public async Task ChangedAsync(CancellationToken cancellationToken)
+        {
+            await inner.ChangedAsync(cancellationToken);
+            await Wakes.WaitAsync(cancellationToken);
+        }
     }
 
     private sealed class HeldRepair
