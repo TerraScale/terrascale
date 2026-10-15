@@ -23,6 +23,77 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     public const string SingleRegionNotice = "TerraBase does not list its other regions yet, so adding replica regions is unavailable here.";
     public static string RegionDisplay(string code) => code switch { "" => "Not configured", _ => TerraScale.Dashboard.UI.Regions.Name(code) is { Length: > 0 } name ? $"{code.ToLowerInvariant()} · {name}" : code.ToLowerInvariant() };
     public static string Bytes(long bytes) => bytes < 1024 ? $"{bytes} B" : bytes < 1024 * 1024 ? $"{bytes / 1024d:0.0} KiB" : $"{bytes / (1024d * 1024):0.0} MiB";
+    public DatabaseListMetrics? Metrics { get; init; }
+    public string Range { get; init; } = "24h";
+    // Range links keep the search filter.
+    public string RangePath(string range) => "/databases?" + (Search.Length > 0 ? "q=" + Uri.EscapeDataString(Search) + "&" : "") + "range=" + range + "#project-databases";
+    // Clearing the search keeps the selected range.
+    public string ClearPath => "/databases?range=" + Range + "#project-databases";
+    public IEnumerable<(string Label, string? Value, string Title, AnalyticsLinePlot? Trend, string Hue)> Cells(string databaseId)
+    {
+        var metric = Metrics?.Databases.GetValueOrDefault(databaseId);
+        string N(long value) => value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+        yield return ("Reads", metric?.Reads is { } reads ? TerraScale.Dashboard.Features.Home.OperationChart.Compact(reads) : null, metric?.Reads is { } r ? N(r) + " reads in " + Range : "", metric?.ReadTrend, "ts-cat-1");
+        yield return ("Writes", metric?.Writes is { } writes ? TerraScale.Dashboard.Features.Home.OperationChart.Compact(writes) : null, metric?.Writes is { } w ? N(w) + " puts, patches and deletes in " + Range : "", metric?.WriteTrend, "ts-cat-2");
+        yield return ("Storage", metric?.StorageBytes is { } bytes ? TerraScale.Dashboard.Features.Usage.UsageFormat.Bytes(bytes) : null, metric?.StorageBytes is { } b ? N(b) + " bytes in the latest bucket, summed across every reporting region" : "", null, "");
+        yield return ("p95 latency", metric?.P95Ms is { } ms ? ms.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " ms" : null, "Highest region p95 in the latest bucket", null, "");
+    }
+}
+
+// Totals for one database over the list range; null means TerraBase did not report it and is never shown as zero.
+public sealed record DatabaseListMetric(long? Reads, long? Writes, long? StorageBytes, double? P95Ms, AnalyticsLinePlot? ReadTrend, AnalyticsLinePlot? WriteTrend);
+
+// One project-wide analytics read for the whole list; Message says why metrics are missing.
+public sealed record DatabaseListMetrics(IReadOnlyDictionary<string, DatabaseListMetric> Databases, string Message)
+{
+    private static readonly string[] Writes = ["put", "patch", "delete"];
+
+    public static async Task<DatabaseListMetrics> LoadAsync(IAnalyticsBackend backend, AccountContext context, string range, CancellationToken cancellationToken)
+    {
+        if (context.Project is not { Databases.Count: > 0 }) return new(new Dictionary<string, DatabaseListMetric>(), "");
+        try
+        {
+            var selection = AnalyticsSelection.For(context, "", "", "", range);
+            var batch = await backend.ReadAsync(selection, cancellationToken);
+            if (batch.State == AnalyticsSourceState.Unavailable) return new(new Dictionary<string, DatabaseListMetric>(), "Database metrics are unavailable.");
+            if (batch.State == AnalyticsSourceState.NotMetered || batch.Points.Count == 0) return new(new Dictionary<string, DatabaseListMetric>(), "No database measurements in the last " + range + ".");
+            // Build validates buckets and values the same way the analytics page does.
+            _ = AnalyticsService.Build(selection, batch.Points);
+            var bucket = range switch { "1h" => 60, "24h" => 3600, "7d" => 21600, _ => 86400 };
+            var first = batch.Points.Min(point => point.Start.ToUniversalTime());
+            var starts = Enumerable.Range(0, checked((int)((batch.Points.Max(point => point.Start.ToUniversalTime()) - first).TotalSeconds / bucket) + 1)).Select(index => first.AddSeconds((long)index * bucket)).ToArray();
+            return new(batch.Points.GroupBy(point => point.DatabaseId).ToDictionary(group => group.Key, group =>
+            {
+                var name = selection.Context.Project!.Databases[group.Key].Name;
+                AnalyticsLinePlot? Trend(string label, Func<AnalyticsPoint, long?> measure, out long? total)
+                {
+                    var values = new long[starts.Length]; var missing = Enumerable.Repeat(true, starts.Length).ToArray();
+                    total = null;
+                    foreach (var point in group)
+                    {
+                        if (measure(point) is not { } value) continue;
+                        var index = (int)((point.Start.ToUniversalTime() - first).TotalSeconds / bucket);
+                        values[index] = checked(values[index] + value); missing[index] = false;
+                        total = checked((total ?? 0) + value);
+                    }
+                    return total is null ? null : AnalyticsLinePlot.For(name + " " + label + ", " + range, range, starts, [new AnalyticsSeries(label, values, missing)]);
+                }
+                var readTrend = Trend("reads", point => point.Operations.TryGetValue("read", out var count) ? count : null, out var reads);
+                var writeTrend = Trend("writes", point => Writes.Any(point.Operations.ContainsKey) ? Writes.Sum(op => point.Operations.GetValueOrDefault(op)) : null, out var writes);
+                // Gauges read only the latest project bucket, like the analytics page: an explicit null there stays missing and never falls back
+                // to an older reading, and storage is a total only when every region this database reported from has a value in that bucket.
+                var current = group.Where(point => point.Start.ToUniversalTime() == starts[^1]).ToArray();
+                var storage = current.Length > 0 && current.All(point => point.StorageBytes is not null) &&
+                    group.Select(point => point.Region).Distinct(StringComparer.OrdinalIgnoreCase).Count() == current.Select(point => point.Region).Distinct(StringComparer.OrdinalIgnoreCase).Count()
+                    ? current.Aggregate(0L, (sum, point) => checked(sum + point.StorageBytes!.Value)) : (long?)null;
+                var p95 = current.Max(point => point.P95Ms);
+                return new DatabaseListMetric(reads, writes, storage, p95, readTrend, writeTrend);
+            }), "");
+        }
+        catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException ||
+            error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+        { return new(new Dictionary<string, DatabaseListMetric>(), "Could not load database metrics. Reload the page to retry."); }
+    }
 }
 
 public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Database, string Tab, IReadOnlyList<DatabaseRegion> Choices,
