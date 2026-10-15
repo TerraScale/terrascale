@@ -14,9 +14,6 @@ namespace TerraBase.E2E;
 /// </summary>
 public sealed class ShapeCacheE2ETests
 {
-    // A presigned URL expires at the next 10-minute epoch start; one closer to it is read again after the boundary.
-    private static readonly TimeSpan UrlLifetime = TimeSpan.FromSeconds(45);
-
     [Test]
     [Scenario(Nodes.InProcess)]
     [Arguments(Cluster.Gru)]
@@ -53,12 +50,6 @@ public sealed class ShapeCacheE2ETests
         }, offset => offset is not null, $"chunk {snapshot} closed on {region}");
 
         var sealedChunk = await SealedChunkAsync(origin, shape, handle, firstPage, snapshot, region, token);
-        if (sealedChunk.GetProperty("expires_at").GetDateTimeOffset() - DateTimeOffset.UtcNow < UrlLifetime)
-        {
-            await Task.Delay(sealedChunk.GetProperty("expires_at").GetDateTimeOffset() - DateTimeOffset.UtcNow + TimeSpan.FromSeconds(1), token);
-            sealedChunk = await SealedChunkAsync(origin, shape, handle, firstPage, snapshot, region, token);
-        }
-
         await Assert.That(sealedChunk.GetProperty("next_offset").GetString()).IsEqualTo(next);
         var url = new Uri(sealedChunk.GetProperty("url").GetString()!, UriKind.Absolute);
         await Assert.That(url.Scheme).IsEqualTo(Uri.UriSchemeHttps);
@@ -91,10 +82,25 @@ public sealed class ShapeCacheE2ETests
         using var bound = CancellationTokenSource.CreateLinkedTokenSource(token);
         bound.CancelAfter(Converge.Deadline);
         var live = origin.GetAsync(Target($"{shape}?handle={handle}&offset={next}&live=true"), bound.Token);
-        await Docs.PutAsync(origin, cluster.Document(EntityIds.New().ToString()), new JsonObject { ["value"] = "live" }, token);
-        using var tail = await live;
-        await Docs.EnsureSuccessAsync(tail);
-        await PrivateNoStoreAsync(tail);
+        try
+        {
+            await Docs.PutAsync(origin, cluster.Document(EntityIds.New().ToString()), new JsonObject { ["value"] = "live" }, token);
+            using var tail = await live;
+            await Docs.EnsureSuccessAsync(tail);
+            await PrivateNoStoreAsync(tail);
+        }
+        finally
+        {
+            await bound.CancelAsync();
+            try
+            {
+                using var completed = await live;
+            }
+            catch (OperationCanceledException) when (bound.IsCancellationRequested)
+            {
+                // Cancel and observe the parked read if the waking write failed.
+            }
+        }
     }
 
     // The manifest of snap.<S>.0 once it lists the page and chunk S after it, both uploaded; answers chunk S's entry. Elements,
@@ -112,7 +118,7 @@ public sealed class ShapeCacheE2ETests
             var body = await manifest.Content.ReadFromJsonAsync<JsonElement>(token);
             await Assert.That(body.GetProperty("handle").GetString()).IsEqualTo(handle);
             return body.GetProperty("objects").EnumerateArray().Select(entry => entry.Clone()).ToArray();
-        }, listed => listed.Length >= 2, $"{region}'s manifest of {firstPage} and chunk {snapshot}");
+        }, listed => listed.Length >= 2 && listed[1].GetProperty("expires_at").GetDateTimeOffset() - DateTimeOffset.UtcNow >= TimeSpan.FromSeconds(15), $"{region}'s manifest of {firstPage} and chunk {snapshot}");
         await Assert.That(objects[0].GetProperty("offset").GetString()).IsEqualTo(firstPage);
         await Assert.That(objects[0].GetProperty("next_offset").GetString()).IsEqualTo(snapshot);
         await Assert.That(objects[1].GetProperty("offset").GetString()).IsEqualTo(snapshot);
@@ -141,5 +147,4 @@ public sealed class ShapeCacheE2ETests
     private static async Task PrivateNoStoreAsync(HttpResponseMessage response) =>
         await Assert.That(response.Headers.CacheControl is { Private: true, NoStore: true, Public: false, MaxAge: null, SharedMaxAge: null }).IsTrue()
             .Because($"an origin {(int)response.StatusCode} answered Cache-Control: {response.Headers.CacheControl}");
-
 }
