@@ -923,6 +923,9 @@ public sealed class StateAdmissionTests
 
     private sealed class SourceProbe(IReplicaStates inner, Probe probe) : IReplicaStates
     {
+        public ValueTask<bool> MatchedAsync(TenantContext database, ReplicaDigest digest, CancellationToken cancellationToken) =>
+            inner.MatchedAsync(database, digest, cancellationToken);
+
         public ValueTask<ReplicaDigest?> DigestAsync(TenantContext database, Ulid? expected, CancellationToken token) => inner.DigestAsync(database, expected, token);
 
         public async ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)?> ReadBucketsAsync(

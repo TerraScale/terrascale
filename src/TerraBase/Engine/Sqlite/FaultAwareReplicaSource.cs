@@ -48,6 +48,9 @@ internal sealed class FaultAwareReplicaSource(
             return digest is not null && !await faults.RefusedAsync(database, digest.Incarnation, cancellationToken).ConfigureAwait(false) ? digest : null;
         }, static () => (ReplicaDigest?)null, cancellationToken);
 
+    public ValueTask<bool> MatchedAsync(TenantContext database, ReplicaDigest digest, CancellationToken cancellationToken) =>
+        ReadAsync(database, digest.Incarnation, () => source.MatchedAsync(database, digest, cancellationToken), static () => false, cancellationToken);
+
     public ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)?> ReadBucketsAsync(
         TenantContext database, Ulid incarnation, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken) =>
         ReadAsync(database, incarnation, () => source.ReadBucketsAsync(database, incarnation, buckets, after, maxStates, maxBytes, cancellationToken), static () => null, cancellationToken);

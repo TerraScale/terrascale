@@ -716,6 +716,9 @@ public sealed class PeerStreamFaultIsolationTests
     // Only the await boundary is held; production FaultAwareReplicaSource makes the refusal using the real ledger.
     private sealed class HeldSource(FaultAwareReplicaSource inner, bool refuseSystemCursor = false) : IChangeGroupSource, IReplicaStates
     {
+        public ValueTask<bool> MatchedAsync(TenantContext database, ReplicaDigest digest, CancellationToken cancellationToken) =>
+            inner.MatchedAsync(database, digest, cancellationToken);
+
         private BookkeepingGate? _held;
         private ShippingGate? _shipping;
         private int _initializations;

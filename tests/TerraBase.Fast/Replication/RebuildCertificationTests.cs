@@ -1864,6 +1864,9 @@ public sealed class RebuildCertificationTests
     // The machine's real replica states; faults apply to every page of the watched pinned certification, including subsets.
     private sealed class Source(IReplicaStates inner, TenantContext watched, BucketReads requests) : IReplicaStates
     {
+        public ValueTask<bool> MatchedAsync(TenantContext database, ReplicaDigest digest, CancellationToken cancellationToken) =>
+            inner.MatchedAsync(database, digest, cancellationToken);
+
         private const int Disarmed = -1;
         private int _fault = Disarmed;
         private Func<Task>? _afterPage;
