@@ -1,12 +1,12 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
 @using TerraScale.Dashboard.Features.Organizations
-<dl class="ts-stats" aria-label="Audit totals">
+<dl class="ts-kpis" aria-label="Audit totals">
 @foreach (var stat in new[] { ("Matching events", Model.AuditMatches.Count, "Current filtered view"), ("High risk", Model.AuditMatches.Count(item => OrganizationFilters.AuditSeverity(item) == "critical"), "Critical events in this view"), ("Warnings", Model.AuditMatches.Count(item => OrganizationFilters.AuditSeverity(item) == "warn"), "Warning events in this view"), ("Informational", Model.AuditMatches.Count(item => OrganizationFilters.AuditSeverity(item) == "info"), "Informational events in this view") })
 {
-    <div class="ts-stat"><dt class="ts-stat-label">@stat.Item1</dt><dd class="ts-stat-value">@stat.Item2</dd><dd class="ts-stat-detail">@stat.Item3</dd></div>
+    <div class="ts-kpi"><dt class="ts-kpi-label">@stat.Item1</dt><dd class="ts-kpi-value">@stat.Item2</dd><dd class="ts-kpi-detail">@stat.Item3</dd></div>
 }
 </dl>
-<section class="ts-card ts-card-flush" id="recent-activity" aria-labelledby="recent-activity-title">
+<section class="ts-card ts-card-boxed ts-card-flush" id="recent-activity" aria-labelledby="recent-activity-title">
     <header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="recent-activity-title">Recent activity</h2><p class="ts-card-description">Security events matching the current filters · retention is @(Model.Access?.AuditRetentionDays is { } days ? days + " days" : "not reported")</p></div></header>
     <div class="ts-card-body">
         <form method="get" action="/organization" class="ts-filters ts-audit-filters" role="search" aria-label="Filter audit events">
@@ -44,7 +44,7 @@
         @if (Model.Access?.AuditEvents.Any(item => OrganizationFilters.AuditSeverity(item) == "unknown") == true) { <p class="ts-meta" role="status">Severity is not reported for some provider events.</p> }
     </div>
 </section>
-<section class="ts-card" id="audit-breakdown" aria-labelledby="audit-breakdown-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="audit-breakdown-title">Severity breakdown</h2><p class="ts-card-description">Events in the current filtered view</p></div></header><div class="ts-card-body"><dl class="ts-grid-3 ts-audit-breakdown">
+<section class="ts-card ts-card-boxed" id="audit-breakdown" aria-labelledby="audit-breakdown-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="audit-breakdown-title">Severity breakdown</h2><p class="ts-card-description">Events in the current filtered view</p></div></header><div class="ts-card-body"><dl class="ts-grid-3 ts-audit-breakdown">
     @foreach (var share in new[] { ("Informational", "info", "info"), ("Warning", "warning", "warn"), ("Critical severity", "danger", "critical"), ("Not reported", "neutral", "unknown") })
     {
         var count = Model.AuditMatches.Count(item => OrganizationFilters.AuditSeverity(item) == share.Item3); var total = Model.AuditMatches.Count; var percent = total == 0 ? 0 : (int)Math.Round(count * 100d / total, MidpointRounding.AwayFromZero);
