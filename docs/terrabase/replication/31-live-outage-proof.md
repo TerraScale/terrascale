@@ -47,7 +47,8 @@ identity, and 503, as not there yet.
 - Run it alone: never with `terrabase-e2e` or another run against the same app.
 
 The other `fly-outage` scenarios also stop the app's machines and can run concurrently with each other. They are not
-part of this target and must not run against the disposable app during this proof.
+part of this target and must not run against the disposable app during this proof. No dedicated Make runner exists
+for those broader scenarios; each requires its own isolated disposable app.
 
 ## Coverage update
 
@@ -63,7 +64,9 @@ No live run is recorded yet.
 If anything fails or is canceled while the region may be down (the stop included), the region is started again and
 waited on until `/healthz` answers 200, on a five-minute clock of its own that the test's token does not cancel. The
 original error is rethrown; if the recovery fails too, both are reported together. Recovery is cleanup, not success:
-the test still fails. `RejoinRecoveryTests` (local-only category) cancels a real local outage and checks that the region
+the test still fails. If releasing the cluster also fails, that error is aggregated with the original outage and recovery
+errors. A hard suite timeout or process termination can interrupt recovery; the external runner must inspect and restore
+or delete disposable machines on any nonzero exit. `RejoinRecoveryTests` (local-only category) cancels a real local outage and checks that the region
 serves again and that the original cancellation is returned.
 
 The proof's own calls (which refusals are sent again, the durability returned, the tombstone answer) are checked against

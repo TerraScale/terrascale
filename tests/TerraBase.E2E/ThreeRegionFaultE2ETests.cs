@@ -9,7 +9,7 @@ namespace TerraBase.E2E;
 /// Replication across gru, sjc and fra under faults: partitions, a region down and back, a restart in the middle of
 /// replication, a replication backlog and clock skew. Partitions and skew need the local nodes, so on Fly those tests are
 /// skipped with the reason. Stopping a machine on Fly touches the shared app, so there those tests run only from the
-/// broader fly-outage command in docs/terrabase/replication/31-live-outage-proof.md, alone on the app. What each scenario
+/// separate disposable runs described in docs/terrabase/replication/31-live-outage-proof.md, alone on the app. What each scenario
 /// waits on is in <see cref="Gaps"/>.
 /// </summary>
 [Category("fly-outage")]
@@ -277,5 +277,5 @@ public sealed class ThreeRegionFaultE2ETests
 
     private static void SkipOnFlyUnlessOutageRun() =>
         Skip.When(Cluster.FlyRequested && !Cluster.FlyMachineFaults,
-            "stops a Fly machine: run it alone on a pinned disposable app with the broader fly-outage command (docs/terrabase/replication/31-live-outage-proof.md)");
+            "stops a Fly machine: run it alone on a pinned disposable app with a separate disposable run; no dedicated runner exists (docs/terrabase/replication/31-live-outage-proof.md)");
 }

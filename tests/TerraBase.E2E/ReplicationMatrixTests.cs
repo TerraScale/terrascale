@@ -46,8 +46,32 @@ public sealed class ReplicationMatrixTests
     {
         Skip.When(Cluster.FlyRequested,
             "each parallel outage owns local nodes; live outage proof runs separately on a pinned disposable app with make terrabase-e2e-fly-outage");
-        await using var cluster = await Cluster.StartAsync(All);
-        await RejoinAsync(cluster, offline, cancellationToken);
+        await RejoinOwnedAsync(offline, cancellationToken);
+    }
+
+    // Preserve the outage and recovery errors if releasing the cluster also fails.
+    internal static async Task RejoinOwnedAsync(string offline, CancellationToken token)
+    {
+        var cluster = await Cluster.StartAsync(All);
+        try
+        {
+            await RejoinAsync(cluster, offline, token);
+        }
+        catch (Exception error)
+        {
+            try
+            {
+                await cluster.DisposeAsync();
+            }
+            catch (Exception cleanup)
+            {
+                throw new AggregateException(error, cleanup);
+            }
+
+            throw;
+        }
+
+        await cluster.DisposeAsync();
     }
 
     /// <summary>
