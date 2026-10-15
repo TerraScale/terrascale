@@ -19,9 +19,7 @@ internal static class Gaps
         // GC is R7 (#120, R7-FIX): no tombstone of a deleted document is ever collected on main.
         ["E14"] = new("garbage collection (R7, #120 / R7-FIX)", "GC collects the tombstones of deleted documents"),
 
-        // CatalogE2ETests: a database made in one region never reaches the other before the catalog lattice (R10a, #116/#121);
-        // live move is R11 (no PR yet), whose route does not exist.
-        ["E12"] = new("the catalog as a lattice database (R10a, #116/#121)", "sjc's database on gru did not converge"),
+        // CatalogE2ETests: live move is R11 (no PR yet), whose route does not exist.
         ["E13"] = new("home region and live move (R11, no PR yet)", "unknown_route"),
 
         // RepairAndContractE2ETests: the new database stops at the same catalog step; its deletion while a region is away
