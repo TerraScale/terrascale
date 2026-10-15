@@ -431,6 +431,8 @@ lands after #211. There is no runtime switch. Until then, every resume answers `
 | Keys and manifest | `private, no-store` |
 | TBS1 objects in Tigris | `public, max-age=31536000, immutable` (FR-24, after A1 and FR-21) |
 
+Downloaded or cached ciphertext can remain available after seven-day source deletion or URL expiry; retention blocks new manifests and key grants, but cannot erase those copies.
+
 | Header | On | Value |
 | --- | --- | --- |
 | `ETag` | `200`, `304` | `"<shape_id>:<handle>:<offset>:<next_offset>:<digest>"`, digest = hex of the first 8 bytes of SHA-256 over the body bytes |
@@ -566,12 +568,30 @@ objects; FR-22 supplies that proof. Before T1 objects exist the default refuses 
 
 `GET …/collections/{collection}/shape/manifest?handle=&offset=`, with the same scope, tenancy and errors as section 13.
 
+### 14.1 SDK transport contract (presigned manifest; no 302)
+
+D2 selects the **presigned manifest**, not a `302` redirect to ciphertext. `GET …/shape` continues to return
+plaintext (`200`) or revalidate that plaintext (`304`); its bootstrap and resume redirects remain `307` (sections 3
+and 9). It never redirects an origin fallback to Tigris. SDKs fetch `…/shape/manifest` explicitly after resolving a
+concrete handle and offset; `-1`, `live`, `cursor` and resume parameters are not accepted by that route. Forward
+the canonical `where` filter when present. Manifest requests require the same `documents:read` authorization as
+origin reads, and answer `200 application/json` with `Cache-Control: private, no-store`.
+The manifest uses the same filter parser and normalized identity as origin reads: an empty `where` answers
+`400 invalid_request`; malformed filter JSON or a value over 8 KiB answers `400 invalid_query`.
+
+Fetch each manifest URL as an opaque bearer URL, without forwarding origin authorization or cookies. The downloaded
+body is TBS1 ciphertext, never shape JSON. An empty manifest, expired URL, download failure or any verification
+failure means read that object's offset from the plaintext origin; do not apply ciphertext or partially verified
+plaintext. The origin never answers `302`; SDKs must not treat any redirect as a ciphertext transport.
+
+### 14.2 Objects and lifecycle
+
 - Body: `{"handle":"h1-…","objects":[…]}`. At most **8** entries in total. The first entry's `offset` is the
   requested offset; each later entry's `offset` is the previous `next_offset`. The list stops at the first object that
   is unpublished (section 10) or not yet mirrored, so it may be empty. The client then reads that offset from the
   origin.
 - Entry: `offset`, `next_offset`, `binding` (JSON string `handle + "\u0000" + offset`), `object`
-  (`v1/shapes/<hex SHA-256(shape_id ‖ 0x00 ‖ binding)>`, where `shape_id` is its 32 lowercase hex characters as ASCII and
+  (`v1/shapes/<handle>/<hex SHA-256(shape_id ‖ 0x00 ‖ binding)>`, where `shape_id` is its 32 lowercase hex characters as ASCII and
   `binding` is the UTF-8 string above), `url` (presigned GET), `expires_at`, `epoch`, `key_id`, `sha256` (hex of the
   exact TBS1 bytes) and `size` (bytes, integer).
 - `expires_at` is RFC 3339 UTC at the start of the next epoch, `(E_now + 1) × 600`. The presigned URL expires no
@@ -586,6 +606,26 @@ objects; FR-22 supplies that proof. Before T1 objects exist the default refuses 
 
   Any failure discards that object and falls back to the origin for its offset.
 - The mirror never replaces a stored object with different bytes (FR-22).
+- FR-22 uses the platform backup bucket and credentials, with conditional `If-None-Match: *` PUTs. The object holds
+  TBS1 ciphertext and hash/key/epoch/seal-time metadata; a numeric retention position supports floor cleanup. Plaintext
+  document ids, snapshot continuation ids, and tenant names never enter object metadata.
+- T1 delivery uses the authenticated manifest for integrity metadata and the next eight objects. Origin reads keep
+  returning plaintext, including when the client falls back after an object fails integrity checks. Conditional origin
+  `304` responses continue to revalidate plaintext.
+- Successful chunk and complete snapshot publication enqueue a bounded background mirror. Chunk publication retains
+  the encoded admitted bytes through commit and performs no post-commit payload read. Snapshot pages are read after
+  publication by the bounded background mirror worker, one admitted page at a time; these reads are separate from
+  the one-payload-read live wake path. Failed or refused work leaves origin delivery available. After a restart,
+  reading immutable origin bytes warms the metadata cache with HEAD from the existing remote object. Warming never
+  uploads missing objects or renews the original seal timestamp.
+- Historical key proof first checks warmed objects, then scans at most 1024 remote objects with a two-second
+  deadline. An unproven pair answers `409 must_refetch`; reading its immutable offset from the origin warms the proof
+  without rewriting ciphertext. Successful remote proofs are cached and rechecked against retention; absent-object
+  HEAD results back off for 30 seconds. This bounds remote request amplification after a restart.
+- Floor cleanup deletes mirrors below the floor; an hourly bounded sweep also collects objects older than seven days,
+  including retired handles. Expired objects stop appearing in manifests and key proofs immediately, even while a
+  refused remote delete waits for a later pass. Physical deletion can lag the retention cutoff by a sweep interval and
+  the bounded scan backlog.
 
 ## 15. Limitations
 

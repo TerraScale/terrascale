@@ -13,7 +13,7 @@ namespace TerraBase.Features.Shapes;
 
 /// <summary>
 /// The shape reads over the sealing, snapshot, flight, retention and filter components (shape-reads.md sections 3 to 9).
-/// Serves plaintext T0 only: nothing here reads the data keys or mirrors sealed objects; FR-22 adds the mirror hooks later.
+/// Serves plaintext T0; seal, snapshot and retention callbacks publish TBS1 mirrors independently.
 /// </summary>
 internal sealed class ShapeService(
     IStorageEngine engine, LocalReplica replica, IDocumentService documents, IShapeSealer sealer, IShapeSnapshotSealer snapshots,

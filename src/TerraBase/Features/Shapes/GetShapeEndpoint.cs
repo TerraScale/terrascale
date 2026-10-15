@@ -18,7 +18,7 @@ namespace TerraBase.Features.Shapes;
 /// <summary><c>GET …/collections/{collection}/shape</c>: a collection's shape as snapshot pages, chunks and a live tail (shape reads v1).</summary>
 internal sealed class GetShapeEndpoint(
     IDocumentService documents, ITenantDirectory tenants, IShapeLineages lineages, IShapeSnapshots snapshots, IShapeChunks chunks, IShapeLiveTail live,
-    IShapeResume resumes, IShapeMetrics metrics, IShapeFlights<ShapeRead> flights) : EndpointWithoutRequest<IResult>
+    IShapeResume resumes, IShapeMetrics metrics, IShapeFlights<ShapeRead> flights, IShapeMirror mirror) : EndpointWithoutRequest<IResult>
 {
     private const string ResumeHeader = "TB-Shape-Resume";
     private const string CachePrivate = "private, max-age=0, must-revalidate";
@@ -196,6 +196,11 @@ internal sealed class GetShapeEndpoint(
         }
 
         var headers = HttpContext.Response.Headers;
+        if (!request.Live && !body.UpToDate && !notModified)
+        {
+            mirror.Warm(request.Scope.Database, lineage.ShapeId, lineage.Handle, request.OffsetText, body.NextOffset);
+        }
+
         headers.CacheControl = CachePrivate;
         headers.Vary = "Authorization";
         headers.ETag = $"\"{tag}\"";

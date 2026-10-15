@@ -8,6 +8,7 @@ using TerraBase.Engine;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
+using ZLogger;
 
 namespace TerraBase.Features.Shapes;
 
@@ -63,7 +64,8 @@ internal interface IShapeSnapshotTransactions
 
 /// <summary>Persisted, immutable snapshots; registration and scheduling belong to FR-10/FR-20.</summary>
 internal sealed class ShapeSnapshots(
-    IMemoryBudget memory, TimeProvider time, IShapeSnapshotTransactions transactions, IRemoteDurability durability, IShapeMetrics? metrics = null)
+    IMemoryBudget memory, TimeProvider time, IShapeSnapshotTransactions transactions, IRemoteDurability durability, IShapeMetrics? metrics = null,
+    Action<IDatabaseStore, ShapeSnapshotDefinition, ShapeSnapshot>? onSealed = null, ILogger<ShapeSnapshots>? logger = null)
     : IShapeSnapshotSealer
 {
     // One admitted seal per singleton; callers retry rather than queueing unbounded scans.
@@ -186,7 +188,20 @@ internal sealed class ShapeSnapshots(
             while (after is not null);
 
             metrics?.RecordSeal(published, Stopwatch.GetElapsedTime(started));
-            return new ShapeSnapshot(offset, now.ToUnixTimeMilliseconds());
+            var snapshot = new ShapeSnapshot(offset, now.ToUnixTimeMilliseconds());
+            if (onSealed is not null)
+            {
+                try
+                {
+                    onSealed(store, shape, snapshot);
+                }
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // The snapshot is fully published; a failed notification must not fail this read.
+                    logger?.ZLogWarning(error, $"Shape snapshot callback failed; the published snapshot remains readable");
+                }
+            }
+            return snapshot;
         }
         finally
         {

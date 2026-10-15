@@ -2033,8 +2033,8 @@
               "offset": "2",
               "next_offset": "4",
               "binding": "h1-f3171a2230109328\u00002",
-              "object": "v1/shapes/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07",
-              "url": "https://shapes.example.invalid/v1/shapes/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07?signature=fixture-only",
+              "object": "v1/shapes/h1-f3171a2230109328/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07",
+              "url": "https://shapes.example.invalid/v1/shapes/h1-f3171a2230109328/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07?signature=fixture-only",
               "expires_at": "1970-01-01T16:50:00Z",
               "epoch": "100",
               "key_id": "01ARZ3NDEKTSV4RRFFQ69G5FC0",
@@ -2043,7 +2043,7 @@
             }
           ]
         },
-        "body_utf8": "{\"handle\":\"h1-f3171a2230109328\",\"objects\":[{\"offset\":\"2\",\"next_offset\":\"4\",\"binding\":\"h1-f3171a2230109328\\u00002\",\"object\":\"v1/shapes/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07\",\"url\":\"https://shapes.example.invalid/v1/shapes/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07?signature=fixture-only\",\"expires_at\":\"1970-01-01T16:50:00Z\",\"epoch\":\"100\",\"key_id\":\"01ARZ3NDEKTSV4RRFFQ69G5FC0\",\"sha256\":\"b487cf0ebc4031f3a8954ed5b0d4f41eb63c66cf738991f4777136830b8a0d22\",\"size\":624}]}"
+        "body_utf8": "{\"handle\":\"h1-f3171a2230109328\",\"objects\":[{\"offset\":\"2\",\"next_offset\":\"4\",\"binding\":\"h1-f3171a2230109328\\u00002\",\"object\":\"v1/shapes/h1-f3171a2230109328/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07\",\"url\":\"https://shapes.example.invalid/v1/shapes/h1-f3171a2230109328/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07?signature=fixture-only\",\"expires_at\":\"1970-01-01T16:50:00Z\",\"epoch\":\"100\",\"key_id\":\"01ARZ3NDEKTSV4RRFFQ69G5FC0\",\"sha256\":\"b487cf0ebc4031f3a8954ed5b0d4f41eb63c66cf738991f4777136830b8a0d22\",\"size\":624}]}"
       },
       "expected_action": "fetch_ciphertext_then_verify_size_hash_binding_and_decrypt"
     },
@@ -2051,7 +2051,7 @@
       "id": "tigris-sealed-ciphertext",
       "request": {
         "method": "GET",
-        "url": "https://shapes.example.invalid/v1/shapes/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07?signature=fixture-only",
+        "url": "https://shapes.example.invalid/v1/shapes/h1-f3171a2230109328/5e1d6603d02d636254b0fd9341234c217cb428c8d736930e1d0ef36a7cd3fe07?signature=fixture-only",
         "headers": {}
       },
       "response": {
