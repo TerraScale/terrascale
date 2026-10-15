@@ -329,5 +329,5 @@ public sealed class RepairAndContractE2ETests
 
     private static void SkipOnFlyUnlessOutageRun() =>
         Skip.When(Cluster.FlyRequested && !Cluster.FlyMachineFaults,
-            "stops a Fly machine: run it alone on a pinned disposable app with make terrabase-e2e-fly-outage");
+            "stops a Fly machine: run it alone on a pinned disposable app with a separate disposable run; no dedicated runner exists (docs/terrabase/replication/31-live-outage-proof.md)");
 }
