@@ -26,6 +26,7 @@ public static class NotFoundEndpoints
     {
         try { return await AccountEndpoints.RequireAsync(http, sessions, accounts); }
         catch (Exception error) when (error is AccountAccessException or HttpRequestException or IOException or JsonException or TimeoutException ||
-                                      error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested) { return null; }
+                                      error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested)
+        { return null; }
     }
 }
