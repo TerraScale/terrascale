@@ -902,3 +902,14 @@ button.ts-idp-provider:focus-visible {
 .ts-idp-stat-dot[data-hue="3"] { background: var(--ts-chart-3); }
 .ts-idp-stat-dot[data-hue="4"] { background: var(--ts-chart-4); }
 .ts-idp-stat-dot[data-hue="5"] { background: var(--ts-chart-5); }
+
+@container page (width < 480px) {
+  #auth-quickstart .ts-kv {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-s1);
+  }
+
+  #auth-quickstart .ts-kv > dd {
+    margin-bottom: var(--ts-s3);
+  }
+}

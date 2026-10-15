@@ -39,19 +39,40 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
         var producer = new AuditAnalyticsProducer { Mode = "explicit-gap" };
         await using var scenario = await AuthProviderScenario.StartReportingAsync(fixture.Root, producer.RespondAsync);
         using var client = scenario.CreateClient();
-        producer.DatabaseId = await CreateDatabaseAsync(client);
+        // The longest database name the API accepts (63 characters) makes the longest latency series names.
+        var name = "audit-latency-" + new string('x', 44) + "-tail";
+        producer.DatabaseId = await CreateDatabaseAsync(client, name);
         const string route = "/analytics?range=1h";
         var explicitGap = await GetPageAsync(client, route);
         await SaveEvidenceAsync("explicit-null-gap-analytics", route, producer, explicitGap);
-        var explicitChart = Regex.Match(explicitGap, "<svg[^>]+aria-label=\"Approximate request latency[^>]*>(.*?)</svg>", RegexOptions.Singleline).Groups[1].Value;
+        var explicitChart = Regex.Match(explicitGap, "<svg class=\"ts-chart ts-analytics-plot\"[^>]+aria-label=\"Approximate request latency[^>]*>(.*?)</svg>\\s*</div>", RegexOptions.Singleline).Groups[1].Value;
         await Assert.That(explicitChart).Contains("Not reported");
         foreach (Match path in Regex.Matches(explicitChart, "<path class=\"ts-chart-line[^\"]*\" d=\"([^\"]*)\""))
             await Assert.That(path.Groups[1].Value.Contains('C') || path.Groups[1].Value.Contains('L')).IsFalse();
         producer.Mode = "sparse";
         var html = await GetPageAsync(client, route);
         await SaveEvidenceAsync("sparse-analytics", route, producer, html);
-        var chart = Regex.Match(html, "<svg[^>]+aria-label=\"Approximate request latency[^>]*>(.*?)</svg>", RegexOptions.Singleline).Groups[1].Value;
+        var chart = Regex.Match(html, "<svg class=\"ts-chart ts-analytics-plot\"[^>]+aria-label=\"Approximate request latency[^>]*>(.*?)</svg>\\s*</div>", RegexOptions.Singleline).Groups[1].Value;
         await Assert.That(chart.Length).IsGreaterThan(0);
+        var columns = Regex.Matches(chart, "class=\"ts-chart-guide\" x1=\"([0-9.]+)%\".*?<rect class=\"ts-chart-tip-box\" x=\"(-?[0-9.]+)\" y=\"[^\"]*\" width=\"([0-9.]+)\"", RegexOptions.Singleline)
+            .Select(match => match.Groups.Values.Skip(1).Select(group => double.Parse(group.Value, System.Globalization.CultureInfo.InvariantCulture)).ToArray()).ToArray();
+        await Assert.That(columns.Length).IsEqualTo(Regex.Matches(chart, "class=\"ts-chart-column\"").Count).Because("Every hover column draws a guide and a tooltip.");
+        await Assert.That(columns.Length).IsGreaterThan(0);
+        foreach (var (guide, left, width) in columns.Select(values => (values[0], values[1], values[2])))
+        {
+            await Assert.That(guide is >= 0 and <= 100).IsTrue().Because("Hover columns stay inside the plot width.");
+            // At a 360px viewport the plot is 272px wide, with a 48px y-axis gutter on the left and 8px on the right.
+            var plot = 272 * guide / 100;
+            await Assert.That(plot + left >= -48 - 0.2 && plot + left + width <= 272 + 8 + 0.2).IsTrue()
+                .Because("The whole tooltip stays inside the chart frame at the narrowest supported width, without horizontal overflow.");
+        }
+        var visibleNames = Regex.Matches(chart, "class=\"ts-chart-tip-name\"[^>]*>([^<]*)</text>").Select(match => match.Groups[1].Value).ToArray();
+        await Assert.That(visibleNames.Length).IsGreaterThan(0);
+        foreach (var visible in visibleNames)
+            await Assert.That(visible.StartsWith("p", StringComparison.Ordinal) && visible.EndsWith(" / gru", StringComparison.Ordinal) && visible.Contains('…') && visible.Length < name.Length)
+                .IsTrue().Because("Long series names are shortened in the middle, keeping the percentile and region readable.");
+        await Assert.That(chart).Contains(": p50 " + name + " / gru ")
+            .Because("Assistive technology still reads the full series name for each column.");
         await Assert.That(chart.Contains("Not reported", StringComparison.Ordinal)).IsTrue()
             .Because("The producer omitted the minute between two measured samples; the chart must expose that gap.");
         foreach (Match path in Regex.Matches(chart, "<path class=\"ts-chart-line[^\"]*\" d=\"([^\"]*)\""))
@@ -88,7 +109,7 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
         await Assert.That(producer.Reads).IsEqualTo(reads).Because("Unauthorized database filters are rejected before producer reads.");
     }
 
-    private static async Task<string> CreateDatabaseAsync(HttpClient client)
+    private static async Task<string> CreateDatabaseAsync(HttpClient client, string name = "audit-metrics")
     {
         using var login = await HttpJourney.LoginAsync(client);
         await Assert.That(login.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
@@ -105,7 +126,7 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
         }
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");
         using var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases", new()
-        { ["_csrf"] = csrf, ["name"] = "audit-metrics", ["region"] = "GRU" });
+        { ["_csrf"] = csrf, ["name"] = name, ["region"] = "GRU" });
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
         using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
         return body.RootElement.GetProperty("id").GetString()!;
@@ -124,7 +145,7 @@ public sealed class AnalyticsPageAuditJourneyTests(DashboardRootFixture fixture)
         Directory.CreateDirectory(directory);
         var stats = Regex.Matches(html, "<dt class=\"ts-stat-label\">([^<]+)</dt><dd class=\"ts-stat-value\">([^<]*)</dd>")
             .Select(match => new { label = match.Groups[1].Value, value = match.Groups[2].Value }).ToArray();
-        var charts = Regex.Matches(html, "<svg[^>]+aria-label=\"([^\"]+)\"[^>]*>(.*?)</svg>", RegexOptions.Singleline)
+        var charts = Regex.Matches(html, "<svg class=\"ts-chart ts-analytics-plot\"[^>]+aria-label=\"([^\"]+)\"[^>]*>(.*?)</svg>\\s*</div>", RegexOptions.Singleline)
             .Select(match => new
             {
                 label = match.Groups[1].Value,
