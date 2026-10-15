@@ -28,6 +28,8 @@ namespace TerraBase.Fast.Shapes;
 /// </summary>
 public sealed class ShapeMirrorTests
 {
+    private static readonly string[] ExpectedMetadata = ["x-amz-meta-owner", "x-amz-meta-object-hash", "x-amz-meta-sha256", "x-amz-meta-epoch", "x-amz-meta-key-id", "x-amz-meta-sealed-at", "x-amz-meta-floor-offset"];
+
     private const string Collection = DocumentApi.Collection;
     private const int LargeBody = 600_000;
 
@@ -269,7 +271,7 @@ public sealed class ShapeMirrorTests
             await Assert.That(fetched.Content.Headers.ContentDisposition).IsNull();
             var metadata = fetched.Headers.Where(header => header.Key.StartsWith("x-amz-meta-", StringComparison.Ordinal))
                 .ToDictionary(header => header.Key, header => string.Join(",", header.Value));
-            await Assert.That(metadata.Keys).IsEquivalentTo(new[] { "x-amz-meta-owner", "x-amz-meta-object-hash", "x-amz-meta-sha256", "x-amz-meta-epoch", "x-amz-meta-key-id", "x-amz-meta-sealed-at", "x-amz-meta-floor-offset" });
+            await Assert.That(metadata.Keys).IsEquivalentTo(ExpectedMetadata);
             await Assert.That(metadata.Values.Any(value => tenantIds.Any(id => value.Contains(id, StringComparison.Ordinal)))).IsFalse().Because("metadata carries hashes and numbers, never tenant identifiers");
             using var repeat = await platform.GetAsync(url);
             await Assert.That((await repeat.Content.ReadAsByteArrayAsync()).SequenceEqual(bytes)).IsTrue().Because("the same signed URL serves the same ciphertext");
