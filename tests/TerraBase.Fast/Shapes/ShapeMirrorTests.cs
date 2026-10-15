@@ -64,8 +64,7 @@ public sealed class ShapeMirrorTests
         // The manifest is the one transport: it names the presigned URL, which the platform serves with the stored ciphertext.
         using var listed = await harness.GetManifestAsync(start);
         await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(listed.Headers.CacheControl!.Private).IsTrue();
-        await Assert.That(listed.Headers.CacheControl!.NoStore).IsTrue();
+        await CacheControlAssert.EqualAsync(listed.Headers.CacheControl?.ToString());
         using var wire = JsonDocument.Parse(await listed.Content.ReadAsByteArrayAsync());
         var url = wire.RootElement.GetProperty("objects")[0].GetProperty("url").GetString()
             ?? throw new InvalidOperationException("the manifest names no url");
@@ -213,8 +212,7 @@ public sealed class ShapeMirrorTests
         await harness.MirroredAsync(chunks.Length);
         using var response = await harness.GetManifestAsync(start);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(response.Headers.CacheControl!.Private).IsTrue();
-        await Assert.That(response.Headers.CacheControl!.NoStore).IsTrue();
+        await CacheControlAssert.EqualAsync(response.Headers.CacheControl?.ToString());
 
         using var wire = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync());
         var objects = wire.RootElement.GetProperty("objects");
@@ -263,9 +261,7 @@ public sealed class ShapeMirrorTests
             await Assert.That(bytes.SequenceEqual(harness.S3.Objects[key])).IsTrue();
             await Assert.That(Convert.ToHexStringLower(SHA256.HashData(bytes))).IsEqualTo(entry.GetProperty("sha256").GetString());
             await Assert.That((long)bytes.Length).IsEqualTo(entry.GetProperty("size").GetInt64());
-            await Assert.That(fetched.Headers.CacheControl!.Public).IsTrue();
-            await Assert.That(fetched.Headers.CacheControl!.MaxAge).IsEqualTo(TimeSpan.FromDays(365));
-            await Assert.That(fetched.Headers.CacheControl!.Extensions.Any(value => value.Name == "immutable")).IsTrue();
+            await CacheControlAssert.EqualAsync(fetched.Headers.CacheControl?.ToString(), "public, max-age=31536000, immutable");
             await Assert.That(fetched.Content.Headers.ContentType!.MediaType).IsEqualTo("application/octet-stream").Because("the platform serves ciphertext as opaque bytes");
             await Assert.That(fetched.Content.Headers.ContentEncoding).IsEmpty().Because("the ciphertext is not content-encoded");
             await Assert.That(fetched.Content.Headers.ContentDisposition).IsNull();
@@ -456,8 +452,7 @@ public sealed class ShapeMirrorTests
         await harness.MirroredAsync(queued);
         using var response = await harness.GetManifestAsync(first);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(response.Headers.CacheControl!.Private).IsTrue();
-        await Assert.That(response.Headers.CacheControl!.NoStore).IsTrue();
+        await CacheControlAssert.EqualAsync(response.Headers.CacheControl?.ToString());
         using var wire = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync());
         var objects = wire.RootElement.GetProperty("objects");
         await Assert.That(objects.GetArrayLength()).IsEqualTo(queued).Because("the manifest lists the whole chain, which is under eight pages");

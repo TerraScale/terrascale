@@ -13,6 +13,8 @@ using TerraBase.Features.Replication;
 using TerraBase.Features.Shapes;
 using TerraBase.Tenancy;
 
+using TerraBase.Testing;
+
 namespace TerraBase.Fast.Shapes;
 
 public sealed partial class ShapeResumeTests
@@ -37,7 +39,7 @@ public sealed partial class ShapeResumeTests
         {
             var head = await ResumeAsync(api.Client, path, synced.Cursor, header);
             await Assert.That(head.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect).Because(head.Message ?? "no refusal message");
-            await Assert.That(head.PrivateNoStore).IsTrue();
+            await CacheControlAssert.EqualAsync(head.CacheControl);
             await Assert.That(head.Location).IsEqualTo($"{path}?handle={synced.Handle}&offset={synced.Offset}");
         }
 
@@ -91,7 +93,7 @@ public sealed partial class ShapeResumeTests
         durability.Confirms = true;
         var capped = await ResumeAsync(api.Client, path, synced.Cursor);
         await Assert.That(capped.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect).Because(capped.Message ?? "no refusal message");
-        await Assert.That(capped.PrivateNoStore).IsTrue();
+        await CacheControlAssert.EqualAsync(capped.CacheControl);
         await Assert.That(capped.Location).IsEqualTo($"{path}?handle={synced.Handle}&offset=0");
     }
 
@@ -211,7 +213,7 @@ public sealed partial class ShapeResumeTests
 
     private sealed record Synced(string Handle, string Offset, string Cursor);
 
-    private sealed record Reply(HttpStatusCode Status, string? Location, bool PrivateNoStore, string? Handle, string? Code, string? Message);
+    private sealed record Reply(HttpStatusCode Status, string? Location, string? CacheControl, string? Handle, string? Code, string? Message);
 
     private static async Task<Synced> SyncAsync(HttpClient http, string path, string? cursor, Dictionary<string, string> state)
     {
@@ -267,7 +269,7 @@ public sealed partial class ShapeResumeTests
         var token = TestContext.Current!.Execution.CancellationToken;
         using var response = await http.SendAsync(request, token);
         var text = await response.Content.ReadAsStringAsync(token);
-        return new Reply(response.StatusCode, response.Headers.Location?.OriginalString, response.Headers.CacheControl is { Private: true, NoStore: true, Public: false, MaxAge: null, SharedMaxAge: null },
+        return new Reply(response.StatusCode, response.Headers.Location?.OriginalString, response.Headers.CacheControl?.ToString(),
             response.Headers.TryGetValues("TB-Shape-Handle", out var handle) ? handle.Single() : null,
             text.StartsWith('{') ? JsonElement.Parse(text).GetProperty("error").GetProperty("code").GetString() : null,
             text.StartsWith('{') ? JsonElement.Parse(text).GetProperty("error").GetProperty("message").GetString() : null);
@@ -294,7 +296,7 @@ public sealed partial class ShapeResumeTests
         await Assert.That(reply.Status).IsEqualTo(HttpStatusCode.Conflict);
         await Assert.That(reply.Code).IsEqualTo("must_refetch");
         await Assert.That(reply.Handle).IsEqualTo(handle);
-        await Assert.That(reply.PrivateNoStore).IsTrue();
+        await CacheControlAssert.EqualAsync(reply.CacheControl);
     }
 
     // Re-encodes the envelope's R8 cursor after `change`, keeping its marker and scope bytes.
