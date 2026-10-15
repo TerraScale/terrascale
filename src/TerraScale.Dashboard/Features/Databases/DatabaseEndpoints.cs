@@ -1,5 +1,6 @@
 using RazorSlices;
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.ApiKeys;
@@ -174,8 +175,11 @@ public static class DatabaseEndpoints
         }
         if (tab == "replication")
             measurements = await http.RequestServices.GetRequiredService<IUsageReplication>().ReadAsync(new(context, range, database.Id, true), http.RequestAborted);
+        var activity = tab is "overview" or "replication"
+            ? await DatabaseActivity.LoadAsync(http.RequestServices.GetRequiredService<IAnalyticsBackend>(), context, database.Id,
+                key => tab == "overview" && http.Request.Query[key].ToString() is { Length: > 0 } selected ? HomePage.NormalizeRange(selected) : range, http.RequestAborted) : null;
         var backups = tab is "backups" or "overview" ? await BackupEndpoints.PageAsync(http, context, database, error) : null;
-        var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, contents, error, regionError, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, contentsAvailable, measurements, range));
+        var result = DatabaseDetailView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(tab)), database, tab, choices, contents, error, regionError, openDelete || http.Request.Query["delete"] == "1", http.Request.Query["created"] == "1", backups, contentsAvailable, measurements, range, activity));
         result.StatusCode = status;
         return result;
     }
