@@ -28,25 +28,18 @@ public sealed class TerraBaseStorageHealth(TerraBaseDatabase database) : IStorag
     /// <inheritdoc />
     public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
     {
-        // One catalog read replaces a burst of one request per collection on the shared authority.
-        var missing = AuthStore.RequiredCollections.ToHashSet(StringComparer.Ordinal);
-        string? cursor = null;
-        do
-        {
-            var page = await database.ListCollectionsAsync(limit: 200, cursor: cursor, cancellationToken: cancellationToken).ConfigureAwait(false);
-            missing.ExceptWith(page.Items.Select(collection => collection.Name));
-            cursor = page.NextCursor;
-        }
-        while (missing.Count > 0 && cursor is not null);
-
-        if (missing.Count > 0)
+        // These reads are independent; mutations still wait until every required collection is present.
+        var collections = this.HasRequiredCollectionsAsync(cancellationToken);
+        var previousRead = database.GetDocumentAsync(AuthStore.HealthCollection, this.probeId, cancellationToken);
+        await Task.WhenAll(collections, previousRead).ConfigureAwait(false);
+        if (!await collections.ConfigureAwait(false))
         {
             return new StorageHealthResult(false, null);
         }
 
         // An interrupted probe may have committed its create. Only this synthetic address
         // is safe to clean up; never compensate an ambiguous identity write this way.
-        var previous = await database.GetDocumentAsync(AuthStore.HealthCollection, this.probeId, cancellationToken).ConfigureAwait(false);
+        var previous = await previousRead.ConfigureAwait(false);
         if (previous is not null)
         {
             await database.DeleteDocumentAsync(AuthStore.HealthCollection, this.probeId, TerraBasePrecondition.Matches(previous.Version), cancellationToken).ConfigureAwait(false);
@@ -61,5 +54,20 @@ public sealed class TerraBaseStorageHealth(TerraBaseDatabase database) : IStorag
 
         await database.DeleteDocumentAsync(AuthStore.HealthCollection, this.probeId, TerraBasePrecondition.Matches(read.Version), cancellationToken).ConfigureAwait(false);
         return new StorageHealthResult(true, null);
+    }
+
+    private async Task<bool> HasRequiredCollectionsAsync(CancellationToken cancellationToken)
+    {
+        var missing = AuthStore.RequiredCollections.ToHashSet(StringComparer.Ordinal);
+        string? cursor = null;
+        do
+        {
+            var page = await database.ListCollectionsAsync(limit: 200, cursor: cursor, cancellationToken: cancellationToken).ConfigureAwait(false);
+            missing.ExceptWith(page.Items.Select(collection => collection.Name));
+            cursor = page.NextCursor;
+        }
+        while (missing.Count > 0 && cursor is not null);
+
+        return missing.Count == 0;
     }
 }
