@@ -33,7 +33,7 @@ internal static class Docs
     // durability as the region acknowledged it (remote_durable, local_durable), or null when the answer names none.
     public static async Task<string?> PutRefusedBeforeRunAsync(HttpClient client, Uri uri, JsonNode body, CancellationToken token = default)
     {
-        using var response = await AdmittedAsync(() => client.PutAsync(uri, Json(body, "application/json"), token), refusedBeforeRun: true, token: token);
+        using var response = await SendAdmittedAsync(() => client.PutAsync(uri, Json(body, "application/json"), token), refusedBeforeRun: true, token: token);
         return (await BodyAsync(response, token))?["durability"]?.GetValue<string>();
     }
 
@@ -165,9 +165,9 @@ internal static class Docs
     // Every other answer is returned: tenant_memory and write_outcome_unknown can come after the request ran.
     // A wait that would pass the convergence deadline returns the 429, and the caller reports it; token cancels the wait.
     internal static Task<HttpResponseMessage> AdmittedAsync(Func<Task<HttpResponseMessage>> send, CancellationToken token = default) =>
-        AdmittedAsync(send, refusedBeforeRun: false, token: token);
+        SendAdmittedAsync(send, refusedBeforeRun: false, token: token);
 
-    private static async Task<HttpResponseMessage> AdmittedAsync(Func<Task<HttpResponseMessage>> send, bool refusedBeforeRun, CancellationToken token = default)
+    private static async Task<HttpResponseMessage> SendAdmittedAsync(Func<Task<HttpResponseMessage>> send, bool refusedBeforeRun, CancellationToken token = default)
     {
         var clock = Stopwatch.StartNew();
         while (true)
