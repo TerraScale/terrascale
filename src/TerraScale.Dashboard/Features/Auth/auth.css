@@ -46,6 +46,89 @@
   color: var(--ts-link);
 }
 
+/* Decorative auth aside; operational maps retain their shared component. */
+.ts-auth-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--ts-s8);
+}
+
+/* Neutral dotted world map: masked dots, dashed static routes, muted markers, no animation. */
+.ts-auth-map {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 119 / 60;
+}
+
+.ts-auth-map::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--ts-ink-3);
+  opacity: 0.4;
+  -webkit-mask: url("/brand/world-map-dots.svg") center / contain no-repeat;
+  mask: url("/brand/world-map-dots.svg") center / contain no-repeat;
+}
+
+.ts-auth-routes {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.ts-auth-routes path {
+  fill: none;
+  stroke: var(--ts-ink-3);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: 0.7;
+}
+
+.ts-auth-point {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px;
+  border: 2px solid var(--ts-surface);
+  border-radius: 50%;
+  background: var(--ts-ink-2);
+}
+
+.ts-auth-point-sjc { left: 16.1%; top: 32.8%; background: var(--ts-chart-4); }
+.ts-auth-point-gru { left: 37%; top: 75.7%; background: var(--ts-chart-2); }
+.ts-auth-point-fra { left: 52.4%; top: 23.9%; background: var(--ts-chart-3); }
+
+.ts-auth-regions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ts-s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ts-auth-region {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+  height: 28px;
+  padding-inline: var(--ts-s2);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-auth-region img {
+  width: 16px;
+  height: 12px;
+  border-radius: 2px;
+}
+
 /* Centered form column: card, then the locale footer below it. */
 .ts-login-column {
   display: flex;
@@ -71,7 +154,8 @@
 .ts-login-heading {
   display: grid;
   justify-items: center;
-  gap: var(--ts-s4);
+  gap: var(--ts-s6);
+  margin-bottom: var(--ts-s1);
 }
 
 .ts-login-heading .ts-auth-heading {
@@ -79,7 +163,7 @@
 }
 
 .ts-login-heading .ts-auth-title {
-  font-size: var(--ts-fs-2xl);
+  font-size: 24px;
 }
 
 .ts-login-logo {
@@ -88,13 +172,29 @@
   height: 28px;
 }
 
+.ts-login-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ts-login-brand img {
+  width: 25px;
+  height: 28px;
+}
+
+.ts-login-brand-word {
+  color: var(--ts-ink);
+  font: 600 17px / 1 var(--ts-font-sans);
+  letter-spacing: -0.02em;
+}
+
 .ts-login-panel .ts-auth-providers {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--ts-s2);
 }
 
 .ts-login-panel .ts-auth-providers .ts-btn {
-  height: var(--ts-control-h-lg);
   padding-inline: var(--ts-s3);
 }
 
@@ -107,7 +207,10 @@
 
 .ts-login-footer {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: center;
+  gap: var(--ts-s4);
 }
 
 .ts-login-footer .ts-auth-locale .ts-select {
