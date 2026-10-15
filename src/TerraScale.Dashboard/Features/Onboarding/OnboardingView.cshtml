@@ -2,13 +2,12 @@
 @implements IUsesLayout<TerraScale.Dashboard.UI.Slices.Document, DocumentModel>
 @inject AssetUrls Assets
 <main class="ts-login">
-    <section class="ts-login-hero" aria-hidden="true">
-        @(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.RegionMap>())
-        <ul class="ts-login-regions"><li><span class="ts-dot"></span>San Francisco</li><li><span class="ts-dot"></span>São Paulo</li></ul>
+    <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
+        @(await RenderPartialAsync<TerraScale.Dashboard.Features.Auth.AuthRegionMap>())
     </section>
     <div class="ts-login-column">
     <div class="@(Model.Step == "payment-method" ? "ts-onboarding ts-onboarding-wide" : "ts-onboarding")">
-    <header class="ts-onboarding-header"><img class="ts-brand-logo" src="@Assets.Url("brand/logo-terrascale-blue.svg")" alt="TerraScale" decoding="async" /><h1 class="ts-sr-only">Activate your TerraScale account</h1></header>
+    <header class="ts-onboarding-header"><span class="ts-login-brand"><img src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" width="25" height="28" decoding="async" /><span class="ts-login-brand-word">TerraScale</span></span><h1 class="ts-sr-only">Activate your TerraScale account</h1></header>
     <div class="ts-onboarding-progress">
         <div class="ts-row-between ts-meta"><span class="ts-eyebrow">Step @Model.CurrentStep of 3</span><span>@Model.Progress%</span></div>
         <div class="ts-progress" role="progressbar" aria-label="Account setup progress" aria-valuenow="@Model.Progress" aria-valuemin="0" aria-valuemax="100"><div class="ts-progress-bar" data-progress="@Model.Progress"></div></div>
