@@ -1,12 +1,12 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Notifications.NotificationPage>
-<div class="ts-toolbar"><nav class="ts-tabs" aria-label="Notification filter">
+<div class="ts-notifications-toolbar"><nav class="ts-tabs" aria-label="Notification filter">
     @foreach (var filter in new[] { (Key: "all", Label: "All", Count: Model.Total), (Key: "unread", Label: "Unread", Count: Model.Unread) })
     {
         var href = filter.Key == "all" ? "/notifications" : "/notifications?status=unread";
-        if (Model.Dialog) { <button class="ts-tab" type="button" aria-current="@(Model.Status == filter.Key ? "page" : null)" data-on:click="@("@get('" + href.Replace("/notifications", "/notifications/dialog") + "')")">@Icons.Render(filter.Key == "all" ? "Bell" : "Mail", 16)<span>@filter.Label</span>@if (filter.Count > 0) { <span class="ts-tab-count">@filter.Count</span> }</button> }
-        else { <a class="ts-tab" href="@href" aria-current="@(Model.Status == filter.Key ? "page" : null)">@Icons.Render(filter.Key == "all" ? "Bell" : "Mail", 16)<span>@filter.Label</span>@if (filter.Count > 0) { <span class="ts-tab-count">@filter.Count</span> }</a> }
+        if (Model.Dialog) { <button class="ts-tab" type="button" aria-current="@(Model.Status == filter.Key ? "page" : null)" data-on:click="@("@get('" + href.Replace("/notifications", "/notifications/dialog") + "')")"><span>@filter.Label</span><span class="ts-tab-count">@filter.Count</span></button> }
+        else { <a class="ts-tab" href="@href" aria-current="@(Model.Status == filter.Key ? "page" : null)"><span>@filter.Label</span><span class="ts-tab-count">@filter.Count</span></a> }
     }
-    </nav><div class="ts-notifications-actions">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationReadForm, TerraScale.Dashboard.Features.Notifications.NotificationReadFormModel>(new(Model)))<p class="ts-meta ts-notifications-summary">@Model.Unread unread @if (Model.Critical > 0) { <span>· @Model.Critical critical</span> } · @Model.Total total</p></div>
+    </nav><div class="ts-notifications-actions">@if (Model.Dialog) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationReadForm, TerraScale.Dashboard.Features.Notifications.NotificationReadFormModel>(new(Model))) }<p class="ts-meta ts-notifications-summary">@Model.Unread unread @if (Model.Critical > 0) { <span>· @Model.Critical critical</span> } · @Model.Total total</p></div>
 </div>
 @if (Model.Items.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">You're all caught up</p><p class="ts-empty-detail">@(Model.Status == "unread" ? "No unread notifications in this scope." : "No notifications in this scope.")</p></div> }
 else
