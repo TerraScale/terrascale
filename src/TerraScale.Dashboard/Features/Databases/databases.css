@@ -304,6 +304,37 @@
   }
 }
 
+/* List metrics: muted sparkline beside the canonical text value. */
+.ts-db-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ts-s2);
+}
+
+.ts-db-spark {
+  width: 64px;
+  height: 20px;
+}
+
+.ts-db-spark path {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+@container page (width < 768px) {
+  .ts-db-spark {
+    display: none;
+  }
+
+  /* Headers are hidden here, so each metric names itself. */
+  .ts-db-table td[data-label]::before {
+    content: attr(data-label) " ";
+    color: var(--ts-ink-2);
+  }
+}
+
 .ts-db-chips {
   display: flex;
   flex-wrap: wrap;
