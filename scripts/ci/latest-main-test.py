@@ -12,7 +12,7 @@ root = Path(__file__).resolve().parents[2]
 workflow = (root / ".github/workflows/ci.yml").read_text()
 concurrency = workflow.split("\nconcurrency:\n", 1)[1].split("\npermissions:", 1)[0]
 assert "group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}" in concurrency
-assert "cancel-in-progress: true" in concurrency
+assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in concurrency
 deploy = workflow.split("\n  deploy:\n", 1)[1].split("\n  e2e:\n", 1)[0]
 steps = dict(re.findall(r"^      - name: ([^\n]+)\n(.*?)(?=^      - |\Z)", deploy, re.M | re.S))
 gate = steps["Wait for Fast on this tree"]

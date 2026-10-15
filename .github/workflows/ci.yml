@@ -27,10 +27,10 @@ on:
     types: [checks_requested]
   workflow_dispatch:
 
-# A newer push cancels obsolete tests and rollouts; manual test runs cannot cancel the push's deployment.
+# Cancel superseded PR tests; main runs finish their rollout and live E2E.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -375,7 +375,7 @@ jobs:
           gh pr comment ${{ github.event.pull_request.number }} -R "$GITHUB_REPOSITORY" --edit-last --create-if-none
           --body "Preview: https://$APP.fly.dev (TerraBase + ts-auth at ${{ github.sha }}; stops when idle, deleted on close or after 24 h)"
 
-  # No `needs`: an already-green PR tree can deploy immediately. Superseded main runs cancel, including rollout.
+  # No `needs`: an already-green PR tree can deploy immediately. Main runs finish even when newer commits arrive.
   # The shared deploy group prevents overlapping rollouts; ts-auth rolls out after TerraBase.
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
