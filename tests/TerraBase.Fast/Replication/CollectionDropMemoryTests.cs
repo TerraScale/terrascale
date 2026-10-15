@@ -28,7 +28,7 @@ public sealed class CollectionDropMemoryTests
         await using var cluster = await ReplicaCluster.StartAsync(cdc: true, clock: null, configure: (_, services) =>
         {
             var memory = services.Last(service => service.ServiceType == typeof(IMemoryBudget));
-            services.AddSingleton<IMemoryBudget>(provider => new ForegroundBudget((IMemoryBudget)memory.ImplementationFactory!(provider)));
+            services.AddSingleton<IMemoryBudget>(provider => new CappedBudget((IMemoryBudget)memory.ImplementationFactory!(provider)));
         }, "gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
         // About 4 KiB is admitted per small document, so all of them together need several times the headroom.
@@ -98,9 +98,9 @@ public sealed class CollectionDropMemoryTests
 
     // A separate cap cannot regain headroom when unrelated background reservations are released.
     private static IDisposable Hold(ReplicaMachine machine, long headroom) =>
-        ((ForegroundBudget)machine.Api.Server.Services.GetRequiredService<IMemoryBudget>()).Hold(headroom);
+        ((CappedBudget)machine.Api.Server.Services.GetRequiredService<IMemoryBudget>()).Hold(headroom);
 
-    private sealed class ForegroundBudget(IMemoryBudget inner) : IMemoryBudget
+    private sealed class CappedBudget(IMemoryBudget inner) : IMemoryBudget
     {
         private Limit? _limit;
 
@@ -110,7 +110,7 @@ public sealed class CollectionDropMemoryTests
             if (Interlocked.CompareExchange(ref _limit, limit, null) is not null)
             {
                 limit.Dispose();
-                throw new InvalidOperationException("the foreground budget is already held");
+                throw new InvalidOperationException("the memory budget is already held");
             }
             return limit;
         }
@@ -119,7 +119,7 @@ public sealed class CollectionDropMemoryTests
 
         public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant)
         {
-            if (lane != MemoryLane.Foreground || Volatile.Read(ref _limit) is not { } limit)
+            if (Volatile.Read(ref _limit) is not { } limit)
             {
                 return inner.TryReserve(lane, bytes, tenant);
             }
@@ -138,10 +138,10 @@ public sealed class CollectionDropMemoryTests
 
         private sealed class Limit : IDisposable
         {
-            private readonly ForegroundBudget _owner;
+            private readonly CappedBudget _owner;
             private readonly Meter _meter = new("CollectionDropMemoryTests");
 
-            public Limit(ForegroundBudget owner, long headroom)
+            public Limit(CappedBudget owner, long headroom)
             {
                 _owner = owner;
                 Budget = new MemoryBudget(headroom, _meter);
