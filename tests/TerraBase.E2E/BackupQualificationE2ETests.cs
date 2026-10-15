@@ -44,7 +44,11 @@ public sealed class BackupQualificationE2ETests
             await Docs.PutAsync(cluster[Cluster.Gru], new Uri($"{path}/collections/{cluster.Collection}/documents/by-key?id={first.Key}", UriKind.Relative), JsonNode.Parse(first.Value.Body)!);
         });
         var failures = BackupQualification.Failures(run.Plan, run.Outcomes);
-        Outcomes.Mark("harness", "real three-node backup restores deliberately rewritten; judge must reject changed stored versions");
+        Outcomes.Mark("harness", JsonSerializer.Serialize(new
+        {
+            control = "real three-node backup restores deliberately rewritten; judge must reject changed stored versions",
+            failures,
+        }));
         await Assert.That(failures.Count).IsEqualTo(3);
         await Assert.That(failures.All(failure => failure.Contains("versions differ", StringComparison.Ordinal))).IsTrue();
     }

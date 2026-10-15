@@ -41,6 +41,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private readonly IChangeGroupSource _source;
     private readonly RemoteAckWaiter _acks;
     private readonly IReplicaStates _states;
+    private readonly IReplicaCopyFaults _faults;
+    private readonly IRebuildStorage _storage;
     private readonly ITenantDirectory _tenants;
     private readonly LocalReplica _self;
     private readonly TerraBaseOptions _options;
@@ -54,12 +56,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
     public PeerStreams(
         IMembership membership, IChangeGroupSource source, RemoteAckWaiter acks, IReplicaStates states, ITenantDirectory tenants, LocalReplica self, TerraBaseOptions options,
-        TimeProvider time, IMeterFactory meters, ILogger<PeerStreams> logger, Lazy<ICatalogGate> catalogGate, PeerCredential credential)
+        TimeProvider time, IMeterFactory meters, ILogger<PeerStreams> logger, Lazy<ICatalogGate> catalogGate, PeerCredential credential, IReplicaCopyFaults faults, IRebuildStorage storage)
     {
         _credential = credential;
         (_membership, _source, _acks, _states, _tenants, _self, _options, _time, _logger) =
             (membership, source, acks, states, tenants, self, options, time, logger);
         _catalogGate = catalogGate;
+        _faults = faults;
+        _storage = storage;
         var meter = meters.Create(Telemetry.MeterName);
         meter.CreateObservableGauge("terrabase.replication.send_lag", () => Lags(cursor => cursor.BehindSince), "s",
             "Age of the oldest change group not yet acknowledged by the peer region's machines.");
@@ -253,7 +257,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         }
     }
 
-    // The peer answers every frame (a heartbeat with an empty frame), so silence for the progress timeout means a half-open
+    // Heartbeats are answered even when a tenant frontier is refused, so silence for the progress timeout means a half-open
     // connection or a peer that stopped reading, where this side's writes stall: either ends the stream, which reconnects.
     private async Task StreamAsync(Link link, Action welcomed, CancellationToken cancellationToken)
     {
@@ -302,7 +306,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         var pending = 0;
         ExceptionDispatchInfo? failure = null;
         var ledger = new Ledger();
-        using var writer = new LinkWriter(call.RequestStream, _time, ReserveAsync);
+        using var writer = new LinkWriter(call.RequestStream, _time, ReserveAsync, () => pending--);
         var receiving = ReceiveAsync();
         var heartbeats = HeartbeatAsync();
         var progress = ProgressAsync();
@@ -351,11 +355,6 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             while (reading.IsCompleted)
             {
                 var response = await reading.ConfigureAwait(false);
-                if (pending == 0)
-                {
-                    throw new InvalidDataException("the peer sent a response with no frame outstanding");
-                }
-
                 if (response.Stable is { } report)
                 {
                     // A report for a frontier of a replaced copy says nothing of the copy in place: the source refuses it.
@@ -366,16 +365,21 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 }
                 else
                 {
+                    if (pending == 0)
+                    {
+                        throw new InvalidDataException("the peer sent a response with no frame outstanding");
+                    }
+
                     await AckedAsync(link, response.Ack, ledger, activity.Token).ConfigureAwait(false);
+                    pending--;
                 }
 
-                pending--;
                 reading = responses.Reader.ReadAsync(activity.Token).AsTask();
             }
         }
 
-        // At most 32 response-producing frames await processing, leaving room to read their replies and heartbeats even while
-        // local storage is busy. The budget is released by the single consumer, not by mere receipt.
+        // At most 32 batches/refills await durable processing, leaving room to read their replies and heartbeats
+        // even while local storage is busy. The budget is released by the single consumer, not by mere receipt.
         async ValueTask ReserveAsync()
         {
             while (pending >= MaxPendingResponses)
@@ -410,6 +414,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     var frame = call.ResponseStream.Current;
                     if (frame.KindCase != AckFrame.KindOneofCase.None)
                     {
+                        if (frame.Stable is not null)
+                        {
+                            // Keep half the buffer available for mandatory ACKs; optional stable proofs may be omitted.
+                            _ = responses.Reader.Count < MaxPendingResponses && responses.Writer.TryWrite(frame);
+                            continue;
+                        }
+
                         if (frame.Ack is { } ack)
                         {
                             var database = ChangeGroups.Tenant(ack.Database);
@@ -473,10 +484,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
         }
 
-        // Persists the ledger behind the stream: a busy writer delays only the resume cursor, retention and shape publication,
-        // never the waits an ack released. Shipping waits only when the bounded ledger fills. A lost stream resends from the
-        // persisted ack, so it is acked and proved again. A refused ack is not reset here: the next pass's read finds the copy
-        // replaced and starts over.
+        // A busy writer delays resume cursors, retention and shape publication, never waits an ACK released.
+        // Tenant bookkeeping failures affect only that copy; node faults fail the whole stream closed.
         async Task BookkeepAsync()
         {
             try
@@ -485,32 +494,76 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 {
                     foreach (var ((database, incarnation), due) in await ledger.TakeAsync(activity.Token).ConfigureAwait(false))
                     {
-                        // Shape reads publish from the same proof. Proved before the ack is recorded, which cuts the change log down
-                        // to the frontier this moves (FR-25); ProveAsync checks the incarnation itself. A failure only delays
-                        // publication until the next ack of the run, which covers the same range: it never fails the stream.
-                        foreach (var (from, through) in due.Proofs)
+                        try
                         {
-                            try
+                            // Prove before recording the ACK, which can trim the change log through this frontier (FR-25).
+                            foreach (var (from, through) in due.Proofs)
                             {
-                                var held = await HeldOriginsAsync(database, activity.Token).ConfigureAwait(false);
-                                _ = await _source.ProveAsync(database, incarnation, from, through, held, activity.Token)
-                                    .ConfigureAwait(false);
+                                try
+                                {
+                                    var held = await HeldOriginsAsync(database, activity.Token).ConfigureAwait(false);
+                                    _ = await _source.ProveAsync(database, incarnation, from, through, held, activity.Token)
+                                        .ConfigureAwait(false);
+                                }
+                                catch (Exception error) when (!activity.IsCancellationRequested)
+                                {
+                                    if (database == ChangeGroups.System
+                                        || await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, activity.Token).ConfigureAwait(false))
+                                    {
+                                        throw;
+                                    }
+
+                                    _logger.ZLogWarning(error,
+                                        $"Recording a remote durable proof for shape reads failed; the next ack retries");
+                                }
                             }
-                            catch (Exception error) when (!activity.IsCancellationRequested)
+
+                            var recorded = due.Acked is { } acked
+                                ? await _source.AckAsync(database, incarnation, peer, acked, new Hlc(due.Stable), activity.Token)
+                                    .ConfigureAwait(false)
+                                : await _source.RecordStableAsync(database, incarnation, peer, new Hlc(due.Stable), activity.Token)
+                                    .ConfigureAwait(false);
+                            if (!recorded && MatchingCursor(database, incarnation) is { } cursor)
                             {
-                                _logger.ZLogWarning(error,
-                                    $"Recording a remote durable proof for shape reads failed; the next ack retries");
+                                if (due.Acked is not null)
+                                {
+                                    // A newer in-flight batch keeps its scope; its ACK and the next source read recheck faults.
+                                    Reset(link, cursor, incarnation);
+                                }
+                                else
+                                {
+                                    await HoldOrResetAsync(link, database, cursor, activity.Token, incarnation).ConfigureAwait(false);
+                                }
                             }
                         }
-
-                        var recorded = due.Acked is { } acked
-                            ? await _source.AckAsync(database, incarnation, peer, acked, new Hlc(due.Stable), activity.Token)
-                                .ConfigureAwait(false)
-                            : await _source.RecordStableAsync(database, incarnation, peer, new Hlc(due.Stable), activity.Token)
-                                .ConfigureAwait(false);
-                        if (!recorded)
+                        catch (Exception error) when (!activity.IsCancellationRequested)
                         {
-                            _logger.ZLogDebug($"Peer bookkeeping for a replaced database {database.DatabaseId:@Database} was refused");
+                            if (database == ChangeGroups.System
+                                || await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, activity.Token).ConfigureAwait(false))
+                            {
+                                throw;
+                            }
+
+                            if (MatchingCursor(database, incarnation) is { } cursor)
+                            {
+                                if (due.Acked is not null)
+                                {
+                                    lock (link.Gate)
+                                    {
+                                        if (cursor.Incarnation == incarnation)
+                                        {
+                                            Reset(link, cursor, incarnation);
+                                            cursor.RetryAt = _time.GetTimestamp() + (long)(MaxBackoff.TotalSeconds * _time.TimestampFrequency);
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    await HoldOrResetAsync(link, database, cursor, activity.Token, incarnation).ConfigureAwait(false);
+                                }
+                            }
+
+                            _logger.ZLogWarning(error, $"Peer bookkeeping for database {database.DatabaseId:@Database} from machine {link.Peer.Name:@Peer} failed; other databases continue");
                         }
                     }
                 }
@@ -518,6 +571,15 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             catch (Exception error)
             {
                 await FailAsync(error).ConfigureAwait(false);
+            }
+        }
+
+        Cursor? MatchingCursor(TenantContext database, Ulid incarnation)
+        {
+            lock (link.Gate)
+            {
+                var cursor = link.Cursors.GetValueOrDefault(database);
+                return cursor?.Incarnation == incarnation ? cursor : null;
             }
         }
 
@@ -560,74 +622,98 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 cursor = link.Cursors.TryGetValue(database, out var known) ? known : link.Cursors[database] = new Cursor();
             }
 
-            // The cursor is pinned to one incarnation of this machine's copy: its change ids mean nothing in another.
-            var position = cursor is { Incarnation: { } pinned, Acked: { } resume } ? new SourceCursor(pinned, resume) { RequiresRefill = cursor.RequiresRefill }
-                : await _source.AckedAsync(database, peer, cancellationToken).ConfigureAwait(false);
-            if (position is not (var incarnation, var acked))
-            {
-                continue;
-            }
-
-            lock (link.Gate)
-            {
-                (cursor.Incarnation, cursor.Acked, cursor.RequiresRefill) = (incarnation, acked, position.Value.RequiresRefill);
-            }
-
-            if (cursor.InFlight is not null || _time.GetTimestamp() < cursor.RetryAt)
-            {
-                continue;
-            }
-
-            // Read before the retention check: retention only cuts from the oldest group on, so a trim between the two shows
-            // as a cut here and never ships a batch past a hole.
+            Ulid incarnation;
+            SourceGroups read;
+            bool retained;
+            long head = 0;
+            long refillResume = 0;
+            Hlc horizon = default;
             var frontier = _self.Clock.Tick();
-            SourceGroups? read;
             try
             {
-                read = await _source.ReadAsync(database, incarnation, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
-            {
-                // A change log this machine cannot read (a damaged row is refused, never skipped) holds back that database only:
-                // nothing after the peer's ack ships or is acknowledged, the other databases on the stream go on, and this one is
-                // read again from the same ack. Its send_lag grows meanwhile.
-                _logger.ZLogError(error, $"The change log of database {database.DatabaseId:@Database} could not be read for machine {link.Peer.Name:@Peer} in {link.Peer.Region:@Region}; that database is held and read again");
-                _unreadable.Add(1, new KeyValuePair<string, object?>("peer_region", link.Peer.Region));
-                lock (link.Gate)
+                var position = cursor is { Incarnation: { } pinned, Acked: { } resume }
+                    ? new SourceCursor(pinned, resume) { RequiresRefill = cursor.RequiresRefill }
+                    : await _source.AckedAsync(database, peer, cancellationToken).ConfigureAwait(false);
+                if (position is not (var found, var acked))
                 {
-                    cursor.BehindSince ??= _time.GetTimestamp();
-                    cursor.RetryAt = _time.GetTimestamp() + (long)(MaxBackoff.TotalSeconds * _time.TimestampFrequency);
+                    await HoldOrResetAsync(link, database, cursor, cancellationToken).ConfigureAwait(false);
+                    continue;
                 }
 
-                continue;
-            }
+                incarnation = found;
+                if (cursor.Incarnation is { } previous && previous != incarnation)
+                {
+                    Reset(link, cursor);
+                }
+                lock (link.Gate)
+                {
+                    (cursor.Incarnation, cursor.Acked, cursor.RequiresRefill) = (incarnation, acked, position.Value.RequiresRefill);
+                }
 
-            // The copy was replaced (a copy, restore or rebuild) since the cursor was read: start over from its own acks.
-            var retains = read is null || read.Incarnation != incarnation ? null
-                : await _source.RetainsAsync(database, incarnation, acked, cancellationToken).ConfigureAwait(false);
-            if (read is not { Groups: var groups } || retains is null)
-            {
-                Reset(link, cursor);
-                continue;
-            }
+                if (cursor.InFlight is not null || _time.GetTimestamp() < cursor.RetryAt)
+                {
+                    continue;
+                }
 
-            if (retains is false || cursor.RequiresRefill)
-            {
-                // Retention cut groups after the peer's ack (it was silent or far behind, or it is new): it refills from this
-                // copy, then the stream goes on from its newest change. A copy or restore whose own change log is whole refills
-                // the current state and goes on from its ack: its writes since then also ship in live batches, which
-                // can confirm them, instead of hiding under an uncertified refill head (decision 0013a, B2).
-                if (await _source.HeadAsync(database, incarnation, cancellationToken).ConfigureAwait(false) is not { } head)
+                // Read before retention: a cut between them must never ship a batch past a hole.
+                var page = await _source.ReadAsync(database, incarnation, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
+                if (page is not null && page.Incarnation != incarnation)
                 {
                     Reset(link, cursor);
                     continue;
                 }
 
-                var refillResume = retains is true ? acked : head;
-                var horizon = await _states.HorizonAsync(database, cancellationToken).ConfigureAwait(false);
+                var retains = page is null ? null
+                    : await _source.RetainsAsync(database, incarnation, acked, cancellationToken).ConfigureAwait(false);
+                if (page is null || retains is null)
+                {
+                    await HoldOrResetAsync(link, database, cursor, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                read = page;
+                retained = retains.Value;
+                if (!retained || cursor.RequiresRefill)
+                {
+                    if (await _source.HeadAsync(database, incarnation, cancellationToken).ConfigureAwait(false) is not { } heldHead)
+                    {
+                        await HoldOrResetAsync(link, database, cursor, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    head = heldHead;
+                    // A whole copied log resumes at the ack so post-restore writes still receive live durable acknowledgements.
+                    refillResume = retained ? acked : head;
+                    // A faulted frontier throws: no refill with a fabricated zero horizon can be sent.
+                    horizon = await _states.HorizonAsync(database, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            {
+                if (database == ChangeGroups.System
+                    || await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false))
+                {
+                    throw;
+                }
+
+                _logger.ZLogError(error, $"The change log of database {database.DatabaseId:@Database} could not be read for machine {link.Peer.Name:@Peer} in {link.Peer.Region:@Region}; that database is held and read again");
+                _unreadable.Add(1, new KeyValuePair<string, object?>("peer_region", link.Peer.Region));
+                await HoldOrResetAsync(link, database, cursor, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
+            var groups = read.Groups;
+            if (!retained || cursor.RequiresRefill)
+            {
                 await stream.ReserveAsync().ConfigureAwait(false);
                 lock (link.Gate)
                 {
+                    if (cursor.Incarnation != incarnation)
+                    {
+                        stream.Release();
+                        continue;
+                    }
+
                     cursor.BehindSince ??= _time.GetTimestamp();
                     (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (refillResume, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true);
                     cursor.ResponseReceived = false;
@@ -645,7 +731,6 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             {
                 if (_time.GetElapsedTime(cursor.FrontierAt) >= FrontierEvery || cursor.FrontierAt == 0)
                 {
-                    await stream.ReserveAsync().ConfigureAwait(false);
                     await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database, incarnation), Hlc = frontier.Value } }, cancellationToken)
                         .ConfigureAwait(false);
                     cursor.FrontierAt = _time.GetTimestamp();
@@ -664,6 +749,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             await stream.ReserveAsync().ConfigureAwait(false);
             lock (link.Gate)
             {
+                if (cursor.Incarnation != incarnation)
+                {
+                    stream.Release();
+                    continue;
+                }
+
                 cursor.BehindSince ??= _time.GetTimestamp();
                 (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (last, groups.Count, _time.GetTimestamp(), Math.Max(cursor.Head, last), false);
                 cursor.ResponseReceived = false;
@@ -714,22 +805,112 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         // The peer holds the range durably whatever this machine's bookkeeping does: a client wait needs only placement and
         // the copy the batch came from still in place (HeadAsync reads its incarnation without the writer).
         var placed = live && (await PlacementAsync(database, cancellationToken).ConfigureAwait(false))?.Includes(link.Peer.Region) == true;
-        if (placed && await _source.HeadAsync(database, incarnation, cancellationToken).ConfigureAwait(false) is not null)
+        long? head = null;
+        if (placed)
+        {
+            try
+            {
+                head = await _source.HeadAsync(database, incarnation, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            {
+                if (database == ChangeGroups.System
+                    || await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false))
+                {
+                    throw;
+                }
+
+                Cursor? cursor;
+                lock (link.Gate)
+                {
+                    cursor = link.Cursors.GetValueOrDefault(database);
+                    if (cursor?.Incarnation == incarnation)
+                    {
+                        Reset(link, cursor);
+                        cursor.RetryAt = _time.GetTimestamp() + (long)(MaxBackoff.TotalSeconds * _time.TimestampFrequency);
+                    }
+                }
+
+                _logger.ZLogWarning(error, $"The acknowledgement of database {database.DatabaseId:@Database} from machine {link.Peer.Name:@Peer} could not be validated; other databases continue");
+            }
+        }
+
+        if (head is not null)
         {
             _acks.Acked(database, incarnation, from, (long)ack.ChangeId);
         }
 
         await ledger.AddAsync(
-            database, incarnation, placed ? (from, (long)ack.ChangeId) : null, (long)ack.ChangeId, ack.Stable, cancellationToken)
+            database, incarnation, head is not null ? (from, (long)ack.ChangeId) : null, (long)ack.ChangeId, ack.Stable, cancellationToken)
             .ConfigureAwait(false);
     }
 
+    // RefusedAsync also covers replacement; only the same observed, refused tenant copy retains its durable ACK.
+    private async ValueTask HoldOrResetAsync(Link link, TenantContext database, Cursor cursor, CancellationToken cancellationToken, Ulid? expected = null)
+    {
+        if (await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ReplicaCopyFaultedException("storage failed closed; this node cannot supply replication data");
+        }
+
+        var knownTenantRefusal = false;
+        try
+        {
+            // A reconnect may meet a known fault before it can read a cursor: discover only its scope, never an ACK.
+            var observed = database == ChangeGroups.System ? null
+                : cursor.Incarnation ?? await _storage.IncarnationAsync(database, cancellationToken).ConfigureAwait(false);
+            knownTenantRefusal = database != ChangeGroups.System && observed is { } incarnation
+                && await _storage.IncarnationAsync(database, cancellationToken).ConfigureAwait(false) == incarnation
+                && await _faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false)
+                && await _storage.IncarnationAsync(database, cancellationToken).ConfigureAwait(false) == incarnation;
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            if (database == ChangeGroups.System
+                || await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false))
+            {
+                throw;
+            }
+
+            _logger.ZLogWarning(error, $"The scope of database {database.DatabaseId:@Database} could not be checked; its cursor remains neutral and other databases continue");
+        }
+
+        if (await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ReplicaCopyFaultedException("storage failed closed; this node cannot supply replication data");
+        }
+
+        if (!knownTenantRefusal)
+        {
+            Reset(link, cursor, expected);
+            return;
+        }
+
+        lock (link.Gate)
+        {
+            if (expected is not null && cursor.Incarnation != expected)
+            {
+                return;
+            }
+
+            cursor.BehindSince ??= _time.GetTimestamp();
+            cursor.RetryAt = _time.GetTimestamp() + (long)(MaxBackoff.TotalSeconds * _time.TimestampFrequency);
+        }
+    }
+
     // Forgets a cursor's incarnation and position: the next pass reads both again from the copy in place.
-    private static void Reset(Link link, Cursor cursor)
+    private static void Reset(Link link, Cursor cursor, Ulid? expected = null)
     {
         lock (link.Gate)
         {
+            // A late optional stable report cannot erase the scope needed to validate an outstanding batch's ACK.
+            if (cursor.InFlight is not null || (expected is not null && cursor.Incarnation != expected))
+            {
+                return;
+            }
+
             (cursor.Incarnation, cursor.Acked, cursor.Head, cursor.RequiresRefill, cursor.Live) = (null, null, 0, false, null);
+            (cursor.FrontierAt, cursor.BehindSince, cursor.Convergence) = (0, null, null);
         }
     }
 
@@ -784,7 +965,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             new KeyValuePair<string, object?>("peer_region", region.Key)));
 
     // gRPC permits one pending write. Heartbeats can run beside storage reads, but never beside a batch write.
-    private sealed class LinkWriter(IClientStreamWriter<PushFrame> stream, TimeProvider time, Func<ValueTask> reserve) : IDisposable
+    private sealed class LinkWriter(IClientStreamWriter<PushFrame> stream, TimeProvider time, Func<ValueTask> reserve, Action release) : IDisposable
     {
         private readonly SemaphoreSlim _writing = new(1, 1);
         private long _lastWrite = time.GetTimestamp();
@@ -792,6 +973,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         public TimeSpan Quiet => time.GetElapsedTime(Interlocked.Read(ref _lastWrite));
 
         public ValueTask ReserveAsync() => reserve();
+
+        public void Release() => release();
 
         public async Task WriteAsync(PushFrame frame, CancellationToken cancellationToken)
         {

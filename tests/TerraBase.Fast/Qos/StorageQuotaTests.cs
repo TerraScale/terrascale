@@ -118,6 +118,20 @@ public sealed class StorageQuotaTests
     }
 
     [Test]
+    public async Task Hobby_can_drop_a_collection_holding_a_large_enterprise_document()
+    {
+        await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "4194304", Configure);
+        var management = api.Server.Services.GetRequiredService<IManagementService>();
+        await management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, PlanTier.Enterprise, CancellationToken.None);
+        // The drop admits 16 times this document's stored bytes, far past Hobby's 256 KiB memory share.
+        (await api.PutAsync(DocumentApi.NewId(), Data(64 * 1024))).Status.ShouldBe(HttpStatusCode.Created);
+        await management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, PlanTier.Hobby, CancellationToken.None);
+        var collection = $"{api.Collections}/{DocumentApi.Collection}";
+        await Assert.That((await api.SendAsync(HttpMethod.Delete, collection)).Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await api.SendAsync(HttpMethod.Get, collection)).Status).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
+    [Test]
     public async Task Storage_is_aggregated_across_projects_but_other_organizations_have_their_own_quota()
     {
         await using var api = await StartAsync();

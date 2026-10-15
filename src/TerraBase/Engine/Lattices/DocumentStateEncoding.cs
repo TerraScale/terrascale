@@ -28,6 +28,17 @@ namespace TerraBase.Engine.Lattices;
 /// </remarks>
 public static class DocumentStateEncoding
 {
+    internal static int Bucket(string collection, string id)
+    {
+        var name = Encoding.UTF8.GetBytes(collection);
+        var input = new byte[4 + name.Length + Encoding.UTF8.GetByteCount(id)];
+        BinaryPrimitives.WriteInt32LittleEndian(input, name.Length);
+        name.CopyTo(input, 4);
+        Encoding.UTF8.GetBytes(id, input.AsSpan(4 + name.Length));
+        var hash = SHA256.HashData(input);
+        return (hash[0] << 4) | (hash[1] >> 4);
+    }
+
     /// <summary>The format every encoding starts with; decoding refuses any other.</summary>
     public const byte Format = 1;
 

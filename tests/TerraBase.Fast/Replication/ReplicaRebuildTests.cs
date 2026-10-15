@@ -16,9 +16,9 @@ namespace TerraBase.Fast.Replication;
 /// <summary>
 /// The R7 rebuild of a faulted copy into a new incarnation (docs/terrabase/decisions/0013a, sections 1, 5 and 9), on real
 /// engines: the swap, the salvage of what only the faulted copy holds, refusals that keep the record and the side copy,
-/// and resumption. The copy fault, its record and certified refill are R6-FIX's and not built yet: a test-only adapter
-/// stands in (a ledger in memory, today's merge refill, a certificate written into that ledger). These tests prove the
-/// rebuild's own steps; they claim no certification.
+/// and resumption. A test-only adapter keeps the orchestration record in memory and uses merge refill, then records
+/// its source proof and runs the production tenant completion barrier. These tests cover rebuild orchestration;
+/// complete certified-refill coverage belongs to the certification integration tests.
 /// </summary>
 public sealed class ReplicaRebuildTests
 {
@@ -230,7 +230,7 @@ public sealed class ReplicaRebuildTests
         await Assert.That(adapter.Ledger.Get(pair.Database)?.Phase).IsEqualTo(RebuildPhase.Certified);
 
         // The certified file goes before the side copy was deleted: the side copy is the only copy left, and it stays.
-        _ = await pair.Sjc.DeleteDatabaseAsync();
+        await pair.Sjc.LoseDatabaseAsync();
         adapter.FailAfterCertifying = false;
         var outcome = await pair.Sjc.Rebuild(adapter).RebuildAsync(pair.Database, faulted, CancellationToken.None);
 
@@ -301,11 +301,17 @@ public sealed class ReplicaRebuildTests
         public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant) => null;
     }
 
-    // Test-only boundary adapter for R6-FIX's seams: the record in memory (it outlives a machine's restart because the test
-    // holds it), today's merge refill from gru as the stand-in for certified refill, and a certificate written into the
-    // record as the stand-in for the completion barrier.
-    private sealed class StandIn(Pair pair) : IRebuildCertification
+    private sealed class BusyRebuild : IReplicaRebuild
     {
+        public ValueTask<RebuildOutcome> RebuildAsync(TenantContext database, Ulid faultedIncarnation, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<RebuildOutcome>(new RebuildOutcome.Busy());
+    }
+
+    // The in-memory orchestration record outlives this fixture's restart; merge refill still crosses the real tenant barrier.
+    private sealed class StandIn(Pair pair) : IRebuildCertification, IRebuildRepair
+    {
+        private (Ulid Incarnation, long Head)? _refill;
+
         public MemoryLedger Ledger { get; } = new();
 
         public bool RefuseRefill { get; set; }
@@ -323,6 +329,19 @@ public sealed class ReplicaRebuildTests
 
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public async ValueTask<int?> RepairRebuildAsync(TenantContext database, Ulid newIncarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
+            await pair.Sjc.IncarnationAsync() == newIncarnation
+                ? await pair.Sjc.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(database, states, cancellationToken)
+                : null;
+
+        public ValueTask<bool> RecordRefillAsync(
+            TenantContext database, Ulid newIncarnation, string sourceMachine, Ulid sourceIncarnation, long head, CancellationToken cancellationToken) =>
+            pair.Sjc.Api.Server.Services.GetRequiredService<IRebuildRepair>()
+                .RecordRefillAsync(database, newIncarnation, sourceMachine, sourceIncarnation, head, cancellationToken);
+
+        public ValueTask<bool> CompleteRebuildAsync(TenantContext database, Ulid oldIncarnation, Ulid newIncarnation, CancellationToken cancellationToken) =>
+            CompleteAsync(database, oldIncarnation, newIncarnation, cancellationToken);
+
         public async ValueTask<bool> RefillAsync(TenantContext database, Ulid newIncarnation, CancellationToken cancellationToken)
         {
             Entered.TrySetResult();
@@ -334,21 +353,43 @@ public sealed class ReplicaRebuildTests
 
             // The refill pins gru's copy in place, as a sender's refill names its own incarnation.
             var source = pair.Gru.Api.Server.Services.GetRequiredService<IReplicaStates>();
-            return !RefuseRefill && await source.DigestAsync(database, null, cancellationToken) is { } pinned
-                && await pair.Sjc.AntiEntropy.RefillAsync(database, pair.Gru.Name, await source.HorizonAsync(database, cancellationToken), pinned.Incarnation, cancellationToken) is not null;
-        }
-
-        public ValueTask<bool> CompleteAsync(TenantContext database, Ulid oldIncarnation, Ulid newIncarnation, CancellationToken cancellationToken)
-        {
-            if (RefuseCompletion || Ledger.Get(database) is not { Phase: RebuildPhase.Salvaged } record || record.OldIncarnation != oldIncarnation
-                || record.NewIncarnation != newIncarnation)
+            if (RefuseRefill || await source.DigestAsync(database, null, cancellationToken) is not { } pinned
+                || await pair.Sjc.AntiEntropy.RefillAsync(database, pair.Gru.Name, await source.HorizonAsync(database, cancellationToken), pinned.Incarnation, cancellationToken) is null)
             {
-                return ValueTask.FromResult(false);
+                return false;
             }
 
-            Ledger.Set(record with { Phase = RebuildPhase.Certified });
+            _refill = (pinned.Incarnation, pinned.Head);
+            return true;
+        }
+
+        public async ValueTask<bool> CompleteAsync(TenantContext database, Ulid oldIncarnation, Ulid newIncarnation, CancellationToken cancellationToken)
+        {
+            if (RefuseCompletion || Ledger.Get(database) is not { Phase: RebuildPhase.Salvaged } record || record.OldIncarnation != oldIncarnation
+                || record.NewIncarnation != newIncarnation || _refill is not { } proof)
+            {
+                return false;
+            }
+
+            var services = pair.Sjc.Api.Server.Services;
+            var durable = services.GetRequiredService<IRebuildLedger>();
+            await durable.SaveAsync(record with { Phase = RebuildPhase.Pending, NewIncarnation = null }, cancellationToken);
+            await durable.SaveAsync(record with { Phase = RebuildPhase.Swapped }, cancellationToken);
+            if (!await RecordRefillAsync(database, newIncarnation, pair.Gru.Name, proof.Incarnation, proof.Head, cancellationToken))
+            {
+                return false;
+            }
+
+            await durable.SaveAsync(record, cancellationToken);
+            if (!await services.GetRequiredService<IRebuildRepair>().CompleteRebuildAsync(database, oldIncarnation, newIncarnation, cancellationToken))
+            {
+                return false;
+            }
+
+            Ledger.Set(await durable.GetAsync(database, cancellationToken)
+                ?? throw new InvalidOperationException("the completion barrier did not record its certificate"));
             Certified = true;
-            return FailAfterCertifying ? throw new IOException("a crash after the certificate, before the side copy went") : ValueTask.FromResult(true);
+            return FailAfterCertifying ? throw new IOException("a crash after the certificate, before the side copy went") : true;
         }
     }
 
@@ -475,7 +516,12 @@ public sealed class ReplicaRebuildTests
                 settings["region"] = region;
                 settings["node-name"] = Name;
                 settings["data-directory"] = _directory;
-            }, services => services.AddSingleton<IMemberDirectory>(pair.Members), userId: pair.User);
+            }, services =>
+            {
+                services.AddSingleton<IMemberDirectory>(pair.Members);
+                // The test drives recovery; the hosted worker must preserve its deliberately retained side copy.
+                services.AddSingleton<IReplicaRebuild, BusyRebuild>();
+            }, userId: pair.User);
             if (first)
             {
                 await RegisterAsync();
@@ -490,14 +536,25 @@ public sealed class ReplicaRebuildTests
 
         // The rebuild of this machine's copy, with the stand-in's seams.
         public ReplicaRebuild Rebuild(StandIn adapter, IMemoryBudget? memory = null) =>
-            new(Engine, adapter.Ledger, adapter, Api.Server.Services.GetRequiredService<IChangeGroupSink>(),
+            new(Engine, adapter.Ledger, adapter, adapter,
                 memory ?? Api.Server.Services.GetRequiredService<IMemoryBudget>());
 
         public string SidePath(Ulid incarnation) => Engine.SidePath(pair.Database, incarnation);
 
         public async Task<bool> FinalizeAsync(Ulid rebuilt, string sidePath) => await Engine.FinalizeAsync(pair.Database, rebuilt, sidePath, CancellationToken.None);
 
-        public async Task<bool> DeleteDatabaseAsync() => await Engine.DeleteDatabaseAsync(pair.Database, CancellationToken.None);
+        public async Task LoseDatabaseAsync()
+        {
+            var path = ((SqliteDatabaseStore)await StoreAsync()).FilePath;
+            await StopAsync();
+            // Lose only the certified file: an explicit database deletion also deletes its retained side copies.
+            foreach (var suffix in new[] { string.Empty, "-wal", "-shm", "-journal" })
+            {
+                File.Delete(path + suffix);
+            }
+
+            await StartAsync();
+        }
 
         public async Task<Ulid> IncarnationAsync() =>
             await Engine.IncarnationAsync(pair.Database, CancellationToken.None) ?? throw new InvalidOperationException("the database is missing");

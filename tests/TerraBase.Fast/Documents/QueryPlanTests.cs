@@ -39,6 +39,7 @@ public sealed class QueryPlanTests
         ["DeleteCollectionNames"] = "SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name>=? AND name<?)",
         ["DeleteCollectionStates"] = "SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>=? AND collection<?)",
         // The system database's documents and states, by (collection, id); inserts have no plan.
+        ["SystemGetStateBytes"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?) LEFT-JOIN",
         ["SystemGetState"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?) LEFT-JOIN",
         ["SystemUpdateRow"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
         ["SystemInsertRow"] = "",
@@ -46,6 +47,7 @@ public sealed class QueryPlanTests
         ["ListIndexes"] = "SCAN sqlite_schema",
         ["IndexExists"] = "SCAN sqlite_schema",
         // Client databases (docs/terrabase/multi-region-replication.md): states and documents by key.
+        ["GetStateBytes"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_items_1 (id=?) LEFT-JOIN | SEARCH c USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) LEFT-JOIN",
         ["GetState"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_items_1 (id=?) LEFT-JOIN | SEARCH c USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) LEFT-JOIN",
         ["UpdateState"] = "SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
         ["InsertState"] = "",

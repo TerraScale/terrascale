@@ -5,6 +5,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -23,10 +24,12 @@ namespace TerraBase.Features.Replication;
 internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 {
     private const int MaxRefills = 4;
+    private const long BucketReadBytes = 16L * ReplicationProtocol.MaxApplicationBytes;
     // Two digests and one page's wire, decompressed, parsed and decoded payloads; held until the sink finishes.
     private const long RefillBytes = (2 * 4096 * 16) + (4L * ReplicationProtocol.MaxApplicationBytes);
     private readonly IChangeGroupSink _sink;
     private readonly IReplicaStates _states;
+    private readonly IReplicaCopyFaults _faults;
     private readonly AntiEntropy _antiEntropy;
     private readonly LocalReplica _self;
     private readonly TimeProvider _time;
@@ -48,13 +51,14 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
     public PeerStreamReceiver(
         IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime,
-        ILogger<PeerStreamReceiver> logger, IMemoryBudget memory, Lazy<ICatalogGate> catalogGate)
+        ILogger<PeerStreamReceiver> logger, IMemoryBudget memory, Lazy<ICatalogGate> catalogGate, IReplicaCopyFaults faults)
     {
         _catalogGate = catalogGate;
         _memory = memory;
         _logger = logger;
         _sink = sink;
         _states = states;
+        _faults = faults;
         _antiEntropy = antiEntropy;
         _lifetime = lifetime;
         _logger = logger;
@@ -157,6 +161,10 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 foreach (var (tenant, (asked, done)) in refills.Where(entry => entry.Value.Done.IsCompleted).ToList())
                 {
                     var refilled = await done.ConfigureAwait(false) is not null;
+                    if (await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, stream.Token).ConfigureAwait(false))
+                    {
+                        throw new ReplicaCopyFaultedException("storage failed closed; this node cannot acknowledge a refill");
+                    }
                     _ = refills.Remove(tenant);
                     if (refilled)
                     {
@@ -208,10 +216,28 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                         continue;
                     }
 
-                    await _sink.RecordFrontierAsync(at, origin, new Hlc(frontier.Hlc), stream.Token).ConfigureAwait(false);
+                    Hlc stable;
+                    try
+                    {
+                        await _sink.RecordFrontierAsync(at, origin, new Hlc(frontier.Hlc), stream.Token).ConfigureAwait(false);
+                        stable = await _states.StableAsync(at, stream.Token).ConfigureAwait(false);
+                    }
+                    catch (Exception error) when (!stream.IsCancellationRequested)
+                    {
+                        if (at == ChangeGroups.System
+                            || await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, stream.Token).ConfigureAwait(false))
+                        {
+                            throw;
+                        }
+
+                        // No batch is in flight for a frontier: suppress the report instead of sending a refused batch ACK.
+                        _logger.ZLogWarning(error, $"The frontier of database {at.DatabaseId:@Database} from machine {origin.Value:@Origin} is refused; the stream continues with other databases");
+                        continue;
+                    }
+
                     await responseStream.WriteAsync(new AckFrame
                     {
-                        Stable = new StableReport { Database = frontier.Database, Stable = (await _states.StableAsync(at, stream.Token).ConfigureAwait(false)).Value },
+                        Stable = new StableReport { Database = frontier.Database, Stable = stable.Value },
                     }, stream.Token).ConfigureAwait(false);
                     continue;
                 }
@@ -272,19 +298,30 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 }
 
                 Hlc? applied;
+                Hlc stableAt = default;
                 try
                 {
                     applied = await _sink.ApplyAsync(database, origin, groups, stream.Token).ConfigureAwait(false);
+                    if (applied is not null)
+                    {
+                        stableAt = await _states.StableAsync(database, stream.Token).ConfigureAwait(false);
+                    }
                 }
                 catch (Exception error) when (!stream.IsCancellationRequested)
                 {
+                    if (database == ChangeGroups.System
+                        || await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, stream.Token).ConfigureAwait(false))
+                    {
+                        throw;
+                    }
+
                     // A batch that fails to apply here (a stored state that no longer decodes, the disk) refuses its database
                     // only: the sender sends it again later, and the other databases go on.
                     _logger.ZLogError(error, $"A batch of database {database.DatabaseId:@Database} from machine {origin.Value:@Origin} in {region:@Region} could not be applied; it is refused");
                     applied = null;
                 }
 
-                if (applied is { } stamp)
+                if (applied is not null)
                 {
                     last[database] = (source.Incarnation, batch.LastChangeId);
                     Observe(groups, region);
@@ -298,7 +335,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                         ChangeId = applied is null ? 0 : batch.LastChangeId,
                         Applied = applied?.Value ?? 0,
                         Refused = applied is null,
-                        Stable = applied is null ? 0 : (await _states.StableAsync(database, stream.Token).ConfigureAwait(false)).Value,
+                        Stable = applied is null ? 0 : stableAt.Value,
                     },
                 }, stream.Token).ConfigureAwait(false);
             }
@@ -374,29 +411,41 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             throw new RpcException(new Status(StatusCode.InvalidArgument, "a bucket read names 1 to 4096 buckets, each 0 to 4095"));
         }
 
-        var buckets = request.Buckets.Select(bucket => (int)bucket).ToList();
-        BucketCursor? after = null;
-        do
+        using var reservation = _memory.TryReserve(MemoryLane.Replication, BucketReadBytes, tenant: null)
+            ?? throw new RpcException(new Status(StatusCode.ResourceExhausted,
+                "the source has no memory capacity for a bucket read"));
+
+        try
         {
-            // Every page, and the end, of the incarnation the request names: a replaced copy fails the stream.
-            if (await _states.ReadBucketsAsync(database, incarnation, buckets, after, ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, context.CancellationToken)
-                .ConfigureAwait(false) is not (var states, var next))
+            var buckets = request.Buckets.Select(bucket => (int)bucket).ToList();
+            BucketCursor? after = null;
+            do
+            {
+                // Every page, and the end, of the incarnation the request names: a replaced copy fails the stream.
+                if (await _states.ReadBucketsAsync(database, incarnation, buckets, after, ChangeGroups.MaxDeltas, ChangeGroups.MaxBatchBytes, context.CancellationToken)
+                    .ConfigureAwait(false) is not (var states, var next))
+                {
+                    throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source no longer holds the named incarnation of the database"));
+                }
+
+                after = next;
+                if (states.Count > 0)
+                {
+                    await responseStream.WriteAsync(AntiEntropy.Encode(states, incarnation), context.CancellationToken).ConfigureAwait(false);
+                }
+            }
+            while (after is not null);
+
+            // Recheck the answering state source without scanning its digests again.
+            if (await _states.ReadBucketsAsync(database, incarnation, [], null, 1, 1, context.CancellationToken).ConfigureAwait(false) is null)
             {
                 throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source no longer holds the named incarnation of the database"));
             }
-
-            after = next;
-            if (states.Count > 0)
-            {
-                await responseStream.WriteAsync(AntiEntropy.Encode(states, incarnation), context.CancellationToken).ConfigureAwait(false);
-            }
         }
-        while (after is not null);
-
-        // Recheck the answering state source without scanning its digests again.
-        if (await _states.ReadBucketsAsync(database, incarnation, [], null, 1, 1, context.CancellationToken).ConfigureAwait(false) is null)
+        catch (Exception error) when (error is StorageBusyException or QosMemoryException)
         {
-            throw new RpcException(new Status(StatusCode.FailedPrecondition, "the source no longer holds the named incarnation of the database"));
+            throw new RpcException(new Status(StatusCode.ResourceExhausted,
+                "the source bucket read exceeded memory or page capacity"));
         }
     }
 
@@ -421,6 +470,12 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
+            if (database == ChangeGroups.System
+                || await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false))
+            {
+                throw;
+            }
+
             _logger.ZLogWarning(error, $"A refill from machine {machine:@Peer} failed; the database is refused until its sender asks again");
             return null;
         }

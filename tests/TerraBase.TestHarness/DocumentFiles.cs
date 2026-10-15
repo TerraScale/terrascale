@@ -34,8 +34,8 @@ public static class DocumentFiles
     }
 
     /// <summary>
-    /// Replaces existing live document bodies of a closed system database file without changing its schema or their states,
-    /// whose stored form leaves plain values to the body: the engine reads the new values.
+    /// Replaces existing live document bodies of a closed system database file without changing its schema: each becomes one
+    /// PUT of its new body at the stamp its state row holds (<see cref="StoredStates.ReplaceAsync"/>), a healthy keyed row.
     /// </summary>
     public static async Task UpdateAsync(string path, params (string Collection, string Id, string Body)[] documents)
     {
@@ -47,13 +47,7 @@ public static class DocumentFiles
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
         foreach (var (collection, id, body) in documents)
         {
-            await using var update = connection.CreateCommand();
-            update.Transaction = transaction;
-            update.CommandText = "UPDATE documents SET body = $body WHERE collection = $collection AND id = $id;";
-            update.Parameters.AddWithValue("$collection", collection);
-            update.Parameters.AddWithValue("$id", id);
-            update.Parameters.AddWithValue("$body", StoredStates.SystemBody(body));
-            if (await update.ExecuteNonQueryAsync() != 1)
+            if (await StoredStates.ReplaceAsync(connection, collection, id, body, transaction, system: true) != 1)
             {
                 throw new InvalidDataException("the fixture document does not exist");
             }

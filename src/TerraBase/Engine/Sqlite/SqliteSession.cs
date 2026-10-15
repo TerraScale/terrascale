@@ -102,9 +102,13 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// Opens a connection on the <see cref="SqliteIoPool"/> and applies <paramref name="pragmas"/>, its
     /// per-connection settings, under the cancellable busy handling of <see cref="ExecuteAsync"/>.
     /// </summary>
-    public static async Task<SqliteSession> OpenAsync(SqliteRunner io, string connectionString, string pragmas, CancellationToken cancellationToken)
+    public static async Task<SqliteSession> OpenAsync(SqliteRunner io, string connectionString, string pragmas, CancellationToken cancellationToken, SqliteDatabaseStore? store = null)
     {
-        var connection = new SqliteConnection(connectionString);
+        var connection = new SqliteConnection(connectionString)
+        {
+            CloseRefusal = store is null ? null : () => store.CloseRefusal,
+        };
+        var session = new SqliteSession(connection);
         var opening = false;
         try
         {
@@ -113,7 +117,6 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
                 opening = true;
                 OpenExisting(connection, new SqliteConnectionStringBuilder(connectionString).DataSource);
             }, cancellationToken).ConfigureAwait(false);
-            var session = new SqliteSession(connection);
             await session.ExecuteAsync(io, () =>
             {
                 using var command = connection.CreateCommand();
@@ -122,16 +125,20 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
             }, cancellationToken).ConfigureAwait(false);
             return session;
         }
-        catch
+        catch (Exception error)
         {
+            if (SqliteStorageTransaction.Damaged(error))
+            {
+                store?.NoteCopyFault("the file or its log reported damage while opening a session");
+            }
             if (Volatile.Read(ref opening))
             {
-                await io.RunAsync(connection.Dispose, CancellationToken.None).ConfigureAwait(false);
+                await io.RunAsync(session.Dispose, CancellationToken.None).ConfigureAwait(false);
             }
             else
             {
                 // Cancelled while queued: never opened, so closing it does no I/O and must not wait for a worker.
-                connection.Dispose();
+                session.Dispose();
             }
 
             throw;
@@ -215,9 +222,14 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// </summary>
     public void Dispose()
     {
-        var handle = NativeHandle?.GetValue(connection) as System.Runtime.InteropServices.SafeHandle;
+        var handle = NativeHandle?.GetValue(connection) as Turso.Raw.Public.Handles.TursoDatabaseHandle;
         try
         {
+            // Terminal before command disposal: even a throwing command cannot fall back to graceful native close.
+            if (connection.CloseRefusal?.Invoke() is not null)
+            {
+                handle?.Deinitialize();
+            }
             foreach (var command in _commands.Values)
             {
                 command.Dispose();

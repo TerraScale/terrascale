@@ -57,6 +57,11 @@ public static class BadRequests
                 Replace(context.Response);
                 await WriteAsync(context, error.StatusCode, CodeFor(error.StatusCode), error.Message, op: null).ConfigureAwait(false);
             }
+            catch (ReplicaCopyFaultedException) when (!context.Response.HasStarted)
+            {
+                Replace(context.Response);
+                await WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "copy_faulted", "Storage is awaiting certified recovery.", op: null).ConfigureAwait(false);
+            }
             catch (StorageBusyException error) when (!context.Response.HasStarted)
             {
                 Replace(context.Response);

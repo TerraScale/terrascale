@@ -11,9 +11,9 @@ namespace TerraScale.Authentication.Tests;
 
 /// <summary>
 /// One real TerraBase process built from this same commit (<c>TERRABASE_BINARY</c>, set by the Makefile's auth test
-/// targets) on ports it binds itself (port 0, read back from its startup log) with a fresh data directory: its public listener (plain HTTP, as behind Fly Proxy) and
-/// its internal listener (h2c, loopback off Fly), which records verification of this server's peer credential. Share one
-/// per test session and dispose it at the end.
+/// targets), with a fresh data directory and fixture-owned front ports. Each child binds fresh backend ports (port 0,
+/// read back from its startup log); transparent TCP relays keep the public HTTP and internal h2c origins stable across
+/// restarts. The internal listener verifies this server's generated peer credential.
 /// </summary>
 public sealed class TerraBaseTestServer : IAsyncDisposable
 {
@@ -25,23 +25,24 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     internal static readonly string PeerSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
     private readonly ConcurrentQueue<string> output = new();
-    private readonly ConcurrentQueue<Uri> listening = new();
     private readonly string directory;
-    private int publicPort;
-    private int internalPort;
-    private int metricsPort;
+    private TestListenerRelay? publicFront;
+    private TestListenerRelay? internalFront;
+    private (int Internal, int Public, int Metrics) backendPorts;
     private Process? process;
 
     private TerraBaseTestServer(string directory) => this.directory = directory;
 
+    internal (int Internal, int Public, int Metrics) BackendPorts => this.backendPorts;
+
     /// <summary>Origin of the public listener (Documents API with API keys and ts-auth tokens).</summary>
-    public Uri ClientAddress => new($"http://127.0.0.1:{this.publicPort}/");
+    public Uri ClientAddress => this.publicFront?.Address ?? throw new InvalidOperationException("TerraBase has not started.");
 
     /// <summary>Origin of the internal listener (HTTP/2 only), which needs the peer credential that <see cref="Http"/> sends.</summary>
-    public Uri InternalAddress => new($"http://127.0.0.1:{this.internalPort}/");
+    public Uri InternalAddress => this.internalFront?.Address ?? throw new InvalidOperationException("TerraBase has not started.");
 
     /// <summary>Origin of the metrics listener (Prometheus scrape, no credential).</summary>
-    public Uri MetricsAddress => new($"http://127.0.0.1:{this.metricsPort}/");
+    public Uri MetricsAddress => new($"http://127.0.0.1:{this.backendPorts.Metrics}/");
 
     /// <summary>A client that never follows redirects and sends the peer credential. Owned by the server.</summary>
     public HttpClient Http { get; } = new(new PeerCredentialHandler(PeerSecret)
@@ -120,15 +121,16 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         return new(user, organization, project, await this.CreateApiKeyAsync(organization.Id, cancellationToken: cancellationToken));
     }
 
-    /// <summary>Kills the process (a crash: no graceful shutdown) and keeps its data directory and ports for <see cref="RestartAsync"/>.</summary>
+    /// <summary>Kills the process (a crash: no graceful shutdown) and keeps its data directory and front ports for <see cref="RestartAsync"/>.</summary>
     public async Task StopAsync()
     {
+        this.RefuseNewConnections();
         if (this.process is not { } running)
         {
+            await this.StopBackendsAsync();
             return;
         }
 
-        this.process = null;
         try
         {
             running.Kill(entireProcessTree: true);
@@ -138,11 +140,103 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             // Exited between the check and the kill.
         }
 
-        await running.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        await running.WaitForExitAsync(CancellationToken.None);
+        await this.StopBackendsAsync();
+        this.process = null;
         running.Dispose();
     }
 
-    /// <summary>Starts the stopped server again on the same data directory, ports and credential.</summary>
+    /// <summary>Lets TerraBase drain and mark its data directory clean before a restart.</summary>
+    public async Task StopCleanlyAsync()
+    {
+        this.RefuseNewConnections();
+        if (this.process is not { } running)
+        {
+            await this.StopBackendsAsync();
+            return;
+        }
+
+        try
+        {
+            var signal = new ProcessStartInfo("kill") { UseShellExecute = false };
+            signal.ArgumentList.Add("-TERM");
+            signal.ArgumentList.Add(running.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            using var sender = Process.Start(signal) ?? throw new InvalidOperationException("The shutdown signal did not start.");
+            await sender.WaitForExitAsync();
+            if (sender.ExitCode != 0)
+            {
+                throw new InvalidOperationException("The shutdown signal failed.");
+            }
+
+            await running.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            if (running.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"TerraBase shutdown failed with exit code {running.ExitCode}.");
+            }
+        }
+        catch
+        {
+            await this.StopAsync();
+            throw;
+        }
+
+        await this.StopBackendsAsync();
+        this.process = null;
+        running.Dispose();
+    }
+
+    /// <summary>Hashes a stopped tenant copy without opening SQLite or exposing its encrypted documents.</summary>
+    public async Task<IReadOnlyDictionary<string, string>> SnapshotDatabaseFilesAsync(string organization, string project, string database)
+    {
+        if (this.process is not null)
+        {
+            throw new InvalidOperationException("Stop TerraBase before capturing its database files.");
+        }
+
+        var path = Path.Combine(this.directory, "data", organization, project, database + ".db");
+        var hashes = new Dictionary<string, string>();
+        foreach (var suffix in (string[])["", "-wal", "-journal"])
+        {
+            if (suffix.Length == 0 || File.Exists(path + suffix))
+            {
+                hashes.Add(suffix, await HashAsync(path + suffix));
+            }
+        }
+
+        return hashes;
+    }
+
+    /// <summary>Checks the exact original tenant image remains at its one retained rebuild path.</summary>
+    public async Task<bool> RetainedDatabaseMatchesAsync(
+        string organization, string project, string database, IReadOnlyDictionary<string, string> hashes)
+    {
+        var parent = Path.Combine(this.directory, "data", organization, project);
+        var copies = Directory.GetFiles(parent, $".{database}.*.rebuild");
+        if (copies.Length != 1)
+        {
+            return false;
+        }
+
+        foreach (var suffix in (string[])["", "-wal", "-journal"])
+        {
+            var path = copies[0] + suffix;
+            if (File.Exists(path) != hashes.ContainsKey(suffix)
+                || (hashes.TryGetValue(suffix, out var hash) && await HashAsync(path) != hash))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static async Task<string> HashAsync(string path)
+    {
+        await using var file = File.OpenRead(path);
+        return Convert.ToHexString(await SHA256.HashDataAsync(file));
+    }
+
+    /// <summary>Starts the stopped server again on the same data directory, front ports and credential.</summary>
     public Task RestartAsync(CancellationToken cancellationToken = default) =>
         this.process is null
             ? this.StartAsync(Environment.GetEnvironmentVariable("TERRABASE_BINARY")!, cancellationToken)
@@ -151,92 +245,123 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// <summary>Stops the process and deletes its data directory.</summary>
     public async ValueTask DisposeAsync()
     {
-        await this.StopAsync();
-        this.Http.Dispose();
-        this.PublicHttp.Dispose();
-        Directory.Delete(this.directory, recursive: true);
+        try
+        {
+            await this.StopAsync();
+        }
+        finally
+        {
+            try
+            {
+                await Task.WhenAll(
+                    this.publicFront?.DisposeAsync().AsTask() ?? Task.CompletedTask,
+                    this.internalFront?.DisposeAsync().AsTask() ?? Task.CompletedTask);
+            }
+            finally
+            {
+                this.Http.Dispose();
+                this.PublicHttp.Dispose();
+                if (this.process is null)
+                {
+                    Directory.Delete(this.directory, recursive: true);
+                }
+            }
+        }
     }
 
     private async Task StartAsync(string binary, CancellationToken cancellationToken)
     {
-        var start = new ProcessStartInfo(binary)
+        try
         {
-            WorkingDirectory = this.directory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        // Development: no Tigris backup to attach in a test. The test process's own Fly, Tigris and TerraBase variables never reach it.
-        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("FLY_", StringComparison.Ordinal) || name.StartsWith("AWS_", StringComparison.Ordinal)
-            || name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name is "BUCKET_NAME" or "PRIMARY_REGION").ToList())
-        {
-            start.Environment.Remove(name);
-        }
-
-        // This server's own generated secret, never a production one: the internal listener verifies it.
-        start.Environment[PeerSecretVariable] = PeerSecret;
-
-        // Port 0 the first time: TerraBase binds free ports itself, so no other process can take one between a probe and
-        // the bind. shortcut: a restart reuses the bound ports, which ts-auth already holds; another process can take one
-        // while TerraBase is down. Upgrade (a stable front port) if restart tests ever flake on it.
-        this.listening.Clear();
-        start.ArgumentList.Add("--environment=Development");
-        start.ArgumentList.Add($"--port={this.publicPort}");
-        start.ArgumentList.Add($"--internal-port={this.internalPort}");
-        start.ArgumentList.Add($"--metrics-port={this.metricsPort}");
-        start.ArgumentList.Add($"--data-directory={Path.Combine(this.directory, "data")}");
-        this.process = Process.Start(start) ?? throw new InvalidOperationException("TerraBase did not start.");
-        this.process.OutputDataReceived += (_, line) => this.Keep(line.Data);
-        this.process.ErrorDataReceived += (_, line) => this.Keep(line.Data);
-        this.process.BeginOutputReadLine();
-        this.process.BeginErrorReadLine();
-
-        using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        startup.CancelAfter(StartupTimeout);
-        while (true)
-        {
-            if (this.process.HasExited)
+            this.publicFront ??= new TestListenerRelay();
+            this.internalFront ??= new TestListenerRelay();
+            var start = new ProcessStartInfo(binary)
             {
-                throw new InvalidOperationException($"TerraBase exited with {this.process.ExitCode}: {string.Join('\n', this.output)}");
+                WorkingDirectory = this.directory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            // Development: no Tigris backup to attach in a test. The test process's own Fly, Tigris and TerraBase variables never reach it.
+            foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("FLY_", StringComparison.Ordinal) || name.StartsWith("AWS_", StringComparison.Ordinal)
+                || name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name is "BUCKET_NAME" or "PRIMARY_REGION").ToList())
+            {
+                start.Environment.Remove(name);
             }
 
-            if (this.publicPort == 0 && this.listening.Count >= 3)
+            // This fixture credential is never inherited from the invoking environment.
+            start.Environment[PeerSecretVariable] = PeerSecret;
+
+            // All three backend ports are freshly owned by this child, including metrics on every restart.
+            start.ArgumentList.Add("--environment=Development");
+            start.ArgumentList.Add("--port=0");
+            start.ArgumentList.Add("--internal-port=0");
+            start.ArgumentList.Add("--metrics-port=0");
+            start.ArgumentList.Add($"--data-directory={Path.Combine(this.directory, "data")}");
+            var listening = new ConcurrentQueue<Uri>();
+            var bound = new TaskCompletionSource<Uri[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var running = Process.Start(start) ?? throw new InvalidOperationException("TerraBase did not start.");
+            this.process = running;
+            running.OutputDataReceived += (_, line) => this.Keep(line.Data, listening, bound);
+            running.ErrorDataReceived += (_, line) => this.Keep(line.Data, listening, bound);
+            running.Exited += (_, _) => bound.TrySetResult([]);
+            running.EnableRaisingEvents = true;
+            running.BeginOutputReadLine();
+            running.BeginErrorReadLine();
+            if (running.HasExited)
             {
-                // Bound in order: the internal listener (loopback off Fly), then the public and the metrics listeners.
-                var bound = this.listening.Take(3).ToArray();
-                (this.internalPort, this.publicPort, this.metricsPort) = (bound[0].Port, bound[1].Port, bound[2].Port);
+                bound.TrySetResult([]);
             }
 
+            using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            startup.CancelAfter(StartupTimeout);
             try
             {
-                if (this.publicPort == 0)
+                var addresses = await bound.Task.WaitAsync(startup.Token);
+                if (addresses.Length != 3)
                 {
-                    throw new HttpRequestException("TerraBase has not reported its ports yet");
+                    await running.WaitForExitAsync(CancellationToken.None);
+                    throw new InvalidOperationException($"TerraBase exited with {running.ExitCode}: {string.Join('\n', this.output)}");
                 }
 
-                using var health = await this.PublicHttp.GetAsync(new Uri(this.ClientAddress, "healthz"), startup.Token);
-                if (health.StatusCode == HttpStatusCode.OK)
+                // Bound in order: internal, public, metrics. Never probe the front or a previous child's backend.
+                this.backendPorts = (addresses[0].Port, addresses[1].Port, addresses[2].Port);
+                using var health = await this.PublicHttp.GetAsync(new Uri(addresses[1], "healthz"), startup.Token);
+                if (health.StatusCode != HttpStatusCode.OK || running.HasExited)
                 {
-                    return;
+                    throw new InvalidOperationException($"TerraBase startup health failed: {health.StatusCode}: {string.Join('\n', this.output)}");
                 }
-            }
-            catch (HttpRequestException)
-            {
-                // Not listening yet.
-            }
 
-            try
-            {
-                await Task.Delay(100, startup.Token);
+                this.publicFront.SetBackend(this.backendPorts.Public);
+                this.internalFront.SetBackend(this.backendPorts.Internal);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 throw new TimeoutException($"TerraBase was not healthy within {StartupTimeout.TotalSeconds} seconds: {string.Join('\n', this.output)}");
             }
         }
+        catch
+        {
+            await this.StopAsync();
+            throw;
+        }
     }
 
-    private void Keep(string? line)
+    private void RefuseNewConnections()
+    {
+        this.publicFront?.RefuseNewConnections();
+        this.internalFront?.RefuseNewConnections();
+    }
+
+    private async Task StopBackendsAsync()
+    {
+        this.backendPorts = default;
+        await Task.WhenAll(
+            this.publicFront?.StopBackendAsync() ?? Task.CompletedTask,
+            this.internalFront?.StopBackendAsync() ?? Task.CompletedTask);
+    }
+
+    private void Keep(string? line, ConcurrentQueue<Uri> listening, TaskCompletionSource<Uri[]> bound)
     {
         if (line is null)
         {
@@ -246,7 +371,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         this.output.Enqueue(line);
         if (Listening(line) is { } address)
         {
-            this.listening.Enqueue(address);
+            listening.Enqueue(address);
+            if (listening.Count >= 3)
+            {
+                bound.TrySetResult(listening.Take(3).ToArray());
+            }
         }
 
         while (this.output.Count > 200 && this.output.TryDequeue(out _))

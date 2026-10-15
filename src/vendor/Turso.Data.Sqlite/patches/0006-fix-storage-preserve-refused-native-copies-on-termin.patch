@@ -1,0 +1,224 @@
+From 0d42dd8fe6d451958f3e8fa3a0bc416b8c321b95 Mon Sep 17 00:00:00 2001
+From: mariogk <mariogk@terrascale.tech>
+Date: Tue, 13 Oct 2026 23:44:59 -0300
+Subject: [PATCH] fix(storage): preserve refused native copies on terminal
+ cleanup
+
+---
+ src/Turso.Data.Sqlite/SqliteConnection.cs     | 10 ++-
+ src/Turso.Data/TursoConnection.cs             |  4 ++
+ .../Public/Handles/TursoDatabaseHandle.cs     | 66 +++++++++++++++++--
+ .../Public/Handles/TursoStatementHandle.cs    | 35 ++++++++--
+ src/Turso.Raw/Public/TursoBindings.cs         |  2 +-
+ 5 files changed, 107 insertions(+), 10 deletions(-)
+
+diff --git a/src/Turso.Data.Sqlite/SqliteConnection.cs b/src/Turso.Data.Sqlite/SqliteConnection.cs
+index 4a473962..89595abb 100644
+--- a/src/Turso.Data.Sqlite/SqliteConnection.cs
++++ b/src/Turso.Data.Sqlite/SqliteConnection.cs
+@@ -16,6 +16,9 @@ public partial class SqliteConnection : DbConnection
+     private static readonly object SharedMemoryLock = new();
+     private static readonly Dictionary<string, int> SharedMemoryReferences = new(StringComparer.OrdinalIgnoreCase);
+ 
++    /// <summary>The local owning copy's refusal; observes runtime storage state, not connection-string configuration.</summary>
++    public Func<string?>? CloseRefusal { get; set; }
++
+     private TursoDatabaseHandle? _database;
+     private TursoConnection? _managedConnection;
+     private bool _ownsManagedConnection;
+@@ -173,6 +176,7 @@ public partial class SqliteConnection : DbConnection
+             _database = CanPool(_connectionOptions, filename, sharedMemoryPath)
+                 ? SqliteDatabasePool.Connect(filename)
+                 : TursoBindings.OpenDatabase(filename);
++            _database.CloseRefusal = CloseRefusal;
+             _dataSource = filename;
+             _readOnly = readOnly;
+             _sharedMemoryPath = sharedMemoryPath;
+@@ -186,11 +190,15 @@ public partial class SqliteConnection : DbConnection
+         }
+         catch (TursoException ex)
+         {
++            if (ex is TursoNativeException { StatusCode: 132 or 133 or 134 })
++                _database?.Deinitialize();
+             CleanupFailedOpen(sharedMemoryPath);
+             throw ToSqliteException(ex);
+         }
+-        catch (SqliteException)
++        catch (SqliteException ex)
+         {
++            if (ex.SqliteErrorCode is 10 or 11 or 26)
++                _database?.Deinitialize();
+             CleanupFailedOpen(sharedMemoryPath);
+             throw;
+         }
+diff --git a/src/Turso.Data/TursoConnection.cs b/src/Turso.Data/TursoConnection.cs
+index 6f4a69dd..0680e2b8 100644
+--- a/src/Turso.Data/TursoConnection.cs
++++ b/src/Turso.Data/TursoConnection.cs
+@@ -11,6 +11,9 @@ public class TursoConnection : DbConnection
+     internal static Func<HttpMessageHandler?>? RemoteMessageHandlerFactory { get; set; }
+     internal static Func<HttpClient?>? SyncHttpClientFactory { get; set; }
+ 
++    /// <summary>The local owning copy's refusal; observes runtime storage state, not connection-string configuration.</summary>
++    public Func<string?>? CloseRefusal { get; set; }
++
+     private TursoDatabaseHandle? _turso;
+     private TursoRemoteClient? _remoteClient;
+     private TursoSyncDatabase? _syncDatabase;
+@@ -98,6 +101,7 @@ public class TursoConnection : DbConnection
+         {
+             _turso = TursoBindings.OpenDatabase(filename);
+         }
++        _turso.CloseRefusal = CloseRefusal;
+     }
+ 
+     public override Task OpenAsync(CancellationToken cancellationToken)
+diff --git a/src/Turso.Raw/Public/Handles/TursoDatabaseHandle.cs b/src/Turso.Raw/Public/Handles/TursoDatabaseHandle.cs
+index 86b573a5..456f84ee 100644
+--- a/src/Turso.Raw/Public/Handles/TursoDatabaseHandle.cs
++++ b/src/Turso.Raw/Public/Handles/TursoDatabaseHandle.cs
+@@ -7,16 +7,74 @@ public class TursoDatabaseHandle() : SafeHandle(IntPtr.Zero, true)
+     private IntPtr _database;
+     private SafeHandle? _owner;
+     private bool _ownerReferenceAdded;
++    private readonly Lock _statementsGate = new();
++    private readonly HashSet<WeakReference<TursoStatementHandle>> _statements = [];
++    private bool _deinitializeOnly;
++
++    /// <summary>The owning copy's current refusal, read immediately before releasing its native connection.</summary>
++    public Func<string?>? CloseRefusal { get; set; }
++
++    /// <summary>
++    /// Releases a refused, quiescent connection and its statements without graceful close or checkpoint.
++    /// The caller must have stopped all operations and finished or disposed every executing write statement.
++    /// An uncommitted transaction left by failed rollback is abandoned; this is not an interrupt API.
++    /// </summary>
++    public void Deinitialize()
++    {
++        _deinitializeOnly = true;
++        Dispose();
++    }
++
++    internal TursoStatementHandle OwnStatement(IntPtr pointer)
++    {
++        var statement = TursoStatementHandle.FromPtr(pointer);
++        var registration = new WeakReference<TursoStatementHandle>(statement, trackResurrection: true);
++        lock (_statementsGate)
++        {
++            statement.Owner = this;
++            statement.Registration = registration;
++            _statements.Add(registration);
++        }
++
++        return statement;
++    }
++
++    internal void ReleaseStatement(TursoStatementHandle statement, WeakReference<TursoStatementHandle> registration)
++    {
++        // Also serializes a finalizer's native release with this connection's terminal release.
++        lock (_statementsGate)
++        {
++            statement.ReleaseNativeHandle();
++            _statements.Remove(registration);
++        }
++    }
+ 
+     protected override bool ReleaseHandle()
+     {
+         if (handle != IntPtr.Zero)
+         {
+-            _ = TursoInterop.ConnectionClose(handle, out var errorPtr);
+-            if (errorPtr != IntPtr.Zero)
+-                TursoInterop.FreeString(errorPtr);
++            lock (_statementsGate)
++            {
++                if (_deinitializeOnly || CloseRefusal?.Invoke() is not null)
++                {
++                    _deinitializeOnly = true;
++                    // A failed command Dispose must not leave a statement's Arc keeping the file open.
++                    foreach (var registration in _statements.ToArray())
++                    {
++                        if (registration.TryGetTarget(out var statement))
++                            statement.Deinitialize();
++                    }
++                    _statements.Clear();
++                }
++                else
++                {
++                    _ = TursoInterop.ConnectionClose(handle, out var errorPtr);
++                    if (errorPtr != IntPtr.Zero)
++                        TursoInterop.FreeString(errorPtr);
++                }
+ 
+-            TursoInterop.ConnectionDeinit(handle);
++                TursoInterop.ConnectionDeinit(handle);
++            }
+         }
+ 
+         if (_database != IntPtr.Zero)
+diff --git a/src/Turso.Raw/Public/Handles/TursoStatementHandle.cs b/src/Turso.Raw/Public/Handles/TursoStatementHandle.cs
+index 885b800e..8afe424d 100644
+--- a/src/Turso.Raw/Public/Handles/TursoStatementHandle.cs
++++ b/src/Turso.Raw/Public/Handles/TursoStatementHandle.cs
+@@ -4,14 +4,41 @@ namespace Turso.Raw.Public.Handles;
+ 
+ public class TursoStatementHandle() : SafeHandle(IntPtr.Zero, true)
+ {
+-    protected override bool ReleaseHandle()
++    private bool _deinitializeOnly;
++    internal TursoDatabaseHandle? Owner { get; set; }
++    internal WeakReference<TursoStatementHandle>? Registration { get; set; }
++
++    internal void Deinitialize()
++    {
++        _deinitializeOnly = true;
++        Dispose();
++        // The owner holds its gate: finish a finalizer that already marked this SafeHandle closed but awaits that gate.
++        ReleaseNativeHandle();
++    }
++
++    internal void ReleaseNativeHandle()
+     {
+-        _ = TursoInterop.StatementFinalize(handle, out var errorPtr);
+-        if (errorPtr != IntPtr.Zero)
+-            TursoInterop.FreeString(errorPtr);
++        if (handle == IntPtr.Zero)
++            return;
++        if (!_deinitializeOnly)
++        {
++            _ = TursoInterop.StatementFinalize(handle, out var errorPtr);
++            if (errorPtr != IntPtr.Zero)
++                TursoInterop.FreeString(errorPtr);
++        }
+ 
+         TursoInterop.StatementDeinit(handle);
+         handle = IntPtr.Zero;
++    }
++
++    protected override bool ReleaseHandle()
++    {
++        if (Owner is { } owner && Registration is { } registration)
++            owner.ReleaseStatement(this, registration);
++        else
++            ReleaseNativeHandle();
++        Owner = null;
++        Registration = null;
+         return true;
+     }
+ 
+diff --git a/src/Turso.Raw/Public/TursoBindings.cs b/src/Turso.Raw/Public/TursoBindings.cs
+index 6402f210..0d659724 100644
+--- a/src/Turso.Raw/Public/TursoBindings.cs
++++ b/src/Turso.Raw/Public/TursoBindings.cs
+@@ -79,7 +79,7 @@ public static class TursoBindings
+         var status = TursoInterop.ConnectionPrepareSingle(db, sql, out var statementPtr, out var errorPtr);
+         ThrowIfError(status, errorPtr, "Unable to prepare statement: ");
+ 
+-        return TursoStatementHandle.FromPtr(statementPtr);
++        return db.OwnStatement(statementPtr);
+     }
+ 
+     public static void ResetStatement(TursoStatementHandle statement)
+-- 
+2.54.0
+

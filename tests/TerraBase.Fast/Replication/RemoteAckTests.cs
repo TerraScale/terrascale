@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
@@ -52,6 +53,11 @@ public sealed class RemoteAckTests
                     throw new IOException("controlled marker read failure after COMMIT");
                 }
             }));
+        var token = TestContext.Current!.Execution.CancellationToken;
+        // Preserve the landed copy while testing its unknown response; automatic replacement has separate coverage.
+        await api.Server.Services.GetServices<IHostedService>().OfType<RebuildRecovery>().Single().StopAsync(token);
+        var tenant = await api.TenantOfAsync();
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, token))!;
         Volatile.Write(ref armed, 1);
         var id = EntityIds.New().ToString();
         var response = await api.PutAsync(id, new { n = 1 });
@@ -60,6 +66,10 @@ public sealed class RemoteAckTests
         await Assert.That(response.Json.GetProperty("error").GetProperty("region").GetString()).IsEqualTo("test-region");
         await Assert.That(response.Json.GetProperty("error").GetProperty("machine").GetString()).IsNotNullOrEmpty();
         await Assert.That((await api.GetAsync(id)).Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await api.Server.Services.GetRequiredService<IReplicaCopyFaults>()
+            .RefusedAsync(tenant, store.Incarnation, token)).IsTrue();
+        await Assert.That(await api.Server.Services.GetRequiredService<IChangeGroupSource>()
+            .AckAsync(tenant, store.Incarnation, ReplicaId.Of(99, 1, 0), 0, default, token)).IsFalse();
     }
 
     [Test]

@@ -1244,7 +1244,8 @@ public sealed class PeerStreamTests
     }
 
     // A batch that fails to apply (here the stored state of its document no longer decodes) refuses its database only: the
-    // stream goes on with the other databases, and the batch joins once it is sent again after the damage is gone.
+    // stream goes on with the other databases. The damage is corruption, so the copy faults and a certified refill from gru
+    // rebuilds it under a new incarnation.
     [Test]
     public async Task A_batch_that_fails_to_apply_is_refused_for_its_database_only()
     {
@@ -1257,6 +1258,7 @@ public sealed class PeerStreamTests
             _ = await transaction.PutAsync("items", id, Json("""{"n":0}"""), CancellationToken.None);
         });
         await Assert.That(await sjc.UntilAsync(id, """{"n":0}""")).IsTrue();
+        var damaged = await sjc.IncarnationAsync();
         await sjc.DamageAsync("items", id);
 
         using var push = await RawPush.StartAsync(sjc, (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru").Name);
@@ -1270,10 +1272,8 @@ public sealed class PeerStreamTests
         await Assert.That(acknowledged is { ChangeId: 1, Refused: false }).IsTrue();
         await Assert.That(await sjc.ReadAsync(other, otherId)).IsEqualTo("""{"n":1}""");
 
-        await sjc.LoseAsync("items", id);
-        await push.BatchAsync(cluster.Database, 1, id);
-        await Assert.That((await push.AckAsync()) is { ChangeId: 1, Refused: false }).IsTrue();
-        await Assert.That(await sjc.ReadAsync(id)).IsEqualTo("""{"n":1}""");
+        await Assert.That(await sjc.UntilRebuiltAsync(cluster.Database, damaged)).IsTrue();
+        await Assert.That(await sjc.UntilAsync(id, """{"n":0}""")).IsTrue();
     }
 
     // A retention trim between the sender's read and its retention check must not ship the groups after the hole as if
@@ -2345,6 +2345,23 @@ public sealed class PeerStreamTests
             return false;
         }
 
+        // Whether the copy comes back under an incarnation other than `damaged` within the deadline.
+        public async Task<bool> UntilRebuiltAsync(TenantContext database, Ulid damaged)
+        {
+            var deadline = DateTime.UtcNow + Deadline;
+            while (DateTime.UtcNow < deadline)
+            {
+                if (await HeldIncarnationAsync(database) is { } incarnation && incarnation != damaged)
+                {
+                    return true;
+                }
+
+                await Task.Delay(100);
+            }
+
+            return false;
+        }
+
         // Whether `peer` acknowledges `changeId` within the deadline.
         public async Task<bool> UntilAckedAsync(TenantContext database, ReplicaId peer, long changeId)
         {
@@ -2524,7 +2541,7 @@ public sealed class PeerStreamTests
         {
             var states = Api.Server.Services.GetRequiredService<IReplicaStates>();
             var bucket = TerraBase.Engine.Sqlite.SqliteStorageTransaction.Bucket(collection, id);
-            var (page, _) = (await states.ReadBucketsAsync(cluster.Database, await IncarnationAsync(), [bucket], null, 4096, int.MaxValue, CancellationToken.None))
+            var (page, _) = (await states.ReadBucketsAsync(cluster.Database, await IncarnationAsync(), [bucket], null, ChangeGroups.MaxDeltas, int.MaxValue, CancellationToken.None))
                 ?? throw new InvalidOperationException("the copy refused its own incarnation");
             return page.Any(state => state.Collection == collection && state.Id == id);
         }

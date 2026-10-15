@@ -693,7 +693,7 @@ public sealed class DatabaseRecoveryTests
     [Arguments("-wal")]
     [Arguments("-shm")]
     [Arguments("-journal")]
-    public async Task Root_system_filename_directories_are_preserved_logged_and_counted_on_every_restart(string suffix)
+    public async Task Root_system_filename_directories_refuse_startup_and_preserve_inventory_on_every_restart(string suffix)
     {
         await using var state = new RecoveryData();
         await TerraBaseTestServer.InitializeDataDirectoryAsync(state.Directory);
@@ -701,7 +701,7 @@ public sealed class DatabaseRecoveryTests
         await Assert.That(File.Exists(systemPath)).IsFalse();
         await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(state.Directory)).IsFalse();
 
-        // Seed only while the initializing host is stopped; management has not created a system store.
+        // The real engine prepared the layout without creating a system store.
         var directory = systemPath + suffix;
         System.IO.Directory.CreateDirectory(directory);
         var organizationDirectory = System.IO.Path.Combine(state.Directory, EntityIds.New().ToString());
@@ -716,6 +716,16 @@ public sealed class DatabaseRecoveryTests
             System.IO.Directory.CreateDirectory(ordinary);
         }
 
+        if (suffix.Length == 0)
+        {
+            // Prove the main-file directory alone refuses startup, before adding any sidecar controls.
+            await Assert.That(async () =>
+            {
+                await using var failed = await state.StartAsync();
+            }).Throws<IOException>();
+            await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(state.Directory)).IsFalse();
+        }
+
         // Regular reserved sidecars remain excluded, even next to a directory with another reserved name.
         var controls = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         foreach (var sidecar in state.Sidecars.Where(sidecar => sidecar != suffix))
@@ -726,33 +736,43 @@ public sealed class DatabaseRecoveryTests
             controls.Add(path, bytes);
         }
 
+        // Resolving the hosted ImportRunner constructs ImportStaging before any hosted service starts.
+        var importDirectory = System.IO.Path.Combine(state.Directory, ".import");
+        var entries = System.IO.Directory.GetFileSystemEntries(state.Directory, "*", SearchOption.AllDirectories)
+            .Append(importDirectory).Distinct(StringComparer.Ordinal).ToArray();
+        var lockPath = System.IO.Path.Combine(state.Directory, ".terrabase.lock");
+        var layout = await File.ReadAllBytesAsync(lockPath);
         for (var restart = 0; restart < 2; restart++)
         {
             var logs = new CapturedLogs();
-            await using var api = await state.StartAsync(services => services.AddSingleton<ILoggerProvider>(logs));
-            var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+            await Assert.That(async () =>
+            {
+                await using var failed = await state.StartAsync(services => services.AddSingleton<ILoggerProvider>(logs));
+            }).Throws<IOException>();
+            await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(state.Directory)).IsFalse();
+            await Assert.That(File.Exists(systemPath)).IsFalse();
+            await Assert.That((await File.ReadAllBytesAsync(lockPath)).SequenceEqual(layout)).IsTrue();
+            await Assert.That(System.IO.Directory.Exists(importDirectory)).IsTrue();
+            await Assert.That(System.IO.Directory.EnumerateFileSystemEntries(importDirectory)).IsEmpty();
+            var actualEntries = System.IO.Directory.GetFileSystemEntries(state.Directory, "*", SearchOption.AllDirectories);
+            await Assert.That(actualEntries).IsEquivalentTo(entries).Because(
+                "only the fixture entries and empty import staging directory may exist; actual entries: "
+                + string.Join(", ", actualEntries.Order(StringComparer.Ordinal)));
+            // Recovery refuses startup before management inventory or its serving metrics can run.
+            await Assert.That(logs.Messages.Where(message => message.StartsWith(
+                "Warning: Preserved database file without a catalog registration: ", StringComparison.Ordinal)).ToArray()).IsEmpty();
+
+            // Inspect the real engine's inventory without opening SYSTEM or starting hosted services.
+            var options = new TerraBaseOptions { DataDirectory = state.Directory, MemoryBudget = 64 * 1024 * 1024, StorageThreads = 1, StorageQueue = 16 };
+            var services = new ServiceCollection();
+            services.AddTerraBaseEngine(options);
+            await using var provider = services.BuildServiceProvider();
+            var engine = provider.GetRequiredService<IStorageEngine>();
             var inventory = engine.EnumerateDatabaseFiles().ToArray();
             await Assert.That(inventory.Length).IsEqualTo(1);
             await Assert.That(inventory[0].Path).IsEqualTo(directory);
             await Assert.That(inventory[0].Database).IsNull();
             await Assert.That(engine.SystemDatabaseExists).IsFalse();
-            await Assert.That(File.Exists(System.IO.Path.Combine(state.Directory, ".terrabase.lock"))).IsTrue();
-            await Assert.That(logs.Messages.Where(message => message.StartsWith(
-                "Warning: Preserved database file without a catalog registration: ", StringComparison.Ordinal)).ToArray())
-                .IsEquivalentTo(["Warning: Preserved database file without a catalog registration: " + directory]);
-            await AssertUnknownCountAsync(api, 1);
-            await AssertReadyAsync(api);
-
-            if (suffix.Length == 0)
-            {
-                // Inventory inclusion must not authorize replacing the directory with a system database.
-                await Assert.That(async () =>
-                {
-                    _ = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
-                }).Throws<IOException>();
-                await AssertReadyAsync(api);
-                await AssertUnknownCountAsync(api, 1);
-            }
 
             await Assert.That(System.IO.Directory.Exists(directory)).IsTrue();
             await Assert.That(System.IO.Directory.EnumerateFileSystemEntries(directory)).IsEmpty();

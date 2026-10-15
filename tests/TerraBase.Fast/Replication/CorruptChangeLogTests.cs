@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
@@ -59,6 +60,8 @@ public sealed class CorruptChangeLogTests
         {
             var error = await Assert.ThrowsAsync<InvalidDataException>(async () => await node.ReadGroupsAsync(node.Database, before));
             Console.WriteLine($"{fixture}: refused: {error!.Message}");
+            await Assert.That(await node.Api.Server.Services.GetRequiredService<IRebuildLedger>()
+                .GetAsync(node.Database, CancellationToken.None)).IsNotNull().Because("the source refusal is durable");
             return;
         }
 
@@ -70,8 +73,8 @@ public sealed class CorruptChangeLogTests
 
     // Two databases share gru's stream to sjc. The one gru lists first gets a write whose state row is cut in half while sjc
     // is unlisted ("damaged"; "intact" leaves it alone: the control); the other gets a clean write. Once sjc is listed again,
-    // the clean write reaches it; the damaged one is never applied there in any form, and gru counts the refused reads and
-    // reports the held database in send_lag.
+    // the clean write reaches it; the damaged one is never applied there in any form, and gru records its durable fault
+    // and reports the held database in send_lag.
     [Test]
     [Arguments("damaged")]
     [Arguments("intact")]
@@ -96,6 +99,7 @@ public sealed class CorruptChangeLogTests
 
         var first = await gru.Groups.ListDatabasesAsync(CancellationToken.None).FirstAsync(database => cluster.Databases.Contains(database));
         var other = cluster.Databases.Single(database => database != first);
+        await gru.UntilAcknowledgedAsync(first, acknowledged => acknowledged > 0);
         await cluster.UnlistAsync(sjc);
         var before = await gru.HeadAsync(first);
         await gru.WriteAsync(first, async transaction => _ = await transaction.PutAsync(Items, "damaged", Json("""{"n":1}"""), CancellationToken.None));
@@ -111,9 +115,40 @@ public sealed class CorruptChangeLogTests
         if (firstWrite == "damaged")
         {
             await Assert.That(await sjc.ReadAsync(first, "damaged")).IsNull();
-            // The held database shows: its failed reads are counted, and its send_lag grows while the write is held.
-            await Assert.That(await gru.UntilMetricAsync("terrabase_replication_unreadable_reads_total", value => value >= 1, "sjc")).IsTrue();
+            // Maintenance or shipping may detect the damage first; its durable fault and growing send lag show the hold.
+            await gru.UntilFaultRecordedAsync(first);
             await Assert.That(await gru.UntilMetricAsync("terrabase_replication_send_lag_seconds", value => value > 0, "sjc")).IsTrue();
+            await Assert.That(await gru.Api.Server.Services.GetRequiredService<IRebuildLedger>()
+                .GetAsync(first, CancellationToken.None)).IsNotNull();
+            var peer = sjc.Api.Server.Services.GetRequiredService<LocalReplica>().Id;
+            await Assert.That(await gru.Groups.AckedAsync(first, peer, CancellationToken.None)).IsNull();
+            await Assert.That(await gru.Groups.ReadAsync(first, await gru.IncarnationAsync(first), before,
+                ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsNull();
+            await Assert.That(await gru.Groups.AckAsync(first, await gru.IncarnationAsync(first), peer, before, default, CancellationToken.None)).IsFalse();
+            // Replace the real inbound stream while discovery retains the sender's Link and its cached cursors.
+            using (var channel = PeerChannel.Create(sjc.Api.Server.BaseAddress, PeerTls.Credential))
+            {
+                var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
+                using var interrupted = client.Push(deadline: DateTime.UtcNow.Add(Deadline));
+                await interrupted.RequestStream.WriteAsync(new PushFrame
+                {
+                    Hello = new Hello { Node = gru.Api.Server.Services.GetRequiredService<LocalReplica>().Id.Value, Region = "gru", Machine = gru.Name },
+                });
+                using var deadline = new CancellationTokenSource(Deadline);
+                await Assert.That(await interrupted.ResponseStream.MoveNext(deadline.Token)).IsTrue();
+                await Assert.That(interrupted.ResponseStream.Current.Welcome).IsNotNull();
+            }
+            await gru.UntilAcknowledgedAsync(first, acknowledged => acknowledged == 0);
+            var beforeHealthy = await gru.HeadAsync(other);
+            await gru.WriteAsync(other, async transaction => _ = await transaction.PutAsync(Items, "reconnected", Json("""{"n":3}"""), CancellationToken.None));
+            var healthyGroup = (await gru.ReadGroupsAsync(other, beforeHealthy))
+                .Single(group => group.Deltas.Any(delta => delta.Id == "reconnected"));
+            await Assert.That(await sjc.UntilAsync(other, "reconnected", """{"n":3}""")).IsTrue()
+                .Because("the refused first cursor cannot prevent a later healthy database from shipping on a new connection");
+            // Frontiers and ACK bookkeeping advance the file head without a shippable group to acknowledge.
+            await gru.UntilAcknowledgedAsync(other, acknowledged => acknowledged >= healthyGroup.ChangeId);
+            await gru.UntilAcknowledgedAsync(first, acknowledged => acknowledged == 0);
+            await Assert.That(await sjc.ReadAsync(first, "damaged")).IsNull();
         }
         else
         {
@@ -122,31 +157,33 @@ public sealed class CorruptChangeLogTests
         }
     }
 
-    // An ack that ends right before a damaged transaction, and a new peer's first contact while the database is held: both
-    // refresh the tail-lag gauge, which reads the damaged row. Neither may throw (that would end the stream for every
-    // database to that peer); the acks still record. The gauge refreshes at most once a second, so the ack repeats for 1.5 s.
+    // The lag gauge decodes stored CDC after ACK bookkeeping. Its swallowed decoder error still faults the copy.
     [Test]
-    public async Task An_ack_or_first_contact_right_before_a_damaged_transaction_does_not_throw()
+    public async Task Ack_tail_measurement_records_damage_and_refuses_subsequent_work()
     {
-        await using var node = await Node.StartAsync("gru");
+        var time = new FakeTimeProvider();
+        await using var node = await Node.StartAsync("gru", time);
         await node.WriteAsync(node.Database, async transaction => _ = await transaction.CreateCollectionAsync(new CollectionInfo(Items, 1), CancellationToken.None));
         var before = await node.HeadAsync(node.Database);
         await node.WriteAsync(node.Database, async transaction => _ = await transaction.PutAsync(Items, "a", Json("""{"n":1}"""), CancellationToken.None));
         await node.DamageAsync(node.Database, before, Damage.Load("unknown-change-type-on-state-row"));
+        // Expire the one-second gauge cache without firing the five-second maintenance timer.
+        time.Advance(TimeSpan.FromSeconds(2));
         var peer = ReplicaId.Of(99, 1, 0);
-        for (var started = DateTime.UtcNow; DateTime.UtcNow - started < TimeSpan.FromSeconds(1.5); await Task.Delay(100))
-        {
-            await Assert.That(await node.Groups.AckAsync(node.Database, await node.IncarnationAsync(node.Database), peer, before, default, CancellationToken.None)).IsTrue();
-        }
+        var incarnation = await node.IncarnationAsync(node.Database);
+        await Assert.That(await node.Groups.AckAsync(node.Database, incarnation, peer, before, default, CancellationToken.None)).IsFalse();
+        await Assert.That(await node.Api.Server.Services.GetRequiredService<IRebuildLedger>()
+            .GetAsync(node.Database, CancellationToken.None)).IsNotNull();
+        await Assert.That(await node.Groups.AckedAsync(node.Database, peer, CancellationToken.None)).IsNull();
+        await Assert.That(await node.Groups.AckAsync(node.Database, incarnation, peer, before, default, CancellationToken.None)).IsFalse();
+        _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () =>
+            await node.WriteAsync(node.Database, async transaction => _ = await transaction.PutAsync(Items, "later", Json("""{"n":2}"""), CancellationToken.None)));
 
-        await Assert.That(await node.AckedAsync(node.Database, peer)).IsEqualTo(before);
-        await Assert.That(await node.AckedAsync(node.Database, ReplicaId.Of(98, 1, 0))).IsLessThanOrEqualTo(before);
     }
 
-    // Recovery: a held database is read again. gru's write to `first` is damaged while sjc is unlisted, so the stream holds
-    // it (unreadable_reads, send_lag > 0). Once the row is repaired the held write reaches sjc and send_lag returns to 0.
+    // Correcting one capture row cannot retire the durable copy fault. PR1 keeps recovery refused until certified refill.
     [Test]
-    public async Task A_held_database_resumes_once_the_damaged_row_is_repaired()
+    public async Task Repairing_a_damaged_capture_row_does_not_restore_trust_in_the_faulted_copy()
     {
         await using var cluster = await Pair.StartAsync();
         var (gru, sjc) = (cluster.Gru, cluster.Sjc);
@@ -162,14 +199,27 @@ public sealed class CorruptChangeLogTests
         var before = await gru.HeadAsync(first);
         await gru.WriteAsync(first, async transaction => _ = await transaction.PutAsync(Items, "held", Json("""{"n":1}"""), CancellationToken.None));
         await gru.DamageAsync(first, before, Damage.Load("unknown-change-type-on-state-row"));
+        // Establish the fault while unlisted, so the new sender link has never learned this copy's cursor.
+        await gru.UntilFaultRecordedAsync(first);
         cluster.List(sjc);
-        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_unreadable_reads_total", value => value >= 1, "sjc")).IsTrue();
         await Assert.That(await gru.UntilMetricAsync("terrabase_replication_send_lag_seconds", value => value > 0, "sjc")).IsTrue();
+        await gru.UntilAcknowledgedAsync(first, acknowledged => acknowledged == 0);
+        var peer = sjc.Api.Server.Services.GetRequiredService<LocalReplica>().Id;
+        await Assert.That(await gru.Groups.AckedAsync(first, peer, CancellationToken.None)).IsNull();
+        await Assert.That(await gru.Groups.AckAsync(first, await gru.IncarnationAsync(first), peer, before, default, CancellationToken.None)).IsFalse();
         await Assert.That(await sjc.ReadAsync(first, "held")).IsNull();
 
         await gru.RepairAsync(first, "UPDATE turso_cdc SET change_type = 1 WHERE change_type = 7;");
-        await Assert.That(await sjc.UntilAsync(first, "held", """{"n":1}""")).IsTrue().Because("a held database is read again once its damage is gone");
-        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_send_lag_seconds", value => value == 0, "sjc")).IsTrue();
+        // Decoder control: the corrected row is readable, but production sourcing still refuses its incarnation.
+        var decoded = await gru.Api.Server.Services.GetRequiredService<TursoChangeGroupSource>()
+            .ReadAsync(first, await gru.IncarnationAsync(first), before, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)
+            ?? throw new InvalidOperationException("the raw decoder refused its own incarnation");
+        await Assert.That(decoded.Groups.SelectMany(group => group.Deltas).Select(delta => delta.Id)).Contains("held");
+        await Assert.That(await gru.Groups.ReadAsync(first, await gru.IncarnationAsync(first), before,
+                ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsNull();
+        await Assert.That(await gru.Api.Server.Services.GetRequiredService<IReplicaStates>().DigestAsync(first, await gru.IncarnationAsync(first), CancellationToken.None)).IsNull();
+        await Assert.That(await gru.Api.Server.Services.GetRequiredService<IRebuildLedger>().GetAsync(first, CancellationToken.None)).IsNotNull();
+        await Assert.That(await sjc.ReadAsync(first, "held")).IsNull();
     }
 
     // A batch whose second group holds bytes that are no DocumentState is refused for its database: its first, valid group
@@ -220,7 +270,7 @@ public sealed class CorruptChangeLogTests
     // Transaction 1 (document kept) commits; the WAL's size is taken; transaction 2 (documents torn-1..3) commits. A copy of
     // the data directory has its database's WAL cut 100 bytes into the first frame after that size (Variant "cut") or that
     // frame and everything after it overwritten with garbage ("scrambled"). A node started on the copy serves kept exactly,
-    // none of transaction 2, ships only transaction 1's group, and takes and ships new writes.
+    // none of transaction 2. The decoder retains only transaction 1; unclean-copy admission refuses new writes and sourcing.
     [Test]
     [Arguments("cut")]
     [Arguments("scrambled")]
@@ -273,14 +323,20 @@ public sealed class CorruptChangeLogTests
                 await Assert.That(await restarted.ReadAsync(node.Database, id)).IsNull().Because($"{id} was in the torn transaction");
             }
 
-            var deltas = (await restarted.ReadGroupsAsync(node.Database, 0)).SelectMany(group => group.Deltas).ToList();
+            var deltas = (await restarted.Api.Server.Services.GetRequiredService<TursoChangeGroupSource>()
+                .ReadAsync(node.Database, await restarted.IncarnationAsync(node.Database), 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)
+                ?? throw new InvalidOperationException("the raw decoder refused its own incarnation"))
+                .Groups.SelectMany(group => group.Deltas).ToList();
             await Assert.That(deltas.Where(delta => delta.Collection == Items).Select(delta => delta.Id)).IsEquivalentTo(["kept"]);
             await Assert.That(Encoded(deltas.Single(delta => delta.Id == "kept"))).IsEqualTo(Encoded(kept));
 
-            var head = await restarted.HeadAsync(node.Database);
-            await restarted.WriteAsync(node.Database, async transaction => _ = await transaction.PutAsync(Items, "after", Json("""{"n":3}"""), CancellationToken.None));
-            await Assert.That(await restarted.ReadAsync(node.Database, "after")).IsEqualTo("""{"n":3}""");
-            await Assert.That((await restarted.ReadGroupsAsync(node.Database, head)).SelectMany(group => group.Deltas).Select(delta => delta.Id)).IsEquivalentTo(["after"]);
+            _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () => await restarted.WriteAsync(node.Database,
+                async transaction => _ = await transaction.PutAsync(Items, "after", Json("""{"n":3}"""), CancellationToken.None)));
+            await Assert.That(await restarted.ReadAsync(node.Database, "after")).IsNull();
+            await Assert.That(await restarted.Groups.ReadAsync(node.Database, await restarted.IncarnationAsync(node.Database), 0,
+                ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsNull();
+            await Assert.That(await restarted.Api.Server.Services.GetRequiredService<IRebuildLedger>()
+                .GetAsync(node.Database, CancellationToken.None)).IsNotNull();
         }
         finally
         {
@@ -379,13 +435,13 @@ public sealed class CorruptChangeLogTests
 
         public IChangeGroupSource Groups => Api.Server.Services.GetRequiredService<IChangeGroupSource>();
 
-        public static Task<Node> StartAsync(string region) => StartAsync(region, null, null, null, []);
+        public static Task<Node> StartAsync(string region, TimeProvider? time = null) => StartAsync(region, null, null, null, [], time: time);
 
         // A node on a copy of `of`'s data directory, under its name and databases; the copy stays the caller's.
         public static Task<Node> StartAsync(string region, string directory, Node of) => StartAsync(region, directory, of, null, []);
 
         public static async Task<Node> StartAsync(string region, string? directory, Node? of, FakeMemberStore? members, string[] replicas, string? name = null,
-            TenantContext? database = null, TenantContext? second = null, string? user = null)
+            TenantContext? database = null, TenantContext? second = null, string? user = null, TimeProvider? time = null)
         {
             var owns = directory is null;
             directory ??= Directory.CreateTempSubdirectory("terrabase-corrupt-cdc-").FullName;
@@ -399,11 +455,13 @@ public sealed class CorruptChangeLogTests
                 settings["data-directory"] = directory;
             }, services =>
             {
+                // Preserve each suspect fixture in place while testing its decoder and durable source refusal.
+                services.AddSingleton<IReplicaRebuild, BusyRebuild>();
                 if (members is not null)
                 {
                     services.AddSingleton<IMemberDirectory>(members);
                 }
-            }, userId: of?.Api.User ?? user);
+            }, userId: of?.Api.User ?? user, time: time);
             var node = new Node(api, directory, owns, database, second) { Name = name };
             if (of is null)
             {
@@ -530,6 +588,25 @@ public sealed class CorruptChangeLogTests
             await Assert.That(repaired).IsEqualTo(1);
         }
 
+        public async Task UntilFaultRecordedAsync(TenantContext database)
+        {
+            var incarnation = await IncarnationAsync(database);
+            var services = Api.Server.Services;
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                (await services.GetRequiredService<IRebuildLedger>().GetAsync(database, token))?.OldIncarnation == incarnation
+                    && await services.GetRequiredService<IReplicaCopyFaults>().RefusedAsync(database, incarnation, token), Deadline);
+        }
+
+        public Task UntilAcknowledgedAsync(TenantContext database, Func<long, bool> holds) =>
+            TerraBaseTestServer.EventuallyAsync(async token =>
+            {
+                using var response = await Api.Server.Client.GetAsync(new Uri("/replication", UriKind.Relative), token);
+                var status = JsonElement.Parse(await response.Content.ReadAsStringAsync(token));
+                return status.GetProperty("peers").EnumerateArray().SelectMany(peer => peer.GetProperty("databases").EnumerateArray())
+                    .Any(copy => copy.GetProperty("databaseId").GetString() == database.DatabaseId
+                        && holds(copy.GetProperty("acknowledged").GetInt64()));
+            }, Deadline);
+
         // Whether the document's materialized JSON becomes `expected` within the deadline.
         public async Task<bool> UntilAsync(TenantContext database, string id, string expected)
         {
@@ -617,6 +694,12 @@ public sealed class CorruptChangeLogTests
             using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
             await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
         }
+    }
+
+    private sealed class BusyRebuild : IReplicaRebuild
+    {
+        public ValueTask<RebuildOutcome> RebuildAsync(TenantContext database, Ulid faultedIncarnation, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<RebuildOutcome>(new RebuildOutcome.Busy());
     }
 
     /// <summary>gru and sjc in one fake DNS, both holding the same two databases.</summary>
