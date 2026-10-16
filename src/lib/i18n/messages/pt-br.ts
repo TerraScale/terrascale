@@ -19,8 +19,7 @@ export const ptBr: Messages = {
     docs: 'Docs',
     status: 'Status',
     login: 'Entrar',
-    getStarted: 'Começar',
-    prelaunch: 'Public Alpha',
+    getStarted: 'Comece a construir',
     toggleNav: 'Abrir menu de navegação',
     language: {
       trigger: 'Idioma',
@@ -71,9 +70,9 @@ export const ptBr: Messages = {
   },
 
   hero: {
-    brandAlt: 'TerraScale',
-    headlineLead: 'TerraScale',
-    headlineAccent: 'Public Alpha',
+    eyebrow: 'Public Alpha',
+    headlineLead: 'Banco de dados de documentos tipado,',
+    headlineAccent: 'replicado entre regiões.',
     subtitle:
       'Um banco de documentos tipado com replicação assíncrona em São Paulo, San Francisco Bay Area e Frankfurt. O endpoint global encaminha para a região selecionada saudável mais próxima. O Public Alpha não tem percentual de disponibilidade nem SLA.',
     ctaPrelaunch: 'Public Alpha',
@@ -144,7 +143,6 @@ export const ptBr: Messages = {
     headlineAccent: 'TerraScale Public Alpha.',
     text: 'Starter e Pro oferecem um teste elegível de 30 dias por método de pagamento verificado e organização.',
     ctaPrimary: 'Cadastre-se no Public Alpha',
-    ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'Fale com vendas',
     perksAria: 'Detalhes dos planos',
     perks: ['Planos pagos mensais', 'Sem excedentes pagos'],

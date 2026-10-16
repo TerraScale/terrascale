@@ -46,12 +46,12 @@ export type PublicAlphaPlanSlug = 'hobby' | 'starter' | 'pro' | 'enterprise'
 
 const planPresentation: Record<
   PublicAlphaPlanSlug,
-  { icon: AppIconName; accent: string; accentRgb: string; popular: boolean }
+  { icon: AppIconName; popular: boolean }
 > = {
-  hobby: { icon: 'zap', accent: 'var(--ts-primary-light)', accentRgb: 'var(--ts-primary-light-rgb)', popular: false },
-  starter: { icon: 'star', accent: 'var(--ts-secondary)', accentRgb: 'var(--ts-secondary-rgb)', popular: false },
-  pro: { icon: 'trendingUp', accent: 'var(--ts-primary)', accentRgb: 'var(--ts-primary-rgb)', popular: true },
-  enterprise: { icon: 'shieldCheck', accent: 'var(--ts-tertiary)', accentRgb: 'var(--ts-tertiary-rgb)', popular: false },
+  hobby: { icon: 'zap', popular: false },
+  starter: { icon: 'star', popular: false },
+  pro: { icon: 'trendingUp', popular: true },
+  enterprise: { icon: 'shieldCheck', popular: false },
 }
 
 export const publicAlphaCatalog = pricingJson.plans.map((plan) => ({
@@ -65,9 +65,6 @@ export const publicAlphaCatalog = pricingJson.plans.map((plan) => ({
 }))
 
 export const launchRegions = regionsJson.regions
-
-export const launchPhase =
-  import.meta.env.PUBLIC_TERRASCALE_LAUNCH_PHASE === 'public-alpha' ? 'public-alpha' : 'prelaunch'
 
 export const getStartedLink = {
   href: registrationUrl,
@@ -114,9 +111,6 @@ export type SocialLink = {
   key: SocialKey
   href: string
   icon: AppIconName
-  color: string
-  bg: string
-  border: string
 }
 
 export const socialLinks: SocialLink[] = [
@@ -124,40 +118,25 @@ export const socialLinks: SocialLink[] = [
     key: 'github',
     href: 'https://github.com/TerraScale',
     icon: 'brandGithub',
-    color: '#F1F5F9',
-    bg: 'rgba(241,245,249,0.08)',
-    border: 'rgba(241,245,249,0.18)',
   },
   {
     key: 'discord',
     href: 'https://discord.gg/8Zr2Nw9g',
     icon: 'brandDiscord',
-    color: '#5865F2',
-    bg: 'rgba(88,101,242,0.12)',
-    border: 'rgba(88,101,242,0.35)',
   },
   {
     key: 'x',
     href: 'https://twitter.com/terrascale',
     icon: 'brandX',
-    color: '#FFFFFF',
-    bg: 'rgba(255,255,255,0.06)',
-    border: 'rgba(255,255,255,0.18)',
   },
   {
     key: 'linkedin',
     href: 'https://linkedin.com/company/terrascale',
     icon: 'brandLinkedin',
-    color: '#0A66C2',
-    bg: 'rgba(10,102,194,0.14)',
-    border: 'rgba(10,102,194,0.38)',
   },
   {
     key: 'email',
     href: 'mailto:support@terrascale.tech',
     icon: 'mail',
-    color: '#10B981',
-    bg: 'rgba(16,185,129,0.12)',
-    border: 'rgba(16,185,129,0.35)',
   },
 ]

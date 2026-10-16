@@ -1,28 +1,21 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
   import { page } from '$app/stores'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import Icon from '@/components/Icon.svelte'
   import LanguageSelector from '@/components/LanguageSelector.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
-  import { docsLink, getStartedLink, launchPhase, loginUrl, navigation } from '@/lib/site'
+  import { docsLink, getStartedLink, loginUrl, navigation } from '@/lib/site'
   import { dict } from '@/lib/i18n'
 
-  let scrolled = false
   let isMenuOpen = false
+
+  // The logo is the home link, so the bar lists the other pages only.
+  const links = navigation.filter((item) => item.href !== '/')
 
   $: if ($page.url.pathname) {
     isMenuOpen = false
   }
 
-  onMount(() => {
-    const onScroll = () => {
-      scrolled = window.scrollY > 24
-    }
-    onScroll()
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
-  })
 </script>
 
 <header class="ts-header" class:scrolled>
@@ -75,6 +68,8 @@
         <Icon name={getStartedLink.icon} className="ts-cta__icon" />
       </ExternalLink>
 
+  <div class="ts-topnav-end">
+    <div class="site-nav__desktop">
       <LanguageSelector />
     </div>
 
@@ -85,42 +80,33 @@
 
     <button
       type="button"
-      class="ts-header__menu"
+      class="ts-icon-btn site-nav__menu"
       aria-expanded={isMenuOpen}
       aria-controls="mobile-navigation"
       aria-label={$dict.chrome.toggleNav}
-      on:click={() => {
-        isMenuOpen = !isMenuOpen
-      }}
+      on:click={() => (isMenuOpen = !isMenuOpen)}
     >
-      <Icon name={isMenuOpen ? 'x' : 'menu'} className="ts-header__menu-icon" />
+      <Icon name={isMenuOpen ? 'x' : 'menu'} className="site-nav__icon" />
     </button>
   </div>
 
   {#if isMenuOpen}
-    <div id="mobile-navigation" class="ts-header__mobile">
-      <nav class="ts-mobile-nav" aria-label="Mobile primary">
+    <div id="mobile-navigation" class="ts-glass-strong site-nav__sheet">
+      <nav class="site-nav__sheet-links" aria-label="Mobile primary">
         {#each navigation as item (item.href)}
           <RouteLink
             href={item.href}
             match={item.href === '/' ? 'exact' : 'prefix'}
-            class="ts-nav__link ts-nav__link--mobile"
+            class="site-nav__sheet-link"
             activeClass="is-active"
-            inactiveClass=""
-            afterClick={() => {
-              isMenuOpen = false
-            }}
+            afterClick={() => (isMenuOpen = false)}
           >
-            <Icon name={item.icon} className="ts-nav__icon" />
+            <Icon name={item.icon} className="site-nav__icon" />
             {$dict.chrome.nav[item.key]}
           </RouteLink>
         {/each}
-        <ExternalLink
-          href={docsLink.href}
-          target="_blank"
-          class="ts-nav__link ts-nav__link--mobile"
-        >
-          <Icon name={docsLink.icon} className="ts-nav__icon" />
+        <ExternalLink href={docsLink.href} target="_blank" class="site-nav__sheet-link">
+          <Icon name={docsLink.icon} className="site-nav__icon" />
           {$dict.chrome.docs}
         </ExternalLink>
         <ExternalLink
@@ -142,6 +128,11 @@
           <LanguageSelector variant="inline" />
         </div>
       </nav>
+      <div class="site-nav__sheet-actions">
+        <ExternalLink href={loginUrl} class="ts-btn ts-btn-secondary ts-btn-lg">{$dict.chrome.login}</ExternalLink>
+        <ExternalLink href={getStartedLink.href} class="ts-btn ts-btn-primary ts-btn-lg">{$dict.chrome.getStarted}</ExternalLink>
+      </div>
+      <LanguageSelector variant="inline" />
     </div>
   {/if}
 </header>
@@ -160,8 +151,11 @@
     transition: background 250ms ease;
   }
 
-  .ts-header.scrolled {
-    background: rgba(var(--ts-bg-base-raw), 0.94);
+  /* The frost sits on ::before, not the header, so the header is not a backdrop root and the
+     menus inside it (language, mobile sheet) still blur the page behind them. */
+  .site-nav.ts-glass {
+    background: none;
+    backdrop-filter: none;
   }
 
   .ts-header__inner {
@@ -303,16 +297,6 @@
 
   .ts-header__menu {
     display: none;
-    background: transparent;
-    border: 1px solid var(--ts-divider);
-    color: var(--ts-text-muted);
-    border-radius: 6px;
-    padding: 8px;
-    cursor: pointer;
-    transition:
-      color 150ms,
-      border-color 150ms,
-      background 150ms;
   }
 
   :global(.ts-header__mobile-cta) {
@@ -324,10 +308,9 @@
     background: rgba(255, 255, 255, 0.08);
   }
 
-  :global(.ts-header__menu-icon) {
-    width: 20px;
-    height: 20px;
-    display: block;
+  .site-nav__sheet-links {
+    display: grid;
+    gap: 2px;
   }
 
   .ts-header__mobile {
@@ -340,26 +323,35 @@
 
   .ts-mobile-nav {
     display: flex;
-    flex-direction: column;
-    gap: 10px;
+    align-items: center;
+    gap: var(--ts-s3);
+    height: var(--ts-control-h-lg);
+    padding: 0 var(--ts-s3);
+    border-radius: var(--ts-radius);
+    color: var(--ts-ink-2);
+    font-size: var(--ts-fs-md);
+    font-weight: 500;
   }
 
-  :global(.ts-nav__link--mobile) {
-    padding: 10px 14px;
+  :global(.site-nav__sheet-link:hover) {
+    background: var(--ts-surface-2);
+    color: var(--ts-ink);
+    text-decoration: none;
   }
 
-  :global(.ts-status-link--mobile) {
-    padding: 10px 14px;
-    font-size: 13px;
+  :global(.site-nav__sheet-link.is-active) {
+    background: var(--ts-accent-soft);
+    color: var(--ts-ink);
   }
 
-  :global(.ts-cta--mobile) {
-    justify-content: center;
-    margin-top: 6px;
+  :global(.site-nav__sheet-link.is-active .site-nav__icon) {
+    color: var(--ts-accent);
   }
 
-  .ts-header__mobile-lang {
-    margin-top: 8px;
+  .site-nav__sheet-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--ts-s2);
   }
 
   @media (max-width: 1240px) {
@@ -374,11 +366,8 @@
     .ts-nav {
       display: none;
     }
-    .ts-header__actions {
-      display: none;
-    }
-    .ts-header__menu {
-      display: inline-flex;
+    .site-nav__menu {
+      display: inline-grid;
     }
   }
 </style>

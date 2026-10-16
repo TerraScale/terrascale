@@ -29,6 +29,7 @@
 </section>
 
 <style>
+  /* Closes the pricing section on the shared rhythm (see .ts-section in index.css). */
   .triad {
     padding: var(--ts-space-20) clamp(16px, 2.5vw, 40px);
     border-top: 1px solid var(--ts-divider);
@@ -50,6 +51,7 @@
     color: var(--ts-text);
   }
 
+  /* Stat-style row: hairlines above and below, vertical hairlines between items. */
   .triad__grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -57,7 +59,7 @@
     border-left: 1px solid var(--ts-divider);
   }
 
-  .triad__card {
+  .triad__item {
     display: flex;
     flex-direction: column;
     gap: var(--ts-space-3);

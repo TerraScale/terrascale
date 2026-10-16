@@ -22,7 +22,7 @@
       ...meta,
       description: copy.description,
       features: 'features' in copy ? [...limitLines, ...copy.features] : limitLines,
-      cta: meta.slug === 'enterprise' || launchPhase === 'public-alpha' ? copy.cta : $dict.hero.ctaPrelaunch,
+      cta: copy.cta,
       href: meta.slug === 'enterprise' ? '/contact' : `${registrationUrl}?plan=${meta.slug}`,
     }
   })
@@ -106,6 +106,7 @@
 </section>
 
 <style>
+  /* The triad row below belongs to this section, so the plans keep a smaller gap to it. */
   .pricing-section {
     padding: var(--ts-space-16) clamp(16px, 2.5vw, 40px) var(--ts-space-20);
     background:

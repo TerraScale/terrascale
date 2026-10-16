@@ -48,37 +48,33 @@
           {/each}
         </div>
       </div>
-
-      {#each columns as { column, title, links } (column.key)}
-        <div class="ts-footer__column">
-          <div class="ts-footer__heading">{title}</div>
-          <ul class="ts-footer__list">
-            {#each links as { link, name } (link.key)}
-              <li>
-                {#if isExternal(link.href)}
-                  <ExternalLink
-                    href={link.href}
-                    target={link.href.startsWith('mailto:') ? undefined : '_blank'}
-                    class="ts-footer__link"
-                  >
-                    <Icon name="chevronRight" className="ts-footer__chevron" />
-                    {name}
-                  </ExternalLink>
-                {:else}
-                  <RouteLink href={link.href} class="ts-footer__link">
-                    <Icon name="chevronRight" className="ts-footer__chevron" />
-                    {name}
-                  </RouteLink>
-                {/if}
-              </li>
-            {/each}
-          </ul>
-        </div>
-      {/each}
     </div>
 
-    <div class="ts-footer__meta">
-      <div class="ts-footer__copy">© {year} TerraScale. {$dict.footer.rightsReserved}</div>
+    {#each columns as { column, title, links } (column.key)}
+      <div class="site-footer__column">
+        <div class="ts-label">{title}</div>
+        <ul class="site-footer__list">
+          {#each links as { link, name } (link.key)}
+            <li>
+              {#if isExternal(link.href)}
+                <ExternalLink href={link.href} target={link.href.startsWith('mailto:') ? undefined : '_blank'} class="site-footer__link">{name}</ExternalLink>
+              {:else}
+                <RouteLink href={link.href} class="site-footer__link">{name}</RouteLink>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/each}
+  </div>
+
+  <div class="ts-container site-footer__meta">
+    <span>© {year} TerraScale. {$dict.footer.rightsReserved}</span>
+    <ExternalLink href="https://status.terrascale.tech" target="_blank" class="ts-status-link">
+      <span class="ts-dot ts-dot-live site-footer__dot" aria-hidden="true"></span>
+      {$dict.chrome.status}
+    </ExternalLink>
+    <div class="site-footer__lang">
       <LanguageSelector variant="inline" />
     </div>
   </div>
@@ -114,7 +110,6 @@
   :global(.ts-footer__logo img) {
     height: 28px;
     width: auto;
-    display: block;
   }
 
   .ts-footer__word {
@@ -134,9 +129,10 @@
     margin: 0 0 14px;
   }
 
-  .ts-footer__socials {
+  .site-footer__socials {
     display: flex;
-    gap: 8px;
+    gap: var(--ts-s1);
+    margin-left: -6px;
   }
 
   :global(.ts-footer__social) {
@@ -159,30 +155,16 @@
     background: rgba(255, 255, 255, 0.08);
   }
 
-  :global(.ts-footer__social-icon) {
-    width: 14px;
-    height: 14px;
-    display: block;
-  }
-
-  .ts-footer__heading {
-    font-family: var(--ts-font-accent);
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--ts-text);
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    margin-bottom: 10px;
-  }
-
-  .ts-footer__list {
+  .site-footer__list {
     list-style: none;
-    padding: 0;
     margin: 0;
+    padding: 0;
+    display: grid;
+    gap: var(--ts-s2);
   }
 
-  .ts-footer__list li {
-    margin-bottom: 6px;
+  .site-footer :global(.site-footer__link) {
+    color: var(--ts-ink-2);
   }
 
   :global(.ts-footer__link) {
@@ -216,10 +198,11 @@
     border-top: 1px solid var(--ts-divider);
     padding-top: 16px;
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: var(--ts-s5);
     flex-wrap: wrap;
-    gap: 12px;
+    padding-block: var(--ts-s5);
+    border-top: 1px solid var(--ts-line);
   }
 
   .ts-footer__copy {
@@ -234,15 +217,9 @@
     .ts-footer__brand {
       grid-column: 1 / -1;
     }
-  }
-
-  @media (max-width: 560px) {
-    .ts-footer__grid {
-      grid-template-columns: 1fr;
-    }
-    .ts-footer__meta {
-      flex-direction: column;
-      align-items: flex-start;
+    .site-footer__lang {
+      margin-left: 0;
+      width: 100%;
     }
   }
 </style>

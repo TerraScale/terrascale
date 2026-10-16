@@ -18,6 +18,7 @@ export const ICONS = {
   chevronRight: '/icons/lucide/chevron-right.svg',
   clock: '/icons/lucide/clock.svg',
   code2: '/icons/lucide/code-2.svg',
+  copy: '/icons/lucide/copy.svg',
   database: '/icons/lucide/database.svg',
   dollarSign: '/icons/lucide/dollar-sign.svg',
   externalLink: '/icons/lucide/external-link.svg',

@@ -65,12 +65,11 @@
 </script>
 
 {#if variant === 'inline'}
-  <div class="lang lang--inline" role="group" aria-label={$dict.chrome.language.menu}>
+  <div class="ts-segmented lang--inline" role="group" aria-label={$dict.chrome.language.menu}>
     {#each LOCALES as l (l.code)}
       <button
         type="button"
-        class="lang__inline-btn"
-        class:is-active={l.code === $locale}
+        aria-pressed={l.code === $locale}
         aria-current={l.code === $locale ? 'true' : undefined}
         lang={l.bcp47}
         on:click={() => choose(l.code)}
@@ -84,7 +83,7 @@
     <button
       bind:this={triggerEl}
       type="button"
-      class="lang__trigger"
+      class="ts-btn ts-btn-ghost ts-btn-sm lang__trigger"
       aria-haspopup="listbox"
       aria-expanded={open}
       aria-label={triggerAria}
@@ -98,7 +97,7 @@
     {#if open}
       <ul
         bind:this={menuEl}
-        class="lang__menu"
+        class="ts-menu ts-glass lang__menu"
         role="listbox"
         aria-label={$dict.chrome.language.menu}
         on:keydown={onMenuItemKeydown}
@@ -107,8 +106,7 @@
           <li role="option" aria-selected={l.code === $locale}>
             <button
               type="button"
-              class="lang__option"
-              class:is-active={l.code === $locale}
+              class="ts-menu-item lang__option"
               lang={l.bcp47}
               on:click={() => choose(l.code)}
             >
@@ -175,12 +173,8 @@
 
   .lang__menu {
     position: absolute;
-    top: calc(100% + 8px);
+    top: calc(100% + var(--ts-s2));
     right: 0;
-    z-index: 120;
-    list-style: none;
-    margin: 0;
-    padding: 6px;
     min-width: 188px;
     border-radius: 8px;
     border: 1px solid var(--ts-glass-border);
@@ -191,26 +185,14 @@
 
   .lang__option {
     width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 9px 12px;
-    border: none;
-    border-radius: 5px;
+    border: 0;
     background: transparent;
-    color: var(--ts-text-muted);
-    font-family: var(--ts-font-accent);
-    font-size: 13px;
-    font-weight: 600;
+    font: inherit;
+    font-size: var(--ts-fs-sm);
     text-align: left;
     cursor: pointer;
-    transition:
-      color 150ms ease,
-      background 150ms ease;
   }
 
-  .lang__option:hover,
   .lang__option:focus-visible {
     background: rgba(255, 255, 255, 0.08);
     color: var(--ts-text);
