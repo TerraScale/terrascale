@@ -237,15 +237,7 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         }
         finally
         {
-            try
-            {
-                connection.Dispose();
-            }
-            finally
-            {
-                // A no-op when the provider already closed it.
-                handle?.Dispose();
-            }
+            connection.Dispose();
         }
     }
 }
