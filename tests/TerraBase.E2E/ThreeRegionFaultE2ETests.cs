@@ -108,18 +108,14 @@ public sealed class ThreeRegionFaultE2ETests
             await using var cluster = await Cluster.StartAsync(All);
             var faker = new Faker();
             var documents = Enumerable.Range(0, count).Select(_ => (Id: EntityIds.New().ToString(), Body: ThreeRegionE2ETests.Synthetic(faker))).ToArray();
-            var written = 0;
-            var writer = Parallel.ForEachAsync(Enumerable.Range(0, count), new ParallelOptions { MaxDegreeOfParallelism = 8 }, async (index, token) =>
-            {
-                await Docs.PutAsync(cluster[index % 2 == 0 ? Cluster.Gru : Cluster.Fra], cluster.Document(documents[index].Id), documents[index].Body, token);
-                _ = Interlocked.Increment(ref written);
-            });
+            var writes = Writes.Start([.. documents.Select(document => document.Id)], 8, (index, token) =>
+                Docs.PutAsync(cluster[index % 2 == 0 ? Cluster.Gru : Cluster.Fra], cluster.Document(documents[index].Id), documents[index].Body, token));
             // sjc goes down and comes back while gru and fra are still writing and shipping to it.
-            _ = await Converge.UntilAsync(() => Task.FromResult(Volatile.Read(ref written)), done => done >= count / 4, "a quarter of the writes");
+            _ = await writes.UntilAcceptedAsync(count / 4, "a quarter of the writes");
             await cluster.StopAsync(Cluster.Sjc);
             await cluster.StartAgainAsync(Cluster.Sjc);
-            Console.WriteLine($"sjc restarted after {Volatile.Read(ref written)} of {count} writes");
-            await writer;
+            Console.WriteLine($"sjc restarted after {writes}");
+            await writes.CompletedAsync();
             var finished = Stopwatch.GetTimestamp();
             _ = await Converge.ListedAsync(cluster, Docs.Digest(documents.Select(document => (document.Id, Docs.Canonical(document.Body)))), "restart mid-replication");
             Converge.Report($"convergence after an sjc restart during {count} writes", finished);
