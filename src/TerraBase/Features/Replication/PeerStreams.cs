@@ -976,6 +976,59 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             .ConfigureAwait(false);
     }
 
+    // RefusedAsync also covers replacement; only the same observed, refused tenant copy retains its durable ACK.
+    private async ValueTask HoldOrResetAsync(Link link, TenantContext database, Cursor cursor, CancellationToken cancellationToken, Ulid? expected = null)
+    {
+        if (await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ReplicaCopyFaultedException("storage failed closed; this node cannot supply replication data");
+        }
+
+        var knownTenantRefusal = false;
+        try
+        {
+            // A reconnect may meet a known fault before it can read a cursor: discover only its scope, never an ACK.
+            var observed = database == ChangeGroups.System ? null
+                : cursor.Incarnation ?? await _storage.IncarnationAsync(database, cancellationToken).ConfigureAwait(false);
+            knownTenantRefusal = database != ChangeGroups.System && observed is { } incarnation
+                && await _storage.IncarnationAsync(database, cancellationToken).ConfigureAwait(false) == incarnation
+                && await _faults.RefusedAsync(database, incarnation, cancellationToken).ConfigureAwait(false)
+                && await _storage.IncarnationAsync(database, cancellationToken).ConfigureAwait(false) == incarnation;
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            if (database == ChangeGroups.System
+                || await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false))
+            {
+                throw;
+            }
+
+            _logger.ZLogWarning(error, $"The scope of database {database.DatabaseId:@Database} could not be checked; its cursor remains neutral and other databases continue");
+        }
+
+        if (await _faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, cancellationToken).ConfigureAwait(false))
+        {
+            throw new ReplicaCopyFaultedException("storage failed closed; this node cannot supply replication data");
+        }
+
+        if (!knownTenantRefusal)
+        {
+            Reset(link, cursor, expected);
+            return;
+        }
+
+        lock (link.Gate)
+        {
+            if (expected is not null && cursor.Incarnation != expected)
+            {
+                return;
+            }
+
+            cursor.BehindSince ??= _time.GetTimestamp();
+            cursor.RetryAt = _time.GetTimestamp() + (long)(MaxBackoff.TotalSeconds * _time.TimestampFrequency);
+        }
+    }
+
     // Forgets a cursor's incarnation and position: the next pass reads both again from the copy in place.
     private static void Reset(Link link, Cursor cursor, Ulid? expected = null)
     {

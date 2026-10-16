@@ -128,6 +128,25 @@ internal sealed partial class SqliteStorageTransaction
 
     private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) DecodeChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken)
     {
+        try
+        {
+            return DecodeChangeGroups(after, maxGroups, maxBytes, self, cancellationToken);
+        }
+        catch (InvalidDataException error)
+        {
+            // Tail gauges and retention catch decoder errors: fault this local copy before either can swallow one.
+            NoteCopyFault("stored replication data could not be decoded");
+            if (StoredDataCorruption.Is(error))
+            {
+                throw;
+            }
+
+            throw StoredDataCorruption.Create("stored replication data could not be decoded", error);
+        }
+    }
+
+    private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) DecodeChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken)
+    {
         List<OriginGroup> groups = [];
         var quiet = after;
         // The writer creates turso_cdc when it first opens: a file this machine never wrote has captured nothing.
