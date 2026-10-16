@@ -204,6 +204,11 @@ internal sealed partial class SqliteStorageTransaction
                     target.Parameters.AddWithValue("$id", resume?.Id ?? string.Empty);
                     target.Parameters.AddWithValue("$limit", (long)(maxStates - states.Count + 1));
                 }
+
+                if (all)
+                {
+                    break;
+                }
             }
 
             return (states, (BucketCursor?)null);
