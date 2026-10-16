@@ -282,6 +282,15 @@ public sealed class CatalogLatticeTests
             return await transaction.GetAsync(collection, id, CancellationToken.None);
         }
 
+        // The ids of a catalog collection's live documents on this machine.
+        public async Task<string[]> IdsAsync(string collection)
+        {
+            var store = await SystemAsync();
+            await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+            var page = await transaction.ListAsync(collection, null, 100, 1024 * 1024, CancellationToken.None);
+            return [.. page.Documents.Select(document => document.Id).Order(StringComparer.Ordinal)];
+        }
+
         public async Task<string?> ReadAsync(string collection, string id) =>
             await ReadStoredAsync(collection, id) is { } document ? Encoding.UTF8.GetString(document.Json.Span) : null;
 
