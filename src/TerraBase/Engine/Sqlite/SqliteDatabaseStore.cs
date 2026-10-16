@@ -36,6 +36,15 @@ internal sealed partial class SqliteDatabaseStore(
     internal Counter<long>? SchemaEvaluations { get; } = schemaEvaluations;
     internal Counter<long>? StorageReads { get; } = storageReads;
 
+    /// <summary>Host-owned counter of repaired events the changes feed found below their origin's newest event here.</summary>
+    internal Counter<long>? FeedHoles { get; init; }
+
+    /// <summary>Where storage paths of this database report problems an operator must see.</summary>
+    internal ILogger? Logger => logger;
+
+    /// <summary>The database's id (its file name), for log lines.</summary>
+    internal string Name => name;
+
     internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TimeProvider? time = null, Action? committed = null)
         : this(name, path, pool, io, pragmas, null, time, committed) { }
 

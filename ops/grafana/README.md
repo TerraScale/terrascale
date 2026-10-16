@@ -59,6 +59,7 @@ read from the file and never printed.
 | --- | --- | --- |
 | Replication send lag > 30 s | `terrabase_replication_send_lag_seconds` per region → peer | 5 min |
 | CDC tailer lag > 10 s | `terrabase_replication_tail_lag_seconds` per region | 5 min |
+| Changes feed hole (refill ordering broken) | `increase(terrabase_feed_holes_total[10m]) > 0` per region | at once |
 | Backup shipping lag > 10 min | `terrabase_backup_lag_seconds` per region | 10 min |
 | 5xx ratio > 5% | 5xx / all requests per app and region, only above 0.05 req/s | 5 min |
 | Memory available < 10% | `fly_instance_memory_mem_available / mem_total` per app and region | 10 min |
@@ -108,6 +109,7 @@ list in `src/TerraBase/Hosting/Telemetry.cs` (`peer_region` has one value per re
 | R6 | `terrabase.replication.repairs` | counter | `peer_region` | Documents changed by anti-entropy |
 | R3 | `terrabase.replication.unreadable_reads` | counter | `peer_region` | Reads of a database's change log refused as damaged (or failed); that database is held for the peer, the others go on. The `send_lag > 30 s` alert pages for it |
 | R4a | `terrabase.clock.skew_capped` | counter | — | Stamps capped at now + 1 s (section 3 of the design) |
+| R8 | `terrabase.feed.holes` | counter | — | Repaired events the changes feed filed at or below their origin's newest event on this machine. Always 0 while a refill's repairs commit before that origin's later batches; nonzero means that guarantee broke (an error log names the database and origin) |
 
 Backup shipping (phase 3b) keeps `terrabase_backup_lag_seconds` and `terrabase_backup_last_success_seconds`.
 

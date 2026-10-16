@@ -1572,6 +1572,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         var store = new SqliteDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
             RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
         {
+            FeedHoles = _feedHoles,
             QueryBudget = QueryBudget,
             Member = Member,
             Checkpoint = _checkpoint,
