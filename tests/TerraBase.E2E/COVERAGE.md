@@ -16,7 +16,8 @@ harness work on the design-C transport (listed under "Missing").
 
 Status words:
 
-- **pass**: the replacement runs on the design-C replicated path and passes.
+- **pass**: every test of the row ran on the design-C replicated path (in-process nodes, see above) and held.
+- **partial**: some of the row's tests pass, the rest are expected failures or not supported (named in the row).
 - **expected failure (slice)**: the replacement exists and is a strict expected failure in `Gaps.cs` until that slice
   lands. It counts only when the scenario fails its own way with the gap's declared signature (`Expected.cs`). A 5xx, a
   crash, a lock or a harness error fails the test. It fails as soon as it passes.
@@ -191,7 +192,7 @@ E2E run (honest gaps f1cfbc0f, run 2 of 2 (delta)), 2026-10-13T04:34Z on delta
 
 ## Counts (2026-10-12, at 94086cd6 on main)
 
-| Status | Rows |
+| Row status | Rows |
 | --- | ---: |
 | pass on design C (replicated) | 0 |
 | setup-blocked (a slice) | 29 |
