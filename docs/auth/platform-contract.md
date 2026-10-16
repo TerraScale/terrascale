@@ -460,20 +460,11 @@ without a signed-in user.
   this API and suspends a project through section 8.1.
 - **ts-auth's own storage.** ts-auth reaches TerraBase at
   `http://gru.ts-terrabase.internal:8081` for everything but discovery and the JWKS (those at its own region's), TerraBase's internal
-  listener on Fly's private network, which trusts the network and needs no
-  credential. The design below, a token ts-auth signs itself, is superseded:
-  - `iss` the `terrascale` issuer, `sub` `ts-auth`, `org_id` and `project_id`
-    of ts-auth's own organization and project (configured), `database` `auth`,
-    `scope` `databases:read databases:write documents:read documents:write`
-    (so it can create its own database at bootstrap), `aud` the TerraBase
-    audience.
-  - It is signed with a separate **storage key** (`TS_AUTH_STORAGE_SIGNING_KEY`,
-    an ES256 private key from Vault), not the key ring. The `terrascale` JWKS
-    publishes the storage key from configuration, so it answers even while the
-    key ring cannot be read: TerraBase reads ts-auth's JWKS and ts-auth reads
-    its key ring from TerraBase, and with both starting at once neither would
-    otherwise get going. TerraBase needs nothing beyond JWKS.
-  - The `tb_…` key (`TS_AUTH_TERRASCALE_API_KEY`) that bridged to it is deleted.
+  listener on Fly's private network. Storage requests carry the shared
+  `TERRABASE_PEER_SECRET` supplied through Fly secrets on each app; see
+  [peer authentication](../terrabase/peer-authentication.md) for rollout and enforcement.
+  The separate storage-signing-key design is retired. Signing keys live in
+  TerraBase, sealed under `TS_AUTH_MASTER_KEY`, also supplied through Fly secrets.
 
 ## 10. Clients
 

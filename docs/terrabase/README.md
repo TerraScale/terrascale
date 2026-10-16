@@ -51,8 +51,9 @@ Verify a download with `sha256sum -c terrabase-linux-amd64.sha256` (or
 ## Configuration
 
 Production identity, membership, region discovery, listeners and backup are
-automatic under the [operating contract](zero-configuration.md). OCI Vault
-provisions and delivers authentication, TLS, persistence and backup credentials.
+automatic under the [operating contract](zero-configuration.md). Production runtime
+credentials arrive from Fly secrets on each Fly app; CI uses GitHub Actions secrets.
+The repository's secret manifest location is `ops/secrets/`.
 Limits and timeouts have one correct setting in code.
 
 **Current gap (TS-773):** the runtime still parses `TERRABASE_*`/`--name`

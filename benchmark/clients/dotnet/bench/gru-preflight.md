@@ -28,7 +28,8 @@ The pinned SDK lacks canonical project-JWT database create/delete and index
 APIs. Its legacy lifecycle methods do not satisfy this ticket. Full scheduling,
 HDR, per-second JSONL, summary, ramp execution and live cleanup are unimplemented.
 A real bounded gru receipt requires those public SDK prerequisites and dedicated
-project-scoped client credentials from OCI Vault. Do not use this table as a
+project-scoped client credentials. Production runtime secrets now come from Fly
+secrets on each Fly app; CI secrets are GitHub Actions secrets. Do not use this table as a
 capacity or latency result.
 
 ## Merged Slice 1 runner preflight

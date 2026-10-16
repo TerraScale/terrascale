@@ -386,7 +386,7 @@ token entries.
 
 Access and identity tokens are signed with the current key of the TS-488 key
 ring for the instance `terrascale`. The JWKS lists every key in the ring,
-read from the region's OCI Vault (each replica reuses a read for at most one
+read from TerraBase's `signing_keys` collection (each replica reuses a read for at most one
 minute), and tokens signed before a rotation keep validating until the key retires
 (see [bootstrap and automatic rotation](#bootstrap-and-automatic-rotation-ts-703)).
 A ring out of strict creation order, empty or over the bound fails closed. No
@@ -638,7 +638,7 @@ configuring it through ts-orchestrator, verify the intended region and service:
    client throttles, aggregate proxy throttles, 429/Retry-After and fixed issuer URLs.
 
 Source inspection shows Atlas replaces X-Forwarded-For with CF-Connecting-IP,
-but does not establish the final OCI load-balancer header order, actual backend
+but does not establish the deployed ingress header order, actual backend
 peers or current network enforcement. No deployment values are inferred from it.
 
 ### Security decisions

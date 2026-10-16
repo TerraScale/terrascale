@@ -2,7 +2,7 @@
 
 These are local fail-closed invocations selecting `gru`, **not live benchmarks**.
 The SDK lacks APIs needed to create, measure and safely delete the required
-throwaway dataset. No service was contacted and no Vault credential was read
+throwaway dataset. No service was contacted and no credential was read
 or benchmark client provisioned. Host: `beta`; no desktop access.
 
 ## Shared workload compatibility

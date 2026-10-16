@@ -8,7 +8,7 @@ flyctl v0.4.115. All three apps and their volumes were destroyed afterwards. Dec
 
 - **TerraBase**: the current monorepo `src/TerraBase` (main at 2026-10-11), published with
   `dotnet publish src/TerraBase -c Release -r linux-x64 --self-contained` (net11.0, single file, JIT, 125 MB)
-  on `mcr.microsoft.com/dotnet/runtime-deps:10.0` (image 104 MB). It boots standalone: no OCI, NATS or peers
+  on `mcr.microsoft.com/dotnet/runtime-deps:10.0` (image 104 MB). It boots standalone: no NATS or peers
   needed. The monorepo targets **net11.0** (SDK 11.0.100-rc.1), not .NET 10.
 - **Probe**: a throwaway Go binary for DNS, h2c, gRPC, fly-replay, SSE, `[[metrics]]` and memory-pressure
   tests. It also supervised TerraBase to time start to the first `200 /readyz` and read RSS, CPU and

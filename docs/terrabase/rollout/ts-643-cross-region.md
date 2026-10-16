@@ -2,7 +2,8 @@
 
 This replaces the retired manual region-list and credential-copy rollout
 recipe. The required [operating contract](../zero-configuration.md) discovers
-every region automatically and uses OCI Vault for canary and transport secrets.
+every region automatically. Production runtime secrets are Fly secrets on each
+Fly app; CI secrets are GitHub Actions secrets.
 The current runtime and checker still depend on explicit profiles and a canary
 file; removing those dependencies is pending TS-773/TS-796.
 
@@ -13,7 +14,7 @@ file; removing those dependencies is pending TS-773/TS-796.
    or placement restrictions.
 2. Use a dedicated canary project/database, never customer data. Automatic
    provisioning must register consistent project identities and deliver scoped
-   credentials through Vault without printing or copying them.
+   credentials through the appropriate secret store without printing them.
 3. Verify that each direction's writes become readable with the same version and
    that concurrent writes converge. Missing membership, lag, malformed responses
    or unverified credentials fail the observation.

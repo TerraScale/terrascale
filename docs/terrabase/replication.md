@@ -143,15 +143,12 @@ catalog is not replicated, so a key or database created on one machine is not vi
 
 ## Automatic replication contract
 
-Private NetBird membership admits nodes and discovers every serving region.
-OCI Vault provisions and delivers peer mutual-TLS credentials. Peer destinations
-and local region are derived automatically; write-wait and
-resource limits have one correct setting in code.
-
-**Current gap (TS-773):** the runtime still requires peer listener, certificate
-and address options. This documentation does not implement automatic
-replication. Preserve TLS chain/EKU checks, registered-database authorization,
-journal identity validation and secret-free startup errors during removal.
+Nodes join Fly's private network and discover every serving region through
+`.internal` DNS. Fly secrets on each app deliver `TERRABASE_PEER_SECRET` through
+the environment; see [peer authentication](peer-authentication.md). Peer destinations
+and local region are derived automatically. Resource limits have one correct
+setting in code. Preserve registered-database authorization, journal identity
+validation and secret-free startup errors.
 
 Hello/Welcome validates bounded region metadata. Older peers may omit the field
 and remain `unknown`; it does not authorize placement or residency.

@@ -152,8 +152,8 @@ A database another region holds is not recorded here when:
 
 `terrabase_wan_unregistered` also counts databases recorded here whose placement does not name this region.
 
-The current implementation uses per-region API keys. OCI Vault must provision
-and deliver these automatically; operators must not issue and copy one per region.
+Runtime credentials arrive from Fly secrets on each Fly app; CI credentials are
+GitHub Actions secrets. See the [operating contract](zero-configuration.md) for secret ownership.
 
 ## Automatic region discovery
 

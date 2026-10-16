@@ -364,13 +364,9 @@ organizations (TS-437).
   change applies to the next email on every replica. If it cannot be read,
   the sign-in code still goes out with the defaults and a warning is logged.
 
-Sender-domain SPF and DKIM authorization remain required (managed outside
-this repo):
-
-- SPF: the domain TXT record must include `include:rp.oracleemaildelivery.com`
-  (Americas) or deliverability suffers.
-- DKIM: the OCI managed-DKIM records are output by ts-infra once applied;
-  publish the CNAMEs in the zone. DKIM stays `PENDING` until they resolve.
+Sender-domain SPF and DKIM authorization for Cloudflare Email Sending are managed
+outside this repo. Publish the DNS records supplied by Cloudflare for the sender
+domain; this repo does not prescribe account-specific DNS values.
 
 ### Local development against a real TerraBase member
 

@@ -121,26 +121,12 @@ remains available to ordinary members ([commit contract](management-commits.md#m
 
 ### Management service credential
 
-Decided by COS on 2026-10-05: the TS-529 bootstrap creates the `terrascale` organization (projects
-`ts-auth`, `ts-dashboard`) before ts-auth exists, because ts-auth itself persists there.
-
-- OCI Vault must provision and deliver the bootstrap management credential
-  automatically. The current file input remains a TS-773 gap. The secret must
-  contain at least 32 characters; only its SHA-256 is retained. Missing or
-  invalid credentials must fail closed with secret-free diagnostics.
-
-- Accepted **only on the internal listener**, never on the public client listener.
-- Each request presents `Authorization: Bearer <secret>` and `X-TerraBase-User-Id: <user id>` (one value,
-  1 to 256 characters, no control characters). TerraBase compares the two SHA-256 hashes with
-  `CryptographicOperations.FixedTimeEquals`. A wrong secret or a missing or invalid user answers `401`.
-- The named user then acts exactly like a token's `sub`: membership and roles apply as for anyone.
-  The credential carries no verified email, so it cannot accept invitations (`403`); it can
-  [add a member](#adding-a-member-on-the-administrative-listener) instead.
-- Every use is logged: `Management service credential acted as user <id>: <method> <path>` at
-  Information, and `Management service credential rejected: <method> <path>` at Warning. The secret is
-  never logged.
-- The current consumer reads the credential at startup; automatic delivery and
-  rotation reconciliation remain a TS-773 gap.
+The separate bootstrap management bearer credential is retired. Internal platform
+operator requests carry `TERRABASE_PEER_SECRET` from Fly secrets on each app;
+[peer authentication](peer-authentication.md) describes its rollout and enforcement.
+The operator acts as the canonical ULID in `X-TerraBase-User-Id`, only on the
+internal listener, without an `Authorization` header. Membership and roles still
+apply, and each use is logged without the credential.
 
 ### Acting user and organization
 
