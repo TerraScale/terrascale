@@ -34,6 +34,7 @@ type bench struct {
 	sse        *http.Client
 	shape      *http.Client // follows no redirect: the bootstrap's 307 is read, then followed by hand
 	metrics    string
+	admitBy    time.Time // shape followers repeat a refusal before admission until then (live load only)
 }
 
 // probe holds a step's raw metric lines, for the report.
@@ -105,10 +106,14 @@ func (b *bench) findMetrics(ctx context.Context) error {
 
 // measure is one step's delivery record.
 type measure struct {
-	bytes   atomic.Int64 // response body bytes read by admitted followers
-	atHead  atomic.Int64 // shape followers that sent their first live long-poll (client side, before it reaches the server)
-	retries atomic.Int64 // shape requests repeated after a busy or unavailable refusal in the window
-	qosBusy atomic.Int64 // 429 tenant_busy answers to followers, before or after admission; each is repeated after Retry-After
+	bytes    atomic.Int64      // response body bytes read by admitted followers
+	atHead   atomic.Int64      // shape followers that sent their first live long-poll (client side, before it reaches the server)
+	retries  atomic.Int64      // shape requests repeated after a busy or unavailable refusal in the window
+	qosBusy  atomic.Int64      // 429 tenant_busy answers to followers, before or after admission; each is repeated after Retry-After
+	refused  atomic.Int64      // shape refusals before admission repeated until bench.admitBy (live load only)
+	failures atomic.Int64      // shape followers that ended on an error
+	codes    [600]atomic.Int64 // shape responses by HTTP status
+	reasons  sync.Map          // shape refusals by "<status> <code>: <message>", each an *atomic.Int64
 
 	mu         sync.Mutex
 	start, end time.Time // the recorded window, by write send time
@@ -364,6 +369,16 @@ func (b *bench) step(ctx context.Context, st apibench.Step) (apibench.Result, pr
 		RSSMB:        res.MemMB.Max,
 		Stopped:      stopped,
 	}, p, nil
+}
+
+// countReason counts one shape refusal by status, error code and message.
+func (m *measure) countReason(status int, body []byte) {
+	var e struct {
+		Error struct{ Code, Message string }
+	}
+	_ = json.Unmarshal(body, &e)
+	n, _ := m.reasons.LoadOrStore(fmt.Sprintf("%d %s: %s", status, e.Error.Code, e.Error.Message), new(atomic.Int64))
+	n.(*atomic.Int64).Add(1)
 }
 
 func (m *measure) firstErr() error {

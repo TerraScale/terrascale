@@ -1,0 +1,2 @@
+step N=1000: admitted 126 delivered 74712 
+step N=10000: admitted 1416 delivered 0 http://gru.ts-vtest-tb.internal:8080/v1/projects/01M4XXZ6WBT7NREG5P5N5PNF6C/databases/v3/collections/v3-01m4xxzrxdmsxbm9a0wz7p8wch/shape?handle=h1-d46ebad91d7ec30c&offset=snap.0.0: HTTP 503 {"error":{"code":"storage_busy","message":"storage is busy; retry later"}}

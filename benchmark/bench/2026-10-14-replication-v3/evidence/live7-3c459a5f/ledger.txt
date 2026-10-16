@@ -1,0 +1,19 @@
+2026-10-14T19:24:35Z created organization 01M4XXZ6QKHNY5WTDE8XKMMVZQ (owner user 01M4XXZ6KM1PY5T4M3W1BXGC3A, enterprise plan), project 01M4XXZ6WBT7NREG5P5N5PNF6C, database 01M4XXZ6G2TSV5F107J6FBVMCY (gru + sjc, fra) on ts-vtest-tb
+2026-10-14T19:24:40Z key 01M4XXZBJE1P8NAYKVM1VQGBQS (documents read/write on database 01M4XXZ6G2TSV5F107J6FBVMCY, 6 h) set as ts-vtest-load secret TS_BENCH_API_KEY
+2026-10-14T19:24:50Z image registry.fly.io/ts-vtest-load:v3-20261014192440 sha256:08ffe35d6484da843b7b16cf217639b8807bc6b3850778b7fe82abf3a636eb11
+2026-10-14T19:25:02Z load machine 83d1951c7dd748 in gru (shard 0, shared-cpu-2x 2048 MB)
+2026-10-14T19:25:14Z load machine e82d392c111d08 in sjc (shard 1, shared-cpu-2x 2048 MB)
+2026-10-14T19:25:22Z load machine 18577ee4a62e28 in fra (shard 2, shared-cpu-2x 2048 MB)
+2026-10-14T19:25:22Z start 2026-10-14T19:28:50Z, steps 1000,10000, collection v3-01m4xxzrxdmsxbm9a0wz7p8wch
+2026-10-14T19:33:00Z gru exit 0
+2026-10-14T19:33:24Z sjc exit 0
+2026-10-14T19:33:50Z fra exit 0
+2026-10-14T19:34:12Z finished; merge exit 1
+2026-10-14T19:34:15Z destroyed load machine 83d1951c7dd748
+2026-10-14T19:34:19Z destroyed load machine e82d392c111d08
+2026-10-14T19:34:23Z destroyed load machine 18577ee4a62e28
+2026-10-14T19:34:23Z revoked key 01M4XXZBJE1P8NAYKVM1VQGBQS
+2026-10-14T19:34:23Z commit ok: "set_database_regions"
+2026-10-14T19:34:24Z commit ok: "delete_database"
+2026-10-14T19:34:24Z commit ok: "delete_project"
+2026-10-14T19:34:24Z commit ok: "delete_organization"

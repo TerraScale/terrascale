@@ -1,0 +1,1 @@
+step N=10000: admitted 348 delivered 0 http://sjc.ts-vtest-tb.internal:8080/v1/projects/01M4XX4B7WY81Y64KXZGV36PF3/databases/v3/collections/v3-01m4xx5dgyqcnhd4bp3vgcc3cn/shape?handle=h1-d721a661c18777c2&offset=snap.0.0: HTTP 503 {"error":{"code":"storage_busy","message":"storage is busy; retry later"}}

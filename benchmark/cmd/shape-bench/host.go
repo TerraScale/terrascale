@@ -102,9 +102,31 @@ func tail(path string) string {
 // the host process listens on for /metrics while exactly one calibration stream is open on gru. Only that node's
 // scoped scrape has one open stream; port order alone cannot identify a node in this two-region process.
 func metricsURL(ctx context.Context, pid int) (string, error) {
-	fds, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
+	urls, ports, err := metricsListeners(ctx, pid)
 	if err != nil {
 		return "", err
+	}
+	c := &http.Client{Timeout: 2 * time.Second}
+	var matches []string
+	for _, u := range urls {
+		if body, err := get(ctx, c, u); err == nil {
+			if streams, ok := streamCount(body); ok && streams == 1 {
+				matches = append(matches, u)
+			}
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	return "", fmt.Errorf("want exactly one scoped metrics listener of process %d with one calibration stream, found %v (ports %v)", pid, matches, ports)
+}
+
+// metricsListeners are the /metrics URLs of the host process's TCP listeners that answer a TerraBase scrape, and every
+// port it listens on.
+func metricsListeners(ctx context.Context, pid int) ([]string, []int, error) {
+	fds, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
+	if err != nil {
+		return nil, nil, err
 	}
 	inodes := map[string]bool{}
 	for _, fd := range fds {
@@ -117,29 +139,24 @@ func metricsURL(ctx context.Context, pid int) (string, error) {
 	for _, f := range []string{"tcp", "tcp6"} {
 		b, err := os.ReadFile(fmt.Sprintf("/proc/%d/net/%s", pid, f))
 		if err != nil {
-			return "", err
+			return nil, nil, err
 		}
 		ports = append(ports, listenPorts(string(b), inodes)...)
 	}
 	slices.Sort(ports)
 	ports = slices.Compact(ports)
 	c := &http.Client{Timeout: 2 * time.Second}
-	var matches []string
+	var urls []string
 	for _, p := range ports {
 		u := fmt.Sprintf("http://127.0.0.1:%d/metrics", p)
 		if body, err := get(ctx, c, u); err == nil && strings.Contains(body, "terrabase_stats_operations") {
-			if streams, ok := streamCount(body); ok && streams == 1 {
-				matches = append(matches, u)
-			}
+			urls = append(urls, u)
 		}
 		if err := ctx.Err(); err != nil {
-			return "", fmt.Errorf("metrics discovery: %w", err)
+			return nil, nil, fmt.Errorf("metrics discovery: %w", err)
 		}
 	}
-	if len(matches) == 1 {
-		return matches[0], nil
-	}
-	return "", fmt.Errorf("want exactly one scoped metrics listener of process %d with one calibration stream, found %v (ports %v)", pid, matches, ports)
+	return urls, ports, nil
 }
 
 // streamCount accepts the feed's single unlabelled gauge, avoiding a first-series choice if its format changes.

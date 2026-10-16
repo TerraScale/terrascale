@@ -62,6 +62,7 @@ func (b *bench) followShape(ctx context.Context, m *measure, outcomes chan<- str
 	)
 	fail := func(err error) {
 		if ctx.Err() == nil {
+			m.failures.Add(1)
 			m.fail(err)
 		}
 		if !admitted {
@@ -125,6 +126,7 @@ func (b *bench) followShape(ctx context.Context, m *measure, outcomes chan<- str
 			target = b.shapeURL(q)
 		default:
 			code := errorCode(bytes.NewReader(resp.body))
+			m.countReason(resp.status, resp.body)
 			if resp.status == http.StatusTooManyRequests && code == "tenant_busy" {
 				m.qosBusy.Add(1)
 				if !sleep(ctx, qosWait(resp.header)) {
@@ -132,7 +134,20 @@ func (b *bench) followShape(ctx context.Context, m *measure, outcomes chan<- str
 				}
 				continue
 			}
+			if admitted && !b.admitBy.IsZero() && resp.status == http.StatusConflict && code == "must_refetch" {
+				// The live load restarts at offset=-1 as a client does (shape-reads.md); the 409 stays in m.codes.
+				redirected, handle, bucket, target = false, "", "", b.shapeURL(url.Values{"offset": {"-1"}})
+				continue
+			}
 			if !admitted && (resp.status == http.StatusTooManyRequests && code == "shape_busy" || resp.status == http.StatusServiceUnavailable && code == "shape_too_large") {
+				// The live load (load.go) repeats a refusal until b.admitBy, as a client would; B2 leaves admitBy zero.
+				if time.Now().Before(b.admitBy) {
+					m.refused.Add(1)
+					if !sleep(ctx, shapeRetryWait) {
+						return
+					}
+					continue
+				}
 				outcomes <- "rejected_" + code
 				return
 			}
@@ -161,6 +176,7 @@ func (b *bench) shapeGet(ctx context.Context, m *measure, target string) (shapeR
 		return shapeResponse{}, err
 	}
 	defer resp.Body.Close()
+	m.codes[min(resp.StatusCode, len(m.codes)-1)].Add(1)
 	body, err := io.ReadAll(countingReader{resp.Body, &m.bytes})
 	if err != nil {
 		return shapeResponse{}, err

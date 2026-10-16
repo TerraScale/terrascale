@@ -1,0 +1,371 @@
+[
+    {
+        "id": "891e70eb4d0378",
+        "name": "still-wildflower-1197",
+        "state": "started",
+        "region": "gru",
+        "image_ref": {
+            "registry": "registry.fly.io",
+            "repository": "ts-vtest-tb",
+            "tag": "vtest-3c459a5fa160",
+            "digest": "sha256:96573646bbd6557de5891ba356be031a9d6ce02e4e1aa5d6369df20cbff6f0fe"
+        },
+        "instance_id": "01M4XXS5YX8V3Z4HZVYC3Z1BEM",
+        "version": "01M4XXS5YX8V3Z4HZVYC3Z1BEM",
+        "private_ip": "fdaa:d3:e08e:a7b:1f7:fdc8:769c:2",
+        "created_at": "2026-10-14T17:15:35Z",
+        "updated_at": "2026-10-14T19:21:25Z",
+        "config": {
+            "env": {
+                "FLY_PROCESS_GROUP": "app",
+                "PRIMARY_REGION": "gru"
+            },
+            "init": {
+                "swap_size_mb": 4096
+            },
+            "guest": {
+                "cpu_kind": "shared",
+                "cpus": 2,
+                "memory_mb": 512
+            },
+            "metadata": {
+                "fly_builder_id": "854d0dc4e59648",
+                "fly_flyctl_version": "0.4.115",
+                "fly_platform_version": "v2",
+                "fly_process_group": "app",
+                "fly_release_id": "rel_76njzd075vg3yko3",
+                "fly_release_version": "4"
+            },
+            "mounts": [
+                {
+                    "encrypted": true,
+                    "path": "/data",
+                    "size_gb": 1,
+                    "volume": "vol_4oj2nq8ylpjjwl2r",
+                    "name": "terrabase_data"
+                }
+            ],
+            "services": [
+                {
+                    "protocol": "tcp",
+                    "internal_port": 8080,
+                    "autostop": false,
+                    "autostart": false,
+                    "ports": [
+                        {
+                            "port": 80,
+                            "handlers": [
+                                "http"
+                            ],
+                            "force_https": true
+                        },
+                        {
+                            "port": 443,
+                            "handlers": [
+                                "http",
+                                "tls"
+                            ]
+                        }
+                    ],
+                    "checks": [
+                        {
+                            "type": "http",
+                            "interval": "5s",
+                            "timeout": "2s",
+                            "grace_period": "10s",
+                            "method": "GET",
+                            "path": "/healthz"
+                        }
+                    ],
+                    "force_instance_key": null
+                }
+            ],
+            "image": "registry.fly.io/ts-vtest-tb:vtest-3c459a5fa160",
+            "restart": {
+                "policy": "on-failure",
+                "max_retries": 10
+            },
+            "stop_config": {
+                "timeout": "30s",
+                "signal": "SIGTERM"
+            }
+        },
+        "events": [
+            {
+                "type": "start",
+                "status": "started",
+                "request": {},
+                "source": "flyd",
+                "timestamp": 1792005685678
+            },
+            {
+                "type": "launch",
+                "status": "created",
+                "source": "user",
+                "timestamp": 1792005675172
+            },
+            {
+                "type": "launch",
+                "status": "pending",
+                "source": "flyd",
+                "timestamp": 1792005674973
+            }
+        ],
+        "checks": [
+            {
+                "name": "servicecheck-00-http-8080",
+                "status": "passing",
+                "output": "{\"status\":\"ok\",\"version\":\"0.1.0\",\"region\":\"gru\",\"storageFormat\":\"9-f707baac47dc\",\"revision\":\"3c459a5fa160d5f2b6142254430bcf0bd8a8d863\",\"machine\":\"891e70eb4d0378\"}",
+                "updated_at": "2026-10-14T19:21:41.431Z"
+            }
+        ],
+        "host_status": "ok",
+        "cordoned": false
+    },
+    {
+        "id": "6835466b44e258",
+        "name": "billowing-violet-3714",
+        "state": "started",
+        "region": "sjc",
+        "image_ref": {
+            "registry": "registry.fly.io",
+            "repository": "ts-vtest-tb",
+            "tag": "vtest-3c459a5fa160",
+            "digest": "sha256:96573646bbd6557de5891ba356be031a9d6ce02e4e1aa5d6369df20cbff6f0fe"
+        },
+        "instance_id": "01M4XXVD848YT6CY6R8JYW2E7V",
+        "version": "01M4XXVD848YT6CY6R8JYW2E7V",
+        "private_ip": "fdaa:d3:e08e:a7b:7f6:dc96:8793:2",
+        "created_at": "2026-10-14T17:16:35Z",
+        "updated_at": "2026-10-14T19:22:41Z",
+        "config": {
+            "env": {
+                "FLY_PROCESS_GROUP": "app",
+                "PRIMARY_REGION": "gru"
+            },
+            "init": {
+                "swap_size_mb": 4096
+            },
+            "guest": {
+                "cpu_kind": "shared",
+                "cpus": 2,
+                "memory_mb": 512
+            },
+            "metadata": {
+                "fly_builder_id": "854d0dc4e59648",
+                "fly_flyctl_version": "0.4.115",
+                "fly_platform_version": "v2",
+                "fly_process_group": "app",
+                "fly_release_id": "rel_76njzd075vg3yko3",
+                "fly_release_version": "4"
+            },
+            "mounts": [
+                {
+                    "encrypted": true,
+                    "path": "/data",
+                    "size_gb": 1,
+                    "volume": "vol_4oj2nqmj3ez6oppr",
+                    "name": "terrabase_data"
+                }
+            ],
+            "services": [
+                {
+                    "protocol": "tcp",
+                    "internal_port": 8080,
+                    "autostop": false,
+                    "autostart": false,
+                    "ports": [
+                        {
+                            "port": 80,
+                            "handlers": [
+                                "http"
+                            ],
+                            "force_https": true
+                        },
+                        {
+                            "port": 443,
+                            "handlers": [
+                                "http",
+                                "tls"
+                            ]
+                        }
+                    ],
+                    "checks": [
+                        {
+                            "type": "http",
+                            "interval": "5s",
+                            "timeout": "2s",
+                            "grace_period": "10s",
+                            "method": "GET",
+                            "path": "/healthz"
+                        }
+                    ],
+                    "force_instance_key": null
+                }
+            ],
+            "image": "registry.fly.io/ts-vtest-tb:vtest-3c459a5fa160",
+            "restart": {
+                "policy": "on-failure",
+                "max_retries": 10
+            },
+            "stop_config": {
+                "timeout": "30s",
+                "signal": "SIGTERM"
+            }
+        },
+        "events": [
+            {
+                "type": "start",
+                "status": "started",
+                "request": {},
+                "source": "flyd",
+                "timestamp": 1792005761796
+            },
+            {
+                "type": "launch",
+                "status": "created",
+                "source": "user",
+                "timestamp": 1792005748089
+            },
+            {
+                "type": "launch",
+                "status": "pending",
+                "source": "flyd",
+                "timestamp": 1792005747973
+            }
+        ],
+        "checks": [
+            {
+                "name": "servicecheck-00-http-8080",
+                "status": "passing",
+                "output": "{\"status\":\"ok\",\"version\":\"0.1.0\",\"region\":\"sjc\",\"storageFormat\":\"9-f707baac47dc\",\"revision\":\"3c459a5fa160d5f2b6142254430bcf0bd8a8d863\",\"machine\":\"6835466b44e258\"}",
+                "updated_at": "2026-10-14T19:31:21.572Z"
+            }
+        ],
+        "host_status": "ok",
+        "cordoned": false
+    },
+    {
+        "id": "48e4967a225338",
+        "name": "white-water-8976",
+        "state": "started",
+        "region": "fra",
+        "image_ref": {
+            "registry": "registry.fly.io",
+            "repository": "ts-vtest-tb",
+            "tag": "vtest-3c459a5fa160",
+            "digest": "sha256:96573646bbd6557de5891ba356be031a9d6ce02e4e1aa5d6369df20cbff6f0fe"
+        },
+        "instance_id": "01M4XXT8054P8RCN5FPJ8ECKNG",
+        "version": "01M4XXT8054P8RCN5FPJ8ECKNG",
+        "private_ip": "fdaa:d3:e08e:a7b:47b:9190:f030:2",
+        "created_at": "2026-10-14T17:17:07Z",
+        "updated_at": "2026-10-14T19:22:08Z",
+        "config": {
+            "env": {
+                "FLY_PROCESS_GROUP": "app",
+                "PRIMARY_REGION": "gru"
+            },
+            "init": {
+                "swap_size_mb": 4096
+            },
+            "guest": {
+                "cpu_kind": "shared",
+                "cpus": 2,
+                "memory_mb": 512
+            },
+            "metadata": {
+                "fly_builder_id": "854d0dc4e59648",
+                "fly_flyctl_version": "0.4.115",
+                "fly_platform_version": "v2",
+                "fly_process_group": "app",
+                "fly_release_id": "rel_76njzd075vg3yko3",
+                "fly_release_version": "4"
+            },
+            "mounts": [
+                {
+                    "encrypted": true,
+                    "path": "/data",
+                    "size_gb": 1,
+                    "volume": "vol_4oj2nqmwdwwog72r",
+                    "name": "terrabase_data"
+                }
+            ],
+            "services": [
+                {
+                    "protocol": "tcp",
+                    "internal_port": 8080,
+                    "autostop": false,
+                    "autostart": false,
+                    "ports": [
+                        {
+                            "port": 80,
+                            "handlers": [
+                                "http"
+                            ],
+                            "force_https": true
+                        },
+                        {
+                            "port": 443,
+                            "handlers": [
+                                "http",
+                                "tls"
+                            ]
+                        }
+                    ],
+                    "checks": [
+                        {
+                            "type": "http",
+                            "interval": "5s",
+                            "timeout": "2s",
+                            "grace_period": "10s",
+                            "method": "GET",
+                            "path": "/healthz"
+                        }
+                    ],
+                    "force_instance_key": null
+                }
+            ],
+            "image": "registry.fly.io/ts-vtest-tb:vtest-3c459a5fa160",
+            "restart": {
+                "policy": "on-failure",
+                "max_retries": 10
+            },
+            "stop_config": {
+                "timeout": "30s",
+                "signal": "SIGTERM"
+            }
+        },
+        "events": [
+            {
+                "type": "start",
+                "status": "started",
+                "request": {},
+                "source": "flyd",
+                "timestamp": 1792005728413
+            },
+            {
+                "type": "launch",
+                "status": "created",
+                "source": "user",
+                "timestamp": 1792005710266
+            },
+            {
+                "type": "launch",
+                "status": "pending",
+                "source": "flyd",
+                "timestamp": 1792005709829
+            }
+        ],
+        "checks": [
+            {
+                "name": "servicecheck-00-http-8080",
+                "status": "passing",
+                "output": "{\"status\":\"ok\",\"version\":\"0.1.0\",\"region\":\"fra\",\"storageFormat\":\"9-f707baac47dc\",\"revision\":\"3c459a5fa160d5f2b6142254430bcf0bd8a8d863\",\"machine\":\"48e4967a225338\"}",
+                "updated_at": "2026-10-14T19:22:24.023Z"
+            }
+        ],
+        "host_status": "ok",
+        "cordoned": false
+    }
+]

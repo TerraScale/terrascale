@@ -1,0 +1,12 @@
+[1mApp[0m
+ Name     │ ts-vtest-tb                    
+ Owner    │ terrascale-previews-515        
+ Hostname │ ts-vtest-tb.fly.dev            
+ Image    │ ts-vtest-tb:vtest-7bf8dd3a2a84 
+
+[1mMachines[0m
+ PROCESS │ ID             │ VERSION │ REGION │ STATE   │ ROLE │ CHECKS             │ LAST UPDATED         
+ app     │ 48e4967a225338 │ 3       │ fra    │ started │      │ 1 total, 1 passing │ 2026-10-14T18:38:56Z 
+ app     │ 6835466b44e258 │ 3       │ sjc    │ started │      │ 1 total, 1 passing │ 2026-10-14T18:38:20Z 
+ app     │ 891e70eb4d0378 │ 3       │ gru    │ started │      │ 1 total, 1 passing │ 2026-10-14T18:37:51Z 
+

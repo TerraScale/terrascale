@@ -88,3 +88,29 @@ the targets file at the end stops the host.
   deliveries, storage reads and accounting reads, and its raw metric lines are not printed. Its counts (`admitted`,
   rejections, `qos_busy_followers`, `retries`) are kept. The shared apibench table prints zeros for latency and
   requests/s on those rows because its format has no empty value; the notes table here is the measured view.
+
+## Live load (V3)
+
+`shape-bench load` drives many readers of one shape, step by step on a shared wall clock (`-steps`, default
+1, 100, 1000 and 10000 readers in total), and `shape-bench merge` joins the load processes into one report. Each step
+is 120 s from `-start`: readers open evenly over 60 s and repeat a `shape_busy` or `shape_too_large` refusal (counted as
+`refused`) until 70 s, as a client would (an admitted reader answered `409 must_refetch` restarts at `offset=-1`; the 409 stays
+in the status counts); the writer then sends 20 documents/s, the 30 s window opens after a 5 s warmup,
+deliveries count through a 5 s grace, and the after scrape follows a 6 s settle.
+
+- On Fly (`-app <terrabase app>`, one process per load machine, `-shard i -shards k`): readers use the node of their own
+  region, `http://<FLY_REGION>.<app>.internal:8080`; shard 0 creates `-collection`, writes, and scrapes every node it
+  finds through `regions.<app>.internal` and `<region>.<app>.internal` on port 9091. The key is the `TS_BENCH_API_KEY`
+  Fly secret. Each shard writes `-out`; `shape-bench merge -out <base> shard0.json …` writes `<base>.md` and `.json`.
+- Without `-app` it starts the local two-node host (as above), runs one shard against gru, scrapes both nodes and merges
+  the report itself.
+- Per step and node: `terrabase.shape.seals` (sealed objects: chunks and snapshot pages), mirrored objects
+  (`terrabase.shape.mirror.lag` count; FR-22), storage reads by path, the parked gauge at window start, and node CPU
+  and RSS from the runtime metrics. Per step: admitted, unresolved and refused readers, delivered and missed writes
+  (admitted × writes − delivered), latency p50/p99 (write send time to read; across machines it includes clock skew),
+  shape responses by status, the 304 ratio (304 / (200 + 304); followers send no `If-None-Match`), and each load
+  process's CPU and RSS.
+- **Bound.** A node breaks it when its `shape` plus `shape_body` reads exceed one per sealed object per cache location:
+  the node, plus Tigris for each mirrored object (`reads > sealed + mirrored`). `point` reads are reported, not gated:
+  they are node-wide and include the writer's. Any step over the bound, or any shard error, makes `merge` exit non-zero
+  and print why.
