@@ -143,6 +143,49 @@ public sealed class DocumentBackendContractTests
         await Assert.That(wire.Requests).IsEqualTo(1);
     }
 
+    [Test]
+    [Arguments("malformed")]
+    [Arguments("missing")]
+    [Arguments("foreign")]
+    [Arguments("valid")]
+    public async Task OnlyACompleteMatchingAcknowledgementConfirmsTheWrite(string receipt)
+    {
+        using var wire = new Wire { Receipt = receipt };
+        var backend = new DocumentBackend(wire, new Tokens());
+        using var body = JsonDocument.Parse("{\"title\":\"kept\"}");
+        DocumentWriteOutcomeUnknownException? unknown = null;
+        TerraBaseWriteResult? result = null;
+        try { result = await backend.WriteAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "replace", "a", body.RootElement, "", CancellationToken.None); }
+        catch (DocumentWriteOutcomeUnknownException error) { unknown = error; }
+        await Assert.That(wire.Requests).IsEqualTo(1);
+        if (receipt == "valid")
+        {
+            await Assert.That(unknown).IsNull();
+            await Assert.That(result!.Id).IsEqualTo("a");
+        }
+        else
+        {
+            await Assert.That(result).IsNull();
+            await Assert.That(unknown).IsNotNull();
+            await Assert.That(unknown!.DocumentId).IsEqualTo("a");
+            await Assert.That(TerraScaleIds.IsValid(unknown.OperationId)).IsTrue();
+        }
+    }
+
+    [Test]
+    [Arguments(403)]
+    [Arguments(412)]
+    public async Task KnownWriteRejectionKeepsItsStatusAndDoesNotReplay(int status)
+    {
+        using var wire = new Wire { Failure = status };
+        using var body = JsonDocument.Parse("{\"title\":\"kept\"}");
+        HttpRequestException? rejected = null;
+        try { await new DocumentBackend(wire, new Tokens()).WriteAsync(Scope(), DatabaseRegion.FromId("gru")!, "app", "items", "replace", "a", body.RootElement, "", CancellationToken.None); }
+        catch (HttpRequestException error) { rejected = error; }
+        await Assert.That(rejected?.StatusCode).IsEqualTo((HttpStatusCode)status);
+        await Assert.That(wire.Requests).IsEqualTo(1);
+    }
+
     private static DatabaseScope Scope() => new("user", "original-user-token", "01JA0000000000000000000002", "org", "01JA0000000000000000000001", "project")
     { Session = new("user", "Synthetic", "synthetic@example.test", "original-user-token", null, DateTimeOffset.UtcNow.AddMinutes(5)) };
 
