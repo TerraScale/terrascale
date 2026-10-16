@@ -30,6 +30,27 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     private const string Local = "auth-local";
 
     [Test]
+    public async Task Storage_transport_without_the_peer_credential_is_refused_by_terrabase()
+    {
+        using var refused = new HttpClient(TerraBaseTransport.CreateHandler([], Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance))
+        {
+            DefaultRequestVersion = HttpVersion.Version20,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        using var rejected = await refused.GetAsync(new Uri(fixture.Server.InternalAddress, "healthz"));
+        await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+
+        using var accepted = new HttpClient(TerraBaseTransport.CreateHandler([], Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
+            peerSecret: TerraBaseTestServer.PeerSecret))
+        {
+            DefaultRequestVersion = HttpVersion.Version20,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        using var response = await accepted.GetAsync(new Uri(fixture.Server.InternalAddress, "healthz"));
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    [Test]
     public async Task Discovery_and_jwks_read_this_regions_copy_and_every_other_read_the_designated_one()
     {
         var (tenant, designated) = await fixture.CreateDatabaseAsync();
