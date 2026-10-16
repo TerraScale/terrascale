@@ -139,6 +139,8 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
     [Arguments("fly-secrets-unavailable")]
     [Arguments("invalid-auth-client-secret")]
     [Arguments("invalid-session-key")]
+    [Arguments("invalid-peer-secret")]
+    [Arguments("redirect")]
     [Arguments("wrong-collection")]
     [Arguments("bad-conflict-reread")]
     [Arguments("other-conflict")]
@@ -152,8 +154,34 @@ public sealed class StateSdkJourneyTests(DashboardRootFixture fixture)
         var observation = await ObserveAsync(controls);
         Check(observation.GetProperty("documentWrites").GetInt32() == 0 && scenario.StartupError is not null,
             "Bootstrap failure cannot write user state, select a fallback store or silently admit traffic: " + failure);
-        if (failure is "authorization" or "forbidden" or "project-missing" or "region-unavailable" or "fly-secrets-unavailable" or "invalid-auth-client-secret" or "invalid-session-key" or "wrong-missing-code")
+        if (failure is "authorization" or "forbidden" or "project-missing" or "region-unavailable" or "fly-secrets-unavailable" or "invalid-auth-client-secret" or "invalid-session-key" or "invalid-peer-secret" or "redirect" or "wrong-missing-code")
             Check(observation.GetProperty("collectionPosts").GetInt32() == 0, "Only a genuine missing collection in the validated fixed database can trigger schema creation.");
+        Check(observation.GetProperty("redirectTargetRequests").GetInt32() == 0 && scenario.ForeignCredentials == 0,
+            "A state-listener redirect is never followed, so the peer credential reaches no other destination.");
+        CheckProtocol(observation);
+    }
+
+    [Test]
+    public async Task PeerCredentialReachesOnlyTheStateListener()
+    {
+        await using var scenario = await StateSdkScenario.PrepareAsync(fixture.Root);
+        using var controls = scenario.CreateProviderClient();
+        Check(await scenario.StartHostsAsync(), "The dashboard starts with the delivered peer credential: " + scenario.StartupError);
+        using var client = scenario.CreateClient();
+        await ReadyAsync(client);
+        Check((await ObserveAsync(controls)).GetProperty("privateRequests").GetInt32() > 0, "Startup and readiness reached the state listener with the credential.");
+
+        // A public TerraBase origin and a vendor origin stand in for every non-state destination.
+        foreach (var destination in new[] { new Uri("https://api.terrascale.tech/healthz"), new Uri("https://api.stripe.com/v1/customers"), new Uri(scenario.ProviderOrigin, "/__test/redirected") })
+            Check(await scenario.SendStateClientElsewhereAsync(destination) == nameof(HttpRequestException),
+                "The credentialed state client refuses " + destination.Host + " before sending.");
+        var observation = await ObserveAsync(controls);
+        Check(observation.GetProperty("redirectTargetRequests").GetInt32() == 0 && scenario.ForeignCredentials == 0,
+            "No request outside the state listener carried the peer credential.");
+
+        var (handlers, followsRedirects) = scenario.ProductionStateHandlers();
+        Check(handlers.Contains(nameof(TerraScale.Dashboard.Platform.Persistence.TerraBasePeerCredential)) && !followsRedirects,
+            "Production's state client attaches the credential and its primary handler follows no redirect: " + string.Join(",", handlers));
         CheckProtocol(observation);
     }
 

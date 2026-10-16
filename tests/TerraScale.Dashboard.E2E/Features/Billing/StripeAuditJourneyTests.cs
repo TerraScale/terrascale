@@ -45,11 +45,13 @@ public sealed class StripeAuditJourneyTests(DashboardRootFixture fixture)
     }
 
     [Test]
-    [Arguments("test", "")]
-    [Arguments("live", "")]
-    public async Task StripeNetAuditProcessReadsCompleteInventoryThroughTrustedTls(string mode, string fault)
+    [Arguments("test", "", false)]
+    [Arguments("live", "", false)]
+    [Arguments("test", "", true)]
+    [Arguments("live", "", true)]
+    public async Task StripeNetAuditProcessReadsCompleteInventoryThroughTrustedTls(string mode, string fault, bool restricted)
     {
-        await using var scenario = new StripeAuditScenario(fixture.Root, mode, fault);
+        await using var scenario = new StripeAuditScenario(fixture.Root, mode, fault, restricted);
         var result = await scenario.RunAsync();
         Safe(result);
         Check(result.ExitCode == 0 && result.Error == "", $"The production audit command reads the Stripe account selected by the Vault identity key (exit {result.ExitCode}; stdout: {result.Output}; stderr: {result.Error})");
@@ -81,10 +83,13 @@ public sealed class StripeAuditJourneyTests(DashboardRootFixture fixture)
         Check(unsupported.ExitCode == 1 && unsupported.Output.Length == 0, $"The audit has no online/offline or mode switches (exit {unsupported.ExitCode}; stdout: {unsupported.Output}; stderr: {unsupported.Error})");
         Protocol(scenario, 0);
 
-        var invalid = await scenario.RunAsync(identity: scenario.Identity("sk_unknown_PRIVATE"));
-        Safe(invalid);
-        Check(invalid.ExitCode == 2 && invalid.Output.Length == 0, $"An unrecognized Stripe key mode fails closed (exit {invalid.ExitCode}; stdout: {invalid.Output}; stderr: {invalid.Error})");
-        Protocol(scenario, 0);
+        foreach (var key in new[] { "sk_unknown_PRIVATE", "rk_unknown_PRIVATE", "pk_test_PRIVATE" })
+        {
+            var invalid = await scenario.RunAsync(identity: scenario.Identity(key));
+            Safe(invalid);
+            Check(invalid.ExitCode == 2 && invalid.Output.Length == 0, $"An unrecognized or public Stripe key fails closed (exit {invalid.ExitCode}; stdout: {invalid.Output}; stderr: {invalid.Error})");
+            Protocol(scenario, 0);
+        }
 
         var completeIdentity = scenario.Identity();
         var incomplete = completeIdentity with { Stripe = null! };

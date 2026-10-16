@@ -28,7 +28,15 @@ internal static class StripeAuditCliEntryPoint
                 ?? throw new InvalidDataException("The test identity was not provided.");
             // The fixture PEM is a public CA certificate, without a private key.
             using var root = X509Certificate2.CreateFromPem(System.IO.File.ReadAllText(caPath));
-            var identity = new FixtureIdentity(credentials);
+            var identity = new DashboardIdentity(name => name switch
+            {
+                DashboardIdentity.AuthClientSecretName => credentials.AuthClientSecret,
+                DashboardIdentity.SessionEncryptionKeyName => credentials.SessionEncryptionKey,
+                DashboardIdentity.StripeSecretKeyName => credentials.Stripe?.SecretKey,
+                DashboardIdentity.StripeWebhookSecretName => credentials.Stripe?.WebhookSecret,
+                DashboardIdentity.TerraBasePeerSecretName => credentials.TerraBasePeerSecret,
+                _ => null
+            });
             StripeClient CreateClient(string key)
             {
                 var handler = new HttpClientHandler
@@ -58,10 +66,5 @@ internal static class StripeAuditCliEntryPoint
             Console.Error.WriteLine("Stripe audit test child failed safely.");
             Environment.Exit(2);
         }
-    }
-
-    private sealed class FixtureIdentity(DashboardCredentials credentials) : IDashboardIdentity
-    {
-        public Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken) => Task.FromResult(credentials);
     }
 }

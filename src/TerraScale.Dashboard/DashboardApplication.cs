@@ -68,6 +68,10 @@ public static class DashboardApplication
         builder.Services.AddDashboardContracts();
         builder.Services.AddHttpClient("platform", client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler);
+        builder.Services.AddTransient<TerraBasePeerCredential>();
+        builder.Services.AddHttpClient(TerraBaseDashboardState.ClientName, client => client.Timeout = TimeSpan.FromSeconds(30))
+            .ConfigurePrimaryHttpMessageHandler(TerraBaseHttp.CreateHandler)
+            .AddHttpMessageHandler<TerraBasePeerCredential>();
         configureTestHost?.Invoke(builder);
         var app = builder.Build();
 
@@ -144,7 +148,7 @@ public static class DashboardApplication
         app.MapGet("/health/ready", async (IDashboardState state, CancellationToken cancellationToken) =>
         {
             await state.CheckReadyAsync(cancellationToken);
-            return Results.Json(new { status = "ok", version = BuildVersion });
+            return Results.Json(new { status = "ok", version = BuildVersion, region = Environment.GetEnvironmentVariable("FLY_REGION") });
         });
         app.MapAuth();
         app.MapAccountFeatures();

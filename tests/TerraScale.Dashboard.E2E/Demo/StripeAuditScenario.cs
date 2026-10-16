@@ -22,6 +22,7 @@ public sealed class StripeAuditScenario : IAsyncDisposable
     private readonly string root;
     private readonly string mode;
     private readonly string fault;
+    private readonly bool restricted;
     private readonly string temporaryDirectory;
     private readonly X509Certificate2 certificate;
     private readonly TcpListener listener = new(IPAddress.Loopback, 0);
@@ -33,7 +34,7 @@ public sealed class StripeAuditScenario : IAsyncDisposable
     private readonly ConcurrentQueue<string> failures = [];
     private readonly Task accepting;
     public string ApiVersion => StripeConfiguration.ApiVersion;
-    public string Secret => $"sk_{mode}_STRIPE_AUDIT_PRIVATE";
+    public string Secret => $"{(restricted ? "rk" : "sk")}_{mode}_STRIPE_AUDIT_PRIVATE";
     public IReadOnlyList<Request> Requests => requests.ToArray();
     public IReadOnlyList<string> PriceFacts => priceFacts.ToArray();
     public IReadOnlyList<string> Failures => failures.ToArray();
@@ -48,9 +49,9 @@ public sealed class StripeAuditScenario : IAsyncDisposable
         "invoice.payment_succeeded", "invoice.payment_failed", "invoice.payment_action_required", "invoice.marked_uncollectible", "invoice.voided"
     ];
 
-    public StripeAuditScenario(string root, string mode = "live", string fault = "")
+    public StripeAuditScenario(string root, string mode = "live", string fault = "", bool restricted = false)
     {
-        this.root = root; this.mode = mode; this.fault = fault;
+        this.root = root; this.mode = mode; this.fault = fault; this.restricted = restricted;
         temporaryDirectory = Path.Combine(Path.GetTempPath(), "dashboard-stripe-audit-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(temporaryDirectory);
         using var authorityKey = RSA.Create(2048);
@@ -81,7 +82,7 @@ public sealed class StripeAuditScenario : IAsyncDisposable
     private string Proxy => "http://127.0.0.1:" + ((IPEndPoint)listener.LocalEndpoint).Port;
 
     public DashboardCredentials Identity(string? key = null) => new("test-dashboard-client-secret-0123456789abcdef",
-        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new(key ?? Secret, "whsec_STRIPE_AUDIT_PRIVATE"));
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new(key ?? Secret, "whsec_STRIPE_AUDIT_PRIVATE"), TestIdentity.PeerSecret);
 
     public async Task<Result> RunAsync(string[]? arguments = null, DashboardCredentials? identity = null)
     {

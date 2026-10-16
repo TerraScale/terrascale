@@ -1,4 +1,4 @@
-# Independent, non-blocking Slow results stay red on failure and receive an issue report.
+# Independent, non-blocking Slow results receive an issue report on failure.
 name: Slow
 
 on:

@@ -1,7 +1,7 @@
 # DSH-207: homologação Stripe no Fly
 
 Estas instruções se referem ao app `terrascale-dashboard-dev`. A integração usa
-Stripe.net 53 e a identidade do dashboard entregue pelo OCI Vault. Não configure
+Stripe.net 53 e os segredos do dashboard entregues pelo Fly. Não configure
 chaves, segredos, modo ou origem manualmente. As regras do fluxo de cobrança e
 da auditoria estão em [`stripe.md`](stripe.md).
 
@@ -21,15 +21,16 @@ produção `ts-dashboard` para estes passos.
 
 ## 2. Identidade e auditoria somente leitura
 
-A produção exige que OCI Vault entregue automaticamente o documento de identidade do dashboard,
+A produção exige que Fly secrets entregue as variáveis de ambiente do dashboard,
 incluindo a chave Stripe e o segredo de assinatura do webhook. A aplicação e o
 comando de auditoria leem essa mesma identidade. O comando não aceita opções,
 chaves, segredos, origem, versão da API ou configuração de modo. Ele infere
 test/live pelo prefixo da chave entregue e faz apenas leituras pelo Stripe.net
 53 `V1` client.
 
-A entrega automática e o deploy C# ainda precisam de qualificação. Este runbook
-não implementa essa entrega; veja [`csharp-migration.md`](csharp-migration.md).
+Os nomes e formatos estão em [`identity-descriptor.md`](identity-descriptor.md).
+O deploy usa a mesma imagem nos três locais; a prova em produção depende do
+TerraBase e do ts-auth estarem prontos.
 
 Execute o comando no ambiente que contém o checkout do dashboard e a identidade
 entregue:
@@ -39,7 +40,7 @@ nice -n 19 dotnet run --project src/TerraScale.Dashboard -- audit-stripe
 ```
 
 A auditoria usa a origem canônica fixa compartilhada pelo fluxo de Checkout,
-retorno do portal e configuração de webhook: `https://dashboard.terrascale.tech`.
+retorno do portal e configuração de webhook: `https://dash.terrascale.tech`.
 Ela não substitui a verificação das tentativas de entrega do endpoint no Stripe
 Workbench, nem exercita Checkout, pagamentos, renovações ou alterações de plano.
 Nenhum resultado atual de auditoria ou validação ao vivo é afirmado por este

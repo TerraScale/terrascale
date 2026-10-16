@@ -1,12 +1,11 @@
 namespace TerraScale.Dashboard.Platform.Persistence;
 
-// TerraBase seeds this database in the platform project on every start
-// (terrascale src/TerraBase/Features/Platform/PlatformDatabases.cs). The
-// project has no customer members or keys; only the private listener reaches it.
+// TerraBase seeds this database under the ts-dashboard project at startup.
+// ts-auth owns the matching TerraScale organization, owner and project identities.
 public static class DashboardStateSchema
 {
-    public const string ProjectId = "00000000000000000000000002";
-    public const string Database = "platform-dashboard";
+    public const string ProjectId = "00000000000000000000000005";
+    public const string Database = "ts-dashboard";
 
     public static IReadOnlyList<string> Collections { get; } = Array.AsReadOnly(new[]
     {

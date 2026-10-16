@@ -6,8 +6,9 @@ This is the consumer contract the application implements
 contains no credential values, and none may be added here, to an issue, a chat
 or a command line.
 
-Status (2026-10-13): nothing is delivered. The Fly app `ts-dashboard` has no
-secrets; the real application refuses to start until they exist.
+Status (2026-10-13): the client secret and session encryption key are staged
+in Fly and saved in GitHub secrets. The app-scoped deploy token is in GitHub.
+Vendor-issued Stripe keys remain required before the application can start.
 
 ## Fly secrets
 
@@ -15,13 +16,15 @@ Fly secrets are the only secret store. `fly secrets set` delivers them to the
 machine as environment variables; there is no file, default or fallback. The
 app reads them at startup (startup fails closed when one is missing or
 invalid) and on each use, and never logs them.
+All five secrets are required in Development too; test-only hosts supply synthetic identities.
 
 | Environment variable | Format checked by the app | Used for | Issued by |
 | --- | --- | --- | --- |
 | `TS_AUTH_DASHBOARD_CLIENT_SECRET` | 32-512 characters, no whitespace, control character or `;` | `client_secret_basic` for the ts-auth dashboard client. ts-auth reads the same-named secret on its own app to seed that client, so both apps hold the same value | generated once |
 | `TS_DASHBOARD_SESSION_ENCRYPTION_KEY` | base64 of exactly 32 bytes | AES-GCM for browser sessions, refresh credentials and pending OIDC and sign-up flows. Replacing it makes all of those unreadable | generated once |
-| `STRIPE_SECRET_KEY` | starts with `sk_` | Stripe API (Stripe.net) | Stripe (vendor) |
+| `STRIPE_SECRET_KEY` | `sk_test_`, `sk_live_`, `rk_test_` or `rk_live_` prefix | Stripe API (Stripe.net) | Stripe (vendor) |
 | `STRIPE_WEBHOOK_SECRET` | starts with `whsec_` | Verifies the Stripe webhook routes | Stripe (vendor) |
+| `TERRABASE_PEER_SECRET` | exactly 64 hexadecimal characters | `X-TerraBase-Peer-Credential` on state requests to TerraBase's internal listener. `ts-terrabase` and `ts-auth` hold the same value (terrascale `docs/terrabase/peer-authentication.md`) | generated once, shared |
 
 Fixed in code, not delivered: the ts-auth tenant `terrascale`, its issuer
 `https://auth.terrascale.tech/terrascale` and the dashboard client id
@@ -101,12 +104,16 @@ the invitations the dashboard sends. ts-auth does not enforce it.
 
 ## State database
 
-The dashboard keeps its own state in the `platform-dashboard` database of the
-platform project `00000000000000000000000002`, which TerraBase seeds on every
+The dashboard keeps its own state in the `ts-dashboard` database of the
+ts-dashboard project `00000000000000000000000005`, which TerraBase seeds on every
 start (terrascale `PlatformDatabases.cs`). It reaches TerraBase's private
-listener with no credential: `http://gru.ts-terrabase.internal:8081` on Fly,
+listener at `http://gru.ts-terrabase.internal:8081` on Fly and
 `http://127.0.0.1:8081` only in Development off Fly; Production off Fly refuses
-to start. gru stays the single home until cross-region conditional writes are
+to start. Only the `terrabase-state` HTTP client sends
+`X-TerraBase-Peer-Credential`, and only to that origin: its handler
+(`TerraBasePeerCredential`) refuses any other destination and its primary
+handler follows no redirects. The shared `platform` client (ts-auth, the public
+TerraBase API, Stripe, status) never carries it. gru stays the single home until cross-region conditional writes are
 proven. Startup creates missing collections (`409 name_taken` counts as
 created) and never creates or replaces the database. The platform project has
 no customer members or keys; no customer token reaches this database.

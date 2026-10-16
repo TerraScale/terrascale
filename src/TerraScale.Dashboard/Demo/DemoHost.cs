@@ -133,7 +133,9 @@ public sealed record ReferencePrincipal(string Subject, string Name, string Emai
 
 sealed class TestIdentity : IDashboardIdentity
 {
-    private readonly DashboardCredentials credentials = new("test-dashboard-client-secret-0123456789abcdef", Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new("sk_test_demo", "whsec_demo"));
+    // A test-only peer credential: 64 hexadecimal characters, never a deployed value.
+    public static readonly string PeerSecret = string.Concat(Enumerable.Repeat("7e57", 16));
+    private readonly DashboardCredentials credentials = new("test-dashboard-client-secret-0123456789abcdef", Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new("sk_test_demo", "whsec_demo"), PeerSecret);
     public Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken) => Task.FromResult(credentials);
 }
 sealed class TestClock : TimeProvider

@@ -35,9 +35,7 @@ public sealed class StripeAuditCommand
             var credentials = await identity.ReadAsync(cancellationToken);
             credentials.Validate();
             var key = credentials.Stripe!.SecretKey;
-            var live = key.StartsWith("sk_live_", StringComparison.Ordinal);
-            if (!live && !key.StartsWith("sk_test_", StringComparison.Ordinal))
-                throw new InvalidDataException("Stripe identity mode is invalid.");
+            var live = credentials.Stripe.IsLive;
 
             var checks = new Dictionary<string, bool>(StringComparer.Ordinal)
             {

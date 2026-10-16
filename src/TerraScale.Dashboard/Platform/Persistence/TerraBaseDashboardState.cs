@@ -4,9 +4,12 @@ using TerraScale.DotNet.TerraBase;
 namespace TerraScale.Dashboard.Platform.Persistence;
 
 // The dashboard's own dogfood database, reached through TerraBase's private
-// listener without a credential. No customer key or token ever reaches it.
+// listener with the shared peer credential. No customer key or token ever reaches it.
 public sealed class TerraBaseDashboardState(IHttpClientFactory http, IHostEnvironment environment) : IDashboardState
 {
+    // The only client that carries the peer credential (TerraBasePeerCredential); every other client uses "platform".
+    public const string ClientName = "terrabase-state";
+
     private readonly Uri origin = Origin(environment, Environment.GetEnvironmentVariable("FLY_APP_NAME"));
 
     // gru stays the single home until cross-region conditional writes are proven (integration plan G15).
@@ -52,11 +55,30 @@ public sealed class TerraBaseDashboardState(IHttpClientFactory http, IHostEnviro
         await Database().DeleteDocumentAsync(collection, id, TerraBasePrecondition.Matches(version), cancellationToken);
 
     private TerraBaseDatabase Database() =>
-        new TerraBaseDocumentsClient(http.CreateClient("platform"), new TerraBaseDocumentsClientOptions { BaseAddress = origin })
+        new TerraBaseDocumentsClient(http.CreateClient(ClientName), new TerraBaseDocumentsClientOptions { BaseAddress = origin })
             .Database(DashboardStateSchema.ProjectId, DashboardStateSchema.Database);
 
     private static void ValidateCollection(TerraBaseCollection collection, string name)
     {
         if (collection.Name != name) throw new IOException("Dashboard state collection identity is invalid.");
+    }
+}
+
+// Attaches TERRABASE_PEER_SECRET only to requests for the state listener's origin and refuses any other destination.
+// The primary handler follows no redirects (TerraBaseHttp), so a redirect cannot carry the credential elsewhere.
+public sealed class TerraBasePeerCredential(IDashboardIdentity identity, IHostEnvironment environment) : DelegatingHandler
+{
+    public const string Header = "X-TerraBase-Peer-Credential";
+    private readonly Uri origin = TerraBaseDashboardState.Origin(environment, Environment.GetEnvironmentVariable("FLY_APP_NAME"));
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        if (request.RequestUri is not { IsAbsoluteUri: true, UserInfo.Length: 0 } uri ||
+            Uri.Compare(uri, origin, UriComponents.SchemeAndServer, UriFormat.UriEscaped, StringComparison.OrdinalIgnoreCase) != 0)
+            throw new HttpRequestException("The TerraBase peer credential is sent only to the dashboard state listener.");
+        var credentials = await identity.ReadAsync(cancellationToken);
+        request.Headers.Remove(Header);
+        request.Headers.Add(Header, credentials.TerraBasePeerSecret);
+        return await base.SendAsync(request, cancellationToken);
     }
 }
