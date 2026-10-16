@@ -6,16 +6,14 @@ using static TerraScale.Dashboard.Shared.Charts.ChartGeometry;
 namespace TerraScale.Dashboard.Features.Home;
 
 public sealed record ChartColumn(string X, string Y, string Left, string Width, string Header, string Value, string TipX, string TipWidth);
-public sealed record OperationChart(string Label, string GradientId, string Path, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks, IReadOnlyList<ChartColumn> Columns, string Name = "Operations")
+public sealed record OperationChart(string Label, string Path, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks, IReadOnlyList<ChartColumn> Columns, string Name = "Operations")
 {
     public static OperationChart For(HomePage page)
     {
         var rangeLabel = page.Range switch { "1h" => "Current UTC hour", "24h" => "Last 24 hours", "30d" => "Last 30 days", _ => "Last 7 days" };
         var label = page.Measurement.ActivityLabel + ", " + rangeLabel + ": " + page.Measurement.ActivityNote;
-        uint hash = 2166136261;
-        foreach (var item in Encoding.UTF8.GetBytes(label)) hash = unchecked((hash ^ item) * 16777619);
         var points = page.Measurement.Activity;
-        if (points.Count == 0) return new(label, "ts-chart-fill-" + hash.ToString("x"), "", "", [], [], []);
+        if (points.Count == 0) return new(label, "", "", [], [], []);
         var values = points.Select(point => checked(point.Reads + point.Writes)).ToArray();
         var maximum = values.Max();
         double magnitude = 1;
@@ -52,6 +50,6 @@ public sealed record OperationChart(string Label, string GradientId, string Path
             var left = x + 10 + width > 708 ? Math.Max(0, x - 10 - width) : x + 10;
             columns.Add(new(Coordinate(x), Coordinate(coordinates[index].Y), Coordinate(Math.Max(48, x - columnWidth / 2)), Coordinate(Math.Min(708, x + columnWidth / 2) - Math.Max(48, x - columnWidth / 2)), header, value, Coordinate(left), Coordinate(width)));
         }
-        return new(label, "ts-chart-fill-" + hash.ToString("x"), path, path + " L 708,148 L 48,148 Z", grid, ticks, columns, page.Measurement.ActivityLabel);
+        return new(label, path, path + " L 708,148 L 48,148 Z", grid, ticks, columns, page.Measurement.ActivityLabel);
     }
 }

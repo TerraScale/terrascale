@@ -9,6 +9,7 @@ public sealed record HomePage(ShellModel Shell, string Tab, string Range, HomeMe
     public int Databases => Shell.Context.Project?.Databases.Count ?? 0;
     public int Members => Shell.Context.Organization?.Members.Values.Count(item => item.Status == "active") ?? 0;
     public int TotalNotifications => Shell.Context.Account.Notifications.Count(item => item.VisibleTo(Shell.Context));
+    public static readonly string[] Ranges = ["1h", "24h", "7d", "30d"];
     public static string NormalizeRange(string? value) => value is "1h" or "24h" or "7d" or "30d" ? value : "24h";
 }
 

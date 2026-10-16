@@ -19,6 +19,12 @@
   border-top: 1px solid var(--ts-line);
 }
 
+/* A section that ends in a stat row already closes with a hairline. */
+:is(.ts-page, .ts-stack) > .ts-card:has(> .ts-card-body > .ts-stats:last-child) + .ts-card {
+  padding-top: 0;
+  border-top: 0;
+}
+
 .ts-card-head {
   display: flex;
   flex-wrap: wrap;
@@ -136,6 +142,7 @@
    leading divider; the grid is shifted left and clipped so the first stat of
    each row hides its divider and lines up with the page edge. */
 .ts-stats {
+  --ts-stat-pad: var(--ts-s6);
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
   row-gap: var(--ts-s2);
@@ -166,10 +173,9 @@
 .ts-stat {
   display: grid;
   align-content: start;
-  gap: var(--ts-s1);
+  gap: var(--ts-s2);
   min-width: 0;
-  margin-left: -1px;
-  padding: var(--ts-s1) var(--ts-s5) var(--ts-s6);
+  padding: var(--ts-s5) var(--ts-stat-pad);
   border-left: 1px solid var(--ts-line);
 }
 
@@ -194,7 +200,8 @@
   font-weight: 500;
   letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
-  line-height: 1.15;
+  letter-spacing: -0.02em;
+  line-height: 1;
 }
 
 /* KPI tiles (prototype b-kpis): icon + label, value, detail, thin meter. */
@@ -276,11 +283,16 @@
 
 @media (max-width: 47.99rem) {
   .ts-stats {
+    --ts-stat-pad: var(--ts-s4);
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .ts-stat {
-    padding: var(--ts-s3) var(--ts-s3) var(--ts-s3) var(--ts-s5);
+    padding-block: var(--ts-s4);
+  }
+
+  .ts-stat:nth-child(n + 3) {
+    border-top: 1px solid var(--ts-line);
   }
 
   .ts-stat:nth-child(n + 3) {
@@ -289,36 +301,61 @@
 
 }
 
-/* Empty states. */
+/* Icon tile: feature, step and empty-state icons (Lucide 16, accent). */
+.ts-icon-tile {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ts-radius);
+  background: var(--ts-accent-soft);
+  color: var(--ts-accent);
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-icon-tile-success {
+  background: color-mix(in srgb, var(--ts-success) 14%, transparent);
+  color: var(--ts-success);
+}
+
+/* Empty states: a solid hairline box, an icon tile, a title and one line. */
 .ts-empty {
   display: grid;
   justify-items: center;
   gap: var(--ts-s2);
   padding: var(--ts-s8) var(--ts-s6);
-  border-radius: var(--ts-radius);
-  background: var(--ts-surface);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
   text-align: center;
+}
+
+.ts-empty > .ts-icon-tile {
+  margin-bottom: var(--ts-s2);
 }
 
 .ts-empty-title {
   color: var(--ts-ink);
-  font-weight: 600;
+  font-size: var(--ts-fs-md);
+  font-weight: 500;
 }
 
 .ts-empty-detail {
   max-width: 52ch;
-  color: var(--ts-ink-3);
+  color: var(--ts-ink-2);
   font-size: var(--ts-fs-sm);
 }
 
 .ts-empty > .ts-btn,
-.ts-empty > .ts-row {
+.ts-empty > .ts-row,
+.ts-empty > :is(.ts-empty-action, .ts-empty-actions) {
   margin-top: var(--ts-s2);
 }
 
 /* Alerts. */
 .ts-alert {
-  --alert: var(--ts-info);
+  --alert: var(--state, var(--ts-info));
   display: grid;
   gap: 2px;
   padding: var(--ts-s3) var(--ts-s4);
@@ -335,7 +372,7 @@
 
 .ts-alert-title {
   font-size: inherit;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ts-alert-body {
@@ -344,7 +381,7 @@
 
 /* Badges. */
 .ts-badge {
-  --badge: var(--ts-ink-2);
+  --badge: var(--state, var(--ts-ink-2));
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -352,10 +389,10 @@
   height: 22px;
   padding: 0 var(--ts-s2);
   border-radius: var(--ts-radius-sm);
-  background: color-mix(in oklab, var(--badge) 14%, transparent);
+  background: color-mix(in oklab, var(--badge) var(--ts-tint-badge), transparent);
   color: var(--badge);
   font-size: var(--ts-fs-xs);
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1;
   white-space: nowrap;
 }
@@ -383,11 +420,11 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: currentColor;
+  background: var(--state, currentColor);
 }
 
-.ts-stat[data-tone] .ts-dot {
-  color: var(--tone);
+.ts-stat .ts-dot {
+  color: var(--ts-ink-3);
 }
 
 .ts-badge > .ts-dot {
@@ -415,9 +452,9 @@
   flex: none;
   align-items: center;
   gap: var(--ts-s2);
-  padding: var(--ts-s3) 0;
-  color: var(--ts-ink-3);
-  font-weight: 600;
+  height: 40px;
+  color: var(--ts-ink-2);
+  font-weight: 500;
   white-space: nowrap;
   transition: color var(--ts-fast) var(--ts-ease);
 }
@@ -448,7 +485,7 @@
   border-radius: var(--ts-radius-pill);
   background: var(--ts-surface-3);
   color: var(--ts-ink-2);
-  font-size: 11px;
+  font-size: var(--ts-fs-xs);
   line-height: 18px;
   text-align: center;
 }

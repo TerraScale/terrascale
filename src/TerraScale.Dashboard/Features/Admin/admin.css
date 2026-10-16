@@ -76,7 +76,7 @@
 }
 
 .ts-admin-plan > summary:hover {
-  background: rgb(255 255 255 / 0.025);
+  background: var(--ts-surface-2);
 }
 
 .ts-admin-plan > .ts-form {

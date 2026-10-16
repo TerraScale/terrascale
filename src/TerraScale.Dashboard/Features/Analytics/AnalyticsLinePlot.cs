@@ -5,16 +5,13 @@ using TerraScale.Dashboard.Shared.Charts;
 namespace TerraScale.Dashboard.Features.Analytics;
 
 public sealed record AnalyticsSeries(string Name, long[] Values, bool[]? Missing = null);
-public sealed record AnalyticsLinePlot(string Label, string GradientId, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks,
+public sealed record AnalyticsLinePlot(string Label, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks,
     IReadOnlyList<RequestPath> Paths, IReadOnlyList<RequestDot> Markers, IReadOnlyList<RequestColumn> Columns)
 {
     public static AnalyticsLinePlot For(string label, string range, IReadOnlyList<DateTimeOffset> starts, IReadOnlyList<AnalyticsSeries> series)
     {
-        uint hash = 2166136261;
-        foreach (var item in Encoding.UTF8.GetBytes(label)) hash = unchecked((hash ^ item) * 16777619);
-        var gradient = "ts-chart-fill-" + hash.ToString("x");
         if (starts.Count == 0 || series.Count == 0 || series.Any(row => row.Values.Length != starts.Count || row.Missing is { } missing && missing.Length != starts.Count))
-            return new(label, gradient, "", [], [], [], [], []);
+            return new(label, "", [], [], [], [], []);
         bool Missing(AnalyticsSeries row, int index) => row.Missing?[index] == true;
         var maximum = series.SelectMany(row => row.Values.Where((value, index) => !Missing(row, index))).DefaultIfEmpty().Max();
         double magnitude = 1;
@@ -57,6 +54,6 @@ public sealed record AnalyticsLinePlot(string Label, string GradientId, string A
             var dots = paths.Select((path, order) => (path, order)).Where(value => !Missing(series[value.order], index)).Select(value => new RequestDot(C(X(index)), C(Y(series[value.order].Values[index])), value.path.Class, value.path.Dash)).ToArray();
             columns.Add(new(C(X(index)), C(Math.Max(48, X(index) - columnWidth / 2)), C(Math.Min(708, X(index) + columnWidth / 2) - Math.Max(48, X(index) - columnWidth / 2)), header + ": " + string.Join(", ", rows.Select(row => row.Name + " " + row.Value)), header, C(left), C(width), C(12 + (rows.Length + 1) * 17), dots, rows));
         }
-        return new(label, gradient, series.Count == 1 && !(series[0].Missing?.Contains(true) ?? false) ? paths[0].Path + " L 708,168 L 48,168 Z" : "", grid, ticks, paths, markers, columns);
+        return new(label, series.Count == 1 && !(series[0].Missing?.Contains(true) ?? false) ? paths[0].Path + " L 708,168 L 48,168 Z" : "", grid, ticks, paths, markers, columns);
     }
 }

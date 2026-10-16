@@ -26,7 +26,7 @@ const pageLoaded = new Promise(resolve => {
   }
 });
 const monaco = pageLoaded
-  .then(() => Promise.all([import('./monaco.js'), document.fonts.load(`${fontSize}px "JetBrains Mono"`)]))
+  .then(() => Promise.all([import('./monaco.js'), document.fonts.load(`${fontSize}px "Geist Mono"`)]))
   .then(([module]) => module.load())
   .catch(error => {
     // The textareas stay usable as plain fields.

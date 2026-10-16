@@ -13,11 +13,41 @@
 }
 
 .ts-eyebrow {
-  color: var(--tone);
-  font-size: var(--ts-fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  color: var(--ts-eyebrow);
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
+}
+
+/* Every page opens with a visible header: eyebrow, title, lede, actions. */
+.ts-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--ts-s4) var(--ts-s6);
+}
+
+.ts-page-heading {
+  display: grid;
+  gap: var(--ts-s2);
+  min-width: 0;
+}
+
+.ts-page-title {
+  font-family: var(--ts-font-display);
+  font-size: var(--ts-fs-3xl);
+  font-weight: var(--ts-heading-weight);
+  letter-spacing: var(--ts-heading-tracking);
+  line-height: var(--ts-lh-tight);
+}
+
+.ts-lede {
+  max-width: var(--ts-prose-max);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-lg);
 }
 
 .ts-page-actions {
@@ -122,7 +152,15 @@
     gap: var(--ts-s5);
     padding-top: 68px;
     padding-inline: var(--ts-s4);
-    padding-bottom: var(--ts-s10);
+    padding-bottom: var(--ts-s6);
+  }
+
+  .ts-page-title {
+    font-size: var(--ts-fs-2xl);
+  }
+
+  .ts-lede {
+    font-size: var(--ts-fs-md);
   }
 }
 
@@ -149,7 +187,7 @@
 
 .ts-strong {
   color: var(--ts-ink);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ts-truncate {

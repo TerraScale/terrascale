@@ -11,7 +11,7 @@ else
 <main class="ts-page ts-org-page @(Model.Tab == "audit" ? "ts-audit-page" : "")">
     @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationHeader, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))
     @if (Model.Shell.Context.Organization is not { } org)
-    { <div class="ts-empty" role="status"><p class="ts-empty-title">Select an organization</p><p class="ts-empty-detail">Choose an organization from the workspace menu.</p></div> }
+    { <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("Building2", 16)</span><p class="ts-empty-title">Select an organization</p><p class="ts-empty-detail">Choose an organization from the workspace menu.</p></div> }
     else if (Model.Tab == "billing")
     {
         @(await RenderPartialAsync<TerraScale.Dashboard.Features.Billing.BillingSummary, TerraScale.Dashboard.Features.Billing.BillingPage>(Model.Billing!))

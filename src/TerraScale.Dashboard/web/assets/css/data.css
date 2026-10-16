@@ -19,18 +19,22 @@
 
 .ts-table th,
 .ts-table td {
-  padding: var(--ts-s3) var(--ts-s4);
+  height: 48px;
+  padding: var(--ts-s2) var(--ts-s4);
   border-bottom: 1px solid var(--ts-line);
   text-align: left;
   vertical-align: middle;
 }
 
 .ts-table th {
+  height: 36px;
+  padding-block: 0;
   color: var(--ts-ink-3);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
   white-space: nowrap;
 }
 
@@ -39,10 +43,10 @@
 }
 
 .ts-table tbody tr:hover {
-  background: rgb(59 130 246 / 0.05);
+  background: var(--ts-surface);
 }
 
-.ts-table tbody tr:last-child td {
+.ts-table tbody tr:last-child > * {
   border-bottom: 0;
 }
 
@@ -55,7 +59,7 @@
 
 .ts-table-strong {
   color: var(--ts-ink);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ts-table-mono {
@@ -63,14 +67,20 @@
   font-size: var(--ts-fs-sm);
 }
 
-.ts-table-actions {
+.ts-table .ts-table-actions {
   text-align: right;
   white-space: nowrap;
 }
 
+/* An inline form in the actions cell (role select + save) stays on one
+   line; the cell's own actions wrap after it, right-aligned. */
 .ts-table-actions > .ts-row {
-  flex-wrap: nowrap;
+  justify-content: flex-end;
   gap: var(--ts-s1);
+}
+
+.ts-table-actions form.ts-row {
+  flex-wrap: nowrap;
 }
 
 /* Tables align with the section edge: no outer cell padding. */
@@ -84,9 +94,6 @@
   padding-right: 0;
 }
 
-.ts-table thead th {
-  border-bottom-color: var(--ts-line-strong);
-}
 
 /* Divided rows: members, keys, steps. */
 .ts-list {
@@ -190,7 +197,8 @@
 .ts-snippet {
   min-width: 0;
   overflow: hidden;
-  border-radius: var(--ts-radius);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
   background: var(--ts-surface);
 }
 
@@ -198,8 +206,11 @@
   padding: var(--ts-s2) var(--ts-s4);
   border-bottom: 1px solid var(--ts-line);
   color: var(--ts-ink-3);
-  font-size: var(--ts-fs-xs);
-  font-weight: 600;
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
 }
 
 /* Long lines wrap instead of scrolling, so code stays readable without a
@@ -208,10 +219,10 @@
 .ts-snippet-body {
   margin: 0;
   padding: var(--ts-s4);
-  color: #c9d4ff;
+  color: var(--ts-ink);
   font-family: var(--ts-font-mono);
   font-size: var(--ts-fs-sm);
-  line-height: 1.6;
+  line-height: 1.7;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -222,8 +233,10 @@
 
 code:not(pre code) {
   padding: 1px 6px;
+  border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius-sm);
-  background: var(--ts-surface-3);
+  background: var(--ts-surface-2);
+  font-size: 0.88em;
 }
 
 /* Charts rendered by Features/Analytics (AnalyticsLinePlot.cs). */
@@ -253,12 +266,12 @@ code:not(pre code) {
 .ts-chart .ts-chart-axis {
   fill: var(--ts-ink-3);
   font-family: var(--ts-font-mono);
-  font-size: 11px;
+  font-size: var(--ts-fs-xs);
 }
 
 .ts-chart .ts-chart-line {
   fill: none;
-  stroke-width: 2.25;
+  stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -317,13 +330,12 @@ code:not(pre code) {
 .ts-chart-tip-box {
   fill: var(--ts-surface-2);
   stroke: var(--ts-line-strong);
-  filter: drop-shadow(0 8px 12px rgb(0 0 0 / 0.45));
 }
 
 .ts-chart .ts-chart-tip text {
   fill: var(--ts-ink-2);
   font-family: var(--ts-font-mono);
-  font-size: 11px;
+  font-size: var(--ts-fs-xs);
 }
 
 .ts-chart .ts-chart-tip .ts-chart-tip-label {
@@ -378,7 +390,7 @@ svg.ts-chart-swatch {
   flex: none;
   background: none;
   stroke: var(--series, var(--ts-chart-1));
-  stroke-width: 2.25;
+  stroke-width: 1.5;
   stroke-linecap: round;
 }
 
@@ -405,9 +417,9 @@ svg.ts-chart-swatch {
   align-items: baseline;
   gap: var(--ts-s3);
   padding: 6px var(--ts-s3);
+  border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius);
   background: var(--ts-surface-2);
-  box-shadow: var(--ts-shadow-overlay);
   color: var(--ts-ink);
   font-family: var(--ts-font-mono);
   font-size: var(--ts-fs-xs);

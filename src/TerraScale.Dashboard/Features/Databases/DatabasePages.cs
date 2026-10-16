@@ -107,7 +107,7 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
     public IReadOnlyList<DatabaseRecord> Branches => Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal).ToArray();
     public string Placement => DatabaseService.Regions(Database).Count == 0 ? DatabasesPage.RegionDisplay("")
         : string.Join(", ", DatabaseService.Regions(Database).Select(DatabasesPage.RegionDisplay));
-    public (string Tone, string Title, string Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
+    public (string Tone, string Title, string Body) CreatedState => DatabasesPage.State(Database.Status) switch
     {
         "success" => ("success", Database.Name + " is ready", DatabaseService.Regions(Database).Count == 1
             ? "It serves " + Placement + ". Add a collection in Documents, or connect with an API key."

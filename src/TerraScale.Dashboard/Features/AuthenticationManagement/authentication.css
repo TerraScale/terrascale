@@ -24,7 +24,7 @@
   background: var(--ts-surface-3);
   color: var(--ts-ink-2);
   font-size: var(--ts-fs-xs);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.02em;
 }
 
@@ -83,27 +83,6 @@
   background: none;
   color: var(--ts-ink-2);
   font-family: var(--ts-font-mono);
-}
-
-/* Empty lists get the section's tile above the message. */
-.ts-idp-empty {
-  display: grid;
-  justify-items: center;
-  gap: var(--ts-s2);
-  padding: var(--ts-s10) var(--ts-s6);
-  border: 1px dashed var(--ts-line-strong);
-  border-radius: var(--ts-radius-lg);
-  text-align: center;
-}
-
-.ts-idp-empty > .ts-idp-tile {
-  width: 44px;
-  height: 44px;
-  margin-bottom: var(--ts-s1);
-}
-
-.ts-idp-empty > .ts-btn {
-  margin-top: var(--ts-s2);
 }
 
 /* Copyable values. */

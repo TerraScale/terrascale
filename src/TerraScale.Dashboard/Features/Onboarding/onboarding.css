@@ -234,7 +234,7 @@
   align-items: baseline;
   gap: var(--ts-s1);
   font-size: var(--ts-fs-xl);
-  font-weight: 700;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 

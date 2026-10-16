@@ -8,7 +8,7 @@
     }
     </nav><div class="ts-notifications-actions">@if (Model.Dialog) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationReadForm, TerraScale.Dashboard.Features.Notifications.NotificationReadFormModel>(new(Model))) }<p class="ts-meta ts-notifications-summary">@Model.Unread unread @if (Model.Critical > 0) { <span>· @Model.Critical critical</span> } · @Model.Total total</p></div>
 </div>
-@if (Model.Items.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">You're all caught up</p><p class="ts-empty-detail">@(Model.Status == "unread" ? "No unread notifications in this scope." : "No notifications in this scope.")</p></div> }
+@if (Model.Items.Count == 0) { <div class="ts-empty" role="status"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("Bell", 16)</span><p class="ts-empty-title">You're all caught up</p><p class="ts-empty-detail">@(Model.Status == "unread" ? "No unread notifications in this scope." : "No notifications in this scope.")</p></div> }
 else
 {
     <ol class="ts-notification-list">@foreach (var item in Model.Items)

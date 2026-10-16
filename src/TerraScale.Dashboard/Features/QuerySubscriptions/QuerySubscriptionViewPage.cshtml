@@ -6,7 +6,7 @@
     <section class="ts-card" id="saved-configurations"><div class="ts-card-header"><h2 class="ts-card-title">Saved configurations</h2><p class="ts-meta">Shared views saved in this project.</p></div>
         @if (Model.Configurations.Subscriptions.Count == 0)
         {
-            <div class="ts-empty"><p class="ts-empty-title">No shared-result configurations yet.</p></div>
+            <div class="ts-empty"><span class="ts-icon-tile" aria-hidden="true">@Icons.Render("RadioTower", 16)</span><p class="ts-empty-title">No shared-result configurations yet.</p></div>
         }
         else
         {

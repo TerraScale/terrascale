@@ -47,7 +47,7 @@
 .ts-auth-title,
 .ts-flow-title {
   font-size: var(--ts-fs-2xl);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ts-auth-subtitle,
@@ -122,13 +122,13 @@
   display: grid;
   flex: none;
   place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: var(--ts-radius);
-  background: color-mix(in oklab, var(--tone) 18%, transparent);
-  color: var(--tone);
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius-lg);
+  color: var(--ts-ink-2);
   font-size: var(--ts-fs-xl);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ts-flow-actions,

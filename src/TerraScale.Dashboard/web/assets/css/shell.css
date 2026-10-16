@@ -5,6 +5,8 @@
   display: grid;
   grid-template-columns: var(--ts-sidebar-width) minmax(0, 1fr);
   min-height: 100dvh;
+  /* The sidebar column keeps its fill below the pinned sidebar. */
+  background: var(--ts-sidebar);
 }
 
 /* The sidebar stays pinned at full viewport height while the page scrolls,
@@ -23,6 +25,8 @@
   backdrop-filter: blur(20px);
 }
 
+/* Logo top-left, in line with the nav icons; the drawer's close button
+   comes first in the DOM so it takes focus when the drawer opens. */
 .ts-sidebar-header {
   display: flex;
   align-items: center;
@@ -40,7 +44,7 @@
 }
 
 .ts-sidebar-brand img {
-  height: 22px;
+  height: 20px;
   width: auto;
 }
 
@@ -106,6 +110,7 @@ details[open] > .ts-context-trigger {
   display: grid;
   flex: none;
   place-items: center;
+  border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius);
   background: var(--ts-surface-3);
   color: var(--ts-ink);
@@ -113,16 +118,16 @@ details[open] > .ts-context-trigger {
 }
 
 .ts-context-icon {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   font-size: var(--ts-fs-sm);
 }
 
 .ts-menu-tile {
   width: 22px;
   height: 22px;
-  border-radius: 6px;
-  font-size: 11px;
+  border-radius: var(--ts-radius-sm);
+  font-size: var(--ts-fs-xs);
 }
 
 .ts-context-chevron {
@@ -156,7 +161,7 @@ details[open] > .ts-context-trigger {
   gap: 6px;
   min-width: 0;
   color: var(--ts-ink);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ts-context-dot {
@@ -206,10 +211,11 @@ details[open] > .ts-context-trigger {
 .ts-nav-group-label {
   padding: 0 var(--ts-s3);
   color: var(--ts-ink-3);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
 }
 
 .ts-nav {
@@ -298,7 +304,7 @@ details[open] > .ts-context-trigger {
 
 .ts-nav-collapsible:has([aria-current="page"]) > summary {
   color: var(--ts-ink);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ts-subnav {
@@ -313,10 +319,11 @@ details[open] > .ts-context-trigger {
 .ts-subnav-group {
   padding: var(--ts-s2) var(--ts-s2) 2px;
   color: var(--ts-ink-3);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
 }
 
 .ts-subnav-link {
@@ -344,6 +351,7 @@ details[open] > .ts-context-trigger {
 /* Counts are plain numbers, never tinted pills. */
 .ts-sidebar .ts-nav-count {
   min-width: 20px;
+  margin-left: auto;
   padding: 0 6px;
   background: transparent;
   color: var(--ts-ink-3);
@@ -351,6 +359,26 @@ details[open] > .ts-context-trigger {
   font-weight: 600;
   line-height: 20px;
   text-align: center;
+}
+
+/* Status link: the platform status page, from every app. */
+.ts-status-link {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--ts-s2);
+  height: 28px;
+  padding: 0 var(--ts-s3);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-pill);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-status-link:hover {
+  border-color: var(--ts-line-strong);
+  color: var(--ts-ink);
+  text-decoration: none;
 }
 
 /* Account. */
@@ -408,10 +436,10 @@ details[open] > .ts-account-trigger {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: var(--ts-accent-fill);
-  color: var(--ts-on-accent);
-  font-size: 12px;
-  font-weight: 700;
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
 }
 
 /* The account avatar is a neutral initials tile. */
@@ -421,9 +449,9 @@ details[open] > .ts-account-trigger {
 }
 
 .ts-account-avatar-lg {
-  width: 38px;
-  height: 38px;
-  font-size: 13px;
+  width: 36px;
+  height: 36px;
+  font-size: var(--ts-fs-sm);
 }
 
 .ts-account-meta {
@@ -441,7 +469,7 @@ details[open] > .ts-account-trigger {
 }
 
 .ts-account-name {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ts-account-email,
@@ -513,6 +541,7 @@ details[open] > .ts-account-trigger {
   flex-direction: column;
   min-width: 0;
   border-left: 1px solid var(--ts-line);
+  background: var(--ts-canvas);
 }
 
 /* Containment also scopes fixed descendants and stacks in-page overlays below
@@ -569,10 +598,11 @@ details[open] > .ts-account-trigger {
 
 .ts-status-notice-label {
   color: var(--impact);
-  font-size: var(--ts-fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
 }
 
 .ts-status-notice-title {
@@ -610,7 +640,9 @@ details[open] > .ts-account-trigger {
     inset: 0 auto 0 0;
     z-index: var(--ts-z-modal);
     width: min(86vw, 300px);
-    box-shadow: var(--ts-shadow-overlay);
+    border-right: 1px solid var(--ts-glass-line);
+    background: var(--ts-glass-strong);
+    backdrop-filter: blur(var(--ts-blur-lg)) saturate(var(--ts-saturate));
     transform: translateX(-102%);
     visibility: hidden;
   }
@@ -668,3 +700,4 @@ details[open] > .ts-account-trigger {
     padding-inline: var(--ts-s4);
   }
 }
+

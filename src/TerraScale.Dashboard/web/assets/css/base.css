@@ -31,8 +31,9 @@ html {
   color: var(--ts-ink);
   font-family: var(--ts-font-sans);
   font-size: var(--ts-fs-md);
-  line-height: 1.55;
+  line-height: var(--ts-lh);
   -webkit-text-size-adjust: 100%;
+  accent-color: var(--ts-accent);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   scrollbar-gutter: stable;
@@ -66,9 +67,10 @@ h1,
 h2,
 h3,
 h4 {
-  font-weight: 600;
-  line-height: 1.25;
-  letter-spacing: -0.01em;
+  font-family: var(--ts-font-display);
+  font-weight: var(--ts-heading-weight);
+  line-height: var(--ts-lh-tight);
+  letter-spacing: var(--ts-heading-tracking);
 }
 
 ul,
@@ -109,7 +111,7 @@ hr {
 }
 
 ::selection {
-  background: color-mix(in oklab, var(--ts-accent) 40%, transparent);
+  background: var(--ts-accent-soft);
 }
 
 :focus-visible {
@@ -154,6 +156,29 @@ hr {
   transform: none;
 }
 
+/* Frosted glass fallback: solid surface when blur is unsupported or the
+   user asks for less transparency. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  details.ts-menu > .ts-menu-panel,
+  dialog.ts-dialog,
+  .ts-db-created,
+  .ts-topbar,
+  .ts-shell .ts-sidebar {
+    background: var(--ts-surface) !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  details.ts-menu > .ts-menu-panel,
+  dialog.ts-dialog,
+  .ts-db-created,
+  .ts-topbar,
+  .ts-shell .ts-sidebar {
+    background: var(--ts-surface) !important;
+    backdrop-filter: none !important;
+  }
+}
+
 /* Navigation activity: Datastar sets body.ts-nav-pending while the next
    document loads (see UI/Slices/ShellDocument.cshtml). Wait before revealing the
    full-width bar so quick navigations never flash it. A flat pulse shows an
@@ -187,11 +212,6 @@ body.ts-nav-pending::before {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  body.ts-nav-pending::before {
-    background: var(--ts-accent);
-    animation-name: ts-progress-reveal;
-  }
-
   *,
   *::before,
   *::after {
