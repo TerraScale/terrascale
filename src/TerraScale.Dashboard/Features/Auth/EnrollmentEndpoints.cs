@@ -81,7 +81,7 @@ public static class EnrollmentEndpoints
         {
             var flow = await flows.StartOidcAsync(context, returnTo);
             var target = await auth.AuthorizationUrlAsync(flow, context.RequestAborted);
-            return AuthEndpoints.SeeOther(target);
+            return HttpRedirects.SeeOther(target);
         }
         catch (Exception error) when (DependencyFailure(error, context))
         { return Failure(context, returnTo, "Single sign-on is unavailable right now. Try again in a moment.", 503, error); }

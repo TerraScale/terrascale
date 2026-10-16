@@ -1,7 +1,6 @@
 using System.Text;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.Features.Organizations;
 

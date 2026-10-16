@@ -1,5 +1,4 @@
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Shared.UI;
 
