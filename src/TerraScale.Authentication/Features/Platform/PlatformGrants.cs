@@ -240,6 +240,16 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
             || (value.ValueKind == JsonValueKind.String && value.GetString() == GitHubActionsGrant.WorkflowRef);
     }
 
+    // GitHub documents job_workflow_ref only for jobs of a reusable workflow, where it names the called workflow: absent is a
+    // job of the workflow itself; present in any JSON form (null, a number, an array), it must be exactly ci.yml's string,
+    // so no reusable workflow (here or elsewhere) matches. Read from the raw payload so no typed lookup hides a non-string.
+    private static bool JobWorkflowMatches(JsonWebToken token)
+    {
+        using var payload = JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(token.EncodedPayload));
+        return !payload.RootElement.TryGetProperty("job_workflow_ref", out var value)
+            || (value.ValueKind == JsonValueKind.String && value.GetString() == GitHubActionsGrant.WorkflowRef);
+    }
+
     private static string? Claim(JsonWebToken token, string name) =>
         token.TryGetPayloadValue<string>(name, out var value) && value is { Length: > 0 } ? value : null;
 
