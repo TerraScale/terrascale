@@ -2038,8 +2038,10 @@ public sealed class PeerStreamTests
         cluster.Members.Leave(member.Name);
         await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
         await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", id, CancellationToken.None));
+        var deletion = (await gru.StateAsync("items", id)).MaxStamp;
         clock.Offset = TimeSpan.FromMinutes(10);
-        await Task.Delay(TimeSpan.FromSeconds(12));
+        await Assert.That(await gru.UntilStableAsync(new Hlc(deletion.Value + (120_000UL << 16)))).IsTrue().Because("sjc still streams to gru");
+        await Task.Delay(TimeSpan.FromSeconds(6));
         await Assert.That(await gru.HasStateAsync("items", id)).IsTrue();
 
         // Listed again, sjc applies the delete and reports stable stamps past it: both collect the tombstone.
@@ -3033,6 +3035,8 @@ public sealed class PeerStreamTests
             }
         }
 
+        // Stops this machine and waits until no running machine lists it any more: a test that moves the clock next must not
+        // have a peer record it as listed at the moved time from a view read before it stopped.
         public async Task StopAsync()
         {
             await Api.DisposeAsync();
