@@ -4,7 +4,7 @@
 @inject AssetUrls Assets
 @if (Model.Tab is "members" or "invitations")
 {
-    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationAccessPage, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))
+    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Members.OrganizationAccessPage, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))
 }
 else
 {

@@ -1,17 +1,5 @@
-using TerraScale.Dashboard.Features.Accounts;
 
 namespace TerraScale.Dashboard.Features.QuerySubscriptions;
-
-public sealed class SharedResultConfiguration
-{
-    public string Id { get; set; } = "";
-    public string DatabaseId { get; set; } = "";
-    public string Name { get; set; } = "";
-    public string Query { get; set; } = "";
-    public string Transport { get; set; } = "";
-    public string Status { get; set; } = "saved";
-    public DateTimeOffset CreatedAt { get; set; }
-}
 
 public sealed record QuerySubscriptionView(string Id, string DatabaseId, string DatabaseName,
     string Name, string Query, string Transport, string Status, DateTimeOffset CreatedAt);

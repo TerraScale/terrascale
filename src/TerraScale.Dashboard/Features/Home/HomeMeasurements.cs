@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Features.Usage;
@@ -31,7 +30,6 @@ public sealed class HomeMeasurement
     public long Reads => Activity.Sum(item => item.Reads);
     public long Writes => Activity.Sum(item => item.Writes);
 }
-public sealed record ActivityPoint(DateTimeOffset Start, long Reads, long Writes);
 public sealed record HomeRegion(string Code, string Status, string Latency, int Databases);
 public interface IHomeMeasurements
 {

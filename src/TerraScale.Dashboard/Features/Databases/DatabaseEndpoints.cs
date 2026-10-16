@@ -28,12 +28,12 @@ public static class DatabaseEndpoints
     {
         endpoints.MapGet("/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            return context is null ? AccountEndpoints.LoginRedirect(http) : await ListPageAsync(http, context, backend, databases);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            return context is null ? AccountRequest.LoginRedirect(http) : await ListPageAsync(http, context, backend, databases);
         });
         endpoints.MapGet("/api/v1/dashboard/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             return context is null ? Results.Unauthorized() : Results.Json(context.Project?.Databases.Values.OrderBy(database => database.Name).ToArray() ?? []);
         });
         foreach (var tab in new[] { "overview", "replication", "backups", "branches", "import", "danger" })
@@ -51,7 +51,7 @@ public static class DatabaseEndpoints
         }
         endpoints.MapPost("/api/v1/dashboard/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
@@ -71,7 +71,7 @@ public static class DatabaseEndpoints
             endpoints.MapPost("/api/v1/dashboard/databases/" + operation,
                 async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend) =>
                 {
-                    var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+                    var context = await AccountRequest.RequireAsync(http, sessions, accounts);
                     if (context is null) return Results.Unauthorized();
                     var form = await http.Request.ReadFormAsync(http.RequestAborted);
                     if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
@@ -98,7 +98,8 @@ public static class DatabaseEndpoints
         }
         endpoints.MapDataFeatures();
         endpoints.MapApiKeyFeatures();
-        endpoints.MapBackupFeatures();
+        endpoints.MapBackupFeatures((http, context, databaseId, error, status) => DetailPageAsync(http, context, databaseId, "backups",
+            http.RequestServices.GetRequiredService<IDatabaseBackend>(), http.RequestServices.GetRequiredService<DatabaseService>(), error, status: status));
         return endpoints;
     }
 

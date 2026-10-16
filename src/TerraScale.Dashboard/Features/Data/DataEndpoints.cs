@@ -17,43 +17,43 @@ public static class DataEndpoints
             var tab = section;
             endpoints.MapGet("/databases/{databaseId}/" + section, async (HttpContext http, string databaseId, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) =>
             {
-                var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-                return context is null ? AccountEndpoints.LoginRedirect(http) : await PageAsync(http, context, databaseId, tab, data, saved);
+                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+                return context is null ? AccountRequest.LoginRedirect(http) : await PageAsync(http, context, databaseId, tab, data, saved);
             });
         }
         endpoints.MapGet("/databases/{databaseId}/documents/{collection}", async (HttpContext http, string databaseId, string collection, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            return context is null ? AccountEndpoints.LoginRedirect(http) : await PageAsync(http, context, databaseId, "documents", data, saved, collection);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            return context is null ? AccountRequest.LoginRedirect(http) : await PageAsync(http, context, databaseId, "documents", data, saved, collection);
         });
         endpoints.MapGet("/api/v1/dashboard/data/documents", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             try
             {
                 var result = await data.DocumentsAsync(context, http.Request.Query["databaseId"].ToString(), http.Request.Query["collection"].ToString(), http.RequestAborted);
                 return Results.Json(result.Select(document => new { id = document.Id, value = document.Document }));
             }
-            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.Failure(error); }
+            catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }
         });
         endpoints.MapGet("/api/v1/dashboard/schema", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             try { return Results.Json(await data.SchemaAsync(context, http.Request.Query["databaseId"].ToString(), http.Request.Query["collection"].ToString(), http.RequestAborted)); }
-            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.Failure(error); }
+            catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }
         });
         endpoints.MapGet("/api/v1/dashboard/data/saved-queries", async (HttpContext http, DashboardSessions sessions, AccountService accounts, SavedQueryService saved) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             try { return Results.Json((await saved.ListAsync(context, http.RequestAborted)).Select(PublicSavedQuery)); }
-            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.Failure(error); }
+            catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }
         });
         endpoints.MapGet("/api/v1/dashboard/indexes", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             try
             {
@@ -62,7 +62,7 @@ public static class DataEndpoints
                 var indexes = await data.IndexesAsync(context, http.Request.Query["databaseId"].ToString(), http.RequestAborted);
                 return Results.Json(indexes.Where(index => collection.Length == 0 || index.Collection == collection).Select(index => new { field = string.Join(", ", index.Fields), state = index.State }));
             }
-            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.Failure(error); }
+            catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }
         });
         foreach (var operation in new[] { "documents", "collections", "sql", "sql/check", "saved-queries", "saved-queries/delete", "indexes", "indexes/delete" })
         {
@@ -72,7 +72,7 @@ public static class DataEndpoints
             {
                 if (action == "documents" && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit) bodyLimit.MaxRequestBodySize = 1024 * 1024 + 4096;
                 if ((action.StartsWith("sql", StringComparison.Ordinal) || action == "saved-queries") && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sqlBodyLimit) sqlBodyLimit.MaxRequestBodySize = 16 * 1024 + 3 * 4 * 1024 + 4096;
-                var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
                 if (context is null) return Results.Unauthorized();
                 var form = await http.Request.ReadFormAsync(http.RequestAborted);
                 if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
@@ -106,7 +106,7 @@ public static class DataEndpoints
                         if (action == "sql")
                         {
                             var result = await data.SqlAsync(context, id, form["sql"].ToString(), http.RequestAborted);
-                            return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, id, "sql", data, saved, collection, sql: form["sql"].ToString(), sqlResult: result) : Results.Json(new { rows = result.Rows });
+                            return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, id, "sql", data, saved, collection, sql: form["sql"].ToString(), sqlResult: result) : Results.Json(new { rows = result.Rows });
                         }
                         var query = await saved.SaveAsync(context, id, form["name"].ToString(), form["sql"].ToString(), http.RequestAborted);
                         return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, "sql", collection) + (collection.Length == 0 ? "?" : "&") + "savedQueryId=" + Uri.EscapeDataString(query.Id)) : Results.Json(PublicSavedQuery(query), statusCode: 201);
@@ -116,9 +116,9 @@ public static class DataEndpoints
                     else if (action == "indexes/delete") await data.DropIndexAsync(context, id, form["name"].ToString(), http.RequestAborted);
                     return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(id, action.StartsWith("indexes", StringComparison.Ordinal) ? "indexes" : "sql", collection)) : Results.NoContent();
                 }
-                catch (Exception error) when (DatabaseEndpoints.KnownFailure(error))
+                catch (Exception error) when (DatabaseResults.KnownFailure(error))
                 {
-                    if (!DatabaseEndpoints.WantsHtml(http) || DatabaseEndpoints.Status(error) == 404) return DatabaseEndpoints.Failure(error);
+                    if (!DatabaseResults.WantsHtml(http) || DatabaseResults.Status(error) == 404) return DatabaseResults.Failure(error);
                     var section = action.StartsWith("indexes", StringComparison.Ordinal) ? "indexes" : action.Contains("sql", StringComparison.Ordinal) || action.StartsWith("saved-queries", StringComparison.Ordinal) ? "sql" : "documents";
                     var dialog = action == "collections" ? "new-collection" : action == "saved-queries" ? "save-query" : action == "documents" ? form["operation"] == "create" ? "add-document" : form["operation"] == "delete" ? "delete-document" : "edit-document" : "";
                     var submittedId = error is DocumentWriteOutcomeUnknownException unknown ? unknown.DocumentId : form["id"].ToString();
@@ -134,7 +134,7 @@ public static class DataEndpoints
     {
         DatabaseRecord database;
         try { database = DatabaseService.Database(context, id); }
-        catch (AccountAccessException error) { return DatabaseEndpoints.Failure(error); }
+        catch (AccountAccessException error) { return DatabaseResults.Failure(error); }
         var errorMessage = "";
         IReadOnlyList<TerraBaseCollection> collections = [];
         var browse = new DocumentBrowse([], 0, 1, 1, false);
@@ -168,7 +168,7 @@ public static class DataEndpoints
                 // Counts are an optional producer measurement. Omit unavailable
                 // counts while retaining independently available document rows.
                 try { collectionCounts = await data.CollectionCountsAsync(context, id, http.RequestAborted); }
-                catch (Exception error) when (error is HttpRequestException or JsonException || DatabaseEndpoints.KnownFailure(error)) { }
+                catch (Exception error) when (error is HttpRequestException or JsonException || DatabaseResults.KnownFailure(error)) { }
                 browse = await data.BrowseAsync(context, id, collection, search, sort, descending, int.TryParse(BrowseValue("page"), out var page) ? page : 1, http.RequestAborted);
                 if (dialog.Length == 0 && (http.Request.Query["edit"].ToString() is { Length: > 0 } edit))
                 {
@@ -191,10 +191,10 @@ public static class DataEndpoints
             else if (section == "indexes") indexes = await data.IndexesAsync(context, id, http.RequestAborted);
             else if (section == "history") documentId = http.Request.Query["id"].ToString();
         }
-        catch (Exception error) when (error is HttpRequestException || DatabaseEndpoints.KnownFailure(error))
+        catch (Exception error) when (error is HttpRequestException || DatabaseResults.KnownFailure(error))
         {
-            errorMessage = DatabaseEndpoints.KnownFailure(error) ? DatabaseEndpoints.Message(error) : "The live data plane is unavailable. Try again shortly.";
-            if (DatabaseEndpoints.KnownFailure(error) && DatabaseEndpoints.Status(error) == 404) return DatabaseEndpoints.Failure(error);
+            errorMessage = DatabaseResults.KnownFailure(error) ? DatabaseResults.Message(error) : "The live data plane is unavailable. Try again shortly.";
+            if (DatabaseResults.KnownFailure(error) && DatabaseResults.Status(error) == 404) return DatabaseResults.Failure(error);
         }
         var result = DataView.Create(new(ShellModel.For(http, context, database.Name + " · " + DatabaseFrameModel.Title(section)), database, section, collection, collections, browse, search, sort, descending, layout, errorMessage, formError, dialog, documentId, body, version, operation, sql, sqlResult, indexes, schema, queries, queryName, catalog, history, collectionCounts, sqlChecked));
         result.StatusCode = status;

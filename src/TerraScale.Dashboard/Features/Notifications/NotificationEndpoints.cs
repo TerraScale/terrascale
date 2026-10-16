@@ -26,13 +26,13 @@ public static class NotificationEndpoints
     {
         endpoints.MapGet("/notifications", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            if (context is null) return AccountEndpoints.LoginRedirect(http);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null) return AccountRequest.LoginRedirect(http);
             return NotificationView.Create(Page(http, context));
         });
         endpoints.MapGet("/notifications/dialog", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             if (http.Request.Headers["Datastar-Request"] != "true") return Results.Redirect("/notifications");
             await DatastarEvents.PatchElementsAsync(http, NotificationPatch.Create(Page(http, context, true)));
@@ -50,7 +50,7 @@ public static class NotificationEndpoints
 
     private static async Task<IResult> MarkAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, string? id)
     {
-        var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
         if (context is null) return Results.Unauthorized();
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");

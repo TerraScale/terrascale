@@ -28,8 +28,8 @@ public static class BillingPlanEndpoints
     }
     private static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing, string operation)
     {
-        var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-        if (context is null) return AccountEndpoints.LoginRedirect(http);
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (context is null) return AccountRequest.LoginRedirect(http);
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!Csrf.Validate(http, form)) return Results.Text("Invalid CSRF token.", statusCode: 403);
         try

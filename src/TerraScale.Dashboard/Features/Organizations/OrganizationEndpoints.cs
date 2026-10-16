@@ -1,7 +1,10 @@
 using RazorSlices;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Billing;
-using TerraScale.Dashboard.Features.Usage;
+using TerraScale.Dashboard.Features.Organizations.Audit;
+using TerraScale.Dashboard.Features.Organizations.Invitations;
+using TerraScale.Dashboard.Features.Organizations.Members;
+using TerraScale.Dashboard.Features.Organizations.Wizard;
 using TerraScale.Dashboard.Platform.Datastar;
 using TerraScale.Dashboard.Shared.UI;
 
@@ -24,8 +27,8 @@ public static class OrganizationEndpoints
         endpoints.MapGet("/organization", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement,
             StripeBilling billing, SpendingService spending, TimeProvider time, InternalBillingService internalBilling) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            if (context is null) return AccountEndpoints.LoginRedirect(http);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null) return AccountRequest.LoginRedirect(http);
             if (http.Request.Query["tab"] == "billing" && http.Request.Query["payment"] == "success" && context.Role == "owner")
             {
                 await http.RequestServices.GetRequiredService<TerraScale.Dashboard.Features.Billing.StripeBilling>().ConfirmAsync(context, http.RequestAborted);
@@ -49,7 +52,7 @@ public static class OrganizationEndpoints
         });
         endpoints.MapGet("/api/v1/dashboard/context", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             return Results.Json(AccountContextView.From(context));
         });
@@ -133,7 +136,7 @@ public static class OrganizationEndpoints
 
     private static async Task<IResult> AccessMutationAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, IWorkspacePlacement placement, string operation, string? id = null)
     {
-        var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
         if (context is null) return Results.Unauthorized();
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
@@ -171,7 +174,7 @@ public static class OrganizationEndpoints
 
     private static async Task<IResult> LifecycleAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, OrganizationLifecycleService lifecycle, IWorkspacePlacement placement, string operation, string? projectId = null)
     {
-        var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
         if (context is null) return Results.Unauthorized();
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
@@ -187,7 +190,7 @@ public static class OrganizationEndpoints
 
     internal static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, IWorkspacePlacement placement, string operation, string? projectId = null)
     {
-        var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
         if (context is null) return Results.Unauthorized();
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");

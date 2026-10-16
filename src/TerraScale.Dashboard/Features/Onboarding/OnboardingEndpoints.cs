@@ -1,7 +1,5 @@
-using TerraScale.Dashboard.Features.Billing;
 using System.Net.Mail;
 using System.Text;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Shared.UI;
 

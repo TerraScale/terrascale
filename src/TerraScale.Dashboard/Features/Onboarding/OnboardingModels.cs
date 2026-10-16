@@ -34,8 +34,3 @@ public sealed record OnboardingPage(DocumentModel Document, string CsrfToken, bo
     public string SignInUrl => ReturnTo.Length == 0 ? "/login" : "/login?returnTo=" + Uri.EscapeDataString(ReturnTo);
     public string FieldError(string field) => ErrorField == field ? Error : "";
 }
-
-public sealed class OnboardingValidationException(string message, string field = "") : Exception(message)
-{
-    public string Field { get; } = field;
-}

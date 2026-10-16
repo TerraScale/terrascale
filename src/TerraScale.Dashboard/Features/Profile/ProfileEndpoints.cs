@@ -31,8 +31,8 @@ public static class ProfileEndpoints
     {
         endpoints.MapGet("/profile", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            if (context is null) return AccountEndpoints.LoginRedirect(http);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null) return AccountRequest.LoginRedirect(http);
             var tab = http.Request.Query["tab"].ToString();
             if (tab is not ("security" or "sessions" or "access-tokens" or "danger")) tab = "profile";
             var list = tab is "access-tokens" or "danger" ? await tokens.ListAsync(context, http.RequestAborted) : null;
@@ -62,7 +62,7 @@ public static class ProfileEndpoints
 
     private static async Task<IResult> SaveAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, bool language)
     {
-        var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
         if (context is null) return Results.Unauthorized();
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");

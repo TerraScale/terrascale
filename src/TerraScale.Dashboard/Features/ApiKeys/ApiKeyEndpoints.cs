@@ -10,12 +10,12 @@ public static class ApiKeyEndpoints
     {
         endpoints.MapGet("/api-keys", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            return context is null ? AccountEndpoints.LoginRedirect(http) : await PageAsync(http, context, keys);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            return context is null ? AccountRequest.LoginRedirect(http) : await PageAsync(http, context, keys);
         });
         endpoints.MapGet("/api/v1/dashboard/credentials", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             try { return Results.Json((await keys.ListAsync(context, http.RequestAborted)).Select(ApiKeyService.CredentialMetadata).ToArray(), ApiKeyContractJson.Default.ProjectCredentialMetadataArray); }
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.Failure(error); }
@@ -25,7 +25,7 @@ public static class ApiKeyEndpoints
             .Produces<ProjectCredentialMetadata[]>().Produces(401).ProducesProblem(403).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/{kind}", async (HttpContext http, string kind, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
@@ -34,9 +34,9 @@ public static class ApiKeyEndpoints
                 var credential = await keys.CreateAsync(context, kind, form["name"].ToString(), form["databaseId"].ToString(), form["scope"].Concat(form["scopes"]).SelectMany(value => (value ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)), http.RequestAborted);
                 return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, revealed: credential) : Results.Json(new ProjectApiKeySecret(ApiKeyService.Metadata(credential.Key), credential.Secret), ApiKeyContractJson.Default.ProjectApiKeySecret, statusCode: 201);
             }
-            catch (Exception error) when (DatabaseEndpoints.KnownFailure(error))
+            catch (Exception error) when (DatabaseResults.KnownFailure(error))
             {
-                return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), kind, form["name"].ToString(), status: DatabaseEndpoints.Status(error), draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString()) : DatabaseEndpoints.Failure(error);
+                return DatabaseResults.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseResults.Message(error), kind, form["name"].ToString(), status: DatabaseResults.Status(error), draftScopes: form["scopes"].ToString(), draftDatabaseId: form["databaseId"].ToString()) : DatabaseResults.Failure(error);
             }
         }).WithGroupName("integration").WithName("createDashboardCredential").WithTags("Credentials")
             .WithSummary("Create a project key and reveal its secret once")
@@ -45,7 +45,7 @@ public static class ApiKeyEndpoints
             .Produces<ProjectApiKeySecret>(201).Produces(200, contentType: "text/html").Produces(401).ProducesProblem(403).ProducesProblem(422).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/{keyId}/revoke", async (HttpContext http, string keyId, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
@@ -59,7 +59,7 @@ public static class ApiKeyEndpoints
             .Produces(204).Produces(303).Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/revoke", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
@@ -72,7 +72,7 @@ public static class ApiKeyEndpoints
             .Produces(204).Produces(303).Produces(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(503);
         endpoints.MapPost("/api/v1/dashboard/credentials/rotate", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");

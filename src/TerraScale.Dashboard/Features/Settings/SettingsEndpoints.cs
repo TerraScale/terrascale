@@ -13,7 +13,7 @@ public static class SettingsEndpoints
             var action = operation;
             endpoints.MapPost("/api/v1/dashboard/settings/" + action, async (HttpContext http, DashboardSessions sessions, AccountService accounts, SettingsService settings) =>
             {
-                var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
                 if (context is null) return Results.Unauthorized();
                 var form = await http.Request.ReadFormAsync(http.RequestAborted);
                 if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");

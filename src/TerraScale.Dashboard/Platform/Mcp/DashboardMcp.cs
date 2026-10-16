@@ -1,8 +1,8 @@
 using System.Net.Http.Headers;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Protocol;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Profile;
+using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.Platform.Mcp;
 

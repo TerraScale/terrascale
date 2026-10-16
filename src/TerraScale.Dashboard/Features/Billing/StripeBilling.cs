@@ -1,10 +1,10 @@
 using System.Text.Json;
 using Stripe;
-using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Onboarding;
+using TerraScale.Dashboard.Features.Billing.Internal;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
-using AccountService = TerraScale.Dashboard.Features.Accounts.AccountService;
+using AccountService = TerraScale.Dashboard.Shared.Accounts.AccountService;
+using TerraScale.Dashboard.Shared.Validation;
 
 namespace TerraScale.Dashboard.Features.Billing;
 

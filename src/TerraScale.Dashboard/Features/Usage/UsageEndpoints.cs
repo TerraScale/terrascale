@@ -27,7 +27,7 @@ public static class UsageEndpoints
         });
         endpoints.MapPost("/api/v1/dashboard/usage/spending-controls", async (HttpContext http, DashboardSessions sessions, AccountService accounts, SpendingService spending) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");

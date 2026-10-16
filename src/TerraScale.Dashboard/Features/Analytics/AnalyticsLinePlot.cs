@@ -1,6 +1,6 @@
 using System.Globalization;
 using System.Text;
-using TerraScale.Dashboard.Features.Home;
+using TerraScale.Dashboard.Shared.Charts;
 
 namespace TerraScale.Dashboard.Features.Analytics;
 
@@ -22,8 +22,8 @@ public sealed record AnalyticsLinePlot(string Label, string GradientId, string A
         var scale = maximum == 0 ? 1 : new[] { 1d, 2d, 5d, 10d }.Select(factor => factor * magnitude).First(value => value >= maximum);
         double X(int index) => 48 + 660d * index / Math.Max(1, starts.Count - 1);
         double Y(long value) => 14 + 154 * (1 - value / scale);
-        string C(double value) => OperationChart.Coordinate(value);
-        var grid = Enumerable.Range(0, 5).Select(step => new ChartGrid(C(14 + 154d * step / 4), maximum > 0 ? OperationChart.Compact(Math.Floor(scale * (4 - step) / 4)) : step == 4 ? "0" : "")).ToArray();
+        string C(double value) => ChartGeometry.Coordinate(value);
+        var grid = Enumerable.Range(0, 5).Select(step => new ChartGrid(C(14 + 154d * step / 4), maximum > 0 ? ChartGeometry.Compact(Math.Floor(scale * (4 - step) / 4)) : step == 4 ? "0" : "")).ToArray();
         var seen = new HashSet<int>();
         var ticks = Enumerable.Range(0, 5).Select(step =>
         {
@@ -44,7 +44,7 @@ public sealed record AnalyticsLinePlot(string Label, string GradientId, string A
                 if ((sample == 0 || Missing(row, sample - 1)) && (sample == starts.Count - 1 || Missing(row, sample + 1))) markers.Add(new(C(X(sample)), C(Y(row.Values[sample])), color, dash));
             }
             Flush(); paths.Add(new(row.Name, color, dash, string.Join(' ', segments)));
-            void Flush() { if (segment.Count == 0) return; segments.Add(OperationChart.Smooth(segment.ToArray())); segment.Clear(); }
+            void Flush() { if (segment.Count == 0) return; segments.Add(ChartGeometry.Smooth(segment.ToArray())); segment.Clear(); }
         }
         var columns = new List<RequestColumn>();
         var stepSize = Math.Max(1, (starts.Count + 59) / 60); var columnWidth = 660d * stepSize / Math.Max(1, starts.Count - 1);

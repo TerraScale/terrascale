@@ -1,6 +1,6 @@
 using Stripe;
-using TerraScale.Dashboard.Features.Accounts;
-using AccountService = TerraScale.Dashboard.Features.Accounts.AccountService;
+using AccountService = TerraScale.Dashboard.Shared.Accounts.AccountService;
+using TerraScale.Dashboard.Features.Billing.Invoices;
 
 namespace TerraScale.Dashboard.Features.Billing;
 

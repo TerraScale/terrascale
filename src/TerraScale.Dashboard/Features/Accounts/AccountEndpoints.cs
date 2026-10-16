@@ -11,7 +11,7 @@ public static class AccountEndpoints
     {
         endpoints.MapGet("/api/v1/auth/me", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
-            var context = await RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             return Results.Json(new AccountIdentityResponse(context.UserId, context.Account.Id,
                 context.Account.Name, context.Account.Email, context.Account.Phone, context.Account.Locale,
