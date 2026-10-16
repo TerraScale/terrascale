@@ -35,7 +35,6 @@ public sealed class TigrisBackupTests
                 services: services => services.AddSingleton<IObjectStore>(provider =>
                     new PrefixedStore(provider.GetRequiredService<S3ObjectStore>(), prefix)),
                 cancellationToken: cancellationToken, failedStartCleanup: cleanup => failedStartCleanup = cleanup);
-            var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
             var database = await api.CreateManagedDatabaseAsync("main");
             using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
             await ManagementApi.CreateCollectionAsync(data, database, "people", cancellationToken);
@@ -45,13 +44,17 @@ public sealed class TigrisBackupTests
                 (await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", id)), new { text }, cancellationToken)).EnsureSuccessStatusCode();
             }
 
-            var shipped = await ShippedAsync(backup, database, DateTimeOffset.UtcNow, cancellationToken);
+            // Turso records commit seconds: separate the writes from the deletes at a whole-second restore boundary.
+            var writtenAt = DateTimeOffset.UtcNow;
+            var shipped = DateTimeOffset.FromUnixTimeSeconds(writtenAt.ToUnixTimeSeconds() + 1);
+            await Task.Delay(shipped - writtenAt, cancellationToken);
             foreach (var id in written.Keys)
             {
                 (await data.DeleteAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", id)), cancellationToken)).EnsureSuccessStatusCode();
             }
 
             using var wiped = await data.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", written.Keys.First())), cancellationToken);
+            await ShippedAsync(api, database, shipped, cancellationToken);
             using var restore = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = shipped, name = "main-restored" }, cancellationToken);
             var restored = database with { Name = "main-restored" };
             var read = new Dictionary<string, string?>();
@@ -75,7 +78,8 @@ public sealed class TigrisBackupTests
             }
 
             await Assert.That(wiped.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-            await Assert.That(restore.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(restore.StatusCode).IsEqualTo(HttpStatusCode.Created)
+                .Because(await restore.Content.ReadAsStringAsync(cancellationToken));
             await Assert.That(read.Count(pair => pair.Value != written[pair.Key])).IsEqualTo(0);
             await Assert.That(objects.Any(key => key.Contains("/snapshots/", StringComparison.Ordinal))).IsTrue();
             await Assert.That(sealedOnly).IsTrue();
@@ -111,17 +115,21 @@ public sealed class TigrisBackupTests
         }
     }
 
-    // Waits for the background shipper (no manual pass) to have read everything written before `after`.
-    private static async Task<DateTimeOffset> ShippedAsync(IContinuousBackup backup, ManagedDatabaseRef database, DateTimeOffset after, CancellationToken cancellationToken)
+    // Waits for the background shipper's proven window; an upload timestamp alone cannot place its transactions.
+    private static async Task ShippedAsync(ManagementApi api, ManagedDatabaseRef database, DateTimeOffset at, CancellationToken cancellationToken)
     {
-        var file = $"v1/{database.Organization}/{database.Project}/{database.Id}";
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(ShippingDeadline);
         while (true)
         {
-            if (backup.Status.Files.SingleOrDefault(status => status.File == file) is { LastShippedAt: { } at, PendingBytes: 0, LastError: null } && at >= after)
+            using var window = await api.Client.GetAsync(ManagementApi.Uri($"{database.Path}/point-in-time"), deadline.Token);
+            if (window.StatusCode != HttpStatusCode.NotFound)
             {
-                return at;
+                window.EnsureSuccessStatusCode();
+                if ((await window.Content.ReadFromJsonAsync<JsonElement>(deadline.Token)).GetProperty("latest").GetDateTimeOffset() >= at)
+                {
+                    return;
+                }
             }
 
             await Task.Delay(TimeSpan.FromSeconds(1), deadline.Token);

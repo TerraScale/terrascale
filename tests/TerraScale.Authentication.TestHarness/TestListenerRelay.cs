@@ -6,7 +6,8 @@ namespace TerraScale.Authentication.Tests;
 // Owns one front port for the whole fixture; stopping a backend never releases that port.
 internal sealed class TestListenerRelay : IAsyncDisposable
 {
-    private const int MaximumConnections = 64;
+    // Parallel store races keep hundreds of HTTP/1.1 connections pooled between requests.
+    private const int MaximumConnections = 1024;
     private readonly Lock gate = new();
     private readonly TcpListener listener = new(IPAddress.Loopback, 0);
     private readonly CancellationTokenSource lifetime = new();
