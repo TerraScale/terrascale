@@ -108,8 +108,10 @@ lab() {
 	local job=$1 env=${2:-} out=$BASE/out/$(basename "$1" .json).out
 	(
 		if [[ -n $env ]]; then
-			TERRABASE_MASTER_KEY=$(sed -n 's/^TERRABASE_MASTER_KEY=//p' "$env")
-			export TERRABASE_MASTER_KEY
+			# The whole 0600 env file: the master key for every job, the bucket and credentials for an s3 source.
+			while IFS== read -r name value; do
+				export "$name=$value"
+			done < <(grep -E '^(AWS_ENDPOINT_URL_S3|AWS_REGION|BUCKET_NAME|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|TERRABASE_MASTER_KEY|SSL_CERT_FILE)=' "$env")
 		fi
 		export TERRABASE_PITR_JOB=$job DOTNET_gcServer=0 DOTNET_GCHeapHardLimit=0x40000000
 		nice -n 19 dotnet "$LAB_DLL" --treenode-filter '/*/*/PitrLabHost/*' --output detailed
@@ -372,16 +374,25 @@ cmd_tcuts() {
 }
 
 # audit ROOT LABEL
+# pitrsrc ROOT: an s3 source for Tigris (bucket and credentials from the environment), the emulator's dir otherwise.
+pitrsrc() {
+	if [[ $TARGET == tigris ]]; then
+		echo '{"kind":"s3"}'
+	else
+		jq -nc --arg root "$1" '{kind:"dir",root:$root}'
+	fi
+}
+
 cmd_audit() {
 	local root=$1 label=$2
-	jq -n --arg root "$root" --arg db "$(db_prefix)" --arg keys "$(keys_prefix)" --arg out "$BASE/out/audit-$label-db.json" \
-		'{mode:"audit",source:{kind:"dir",root:$root},database_prefix:$db,keys_prefix:$keys,out:$out}' >"$BASE/jobs/audit-$label-db.json"
-	jq -n --arg root "$root" --arg out "$BASE/out/audit-$label-system.json" \
-		'{mode:"audit",source:{kind:"dir",root:$root},database_prefix:"v1/_system/",keys_prefix:"v1/keys/_system/",out:$out}' >"$BASE/jobs/audit-$label-system.json"
+	jq -nc --argjson src "$(pitrsrc "$root")" --arg db "$(db_prefix)" --arg keys "$(keys_prefix)" --arg out "$BASE/out/audit-$label-db.json" \
+		'{mode:"audit",source:$src,database_prefix:$db,keys_prefix:$keys,out:$out}' >"$BASE/jobs/audit-$label-db.json"
+	jq -nc --argjson src "$(pitrsrc "$root")" --arg out "$BASE/out/audit-$label-system.json" \
+		'{mode:"audit",source:$src,database_prefix:"v1/_system/",keys_prefix:"v1/keys/_system/",out:$out}' >"$BASE/jobs/audit-$label-system.json"
 	for part in db system; do
 		local lock=(flock -o "$LOCK")
 		[[ -n ${NO_LOCK:-} ]] && lock=()
-		"${lock[@]}" bash -c "$(declare -f lab log); BASE='$BASE' LAB_DLL='$LAB_DLL' lab '$BASE/jobs/audit-$label-$part.json' '${AUDIT_ENV:-$BASE/secrets/source.env}'"
+		"${lock[@]}" bash -c "$(declare -f lab log); BASE='$BASE' LAB_DLL='$LAB_DLL' lab '$BASE/jobs/audit-$label-$part.json' '${AUDIT_ENV:-${SOURCE_ENV:-$BASE/secrets/source.env}}'"
 		log "audit $label $part: $(jq -c '{verdict,problems:[.problems[].kind],totals}' "$BASE/out/audit-$label-$part.json")"
 	done
 }
@@ -438,9 +449,9 @@ cmd_path_a() {
 cmd_copy() {
 	local dest=$BASE/copies/$1 job=$BASE/jobs/download-$1.json
 	mkdir -p "$BASE/copies"
-	jq -n --arg src "$BASE/s3/src-root" --arg db "$(db_prefix)" --arg keys "$(keys_prefix)" --arg root "$dest" --arg m "$BASE/out/download-$1-manifest.json" \
-		'{mode:"download",source:{kind:"dir",root:$src},prefixes:[$db,$keys],root:$root,manifest:$m}' >"$job"
-	bash -c "$(declare -f lab log); BASE='$BASE' LAB_DLL='$LAB_DLL' lab '$job'" # a local copy of under a GB: short, no lock
+	jq -nc --argjson src "$(pitrsrc "$BASE/s3/src-root")" --arg db "$(db_prefix)" --arg keys "$(keys_prefix)" --arg root "$dest" --arg m "$BASE/out/download-$1-manifest.json" \
+		'{mode:"download",source:$src,prefixes:[$db,$keys],root:$root,manifest:$m}' >"$job"
+	bash -c "$(declare -f lab log); BASE='$BASE' LAB_DLL='$LAB_DLL' lab '$job' '${SOURCE_ENV:-}'" # a local copy of under a GB: short, no lock
 	log "copy $1: $(grep -m1 '^download:' "$BASE/out/download-$1.out" || true)"
 }
 
