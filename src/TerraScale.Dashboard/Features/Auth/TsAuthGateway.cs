@@ -99,4 +99,5 @@ public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClie
     private const string Tenant = "terrascale";
     private const string SignInScope = "openid email profile offline_access";
     private static readonly Uri AuthOrigin = new("https://auth.terrascale.tech/");
+    private static readonly Uri TokenEndpoint = new(AuthOrigin, $"/{Tenant}/oauth/token");
 }
