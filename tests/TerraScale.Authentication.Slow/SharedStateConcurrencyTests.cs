@@ -53,9 +53,16 @@ public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
                     : Results.StatusCode(StatusCodes.Status429TooManyRequests));
         });
 
-    private async Task<(AuthTestServer First, AuthTestServer Second, SharedStateTarget Store)> StartPairAsync()
+    private async Task<(AuthTestServer First, AuthTestServer Second, SharedStateTarget Store)> StartPairAsync(string? projectId = null)
     {
         var store = await SharedStateTarget.CreateAsync(fixture);
+        if (projectId is not null)
+        {
+            // Project keys are created only while their project exists at the storage authority.
+            await store.PutAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, projectId,
+                TerraBaseFixture.Json($$"""{"id":"{{projectId}}"}"""));
+        }
+
         var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         var clock = new ManualClock(new DateTimeOffset(2026, 10, 4, 12, 0, 5, TimeSpan.Zero));
         // First-use and rotation require an existing project, checked atomically with the new key.
@@ -81,41 +88,43 @@ public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
     [Test]
     public async Task Concurrent_first_use_on_two_replicas_publishes_every_key_and_converges_on_one_signer()
     {
-        var (first, second, store) = await StartPairAsync();
+        var projectId = AuthStore.NewId();
+        var (first, second, store) = await StartPairAsync(projectId);
         await using var _ = first;
         await using var __ = second;
 
         var kids = await Task.WhenAll(Enumerable.Range(0, 40).Select(async index =>
         {
             var server = index % 2 == 0 ? first : second;
-            var body = await server.Client.GetFromJsonAsync<JsonElement>("/__test/instances/ins_race/kid");
+            var body = await server.Client.GetFromJsonAsync<JsonElement>($"/__test/instances/{projectId}/kid");
             return body.GetProperty("kid").GetString();
         }));
 
         // Replicas may each add a first key; every key that signed is published, and all agree on the signer after.
-        var stored = await KeysAsync(store, "ins_race");
+        var stored = await KeysAsync(store, projectId);
         await Assert.That(kids.All(kid => kid is not null && stored.Contains(kid))).IsTrue();
         var signers = await Task.WhenAll(new[] { first, second }.Select(async server =>
-            (await server.Client.GetFromJsonAsync<JsonElement>("/__test/instances/ins_race/kid")).GetProperty("kid").GetString()));
+            (await server.Client.GetFromJsonAsync<JsonElement>($"/__test/instances/{projectId}/kid")).GetProperty("kid").GetString()));
         await Assert.That(signers.Distinct().Count()).IsEqualTo(1);
     }
 
     [Test]
     public async Task Concurrent_rotations_on_two_replicas_lose_no_key()
     {
-        var (first, second, store) = await StartPairAsync();
+        var projectId = AuthStore.NewId();
+        var (first, second, store) = await StartPairAsync(projectId);
         await using var _ = first;
         await using var __ = second;
-        var initial = (await first.Client.GetFromJsonAsync<JsonElement>("/__test/instances/ins_rotate/kid")).GetProperty("kid").GetString();
+        var initial = (await first.Client.GetFromJsonAsync<JsonElement>($"/__test/instances/{projectId}/kid")).GetProperty("kid").GetString();
 
         // Six rotators: every rotation stores its own key, so none is lost.
         var rotated = await Task.WhenAll(Enumerable.Range(0, 6).Select(async index =>
         {
-            using var response = await (index % 2 == 0 ? first : second).Client.PostAsync("/__test/instances/ins_rotate/keys/rotate", null);
+            using var response = await (index % 2 == 0 ? first : second).Client.PostAsync($"/__test/instances/{projectId}/keys/rotate", null);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
             return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("kid").GetString();
         }));
-        var stored = await KeysAsync(store, "ins_rotate");
+        var stored = await KeysAsync(store, projectId);
 
         await Assert.That(stored.Count).IsEqualTo(7);
         await Assert.That(stored.Distinct().Count()).IsEqualTo(7);
