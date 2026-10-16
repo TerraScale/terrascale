@@ -580,6 +580,61 @@ public sealed class PeerStreamTests
         await Assert.That(rows).IsLessThan(20);
     }
 
+    // Retention raises a connected peer's stored ack over joined rows, past the stream's own ack (review of #169): the stream
+    // goes on from the raised ack, and the peer is never told to refill. gru's and sjc's writes interleave, with a retention
+    // pass each round. sjc lost gru's first document behind the streams' back: only a refill (a forced compare) brings it
+    // back that soon, since anti-entropy repairs a bucket after two differing rounds 60 s apart.
+    [Test]
+    public async Task A_connected_peer_streams_on_without_a_refill_while_retention_raises_its_ack_over_joined_rows()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var first = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":0}"""), CancellationToken.None);
+        });
+        var sjcNode = sjc.Node;
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+        await sjc.LoseAsync("items", first);
+
+        for (var round = 1; round <= 3; round++)
+        {
+            // sjc's writes, joined on gru, with one of gru's own in the middle: the stream's ack ends at gru's group.
+            var (local, remote, localHead) = (EntityIds.New().ToString(), string.Empty, 0L);
+            for (var write = 1; write <= 20; write++)
+            {
+                remote = EntityIds.New().ToString();
+                var id = remote;
+                await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", id, Json($$"""{"r":{{round}}}"""), CancellationToken.None));
+                if (write == 10)
+                {
+                    await gru.WriteAsync(async transaction => await transaction.PutAsync("items", local, Json($$"""{"l":{{round}}}"""), CancellationToken.None));
+                    localHead = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+                }
+            }
+
+            await Assert.That(await gru.UntilAsync(remote, $$"""{"r":{{round}}}""")).IsTrue();
+            await Assert.That(await sjc.UntilAsync(local, $$"""{"l":{{round}}}""")).IsTrue();
+
+            // After the hold, retention cuts past gru's group (so past the stream's ack) and keeps every row after the stored ack.
+            clock.Offset += TimeSpan.FromMinutes(2);
+            await gru.TrimAsync();
+            var stored = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+            await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, localHead, CancellationToken.None)).IsFalse().Because($"round {round}: the cut passes the stream's ack");
+            await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, stored, CancellationToken.None)).IsTrue().Because($"round {round}: rows after the stored ack stay");
+
+            // gru's next write ships from the raised ack, and no refill brought the lost document back meanwhile.
+            var next = EntityIds.New().ToString();
+            await gru.WriteAsync(async transaction => await transaction.PutAsync("items", next, Json($$"""{"next":{{round}}}"""), CancellationToken.None));
+            await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+            await Assert.That(await sjc.ReadAsync(next)).IsEqualTo($$"""{"next":{{round}}}""");
+            await Assert.That(await sjc.ReadAsync(first)).IsNull().Because($"round {round}: a refill brought back the document sjc lost");
+        }
+    }
+
     // The other side of raising acks over joined rows: sjc's own write is joined on gru (rows sjc's ack may rise over), then
     // sjc is away while gru writes. A retention pass may raise sjc's ack over the joined rows but never past gru's
     // unshipped local group, so the group still ships when sjc returns.
