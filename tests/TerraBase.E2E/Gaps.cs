@@ -34,6 +34,16 @@ internal static class Gaps
         ["storage-stall-single"] = new("E2E harness: the storage stall hook (Cluster.StallStorageAsync) not wired to this scenario", "not supported"),
     };
 
+    // On Fly the suite authenticates with a TerraBase API key of its own project (#81), and API keys cannot hold
+    // databases:*. A scenario that creates or deletes a database therefore cannot pass there, whatever slice lands: it
+    // stays a strict expected failure on Fly until an appropriately scoped token replaces the key (the OIDC exchange in
+    // .cos/e2e-credential-plan.md). Locally the nodes accept project tokens with databases:write, so only the slice gap
+    // applies there.
+    private const string NoDatabaseScope = "no appropriately-scoped auth on Fly (API keys can't hold databases:*)";
+
+    private static readonly HashSet<string> CreatesOrDeletesDatabases =
+        [with(StringComparer.Ordinal), "E12", "E13", "deleted-database-stays-deleted", "flow-control"];
+
     /// <summary>Runs <paramref name="scenario"/>: plainly, or as a strict expected failure while it is listed.</summary>
     /// <remarks>
     /// No scenario is skipped for its credential: on Fly every request carries the bound e2e project's ts-auth project token
