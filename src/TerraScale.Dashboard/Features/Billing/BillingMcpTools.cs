@@ -8,7 +8,7 @@ using TerraScale.Dashboard.Platform.Mcp;
 namespace TerraScale.Dashboard.Features.Billing;
 
 [McpServerToolType]
-public sealed class BillingMcpTools(IHttpContextAccessor http, StripeBilling billing)
+public sealed class BillingMcpTools(IHttpContextAccessor http, StripeBilling billing, TimeProvider time)
 {
     [McpServerTool(Name = "cancel_checkout", Title = "Cancel plan checkout", OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Cancel the organization's checkout in progress without changing its plan. Owner only.")]
     public Task<CheckoutCanceled> CancelCheckout(string? organizationId = null, string? projectId = null) => Invoke(async () =>
@@ -34,6 +34,33 @@ public sealed class BillingMcpTools(IHttpContextAccessor http, StripeBilling bil
     [McpServerTool(Name = "undo_plan_change", Title = "Undo scheduled plan change", OpenWorld = true, Idempotent = true, Destructive = false, UseStructuredContent = true), Description("Cancel a plan change scheduled for renewal so the current plan continues. Owner only.")]
     public Task<PlanChanged> UndoPlanChange(string? organizationId = null, string? projectId = null) => Invoke(async () =>
         new PlanChanged(await billing.UndoPlanChangeAsync(Scope(organizationId, projectId), Cancellation)));
+
+    [McpServerTool(Name = "list_plans", Title = "List plans", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = true, Idempotent = true), Description("List the paid plans an organization can subscribe to, with prices in cents, limits, and which plan is current.")]
+    public Task<BillingMcpPlans> Plans(string? organizationId = null, string? projectId = null) => billing.McpPlansAsync(Scope(organizationId, projectId), Cancellation);
+
+    [McpServerTool(Name = "get_billing", Title = "Get billing", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = true, Idempotent = true), Description("Show an organization's plan, billing interval and status, renewal date, scheduled or pending plan changes, checkout state, and (for the owner) payment method summary.")]
+    public Task<BillingMcpSummary> Billing(string? organizationId = null, string? projectId = null) => billing.McpSummaryAsync(Scope(organizationId, projectId), Cancellation);
+
+    [McpServerTool(Name = "list_invoices", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("List organization invoices newest first, ten per page, filtered by status or issued date.")]
+    public async Task<BillingInvoiceList> Invoices(string status = "", string issued = "", int page = 1, string? organizationId = null, string? projectId = null)
+    {
+        var invoices = await billing.InvoicesAsync(Scope(organizationId, projectId), Cancellation);
+        return InvoiceHistory.Page(invoices, status, issued, page, time.GetUtcNow());
+    }
+
+    [McpServerTool(Name = "create_checkout", Title = "Start plan checkout", OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Start a checkout that subscribes an organization without a subscription to a paid plan. Returns the URL the owner must open in a browser to pay; this tool never completes a payment. Owner only.")]
+    public async Task<CheckoutStarted> Checkout(
+        [Description("Plan key from list_plans, such as starter, pro, or business. change_plan and preview_plan_change also accept free for Personal workspaces.")] string plan,
+        [Description("Billing interval: monthly or annual. Omit for free.")] string interval = "", string? organizationId = null, string? projectId = null)
+    {
+        if (PlanCatalog.For(plan).PriceCents <= 0)
+            throw new AccountAccessException("Choose an available paid plan and a monthly or annual interval.", 400);
+        var url = await billing.StartCheckoutAsync(Scope(organizationId, projectId), plan, interval, "/organization?tab=billing", Cancellation);
+        return new(url);
+    }
+
+    [McpServerTool(Name = "get_billing_portal_url", Title = "Open billing portal", OpenWorld = true, Destructive = false, UseStructuredContent = true), Description("Create a billing portal session where the owner updates payment methods and downloads invoices. Returns the URL to open in a browser. Owner only.")]
+    public async Task<BillingMcpPortal> Portal(string? organizationId = null, string? projectId = null) => new(await billing.PortalAsync(Scope(organizationId, projectId), Cancellation));
 
     private AccountContext Scope(string? organizationId, string? projectId) => DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
     private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;

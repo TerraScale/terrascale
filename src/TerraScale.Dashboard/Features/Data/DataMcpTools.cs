@@ -3,13 +3,12 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.ApiKeys;
-using TerraScale.Dashboard.Features.Backups;
-using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Databases;
+using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.DotNet.TerraBase;
+using static TerraScale.Dashboard.Platform.Mcp.McpScope;
 
-namespace TerraScale.Dashboard.Platform.Mcp;
+namespace TerraScale.Dashboard.Features.Data;
 
 public record McpDatabase(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt);
 public sealed record McpDatabaseList(IReadOnlyList<McpDatabase> Databases);
@@ -310,11 +309,6 @@ public sealed partial class DashboardMcpTools
 
     private static McpDatabase DatabaseOutput(DatabaseRecord db) => new(db.Id, db.Name, db.Status, db.Region, DatabaseService.Regions(db), db.CreatedAt);
     private static McpSavedQuery SavedQueryOutput(SavedQuery query) => new(query.Id, query.Name, query.Sql, query.CreatedAt);
-    private async Task<ProjectApiKeySecret> CreateCredentialAsync(AccountContext context, string kind, string name, string[] scopes, string databaseId)
-    {
-        var result = await keys.CreateAsync(context, kind, name, databaseId, scopes, Cancellation);
-        return new(ApiKeyService.Metadata(result.Key), result.Secret);
-    }
     private async Task<McpDocumentWrite> WriteDocumentAsync(AccountContext context, string databaseId, string collection, string operation, string id, JsonElement body, string? version)
     {
         if (!context.CanWrite) throw new AccountAccessException("Write access is required.");
@@ -345,15 +339,27 @@ public sealed partial class DashboardMcpTools
         if (body.ValueKind != JsonValueKind.Object) throw new AccountAccessException("Document must be a JSON object.", 422);
         return body;
     }
-    private static string Alias(string primary, string? alias, string name, bool required = true)
-    {
-        if (primary.Length > 0 && !string.IsNullOrEmpty(alias) && primary != alias) throw new AccountAccessException("Conflicting " + name + " values were provided.", 422);
-        var result = primary.Length > 0 ? primary : alias ?? "";
-        if (required && result.Length == 0) throw new AccountAccessException(name + " is required.", 422);
-        return result;
-    }
     private static void ValidateCollection(AccountContext context, string databaseId, string collection)
     { DatabaseService.Database(context, databaseId); DataService.ValidCollection(collection); }
-    private static void DemandManagement(AccountContext context)
-    { if (!context.CanManage) throw new AccountAccessException("Organization management access is required."); }
 }
+
+public sealed record McpCollectionList(IReadOnlyList<string> Collections);
+public sealed record McpDocument(string Id, JsonElement Value, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Version = null);
+public sealed record McpDocumentList(IReadOnlyList<McpDocument> Documents);
+public sealed record McpDocumentWrite(string Id, string Operation);
+public sealed record McpHistoryVersion(string Revision, bool Deleted, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Value);
+public sealed record McpDocumentHistory(IReadOnlyList<McpHistoryVersion> Versions);
+public sealed record McpCollectionSchema(string Collection, TerraBaseCollectionSchema Schema);
+public sealed record McpSchemaApplied(string Collection, string Status);
+public sealed record McpSqlRows(IReadOnlyList<DatabaseSqlRow> Rows);
+public sealed record McpSqlResponse(McpSqlRows Result);
+public sealed record McpIndex(string Field, string State);
+public sealed record McpIndexResponse(string Collection, IReadOnlyList<McpIndex> Indexes);
+public sealed record McpIndexCreated(string Collection, string Field, string Status);
+public sealed record McpRecommendation(string Id, string Collection, IReadOnlyList<string> Fields, string Reason, string State);
+public sealed record McpRecommendations(IReadOnlyList<McpRecommendation> Recommendations);
+public sealed record McpRecommendationApplied(string RecommendationId, string DatabaseId, string Collection, string Status);
+public sealed record McpMigration(string State, int Completed, int Total, int Percent, string Watermark);
+public sealed record McpIndexMigration([property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] McpMigration? Migration);
+public sealed record McpSavedQuery(string Id, string Name, string Sql, DateTimeOffset CreatedAt);
+public sealed record McpSavedQueries(IReadOnlyList<McpSavedQuery> Queries);
