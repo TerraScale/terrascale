@@ -20,7 +20,7 @@ public static class ShapesExtensions
             {"shape_id":"a07ef7c2873b7b4c4fcbb88c9e682ca5","handle":"{{{Handle}}}","offset":"2","next_offset":"4","covered_offset":"4","values_at":"4","up_to_date":false,"cursor_resume":"opaque-cursor-from-server","changes":[{"offset":"4","ops":[{"op":"upsert","id":"01ARZ3NDEKTSV4RRFFQ69G5FB0","version":"opaque-version-from-server","document":{"title":"Updated"}},{"op":"delete","id":"01ARZ3NDEKTSV4RRFFQ69G5FB1"}]}]}
             """, ["ETag", "TB-Shape-Handle", "TB-Shape-Next-Offset", "TB-Shape-Up-To-Date", "TB-Shape-Cursor"]),
         ["304"] = ("If-None-Match matched; reuse the cached body.", null, ["ETag", "TB-Shape-Handle", "TB-Shape-Next-Offset", "TB-Shape-Up-To-Date", "TB-Shape-Cursor"]),
-        ["307"] = ("offset=-1: Location names snap.<S>.0 of the newest published snapshot, or a resume's local commit boundary (no-store).", null, ["Location", "TB-Shape-Handle"]),
+        ["307"] = ("offset=-1: Location names snap.<S>.0 of the newest published snapshot, or a resume's local commit boundary.", null, ["Location", "TB-Shape-Handle"]),
         ["400"] = ("Error codes: invalid_request, invalid_query.", Error("invalid_request", "resume cursor is malformed"), []),
         ["401"] = ("Error codes: invalid_key.", Error("invalid_key", "The request cannot be served."), []),
         ["403"] = ("Error codes: forbidden_scope.", Error("forbidden_scope", "The request cannot be served."), []),
@@ -42,6 +42,30 @@ public static class ShapesExtensions
         ["TB-Shape-Cursor"] = "live=true only: the bucket to send as cursor on the next long-poll.",
     };
 
+    /// <summary>
+    /// Makes every answer on an <see cref="OriginNoStore"/> route <c>private, no-store</c>, including 401, 403, 429 and errors
+    /// written by other middleware. Register it right after routing.
+    /// </summary>
+    public static WebApplication UseTerraBaseShapeNoStore(this WebApplication app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        app.Use((context, next) =>
+        {
+            if (context.GetEndpoint()?.Metadata.GetMetadata<OriginNoStore>() is not null)
+            {
+                // OnStarting runs last, after error writers that set their own no-store, and survives Response.Clear.
+                context.Response.OnStarting(static state =>
+                {
+                    ((HttpResponse)state).Headers.CacheControl = OriginNoStore.CacheControl;
+                    return Task.CompletedTask;
+                }, context.Response);
+            }
+
+            return next(context);
+        });
+        return app;
+    }
+
     /// <summary>Registers the shape services behind <c>GET …/collections/{collection}/shape</c>, their JSON metadata and examples.</summary>
     public static IServiceCollection AddTerraBaseShapes(this IServiceCollection services) =>
         services.ConfigureHttpJsonOptions(json =>
@@ -61,12 +85,7 @@ public static class ShapesExtensions
                 {
                     foreach (var response in responses.Values.OfType<OpenApiResponse>())
                     {
-                        response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal);
-                        response.Headers["Cache-Control"] = new OpenApiHeader
-                        {
-                            Description = "private, no-store; shape keys and manifests must never be cached.",
-                            Schema = new OpenApiSchema { Type = JsonSchemaType.String },
-                        };
+                        DocumentNoStore(response);
                     }
                 }
 
@@ -122,6 +141,7 @@ public static class ShapesExtensions
                 continue;
             }
 
+            DocumentNoStore(concrete);
             concrete.Description = documented.Description;
             foreach (var media in concrete.Content?.Values.OfType<OpenApiMediaType>() ?? [])
             {
@@ -136,5 +156,30 @@ public static class ShapesExtensions
         }
     }
 
+    private static void DocumentNoStore(OpenApiResponse response)
+    {
+        response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal);
+        response.Headers["Cache-Control"] = new OpenApiHeader
+        {
+            Description = OriginNoStore.CacheControl,
+            Schema = new OpenApiSchema { Type = JsonSchemaType.String },
+        };
+    }
+
     private static string Error(string code, string message) => $$$"""{"error":{"code":"{{{code}}}","message":"{{{message}}}"}}""";
+}
+
+/// <summary>
+/// Endpoint metadata: origin answers hold tenant plaintext or depend on the caller's credential, so no cache may store them.
+/// Only TBS1 ciphertext in Tigris is shared-cacheable (<c>ShapeObjectStore.CacheControl</c>, FR-22/FR-24).
+/// </summary>
+internal sealed class OriginNoStore
+{
+    internal const string CacheControl = "private, no-store";
+
+    internal static readonly OriginNoStore Instance = new();
+
+    private OriginNoStore()
+    {
+    }
 }

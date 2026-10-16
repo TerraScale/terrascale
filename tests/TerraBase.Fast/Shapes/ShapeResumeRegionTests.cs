@@ -51,7 +51,7 @@ public sealed partial class ShapeResumeTests
         await sjc.DurableAsync();
         var resumed = await ResumeAsync(sjc.Data, path, synced.Cursor);
         await Assert.That(resumed.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect).Because(resumed.Message ?? "no refusal message");
-        await Assert.That(resumed.CacheControl).IsEqualTo("no-store");
+        await CacheControlAssert.EqualAsync(resumed.CacheControl);
         await Assert.That(resumed.Handle).IsNotEqualTo(synced.Handle);
         var location = resumed.Location!;
         var offset = location[(location.LastIndexOf("offset=", StringComparison.Ordinal) + "offset=".Length)..];

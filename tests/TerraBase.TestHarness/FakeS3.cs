@@ -503,7 +503,14 @@ public sealed class FakeS3
             get.Content.Headers.LastModified = new DateTimeOffset(2026, 10, 7, 0, 0, 0, TimeSpan.Zero);
             foreach (var (name, value) in _uploadedMetadata.TryGetValue(stored, out var uploaded) ? uploaded.Metadata : [])
             {
-                get.Headers.Add(name, value);
+                if (name is "content-type" or "content-encoding" or "content-disposition")
+                {
+                    get.Content.Headers.TryAddWithoutValidation(name, value);
+                }
+                else
+                {
+                    get.Headers.Add(name, value);
+                }
             }
 
             if (customer)
@@ -526,7 +533,14 @@ public sealed class FakeS3
                 head.Headers.ETag = new(uploaded ? entry!.ETag : ETag(headed));
                 foreach (var (name, value) in uploaded ? entry!.Metadata : [])
                 {
-                    head.Headers.Add(name, value);
+                    if (name is "content-type" or "content-encoding" or "content-disposition")
+                    {
+                        head.Content.Headers.TryAddWithoutValidation(name, value);
+                    }
+                    else
+                    {
+                        head.Headers.Add(name, value);
+                    }
                 }
             }
 
@@ -764,9 +778,10 @@ public sealed class FakeS3
         return Convert.ToHexStringLower(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(signed)));
     }
 
-    // The user metadata and Cache-Control an upload stores; HEAD and GET return them with the object.
+    // The user metadata, Cache-Control and content headers an upload stores; HEAD and GET return them with the object.
     private static KeyValuePair<string, string>[] UploadHeaders(HttpRequestMessage request) => [.. request.Headers
-        .Where(header => header.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Cache-Control", StringComparison.OrdinalIgnoreCase))
+        .Concat(request.Content?.Headers ?? Enumerable.Empty<KeyValuePair<string, IEnumerable<string>>>())
+        .Where(header => header.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Cache-Control", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase) || header.Key.Equals("Content-Disposition", StringComparison.OrdinalIgnoreCase))
         .Select(header => KeyValuePair.Create(header.Key.ToLowerInvariant(), string.Join(",", header.Value)))];
 
     private static string? Header(HttpRequestMessage request, string name) =>

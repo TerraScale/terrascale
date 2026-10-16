@@ -18,7 +18,6 @@ internal sealed class GetShapeManifestEndpoint(
     IDocumentService documents, ITenantDirectory tenants, IShapeLineages lineages, IShapeSnapshots snapshots, IShapeChunks chunks, IShapeMirror mirror)
     : EndpointWithoutRequest<IResult>
 {
-    private const string NoStore = "private, no-store";
     private static readonly SearchValues<char> LowerHex = SearchValues.Create("0123456789abcdef");
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
     private static readonly Validation BadOffset = new("offset must be snap.<S>.<P> or a decimal commit boundary");
@@ -42,6 +41,7 @@ internal sealed class GetShapeManifestEndpoint(
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Metadata(
+            OriginNoStore.Instance,
             Query("handle", "The current handle: h1- and 16 lowercase hex characters.", required: true),
             Query("offset", "snap.<S>.<P> or a decimal commit boundary; -1 is refused.", required: true),
             Query("where", "JSON filter in the grammar of POST …/query."));
@@ -61,7 +61,6 @@ internal sealed class GetShapeManifestEndpoint(
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        HttpContext.Response.Headers.CacheControl = NoStore;
         return await DocumentRoute.CheckTenantAsync(HttpContext, tenants, cancellationToken) switch
         {
             Validation error => ErrorResponse.From(error),

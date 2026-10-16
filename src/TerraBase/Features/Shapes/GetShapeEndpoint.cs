@@ -21,7 +21,6 @@ internal sealed class GetShapeEndpoint(
     IShapeResume resumes, IShapeMetrics metrics, IShapeFlights<ShapeRead> flights, IShapeMirror mirror) : EndpointWithoutRequest<IResult>
 {
     private const string ResumeHeader = "TB-Shape-Resume";
-    private const string CachePrivate = "private, max-age=0, must-revalidate";
 
     // A continuation target fits the 8 KiB request line with 64 bytes reserved for the method and version (section 2).
     private const int MaxTarget = (8 * 1024) - 64;
@@ -73,7 +72,7 @@ internal sealed class GetShapeEndpoint(
                 Schema = new OpenApiSchema { Type = JsonSchemaType.String },
             });
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
-        Metadata(new ListenerMetadata(TerraBaseListener.Client));
+        Metadata(new ListenerMetadata(TerraBaseListener.Client), OriginNoStore.Instance);
     }
 
     private static OpenApiParameter Query(string name, string description, bool required = false) => new()
@@ -149,13 +148,13 @@ internal sealed class GetShapeEndpoint(
         {
             Bootstrap when request.Resume is { } resume => await resumes.ResolveAsync(request.Scope, lineage, resume.Scope, resume.Cursor, cancellationToken) switch
             {
-                long target => Redirect(request, lineage, DocumentRoute.Decimal(target), "no-store"),
+                long target => Redirect(request, lineage, DocumentRoute.Decimal(target)),
                 MustRefetch refetch => Refetch(refetch.Lineage ?? lineage, refetch.Message),
                 Unavailable error => ErrorResponse.From(error),
             },
             Bootstrap => await snapshots.NewestAsync(request.Scope, lineage, cancellationToken) switch
             {
-                long snapshot => Redirect(request, lineage, $"snap.{DocumentRoute.Decimal(snapshot)}.0", CachePrivate),
+                long snapshot => Redirect(request, lineage, $"snap.{DocumentRoute.Decimal(snapshot)}.0"),
                 MustRefetch refetch => Refetch(refetch.Lineage ?? lineage, refetch.Message),
                 QuotaExceeded error => ErrorResponse.From(error),
                 NotFound missing => ErrorResponse.From(missing),
@@ -201,7 +200,6 @@ internal sealed class GetShapeEndpoint(
             mirror.Warm(request.Scope.Database, lineage.ShapeId, lineage.Handle, request.OffsetText, body.NextOffset);
         }
 
-        headers.CacheControl = CachePrivate;
         headers.Vary = "Authorization";
         headers.ETag = $"\"{tag}\"";
         headers["TB-Shape-Handle"] = lineage.Handle;
@@ -242,10 +240,9 @@ internal sealed class GetShapeEndpoint(
         return tags.Any(candidate => candidate.Equals(EntityTagHeaderValue.Any) || candidate.Tag.Value![1..^1] == tag);
     }
 
-    private Microsoft.AspNetCore.Http.HttpResults.RedirectHttpResult Redirect(ShapeRequest request, ShapeLineage lineage, string offset, string cacheControl)
+    private Microsoft.AspNetCore.Http.HttpResults.RedirectHttpResult Redirect(ShapeRequest request, ShapeLineage lineage, string offset)
     {
         var headers = HttpContext.Response.Headers;
-        headers.CacheControl = cacheControl;
         headers.Vary = "Authorization";
         headers["TB-Shape-Handle"] = lineage.Handle;
         HttpContext.Response.ContentType = DocumentRoute.JsonMediaType;
@@ -255,7 +252,6 @@ internal sealed class GetShapeEndpoint(
 
     private Microsoft.AspNetCore.Http.HttpResults.JsonHttpResult<ShapeErrorBody> Refetch(ShapeLineage lineage, string message)
     {
-        HttpContext.Response.Headers.CacheControl = "no-store";
         HttpContext.Response.Headers["TB-Shape-Handle"] = lineage.Handle;
         return TypedResults.Json(
             new ShapeErrorBody(new ShapeErrorDetail("must_refetch", message, lineage.Handle)), ShapeJsonContext.Default.ShapeErrorBody,
