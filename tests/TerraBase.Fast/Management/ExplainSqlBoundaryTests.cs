@@ -626,7 +626,7 @@ public sealed class ExplainSqlBoundaryTests
     {
         var credentials = System.IO.Path.Combine(directory, "user.creds");
         await File.WriteAllTextAsync(credentials, "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n");
-        return await ManagementApi.StartAsync(settings =>
+        var api = await ManagementApi.StartAsync(settings =>
         {
             settings["region"] = "gru-1";
             settings["node-name"] = "gru-member";
@@ -638,6 +638,8 @@ public sealed class ExplainSqlBoundaryTests
             services.AddSingleton<IMemberDirectory>(members);
             hook?.Install(services);
         });
+        await CatalogBootstrap.OpenAsync(api.Server);
+        return api;
     }
 
     private static Task<ManagementApi> StartAsync() =>

@@ -118,6 +118,37 @@ public sealed class DocumentState : ILattice<DocumentState>, IEquatable<Document
         return new DocumentState(new ClearEntry(at, true, at.Stamp), NoFields);
     }
 
+    /// <summary>Every version this state carries: its clear register, field bases, counter epochs, and dots with their removals.</summary>
+    public IEnumerable<EntryVersion> Versions()
+    {
+        if (Clear is { } clear)
+        {
+            yield return clear.Version;
+        }
+
+        foreach (var field in Fields.Values)
+        {
+            if (field.Base is { } @base)
+            {
+                yield return @base.Version;
+            }
+
+            foreach (var counter in field.Counters.Values)
+            {
+                yield return counter.Epoch;
+            }
+
+            foreach (var (dot, entry) in field.Dots)
+            {
+                yield return dot.Version;
+                if (entry.RemovedAt is { } removed)
+                {
+                    yield return removed;
+                }
+            }
+        }
+    }
+
     /// <summary>Sets <paramref name="field"/> to <paramref name="value"/> (merge-patch key, ops <c>set</c> and <c>append</c>).</summary>
     public DocumentState Set(EntryVersion at, string field, JsonElement value) => Write(at, field, Canonical(value));
 

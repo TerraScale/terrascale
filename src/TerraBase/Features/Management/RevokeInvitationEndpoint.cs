@@ -3,6 +3,7 @@ using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management;
 
@@ -15,6 +16,8 @@ public sealed class RevokeInvitationEndpoint(IAccessService access) : EndpointWi
         Delete(ManagementRoute.Invitations + "/{invitation}");
         Metadata(AnchoredRevocation.Instance);
         Name("revokeInvitation");
+        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
+        Metadata(AnchoredRevocation.Instance);
         Summary("Revokes an invitation");
         Description($"Needs admin. The invitation becomes revoked and its token stops working; 409 when it is no longer pending. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);

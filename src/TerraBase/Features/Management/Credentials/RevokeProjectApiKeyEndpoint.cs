@@ -4,6 +4,7 @@ using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management.Credentials;
 
@@ -16,6 +17,8 @@ public sealed class RevokeProjectApiKeyEndpoint(IApiKeyStore keys) : EndpointWit
         Delete(ManagementRoute.ApiKey);
         Metadata(AnchoredRevocation.Instance);
         Name("revokeProjectApiKey");
+        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
+        Metadata(AnchoredRevocation.Instance);
         Summary("Revokes a data API key of a project");
         Description("The key stops authenticating immediately." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);

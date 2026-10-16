@@ -176,38 +176,7 @@ internal sealed partial class SqliteStorageTransaction
             }
         }
 
-        return Versions(state).Any(version => (version.Node.Region == self.Region && version.Node.Member == self.Member)
+        return state.Versions().Any(version => (version.Node.Region == self.Region && version.Node.Member == self.Member)
             || (applied.TryGetValue(version.Node.Value, out var stamp) && version.Stamp.Value <= stamp));
-    }
-
-    // Every version a state carries: its clear register, field bases, counter epochs, and dots with their removals.
-    private static IEnumerable<EntryVersion> Versions(DocumentState state)
-    {
-        if (state.Clear is { } clear)
-        {
-            yield return clear.Version;
-        }
-
-        foreach (var field in state.Fields.Values)
-        {
-            if (field.Base is { } @base)
-            {
-                yield return @base.Version;
-            }
-
-            foreach (var counter in field.Counters.Values)
-            {
-                yield return counter.Epoch;
-            }
-
-            foreach (var (dot, entry) in field.Dots)
-            {
-                yield return dot.Version;
-                if (entry.RemovedAt is { } removed)
-                {
-                    yield return removed;
-                }
-            }
-        }
     }
 }

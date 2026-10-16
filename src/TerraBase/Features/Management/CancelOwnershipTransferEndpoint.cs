@@ -3,6 +3,7 @@ using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management;
 
@@ -15,6 +16,8 @@ public sealed class CancelOwnershipTransferEndpoint(IAccessService access) : End
         Delete(ManagementRoute.OwnershipTransfer);
         Metadata(AnchoredRevocation.Instance);
         Name("cancelOwnershipTransfer");
+        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
+        Metadata(AnchoredRevocation.Instance);
         Summary("Cancels the pending ownership transfer");
         Description($"Needs owner, or to be the nominee. 404 when none is pending. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);
