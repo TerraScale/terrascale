@@ -86,6 +86,12 @@ public interface IStorageTransaction : IAsyncDisposable
     /// </summary>
     Guid Scope { get; }
 
+    /// <summary>
+    /// Whether a write stores the materialized document, canonical JSON with fields in name order (a client database),
+    /// rather than the bytes written (the system database, until it becomes a lattice database too).
+    /// </summary>
+    bool Materializes { get; }
+
     /// <summary>Reads one live document, or <see langword="null"/> when it is absent or deleted.</summary>
     ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken);
 
