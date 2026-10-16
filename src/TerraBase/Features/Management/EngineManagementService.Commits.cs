@@ -205,6 +205,23 @@ internal sealed partial class EngineManagementService
             }
         }
 
+        if (result is CommitOutcome)
+        {
+            foreach (var (index, database) in created.Where(pair => pair.Value.Existing))
+            {
+                var initialized = await InitializeLocalAsync(database.Tenant, cancellationToken).ConfigureAwait(false);
+                if (initialized is not Done)
+                {
+                    return initialized switch
+                    {
+                        NotFound error => new CommitRejected(error, index),
+                        Unavailable error => new CommitRejected(error, index),
+                        Done => throw new UnreachableException(),
+                    };
+                }
+            }
+        }
+
         return result;
     }
 
