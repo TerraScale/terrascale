@@ -1214,7 +1214,28 @@ internal sealed partial class SqliteStorageTransaction(
             Follow("the after-commit hook", store.AfterSqliteCommit);
             if (ChangedReaderState)
             {
-                Follow("forgetting the collection names", store.ForgetCollections);
+                result = new CommitResult(offset, IsClient && _captured > 0 && !_captureSuspended ? ReadCommitMarker() : null);
+                Committed = result;
+            }
+            finally
+            {
+                // A marker failure cannot skip cache invalidation or waking waiters for the committed write.
+                Follow("the after-commit hook", store.AfterSqliteCommit);
+                if (ChangedReaderState)
+                {
+                    Follow("forgetting the collection names", store.ForgetCollections);
+                }
+
+                if (_statisticsChanged)
+                {
+                    // Sessions opened before ANALYZE still use the old statistics.
+                    Follow("moving the statistics generation", store.StatisticsChanged);
+                }
+
+                if (_offset is not null)
+                {
+                    Follow("the commit notification", committed);
+                }
             }
 
             if (_statisticsChanged)

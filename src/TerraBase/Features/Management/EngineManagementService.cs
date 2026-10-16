@@ -11,6 +11,7 @@ using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;

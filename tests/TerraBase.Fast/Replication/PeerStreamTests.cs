@@ -1067,13 +1067,13 @@ public sealed class PeerStreamTests
     {
         await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
         var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
-        _ = DocumentField.TryParse("n", out var n);
-        await gru.WriteAsync(async transaction => await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None));
-        var deadline = DateTime.UtcNow + Deadline;
-        while (await sjc.CollectionIdAsync("items") is null && DateTime.UtcNow < deadline)
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
         {
-            await Task.Delay(100);
-        }
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
 
         await Assert.That(await sjc.CollectionIdAsync("items")).IsNotNull();
 
