@@ -294,5 +294,10 @@
     .detailed__table tbody tr:nth-child(-n + 5) td {
       white-space: nowrap;
     }
+
+    .detailed__table tbody tr:nth-child(-n + 5) td {
+      white-space: nowrap;
+      overflow-wrap: normal;
+    }
   }
 </style>
