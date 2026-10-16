@@ -1,8 +1,7 @@
 using System.Text;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.Auth;
 
-namespace TerraScale.Dashboard.UI;
+namespace TerraScale.Dashboard.Shared.UI;
 
 public sealed record ShellModel(AccountContext Context, string Title, string Nonce, string CsrfToken, string ReturnUrl)
 {

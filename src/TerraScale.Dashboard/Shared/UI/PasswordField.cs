@@ -1,4 +1,4 @@
-namespace TerraScale.Dashboard.UI;
+namespace TerraScale.Dashboard.Shared.UI;
 
 public sealed record PasswordField(string Id, string Autocomplete, string Error = "", string Placeholder = "", int MinLength = 0, string HintId = "", bool Autofocus = false)
 {

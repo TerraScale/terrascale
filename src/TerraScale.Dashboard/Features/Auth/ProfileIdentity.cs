@@ -46,7 +46,7 @@ public static class ProfileAuthEndpoints
         catch (AuthRequestRejectedException error)
         {
             if (error.RetryAfter > 0) context.Response.Headers.RetryAfter = error.RetryAfter.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            return AuthEndpoints.SeeOther("/profile?tab=security&error=" + Uri.EscapeDataString(error.Message));
+            return HttpRedirects.SeeOther("/profile?tab=security&error=" + Uri.EscapeDataString(error.Message));
         }
     }
 }

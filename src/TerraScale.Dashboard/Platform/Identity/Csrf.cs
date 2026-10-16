@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace TerraScale.Dashboard.Features.Auth;
+namespace TerraScale.Dashboard.Platform.Identity;
 
 public static class Csrf
 {

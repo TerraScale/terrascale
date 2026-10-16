@@ -1,7 +1,7 @@
 using System.Text.Json.Serialization;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Databases;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Backups;
 

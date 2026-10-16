@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Auth.AuthPage>
-@implements IUsesLayout<TerraScale.Dashboard.UI.Slices.Document, DocumentModel>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.Document, DocumentModel>
 @inject AssetUrls Assets
 <main class="ts-login">
     <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
@@ -29,7 +29,7 @@
                         <input type="hidden" name="email" value="@Model.Email" />
                         @if (Model.Mode == "code-verify")
                         {
-                            @(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.EmailCodeInput, string>(Model.CodeError))
+                            @(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.EmailCodeInput, string>(Model.CodeError))
                         }
                         else
                         {
@@ -49,13 +49,13 @@
                     {
                         <div class="ts-field">
                             <div class="ts-row-between"><label class="ts-label" for="password">@(Model.Mode == "login" ? "Password" : "New password")</label>@if (Model.Mode == "login") { <a class="ts-link ts-meta" href="/reset-password">Forgot password</a> }</div>
-                            @(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.PasswordInput, TerraScale.Dashboard.UI.PasswordField>(new("password", Model.Mode == "login" ? "current-password" : "new-password", Model.PasswordError, Model.Mode == "login" ? "Enter your password" : "", Model.Mode == "reset-complete" ? 12 : 0, Autofocus: Model.Mode == "login" && Model.Error.Length != 0)))
+                            @(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.PasswordInput, TerraScale.Dashboard.Shared.UI.PasswordField>(new("password", Model.Mode == "login" ? "current-password" : "new-password", Model.PasswordError, Model.Mode == "login" ? "Enter your password" : "", Model.Mode == "reset-complete" ? 12 : 0, Autofocus: Model.Mode == "login" && Model.Error.Length != 0)))
                             @if (Model.PasswordError.Length != 0) { <p class="ts-field-error" id="password-error">@Model.PasswordError</p> }
                         </div>
                     }
                     @if (Model.Mode == "reset-complete")
                     {
-                        <div class="ts-field"><label class="ts-label" for="confirmPassword">Confirm new password</label>@(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.PasswordInput, TerraScale.Dashboard.UI.PasswordField>(new("confirmPassword", "new-password", Model.ConfirmPasswordError)))
+                        <div class="ts-field"><label class="ts-label" for="confirmPassword">Confirm new password</label>@(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.PasswordInput, TerraScale.Dashboard.Shared.UI.PasswordField>(new("confirmPassword", "new-password", Model.ConfirmPasswordError)))
                         @if (Model.ConfirmPasswordError.Length != 0) { <p class="ts-field-error" id="confirmPassword-error">@Model.ConfirmPasswordError</p> }</div>
                     }
                     <button class="ts-btn ts-btn-primary ts-btn-block" type="submit">@(Model.Mode switch { "login" => "Sign in", "code-verify" => "Continue", "reset-complete" => "Change password", _ => "Email me a code" })</button>

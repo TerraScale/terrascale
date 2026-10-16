@@ -23,7 +23,7 @@
          data-on:resize__window__debounce.150ms="innerWidth >= 768 &amp;&amp; $navOpen &amp;&amp; ($navOpen = false, setTimeout(() => document.getElementById('ts-navigation').focus()))">
         <button type="button" id="ts-nav-toggle" class="ts-icon-btn ts-fab-nav" aria-label="Open navigation" aria-controls="ts-navigation" aria-expanded="false" data-on:click="$navOpen = true; setTimeout(() => document.getElementById('ts-nav-close').focus())" data-attr:aria-expanded="$navOpen ? 'true' : 'false'">@ShellIcons.Svg("panel-left", 18)</button>
         <div class="ts-nav-backdrop" aria-hidden="true" data-on:click="$navOpen = false; setTimeout(() => document.getElementById('ts-nav-toggle').focus())"></div>
-        @(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.ShellSidebar, ShellModel>(Model))
+        @(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.ShellSidebar, ShellModel>(Model))
         <div class="ts-inset" data-attr:inert="$navOpen">
             <div id="ts-main" class="ts-main" tabindex="-1">@await RenderBodyAsync()</div>
         </div>

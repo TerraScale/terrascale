@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Onboarding.OnboardingPage>
-@implements IUsesLayout<TerraScale.Dashboard.UI.Slices.Document, DocumentModel>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.Document, DocumentModel>
 @inject AssetUrls Assets
 <main class="ts-login">
     <section class="ts-login-hero ts-auth-hero" aria-hidden="true">
@@ -39,10 +39,10 @@
                     @if (Model.FieldError("email").Length != 0) { <p class="ts-field-error" id="email-error">@Model.Error</p> }
                 </div>
                 <div class="ts-form-grid">
-                    <div class="ts-field"><label class="ts-label" for="password">Password</label>@(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.PasswordInput, PasswordField>(new("password", "new-password", Model.FieldError("password"), MinLength: 12, HintId: "password-hint")))<p class="ts-field-hint" id="password-hint">Use at least 12 characters.</p>
+                    <div class="ts-field"><label class="ts-label" for="password">Password</label>@(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.PasswordInput, PasswordField>(new("password", "new-password", Model.FieldError("password"), MinLength: 12, HintId: "password-hint")))<p class="ts-field-hint" id="password-hint">Use at least 12 characters.</p>
                         @if (Model.FieldError("password").Length != 0) { <p class="ts-field-error" id="password-error">@Model.Error</p> }
                     </div>
-                    <div class="ts-field"><label class="ts-label" for="confirmPassword">Confirm password</label>@(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.PasswordInput, PasswordField>(new("confirmPassword", "new-password", Model.FieldError("confirmPassword"))))
+                    <div class="ts-field"><label class="ts-label" for="confirmPassword">Confirm password</label>@(await RenderPartialAsync<TerraScale.Dashboard.Shared.UI.Slices.PasswordInput, PasswordField>(new("confirmPassword", "new-password", Model.FieldError("confirmPassword"))))
                         @if (Model.FieldError("confirmPassword").Length != 0) { <p class="ts-field-error" id="confirmPassword-error">@Model.Error</p> }
                     </div>
                 </div>

@@ -4,7 +4,7 @@ using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Usage;
 using TerraScale.Dashboard.Platform.Datastar;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Organizations;
 
@@ -198,13 +198,13 @@ public static class OrganizationEndpoints
             if (operation == "create")
             {
                 await accounts.CreateBusinessAsync(context.Session, name, http.RequestAborted);
-                return AuthEndpoints.SeeOther("/organization?tab=billing");
+                return HttpRedirects.SeeOther("/organization?tab=billing");
             }
             var operations = http.RequestServices.GetRequiredService<OrganizationOperations>();
             if (operation == "rename")
             {
                 await operations.RenameAsync(context, name, http.RequestAborted);
-                return AuthEndpoints.SeeOther("/organization");
+                return HttpRedirects.SeeOther("/organization");
             }
             var regions = form["regions"].Select(item => item ?? "").Where(item => item.Length > 0).ToArray();
             var primary = form["region"].ToString();
@@ -218,7 +218,7 @@ public static class OrganizationEndpoints
                 var project = context.Organization?.Projects.GetValueOrDefault(projectId ?? "") ?? throw new AccountAccessException("Project is unavailable.", 404);
                 await operations.UpdateProjectAsync(context with { Project = project }, name, primary, backup, regions, http.RequestAborted);
             }
-            return AuthEndpoints.SeeOther("/organization?tab=projects");
+            return HttpRedirects.SeeOther("/organization?tab=projects");
         }
         catch (AccountAccessException error)
         {

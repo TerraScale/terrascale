@@ -12,11 +12,6 @@ public interface IAuthOidcGateway
     Task<SessionRecord> ExchangeAsync(string code, OidcFlow flow, CancellationToken cancellationToken);
 }
 
-public interface IAuthRefreshGateway
-{
-    Task<SessionRecord> RefreshAsync(SessionRecord session, CancellationToken cancellationToken);
-}
-
 public interface IAuthLogoutGateway
 {
     Task<string> EndSessionUrlAsync(string dashboardOrigin, CancellationToken cancellationToken);

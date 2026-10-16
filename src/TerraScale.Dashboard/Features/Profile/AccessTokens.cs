@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Profile;

@@ -2,7 +2,7 @@ using System.Globalization;
 using TerraScale.Dashboard.Features.Analytics;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Home;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Usage;
 

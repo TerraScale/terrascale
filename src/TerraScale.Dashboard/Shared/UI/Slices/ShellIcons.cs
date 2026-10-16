@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Html;
-namespace TerraScale.Dashboard.UI;
+namespace TerraScale.Dashboard.Shared.UI;
 
 public static class ShellIcons
 {

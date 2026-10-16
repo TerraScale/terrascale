@@ -100,5 +100,3 @@ public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClie
     private const string SignInScope = "openid email profile offline_access";
     private static readonly Uri AuthOrigin = new("https://auth.terrascale.tech/");
 }
-
-public sealed class SignInRejectedException : Exception;

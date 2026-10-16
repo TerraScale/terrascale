@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace TerraScale.Dashboard.UI;
+namespace TerraScale.Dashboard.Shared.UI;
 
 public sealed record RegionMapField(string SelectId, string Selected = "GRU", IReadOnlyDictionary<string, string>? Pings = null, IReadOnlyList<string>? Available = null)
 {
