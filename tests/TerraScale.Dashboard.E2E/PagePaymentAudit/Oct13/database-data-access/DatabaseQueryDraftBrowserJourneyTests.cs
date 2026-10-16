@@ -6,8 +6,7 @@ using TerraScale.Dashboard.E2E.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.DatabaseDataAccess;
 
-[ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
-[NotInParallel("dashboard-demo")]
+[ClassDataSource<DashboardE2EFixture>]
 [Category("Slow")]
 public sealed class DatabaseQueryDraftBrowserJourneyTests(DashboardE2EFixture fixture)
 {
