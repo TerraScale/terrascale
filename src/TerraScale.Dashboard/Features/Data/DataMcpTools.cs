@@ -156,25 +156,25 @@ public sealed partial class DashboardMcpTools
     [McpServerTool(Name = "get_document", Title = "Get document", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read one document by ID. Set includeVersion for a conditional-write version.")]
     public async Task<McpDocument> Document(string databaseId, string collection, string documentId = "", string? organizationId = null, string? projectId = null, string? id = null, bool includeVersion = false)
     {
-        var row = await data.GetAsync(Scope(organizationId, projectId), databaseId, collection, Alias(documentId, id, "documentId"), Cancellation);
+        var row = await data.GetAsync(Scope(organizationId, projectId), databaseId, collection, McpScope.Alias(documentId, id, "documentId"), Cancellation);
         return new(row.Id, row.Document, includeVersion ? row.Version : null);
     }
 
     [McpServerTool(Name = "create_document", Title = "Create document", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a document in a collection. Fails if the ID already exists. Requires write access.")]
     public Task<McpDocumentWrite> CreateDocument(string databaseId, string collection, [Description("The document body as a JSON object. Required unless using the value alias.")] Dictionary<string, JsonElement>? document = null, string documentId = "", string? organizationId = null, string? projectId = null, JsonElement? value = null, string? id = null) =>
-        WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "create", Alias(documentId, id, "documentId", false), Body(document, value), "");
+        WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "create", McpScope.Alias(documentId, id, "documentId", false), Body(document, value), "");
 
     [McpServerTool(Name = "replace_document", Title = "Replace document", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Replace an existing document's whole body. Requires write access. An omitted version uses the current version as a precondition.")]
     public Task<McpDocumentWrite> ReplaceDocument(string databaseId, string collection, string documentId = "", [Description("The new document body as a JSON object. Required unless using the value alias.")] Dictionary<string, JsonElement>? document = null, string? version = null, string? organizationId = null, string? projectId = null, string? id = null, JsonElement? value = null) =>
-        WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "replace", Alias(documentId, id, "documentId"), Body(document, value), version);
+        WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "replace", McpScope.Alias(documentId, id, "documentId"), Body(document, value), version);
 
     [McpServerTool(Name = "patch_document", Title = "Patch document", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Merge-patch an existing document (RFC 7396). Requires write access. An omitted version uses the current version as a precondition.")]
     public Task<McpDocumentWrite> PatchDocument(string databaseId, string collection, string documentId = "", [Description("RFC 7396 JSON merge patch: null removes fields and nested objects merge. Required unless using the value alias.")] Dictionary<string, JsonElement>? patch = null, string? version = null, string? organizationId = null, string? projectId = null, string? id = null, JsonElement? value = null) =>
-        WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "patch", Alias(documentId, id, "documentId"), Body(patch, value), version);
+        WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "patch", McpScope.Alias(documentId, id, "documentId"), Body(patch, value), version);
 
     [McpServerTool(Name = "delete_document", Title = "Delete document", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Delete a document. Requires write access. An omitted version uses the current version as a precondition.")]
     public Task<McpDocumentWrite> DeleteDocument(string databaseId, string collection, string documentId = "", string? version = null, string? organizationId = null, string? projectId = null, string? id = null) =>
-        WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "delete", Alias(documentId, id, "documentId"), default, version);
+        WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "delete", McpScope.Alias(documentId, id, "documentId"), default, version);
 
     [McpServerTool(Name = "get_document_history", Title = "Get document history", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a document's recorded versions, oldest first, including deletions. Requires a producer history contract.")]
     public Task<McpDocumentHistory> History(string databaseId, string collection, string documentId, string? organizationId = null, string? projectId = null)
@@ -193,7 +193,7 @@ public sealed partial class DashboardMcpTools
     {
         var context = Scope(organizationId, projectId);
         ValidateCollection(context, databaseId, collection);
-        DemandManagement(context);
+        McpScope.DemandManagement(context);
         if (schema is null) throw new AccountAccessException("Schema must be a JSON object.", 422);
         throw new AccountAccessException("The data plane does not expose editable collection schemas.", 503);
     }
@@ -241,7 +241,7 @@ public sealed partial class DashboardMcpTools
     public Task<McpRecommendationApplied> ApplyRecommendation(string recommendationId, string databaseId = "", string collection = "", string? organizationId = null, string? projectId = null)
     {
         var context = Scope(organizationId, projectId);
-        DemandManagement(context);
+        McpScope.DemandManagement(context);
         if (databaseId.Length > 0) DatabaseService.Database(context, databaseId);
         if (collection.Length > 0) DataService.ValidCollection(collection);
         if (recommendationId.Length is 0 or > 128) throw new AccountAccessException("Choose a valid recommendation ID.", 422);
@@ -329,6 +329,7 @@ public sealed partial class DashboardMcpTools
             return new(error.DocumentId, operation) { Outcome = "unknown", OperationId = error.OperationId, Message = error.Message };
         }
     }
+
     private static JsonElement Body(Dictionary<string, JsonElement>? document, JsonElement? value)
     {
         var primary = document is null ? default : JsonSerializer.SerializeToElement(document);
