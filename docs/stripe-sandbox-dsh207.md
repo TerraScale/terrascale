@@ -9,15 +9,16 @@ other options; key mode is inferred from the delivered key prefix.
 ## Run the read-only audit
 
 Run this from the dashboard checkout in an environment where Fly has
-delivered the dashboard identity:
+delivered the dashboard identity as environment variables:
 
 ```sh
 nice -n 19 dotnet run --project src/TerraScale.Dashboard -- audit-stripe
 ```
 
-Automatic delivery of the fixed identity and deployment of the C# application
-remain open qualification gates. This command consumes the identity; it does
-not create or deliver it. See [`csharp-migration.md`](csharp-migration.md).
+Production runtime secrets are Fly secrets on each Fly app; CI secrets are
+GitHub Actions secrets. The complete inventory lives in the terrascale repository
+under `ops/secrets/`. This command consumes the identity; it does not provision
+it. See [`csharp-migration.md`](csharp-migration.md).
 
 The audit uses the fixed canonical origin `https://dash.terrascale.tech`,
 shared by checkout return/cancel URLs, the billing portal return URL and
@@ -38,8 +39,8 @@ acceptance evidence before a staging gate can be considered complete.
 ## Fly dev environment
 
 The dev app remains `terrascale-dashboard-dev`. Use the existing Fly app and
-its automatically delivered identity; do not add dotenv files or manually
-copy vendor credentials into Fly settings. See
+its Fly-secret identity; do not add dotenv files or copy vendor credentials
+into code or config. See
 [`fly-stripe-dev-dsh207.md`](fly-stripe-dev-dsh207.md) for app readiness and
 deploy checks. The fixed audit origin is the canonical production origin even
 when the command runs from a development checkout; the command does not provide

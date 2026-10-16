@@ -17,14 +17,17 @@ one matching enabled endpoint per Stripe account.
 ## Read-only Stripe audit
 
 Run the app's audit command in an environment where Fly has delivered the
-dashboard secrets:
+dashboard secrets as environment variables:
 
 ```sh
 nice -n 19 dotnet run --project src/TerraScale.Dashboard -- audit-stripe
 ```
 
 The secret names and formats are in [`identity-descriptor.md`](identity-descriptor.md).
-Fly delivers the environment variables; this audit does not provision secrets.
+Production runtime secrets are Fly secrets on each Fly app; CI secrets are
+GitHub Actions secrets. The complete inventory lives in the terrascale repository under
+`ops/secrets/`. This command consumes secrets; it does not provision them.
+See [`csharp-migration.md`](csharp-migration.md) for the open runtime gates.
 
 The command takes no options and reads DashboardIdentity from Fly environment variables. It
 does not accept keys, webhook secrets, origins, API versions or mode settings on

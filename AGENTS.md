@@ -51,7 +51,7 @@ Production uses persistent state and ts-auth authorization. In-memory demos, fak
 
 - Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled-config keys, deploy toggles, or kill switches in code, config, or CI. Delete switches and their guarded paths.
 - Every region always serves. NetBird membership admits a node automatically; it discovers all regions, infers its own from where it runs, and serves with no per-region enable step.
-- Discover authentication, database, and orchestrator endpoints automatically. OCI Vault creates, delivers, and configures every first-party production secret; vendor-issued keys (such as Stripe and Cloudflare) are stored once there and picked up automatically. Nobody copies secrets by hand.
+- Discover authentication, database, and orchestrator endpoints automatically. Production runtime secrets are Fly secrets on each Fly app; CI secrets are GitHub Actions secrets. The complete secret inventory lives in the terrascale repository under `ops/secrets/`. Never put secret values in code or config.
 - Values have one correct setting in code. Expose no tuning knobs.
 - CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance, with a one-line reason.
 

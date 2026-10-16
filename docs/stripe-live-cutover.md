@@ -1,9 +1,11 @@
 # Stripe live cutover — TS-709
 
 The [zero-configuration contract](zero-configuration.md) requires billing to be
-always available, with vendor keys stored once as Fly secrets and delivered
-as environment variables. This document retains the authorization, data-integrity and
-financial acceptance boundaries; it does not introduce a billing enable switch.
+always available. Production runtime secrets are Fly secrets on each Fly app,
+delivered as environment variables; CI secrets are GitHub Actions secrets. The
+complete inventory lives in the terrascale repository under `ops/secrets/`.
+This document retains the authorization, data-integrity and financial
+acceptance boundaries; it does not introduce a billing enable switch.
 The production binary has no demo or billing mode switches. Preparation alone does not authorize charges, refunds or destructive resets.
 
 ## Verify the serving target
@@ -26,15 +28,30 @@ The greenfield rebuild removed the old dashboard machine. The rollout creates
 one machine in each of gru, sjc and fra and checks the tested commit and region
 from `/health/ready`. State is in TerraBase, never a dashboard volume.
 
-Record machine/release IDs and Fly secret names/digests. Never record values.
-Database provisioning belongs to TerraBase startup; identity bootstrap belongs
-to ts-auth.
+Historical (Go application on `https://dash.terrascale.tech`): read-only
+inspection on 2026-10-09 at 07:10 UTC found Machine
+`d8d96000b74e78` started in `gru` on completed release `v135`, with its check
+passing. Readiness, native password login and email-code pages returned `200`;
+the login pages retain CSRF controls. Actual authentication was not exercised.
+That 2026-10-09 inspection found ten deployed `Payments__Stripe__*` secrets,
+but no `STRIPE_*` or `DASHBOARD_PUBLIC_ORIGIN` settings. The Go application ignored those legacy
+names, so that inspection found billing unconfigured. Do not add compatibility
+aliases; the current Fly-secret contract is documented in
+[`identity-descriptor.md`](identity-descriptor.md).
 
-## Fly delivery and provider verification
+Record Machine/release IDs and Fly secret names/digests in the ticket. Never
+record credential values. Database provisioning belongs to TerraBase startup;
+identity bootstrap belongs to ts-auth. Do not touch Forgejo, ts-ops or
+homelab hosts.
+
+## Fly secrets and provider verification
 
 The vendor-issued Stripe account key and endpoint-specific signing secret are
-`STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` on `ts-dashboard`. Fly injects
-them into the application. There is no identity file or external vault.
+`STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` Fly secrets on `ts-dashboard`.
+Fly injects them into the application as environment variables. There is no
+identity file or external vault. CI credentials belong in GitHub Actions
+secrets. Use the terrascale `ops/secrets/` inventory; never assemble dotenv
+files or record secret values. This documentation does not provision secrets.
 See [identity-descriptor.md](identity-descriptor.md) for formats and ownership.
 
 Verify account authorization, restricted-key permissions, six distinct recurring
@@ -97,8 +114,8 @@ Verified Stripe sandbox deliveries remain required before live approval.
 ## Production acceptance
 
 Deploy the reviewed runtime through its normal quality and integrity gates.
-Fly must deliver the verified credentials automatically; manual secret
-import and demo-switch recipes are retired. Existing delivery and switch paths
+Fly secrets must deliver the verified runtime credentials automatically; manual
+secret import and demo-switch recipes are retired. Existing delivery and switch paths
 remain runtime gaps, so this document cannot certify a completed cutover.
 
 Explicit authorization remains required for actual charges/refunds and approved
