@@ -464,7 +464,7 @@ tstart() {
 
 # target_up LABEL ROOT [KEY_FROM]: s3-serve on ROOT plus a fresh, isolated target node that adopts the run's tenant.
 target_up() {
-	local label=$1 root=$2 from=${3:-$BASE/secrets/source.env} tdir=$BASE/targets/$1 pid
+	local label=$1 root=$2 from=${3:-${SOURCE_ENV:-$BASE/secrets/source.env}} tdir=$BASE/targets/$1 pid
 	mkdir -p "$BASE/targets"
 	if [[ ! -e $BASE/s3/t-$label.ready.json ]]; then
 		cmd_serve "t-$label" "$root"
@@ -547,7 +547,7 @@ cmd_mutate() {
 		'{mode:"mutate",from:$from,to:$to,mutation:{kind:$kind,key:$key},out:$out}' >"$job"
 	lab "$job"
 	log "fault $label: $(jq -c '{kind,key,new_key}' "$BASE/out/mutate-$label.json")"
-	[[ -n ${NO_AUDIT:-} ]] || AUDIT_ENV=$BASE/secrets/source.env NO_LOCK=1 cmd_audit "$to" "$label" || true
+	[[ -n ${NO_AUDIT:-} ]] || AUDIT_ENV="${SOURCE_ENV:-$BASE/secrets/source.env}" NO_LOCK=1 cmd_audit "$to" "$label" || true
 }
 
 # fault KIND KEY CUT LABEL: the mutated copy (made now unless mutate made it) restored at CUT on a fresh target.
@@ -678,7 +678,7 @@ delete_range() {
 		[[ -d $BASE/faults/$label-$k ]] || MUTATE_FROM=$prev NO_AUDIT=1 cmd_mutate delete_segment "${keys[$k]}" "$label-$k" >&2
 		prev=$BASE/faults/$label-$k
 	done
-	AUDIT_ENV=$BASE/secrets/source.env NO_LOCK=1 cmd_audit "$prev" "$label" >&2 || true
+	AUDIT_ENV="${SOURCE_ENV:-$BASE/secrets/source.env}" NO_LOCK=1 cmd_audit "$prev" "$label" >&2 || true
 	echo "$prev"
 }
 
@@ -741,7 +741,7 @@ defect_p1_restores() {
 			[[ -d $BASE/faults/p1a-$k ]] || MUTATE_FROM=$prev NO_AUDIT=1 cmd_mutate delete_segment "${keys[$k]}" "p1a-$k"
 			prev=$BASE/faults/p1a-$k
 		done
-		AUDIT_ENV=$BASE/secrets/source.env NO_LOCK=1 cmd_audit "$prev" p1a || true
+		AUDIT_ENV="${SOURCE_ENV:-$BASE/secrets/source.env}" NO_LOCK=1 cmd_audit "$prev" p1a || true
 		NO_RESTART=1 cmd_path_b "$prev" p1a C2
 	fi
 	read -r final final_at < <(jq -r '[.generations[].segments[]] | max_by(.at_ms) | "\(.key) \(.at_ms)"' "$BASE/out/audit-src-db.json")
@@ -1001,8 +1001,12 @@ matrix-monitored)
 	cmd_tcuts
 	cmd_path_a
 	cmd_stop
-	if [[ ${FAULTS:-0} == 1 ]]; then
+	if [[ ${PATHB:-1} == 1 ]]; then
 		cmd_copy pristine
+		cmd_copy pathb
+		cmd_path_b "$BASE/copies/pathb" pathb
+	fi
+	if [[ ${FAULTS:-0} == 1 ]]; then
 		cmd_fault_matrix
 	fi
 	if [[ -s $BASE/out/monitor.pid ]] && kill -0 "$(cat "$BASE/out/monitor.pid")" 2>/dev/null; then
