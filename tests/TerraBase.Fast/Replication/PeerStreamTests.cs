@@ -2178,6 +2178,71 @@ public sealed class PeerStreamTests
         }
     }
 
+    [Test]
+    public async Task A_refill_that_fails_for_one_database_does_not_hold_back_the_others_on_the_stream()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (first, second) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        foreach (var database in new[] { cluster.Database, cluster.Second })
+        {
+            await gru.WriteAsync(database, async transaction =>
+            {
+                _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+                _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
+            });
+            await Assert.That(await sjc.UntilAsync(database, first, """{"n":1}""")).IsTrue();
+        }
+
+        // Both databases get a write while sjc is away a day, so gru no longer holds what sjc lacks: both need a refill.
+        var sjcNode = sjc.Node;
+        await sjc.StopAsync();
+        foreach (var database in new[] { cluster.Database, cluster.Second })
+        {
+            var acked = await gru.Groups.AckedAsync(database, sjcNode, CancellationToken.None);
+            await gru.WriteAsync(database, async transaction => await transaction.PutAsync("items", second, Json("""{"n":2}"""), CancellationToken.None));
+            clock.Offset = TimeSpan.FromHours(25);
+            var deadline = DateTime.UtcNow + Deadline;
+            while (await gru.Groups.RetainsAsync(database, acked, CancellationToken.None) && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(200);
+            }
+
+            await Assert.That(await gru.Groups.RetainsAsync(database, acked, CancellationToken.None)).IsFalse();
+        }
+
+        // The database gru ships first cannot refill on sjc. The other one still refills over the same stream.
+        var stuck = await gru.Groups.ListDatabasesAsync(CancellationToken.None).FirstAsync(database => database == cluster.Database || database == cluster.Second);
+        var other = stuck == cluster.Database ? cluster.Second : cluster.Database;
+        cluster.FailDigests = stuck;
+        await sjc.StartAsync();
+        await Assert.That(await sjc.UntilAsync(other, second, """{"n":2}""")).IsTrue();
+        await Assert.That(await sjc.ReadAsync(stuck, second)).IsNull();
+
+        // Once the fault clears, the refused refill is tried again and the stuck database catches up too.
+        cluster.FailDigests = null;
+        await Assert.That(await sjc.UntilAsync(stuck, second, """{"n":2}""")).IsTrue();
+    }
+
+    // Anti-entropy's view of the replicas, failing to read one database's digests while asked to.
+    private sealed class FailingDigests(IReplicaStates inner, Func<TenantContext?> failing) : IReplicaStates
+    {
+        public ValueTask<byte[]?> DigestAsync(TenantContext database, CancellationToken cancellationToken) =>
+            failing() == database ? throw new IOException("a digest read that fails") : inner.DigestAsync(database, cancellationToken);
+
+        public ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)> ReadBucketsAsync(
+            TenantContext database, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken) =>
+            inner.ReadBucketsAsync(database, buckets, after, maxStates, maxBytes, cancellationToken);
+
+        public ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken) => inner.StableAsync(database, cancellationToken);
+
+        public ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken) => inner.HorizonAsync(database, cancellationToken);
+
+        public ValueTask<int> ForgetAsync(TenantContext database, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
+            inner.ForgetAsync(database, keys, horizon, cancellationToken);
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
@@ -2400,8 +2465,10 @@ public sealed class PeerStreamTests
         // The source the peer streams read: the CDC tailer, or the fake.
         public IChangeGroupSource Groups => Api.Server.Services.GetRequiredService<IChangeGroupSource>();
 
-        public async Task<IDatabaseStore> StoreAsync() =>
-            await Engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None) ?? throw new InvalidOperationException("the database is missing");
+        public Task<IDatabaseStore> StoreAsync() => StoreAsync(cluster.Database);
+
+        public async Task<IDatabaseStore> StoreAsync(TenantContext database) =>
+            await Engine.OpenDatabaseAsync(database, CancellationToken.None) ?? throw new InvalidOperationException("the database is missing");
 
         public async Task<TenantContext> CreateOtherDatabaseAsync()
         {
@@ -2439,9 +2506,11 @@ public sealed class PeerStreamTests
         }
 
         // Runs `work` as one queued write of the database's group commit, as the document API does.
-        public async Task WriteAsync(Func<IStorageTransaction, Task> work)
+        public Task WriteAsync(Func<IStorageTransaction, Task> work) => WriteAsync(cluster.Database, work);
+
+        public async Task WriteAsync(TenantContext database, Func<IStorageTransaction, Task> work)
         {
-            var store = await StoreAsync();
+            var store = await StoreAsync(database);
             _ = await store.WriteAsync(async (transaction, _) =>
             {
                 await work(transaction);
@@ -2450,12 +2519,14 @@ public sealed class PeerStreamTests
         }
 
         // Whether the document's materialized JSON becomes `expected` within the deadline.
-        public async Task<bool> UntilAsync(string id, string expected)
+        public Task<bool> UntilAsync(string id, string expected) => UntilAsync(cluster.Database, id, expected);
+
+        public async Task<bool> UntilAsync(TenantContext database, string id, string expected)
         {
             var deadline = DateTime.UtcNow + Deadline;
             while (DateTime.UtcNow < deadline)
             {
-                if (await ReadAsync(id) == expected)
+                if (await ReadAsync(database, id) == expected)
                 {
                     return true;
                 }
@@ -2856,6 +2927,7 @@ public sealed class PeerStreamTests
                     new { op = "create_organization", id = database.OrganizationId, name = $"peers-{database.OrganizationId}" },
                     new { op = "create_project", organization = database.OrganizationId, id = database.ProjectId, name = "peers" },
                     new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "main", id = database.DatabaseId, replica_regions = replicas },
+                    new { op = "create_database", organization = database.OrganizationId, project = database.ProjectId, name = "second", id = cluster.Second.DatabaseId, replica_regions = replicas },
                 },
             });
             using var service = Api.Service(Api.User);
