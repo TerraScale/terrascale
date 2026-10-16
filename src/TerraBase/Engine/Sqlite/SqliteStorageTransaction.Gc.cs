@@ -146,4 +146,68 @@ internal sealed partial class SqliteStorageTransaction
 
             return forgotten;
         }, cancellationToken, mutation: true);
+
+    public async ValueTask<bool> JoinStaleAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return await RunAsync(() => !HeldBefore(collection, id, state) && Join(collection, id, state, at, cancellationToken), cancellationToken, mutation: true)
+            .ConfigureAwait(false);
+    }
+
+    // Worker-only: whether this machine lacks the document's state although the state shows it once held it: an entry
+    // minted here (any epoch), or one at or below what it applied from that entry's origin. Every such entry reached this
+    // file, so its state was here and went: garbage collection removes only a deletion's tombstone, below the horizon.
+    private bool HeldBefore(string collection, string id, DocumentState state)
+    {
+        var held = Command("SELECT 1 FROM _tb_state WHERE collection = $collection AND id = $id;", collection);
+        held.Parameters.AddWithValue("$id", id);
+        if (held.ExecuteScalar() is not null)
+        {
+            return false;
+        }
+
+        var self = Member.Id;
+        var applied = new Dictionary<ulong, ulong>();
+        using (var reader = Command("SELECT node, applied FROM _tb_peers;").ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                applied[unchecked((ulong)reader.GetInt64(0))] = unchecked((ulong)reader.GetInt64(1));
+            }
+        }
+
+        return Versions(state).Any(version => (version.Node.Region == self.Region && version.Node.Member == self.Member)
+            || (applied.TryGetValue(version.Node.Value, out var stamp) && version.Stamp.Value <= stamp));
+    }
+
+    // Every version a state carries: its clear register, field bases, counter epochs, and dots with their removals.
+    private static IEnumerable<EntryVersion> Versions(DocumentState state)
+    {
+        if (state.Clear is { } clear)
+        {
+            yield return clear.Version;
+        }
+
+        foreach (var field in state.Fields.Values)
+        {
+            if (field.Base is { } @base)
+            {
+                yield return @base.Version;
+            }
+
+            foreach (var counter in field.Counters.Values)
+            {
+                yield return counter.Epoch;
+            }
+
+            foreach (var (dot, entry) in field.Dots)
+            {
+                yield return dot.Version;
+                if (entry.RemovedAt is { } removed)
+                {
+                    yield return removed;
+                }
+            }
+        }
+    }
 }

@@ -2684,6 +2684,36 @@ public sealed class PeerStreamTests
             return true;
         }
 
+        // Writes {"a":"stale"} to the document (a create, or an edit of field a) while this machine is cut off from every
+        // peer (they leave its list, so no stream ships it), checks that no peer got it, then stops this machine and lists
+        // the peers again: the write stays queued in its CDC until it returns.
+        public async Task StaleEditAsync(Cluster cluster, string id, bool create = false)
+        {
+            var peers = (await cluster.Members.ListAsync(CancellationToken.None)).Where(member => member.Region != Region).ToList();
+            peers.ForEach(member => cluster.Members.Leave(member.Name));
+            await Assert.That(await UntilStreamsAsync([])).IsTrue();
+            using var value = JsonDocument.Parse("\"stale\"");
+            var stale = value.RootElement.Clone();
+            await WriteAsync(async transaction => _ = create
+                ? await transaction.PutAsync("items", id, Json("""{"a":"stale"}"""), CancellationToken.None)
+                : await transaction.PatchAsync("items", id, Json("{}"), [new FieldOperation(FieldOperationKind.Set, "a", stale)], CancellationToken.None));
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            foreach (var other in cluster.Machines.Where(machine => machine != this))
+            {
+                await Assert.That((await other.ReadAsync(id))?.Contains("stale", StringComparison.Ordinal) ?? false).IsFalse();
+            }
+
+            await StopAsync();
+            peers.ForEach(cluster.Members.Join);
+        }
+
+        // Whether `peer` acknowledges every change group this machine has, within the deadline.
+        public async Task<bool> UntilAckedByAsync(TenantContext database, ReplicaId peer)
+        {
+            var head = await Groups.HeadAsync(database, CancellationToken.None);
+            return await UntilAckedAsync(database, peer, head);
+        }
+
         // Whether the outbound streams that report connected become exactly `regions` within the deadline.
         public async Task<bool> UntilStreamsAsync(string[] regions)
         {
