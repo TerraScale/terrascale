@@ -1,0 +1,44 @@
+--- a/src/TerraScale.Dashboard/Features/Databases/DatabaseEndpoints.cs
++++ b/src/TerraScale.Dashboard/Features/Databases/DatabaseEndpoints.cs
+@@ -105,18 +105,19 @@
+         try { choices = await backend.RegionsAsync(http.RequestAborted); }
+         catch (HttpRequestException) { regionsError = "Region discovery is unavailable. Try again shortly."; }
+         var contents = new List<CollectionStats>();
++        var contentsAvailable = true;
+         if (context.Project is not null)
+         {
+             foreach (var database in context.Project.Databases.Values)
+             {
+                 try { contents.AddRange(await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, database, http.RequestAborted), database.Id, http.RequestAborted)); }
+-                catch (HttpRequestException) { if (error.Length == 0) error = "Database counts are unavailable. The data plane did not answer."; }
++                catch (HttpRequestException) { contentsAvailable = false; if (error.Length == 0) error = "Database counts are unavailable. The data plane did not answer."; }
+             }
+         }
+         var search = http.Request.Query["q"].ToString().Trim();
+         var all = context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
+         var filtered = all.Where(database => search.Length == 0 || database.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
+-        var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regions, regionsError));
++        var result = DatabasesView.Create(new(ShellModel.For(http, context, "Databases"), filtered, choices, contents, search, error, openCreate || http.Request.Query["create"] == "1", name, regions, regionsError, contentsAvailable));
+         result.StatusCode = status;
+         return result;
+     }
+--- a/src/TerraScale.Dashboard/Features/Databases/DatabasePages.cs
++++ b/src/TerraScale.Dashboard/Features/Databases/DatabasePages.cs
+@@ -6,5 +6,5 @@
+ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecord> Databases, IReadOnlyList<DatabaseRegion> Choices,
+-    IReadOnlyList<CollectionStats> Contents, string Search = "", string Error = "", bool OpenCreate = false, string Name = "", IReadOnlyList<string>? Selection = null, string RegionsError = "")
++    IReadOnlyList<CollectionStats> Contents, string Search = "", string Error = "", bool OpenCreate = false, string Name = "", IReadOnlyList<string>? Selection = null, string RegionsError = "", bool ContentsAvailable = true)
+ {
+     public AccountContext Context => Shell.Context;
+     public IReadOnlyList<DatabaseRecord> All => Context.Project?.Databases.Values.OrderBy(database => database.Name, StringComparer.Ordinal).ToArray() ?? [];
+--- a/src/TerraScale.Dashboard/Features/Databases/DatabasesView.cshtml
++++ b/src/TerraScale.Dashboard/Features/Databases/DatabasesView.cshtml
+@@ -11,7 +11,7 @@
+ <div class="ts-stat" data-tone="amber"><dt class="ts-stat-label"><span class="ts-dot" aria-hidden="true"></span>Provisioning</dt><dd class="ts-stat-value">@Model.Progress</dd><dd class="ts-stat-detail">Being created</dd></div>
+ @if(Model.Failed > 0){<div class="ts-stat" data-tone="rose"><dt class="ts-stat-label"><span class="ts-dot" aria-hidden="true"></span>Failed</dt><dd class="ts-stat-value">@Model.Failed</dd><dd class="ts-stat-detail">Provisioning did not finish</dd></div>}
+ <div class="ts-stat" data-tone="cyan"><dt class="ts-stat-label"><span class="ts-dot" aria-hidden="true"></span>Regions</dt><dd class="ts-stat-value">@Model.Regions.Count</dd><dd class="ts-stat-detail">@string.Join(" · ",Model.Regions)</dd></div>
+-<div class="ts-stat" data-tone="violet"><dt class="ts-stat-label"><span class="ts-dot" aria-hidden="true"></span>Documents</dt><dd class="ts-stat-value">@Model.Contents.Sum(item => item.Documents)</dd><dd class="ts-stat-detail">Across @Model.Contents.Count collections, @DatabasesPage.Bytes(Model.Contents.Sum(item => item.Bytes))</dd></div>
++<div class="ts-stat" data-tone="violet"><dt class="ts-stat-label"><span class="ts-dot" aria-hidden="true"></span>Documents</dt><dd class="ts-stat-value">@(Model.ContentsAvailable ? Model.Contents.Sum(item => item.Documents).ToString(System.Globalization.CultureInfo.InvariantCulture) : "—")</dd><dd class="ts-stat-detail">@if(Model.ContentsAvailable){<span>Across @Model.Contents.Count collections, @DatabasesPage.Bytes(Model.Contents.Sum(item => item.Bytes))</span>}else{<span>Not reported by provider</span>}</dd></div>
+ </dl>}
+ <section class="ts-card ts-card-flush" id="project-databases" aria-labelledby="project-databases-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="project-databases-title">Project databases</h2><p class="ts-card-description">@Model.Description</p></div><div class="ts-card-actions ts-card-actions-shrinkable"><form class="ts-filters ts-db-search" method="get" action="/databases" role="search" aria-label="Search databases"><input class="ts-input ts-input-sm" type="search" name="q" value="@Model.Search" placeholder="Search databases..." aria-label="Search databases" />@if(Model.Search.Length > 0){<a class="ts-btn ts-btn-ghost ts-btn-sm" href="/databases">Clear</a>}</form>@if(Model.CanProvision){<button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="create-database">@Icons.Render("Plus",16)<span>New database</span></button>}</div></header><div class="ts-card-body">
+ @if(Model.Databases.Count > 0){<div class="ts-table-wrap"><table class="ts-table ts-db-table" role="table"><thead role="rowgroup"><tr role="row"><th role="columnheader">Name</th><th role="columnheader">Status</th><th role="columnheader">Regions</th></tr></thead><tbody role="rowgroup">@foreach(var database in Model.Databases){<tr role="row"><td role="cell"><a class="ts-db-name" href="@DatabaseService.Path(database.Id)"><span class="ts-db-icon" aria-hidden="true">@Icons.Render("Database",18)</span><span class="ts-list-main"><span class="ts-strong">@database.Name</span><span class="ts-meta">Created @database.CreatedAt.UtcDateTime.ToString("MMM d, yyyy",System.Globalization.CultureInfo.InvariantCulture)</span></span></a></td><td role="cell"><span class="ts-badge ts-badge-tone" data-tone="@DatabasesPage.Tone(database.Status)"><span class="ts-dot" aria-hidden="true"></span>@database.Status</span></td><td role="cell"><span class="ts-db-chips">@foreach(var region in DatabaseService.Regions(database)){<span class="ts-db-chip">@DatabasesPage.RegionDisplay(region)</span>}</span></td></tr>}</tbody></table></div>}
