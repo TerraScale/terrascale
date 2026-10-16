@@ -100,6 +100,23 @@ public sealed class TerraBaseContractTests
         yield return ("documents", "createIndex", client => Db(client).CreateIndexAsync("users", ["email"]));
         yield return ("documents", "dropIndex", client => Db(client).DropIndexAsync("users_email"));
 
+        yield return ("project", "createDatabase", client => ProjectClient(client).CreateDatabaseAsync("app"));
+        yield return ("project", "listDatabases", client => ProjectClient(client).ListDatabasesAsync());
+        yield return ("project", "getDatabase", client => ProjectClient(client).GetDatabaseAsync("app"));
+        yield return ("project", "deleteDatabase", client => ProjectClient(client).DeleteDatabaseAsync("app"));
+        yield return ("project", "updateDatabase", client => ProjectClient(client).SetDatabaseRegionsAsync("app", []));
+        yield return ("project", "getProjectUsage", client => ProjectClient(client).GetUsageAsync());
+        yield return ("documents", "getDatabaseUsage", client => Db(client).GetUsageAsync());
+        yield return ("documents", "streamDatabaseChanges", client => ReadFirstAsync(Db(client).StreamChangesAsync()));
+        yield return ("documents", "getDeclaredCollectionSchema", client => Db(client).GetDeclaredSchemaAsync("users"));
+        yield return ("documents", "putDeclaredCollectionSchema", client => Db(client).PutDeclaredSchemaAsync("users", json));
+        yield return ("documents", "deleteDeclaredCollectionSchema", client => Db(client).DeleteDeclaredSchemaAsync("users"));
+        yield return ("documents", "branchDatabase", client => Db(client).BranchAsync("copy"));
+        yield return ("documents", "runSql", client => Db(client).RunSqlAsync("SELECT * FROM users LIMIT 1"));
+        yield return ("documents", "listIndexes", client => Db(client).ListIndexesAsync());
+        yield return ("documents", "createIndex", client => Db(client).CreateIndexAsync("users", ["email"]));
+        yield return ("documents", "dropIndex", client => Db(client).DropIndexAsync("users_email"));
+
         static TerraBasePlatformClient P(object client) => (TerraBasePlatformClient)client;
         yield return ("platform", "listPlatformDatabases", client => P(client).ListDatabasesAsync());
         yield return ("platform", "listPlatformCollections", client => P(client).ListCollectionsAsync("platform-auth"));
