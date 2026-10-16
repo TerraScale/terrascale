@@ -10,6 +10,8 @@
 #   vtest.sh with-key <cmd..>  run <cmd> with the pinned-run target (env) and a fresh 24 h documents:read/write key in its
 #                              environment only, revoked on exit
 #   vtest.sh env               print the TERRABASE_E2E_FLY_* exports (no secret) for a pinned run
+#   vtest.sh rotate-peer       stage a fresh peer credential (applied by the next deploy) and keep it, 0600, in
+#                              $peer, so operator calls pass #271's peer gate
 #   vtest.sh destroy           delete the bucket and the app (machines + volumes); the owner runs this after the reruns
 # Every created resource is appended to ../resources.md. Secrets are generated into a 0600 temp file, piped to
 # `fly secrets import`, and deleted: never printed, never in argv, git or logs.
@@ -17,6 +19,8 @@ set -euo pipefail; set +x
 here=$(cd "$(dirname "$0")" && pwd); repo=$(git -C "$here" rev-parse --show-toplevel)
 A=ts-vtest-tb O=terrascale-previews-515 REGIONS=(gru sjc fra) URL=https://ts-vtest-tb.fly.dev
 ledger=$here/../resources.md state=$here/../state.env
+# The peer credential as a curl header file (curl -H @file): outside the repo, never in argv, deleted by destroy.
+peer=${XDG_RUNTIME_DIR:-/tmp}/ts-vtest-peer.header
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$ledger" >&2; }
 fly() { flyctl "$@"; }
 machines_json() { fly machine list -a $A --json; }
@@ -26,16 +30,17 @@ save_state() {
   local G S F; G=$(machine_of gru) S=$(machine_of sjc) F=$(machine_of fra)
   { echo "G=$G S=$S F=$F"; [[ -f $state ]] && grep -E '^(owner|org|project)=' "$state" || true; } > "$state.new"; mv "$state.new" "$state"
 }
-# Operator calls on a machine's internal listener (h2c) through flyctl proxy; after #271 they need the peer credential,
-# which only exists in Fly's secret store (rerun note in README).
+# Operator calls on a machine's internal listener (h2c) through flyctl proxy; after #271 they send the peer credential
+# from $peer (create and rotate-peer write it; a cluster created before either needs rotate-peer + deploy).
 op_proxy() { fly proxy "$1:8081" "$2.vm.$A.internal" -a $A > /dev/null 2>&1 & echo $!; }
 wait_port() { for _ in $(seq 1 30); do curl -s -m 2 -o /dev/null --http2-prior-knowledge "http://127.0.0.1:$1/healthz" && return; sleep 1; done; echo "proxy :$1 not up" >&2; return 1; }
 
 secrets() {
-  local tmp; tmp=$(mktemp); chmod 600 "$tmp"; trap 'rm -f "$tmp"' RETURN
-  printf 'TERRABASE_MASTER_KEY=%s\nTERRABASE_PEER_SECRET=%s\n' "$(openssl rand -base64 32)" "$(openssl rand -hex 32)" > "$tmp"
+  local tmp p; tmp=$(mktemp); chmod 600 "$tmp"; trap 'rm -f "$tmp"' RETURN; p=$(openssl rand -hex 32)
+  (umask 077; printf 'X-TerraBase-Peer-Credential: %s\n' "$p" > "$peer")
+  { [[ ${1:-} == peer ]] || printf 'TERRABASE_MASTER_KEY=%s\n' "$(openssl rand -base64 32)"; printf 'TERRABASE_PEER_SECRET=%s\n' "$p"; } > "$tmp"
   fly secrets import --stage -a $A < "$tmp" > /dev/null
-  log "secrets set on $A: TERRABASE_MASTER_KEY, TERRABASE_PEER_SECRET (generated, temp file deleted)"
+  log "secrets staged on $A: $(cut -d= -f1 "$tmp" | paste -sd' ') (generated, temp file deleted; peer header kept 0600 outside the repo)"
 }
 
 deploy() {
@@ -51,7 +56,7 @@ deploy() {
   log "deployed $sha to $A: image $image digest $(machines_json | jq -r '[.[].image_ref.digest] | unique | join(",")')"
 }
 
-case ${1:?usage: vtest.sh create|clone|deploy|bootstrap|status|partition|heal|with-key|env|destroy} in
+case ${1:?usage: vtest.sh create|clone|deploy|bootstrap|status|partition|heal|with-key|env|rotate-peer|destroy} in
 create)
   sha=${2:?create <sha>}
   fly apps create $A --org $O > /dev/null; log "created app $A in $O"
@@ -72,7 +77,7 @@ deploy) deploy "${2:?deploy <sha>}"; save_state 2> /dev/null || echo "fewer than
 bootstrap)
   save_state; source "$state"; pid=$(op_proxy 18181 "$G"); trap 'kill $pid 2> /dev/null' EXIT; wait_port 18181
   owner=$(python3 -I -c 'import os,time; e="0123456789ABCDEFGHJKMNPQRSTVWXYZ"; n=(int(time.time()*1000)<<80)|int.from_bytes(os.urandom(10)); print("".join(e[(n>>(5*i))&31] for i in range(25,-1,-1)))')
-  mg() { curl -sS --fail-with-body --http2-prior-knowledge -H "X-TerraBase-User-Id: $owner" -H 'content-type: application/json' "$@"; }
+  mg() { curl -sS --fail-with-body --http2-prior-knowledge -H @"$peer" -H "X-TerraBase-User-Id: $owner" -H 'content-type: application/json' "$@"; }
   org=$(mg -d '{"name":"vtest"}' http://127.0.0.1:18181/v1/management/organizations | jq -r .id)
   project=$(mg -d '{"name":"vtest"}' "http://127.0.0.1:18181/v1/management/organizations/$org/projects" | jq -r .id)
   mg -d '{"name":"e2e","homeRegion":"gru","replicaRegions":["sjc","fra"]}' "http://127.0.0.1:18181/v1/management/organizations/$org/projects/$project/databases" | jq -c '{id,name,homeRegion,replicaRegions}'
@@ -96,10 +101,10 @@ partition|heal)
 with-key)
   shift; source "$state"; pid=$(op_proxy 18181 "$G"); trap 'kill $pid 2> /dev/null' EXIT; wait_port 18181
   keys=http://127.0.0.1:18181/v1/management/organizations/$org/projects/$project/api-keys; name="run-$(date -u +%Y%m%dT%H%M%S)"
-  issued=$(curl -sS --fail --http2-prior-knowledge -H 'content-type: application/json' -d "$(jq -cn --arg n "$name" --arg o "$org" --arg p "$project" \
+  issued=$(curl -sS --fail --http2-prior-knowledge -H @"$peer" -H 'content-type: application/json' -d "$(jq -cn --arg n "$name" --arg o "$org" --arg p "$project" \
     '{name: $n, scopes: ["documents:read", "documents:write"], organizationId: $o, projectId: $p, expiresAt: (now + 86400 | todate)}')" http://127.0.0.1:18181/admin/api-keys)
   id=$(jq -r .id <<< "$issued"); echo "key $name id $id" >&2
-  revoke() { curl -sS --fail --http2-prior-knowledge -H "X-TerraBase-User-Id: $owner" -X DELETE -o /dev/null "$keys/$id" && echo "key $id revoked" >&2 || echo "REVOKE FAILED for key $id" >&2; kill $pid 2> /dev/null; }
+  revoke() { curl -sS --fail --http2-prior-knowledge -H @"$peer" -H "X-TerraBase-User-Id: $owner" -X DELETE -o /dev/null "$keys/$id" && echo "key $id revoked" >&2 || echo "REVOKE FAILED for key $id" >&2; kill $pid 2> /dev/null; }
   trap revoke EXIT
   TERRABASE_E2E_FLY_API_KEY=$(jq -r .secret <<< "$issued"); unset issued; export TERRABASE_E2E_FLY_API_KEY
   eval "$("$0" env)"
@@ -108,8 +113,9 @@ env)
   source "$state"
   echo "export TERRABASE_E2E_FLY_URL=$URL/ TERRABASE_E2E_FLY_APP=$A TERRABASE_E2E_FLY_ORG=$O TERRABASE_E2E_FLY_MACHINES=gru=$G,sjc=$S,fra=$F"
   echo "export TERRABASE_E2E_FLY_PROJECT=$project TERRABASE_E2E_FLY_DATABASE=e2e TERRABASE_E2E_FLY_REVISION=$(curl -sS -H "fly-force-instance-id: $G" $URL/healthz | jq -r .revision)" ;;
+rotate-peer) secrets peer; echo "staged: run vtest.sh deploy <sha> to apply it" >&2 ;;
 destroy)
   fly storage destroy $A -y > /dev/null && log "destroyed Tigris bucket $A"
-  fly apps destroy $A -y > /dev/null && log "destroyed app $A (its machines and volumes)" ;;
+  fly apps destroy $A -y > /dev/null && log "destroyed app $A (its machines and volumes)"; rm -f "$peer" ;;
 *) echo "unknown command $1" >&2; exit 2 ;;
 esac

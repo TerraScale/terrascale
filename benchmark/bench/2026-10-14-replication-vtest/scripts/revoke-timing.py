@@ -13,11 +13,12 @@ state = dict(kv.split("=", 1) for line in open(os.path.join(here, "..", "state.e
 APP, HOST, OP = "ts-vtest-tb", "ts-vtest-tb.fly.dev", "http://127.0.0.1:18185"
 MACHINES = {"sjc": state["S"], "fra": state["F"]}
 INTERVAL, WORKERS = 0.05, 8
+PEER = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "ts-vtest-peer.header")  # vtest.sh rotate-peer writes it
 
 
 def op(method, path, body=None):
     args = ["curl", "-sS", "-m", "30", "--fail-with-body", "--http2-prior-knowledge", "-X", method, "-H", "X-TerraBase-User-Id: " + state["owner"],
-            "-H", "content-type: application/json", "-w", "\n%{http_code}", OP + path]
+            "-H", "@" + PEER, "-H", "content-type: application/json", "-w", "\n%{http_code}", OP + path]
     if body is not None:
         args[1:1] = ["-d", json.dumps(body)]
     for _ in range(60):
