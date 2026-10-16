@@ -16,8 +16,9 @@ public static class StorageFormat
     /// 7: document digests include the length-prefixed collection and id.
     /// 8: <c>_tb_peers.incarnation</c> scopes each peer's ack to the
     /// incarnation of the file whose change log it names (R3). 9: persisted change-feed prefix hashes.
+    /// 10: node-local copy faults, write intents and pinned refill certificates (A6).
     /// </summary>
-    public const int Version = 9;
+    public const int Version = 10;
 
     /// <summary>The format this build writes, for example <c>2-3f1a09c4e7b2</c>.</summary>
     public static string Id { get; } = $"{Version}-{Convert.ToHexStringLower(SqliteDatabaseStore.FormatDigest)[..12]}";

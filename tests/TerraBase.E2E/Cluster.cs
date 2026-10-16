@@ -178,13 +178,15 @@ public sealed class Cluster : IAsyncDisposable
 
     /// <summary>
     /// Takes <paramref name="region"/> down: the local node stops and keeps its data directory, or Fly stops the region's
-    /// machine. Requests to the region fail until <see cref="StartAgainAsync"/>.
+    /// machine. Requests to the region fail until <see cref="StartAgainAsync"/>. The token cancels flyctl; a local stop is
+    /// not canceled once begun.
     /// </summary>
-    public async Task StopAsync(string region)
+    public async Task StopAsync(string region, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         if (_local is null)
         {
-            await Flyctl.RunAsync("machine", "stop", Disposable.Machines[region], "--app", Disposable.App);
+            await Flyctl.RunAsync(["machine", "stop", Disposable.Machines[region], "--app", Disposable.App], token);
             return;
         }
 
@@ -196,11 +198,12 @@ public sealed class Cluster : IAsyncDisposable
         $"machine faults on Fly need a pinned disposable app ({FlyRevisionVariable} and {DisposableTarget.AppVariable})");
 
     /// <summary>Brings <paramref name="region"/> back on the same data (the same volume on Fly) after <see cref="StopAsync"/>.</summary>
-    public async Task StartAgainAsync(string region)
+    public async Task StartAgainAsync(string region, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         if (_local is null)
         {
-            await Flyctl.StartStoppedAsync(Disposable.App, Disposable.Machines[region]);
+            await Flyctl.StartStoppedAsync(Disposable.App, Disposable.Machines[region], token: token);
             return;
         }
 
@@ -226,7 +229,7 @@ public sealed class Cluster : IAsyncDisposable
             return;
         }
 
-        using var listed = JsonDocument.Parse(await Flyctl.RunAsync("machine", "list", "--app", Disposable.App, "--json"));
+        using var listed = JsonDocument.Parse(await Flyctl.RunAsync(["machine", "list", "--app", Disposable.App, "--json"]));
         var ips = listed.RootElement.EnumerateArray().ToDictionary(machine => machine.GetProperty("id").GetString()!, machine => machine.GetProperty("private_ip").GetString()!);
         foreach (var other in others)
         {
@@ -257,11 +260,73 @@ public sealed class Cluster : IAsyncDisposable
 
     /// <summary>Fly only: SIGKILLs <paramref name="region"/>'s machine (<c>flyctl machine kill</c>); <see cref="StartAgainAsync"/> brings it back.</summary>
     public Task KillAsync(string region) => _local is null
-        ? Flyctl.RunAsync("machine", "kill", Disposable.Machines[region], "--app", Disposable.App)
+        ? Flyctl.RunAsync(["machine", "kill", Disposable.Machines[region], "--app", Disposable.App])
         : throw new NotSupportedException("a local SIGKILL needs separate processes (RegionProcesses)");
 
+    /// <summary>
+    /// Fly only: steps <paramref name="region"/>'s machine wall clock by <paramref name="skew"/> (<c>date -s</c> as root; the
+    /// VM runs no NTP daemon). Step back by the negative to restore; each step lags by the command's run time (about 1 ms).
+    /// </summary>
+    public Task<string> StepClockAsync(string region, TimeSpan skew) => FlyScriptAsync(region, $"""
+        now=$(date +%s%N); new=$((now + {(long)skew.TotalMilliseconds} * 1000000))
+        date -s "@$((new / 1000000000)).$(printf %09d $((new % 1000000000)))" > /dev/null
+        echo "stepped {(long)skew.TotalMilliseconds} ms: $now -> $(date +%s%N)"
+        """);
+
+    /// <summary>
+    /// Fly only: makes <paramref name="region"/> lose the acknowledged document <paramref name="id"/>, as a lost apply would.
+    /// The running terrabase holds its database files locked, so the machine is first updated to idle
+    /// (<c>sleep infinity</c>; terrabase stops on SIGTERM), then the id's rows are deleted from every table keyed by
+    /// <c>id</c> in each database file (sqlite3, installed into the test-only image's ephemeral rootfs), and terrabase is
+    /// started again. Returns the edit's output once the region is ready again.
+    /// </summary>
+    public async Task<string> LoseDocumentAsync(string region, string id)
+    {
+        var machine = Disposable.Machines[region];
+        _ = await Flyctl.RunAsync(["machine", "update", machine, "--app", Disposable.App, "--entrypoint", "sleep infinity", "--skip-health-checks", "--yes"]);
+        try
+        {
+            var output = await FlyScriptAsync(region, $$"""
+                apt-get update -qq > /dev/null 2>&1; apt-get install -y -qq sqlite3 > /dev/null 2>&1
+                for f in /data/data/*/*/*.db; do
+                  for t in $(sqlite3 "$f" "SELECT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) c WHERE m.type = 'table' AND c.name = 'id'" 2>&1); do
+                    n=$(sqlite3 "$f" "DELETE FROM \"$t\" WHERE id = '{{id}}'; SELECT changes();" 2>&1)
+                    [ "$n" = 0 ] || echo "deleted $n from $t in $f"
+                  done
+                done
+                """);
+            await RestoreEntrypointAsync();
+            _ = await Converge.UntilAsync(async () =>
+            {
+                try
+                {
+                    return await Docs.StatusAsync(this[region], new Uri("/readyz", UriKind.Relative));
+                }
+                catch (Exception error) when (error is HttpRequestException or RegionMismatchException)
+                {
+                    return HttpStatusCode.ServiceUnavailable;
+                }
+            }, status => status == HttpStatusCode.OK, $"{region} ready on its edited volume", TimeSpan.FromMinutes(4));
+            return output;
+        }
+        catch
+        {
+            await RestoreEntrypointAsync();
+            throw;
+        }
+
+        // The image's own entrypoint: a merged --machine-config cannot clear the override.
+        Task<string> RestoreEntrypointAsync()
+        {
+            return Flyctl.RunAsync(["machine", "update", machine, "--app", Disposable.App, "--entrypoint", "/app/terrabase", "--skip-health-checks", "--yes"]);
+        }
+    }
+    // The script travels base64-encoded, so its quotes survive flyctl's command line and sh -c.
+    private Task<string> FlyScriptAsync(string region, string script) =>
+        FlySshAsync(region, $"echo {Convert.ToBase64String(Encoding.UTF8.GetBytes(script))} | base64 -d | sh");
+
     private Task<string> FlySshAsync(string region, string command) =>
-        Flyctl.RunAsync("ssh", "console", "--app", Disposable.App, "--machine", Disposable.Machines[region], "-C", $"sh -c '{command}'");
+        Flyctl.RunAsync(["ssh", "console", "--app", Disposable.App, "--machine", Disposable.Machines[region], "-C", $"sh -c '{command}'"]);
 
     public async ValueTask DisposeAsync()
     {
@@ -284,7 +349,7 @@ public sealed class Cluster : IAsyncDisposable
     public Uri MetricsAddress(string region) => RequireLocal().MetricsAddress(region);
 
     /// <summary>Local nodes only: connected outbound peer streams reported by the internal listener.</summary>
-    public Task<JsonElement> ReplicationAsync(string region) => RequireLocal().ReplicationAsync(region);
+    public Task<JsonElement> ReplicationAsync(string region, CancellationToken token = default) => RequireLocal().ReplicationAsync(region, token);
 
     /// <summary>
     /// Local nodes only: sends the peer traffic between <paramref name="a"/> and <paramref name="b"/> through the link
@@ -342,9 +407,9 @@ public sealed class Cluster : IAsyncDisposable
         var path = backup ? "" : $"{projectPath}/databases/{Required("TERRABASE_E2E_FLY_DATABASE")}";
         if (target is not null)
         {
-            using var apps = JsonDocument.Parse(await Flyctl.RunAsync("apps", "list", "--org", target.Org, "--json"));
+            using var apps = JsonDocument.Parse(await Flyctl.RunAsync(["apps", "list", "--org", target.Org, "--json"]));
             DisposableTarget.CheckApp(target, apps.RootElement);
-            using var listed = JsonDocument.Parse(await Flyctl.RunAsync("machine", "list", "--app", target.App, "--json"));
+            using var listed = JsonDocument.Parse(await Flyctl.RunAsync(["machine", "list", "--app", target.App, "--json"]));
             DisposableTarget.CheckMachines(target, listed.RootElement);
         }
 
@@ -381,12 +446,13 @@ public sealed class Cluster : IAsyncDisposable
             if (backup)
             {
                 owned = $"{projectPath}/databases/e2e-backup-{EntityIds.New().ToString().ToLowerInvariant()}";
-                using var created = await clients[Gru].PostAsJsonAsync(new Uri($"{projectPath}/databases", UriKind.Relative), new
+                var database = new
                 {
                     name = owned.Split('/')[^1],
                     homeRegion = Gru,
                     replicaRegions = regions.Where(region => region != Gru).ToArray(),
-                });
+                };
+                using var created = await Docs.AdmittedAsync(() => clients[Gru].PostAsJsonAsync(new Uri($"{projectPath}/databases", UriKind.Relative), database));
                 await Docs.EnsureSuccessAsync(created);
                 path = owned;
             }
@@ -465,7 +531,7 @@ public sealed class Cluster : IAsyncDisposable
 
     internal static async Task CreateCollectionAsync(Dictionary<string, HttpClient> clients, string path, string collection)
     {
-        using var created = await clients[Gru].PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = collection });
+        using var created = await Docs.AdmittedAsync(() => clients[Gru].PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = collection }));
         await Docs.EnsureSuccessAsync(created);
         var uri = new Uri($"{path}/collections/{collection}", UriKind.Relative);
         foreach (var (region, client) in clients.Where(pair => pair.Key != Gru))
@@ -477,7 +543,7 @@ public sealed class Cluster : IAsyncDisposable
     // A missing collection is already gone, so only the answers that leave data behind fail the cleanup.
     private static async Task DeleteCollectionAsync(HttpClient gru, string path, string collection)
     {
-        using var deleted = await gru.DeleteAsync(new Uri($"{path}/collections/{collection}", UriKind.Relative));
+        using var deleted = await Docs.AdmittedAsync(() => gru.DeleteAsync(new Uri($"{path}/collections/{collection}", UriKind.Relative)));
         if (deleted.StatusCode != HttpStatusCode.NotFound)
         {
             await Docs.EnsureSuccessAsync(deleted);
@@ -492,7 +558,7 @@ public sealed class Cluster : IAsyncDisposable
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(1));
         var uri = new Uri(path, UriKind.Relative);
-        using var existing = await regions(via).GetAsync(uri, deadline.Token);
+        using var existing = await Docs.AdmittedAsync(() => regions(via).GetAsync(uri, deadline.Token), deadline.Token);
         if (existing.StatusCode == HttpStatusCode.NotFound)
         {
             return;
@@ -503,7 +569,8 @@ public sealed class Cluster : IAsyncDisposable
         var home = regions(record.GetProperty("homeRegion").GetString()!);
         if (record.GetProperty("replicaRegions").GetArrayLength() > 0)
         {
-            using var unreplicated = await home.PatchAsJsonAsync(uri, new { replicaRegions = Array.Empty<string>() }, deadline.Token);
+            using var unreplicated = await Docs.AdmittedAsync(
+                () => home.PatchAsJsonAsync(uri, new { replicaRegions = Array.Empty<string>() }, deadline.Token), deadline.Token);
             if (unreplicated.StatusCode == HttpStatusCode.NotFound)
             {
                 return;
@@ -512,7 +579,7 @@ public sealed class Cluster : IAsyncDisposable
             await Docs.EnsureSuccessAsync(unreplicated);
         }
 
-        using var deleted = await home.DeleteAsync(uri, deadline.Token);
+        using var deleted = await Docs.AdmittedAsync(() => home.DeleteAsync(uri, deadline.Token), deadline.Token);
         if (deleted.StatusCode != HttpStatusCode.NotFound)
         {
             await Docs.EnsureSuccessAsync(deleted);
@@ -730,9 +797,13 @@ public sealed class Cluster : IAsyncDisposable
         public Uri MetricsAddress(string region) =>
             (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.MetricsAddress;
 
-        public Task<JsonElement> ReplicationAsync(string region) =>
-            (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.Client
-                .GetFromJsonAsync<JsonElement>(new Uri("/replication", UriKind.Relative));
+        public async Task<JsonElement> ReplicationAsync(string region, CancellationToken token)
+        {
+            var client = (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.Client;
+            using var response = await client.GetAsync(new Uri("/replication", UriKind.Relative), token);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<JsonElement>(token);
+        }
 
         public string ProjectPath => $"/v1/projects/{_project}";
 

@@ -8,10 +8,12 @@ using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -24,7 +26,7 @@ public sealed class UsageApiTests
     private static readonly Faker Faker = new();
 
     [Test]
-    public async Task Empty_usage_and_query_flushes_leave_the_catalog_uninitialized()
+    public async Task Empty_usage_and_query_flushes_leave_the_eager_system_store_unchanged()
     {
         var time = new FakeTimeProvider();
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
@@ -32,17 +34,60 @@ public sealed class UsageApiTests
         using var initialHealth = await server.Client.GetAsync(Uri("/healthz"), token);
         initialHealth.EnsureSuccessStatusCode();
         var catalog = Path.Combine(server.DataDirectory, "_system.db");
-        await Assert.That(File.Exists(catalog)).IsFalse();
+        await Assert.That(File.Exists(catalog)).IsTrue();
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var system = engine.SystemStore ?? throw new InvalidOperationException("startup did not publish SYSTEM");
+        var source = server.Services.GetRequiredService<IChangeGroupSource>();
+        var head = await source.HeadAsync(ChangeGroups.System, system.Incarnation, token)
+            ?? throw new InvalidOperationException("SYSTEM refused its own incarnation");
+        var sequence = system.CommitSequence;
+        var documents = await SnapshotAsync();
+        await using (var transaction = await system.BeginTransactionAsync(write: false, token))
+        {
+            await Assert.That(await transaction.GetAsync("catalog", "version", token)).IsNull();
+        }
 
-        await server.Services.GetRequiredService<UsageMeter>().FlushAsync(token);
-        await Assert.That(File.Exists(catalog)).IsFalse();
-        await server.Services.GetRequiredService<QueryFieldRecorder>().FlushAsync(token);
-        await Assert.That(File.Exists(catalog)).IsFalse();
-        await server.Services.GetRequiredService<QueryShapeRecorder>().FlushAsync(token);
-        await Assert.That(File.Exists(catalog)).IsFalse();
+        // The stationary clock prevents periodic flushes and maintenance from changing the baseline.
+        (string Kind, Func<CancellationToken, ValueTask> Flush)[] flushes =
+        [
+            ("usage", server.Services.GetRequiredService<UsageMeter>().FlushAsync),
+            ("fields", server.Services.GetRequiredService<QueryFieldRecorder>().FlushAsync),
+            ("shapes", server.Services.GetRequiredService<QueryShapeRecorder>().FlushAsync),
+        ];
+        foreach (var (kind, flush) in flushes)
+        {
+            await flush(token);
+            await Assert.That(File.Exists(catalog)).IsTrue().Because($"the empty {kind} flush must preserve SYSTEM");
+            await Assert.That(ReferenceEquals(engine.SystemStore, system)).IsTrue().Because($"the empty {kind} flush must keep the published store");
+            await Assert.That(await source.HeadAsync(ChangeGroups.System, system.Incarnation, token)).IsEqualTo(head)
+                .Because($"the empty {kind} flush must add no captured changes");
+            await Assert.That(system.CommitSequence).IsEqualTo(sequence).Because($"the empty {kind} flush must add no write commit");
+            await Assert.That(await SnapshotAsync()).IsEquivalentTo(documents).Because($"the empty {kind} flush must leave SYSTEM documents unchanged");
+            using var health = await server.Client.GetAsync(Uri("/healthz"), token);
+            health.EnsureSuccessStatusCode();
+        }
 
-        using var finalHealth = await server.Client.GetAsync(Uri("/healthz"), token);
-        finalHealth.EnsureSuccessStatusCode();
+        // Read the actual startup documents without invoking the foreground management catalog initializer.
+        async Task<(string Collection, string Id, string Body)[]> SnapshotAsync()
+        {
+            await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = catalog,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false,
+            }.ToString());
+            await connection.OpenAsync(token);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT collection, id, body FROM documents ORDER BY collection, id;";
+            List<(string Collection, string Id, string Body)> rows = [];
+            await using var reader = await command.ExecuteReaderAsync(token);
+            while (await reader.ReadAsync(token))
+            {
+                rows.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+            }
+
+            return [.. rows];
+        }
     }
 
     [Test]

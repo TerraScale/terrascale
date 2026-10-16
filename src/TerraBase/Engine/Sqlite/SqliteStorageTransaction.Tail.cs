@@ -88,6 +88,25 @@ internal sealed partial class SqliteStorageTransaction
     // commit row (change_type 2), and a reader never sees part of one.
     private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) ReadChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken)
     {
+        try
+        {
+            return DecodeChangeGroups(after, maxGroups, maxBytes, self, cancellationToken);
+        }
+        catch (InvalidDataException error)
+        {
+            // Tail gauges and retention catch decoder errors: fault this local copy before either can swallow one.
+            NoteCopyFault("stored replication data could not be decoded");
+            if (StoredDataCorruption.Is(error))
+            {
+                throw;
+            }
+
+            throw StoredDataCorruption.Create("stored replication data could not be decoded", error);
+        }
+    }
+
+    private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) DecodeChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken)
+    {
         List<OriginGroup> groups = [];
         var quiet = after;
         // The writer creates turso_cdc when it first opens: a file this machine never wrote has captured nothing.
@@ -179,8 +198,17 @@ internal sealed partial class SqliteStorageTransaction
     /// at the same path while the caller waited for it (a copy, restore or rebuild) shows as the other incarnation it is.
     /// </summary>
     internal ValueTask<Ulid> GetIncarnationAsync(CancellationToken cancellationToken) =>
-        RunAsync(() => Ulid.Parse(Command(SqliteStatements.Incarnation).ExecuteScalar() as string
-            ?? throw new InvalidDataException("database incarnation is missing")), cancellationToken);
+        RunAsync(() =>
+        {
+            var text = Command(SqliteStatements.Incarnation).ExecuteScalar() as string;
+            if (text is not { Length: 26 } || text[0] is < '0' or > '7' || !Ulid.TryParse(text, out var incarnation)
+                || incarnation == Ulid.Empty || incarnation.ToString() != text)
+            {
+                throw StoredDataCorruption.Create("the stored database incarnation is missing or invalid");
+            }
+
+            return incarnation;
+        }, cancellationToken);
 
     /// <summary>
     /// See <see cref="IChangeGroupSource.AckedAsync"/>; a row of another incarnation returns a zero cursor requiring refill.
@@ -274,7 +302,7 @@ internal sealed partial class SqliteStorageTransaction
 
             // Peers at one id share one read. Only an ack whose following rows are all still here can rise: past a cut, the
             // deleted rows may have held groups the peer lacks, and it must refill instead. A damaged row past an ack leaves
-            // that ack where it is (the read refuses, section 7).
+            // that ack where it is and faults the copy, so this transaction cannot commit (section 7).
             List<(long From, long To)> raised = [];
             var oldest = Command("SELECT min(change_id) FROM turso_cdc;").ExecuteScalar() is long kept ? kept : newest + 1;
             foreach (var at in peers.Where(peer => peer.Current).Select(peer => peer.Acked).Where(acked => acked < newest && oldest <= acked + 1).Distinct().ToList())
@@ -286,6 +314,7 @@ internal sealed partial class SqliteStorageTransaction
                 }
                 catch (InvalidDataException)
                 {
+                    // ReadChangeGroups marked and noted the fault, so the commit refuses everything this pass wrote.
                     continue;
                 }
 

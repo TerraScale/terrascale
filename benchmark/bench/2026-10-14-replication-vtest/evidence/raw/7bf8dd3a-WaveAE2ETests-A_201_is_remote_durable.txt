@@ -1,0 +1,50 @@
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v1.73.19.0 | 64-bit | NixOS 26.05 (Yarara) | linux-x64 | .NET 11.0.0-rc.1.26425.128 | Microsoft Testing Platform v2.5.1
+
+   Engine Mode: SourceGenerated
+
+Suite runtime configuration: pid=1562480 cpus=12 server_gc=True latency_mode=Interactive total_available_memory_bytes=9663676416 tiered_pgo=configured:False ServerGC=True ConcurrentGC=True HeapCount=12 MaxHeapCount=0 GCDynamicAdaptationMode=1 GCHeapHardLimit=9663676416 GCHeapHardLimitPercent=0 GCHeapHardLimitSOH=0 GCHeapHardLimitLOH=0 GCHeapHardLimitPOH=0 GCHeapHardLimitSOHPercent=0 GCHeapHardLimitLOHPercent=0 GCHeapHardLimitPOHPercent=0 GCConserveMem=0 NoAffinitize=False GCHeapAffinitizeMask=0 GCCpuGroup=False RetainVM=False
+Suite cgroup limits: depth=0 path=/sys/fs/cgroup/user.slice/user-1000.slice/session-1748.scope cpu_max=[max 100000] cpuset_cpus_effective=[-1] memory_max_bytes=max memory_high_bytes=max memory_swap_max_bytes=max
+Suite cgroup limits: depth=1 path=/sys/fs/cgroup/user.slice/user-1000.slice cpu_max=[max 100000] cpuset_cpus_effective=[-1] memory_max_bytes=12884901888 memory_high_bytes=10737418240 memory_swap_max_bytes=max
+Suite cgroup limits: depth=2 path=/sys/fs/cgroup/user.slice cpu_max=[max 100000] cpuset_cpus_effective=[0-11] memory_max_bytes=12884901888 memory_high_bytes=10737418240 memory_swap_max_bytes=max
+Suite cgroup limits: depth=3 path=/sys/fs/cgroup cpu_max=[-1] cpuset_cpus_effective=[0-11] memory_max_bytes=-1 memory_high_bytes=-1 memory_swap_max_bytes=-1
+V5 remote-ack fly-pinned:gru/891e70eb4d0378@7bf8dd3a2a845240aa74e675eda23457adc67e56: 201 remote_durable in 266 ms; first read held by [sjc,fra] 797 ms after send
+V5 remote-ack fly-pinned:sjc/6835466b44e258@7bf8dd3a2a845240aa74e675eda23457adc67e56: 201 remote_durable in 398 ms; first read held by [gru,fra] 716 ms after send
+V5 remote-ack fly-pinned:fra/48e4967a225338@7bf8dd3a2a845240aa74e675eda23457adc67e56: 201 remote_durable in 474 ms; first read held by [gru,sjc] 720 ms after send
+passed A_201_is_remote_durable_and_another_region_serves_it_at_once(gru) (5s 010ms)
+  Standard output
+    V5 remote-ack fly-pinned:gru/891e70eb4d0378@7bf8dd3a2a845240aa74e675eda23457adc67e56: 201 remote_durable in 266 ms; first read held by [sjc,fra] 797 ms after send
+    
+passed A_201_is_remote_durable_and_another_region_serves_it_at_once(sjc) (5s 133ms)
+  Standard output
+    V5 remote-ack fly-pinned:sjc/6835466b44e258@7bf8dd3a2a845240aa74e675eda23457adc67e56: 201 remote_durable in 398 ms; first read held by [gru,fra] 716 ms after send
+    
+passed A_201_is_remote_durable_and_another_region_serves_it_at_once(fra) (5s 392ms)
+  Standard output
+    V5 remote-ack fly-pinned:fra/48e4967a225338@7bf8dd3a2a845240aa74e675eda23457adc67e56: 201 remote_durable in 474 ms; first read held by [gru,sjc] 720 ms after send
+    
+Suite runtime pid=1562480 cpus=12 server_gc=True: elapsed_s,cpu_s,gc_pause_s,gen2,threads,queued_work,monitor_contentions,gc_index,gc_gen,gc_promoted_bytes,gc_pause0_ms,gc_pause1_ms,host_cpu_some_us,cgroup_cpu_some_us,cgroup_throttled_us,load1,allocated_bytes,heap_bytes,fragmented_bytes,committed_bytes,memory_load_bytes,memory_load_threshold_bytes,working_set_bytes,cgroup_memory_current_bytes,cgroup_swap_current_bytes,cgroup_memory_low,cgroup_memory_high,cgroup_memory_max,cgroup_memory_oom,cgroup_memory_oom_kill,cgroup_memory_oom_group_kill,host_memory_some_us,host_memory_full_us,cgroup_memory_some_us,cgroup_memory_full_us,cgroup_pgmajfault
+Suite runtime: 0.006,0.437,0.000,0,7,0,2,0,0,0,0.000,0.000,2932920029,1015595,0,13.99,2645968,0,0,0,0,11596411699,70385664,219549696,0,0,0,0,0,0,0,22756496,20666165,0,0,72
+Suite runtime: 1.007,0.512,0.000,0,7,0,13,0,0,0,0.000,0.000,2933114480,1020253,0,14.23,3047248,0,0,0,0,11596411699,80826368,275685376,0,0,0,0,0,0,0,22756497,20666165,0,0,73
+Suite runtime: 2.007,0.579,0.000,0,7,0,13,0,0,0,0.000,0.000,2933360783,1023026,0,14.23,3520128,0,0,0,0,11596411699,83566592,276815872,0,0,0,0,0,0,0,22756497,20666165,0,0,73
+Suite runtime: 3.007,0.850,0.004,0,7,0,13,1,0,978280,4.342,0.000,2933558976,1023724,0,14.23,4636888,4778064,2460280,5185536,128849018,11596411699,95744000,233701376,0,0,0,0,0,0,0,22756497,20666165,0,0,73
+Suite runtime: 4.007,1.051,0.004,0,7,0,13,1,0,978280,4.342,0.000,2933831856,1023852,0,14.23,4923088,4778064,2460280,5185536,128849018,11596411699,99876864,235261952,0,0,0,0,0,0,0,22756497,20666165,0,0,73
+Suite runtime: 5.008,1.195,0.004,0,7,0,13,1,0,978280,4.342,0.000,2933950077,1023966,0,14.23,5078888,4778064,2460280,5185536,128849018,11596411699,103104512,238141440,0,0,0,0,0,0,0,22756497,20666165,0,0,73
+Suite runtime: 5.426,1.249,0.004,0,7,0,13,1,0,978280,4.342,0.000,2933967598,1024062,0,13.33,5185376,4778064,2460280,5185536,128849018,11596411699,103456768,238665728,0,0,0,0,0,0,0,22756497,20666165,0,0,73
+
+  In process file artifacts produced:
+    - /home/mariogk/remote-builds/feat-repl-v2-shape-clients/tests/TerraBase.E2E/bin/Release/net11.0/TestResults/TerraBase.E2E-linux-net11.0-report.html
+
+Test run summary: Passed! - /home/mariogk/remote-builds/feat-repl-v2-shape-clients/tests/TerraBase.E2E/bin/Release/net11.0/TerraBase.E2E.dll (net11.0|x64)
+  total: 3
+  failed: 0
+  succeeded: 3
+  skipped: 0
+  duration: 5s 642ms

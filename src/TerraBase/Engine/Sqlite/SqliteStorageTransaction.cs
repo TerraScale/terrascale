@@ -38,6 +38,9 @@ internal sealed partial class SqliteStorageTransaction(
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     // Serializes calls and disposal, so two workers never use the same connection concurrently.
+    private readonly QosContext.ResultMemory? _stateReadMemory =
+        store.SchemaMemory is { } memory ? new QosContext.ResultMemory(memory) : null;
+
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Lock _disposalGate = new();
     private Task? _disposal;
@@ -318,7 +321,7 @@ internal sealed partial class SqliteStorageTransaction(
 
     // Client commits keep per-commit limits and metadata documents; _system is never a client database.
     private DocumentState CollectionState(string name) =>
-        _pending.TryGetValue((DocumentDelta.Collections, name), out var pending) ? pending.State : ReadState(DocumentDelta.Collections, name);
+        _pending.TryGetValue((DocumentDelta.Collections, name), out var pending) ? pending.State : ReadState(DocumentDelta.Collections, name, localWrite: true);
 
     private ClearEntry? CollectionDrop(string name) => CollectionState(name).Clear is { Deleted: true } drop ? drop : null;
 
@@ -1013,10 +1016,16 @@ internal sealed partial class SqliteStorageTransaction(
         var clear = new DocumentState(drop, DocumentState.Bottom.Fields);
         var retained = false;
         var pendingIds = _pending.Keys.Where(key => key.Collection == name).Select(key => key.Id).ToArray();
+        // Read once: the loop changes neither the definition nor the drop it is weighed against, and each read is admitted
+        // for the whole transaction.
+        IReadOnlyList<UniqueConstraint> constraints = IsClient ? ReadUniqueConstraints(name) : [];
         foreach (var id in CollectionDropIds(name, cancellationToken).Where(id => !_pending.ContainsKey((name, id))).Concat(pendingIds))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var state = _pending.TryGetValue((name, id), out var pending) ? pending.State : ReadState(name, id);
+            // Each document is written before the next is read, so its admission ends with its iteration: an unbounded
+            // collection must not accumulate leases for the whole drop.
+            using var admission = store.SchemaMemory is { } memory ? new QosContext.ResultMemory(memory) : null;
+            var state = _pending.TryGetValue((name, id), out var pending) ? pending.State : ReadState(name, id, admission);
             var next = state.Join(clear);
             if (next.Equals(state) && !next.Equals(clear))
             {
@@ -1025,7 +1034,7 @@ internal sealed partial class SqliteStorageTransaction(
             }
 
             var body = Materialize(next);
-            var affected = ReplaceUniqueKeys(name, id, body, cancellationToken, local: false);
+            var affected = ReplaceUniqueKeys(name, id, body, cancellationToken, local: false, constraints);
             ClearUniqueConflict(name, id);
             PutRow(name, id, body);
             _pending.Remove((name, id));
@@ -1144,6 +1153,8 @@ internal sealed partial class SqliteStorageTransaction(
                 throw new InvalidOperationException("an operation of this transaction failed, so it can only be rolled back");
             }
 
+            RefuseKnownFault();
+
             long offset;
             var committing = false;
             try
@@ -1152,6 +1163,7 @@ internal sealed partial class SqliteStorageTransaction(
                 DropUniqueAffected();
                 offset = _offset ?? GetOffset();
                 cancellationToken.ThrowIfCancellationRequested();
+                RefuseKnownFault();
                 committing = true;
                 transaction.Commit();
                 _committed = true;
@@ -1159,6 +1171,12 @@ internal sealed partial class SqliteStorageTransaction(
             catch
             {
                 _faulted = true;
+                if (committing)
+                {
+                    // An error at or after COMMIT, a failed sync included: whether the file holds the commit is unknown.
+                    NoteCopyFault("an error at or after COMMIT");
+                }
+
                 // The driver can throw after the commit landed. Both only drop caches: safe whether or not it did.
                 if (committing && ChangedReaderState)
                 {
@@ -1182,6 +1200,8 @@ internal sealed partial class SqliteStorageTransaction(
             }
             catch
             {
+                // The commit landed but its final CDC row could not be read: the log of this file is not what it wrote.
+                NoteCopyFault("the commit marker could not be read after COMMIT");
                 if (_offset is not null)
                 {
                     Follow("the commit notification", committed);
@@ -1217,7 +1237,23 @@ internal sealed partial class SqliteStorageTransaction(
             ExceptionDispatchInfo.Throw(failure);
         }
 
+        // Damage may be observed by a concurrent reader or an after-commit hook while native COMMIT runs.
+        // The durable intent preserves the commit; a known fault must not return a successful acknowledgement.
+        RefuseKnownFault();
         return result;
+    }
+
+    private void RefuseKnownFault()
+    {
+        if (write && store.Ledger?.FailedClosed is { } failed)
+        {
+            throw new ReplicaCopyFaultedException($"storage failed closed: {failed}");
+        }
+
+        if (write && store.CopyFault is { } copyFault)
+        {
+            throw new ReplicaCopyFaultedException($"this copy is faulted: {copyFault}");
+        }
     }
 
     // Worker-only, after COMMIT and before releasing the exclusive writer; never read a later connection's head.
@@ -1357,7 +1393,7 @@ internal sealed partial class SqliteStorageTransaction(
             return call();
         }
         // Whatever surfaced: a stopped read arrives as a QueryCapacityException or an OperationCanceledException.
-        catch (Exception) when (Ended())
+        catch (Exception error) when (NoteDamage(error) || Ended())
         {
             Aborted = _faulted = true;
             throw;
@@ -1469,6 +1505,11 @@ internal sealed partial class SqliteStorageTransaction(
 
                     if (!write)
                     {
+                        if (store.Tenant is { } readingTenant)
+                        {
+                            store.Checkpoint?.Invoke("reader.reset", readingTenant);
+                        }
+
                         // Failed read-only reset closes the session instead of reusing it.
                         using var writable = session.Connection.CreateCommand();
                         writable.CommandText = "PRAGMA query_only = 0;";
@@ -1483,7 +1524,8 @@ internal sealed partial class SqliteStorageTransaction(
                         normal.ExecuteNonQuery();
                     }
                 }
-                catch when (_committed)
+                // NoteDamage only notes a damaged file's error, so its fault is recorded before the writer is released.
+                catch (Exception error) when (NoteDamage(error) || _committed)
                 {
                     // The write committed and synced: only this session is lost, so the commit is not reported as failed.
                     store.Discard(session);
@@ -1503,11 +1545,29 @@ internal sealed partial class SqliteStorageTransaction(
         {
             try
             {
-                store.End(write, ownsAdmission);
+                if (_copyFault is { } reason)
+                {
+                    // Recorded before the writer is released: no later writer of this process uses the file unrefused.
+                    await store.RecordCopyFaultAsync(reason).ConfigureAwait(false);
+                }
             }
             finally
             {
-                _gate.Release();
+                try
+                {
+                    store.End(write, ownsAdmission);
+                }
+                finally
+                {
+                    try
+                    {
+                        _stateReadMemory?.Dispose();
+                    }
+                    finally
+                    {
+                        _gate.Release();
+                    }
+                }
             }
         }
     }

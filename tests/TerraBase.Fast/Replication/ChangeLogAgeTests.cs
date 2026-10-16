@@ -70,6 +70,9 @@ public sealed class ChangeLogAgeTests
         await Assert.That(await OldestAsync(store)).IsEqualTo(c1).Because("the backup anchor still holds its rows");
 
         store.BackupAnchor = null;
+        // Cut before releasing the late ACK so the next sender pass must refill, even when bookkeeping trails it.
+        await gru.TrimAsync();
+        await Assert.That(await OldestAsync(store)).IsEqualTo(c2);
         await peer.AckAsync(pending);
         await Assert.That(await gru.UntilAckedAsync(peer.Replica, c1)).IsTrue();
         await Assert.That(await gru.FloorAsync(peer.Clock.GetUtcNow())).IsEqualTo(c1).Because("slow progress does not renew the hold");
@@ -383,7 +386,7 @@ public sealed class ChangeLogAgeTests
         }
 
         // One retention pass, as the tailer's 5 s pass runs it.
-        public async Task TrimAsync() => await ((TursoChangeGroupSource)Groups).TrimAsync(await StoreAsync(), CancellationToken.None);
+        public async Task TrimAsync() => await Api.Server.Services.GetRequiredService<TursoChangeGroupSource>().TrimAsync(await StoreAsync(), CancellationToken.None);
 
         public async Task<long?> FloorAsync(DateTimeOffset now)
         {

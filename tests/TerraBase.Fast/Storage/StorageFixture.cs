@@ -40,6 +40,18 @@ internal static class StorageFixture
     }
 
     /// <summary>
+    /// Replaces the body of every live document of <paramref name="collection"/> in the file at <paramref name="path"/> behind
+    /// the server's back, as healthy rows with matching keyed digests (<see cref="StoredStates.ReplaceAsync"/>).
+    /// </summary>
+    public static async Task ReplaceBodiesAsync(string path, string collection, string body)
+    {
+        await using var connection = await OpenAsync(path);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync();
+        await StoredStates.ReplaceAsync(connection, collection, null, body, transaction);
+        await transaction.CommitAsync();
+    }
+
+    /// <summary>
     /// Observes real row-body evaluation of a collection without replacing its rows or their order: the collection
     /// becomes a view of its renamed table that reads every document through <paramref name="functionName"/>, which the
     /// reading session registers, and it takes no more writes. Turso has no generated columns, and only the database's

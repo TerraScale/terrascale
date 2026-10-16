@@ -244,6 +244,13 @@ internal sealed class AntiEntropy : BackgroundService
         }
 
         var differing = Enumerable.Range(0, 4096).Where(bucket => !ours.AsSpan(bucket * 16, 16).SequenceEqual(theirs.AsSpan(bucket * 16, 16))).ToHashSet();
+        if (differing.Count == 0 && !force && peer.Region != _membership.Self.Region)
+        {
+            // A round's peer is of another placed region: it holds every value of the snapshot compared, which proves the
+            // shape frontier past commits its walk stops at for good (a repair, an origin of a past epoch).
+            _ = await _states.MatchedAsync(database, local, cancellationToken).ConfigureAwait(false);
+        }
+
         var compared = _differed.TryGetValue((database, peer.Name), out var previous);
         _differed[(database, peer.Name)] = (differing, began, local.Incarnation, source);
         HashSet<int> repair = force ? differing : compared ? [.. differing.Where(previous.Buckets.Contains)] : [];

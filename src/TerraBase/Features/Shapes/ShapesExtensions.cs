@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Microsoft.OpenApi;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Memory;
@@ -47,6 +48,7 @@ public static class ShapesExtensions
             {
                 json.SerializerOptions.TypeInfoResolverChain.Insert(0, ShapeJsonContext.Default);
                 json.SerializerOptions.TypeInfoResolverChain.Insert(0, ShapeKeyJsonContext.Default);
+                json.SerializerOptions.TypeInfoResolverChain.Insert(0, ShapeMirrorJsonContext.Default);
             })
             // Runs after the generic examples, which do not know the shape protocol's bodies, headers and codes.
             .AddOpenApi("v1", options => options.AddOperationTransformer((operation, _, _) =>
@@ -55,14 +57,14 @@ public static class ShapesExtensions
                 {
                     Document(operation);
                 }
-                else if (operation.OperationId == "getShapeKey" && operation.Responses is { } responses)
+                else if (operation.OperationId is "getShapeKey" or "getShapeManifest" && operation.Responses is { } responses)
                 {
                     foreach (var response in responses.Values.OfType<OpenApiResponse>())
                     {
                         response.Headers ??= new Dictionary<string, IOpenApiHeader>(StringComparer.Ordinal);
                         response.Headers["Cache-Control"] = new OpenApiHeader
                         {
-                            Description = "private, no-store; a shape key must never be cached.",
+                            Description = "private, no-store; shape keys and manifests must never be cached.",
                             Schema = new OpenApiSchema { Type = JsonSchemaType.String },
                         };
                     }
@@ -76,11 +78,13 @@ public static class ShapesExtensions
             .AddSingleton<IShapeMetrics, ShapeMetrics>()
             .AddSingleton<IShapeSealer>(provider => new ShapeSealer(provider.GetRequiredService<IMemoryBudget>(),
                 provider.GetRequiredService<ILogger<ShapeSealer>>(), provider.GetRequiredService<IShapeStorage>(), provider.GetRequiredService<IRemoteDurability>(),
-                provider.GetRequiredService<IShapeMetrics>(), provider.GetRequiredService<TimeProvider>()))
+                provider.GetRequiredService<IShapeMetrics>(), provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<ShapeMirror>().ChunkSealed))
             .AddSingleton<IShapeSnapshotSealer>(provider => new ShapeSnapshots(provider.GetRequiredService<IMemoryBudget>(),
                 provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IShapeSnapshotTransactions>(),
-                provider.GetRequiredService<IRemoteDurability>(), provider.GetRequiredService<IShapeMetrics>()))
-            .AddSingleton<IShapeRetention>(provider => new ShapeRetention(provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IShapeStorage>()))
+                provider.GetRequiredService<IRemoteDurability>(), provider.GetRequiredService<IShapeMetrics>(),
+                provider.GetRequiredService<ShapeMirror>().SnapshotSealed, provider.GetRequiredService<ILogger<ShapeSnapshots>>()))
+            .AddSingleton<IShapeRetention>(provider => new ShapeRetention(provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<IShapeStorage>(),
+                provider.GetRequiredService<ShapeMirror>().FloorTrimmedAsync))
             .AddSingleton<IShapeFilterRegistry>(provider => new ShapeFilterRegistry(provider.GetRequiredService<IMemoryBudget>()))
             .AddSingleton<IShapeFlights<ShapeRead>>(provider => new ShapeFlights<ShapeRead>(provider.GetRequiredService<IStorageEngine>(),
                 provider.GetRequiredService<IShapeFlightSealer>(), provider.GetRequiredService<IMemoryBudget>(),
@@ -91,7 +95,15 @@ public static class ShapesExtensions
             .AddSingleton<IShapeChunks>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeLiveTail>(provider => provider.GetRequiredService<ShapeService>())
             .AddSingleton<IShapeResume>(provider => provider.GetRequiredService<ShapeService>())
-            .AddSingleton<IShapeKeyRetention, NoShapeKeyRetention>()
+            .AddSingleton<ShapeMirror>(provider => new ShapeMirror(provider.GetRequiredService<IStorageEngine>(),
+                provider.GetRequiredService<IShapeStorage>(), provider.GetRequiredService<IShapeMetrics>(), provider.GetRequiredService<IMemoryBudget>(), provider.GetRequiredService<TimeProvider>(),
+                () => provider.GetRequiredService<IShapeCrypto>(),
+                provider.GetService<BackupSettings>() is { } settings ? new ShapeObjectStore(settings,
+                    provider.GetRequiredService<IHttpClientFactory>(), provider.GetRequiredService<IObjectStore>(), provider.GetRequiredService<TimeProvider>()) : null,
+                provider.GetRequiredService<ILogger<ShapeMirror>>()))
+            .AddSingleton<IShapeMirror>(provider => provider.GetRequiredService<ShapeMirror>())
+            .AddSingleton<IShapeKeyRetention>(provider => provider.GetRequiredService<ShapeMirror>())
+            .AddHostedService(provider => provider.GetRequiredService<ShapeMirror>())
             .AddSingleton<IShapeCrypto>(provider => new ShapeCrypto(provider.GetService<DataKeys>(),
                 provider.GetRequiredService<IShapeKeyRetention>(), provider.GetRequiredService<IMemoryBudget>(),
                 provider.GetRequiredService<TimeProvider>()));

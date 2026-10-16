@@ -323,12 +323,12 @@ public sealed class ShapeMetricsTests
         var before = PointReads(await ScrapeAsync(api.Server));
         await transaction.PutAsync(DocumentApi.Collection, id, "{\"a\":2}"u8.ToArray(), token);
         var afterFirst = PointReads(await ScrapeAsync(api.Server));
-        // The first mutation reads the collection-metadata document and stored state plus its JSON.
-        await Assert.That(afterFirst - before).IsEqualTo(2d);
+        // Preflight and payload for the shared collection state, then for the document's stored state.
+        await Assert.That(afterFirst - before).IsEqualTo(4d);
 
         await transaction.PutAsync(DocumentApi.Collection, id, "{\"a\":3}"u8.ToArray(), token);
-        // The next mutation uses pending state; only the collection-metadata document is read again.
-        await Assert.That(PointReads(await ScrapeAsync(api.Server)) - afterFirst).IsEqualTo(1d);
+        // Pending document state skips its two SELECTs; only the collection state's preflight and payload are read again.
+        await Assert.That(PointReads(await ScrapeAsync(api.Server)) - afterFirst).IsEqualTo(2d);
     }
 
     [Test]

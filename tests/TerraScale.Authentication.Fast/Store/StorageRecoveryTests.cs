@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -16,7 +17,8 @@ namespace TerraScale.Authentication.Fast.Store;
 /// <summary>
 /// No startup order between ts-auth and TerraBase: ts-auth starts without TerraBase, answers 503 on <c>/readyz</c>, and
 /// becomes ready by itself once TerraBase serves and startup provisions the issuer's first signing key; a TerraBase
-/// crash and restart while ts-auth runs is the same. Existing keys are kept. Each test owns its TerraBase
+/// clean shutdown and restart keeps existing keys. An unclean copy awaits certified recovery and keeps auth unready.
+/// Each test owns its TerraBase
 /// process (the one built from this commit), so it can stop it.
 /// </summary>
 public sealed class StorageRecoveryTests
@@ -58,7 +60,7 @@ public sealed class StorageRecoveryTests
     }
 
     [Test]
-    public async Task A_terrabase_crash_while_ts_auth_runs_is_not_ready_then_recovers_with_the_same_key()
+    public async Task A_clean_terrabase_shutdown_while_ts_auth_runs_is_not_ready_then_recovers_with_the_same_key()
     {
         var (running, unavailable) = await TerraBaseTestServer.StartAsync();
         await using var terrabase = running ?? throw new InvalidOperationException(unavailable);
@@ -67,15 +69,74 @@ public sealed class StorageRecoveryTests
         await using var auth = await StartAuthAsync(terrabase, tenant, provision: true);
         await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
         var before = await KeyIdAsync(auth);
+        var front = (terrabase.ClientAddress, terrabase.InternalAddress);
+
+        await terrabase.StopCleanlyAsync();
+        await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", Recovery)).IsTrue();
+        using (var down = await auth.Client.GetAsync("/readyz"))
+        {
+            await Assert.That(down.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        }
+
+        var probes = new[] { front.ClientAddress.Port, front.InternalAddress.Port }
+            .Select(port => new TcpListener(IPAddress.Loopback, port)).ToArray();
+        try
+        {
+            // Front relays retain exclusive ownership; released backend ports may be reused by parallel tests.
+            foreach (var listener in probes)
+            {
+                var error = Assert.Throws<SocketException>(listener.Start)
+                    ?? throw new InvalidOperationException("The fixture released its front listener during the outage.");
+                await Assert.That(error.SocketErrorCode).IsEqualTo(SocketError.AddressAlreadyInUse);
+            }
+
+            await terrabase.RestartAsync();
+            await Assert.That((terrabase.ClientAddress, terrabase.InternalAddress)).IsEqualTo(front);
+            await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
+            await Assert.That(await KeyIdAsync(auth)).IsEqualTo(before);
+            var keys = await terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth").ListDocumentsAsync(AuthStore.SigningKeyCollection);
+            await Assert.That(keys.Items.Count).IsEqualTo(1);
+        }
+        finally
+        {
+            foreach (var listener in probes)
+            {
+                listener.Stop();
+            }
+        }
+    }
+
+    [Test]
+    public async Task A_terrabase_crash_keeps_auth_unready_until_the_uncertain_copy_can_be_certified()
+    {
+        var (running, unavailable) = await TerraBaseTestServer.StartAsync();
+        await using var terrabase = running ?? throw new InvalidOperationException(unavailable);
+        var tenant = await terrabase.CreateTenantAsync();
+        var database = terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth");
+        var created = await database.CreateAsync();
+        await using var auth = await StartAuthAsync(terrabase, tenant, provision: true);
+        await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
+        var keys = await database.ListDocumentsAsync(AuthStore.SigningKeyCollection);
+        await Assert.That(keys.Items.Count).IsEqualTo(1);
 
         await terrabase.StopAsync();
+        var image = await terrabase.SnapshotDatabaseFilesAsync(tenant.Organization.Id, tenant.Project.Id, created.Id);
         await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", Recovery)).IsTrue();
-
         await terrabase.RestartAsync();
-        await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
-        await Assert.That(await KeyIdAsync(auth)).IsEqualTo(before);
-        var keys = await terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth").ListDocumentsAsync(AuthStore.SigningKeyCollection);
-        await Assert.That(keys.Items.Count).IsEqualTo(1);
+        await Assert.That(await ReadinessWait.UntilAsync(
+            () => terrabase.RetainedDatabaseMatchesAsync(tenant.Organization.Id, tenant.Project.Id, created.Id, image), Recovery)).IsTrue();
+
+        // Without an intact peer, a restarted uncertain copy cannot authorize auth readiness.
+        await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsFalse();
+        using var ready = await auth.Client.GetAsync("/readyz");
+        await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        var refusal = await Assert.ThrowsAsync<TerraBaseUnavailableException>(async () =>
+            await database.CreateCollectionAsync("after_crash"))
+            ?? throw new InvalidOperationException("The refused copy accepted an ordinary write.");
+        await Assert.That(refusal.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(refusal.ErrorCode).IsEqualTo("copy_faulted");
+        await Assert.That(await terrabase.RetainedDatabaseMatchesAsync(
+            tenant.Organization.Id, tenant.Project.Id, created.Id, image)).IsTrue();
     }
 
     [Test]

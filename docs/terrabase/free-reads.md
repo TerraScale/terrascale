@@ -306,7 +306,27 @@ T1 details:
 - **Caching.** T1 objects carry `public, max-age=31536000, immutable` and no `Vary: Authorization`. Presigned URLs
   differ per manifest, so shared-cache hit rates depend on URL keying. FR-22 measures this, along with the Tigris
   pricing check.
+- **Cached copies.** Seven-day source deletion and URL expiry cannot erase downloaded or cached ciphertext; retention
+  prevents new manifests and key grants for expired objects.
+- **Admission and failures.** The background queue admits at most 32 items and 64 MiB through the memory budget.
+  Refused or failed work remains available at the origin, without automatic backfill. A failed snapshot page stops
+  mirroring that chain; manifests end at the first unmirrored object. Origin reads only adopt existing T1 objects.
 - FR-00 is no longer a gate. The remaining caching-proxy question applies only to T2, which is not selected.
+
+FR-22 pricing and caching check (official documentation, 2026-10-14; no account changes or live bucket runs):
+
+- [Tigris pricing](https://www.tigrisdata.com/pricing.md) charges no regional, inter-region, or Internet egress.
+  Global Standard storage is $0.02/GiB-month; PUT is $0.005/1,000 Class A requests and GET/HEAD is $0.0005/1,000 Class B
+  requests. Free monthly allowances are 5 GiB Standard storage, 10,000 Class A and 100,000 Class B requests.
+- [Fly pricing](https://fly.io/docs/about/pricing/#extensions) explicitly bills transfer to third-party extensions,
+  including Tigris. Published Internet egress is $0.04/GB from `gru` and $0.02/GB from `sjc` or `fra`; actual upload routing
+  and invoice classification are unmeasured. Direct client downloads avoid serving those body bytes through TerraBase.
+- [Tigris regions](https://www.tigrisdata.com/docs/concepts/regions/) lists `sjc` and `fra` for both `t3.storage.dev` and
+  Fly.io, and `gru` in the Fly.io list. This does not promise identical placement through every endpoint.
+- [Global bucket locations](https://www.tigrisdata.com/docs/buckets/locations/) automatically create local copies on
+  cross-region access. [Object caching](https://www.tigrisdata.com/docs/objects/caching/) is on by default and honors
+  object cache headers. The documentation does not establish shared hits across changing presigned query strings or
+  whether a hit avoids GET charges. Those measurements remain in FR-33; no live bucket is used by FR-22 tests.
 
 ### 3.9 Encrypt-then-cache
 
@@ -594,7 +614,7 @@ qualification of wave A). FR-40..42 and FR-44 = S1..S3 and S4; FR-43 (ts-cli) ha
 | D14 | Resume token is `base64url(0x01 ‖ resume_scope16 ‖ R8)`. `resume_scope16` binds organization, project, database, collection, collection generation, canonical filter and wire format, not the machine. Malformed is `400`, mismatched scope is `409` (B0 review) | Settled |
 | D15 | Publication gate uses `covered_offset`: the `next_offset` for chunks and fresh bodies, the snapshot's `S` for every page (B0 review) | Settled |
 | D16 | Region-failover redirect goes to the earlier of the commit boundary before the first uncovered row and the local sealed head; a target below retention is `409` (B0 review) | Settled |
-| D17 | Object keys in Tigris are `v1/shapes/<SHA-256(shape_id ‖ 0x00 ‖ binding)>` (B0 review) | Settled |
+| D17 | Object keys in Tigris are `v1/shapes/<handle>/<SHA-256(shape_id ‖ 0x00 ‖ binding)>` (FR-22 per-handle prefix decision) | Settled |
 
 ---
 

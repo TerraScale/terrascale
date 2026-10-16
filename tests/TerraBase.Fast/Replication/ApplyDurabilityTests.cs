@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Replication;
@@ -25,16 +26,21 @@ public sealed class ApplyDurabilityTests
         var modes = new ConcurrentQueue<int>();
         SqliteDatabaseStore? store = null;
         string? target = null;
-        await using var api = await ManagementApi.StartAsync(services: services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
+        await using var api = await ManagementApi.StartAsync(services: services =>
         {
-            if (step == "replication.apply.committed" && database.DatabaseId == Volatile.Read(ref target))
+            services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
             {
-                var session = store!.CurrentWriter() ?? throw new InvalidOperationException("the apply still holds its writer");
-                using var command = session.Connection.CreateCommand();
-                command.CommandText = "PRAGMA synchronous;";
-                modes.Enqueue(Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture));
-            }
-        }));
+                if (step == "replication.apply.committed" && database.DatabaseId == Volatile.Read(ref target))
+                {
+                    var session = store!.CurrentWriter() ?? throw new InvalidOperationException("the apply still holds its writer");
+                    using var command = session.Connection.CreateCommand();
+                    command.CommandText = "PRAGMA synchronous;";
+                    modes.Enqueue(Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture));
+                }
+            });
+            // The receiver's progress timeout has its own tests; a frozen clock keeps this 1,101-document apply off it under load.
+            services.AddSingleton(provider => ActivatorUtilities.CreateInstance<PeerStreamReceiver>(provider, new FakeTimeProvider(DateTimeOffset.UtcNow)));
+        });
         var managed = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(managed.Organization, "documents:write", "documents:read");
         await ManagementApi.CreateCollectionAsync(data, managed, "items");

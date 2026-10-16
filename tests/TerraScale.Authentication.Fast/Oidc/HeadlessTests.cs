@@ -384,7 +384,7 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
         // Select separate email buckets so this IP test cannot reuse Alice's exhausted budget.
         var limiter = oidc.Server.App.Services.GetRequiredService<AttemptLimiter>();
         var exhausted = limiter.Fold("alice@example.test");
-        var emailCount = HeadlessAuth.PerIp * (HeadlessAuth.SiteFactor + 1) + HeadlessAuth.MailPerIp + 1;
+        var emailCount = HeadlessAuth.PerIp * (HeadlessAuth.SiteFactor + 1) + HeadlessAuth.MailPerIp + 2;
         var emails = Enumerable.Range(0, emailCount * 2).Select(index => $"ip-call{index}@example.test")
             .Where(email => limiter.Fold(email) != exhausted).DistinctBy(limiter.Fold).Take(emailCount).ToArray();
         await Assert.That(emails.Length).IsEqualTo(emailCount);
@@ -413,14 +413,25 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
             await Assert.That(await OidcHarness.ErrorAsync(otherPrefix)).IsEqualTo("invalid_grant");
         }
 
-        // A /48 holds four times one /64's budget, however many /64s it spreads the calls over.
+        // A /48 holds four times one /64's budget, however many /64s it spreads the calls over. Folds are 16-bit, so pick a /48
+        // whose fold avoids 2001:db8::'s site bucket and distinct /64s whose folds avoid 2001:db8:0:1::'s exhausted bucket.
+        // The last /64 and an unused email probe the site, so only the site budget can refuse it.
+        var usedSite = limiter.Fold(HeadlessAuth.Subject("2001:db8::1")!);
+        var block = Enumerable.Range(5, 16).First(index => limiter.Fold(HeadlessAuth.Subject($"2001:db8:{index:x}::1")!) != usedSite);
+        var usedIp = limiter.Fold(HeadlessAuth.Subject("2001:db8:0:1::1")!);
+        var spreadCount = HeadlessAuth.PerIp * HeadlessAuth.SiteFactor + 1;
+        var spread = Enumerable.Range(0, spreadCount * 2).Select(index => $"2001:db8:{block:x}:{index:x}::1")
+            .Where(ip => limiter.Fold(HeadlessAuth.Subject(ip)!) != usedIp)
+            .DistinctBy(ip => limiter.Fold(HeadlessAuth.Subject(ip)!)).Take(spreadCount).ToArray();
+        await Assert.That(spread.Length).IsEqualTo(spreadCount);
         for (var call = 0; call < HeadlessAuth.PerIp * HeadlessAuth.SiteFactor; call++)
         {
-            using var counted = await oidc.GrantAsync(HeadlessGrants.EmailCode, emails[HeadlessAuth.PerIp + 1 + call], wrong, $"2001:db8:5:{call:x}::1");
+            using var counted = await oidc.GrantAsync(HeadlessGrants.EmailCode, emails[HeadlessAuth.PerIp + 1 + call], wrong, spread[call]);
             await Assert.That(counted.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         }
 
-        using (var site = await oidc.GrantAsync(HeadlessGrants.EmailCode, "alice@example.test", wrong, "2001:db8:5:ffff::1"))
+        var fresh = emails[emailCount - HeadlessAuth.MailPerIp - 1];
+        using (var site = await oidc.GrantAsync(HeadlessGrants.EmailCode, fresh, wrong, spread[^1]))
         {
             await Assert.That(site.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
         }

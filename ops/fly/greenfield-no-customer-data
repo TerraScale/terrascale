@@ -1,3 +1,3 @@
-# Greenfield dogfood only: authorize the format-9 volume reset and automatic startup reseeding.
+# Greenfield dogfood only: authorize the format-10 volume reset and automatic startup reseeding.
 # Delete this marker before go-public; customer data must never enter this reset path.
-storage-format=9-f707baac47dc
+storage-format=10-8e53f392820a
