@@ -14,6 +14,7 @@ public sealed class FlyOutageE2ETests
 {
     // One test for all three outages, in sequence: no two outages share the app's machines at the same time.
     [Test]
+    [Timeout(30 * 60_000)]
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task Each_region_machine_stopped_then_started_catches_up_on_writes_tombstones_and_conflicts_from_both_survivors(CancellationToken cancellationToken)
     {
