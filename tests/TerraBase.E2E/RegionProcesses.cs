@@ -385,11 +385,18 @@ public sealed class RegionProcessHost
         Skip.When(string.IsNullOrEmpty(info), "a region of RegionProcesses: started by the harness in a process of its own");
         var (region, machine, members) = (Environment.GetEnvironmentVariable(RegionVariable)!, Environment.GetEnvironmentVariable(MachineVariable)!,
             Environment.GetEnvironmentVariable(MembersVariable)!);
+        // A backup bucket kept in a directory, so this machine's restore anchor and keys outlive a SIGKILL of its process.
+        var bucket = Environment.GetEnvironmentVariable(BucketVariable) is { Length: > 0 } stored ? Bucket(stored) : null;
         await using var api = await ManagementApi.StartAsync(settings =>
         {
             settings["region"] = region;
             settings["node-name"] = machine;
             settings["data-directory"] = Environment.GetEnvironmentVariable(DataVariable)!;
+            if (bucket is not null)
+            {
+                bucket.Configure(settings);
+                settings["master-key"] = Environment.GetEnvironmentVariable(MasterKeyVariable)!;
+            }
         }, services =>
         {
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());

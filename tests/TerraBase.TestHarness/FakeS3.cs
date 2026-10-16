@@ -66,6 +66,9 @@ public sealed class FakeS3
     /// <summary>An optional asynchronous barrier before an object PUT; receives its bucket key, never its content.</summary>
     public Func<string, CancellationToken, Task>? BeforePut { get; set; }
 
+    /// <summary>An optional callback after a platform object PUT is stored, with its key and content (a bucket kept on disk).</summary>
+    public Action<string, byte[]>? AfterPut { get; set; }
+
     /// <summary>An optional asynchronous barrier before an object GET returns; receives the bucket key, never its content.</summary>
     public Func<string, CancellationToken, Task>? BeforeGet { get; set; }
 

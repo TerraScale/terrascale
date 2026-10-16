@@ -919,6 +919,13 @@ public sealed class Cluster : IAsyncDisposable
             await StartNodeAsync(node);
             try
             {
+                // A lone node has nothing to pull from after a restart: the operator open (R10a).
+                if (_nodes.Count == 1)
+                {
+                    await File.WriteAllTextAsync(Path.Combine(node.Api!.Server.DataDirectory, "catalog-open"), "e2e: a lone node restarted");
+                }
+
+                await CatalogBootstrap.WaitOpenAsync(node.Api!.Server);
                 await AuthorizeAsync(node, restart: true);
                 // Nodes restarted together answer 503 catalog_unverified until their gates verify each other's catalogs;
                 // ready means the persisted binding serves the database to the new project token.

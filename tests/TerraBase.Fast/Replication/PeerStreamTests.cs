@@ -2929,6 +2929,23 @@ public sealed class PeerStreamTests
                     await cluster._machines[region].RegisterAsync();
                 }
 
+                // The catalog gates open once each machine pulled from the others (a lone machine is bootstrapped), then the
+                // first machine registers the tenant and the others see it.
+                if (regions.Length == 1)
+                {
+                    await CatalogBootstrap.OpenAsync(cluster._machines[regions[0]].Api.Server);
+                }
+
+                foreach (var machine in cluster._machines.Values)
+                {
+                    await CatalogBootstrap.WaitOpenAsync(machine.Api.Server);
+                }
+
+                foreach (var region in regions)
+                {
+                    await cluster._machines[region].RegisterAsync();
+                }
+
                 return cluster;
             }
             catch
