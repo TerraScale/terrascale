@@ -31,6 +31,9 @@ internal sealed class AntiEntropy : BackgroundService
     private const int DigestBytes = 4096 * 16;
     private const int MaxPageStates = ChangeGroups.MaxDeltas;
 
+    // Buckets read per call: a refill holds one call's keys of the peer at a time.
+    private const int BucketsPerRead = 64;
+
     private readonly IMembership _membership;
     private readonly PeerCredential _credential;
     private readonly IChangeGroupSource _source;
@@ -274,8 +277,7 @@ internal sealed class AntiEntropy : BackgroundService
         request.Buckets.AddRange(repair.Order().Select(bucket => (uint)bucket));
         using var call = client.ReadBucket(request, deadline: TimeProvider.System.GetUtcNow().UtcDateTime + ReadTimeout, cancellationToken: cancellationToken);
         var changed = 0;
-        var theirKeys = new HashSet<(string Collection, string Id)>();
-        while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
+        foreach (var buckets in repair.Order().Chunk(BucketsPerRead))
         {
             var states = Decode(database, call.ResponseStream.Current, source);
             theirKeys.UnionWith(states.Select(state => (state.Collection, state.Id)));

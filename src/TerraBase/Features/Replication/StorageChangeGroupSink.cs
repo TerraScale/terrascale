@@ -82,7 +82,7 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             foreach (var state in chunk.Where(state => state.State.MaxStamp.Value != 0))
             {
                 // Origin 0: a repair (section 9), so the tailer never ships it and it moves no origin's applied stamp.
-                changed += await transaction.JoinAsync(state.Collection, state.Id, state.State, new EntryVersion(state.State.MaxStamp, default), cancellationToken)
+                changed += await transaction.JoinReplicatedAsync(state.Collection, state.Id, state.State, new EntryVersion(state.State.MaxStamp, default), whole: true, cancellationToken)
                     .ConfigureAwait(false) ? 1 : 0;
             }
 

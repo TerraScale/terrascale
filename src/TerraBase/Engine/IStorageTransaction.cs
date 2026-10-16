@@ -182,12 +182,14 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<bool> JoinAsync(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Joins a stale whole state (<see cref="Features.Replication.OriginGroup.Stale"/>) as <see cref="JoinAsync"/> does,
-    /// except into a document this machine holds no state of while the state proves it once did: an entry of this machine,
-    /// or one at or below what it applied from that entry's origin. Its state was then collected after a newer deletion, and
-    /// the stale write loses to that deletion (last writer wins by original versions). Returns whether anything changed.
+    /// Joins a replicated state as <see cref="JoinAsync"/> does, unless it may bring back a deletion this machine collected
+    /// (docs/terrabase/multi-region-replication.md section 11): into a document it no longer holds, from below its collection
+    /// watermark. A whole state (<paramref name="whole"/>: a stale group's or a repair's) then joins only where this machine
+    /// never held the document, or held a version newer than any collection; otherwise only its entries above the watermark
+    /// join. A delta it applied before is dropped, and one it never saw throws <see cref="StaleDeltaException"/>. Returns
+    /// whether anything changed.
     /// </summary>
-    ValueTask<bool> JoinStaleAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken);
+    ValueTask<bool> JoinReplicatedAsync(string collection, string id, DocumentState state, EntryVersion at, bool whole, CancellationToken cancellationToken);
 
     /// <summary>Records in <c>_tb_peers</c> that every change of <paramref name="origin"/> up to <paramref name="applied"/> it streamed was joined here.</summary>
     ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken);

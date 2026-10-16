@@ -13,8 +13,8 @@ namespace TerraBase.Features.Replication;
 /// <param name="ChangeId">Larger than every earlier group's of the database on this machine.</param>
 /// <param name="Deltas">1 to <see cref="ChangeGroups.MaxDeltas"/> deltas.</param>
 /// <param name="Stale">
-/// Committed 24 h or more before it was read: each delta is then the document's whole state as of that commit. Peers may
-/// have collected a newer deletion of it meanwhile (section 11), so they join it only where it cannot bring one back.
+/// Read again for a receiver that may have collected a newer deletion of its documents (section 11): each delta is then the
+/// document's whole state as of that commit, so the receiver joins it only where it cannot bring that deletion back.
 /// </param>
 public sealed record OriginGroup(long ChangeId, IReadOnlyList<ChangeDelta> Deltas, bool Stale = false);
 

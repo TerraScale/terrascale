@@ -27,7 +27,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RefillTimeout = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan FrontierEvery = TimeSpan.FromSeconds(5);
+    // Each frontier costs a write on both machines per idle database; the horizon keeps a 60 s margin anyway.
+    private static readonly TimeSpan FrontierEvery = TimeSpan.FromSeconds(30);
     private const int MaxDetail = 128;
     private const int MaxPendingResponses = 32;
     // Linked nodes HeldOriginsAsync considers at most; past it none is held. The membership bounds links well below it.
@@ -188,6 +189,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             {
                 var view = await _membership.RefreshAsync(stoppingToken).ConfigureAwait(false);
                 var self = _membership.Self.Name;
+                // Every listed machine, reachable or not: garbage collection evicts only machines missing from the list (section 11).
+                _self.Presence.Listed(view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Select(member => member.Name).Where(name => name != self),
+                    _self.Clock.Tick().Milliseconds);
                 var peers = view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere)
                     .Where(member => member.Name != self && member.PeerAddress.Length > 0)
                     .ToDictionary(member => member.Name, StringComparer.Ordinal);
@@ -289,6 +293,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         silent.CancelAfter(ReplicationProtocol.ProgressTimeout);
 
         var peer = new ReplicaId(call.ResponseStream.Current.Welcome.Node);
+        _self.Presence.Heard(link.Peer.Name, peer);
         lock (link.Gate)
         {
             (link.Connected, link.Origin) = (true, peer);
@@ -805,7 +810,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             live = !cursor.Refilling && link.Peer.Region != _options.Region && link.Placements.GetValueOrDefault(database).Placed;
             from = cursor.Live is { } run && run.Incarnation == incarnation ? run.From : cursor.Acked ?? inFlight;
             (cursor.InFlight, cursor.InFlightGroups, cursor.Refilling) = (null, 0, false);
-            if (ack.Refused)
+            if (ack is { Refused: true, Stale: true })
+            {
+                // The peer may have collected a newer deletion of a document in the batch: it gets whole states, at once.
+                (cursor.Stale, cursor.RetryAt) = (true, 0);
+                return;
+            }
+
+            if (ack is { Refused: true, Refill: false })
             {
                 // The peer does not hold the database yet (its catalog lags): try again later.
                 cursor.RetryAt = _time.GetTimestamp() + (long)(Retry.TotalSeconds * _time.TimestampFrequency);
@@ -1134,6 +1146,12 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         public long FrontierAt { get; set; }
 
         public long FrontierQuiet { get; set; }
+
+        // The peer's highest stable stamp recorded here, sent as Batch.expect (null until read on this connection; 0 after a
+        // reset); and whether the peer asked for whole states (Ack.stale) on this connection.
+        public ulong? Expect { get; set; }
+
+        public bool Stale { get; set; }
 
         public int InFlightGroups { get; set; }
 

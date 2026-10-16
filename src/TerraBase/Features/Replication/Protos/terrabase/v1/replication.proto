@@ -31,10 +31,11 @@ message PushFrame {
 
 // Sent for a database whose groups the receiver has all acknowledged (at most every 30 s): the receiver holds every event
 // of the origin stamped below hlc, so its applied stamp for the origin moves there even while the origin writes nothing
-// (section 11). hlc was taken before the read that found nothing left to send.
+// (section 11). hlc was taken before the read that found nothing left to send. expect: as in Batch.
 message Frontier {
   Database database = 1;
   fixed64 hlc = 2;
+  fixed64 expect = 3;
 }
 
 // The first frame: the sending machine's replica id (the origin of every group on this stream), its clock and region, and
@@ -52,9 +53,18 @@ message Hello {
 message Refill {
   Database database = 1;
   uint64 change_id = 2;
-  // The sender's GC horizon (section 11): a state the receiver holds below it that the sender lacks was collected there,
-  // so the refill drops it instead of keeping it (a refill copies; it does not merge collected deletions back).
-  fixed64 horizon = 3;
+  // The sender's collection watermark (section 11): the highest horizon below which it dropped states. A state the
+  // receiver holds wholly below it, which the sender lacks although it applied one of its entries, was collected there, so
+  // the refill drops it instead of keeping it (a refill copies; it does not merge collected deletions back).
+  fixed64 collected_below = 3;
+  // The sender's applied stamp per origin, its own as its clock when the refill began: the receiver holds every one of
+  // those events once it copied the sender's states, and raises its own applied stamps to them.
+  repeated Applied applied = 4;
+}
+
+message Applied {
+  fixed64 node = 1;
+  fixed64 stamp = 2;
 }
 
 // A client database: its organization, project and database ULIDs; and the incarnation (the 16-byte ULID of one database
@@ -70,10 +80,14 @@ message Database {
 
 // Consecutive change groups of one database, the last one's change id, and the groups: a GroupList inside a TBLZ4E01 LZ4
 // application envelope (decision 0007). At most 1024 groups and 2 MiB of encoded groups; one batch per database in flight.
+// expect: the receiver's highest stable stamp the sender recorded (0 when none). A receiver that applied less from the
+// sender than that lost what it acknowledged (its file was restored from an older copy): it applies nothing and answers
+// refill, and the sender refills it.
 message Batch {
   Database database = 1;
   uint64 last_change_id = 2;
   bytes groups = 3;
+  fixed64 expect = 4;
 }
 
 // Sent every second while nothing else is.
@@ -89,8 +103,8 @@ message GroupList {
 message Group {
   uint64 change_id = 1;
   repeated Delta deltas = 2;
-  // Committed 24 h or more before it was read: each delta is the document's whole state as of that commit, so a receiver
-  // can tell whether it ever held the document (section 11, stale writes).
+  // Sent again on the receiver's request (Ack.stale): each delta is the document's whole state as of that commit, so the
+  // receiver can tell whether it ever held the document (section 11, stale writes).
   bool stale = 3;
 }
 
@@ -115,6 +129,8 @@ message AckFrame {
 message StableReport {
   Database database = 1;
   fixed64 stable = 2;
+  // As Ack.refill; the frontier was not applied.
+  bool refill = 3;
 }
 
 // The first answer: the receiving machine's replica id, under which the sender keeps its cursor.
@@ -131,6 +147,12 @@ message Ack {
   bool refused = 4;
   // The receiver's stable stamp for the database (section 11): every origin it hears from is applied up to it.
   fixed64 stable = 5;
+  // Refused because a delta is older than a deletion the receiver may have collected, for a document it no longer holds:
+  // the sender ships its groups again as whole states (Group.stale), right away.
+  bool stale = 6;
+  // Refused because the receiver applied less from the sender than it once reported (Batch.expect): the sender's cursor
+  // goes back to 0, so the receiver refills.
+  bool refill = 7;
 }
 
 message DigestRequest {

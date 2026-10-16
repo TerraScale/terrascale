@@ -228,6 +228,39 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         }
     }
 
+    public async ValueTask AdoptAsync(TenantContext database, RefillBasis basis, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(basis);
+        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        {
+            return;
+        }
+
+        var transaction = (SqliteStorageTransaction)await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            await transaction.AdoptAsync(basis.CollectedBelow, basis.Applied, cancellationToken).ConfigureAwait(false);
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async ValueTask<Hlc?> AppliedFromAsync(TenantContext database, ReplicaId origin, CancellationToken cancellationToken)
+    {
+        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        {
+            return null;
+        }
+
+        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            return await transaction.GetAppliedFromAsync(origin, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async ValueTask<Hlc> ReportedStableAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) =>
+        await ReadAsync(database, (transaction, _) => transaction.GetReportedStableAsync(peer, cancellationToken), cancellationToken).ConfigureAwait(false);
+
     // A stamp read on a read transaction, at this machine's clock; 0 when this machine does not hold the database.
     private async ValueTask<Hlc> ReadAsync(TenantContext database, Func<SqliteStorageTransaction, Hlc, ValueTask<Hlc>> read, CancellationToken cancellationToken)
     {

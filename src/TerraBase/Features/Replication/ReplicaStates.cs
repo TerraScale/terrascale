@@ -6,6 +6,13 @@ namespace TerraBase.Features.Replication;
 /// <summary>A document's whole state, as anti-entropy reads and joins it.</summary>
 public sealed record RepairState(string Collection, string Id, DocumentState State);
 
+/// <summary>
+/// What a refilling peer forgets and adopts (docs/terrabase/multi-region-replication.md section 10): the highest horizon
+/// below which the sender dropped states, and its applied stamp per origin (its own: its clock as the refill began). A state
+/// the sender lacks, wholly below <paramref name="CollectedBelow"/>, with an entry the sender applied, was collected there.
+/// </summary>
+public sealed record RefillBasis(Hlc CollectedBelow, IReadOnlyDictionary<ReplicaId, Hlc> Applied);
+
 /// <summary>Where a bucket read resumes: after this document of this bucket.</summary>
 public sealed record BucketCursor(int Bucket, string Collection, string Id);
 
@@ -48,8 +55,11 @@ public interface IReplicaStates
     /// <summary>This machine's stable stamp of the database (section 11), as its acks report it.</summary>
     ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken);
 
-    /// <summary>This machine's GC horizon of the database: below it, every replica holds every event.</summary>
-    ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken);
+    /// <summary>
+    /// What a peer refilled from this machine needs (section 10): its collection watermark and its applied stamps; null when
+    /// this machine does not hold the database.
+    /// </summary>
+    ValueTask<RefillBasis?> RefillBasisAsync(TenantContext database, CancellationToken cancellationToken);
 
     /// <summary>
     /// A copying refill: forgets each of <paramref name="keys"/> of <paramref name="incarnation"/> whose state lies wholly
