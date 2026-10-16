@@ -35,6 +35,13 @@ This repository (`TerraScale/terrascale`) holds four areas; these rules apply to
 - Fly orgs: `terrascale` (production) and `terrascale-previews` (PR previews). Apps: `ts-terrabase` and `ts-auth` in `terrascale`; one `ts-pr-<number>` app per PR in `terrascale-previews`.
 - CI is GitHub Actions on GitHub-hosted runners: it builds and tests, then `fly deploy` ships the image. Deploy `gru` first, then a live check, then `sjc`. A failed check stops the rollout; fix forward.
 
+## Platform
+
+- Everything runs on Fly.io. Nothing runs on OCI.
+- Fly orgs: `terrascale` (production) and `terrascale-previews` (PR previews). Apps: `ts-terrabase` and `ts-auth` in `terrascale`; one `ts-pr-<number>` app per PR in `terrascale-previews`.
+- CI is GitHub Actions on Blacksmith runners: it builds and tests, then `fly deploy` ships the image.
+- Deploy order: `gru` first, then a live check, then `sjc`. A failed check stops the rollout; fix forward.
+
 ## Rules for every area
 
 ### Zero configuration (user decision 2026-10-09, do not revert)
