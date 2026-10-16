@@ -733,7 +733,10 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 {
                     await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database, incarnation), Hlc = frontier.Value } }, cancellationToken)
                         .ConfigureAwait(false);
-                    cursor.FrontierAt = _time.GetTimestamp();
+                    lock (link.Gate)
+                    {
+                        (cursor.FrontierAt, cursor.FrontierQuiet) = (_time.GetTimestamp(), quiet);
+                    }
                 }
 
                 lock (link.Gate)
@@ -1118,6 +1121,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
         // When the last frontier went (a TimeProvider timestamp; 0 before the first).
         public long FrontierAt { get; set; }
+
+        public long FrontierQuiet { get; set; }
 
         public int InFlightGroups { get; set; }
 
