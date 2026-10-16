@@ -16,19 +16,22 @@ import (
 // project's routes it holds every scope, so no credential exists to leak. Off Fly the listener is reachable only on
 // this host.
 type Client struct {
-	base  string
-	owner string
-	hc    *http.Client
+	base   string
+	owner  string
+	secret string
+	hc     *http.Client
 }
 
-// NewClient builds a client of the internal listener on port.
-func NewClient(port int, owner string, timeout time.Duration) *Client {
+// NewClient builds a client of the internal listener on port. Every request carries the node's peer credential
+// (X-TerraBase-Peer-Credential): without it the internal listener answers 401.
+func NewClient(port int, peerSecret, owner string, timeout time.Duration) *Client {
 	var p http.Protocols
 	p.SetUnencryptedHTTP2(true)
 	return &Client{
-		base:  "http://127.0.0.1:" + strconv.Itoa(port),
-		owner: owner,
-		hc:    &http.Client{Transport: &http.Transport{Protocols: &p, IdleConnTimeout: 90 * time.Second}, Timeout: timeout},
+		base:   "http://127.0.0.1:" + strconv.Itoa(port),
+		owner:  owner,
+		secret: peerSecret,
+		hc:     &http.Client{Transport: &http.Transport{Protocols: &p, IdleConnTimeout: 90 * time.Second}, Timeout: timeout},
 	}
 }
 
@@ -56,6 +59,7 @@ func (c *Client) Do(ctx context.Context, method, path string, body []byte) (Resp
 	}
 	// The owner header only on the Management API: on a project's data route it would make the operator act as that
 	// user, who holds no scopes there, instead of holding every scope (src/TerraBase/Features/UserAuth/OperatorHandler.cs).
+	req.Header.Set("X-TerraBase-Peer-Credential", c.secret)
 	if c.owner != "" && strings.HasPrefix(path, "/v1/management/") {
 		req.Header.Set("X-TerraBase-User-Id", c.owner)
 	}

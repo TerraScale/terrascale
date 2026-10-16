@@ -45,7 +45,7 @@ func SampleLoop(ctx context.Context, r *Run, label string, interval time.Duratio
 	if err != nil {
 		return err
 	}
-	c := NewClient(n.InternalPort, r.Owner, 10*time.Second)
+	c := NewClient(n.InternalPort, n.PeerSecret, r.Owner, 10*time.Second)
 	path := filepath.Join(r.Dir, "evidence", "samples-"+label+".jsonl")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err

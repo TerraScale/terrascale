@@ -175,7 +175,7 @@ func TestDataRoutesCarryNoOwnerHeader(t *testing.T) {
 	n, _ := strconv.Atoi(port)
 	var p http.Protocols
 	p.SetHTTP1(true)
-	c := NewClient(n, "OWNER", time.Second)
+	c := NewClient(n, strings.Repeat("a", 64), "OWNER", time.Second)
 	c.hc.Transport = &http.Transport{Protocols: &p}
 	for _, path := range []string{"/v1/projects/P/databases/d/transactions", "/v1/management/organizations/O/projects/P/databases/D/indexes"} {
 		if _, err := c.Do(context.Background(), http.MethodPost, path, []byte(`{}`)); err != nil {

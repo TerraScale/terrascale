@@ -216,7 +216,7 @@ func TestRealBinaryLostAcknowledgements(t *testing.T) {
 		}
 		proxy, port := startDropProxy(t, n.InternalPort)
 		proxy.arm(tc.label, tc.match)
-		stats, err := Write(ctx, r, WriteConfig{Phase: tc.phase, Writers: 4, client: NewClient(port, r.Owner, 2*time.Minute)})
+		stats, err := Write(ctx, r, WriteConfig{Phase: tc.phase, Writers: 4, client: NewClient(port, strings.Repeat("a", 64), r.Owner, 2*time.Minute)})
 		_ = r.Evidence("write-"+tc.phase+".json", stats)
 		// A dropped fence answer is the fence's own ambiguous attempt (fence evidence), not a batch's.
 		if err != nil || !stats.Fenced || stats.Unresolved != 0 || (stats.Ambiguous < 1 && tc.label != "phase fence") {
