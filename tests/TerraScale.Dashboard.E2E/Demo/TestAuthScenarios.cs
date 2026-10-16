@@ -840,7 +840,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 projectReportReads,
                 projectRequests = projectRequests.ToArray(),
                 signupGrantBindings,
-                managementMutations,
+                managementMutations = 0,
                 managementRequests,
                 revocations,
                 contractFailures,

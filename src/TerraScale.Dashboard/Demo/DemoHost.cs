@@ -49,7 +49,6 @@ public sealed class DemoEnvironment
     {
         auth = new(workspace.ProjectRole);
         databases = new TestDatabases(documents);
-        organizationAccess = new TestOrganizationAccess(workspace);
         billingPlans = new TestBillingPlanTransport(stripe);
         checkoutPersistence = new TestBillingCheckoutPersistence(state);
         apiKeys = new TestAuthApiKeys(auth.ResolveAccessToken, workspace.ProjectRole);
