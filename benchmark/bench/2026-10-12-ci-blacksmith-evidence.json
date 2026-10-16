@@ -11018,6 +11018,2376 @@
           ]
         }
       ]
+    },
+    {
+      "run_id": 38259616461,
+      "attempt": 1,
+      "head_sha": "6d384fab31fccf764c82f4bcc50457da614aeb3a",
+      "url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/attempts/1",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "id": 114846484078,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114846484078",
+          "conclusion": "success",
+          "created_at": "2026-10-12T13:59:28Z",
+          "started_at": "2026-10-12T13:59:36Z",
+          "completed_at": "2026-10-12T13:59:43Z",
+          "name": "changes",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T13:59:37Z",
+              "completed_at": "2026-10-12T13:59:39Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T13:59:39Z",
+              "completed_at": "2026-10-12T13:59:39Z"
+            },
+            {
+              "name": "Run dorny/paths-filter@v3",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T13:59:39Z",
+              "completed_at": "2026-10-12T13:59:40Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 6,
+              "started_at": "2026-10-12T13:59:40Z",
+              "completed_at": "2026-10-12T13:59:40Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 7,
+              "started_at": "2026-10-12T13:59:40Z",
+              "completed_at": "2026-10-12T13:59:40Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-2vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114846485990,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114846485990",
+          "conclusion": "skipped",
+          "created_at": "2026-10-12T13:59:29Z",
+          "started_at": "2026-10-12T13:59:29Z",
+          "completed_at": "2026-10-12T13:59:28Z",
+          "name": "deploy",
+          "steps": [],
+          "labels": [
+            "blacksmith-8vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114846486146,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114846486146",
+          "conclusion": "skipped",
+          "created_at": "2026-10-12T13:59:29Z",
+          "started_at": "2026-10-12T13:59:29Z",
+          "completed_at": "2026-10-12T13:59:28Z",
+          "name": "preview",
+          "steps": [],
+          "labels": [
+            "blacksmith-8vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114846486531,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114846486531",
+          "conclusion": "skipped",
+          "created_at": "2026-10-12T13:59:29Z",
+          "started_at": "2026-10-12T13:59:29Z",
+          "completed_at": "2026-10-12T13:59:28Z",
+          "name": "e2e",
+          "steps": [],
+          "labels": [
+            "blacksmith-4vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114846584265,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114846584265",
+          "conclusion": "success",
+          "created_at": "2026-10-12T13:59:43Z",
+          "started_at": "2026-10-12T13:59:52Z",
+          "completed_at": "2026-10-12T14:02:22Z",
+          "name": "terrabase",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T13:59:52Z",
+              "completed_at": "2026-10-12T13:59:54Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T13:59:54Z",
+              "completed_at": "2026-10-12T13:59:54Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T13:59:54Z",
+              "completed_at": "2026-10-12T13:59:56Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 4,
+              "started_at": "2026-10-12T13:59:56Z",
+              "completed_at": "2026-10-12T13:59:57Z"
+            },
+            {
+              "name": "Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 5,
+              "started_at": "2026-10-12T13:59:57Z",
+              "completed_at": "2026-10-12T14:00:00Z"
+            },
+            {
+              "name": "Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 6,
+              "started_at": "2026-10-12T14:00:00Z",
+              "completed_at": "2026-10-12T14:02:18Z"
+            },
+            {
+              "name": "Post Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 8,
+              "started_at": "2026-10-12T14:02:18Z",
+              "completed_at": "2026-10-12T14:02:18Z"
+            },
+            {
+              "name": "Post Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 9,
+              "started_at": "2026-10-12T14:02:18Z",
+              "completed_at": "2026-10-12T14:02:19Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 10,
+              "started_at": "2026-10-12T14:02:19Z",
+              "completed_at": "2026-10-12T14:02:19Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 11,
+              "started_at": "2026-10-12T14:02:19Z",
+              "completed_at": "2026-10-12T14:02:19Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 12,
+              "started_at": "2026-10-12T14:02:19Z",
+              "completed_at": "2026-10-12T14:02:20Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 13,
+              "started_at": "2026-10-12T14:02:20Z",
+              "completed_at": "2026-10-12T14:02:20Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-8vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114846584328,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114846584328",
+          "conclusion": "success",
+          "created_at": "2026-10-12T13:59:43Z",
+          "started_at": "2026-10-12T13:59:50Z",
+          "completed_at": "2026-10-12T14:01:01Z",
+          "name": "libs",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T13:59:51Z",
+              "completed_at": "2026-10-12T13:59:53Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T13:59:53Z",
+              "completed_at": "2026-10-12T13:59:53Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T13:59:53Z",
+              "completed_at": "2026-10-12T13:59:54Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 4,
+              "started_at": "2026-10-12T13:59:54Z",
+              "completed_at": "2026-10-12T13:59:56Z"
+            },
+            {
+              "name": "Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 5,
+              "started_at": "2026-10-12T13:59:56Z",
+              "completed_at": "2026-10-12T13:59:58Z"
+            },
+            {
+              "name": "Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 6,
+              "started_at": "2026-10-12T13:59:58Z",
+              "completed_at": "2026-10-12T14:00:56Z"
+            },
+            {
+              "name": "Post Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 8,
+              "started_at": "2026-10-12T14:00:56Z",
+              "completed_at": "2026-10-12T14:00:56Z"
+            },
+            {
+              "name": "Post Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 9,
+              "started_at": "2026-10-12T14:00:56Z",
+              "completed_at": "2026-10-12T14:00:57Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 10,
+              "started_at": "2026-10-12T14:00:57Z",
+              "completed_at": "2026-10-12T14:00:57Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 11,
+              "started_at": "2026-10-12T14:00:57Z",
+              "completed_at": "2026-10-12T14:00:57Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 12,
+              "started_at": "2026-10-12T14:00:57Z",
+              "completed_at": "2026-10-12T14:00:58Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 13,
+              "started_at": "2026-10-12T14:00:58Z",
+              "completed_at": "2026-10-12T14:00:58Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-4vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114846584530,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114846584530",
+          "conclusion": "success",
+          "created_at": "2026-10-12T13:59:43Z",
+          "started_at": "2026-10-12T13:59:51Z",
+          "completed_at": "2026-10-12T14:04:03Z",
+          "name": "auth",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T13:59:52Z",
+              "completed_at": "2026-10-12T13:59:54Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T13:59:54Z",
+              "completed_at": "2026-10-12T13:59:54Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T13:59:54Z",
+              "completed_at": "2026-10-12T13:59:56Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 4,
+              "started_at": "2026-10-12T13:59:56Z",
+              "completed_at": "2026-10-12T13:59:57Z"
+            },
+            {
+              "name": "Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 5,
+              "started_at": "2026-10-12T13:59:57Z",
+              "completed_at": "2026-10-12T14:00:00Z"
+            },
+            {
+              "name": "Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 6,
+              "started_at": "2026-10-12T14:00:00Z",
+              "completed_at": "2026-10-12T14:03:58Z"
+            },
+            {
+              "name": "Post Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 8,
+              "started_at": "2026-10-12T14:03:58Z",
+              "completed_at": "2026-10-12T14:03:59Z"
+            },
+            {
+              "name": "Post Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 9,
+              "started_at": "2026-10-12T14:03:59Z",
+              "completed_at": "2026-10-12T14:04:00Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 10,
+              "started_at": "2026-10-12T14:04:00Z",
+              "completed_at": "2026-10-12T14:04:00Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 11,
+              "started_at": "2026-10-12T14:04:00Z",
+              "completed_at": "2026-10-12T14:04:00Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 12,
+              "started_at": "2026-10-12T14:04:00Z",
+              "completed_at": "2026-10-12T14:04:00Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 13,
+              "started_at": "2026-10-12T14:04:00Z",
+              "completed_at": "2026-10-12T14:04:00Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-4vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114848417590,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114848417590",
+          "conclusion": "success",
+          "created_at": "2026-10-12T14:04:03Z",
+          "started_at": "2026-10-12T14:04:11Z",
+          "completed_at": "2026-10-12T14:04:21Z",
+          "name": "test",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T14:04:12Z",
+              "completed_at": "2026-10-12T14:04:13Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T14:04:13Z",
+              "completed_at": "2026-10-12T14:04:13Z"
+            },
+            {
+              "name": "Every area that ran passed",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T14:04:13Z",
+              "completed_at": "2026-10-12T14:04:13Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 4,
+              "started_at": "2026-10-12T14:04:13Z",
+              "completed_at": "2026-10-12T14:04:15Z"
+            },
+            {
+              "name": "Fly deploy, volume reset and storage train self-checks",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 5,
+              "started_at": "2026-10-12T14:04:15Z",
+              "completed_at": "2026-10-12T14:04:16Z"
+            },
+            {
+              "name": "Storage train",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 6,
+              "started_at": "2026-10-12T14:04:16Z",
+              "completed_at": "2026-10-12T14:04:17Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 11,
+              "started_at": "2026-10-12T14:04:17Z",
+              "completed_at": "2026-10-12T14:04:18Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 12,
+              "started_at": "2026-10-12T14:04:18Z",
+              "completed_at": "2026-10-12T14:04:18Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 13,
+              "started_at": "2026-10-12T14:04:18Z",
+              "completed_at": "2026-10-12T14:04:18Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-2vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114848539836,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114848539836",
+          "conclusion": "skipped",
+          "created_at": "2026-10-12T14:04:21Z",
+          "started_at": "2026-10-12T14:04:21Z",
+          "completed_at": "2026-10-12T14:04:21Z",
+          "name": "slow",
+          "steps": [],
+          "labels": [
+            "blacksmith-4vcpu-ubuntu-2404"
+          ]
+        }
+      ],
+      "build_logs": [
+        {
+          "repo": "terrascale",
+          "run": 38259616461,
+          "job": 114846584265,
+          "records": [
+            {
+              "step": 1,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 2,
+              "seconds": 2.2,
+              "cached": false
+            },
+            {
+              "step": 3,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 4,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 5,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 6,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 7,
+              "stage": "base 1/5",
+              "instruction": "FROM",
+              "command": "mcr.microsoft.com/dotnet/sdk:11.0@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675"
+            },
+            {
+              "step": 7,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 8,
+              "stage": "base 2/5",
+              "instruction": "RUN",
+              "command": "apt-get update     && apt-get install -y --no-install-recommends make nodejs npm jq     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 8,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 9,
+              "stage": "base 3/5",
+              "instruction": "RUN",
+              "command": "npx --yes playwright@1.63.0 install --with-deps chromium     && npx --yes @redocly/cli@2.57.0 --version     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 9,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 10,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 11,
+              "stage": "base 4/5",
+              "instruction": "COPY",
+              "command": "--from=ts-dotnet --exclude=.git . /src/ts-dotnet"
+            },
+            {
+              "step": 11,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 12,
+              "stage": "base 5/5",
+              "instruction": "WORKDIR",
+              "command": "/src/terrascale"
+            },
+            {
+              "step": 12,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 13,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 14,
+              "stage": "source 1/1",
+              "instruction": "COPY",
+              "command": ". ."
+            },
+            {
+              "step": 14,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 15,
+              "stage": "check-terrabase 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make fmt-check terrabase-check CONFIGURATION=Release"
+            },
+            {
+              "step": 15,
+              "offset_s": 0.096,
+              "summary": "dotnet restore TerraScale.slnx --locked-mode"
+            },
+            {
+              "step": 15,
+              "offset_s": 10.32,
+              "summary": "dotnet restore src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --locked-mode"
+            },
+            {
+              "step": 15,
+              "offset_s": 10.65,
+              "summary": "dotnet format whitespace TerraScale.slnx --verify-no-changes --no-restore"
+            },
+            {
+              "step": 15,
+              "offset_s": 17.82,
+              "summary": "dotnet build terrabase.slnf --configuration Release --no-restore"
+            },
+            {
+              "step": 15,
+              "offset_s": 79.09,
+              "summary": "Time Elapsed 00:01:01.12"
+            },
+            {
+              "step": 15,
+              "offset_s": 79.5,
+              "summary": "Time Elapsed 00:00:00.15"
+            },
+            {
+              "step": 15,
+              "seconds": 79.6,
+              "cached": false
+            },
+            {
+              "step": 16,
+              "stage": "test-terrabase 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make terrabase-test-fast CONFIGURATION=Release && touch /passed"
+            },
+            {
+              "step": 16,
+              "offset_s": 0.05,
+              "summary": "dotnet restore TerraScale.slnx --locked-mode"
+            },
+            {
+              "step": 16,
+              "offset_s": 1.288,
+              "summary": "dotnet restore src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --locked-mode"
+            },
+            {
+              "step": 16,
+              "offset_s": 1.556,
+              "summary": "dotnet build tests/TerraBase.Fast/TerraBase.Fast.csproj --configuration Release --no-restore"
+            },
+            {
+              "step": 16,
+              "offset_s": 2.393,
+              "summary": "Time Elapsed 00:00:00.68"
+            },
+            {
+              "step": 16,
+              "offset_s": 2.402,
+              "summary": "dotnet run --project tests/TerraBase.Fast --configuration Release --no-build -- --maximum-parallel-tests 16"
+            },
+            {
+              "step": 16,
+              "offset_s": 53.57,
+              "summary": "Test run summary: Passed! - /src/terrascale/tests/TerraBase.Fast/bin/Release/net11.0/TerraBase.Fast.dll (net11.0|x64)"
+            },
+            {
+              "step": 16,
+              "offset_s": 53.57,
+              "summary": "total: 1418"
+            },
+            {
+              "step": 16,
+              "offset_s": 53.57,
+              "summary": "failed: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 53.57,
+              "summary": "succeeded: 1418"
+            },
+            {
+              "step": 16,
+              "offset_s": 53.57,
+              "summary": "skipped: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 53.57,
+              "summary": "duration: 50s 590ms"
+            },
+            {
+              "step": 16,
+              "seconds": 53.7,
+              "cached": false
+            },
+            {
+              "step": 17,
+              "seconds": 0.0,
+              "cached": false
+            }
+          ]
+        },
+        {
+          "repo": "terrascale",
+          "run": 38259616461,
+          "job": 114846584328,
+          "records": [
+            {
+              "step": 1,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 2,
+              "seconds": 1.0,
+              "cached": false
+            },
+            {
+              "step": 3,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 4,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 5,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 6,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 7,
+              "stage": "base 1/5",
+              "instruction": "FROM",
+              "command": "mcr.microsoft.com/dotnet/sdk:11.0@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675"
+            },
+            {
+              "step": 7,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 8,
+              "stage": "base 2/5",
+              "instruction": "RUN",
+              "command": "apt-get update     && apt-get install -y --no-install-recommends make nodejs npm jq     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 8,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 9,
+              "stage": "base 3/5",
+              "instruction": "RUN",
+              "command": "npx --yes playwright@1.63.0 install --with-deps chromium     && npx --yes @redocly/cli@2.57.0 --version     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 9,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 10,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 11,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 12,
+              "stage": "base 4/5",
+              "instruction": "COPY",
+              "command": "--from=ts-dotnet --exclude=.git . /src/ts-dotnet"
+            },
+            {
+              "step": 12,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 13,
+              "stage": "base 5/5",
+              "instruction": "WORKDIR",
+              "command": "/src/terrascale"
+            },
+            {
+              "step": 13,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 14,
+              "stage": "source 1/1",
+              "instruction": "COPY",
+              "command": ". ."
+            },
+            {
+              "step": 14,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 15,
+              "stage": "check-libs 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make fmt-check libs-check CONFIGURATION=Release"
+            },
+            {
+              "step": 15,
+              "offset_s": 0.094,
+              "summary": "dotnet restore TerraScale.slnx --locked-mode"
+            },
+            {
+              "step": 15,
+              "offset_s": 15.12,
+              "summary": "dotnet restore src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --locked-mode"
+            },
+            {
+              "step": 15,
+              "offset_s": 15.39,
+              "summary": "dotnet format whitespace TerraScale.slnx --verify-no-changes --no-restore"
+            },
+            {
+              "step": 15,
+              "offset_s": 22.92,
+              "summary": "dotnet build libs.slnf --configuration Release --no-restore"
+            },
+            {
+              "step": 15,
+              "offset_s": 31.42,
+              "summary": "Time Elapsed 00:00:08.37"
+            },
+            {
+              "step": 15,
+              "seconds": 49.5,
+              "cached": false
+            },
+            {
+              "step": 16,
+              "stage": "test-libs 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make libs-test CONFIGURATION=Release && touch /passed"
+            },
+            {
+              "step": 16,
+              "offset_s": 0.048,
+              "summary": "dotnet restore TerraScale.slnx --locked-mode"
+            },
+            {
+              "step": 16,
+              "offset_s": 1.267,
+              "summary": "dotnet restore src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --locked-mode"
+            },
+            {
+              "step": 16,
+              "offset_s": 1.519,
+              "summary": "dotnet build libs.slnf --configuration Release --no-restore"
+            },
+            {
+              "step": 16,
+              "offset_s": 2.485,
+              "summary": "Time Elapsed 00:00:00.79"
+            },
+            {
+              "step": 16,
+              "offset_s": 4.573,
+              "summary": "Test run summary: Passed! - /src/terrascale/tests/TerraScale.Endpoints.Tests/bin/Release/net11.0/TerraScale.Endpoints.Tests.dll (net11.0|x64)"
+            },
+            {
+              "step": 16,
+              "offset_s": 4.574,
+              "summary": "total: 88"
+            },
+            {
+              "step": 16,
+              "offset_s": 4.574,
+              "summary": "failed: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 4.574,
+              "summary": "succeeded: 88"
+            },
+            {
+              "step": 16,
+              "offset_s": 4.574,
+              "summary": "skipped: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 4.574,
+              "summary": "duration: 1s 139ms"
+            },
+            {
+              "step": 16,
+              "offset_s": 5.349,
+              "summary": "Test run summary: Passed! - /src/terrascale/tests/TerraScale.Logging.Tests/bin/Release/net11.0/TerraScale.Logging.Tests.dll (net11.0|x64)"
+            },
+            {
+              "step": 16,
+              "offset_s": 5.35,
+              "summary": "total: 46"
+            },
+            {
+              "step": 16,
+              "offset_s": 5.35,
+              "summary": "failed: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 5.35,
+              "summary": "succeeded: 46"
+            },
+            {
+              "step": 16,
+              "offset_s": 5.35,
+              "summary": "skipped: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 5.35,
+              "summary": "duration: 243ms"
+            },
+            {
+              "step": 16,
+              "seconds": 5.4,
+              "cached": false
+            },
+            {
+              "step": 17,
+              "seconds": 0.0,
+              "cached": false
+            }
+          ]
+        },
+        {
+          "repo": "terrascale",
+          "run": 38259616461,
+          "job": 114846584530,
+          "records": [
+            {
+              "step": 1,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 2,
+              "seconds": 1.7,
+              "cached": false
+            },
+            {
+              "step": 3,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 4,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 5,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 6,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 7,
+              "stage": "base 1/5",
+              "instruction": "FROM",
+              "command": "mcr.microsoft.com/dotnet/sdk:11.0@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675"
+            },
+            {
+              "step": 7,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 8,
+              "stage": "base 2/5",
+              "instruction": "RUN",
+              "command": "apt-get update     && apt-get install -y --no-install-recommends make nodejs npm jq     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 8,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 9,
+              "stage": "base 3/5",
+              "instruction": "RUN",
+              "command": "npx --yes playwright@1.63.0 install --with-deps chromium     && npx --yes @redocly/cli@2.57.0 --version     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 9,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 10,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 11,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 12,
+              "stage": "base 4/5",
+              "instruction": "COPY",
+              "command": "--from=ts-dotnet --exclude=.git . /src/ts-dotnet"
+            },
+            {
+              "step": 12,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 13,
+              "stage": "base 5/5",
+              "instruction": "WORKDIR",
+              "command": "/src/terrascale"
+            },
+            {
+              "step": 13,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 14,
+              "stage": "source 1/1",
+              "instruction": "COPY",
+              "command": ". ."
+            },
+            {
+              "step": 14,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 15,
+              "stage": "check-auth 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make fmt-check auth-openapi-check CONFIGURATION=Release"
+            },
+            {
+              "step": 15,
+              "offset_s": 0.107,
+              "summary": "dotnet restore TerraScale.slnx --locked-mode"
+            },
+            {
+              "step": 15,
+              "offset_s": 18.01,
+              "summary": "dotnet restore src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --locked-mode"
+            },
+            {
+              "step": 15,
+              "offset_s": 18.25,
+              "summary": "dotnet format whitespace TerraScale.slnx --verify-no-changes --no-restore"
+            },
+            {
+              "step": 15,
+              "offset_s": 25.63,
+              "summary": "dotnet build auth.slnf --configuration Release --no-restore --nologo"
+            },
+            {
+              "step": 15,
+              "offset_s": 58.14,
+              "summary": "Time Elapsed 00:00:32.39"
+            },
+            {
+              "step": 15,
+              "seconds": 61.7,
+              "cached": false
+            },
+            {
+              "step": 16,
+              "stage": "test-auth 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make auth-audit auth-test-fast CONFIGURATION=Release && touch /passed"
+            },
+            {
+              "step": 16,
+              "offset_s": 0.059,
+              "summary": "dotnet run scripts/auth/check-nuget-vulnerabilities.cs src/TerraScale.Authentication/TerraScale.Authentication.csproj"
+            },
+            {
+              "step": 16,
+              "offset_s": 4.855,
+              "summary": "dotnet restore TerraScale.slnx --locked-mode"
+            },
+            {
+              "step": 16,
+              "offset_s": 5.886,
+              "summary": "dotnet restore src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --locked-mode"
+            },
+            {
+              "step": 16,
+              "offset_s": 6.103,
+              "summary": "dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo"
+            },
+            {
+              "step": 16,
+              "offset_s": 24.7,
+              "summary": "Time Elapsed 00:00:18.41"
+            },
+            {
+              "step": 16,
+              "offset_s": 24.71,
+              "summary": "dotnet build tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj --configuration Release --no-restore --nologo"
+            },
+            {
+              "step": 16,
+              "offset_s": 34.67,
+              "summary": "Time Elapsed 00:00:09.74"
+            },
+            {
+              "step": 16,
+              "offset_s": 172.6,
+              "summary": "Test run summary: Passed! - /src/terrascale/tests/TerraScale.Authentication.Fast/bin/Release/net11.0/TerraScale.Authentication.Fast.dll (net11.0|x64)"
+            },
+            {
+              "step": 16,
+              "offset_s": 172.6,
+              "summary": "total: 577"
+            },
+            {
+              "step": 16,
+              "offset_s": 172.6,
+              "summary": "failed: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 172.6,
+              "summary": "succeeded: 577"
+            },
+            {
+              "step": 16,
+              "offset_s": 172.6,
+              "summary": "skipped: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 172.6,
+              "summary": "duration: 2m 17s 245ms"
+            },
+            {
+              "step": 16,
+              "seconds": 172.7,
+              "cached": false
+            },
+            {
+              "step": 17,
+              "seconds": 0.0,
+              "cached": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": 38259616461,
+      "attempt": 2,
+      "head_sha": "6d384fab31fccf764c82f4bcc50457da614aeb3a",
+      "url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/attempts/2",
+      "status": "completed",
+      "conclusion": "failure",
+      "jobs": [
+        {
+          "id": 114849599898,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114849599898",
+          "conclusion": "success",
+          "created_at": "2026-10-12T14:06:54Z",
+          "started_at": "2026-10-12T14:07:03Z",
+          "completed_at": "2026-10-12T14:07:09Z",
+          "name": "changes",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T14:07:04Z",
+              "completed_at": "2026-10-12T14:07:06Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T14:07:06Z",
+              "completed_at": "2026-10-12T14:07:06Z"
+            },
+            {
+              "name": "Run dorny/paths-filter@v3",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T14:07:06Z",
+              "completed_at": "2026-10-12T14:07:07Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 6,
+              "started_at": "2026-10-12T14:07:07Z",
+              "completed_at": "2026-10-12T14:07:07Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 7,
+              "started_at": "2026-10-12T14:07:07Z",
+              "completed_at": "2026-10-12T14:07:07Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-2vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114849601528,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114849601528",
+          "conclusion": "skipped",
+          "created_at": "2026-10-12T14:06:54Z",
+          "started_at": "2026-10-12T14:06:54Z",
+          "completed_at": "2026-10-12T14:06:54Z",
+          "name": "preview",
+          "steps": [],
+          "labels": [
+            "blacksmith-8vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114849602612,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114849602612",
+          "conclusion": "skipped",
+          "created_at": "2026-10-12T14:06:54Z",
+          "started_at": "2026-10-12T14:06:54Z",
+          "completed_at": "2026-10-12T14:06:54Z",
+          "name": "e2e",
+          "steps": [],
+          "labels": [
+            "blacksmith-4vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114849667518,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114849667518",
+          "conclusion": "skipped",
+          "created_at": "2026-10-12T14:07:04Z",
+          "started_at": "2026-10-12T14:07:04Z",
+          "completed_at": "2026-10-12T14:06:54Z",
+          "name": "deploy",
+          "steps": [],
+          "labels": [
+            "blacksmith-8vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114849703557,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114849703557",
+          "conclusion": "failure",
+          "created_at": "2026-10-12T14:07:10Z",
+          "started_at": "2026-10-12T14:07:18Z",
+          "completed_at": "2026-10-12T14:09:10Z",
+          "name": "terrabase",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T14:07:19Z",
+              "completed_at": "2026-10-12T14:07:21Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T14:07:21Z",
+              "completed_at": "2026-10-12T14:07:21Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T14:07:21Z",
+              "completed_at": "2026-10-12T14:07:23Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 4,
+              "started_at": "2026-10-12T14:07:23Z",
+              "completed_at": "2026-10-12T14:07:24Z"
+            },
+            {
+              "name": "Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 5,
+              "started_at": "2026-10-12T14:07:24Z",
+              "completed_at": "2026-10-12T14:07:27Z"
+            },
+            {
+              "name": "Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "failure",
+              "number": 6,
+              "started_at": "2026-10-12T14:07:27Z",
+              "completed_at": "2026-10-12T14:09:05Z"
+            },
+            {
+              "name": "Post Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 8,
+              "started_at": "2026-10-12T14:09:05Z",
+              "completed_at": "2026-10-12T14:09:05Z"
+            },
+            {
+              "name": "Post Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 9,
+              "started_at": "2026-10-12T14:09:05Z",
+              "completed_at": "2026-10-12T14:09:07Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 10,
+              "started_at": "2026-10-12T14:09:07Z",
+              "completed_at": "2026-10-12T14:09:07Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 11,
+              "started_at": "2026-10-12T14:09:07Z",
+              "completed_at": "2026-10-12T14:09:07Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 12,
+              "started_at": "2026-10-12T14:09:07Z",
+              "completed_at": "2026-10-12T14:09:07Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 13,
+              "started_at": "2026-10-12T14:09:07Z",
+              "completed_at": "2026-10-12T14:09:07Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-8vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114849703713,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114849703713",
+          "conclusion": "success",
+          "created_at": "2026-10-12T14:07:10Z",
+          "started_at": "2026-10-12T14:07:19Z",
+          "completed_at": "2026-10-12T14:10:44Z",
+          "name": "auth",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T14:07:20Z",
+              "completed_at": "2026-10-12T14:07:22Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T14:07:22Z",
+              "completed_at": "2026-10-12T14:07:22Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T14:07:22Z",
+              "completed_at": "2026-10-12T14:07:23Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 4,
+              "started_at": "2026-10-12T14:07:23Z",
+              "completed_at": "2026-10-12T14:07:24Z"
+            },
+            {
+              "name": "Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 5,
+              "started_at": "2026-10-12T14:07:24Z",
+              "completed_at": "2026-10-12T14:07:27Z"
+            },
+            {
+              "name": "Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 6,
+              "started_at": "2026-10-12T14:07:27Z",
+              "completed_at": "2026-10-12T14:10:39Z"
+            },
+            {
+              "name": "Post Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 8,
+              "started_at": "2026-10-12T14:10:39Z",
+              "completed_at": "2026-10-12T14:10:39Z"
+            },
+            {
+              "name": "Post Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 9,
+              "started_at": "2026-10-12T14:10:39Z",
+              "completed_at": "2026-10-12T14:10:40Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 10,
+              "started_at": "2026-10-12T14:10:40Z",
+              "completed_at": "2026-10-12T14:10:40Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 11,
+              "started_at": "2026-10-12T14:10:40Z",
+              "completed_at": "2026-10-12T14:10:41Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 12,
+              "started_at": "2026-10-12T14:10:41Z",
+              "completed_at": "2026-10-12T14:10:41Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 13,
+              "started_at": "2026-10-12T14:10:41Z",
+              "completed_at": "2026-10-12T14:10:41Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-4vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114849703741,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114849703741",
+          "conclusion": "success",
+          "created_at": "2026-10-12T14:07:10Z",
+          "started_at": "2026-10-12T14:07:18Z",
+          "completed_at": "2026-10-12T14:07:52Z",
+          "name": "libs",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T14:07:19Z",
+              "completed_at": "2026-10-12T14:07:21Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T14:07:21Z",
+              "completed_at": "2026-10-12T14:07:21Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T14:07:21Z",
+              "completed_at": "2026-10-12T14:07:23Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 4,
+              "started_at": "2026-10-12T14:07:23Z",
+              "completed_at": "2026-10-12T14:07:24Z"
+            },
+            {
+              "name": "Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 5,
+              "started_at": "2026-10-12T14:07:24Z",
+              "completed_at": "2026-10-12T14:07:27Z"
+            },
+            {
+              "name": "Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 6,
+              "started_at": "2026-10-12T14:07:27Z",
+              "completed_at": "2026-10-12T14:07:48Z"
+            },
+            {
+              "name": "Post Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 8,
+              "started_at": "2026-10-12T14:07:48Z",
+              "completed_at": "2026-10-12T14:07:48Z"
+            },
+            {
+              "name": "Post Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 9,
+              "started_at": "2026-10-12T14:07:48Z",
+              "completed_at": "2026-10-12T14:07:49Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 10,
+              "started_at": "2026-10-12T14:07:49Z",
+              "completed_at": "2026-10-12T14:07:49Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 11,
+              "started_at": "2026-10-12T14:07:49Z",
+              "completed_at": "2026-10-12T14:07:49Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 12,
+              "started_at": "2026-10-12T14:07:49Z",
+              "completed_at": "2026-10-12T14:07:50Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 13,
+              "started_at": "2026-10-12T14:07:50Z",
+              "completed_at": "2026-10-12T14:07:50Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-4vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114851196192,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114851196192",
+          "conclusion": "failure",
+          "created_at": "2026-10-12T14:10:44Z",
+          "started_at": "2026-10-12T14:10:53Z",
+          "completed_at": "2026-10-12T14:10:58Z",
+          "name": "test",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T14:10:53Z",
+              "completed_at": "2026-10-12T14:10:55Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T14:10:55Z",
+              "completed_at": "2026-10-12T14:10:55Z"
+            },
+            {
+              "name": "Every area that ran passed",
+              "status": "completed",
+              "conclusion": "failure",
+              "number": 3,
+              "started_at": "2026-10-12T14:10:55Z",
+              "completed_at": "2026-10-12T14:10:55Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "skipped",
+              "number": 4,
+              "started_at": "2026-10-12T14:10:55Z",
+              "completed_at": "2026-10-12T14:10:55Z"
+            },
+            {
+              "name": "Fly deploy, volume reset and storage train self-checks",
+              "status": "completed",
+              "conclusion": "skipped",
+              "number": 5,
+              "started_at": "2026-10-12T14:10:55Z",
+              "completed_at": "2026-10-12T14:10:55Z"
+            },
+            {
+              "name": "Storage train",
+              "status": "completed",
+              "conclusion": "skipped",
+              "number": 6,
+              "started_at": "2026-10-12T14:10:55Z",
+              "completed_at": "2026-10-12T14:10:55Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 12,
+              "started_at": "2026-10-12T14:10:55Z",
+              "completed_at": "2026-10-12T14:10:55Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 13,
+              "started_at": "2026-10-12T14:10:55Z",
+              "completed_at": "2026-10-12T14:10:55Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-2vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114851293821,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114851293821",
+          "conclusion": "skipped",
+          "created_at": "2026-10-12T14:10:58Z",
+          "started_at": "2026-10-12T14:10:58Z",
+          "completed_at": "2026-10-12T14:10:58Z",
+          "name": "slow",
+          "steps": [],
+          "labels": [
+            "blacksmith-4vcpu-ubuntu-2404"
+          ]
+        }
+      ],
+      "build_logs": [
+        {
+          "repo": "terrascale",
+          "run": 38259616461,
+          "job": 114849703557,
+          "records": [
+            {
+              "step": 1,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 2,
+              "seconds": 1.2,
+              "cached": false
+            },
+            {
+              "step": 3,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 4,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 5,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 6,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 7,
+              "stage": "base 1/5",
+              "instruction": "FROM",
+              "command": "mcr.microsoft.com/dotnet/sdk:11.0@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675"
+            },
+            {
+              "step": 7,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 8,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 9,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 10,
+              "stage": "base 2/5",
+              "instruction": "RUN",
+              "command": "apt-get update     && apt-get install -y --no-install-recommends make nodejs npm jq     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 10,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 11,
+              "stage": "base 3/5",
+              "instruction": "RUN",
+              "command": "npx --yes playwright@1.63.0 install --with-deps chromium     && npx --yes @redocly/cli@2.57.0 --version     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 11,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 12,
+              "stage": "base 4/5",
+              "instruction": "COPY",
+              "command": "--from=ts-dotnet --exclude=.git . /src/ts-dotnet"
+            },
+            {
+              "step": 12,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 13,
+              "stage": "base 5/5",
+              "instruction": "WORKDIR",
+              "command": "/src/terrascale"
+            },
+            {
+              "step": 13,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 14,
+              "stage": "source 1/1",
+              "instruction": "COPY",
+              "command": ". ."
+            },
+            {
+              "step": 14,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 15,
+              "stage": "check-terrabase 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make fmt-check terrabase-check CONFIGURATION=Release"
+            },
+            {
+              "step": 15,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 16,
+              "stage": "test-terrabase 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make terrabase-test-fast CONFIGURATION=Release && touch /passed"
+            },
+            {
+              "step": 16,
+              "offset_s": 0.144,
+              "summary": "dotnet restore TerraScale.slnx --locked-mode"
+            },
+            {
+              "step": 16,
+              "offset_s": 9.034,
+              "summary": "dotnet restore src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --locked-mode"
+            },
+            {
+              "step": 16,
+              "offset_s": 9.718,
+              "summary": "dotnet build tests/TerraBase.Fast/TerraBase.Fast.csproj --configuration Release --no-restore"
+            },
+            {
+              "step": 16,
+              "offset_s": 26.84,
+              "summary": "Time Elapsed 00:00:16.70"
+            },
+            {
+              "step": 16,
+              "offset_s": 26.85,
+              "summary": "dotnet run --project tests/TerraBase.Fast --configuration Release --no-build -- --maximum-parallel-tests 16"
+            },
+            {
+              "step": 16,
+              "offset_s": 95.29,
+              "summary": "Test run summary: Failed! - /src/terrascale/tests/TerraBase.Fast/bin/Release/net11.0/TerraBase.Fast.dll (net11.0|x64)"
+            },
+            {
+              "step": 16,
+              "offset_s": 95.29,
+              "summary": "total: 1418"
+            },
+            {
+              "step": 16,
+              "offset_s": 95.29,
+              "summary": "failed: 1"
+            },
+            {
+              "step": 16,
+              "offset_s": 95.29,
+              "summary": "succeeded: 1417"
+            },
+            {
+              "step": 16,
+              "offset_s": 95.29,
+              "summary": "skipped: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 95.29,
+              "summary": "duration: 1m 07s 661ms"
+            }
+          ]
+        },
+        {
+          "repo": "terrascale",
+          "run": 38259616461,
+          "job": 114849703713,
+          "records": [
+            {
+              "step": 1,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 2,
+              "seconds": 0.8,
+              "cached": false
+            },
+            {
+              "step": 3,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 4,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 5,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 6,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 7,
+              "stage": "base 1/5",
+              "instruction": "FROM",
+              "command": "mcr.microsoft.com/dotnet/sdk:11.0@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675"
+            },
+            {
+              "step": 7,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 8,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 9,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 10,
+              "stage": "source 1/1",
+              "instruction": "COPY",
+              "command": ". ."
+            },
+            {
+              "step": 10,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 11,
+              "stage": "base 2/5",
+              "instruction": "RUN",
+              "command": "apt-get update     && apt-get install -y --no-install-recommends make nodejs npm jq     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 11,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 12,
+              "stage": "base 3/5",
+              "instruction": "RUN",
+              "command": "npx --yes playwright@1.63.0 install --with-deps chromium     && npx --yes @redocly/cli@2.57.0 --version     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 12,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 13,
+              "stage": "base 4/5",
+              "instruction": "COPY",
+              "command": "--from=ts-dotnet --exclude=.git . /src/ts-dotnet"
+            },
+            {
+              "step": 13,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 14,
+              "stage": "base 5/5",
+              "instruction": "WORKDIR",
+              "command": "/src/terrascale"
+            },
+            {
+              "step": 14,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 15,
+              "stage": "check-auth 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make fmt-check auth-openapi-check CONFIGURATION=Release"
+            },
+            {
+              "step": 15,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 16,
+              "stage": "test-auth 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make auth-audit auth-test-fast CONFIGURATION=Release && touch /passed"
+            },
+            {
+              "step": 16,
+              "offset_s": 0.142,
+              "summary": "dotnet run scripts/auth/check-nuget-vulnerabilities.cs src/TerraScale.Authentication/TerraScale.Authentication.csproj"
+            },
+            {
+              "step": 16,
+              "offset_s": 9.612,
+              "summary": "dotnet restore TerraScale.slnx --locked-mode"
+            },
+            {
+              "step": 16,
+              "offset_s": 16.83,
+              "summary": "dotnet restore src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --locked-mode"
+            },
+            {
+              "step": 16,
+              "offset_s": 17.14,
+              "summary": "dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo"
+            },
+            {
+              "step": 16,
+              "offset_s": 41.74,
+              "summary": "Time Elapsed 00:00:24.39"
+            },
+            {
+              "step": 16,
+              "offset_s": 41.76,
+              "summary": "dotnet build tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj --configuration Release --no-restore --nologo"
+            },
+            {
+              "step": 16,
+              "offset_s": 51.95,
+              "summary": "Time Elapsed 00:00:10.03"
+            },
+            {
+              "step": 16,
+              "offset_s": 189.2,
+              "summary": "Test run summary: Passed! - /src/terrascale/tests/TerraScale.Authentication.Fast/bin/Release/net11.0/TerraScale.Authentication.Fast.dll (net11.0|x64)"
+            },
+            {
+              "step": 16,
+              "offset_s": 189.2,
+              "summary": "total: 577"
+            },
+            {
+              "step": 16,
+              "offset_s": 189.2,
+              "summary": "failed: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 189.2,
+              "summary": "succeeded: 577"
+            },
+            {
+              "step": 16,
+              "offset_s": 189.2,
+              "summary": "skipped: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 189.2,
+              "summary": "duration: 2m 16s 435ms"
+            },
+            {
+              "step": 16,
+              "seconds": 189.3,
+              "cached": false
+            },
+            {
+              "step": 17,
+              "seconds": 0.0,
+              "cached": false
+            }
+          ]
+        },
+        {
+          "repo": "terrascale",
+          "run": 38259616461,
+          "job": 114849703741,
+          "records": [
+            {
+              "step": 1,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 2,
+              "seconds": 1.0,
+              "cached": false
+            },
+            {
+              "step": 3,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 4,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 5,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 6,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 7,
+              "stage": "base 1/5",
+              "instruction": "FROM",
+              "command": "mcr.microsoft.com/dotnet/sdk:11.0@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675"
+            },
+            {
+              "step": 7,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 8,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 9,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 10,
+              "stage": "source 1/1",
+              "instruction": "COPY",
+              "command": ". ."
+            },
+            {
+              "step": 10,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 11,
+              "stage": "base 2/5",
+              "instruction": "RUN",
+              "command": "apt-get update     && apt-get install -y --no-install-recommends make nodejs npm jq     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 11,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 12,
+              "stage": "base 3/5",
+              "instruction": "RUN",
+              "command": "npx --yes playwright@1.63.0 install --with-deps chromium     && npx --yes @redocly/cli@2.57.0 --version     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 12,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 13,
+              "stage": "base 4/5",
+              "instruction": "COPY",
+              "command": "--from=ts-dotnet --exclude=.git . /src/ts-dotnet"
+            },
+            {
+              "step": 13,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 14,
+              "stage": "base 5/5",
+              "instruction": "WORKDIR",
+              "command": "/src/terrascale"
+            },
+            {
+              "step": 14,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 15,
+              "stage": "check-libs 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make fmt-check libs-check CONFIGURATION=Release"
+            },
+            {
+              "step": 15,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 16,
+              "stage": "test-libs 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make libs-test CONFIGURATION=Release && touch /passed"
+            },
+            {
+              "step": 16,
+              "offset_s": 0.174,
+              "summary": "dotnet restore TerraScale.slnx --locked-mode"
+            },
+            {
+              "step": 16,
+              "offset_s": 9.786,
+              "summary": "dotnet restore src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --locked-mode"
+            },
+            {
+              "step": 16,
+              "offset_s": 10.03,
+              "summary": "dotnet build libs.slnf --configuration Release --no-restore"
+            },
+            {
+              "step": 16,
+              "offset_s": 14.21,
+              "summary": "Time Elapsed 00:00:04.03"
+            },
+            {
+              "step": 16,
+              "offset_s": 16.15,
+              "summary": "Test run summary: Passed! - /src/terrascale/tests/TerraScale.Endpoints.Tests/bin/Release/net11.0/TerraScale.Endpoints.Tests.dll (net11.0|x64)"
+            },
+            {
+              "step": 16,
+              "offset_s": 16.15,
+              "summary": "total: 88"
+            },
+            {
+              "step": 16,
+              "offset_s": 16.15,
+              "summary": "failed: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 16.15,
+              "summary": "succeeded: 88"
+            },
+            {
+              "step": 16,
+              "offset_s": 16.15,
+              "summary": "skipped: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 16.15,
+              "summary": "duration: 1s 126ms"
+            },
+            {
+              "step": 16,
+              "offset_s": 17.25,
+              "summary": "Test run summary: Passed! - /src/terrascale/tests/TerraScale.Logging.Tests/bin/Release/net11.0/TerraScale.Logging.Tests.dll (net11.0|x64)"
+            },
+            {
+              "step": 16,
+              "offset_s": 17.25,
+              "summary": "total: 46"
+            },
+            {
+              "step": 16,
+              "offset_s": 17.25,
+              "summary": "failed: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 17.25,
+              "summary": "succeeded: 46"
+            },
+            {
+              "step": 16,
+              "offset_s": 17.25,
+              "summary": "skipped: 0"
+            },
+            {
+              "step": 16,
+              "offset_s": 17.25,
+              "summary": "duration: 307ms"
+            },
+            {
+              "step": 16,
+              "seconds": 17.6,
+              "cached": false
+            },
+            {
+              "step": 17,
+              "seconds": 0.0,
+              "cached": false
+            }
+          ]
+        }
+      ]
     }
   ],
   "sdk_copy_exclusion_validation": {
@@ -11051,6 +13421,1270 @@
         "duration: 1m 35s 160ms"
       ]
     },
-    "hosted_verification": "pending"
+    "hosted_verification": {
+      "run_id": 38259616461,
+      "head_sha": "6d384fab31fccf764c82f4bcc50457da614aeb3a",
+      "cold_attempt": 1,
+      "cold_result": "all 2129 tests executed and passed; zero failed/skipped",
+      "warm_attempt": 2,
+      "warm_result": "all area preparation and SDK layers hit; tests executed; Auth/Libs passed; TerraBase 1 failed of 1418, zero skipped",
+      "docker_copy_exclusion_parsed_and_built": true,
+      "full_pipeline_speedup_established": false
+    }
+  },
+  "warm_fast_failure": {
+    "job": "https://github.com/TerraScale/terrascale/actions/runs/38259616461/job/114849703557",
+    "sha": "6d384fab31fccf764c82f4bcc50457da614aeb3a",
+    "failures": [
+      {
+        "test": "failed Each_server_exports_only_its_own_http_and_feature_measurements (215ms)",
+        "excerpt": [
+          "  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] ArgumentException: An item with the same key has already been added. Key: System.Diagnostics.Metrics.Counter`1[System.Int64]",
+          "    at System.Collections.Generic.Dictionary`2.TryInsert(TKey key, TValue value, InsertionBehavior behavior)",
+          "    at Microsoft.Extensions.Diagnostics.Metrics.ListenerSubscription.RefreshInstrument(Instrument instrument)",
+          "    at System.Diagnostics.Metrics.Instrument.Publish()",
+          "    at System.Diagnostics.Metrics.Meter.<>c__DisplayClass36_0`1.<CreateCounter>b__0()",
+          "    at System.Diagnostics.Metrics.Meter.GetOrCreateInstrument[T](Type instrumentType, String name, String unit, String description, IEnumerable`1 tags, Func`1 instrumentCreator)",
+          "    at System.Diagnostics.Metrics.Meter.CreateCounter[T](String name, String unit, String description, IEnumerable`1 tags)",
+          "    at TerraBase.Fast.Platform.MetricsTests.Each_server_exports_only_its_own_http_and_feature_measurements() in /src/terrascale/tests/TerraBase.Fast/Platform/MetricsTests.cs:40",
+          "    at TerraBase.Fast.Platform.MetricsTests.Each_server_exports_only_its_own_http_and_feature_measurements() in /src/terrascale/tests/TerraBase.Fast/Platform/MetricsTests.cs:69",
+          "    at TerraBase.Fast.Platform.MetricsTests.Each_server_exports_only_its_own_http_and_feature_measurements() in /src/terrascale/tests/TerraBase.Fast/Platform/MetricsTests.cs:69",
+          "       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---"
+        ]
+      }
+    ],
+    "root_cause": "unestablished; assigned by main to existing owner; no competing test/application edits"
+  },
+  "vendor_path_coverage": {
+    "pr_url": "https://github.com/TerraScale/terrascale/pull/129",
+    "head_sha": "165295e00edea4ccc8374068ce4b5a75a41acae3",
+    "base_sha": "c691f94716c5d6adb41146baa6436304d1d06c88",
+    "actual_merge_sha": "18aa4d15802bfd6572d420f3fb9099ae875c51a3",
+    "shared_paths": [
+      "src/vendor/**",
+      "tests/Turso.Data.Sqlite.Tests/**",
+      "scripts/vendor/**",
+      "scripts/ci/**"
+    ],
+    "matched_areas": [
+      "libs",
+      "auth",
+      "terrabase"
+    ],
+    "matcher": "actual bundled dorny/paths-filter@v3",
+    "fixture_count": 13,
+    "local_fixtures": "passed; nice -n 19; at most 3 workers",
+    "hosted_fixtures": "13 passed in job 114856080263",
+    "original_main_control": "every vendor fixture selected no area and failed as expected",
+    "existing_test_results": {
+      "passed": 2129,
+      "failed": 0,
+      "skipped": 0
+    },
+    "integrated_vendor_build_test_audit": "pending on Strict candidate; no vendor targets on this base",
+    "deploy_preview_holds": "intact in exact head and actual base-main merge",
+    "hosted_attempt": {
+      "run_id": 38262406479,
+      "attempt": 1,
+      "head_sha": "165295e00edea4ccc8374068ce4b5a75a41acae3",
+      "url": "https://github.com/TerraScale/terrascale/actions/runs/38262406479/attempts/1",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "id": 114855982345,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38262406479/job/114855982345",
+          "conclusion": "success",
+          "created_at": "2026-10-12T14:22:15Z",
+          "started_at": "2026-10-12T14:22:22Z",
+          "completed_at": "2026-10-12T14:22:28Z",
+          "name": "changes",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T14:22:23Z",
+              "completed_at": "2026-10-12T14:22:25Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T14:22:25Z",
+              "completed_at": "2026-10-12T14:22:25Z"
+            },
+            {
+              "name": "Run dorny/paths-filter@v3",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T14:22:25Z",
+              "completed_at": "2026-10-12T14:22:26Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 6,
+              "started_at": "2026-10-12T14:22:26Z",
+              "completed_at": "2026-10-12T14:22:26Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 7,
+              "started_at": "2026-10-12T14:22:26Z",
+              "completed_at": "2026-10-12T14:22:26Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-2vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114855984771,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38262406479/job/114855984771",
+          "conclusion": "skipped",
+          "created_at": "2026-10-12T14:22:15Z",
+          "started_at": "2026-10-12T14:22:15Z",
+          "completed_at": "2026-10-12T14:22:14Z",
+          "name": "preview",
+          "steps": [],
+          "labels": [
+            "blacksmith-8vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114855984928,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38262406479/job/114855984928",
+          "conclusion": "skipped",
+          "created_at": "2026-10-12T14:22:15Z",
+          "started_at": "2026-10-12T14:22:15Z",
+          "completed_at": "2026-10-12T14:22:14Z",
+          "name": "deploy",
+          "steps": [],
+          "labels": [
+            "blacksmith-8vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114855985584,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38262406479/job/114855985584",
+          "conclusion": "skipped",
+          "created_at": "2026-10-12T14:22:15Z",
+          "started_at": "2026-10-12T14:22:15Z",
+          "completed_at": "2026-10-12T14:22:15Z",
+          "name": "e2e",
+          "steps": [],
+          "labels": [
+            "blacksmith-4vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114856080089,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38262406479/job/114856080089",
+          "conclusion": "success",
+          "created_at": "2026-10-12T14:22:29Z",
+          "started_at": "2026-10-12T14:22:36Z",
+          "completed_at": "2026-10-12T14:26:15Z",
+          "name": "auth",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T14:22:37Z",
+              "completed_at": "2026-10-12T14:22:39Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T14:22:39Z",
+              "completed_at": "2026-10-12T14:22:39Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T14:22:39Z",
+              "completed_at": "2026-10-12T14:22:41Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 4,
+              "started_at": "2026-10-12T14:22:41Z",
+              "completed_at": "2026-10-12T14:22:42Z"
+            },
+            {
+              "name": "Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 5,
+              "started_at": "2026-10-12T14:22:42Z",
+              "completed_at": "2026-10-12T14:22:45Z"
+            },
+            {
+              "name": "Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 6,
+              "started_at": "2026-10-12T14:22:45Z",
+              "completed_at": "2026-10-12T14:26:11Z"
+            },
+            {
+              "name": "Post Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 8,
+              "started_at": "2026-10-12T14:26:11Z",
+              "completed_at": "2026-10-12T14:26:11Z"
+            },
+            {
+              "name": "Post Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 9,
+              "started_at": "2026-10-12T14:26:11Z",
+              "completed_at": "2026-10-12T14:26:12Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 10,
+              "started_at": "2026-10-12T14:26:12Z",
+              "completed_at": "2026-10-12T14:26:12Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 11,
+              "started_at": "2026-10-12T14:26:12Z",
+              "completed_at": "2026-10-12T14:26:12Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 12,
+              "started_at": "2026-10-12T14:26:12Z",
+              "completed_at": "2026-10-12T14:26:13Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 13,
+              "started_at": "2026-10-12T14:26:13Z",
+              "completed_at": "2026-10-12T14:26:13Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-4vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114856080263,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38262406479/job/114856080263",
+          "conclusion": "success",
+          "created_at": "2026-10-12T14:22:29Z",
+          "started_at": "2026-10-12T14:22:36Z",
+          "completed_at": "2026-10-12T14:23:32Z",
+          "name": "libs",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T14:22:37Z",
+              "completed_at": "2026-10-12T14:22:39Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T14:22:39Z",
+              "completed_at": "2026-10-12T14:22:39Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T14:22:39Z",
+              "completed_at": "2026-10-12T14:22:41Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 4,
+              "started_at": "2026-10-12T14:22:41Z",
+              "completed_at": "2026-10-12T14:22:42Z"
+            },
+            {
+              "name": "Check out the path-filter matcher for regression fixtures",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 5,
+              "started_at": "2026-10-12T14:22:42Z",
+              "completed_at": "2026-10-12T14:22:43Z"
+            },
+            {
+              "name": "Verify CI path filters",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 6,
+              "started_at": "2026-10-12T14:22:43Z",
+              "completed_at": "2026-10-12T14:22:44Z"
+            },
+            {
+              "name": "Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 7,
+              "started_at": "2026-10-12T14:22:44Z",
+              "completed_at": "2026-10-12T14:22:46Z"
+            },
+            {
+              "name": "Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 8,
+              "started_at": "2026-10-12T14:22:46Z",
+              "completed_at": "2026-10-12T14:23:27Z"
+            },
+            {
+              "name": "Post Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 11,
+              "started_at": "2026-10-12T14:23:27Z",
+              "completed_at": "2026-10-12T14:23:27Z"
+            },
+            {
+              "name": "Post Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 12,
+              "started_at": "2026-10-12T14:23:27Z",
+              "completed_at": "2026-10-12T14:23:28Z"
+            },
+            {
+              "name": "Post Check out the path-filter matcher for regression fixtures",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 13,
+              "started_at": "2026-10-12T14:23:28Z",
+              "completed_at": "2026-10-12T14:23:28Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 14,
+              "started_at": "2026-10-12T14:23:28Z",
+              "completed_at": "2026-10-12T14:23:28Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 15,
+              "started_at": "2026-10-12T14:23:28Z",
+              "completed_at": "2026-10-12T14:23:28Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 16,
+              "started_at": "2026-10-12T14:23:28Z",
+              "completed_at": "2026-10-12T14:23:29Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 17,
+              "started_at": "2026-10-12T14:23:29Z",
+              "completed_at": "2026-10-12T14:23:29Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-4vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114856080294,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38262406479/job/114856080294",
+          "conclusion": "success",
+          "created_at": "2026-10-12T14:22:29Z",
+          "started_at": "2026-10-12T14:22:37Z",
+          "completed_at": "2026-10-12T14:25:16Z",
+          "name": "terrabase",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T14:22:38Z",
+              "completed_at": "2026-10-12T14:22:40Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T14:22:40Z",
+              "completed_at": "2026-10-12T14:22:40Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T14:22:40Z",
+              "completed_at": "2026-10-12T14:22:42Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 4,
+              "started_at": "2026-10-12T14:22:42Z",
+              "completed_at": "2026-10-12T14:22:43Z"
+            },
+            {
+              "name": "Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 5,
+              "started_at": "2026-10-12T14:22:43Z",
+              "completed_at": "2026-10-12T14:22:46Z"
+            },
+            {
+              "name": "Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 6,
+              "started_at": "2026-10-12T14:22:46Z",
+              "completed_at": "2026-10-12T14:25:11Z"
+            },
+            {
+              "name": "Post Run useblacksmith/build-push-action@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 8,
+              "started_at": "2026-10-12T14:25:11Z",
+              "completed_at": "2026-10-12T14:25:11Z"
+            },
+            {
+              "name": "Post Run useblacksmith/setup-docker-builder@v2",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 9,
+              "started_at": "2026-10-12T14:25:11Z",
+              "completed_at": "2026-10-12T14:25:12Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 10,
+              "started_at": "2026-10-12T14:25:12Z",
+              "completed_at": "2026-10-12T14:25:12Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 11,
+              "started_at": "2026-10-12T14:25:12Z",
+              "completed_at": "2026-10-12T14:25:12Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 12,
+              "started_at": "2026-10-12T14:25:12Z",
+              "completed_at": "2026-10-12T14:25:12Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 13,
+              "started_at": "2026-10-12T14:25:12Z",
+              "completed_at": "2026-10-12T14:25:12Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-8vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114857680376,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38262406479/job/114857680376",
+          "conclusion": "success",
+          "created_at": "2026-10-12T14:26:16Z",
+          "started_at": "2026-10-12T14:26:24Z",
+          "completed_at": "2026-10-12T14:26:35Z",
+          "name": "test",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 1,
+              "started_at": "2026-10-12T14:26:26Z",
+              "completed_at": "2026-10-12T14:26:27Z"
+            },
+            {
+              "name": "Set up runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 2,
+              "started_at": "2026-10-12T14:26:27Z",
+              "completed_at": "2026-10-12T14:26:27Z"
+            },
+            {
+              "name": "Every area that ran passed",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 3,
+              "started_at": "2026-10-12T14:26:27Z",
+              "completed_at": "2026-10-12T14:26:27Z"
+            },
+            {
+              "name": "Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 4,
+              "started_at": "2026-10-12T14:26:27Z",
+              "completed_at": "2026-10-12T14:26:29Z"
+            },
+            {
+              "name": "Fly deploy, volume reset and storage train self-checks",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 5,
+              "started_at": "2026-10-12T14:26:29Z",
+              "completed_at": "2026-10-12T14:26:30Z"
+            },
+            {
+              "name": "Storage train",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 6,
+              "started_at": "2026-10-12T14:26:30Z",
+              "completed_at": "2026-10-12T14:26:31Z"
+            },
+            {
+              "name": "Post Run actions/checkout@v5",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 11,
+              "started_at": "2026-10-12T14:26:31Z",
+              "completed_at": "2026-10-12T14:26:31Z"
+            },
+            {
+              "name": "Complete runner",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 12,
+              "started_at": "2026-10-12T14:26:31Z",
+              "completed_at": "2026-10-12T14:26:31Z"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success",
+              "number": 13,
+              "started_at": "2026-10-12T14:26:31Z",
+              "completed_at": "2026-10-12T14:26:31Z"
+            }
+          ],
+          "labels": [
+            "blacksmith-2vcpu-ubuntu-2404"
+          ]
+        },
+        {
+          "id": 114857815019,
+          "html_url": "https://github.com/TerraScale/terrascale/actions/runs/38262406479/job/114857815019",
+          "conclusion": "skipped",
+          "created_at": "2026-10-12T14:26:35Z",
+          "started_at": "2026-10-12T14:26:35Z",
+          "completed_at": "2026-10-12T14:26:35Z",
+          "name": "slow",
+          "steps": [],
+          "labels": [
+            "blacksmith-4vcpu-ubuntu-2404"
+          ]
+        }
+      ],
+      "build_logs": [
+        {
+          "repo": "terrascale",
+          "run": 38262406479,
+          "job": 114856080089,
+          "records": [
+            {
+              "step": 1,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 2,
+              "seconds": 1.0,
+              "cached": false
+            },
+            {
+              "step": 3,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 4,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 5,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 6,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 7,
+              "stage": "base 1/5",
+              "instruction": "FROM",
+              "command": "mcr.microsoft.com/dotnet/sdk:11.0@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675"
+            },
+            {
+              "step": 7,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 8,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 9,
+              "stage": "base 2/5",
+              "instruction": "RUN",
+              "command": "apt-get update     && apt-get install -y --no-install-recommends make nodejs npm jq     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 9,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 10,
+              "stage": "base 3/5",
+              "instruction": "RUN",
+              "command": "npx --yes playwright@1.63.0 install --with-deps chromium     && npx --yes @redocly/cli@2.57.0 --version     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 10,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 11,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 12,
+              "stage": "base 4/5",
+              "instruction": "COPY",
+              "command": "--from=ts-dotnet . /src/ts-dotnet"
+            },
+            {
+              "step": 12,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 13,
+              "stage": "base 5/5",
+              "instruction": "WORKDIR",
+              "command": "/src/terrascale"
+            },
+            {
+              "step": 13,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 14,
+              "stage": "source 1/1",
+              "instruction": "COPY",
+              "command": ". ."
+            },
+            {
+              "step": 14,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 15,
+              "stage": "test-auth 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make fmt-check auth-check auth-test-fast CONFIGURATION=Release && touch /passed"
+            },
+            {
+              "step": 15,
+              "offset_s": 0.12,
+              "summary": "dotnet restore TerraScale.slnx --locked-mode"
+            },
+            {
+              "step": 15,
+              "offset_s": 2.801,
+              "summary": "dotnet restore src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --locked-mode"
+            },
+            {
+              "step": 15,
+              "offset_s": 3.053,
+              "summary": "dotnet format whitespace TerraScale.slnx --verify-no-changes --no-restore"
+            },
+            {
+              "step": 15,
+              "offset_s": 10.47,
+              "summary": "dotnet run scripts/auth/check-nuget-vulnerabilities.cs src/TerraScale.Authentication/TerraScale.Authentication.csproj"
+            },
+            {
+              "step": 15,
+              "offset_s": 14.44,
+              "summary": "dotnet build auth.slnf --configuration Release --no-restore --nologo"
+            },
+            {
+              "step": 15,
+              "offset_s": 46.29,
+              "summary": "Time Elapsed 00:00:31.72"
+            },
+            {
+              "step": 15,
+              "offset_s": 49.07,
+              "summary": "dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo"
+            },
+            {
+              "step": 15,
+              "offset_s": 73.79,
+              "summary": "Time Elapsed 00:00:24.58"
+            },
+            {
+              "step": 15,
+              "offset_s": 73.81,
+              "summary": "dotnet build tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj --configuration Release --no-restore --nologo"
+            },
+            {
+              "step": 15,
+              "offset_s": 74.44,
+              "summary": "Time Elapsed 00:00:00.48"
+            },
+            {
+              "step": 15,
+              "offset_s": 202.8,
+              "summary": "Test run summary: Passed! - /src/terrascale/tests/TerraScale.Authentication.Fast/bin/Release/net11.0/TerraScale.Authentication.Fast.dll (net11.0|x64)"
+            },
+            {
+              "step": 15,
+              "offset_s": 202.8,
+              "summary": "total: 577"
+            },
+            {
+              "step": 15,
+              "offset_s": 202.8,
+              "summary": "failed: 0"
+            },
+            {
+              "step": 15,
+              "offset_s": 202.8,
+              "summary": "succeeded: 577"
+            },
+            {
+              "step": 15,
+              "offset_s": 202.8,
+              "summary": "skipped: 0"
+            },
+            {
+              "step": 15,
+              "offset_s": 202.8,
+              "summary": "duration: 2m 07s 730ms"
+            },
+            {
+              "step": 15,
+              "seconds": 202.9,
+              "cached": false
+            },
+            {
+              "step": 16,
+              "seconds": 0.0,
+              "cached": false
+            }
+          ]
+        },
+        {
+          "repo": "terrascale",
+          "run": 38262406479,
+          "job": 114856080263,
+          "records": [
+            {
+              "step": 1,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 2,
+              "seconds": 0.8,
+              "cached": false
+            },
+            {
+              "step": 3,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 4,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 5,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 6,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 7,
+              "stage": "base 1/5",
+              "instruction": "FROM",
+              "command": "mcr.microsoft.com/dotnet/sdk:11.0@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675"
+            },
+            {
+              "step": 7,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 8,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 9,
+              "stage": "base 2/5",
+              "instruction": "RUN",
+              "command": "apt-get update     && apt-get install -y --no-install-recommends make nodejs npm jq     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 9,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 10,
+              "stage": "base 3/5",
+              "instruction": "RUN",
+              "command": "npx --yes playwright@1.63.0 install --with-deps chromium     && npx --yes @redocly/cli@2.57.0 --version     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 10,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 11,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 12,
+              "stage": "base 4/5",
+              "instruction": "COPY",
+              "command": "--from=ts-dotnet . /src/ts-dotnet"
+            },
+            {
+              "step": 12,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 13,
+              "stage": "base 5/5",
+              "instruction": "WORKDIR",
+              "command": "/src/terrascale"
+            },
+            {
+              "step": 13,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 14,
+              "stage": "source 1/1",
+              "instruction": "COPY",
+              "command": ". ."
+            },
+            {
+              "step": 14,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 15,
+              "stage": "test-libs 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make fmt-check libs-check libs-test CONFIGURATION=Release && touch /passed"
+            },
+            {
+              "step": 15,
+              "offset_s": 0.1,
+              "summary": "dotnet restore TerraScale.slnx --locked-mode"
+            },
+            {
+              "step": 15,
+              "offset_s": 2.911,
+              "summary": "dotnet restore src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --locked-mode"
+            },
+            {
+              "step": 15,
+              "offset_s": 3.155,
+              "summary": "dotnet format whitespace TerraScale.slnx --verify-no-changes --no-restore"
+            },
+            {
+              "step": 15,
+              "offset_s": 11.49,
+              "summary": "dotnet build libs.slnf --configuration Release --no-restore"
+            },
+            {
+              "step": 15,
+              "offset_s": 19.94,
+              "summary": "Time Elapsed 00:00:08.28"
+            },
+            {
+              "step": 15,
+              "offset_s": 37.12,
+              "summary": "Test run summary: Passed! - /src/terrascale/tests/TerraScale.Endpoints.Tests/bin/Release/net11.0/TerraScale.Endpoints.Tests.dll (net11.0|x64)"
+            },
+            {
+              "step": 15,
+              "offset_s": 37.12,
+              "summary": "total: 88"
+            },
+            {
+              "step": 15,
+              "offset_s": 37.12,
+              "summary": "failed: 0"
+            },
+            {
+              "step": 15,
+              "offset_s": 37.12,
+              "summary": "succeeded: 88"
+            },
+            {
+              "step": 15,
+              "offset_s": 37.12,
+              "summary": "skipped: 0"
+            },
+            {
+              "step": 15,
+              "offset_s": 37.12,
+              "summary": "duration: 806ms"
+            },
+            {
+              "step": 15,
+              "offset_s": 37.89,
+              "summary": "Test run summary: Passed! - /src/terrascale/tests/TerraScale.Logging.Tests/bin/Release/net11.0/TerraScale.Logging.Tests.dll (net11.0|x64)"
+            },
+            {
+              "step": 15,
+              "offset_s": 37.89,
+              "summary": "total: 46"
+            },
+            {
+              "step": 15,
+              "offset_s": 37.89,
+              "summary": "failed: 0"
+            },
+            {
+              "step": 15,
+              "offset_s": 37.89,
+              "summary": "succeeded: 46"
+            },
+            {
+              "step": 15,
+              "offset_s": 37.89,
+              "summary": "skipped: 0"
+            },
+            {
+              "step": 15,
+              "offset_s": 37.89,
+              "summary": "duration: 236ms"
+            },
+            {
+              "step": 15,
+              "seconds": 37.9,
+              "cached": false
+            },
+            {
+              "step": 16,
+              "seconds": 0.0,
+              "cached": false
+            }
+          ]
+        },
+        {
+          "repo": "terrascale",
+          "run": 38262406479,
+          "job": 114856080294,
+          "records": [
+            {
+              "step": 1,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 2,
+              "seconds": 1.3,
+              "cached": false
+            },
+            {
+              "step": 3,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 4,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 5,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 6,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 7,
+              "stage": "base 1/5",
+              "instruction": "FROM",
+              "command": "mcr.microsoft.com/dotnet/sdk:11.0@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675"
+            },
+            {
+              "step": 7,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 8,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 9,
+              "stage": "base 2/5",
+              "instruction": "RUN",
+              "command": "apt-get update     && apt-get install -y --no-install-recommends make nodejs npm jq     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 9,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 10,
+              "stage": "base 3/5",
+              "instruction": "RUN",
+              "command": "npx --yes playwright@1.63.0 install --with-deps chromium     && npx --yes @redocly/cli@2.57.0 --version     && rm -rf /var/lib/apt/lists/*"
+            },
+            {
+              "step": 10,
+              "seconds": null,
+              "cached": true
+            },
+            {
+              "step": 11,
+              "stage": "base 4/5",
+              "instruction": "COPY",
+              "command": "--from=ts-dotnet . /src/ts-dotnet"
+            },
+            {
+              "step": 11,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 12,
+              "stage": "base 5/5",
+              "instruction": "WORKDIR",
+              "command": "/src/terrascale"
+            },
+            {
+              "step": 12,
+              "seconds": 0.0,
+              "cached": false
+            },
+            {
+              "step": 13,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 14,
+              "stage": "source 1/1",
+              "instruction": "COPY",
+              "command": ". ."
+            },
+            {
+              "step": 14,
+              "seconds": 0.1,
+              "cached": false
+            },
+            {
+              "step": 15,
+              "stage": "test-terrabase 1/1",
+              "instruction": "RUN",
+              "command": "--mount=type=cache,target=/root/.nuget/packages     make fmt-check terrabase-check terrabase-test-fast CONFIGURATION=Release && touch /passed"
+            },
+            {
+              "step": 15,
+              "offset_s": 0.115,
+              "summary": "dotnet restore TerraScale.slnx --locked-mode"
+            },
+            {
+              "step": 15,
+              "offset_s": 2.742,
+              "summary": "dotnet restore src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj --locked-mode"
+            },
+            {
+              "step": 15,
+              "offset_s": 3.02,
+              "summary": "dotnet format whitespace TerraScale.slnx --verify-no-changes --no-restore"
+            },
+            {
+              "step": 15,
+              "offset_s": 10.45,
+              "summary": "dotnet build terrabase.slnf --configuration Release --no-restore"
+            },
+            {
+              "step": 15,
+              "offset_s": 79.74,
+              "summary": "Time Elapsed 00:01:09.13"
+            },
+            {
+              "step": 15,
+              "offset_s": 80.57,
+              "summary": "Time Elapsed 00:00:00.17"
+            },
+            {
+              "step": 15,
+              "offset_s": 80.64,
+              "summary": "dotnet build tests/TerraBase.Fast/TerraBase.Fast.csproj --configuration Release --no-restore"
+            },
+            {
+              "step": 15,
+              "offset_s": 81.22,
+              "summary": "Time Elapsed 00:00:00.41"
+            },
+            {
+              "step": 15,
+              "offset_s": 81.24,
+              "summary": "dotnet run --project tests/TerraBase.Fast --configuration Release --no-build -- --maximum-parallel-tests 16"
+            },
+            {
+              "step": 15,
+              "offset_s": 141.0,
+              "summary": "Test run summary: Passed! - /src/terrascale/tests/TerraBase.Fast/bin/Release/net11.0/TerraBase.Fast.dll (net11.0|x64)"
+            },
+            {
+              "step": 15,
+              "offset_s": 141.0,
+              "summary": "total: 1418"
+            },
+            {
+              "step": 15,
+              "offset_s": 141.0,
+              "summary": "failed: 0"
+            },
+            {
+              "step": 15,
+              "offset_s": 141.0,
+              "summary": "succeeded: 1418"
+            },
+            {
+              "step": 15,
+              "offset_s": 141.0,
+              "summary": "skipped: 0"
+            },
+            {
+              "step": 15,
+              "offset_s": 141.0,
+              "summary": "duration: 59s 083ms"
+            },
+            {
+              "step": 15,
+              "seconds": 141.2,
+              "cached": false
+            },
+            {
+              "step": 16,
+              "seconds": 0.0,
+              "cached": false
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "cloudflare_direction": {
+    "source": "user-relayed verified instruction at 14:21",
+    "repositories": [
+      "TerraScale/ts-docs",
+      "TerraScale/ts-landing",
+      "TerraScale/ts-status"
+    ],
+    "direction": "use Cloudflare deployer for Pages/Workers rather than Blacksmith deployment",
+    "scope": "audit/design only; parent coordinates existing owners",
+    "measurements": "existing Blacksmith deployment timings are historical; Cloudflare timings/costs not measured",
+    "implementation": "no Cloudflare thread history, credentials or persistent access read/configured"
+  },
+  "local_documentation_update": {
+    "remote_performance_head": "6d384fab31fccf764c82f4bcc50457da614aeb3a",
+    "status": "retained locally without push while required TerraBase Fast fails",
+    "current_head_hosted_tests": "not run for this documentation update",
+    "heavy_local_tests": "deferred per user choice; no coordinated same-host lock/quota verified"
   }
 }
