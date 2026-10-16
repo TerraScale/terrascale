@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitepress'
+import { createCssVariablesTheme } from 'shiki'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -575,5 +576,6 @@ export default defineConfig({
     siteTitle: 'Docs',
     logo: { light: '/brand/logo-terrascale-light.svg', dark: '/brand/logo-terrascale-dark.svg', alt: 'TerraScale' },
     search: { provider: 'local' },
+    notFound: { quote: 'This page does not exist or has moved.', linkText: 'Back to the docs home' },
   },
 })

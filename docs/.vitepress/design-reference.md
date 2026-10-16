@@ -9,10 +9,11 @@ work or migration implementation was imported, and the dashboard was not modifie
 
 Imported verbatim:
 
-- `web/assets/css/tokens.css` → `theme/dashboard-tokens.css`.
-- `web/static/brand/logo-terrascale-white.svg` → public wordmark.
+- `theme/tokens.css` is the shared TerraScale tokens file (`light-dark()` colours; VitePress's
+  `html.dark` sets `color-scheme`, see `style.css`).
+- `logo-terrascale-principal.svg` (dark) and `logo-terrascale-blue.svg` (light) → public wordmarks.
 - `web/static/brand/logo-icon-blue.svg` → public favicon.
-- Oxanium and JetBrains Mono WOFF2 files and their OFL license texts.
+- Geist, Geist Mono and Oxanium WOFF2 files and their OFL license texts.
 
 `base.css`, `shell.css`, `layout.css` and `surfaces.css` informed the 264px
 sidebar, 56px header, 4px spacing grid, 6px controls, blue active navigation,
