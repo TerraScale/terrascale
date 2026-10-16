@@ -15,8 +15,8 @@ expected failure or missing blocks. The obsolete binary harness is not coming ba
 
 Status words:
 
-- **pass**: every test of the row ran on the design-C replicated path (in-process nodes, see above) and held.
-- **partial**: some of the row's tests pass, the rest are expected failures or not supported (named in the row).
+- **pass**: every test of the row ran on the design-C replicated path (nodes as stated in the row) and held.
+- **partial**: some of the row's tests pass, the rest are expected failures (named in the row).
 - **expected failure (slice)**: the replacement exists and is a strict expected failure in `Gaps.cs` until that slice
   lands. It counts only when the scenario fails its own way with the gap's declared signature (`Expected.cs`). A 5xx, a
   crash, a lock or a harness error fails the test. It fails as soon as it passes.
@@ -29,13 +29,32 @@ Status words:
   refusal fails the test and is never counted as a gap. Scenarios that stop Fly machines keep their own guard and run only
   in the pinned disposable outage run.
 
+## Candidates
+
+Each candidate's results stay under its own SHA; counts are never merged across candidates. A candidate counts only once
+the R3 owner acknowledged that exact SHA on #108 and both owners' repeats are posted there.
+
+| Candidate | SHA (frozen branch) | Base (harness) | Strict owner, 3 runs | R3 owner, 3 runs | Recorded |
+| --- | --- | --- | --- | --- | --- |
+| combined | `f929c623` (`test/e2e-candidate-f929c623`) | #106 `81fa4fcb` | 37/4/11/1/2/0 of 55 | 37/4/11/1/2/0 of 55 | historical |
+| candidate 2 | `f1ddb954` | #111 `07f8d81f` | 43/4/9/0/3/1 of 60 | 43/4/9/0/3/1 of 60 | historical (unique failed under load; undeclared tests) |
+| candidate-3 | `ab499d84` (`test/candidate-3`) | #112 `8b8758ff` | 45/4/8/0/3/0 of 60 | 45/4/8/0/3/0 of 60 | recorded; superseded by candidate-8 |
+| candidate-4 | `4193f8fe` (`test/candidate-4`) | #114 `594b052a` | 49/4/6/0/3/0 of 62 | not run (stale, per COS) | historical, strict owner only |
+| candidate-5 | `77f0072c` (`test/candidate-5`) | `200e08e1` = #114 `594b052a` + R8 #118 `90c1b833` | 53/4/4/0/3/0 of 64 | not run (stale, per COS) | historical, strict owner only |
+| candidate-6 | `5148157a` (local) | `5b5a028f` = #120 `811dbf6e` + R8 `90c1b833` | 53/4/4/0/3/0 ×2, 52/4/4/0/3/**1** | not run | historical; run 3 failed on the PeerLink abort race |
+| candidate-7 | `4b350f97` (local) | `187af4e8` = `e8b458e5` + `a77a7574` + R8 `90c1b833` | 53/6/4/0/3/0 of 66 | 52/6/4/0/3/**1**, 53/6/4/0/3/0 ×2 | **failed**: an R3 run's writer gate stopped at 195 of 200 under host load 38.7/16 |
+| candidate-8 | `70b55472` (local) | `dea6b364` = `80c67345` + R8 `90c1b833` | 53/13/4/0/3/0 of 73 | 53/13/4/0/3/0 of 73 | **yes: rows below** |
+
+Counts read actual pass / harness check / expected failure / not supported / skip / fail.
+
 ## Last runs
 
 Summaries come from `make terrabase-e2e` itself (`tests/TerraBase.E2E/Outcomes.cs`, `scripts/terrabase/e2e-summary.sh`),
-never from a pass count. Each test declares its nodes and faults (`ScenarioAttribute`); each line says whether it ran on
-in-process nodes, separate OS processes or no node (harness check), and whether its partition was simulated or its fault
-a TCP-proxy network fault. CI's `terrabase-check` rejects a block here or in `RUNS.md` that lacks a category, the commit,
-the working-tree patch identity, the stacked-on line or a test's nodes and faults, or whose counts do not add up.
+never from a pass count. Each test declares its nodes and faults (`ScenarioAttribute`; the harness owner's own tests carry
+it with their OK). Each line says whether a test ran on in-process nodes, separate OS processes or no node
+(harness check), and whether its partition was simulated or its fault a TCP-proxy network fault. CI's `terrabase-check`
+rejects a block here or in `RUNS.md` that lacks a category, the commit, the working-tree patch identity, the stacked-on
+line or a test's nodes and faults, or whose counts do not add up.
 
 **Acceptance candidates** are published on #108 by the strict-test owner (one named candidate per batch, frozen branch).
 Each counts once the R3 owner acknowledges its exact SHA and both owners' 3 repeats are posted there.
@@ -58,7 +77,23 @@ under the heavy lock, `flock -o /tmp/ts-heavy.lock`). They are identical test by
 | 1 of 2 | `f1cfbc0f` | none (origin/main `e30ffdc28753`) | clean | 44 | 19 | 5 | 3 | 4 | 0 | 75 | 10.54 8.36 7.21 → 6.44 11.14 9.12 |
 | 2 of 2 | `f1cfbc0f` | none (same) | clean | 44 | 19 | 5 | 3 | 4 | 0 | 75 | 6.44 11.14 9.12 → 4.47 9.94 9.23 |
 
-The last run in full:
+**Harness checks (13):**
+- 4 harness self-checks;
+- 2 PeerLink regressions;
+- 7 recorder controls (`ExpectedTests`): a 5xx, a real NullReferenceException, a real `database is locked`, a convergence
+  without the signature and a plain harness timeout all fail a listed gap.
+
+**Skipped in every run:** the RegionProcesses child host, the benchmark's cluster host, the Fly outage test.
+
+**Expected failures (4)**, each failing its own way with its declared signature:
+- E11 (R9): `only SELECT statements are supported`;
+- E12 (R10a): `sjc's database on gru did not converge`;
+- E13 (R11): `/move answered 404`;
+- the deleted database (R10a + R7): `the new database on sjc did not converge`.
+
+The commits after candidate-8's code on this branch change only `COVERAGE.md` and `RUNS.md`.
+
+The strict owner's last run in full:
 
 <!-- e2e-summary -->
 E2E run (honest gaps f1cfbc0f, run 2 of 2 (delta)), 2026-10-13T04:34Z on delta
@@ -100,6 +135,7 @@ E2E run (honest gaps f1cfbc0f, run 2 of 2 (delta)), 2026-10-13T04:34Z on delta
 | `Answer_served_from_another_region_is_refused` | harness check | no node (harness) | none |  |
 | `Answer_without_a_region_header_is_refused` | harness check | no node (harness) | none |  |
 | `Pinned_request_carries_the_preferred_region_and_is_accepted_when_that_region_serves_it` | harness check | no node (harness) | none |  |
+| `Resetting_a_link_while_its_connections_close_never_throws` | harness check | no node (harness) | none |  |
 | `The_lossy_link_delivers_bytes_intact_through_its_delays_and_throughput_cap` | harness check | no node (harness) | NetworkFault |  |
 | `The_scenario_failing_its_own_way_is_the_gap` | harness check | no node (harness) | none |  |
 | `A_storage_stall_on_one_region_loses_no_acknowledged_write_and_the_regions_converge` | not supported | in-process nodes | StorageStall | E2E harness: the storage stall hook (Cluster.StallStorageAsync) not wired to this scenario; no storage stall hook: cannot stall sjc's database file for 10 s while gru, sjc, fra write; it needs Cluster.StallStorageAsync (#106) |
