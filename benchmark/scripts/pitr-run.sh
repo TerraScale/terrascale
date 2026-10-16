@@ -975,7 +975,14 @@ matrix-monitored)
 	echo $! >"$BASE/out/monitor.pid"
 	log "monitor started (pid $(cat "$BASE/out/monitor.pid")) args: ${MONITOR_ARGS:-G1 defaults}"
 	cmd_load_a
-	cmd_load_b
+	# PLAIN=1 runs load-b with no restart and no SIGKILL: current main's crash recovery rebuilds a killed
+	# single node's files only from a replica peer ("no certified refill from an intact source"), so the CK
+	# scenario cannot pass without a second node; the kill path is reported as a product finding instead.
+	if [[ ${PLAIN:-0} == 1 ]]; then
+		cmd_load_b_plain
+	else
+		cmd_load_b
+	fi
 	cmd_mutations
 	cmd_audit "$BASE/s3/src-root" src
 	snapcuts
