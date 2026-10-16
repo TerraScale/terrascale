@@ -449,7 +449,7 @@ dashboard-used auth and data wire routes/DTOs remain unchanged from `b76c4621`.
 Its new [signing-key contract](https://github.com/TerraScale/terrascale/blob/76f5d5ce20936f09b484de3084af2c21deb84ea2/docs/auth/signing-keys.md)
 returns `503/no_signing_keys` without keys and requires a separate operator
 provisioning process. Automatic first-party provisioning remains an owning
-producer/Vault qualification gate. The current engine also advances its
+producer/Fly-secret qualification gate. The current engine also advances its
 storage format to version 3; actual deployed migration, CAS, replication and
 backup durability remain unqualified. Public NuGet's
 `TerraScale.DotNet` index returned `404`; candidate digest verification is
@@ -517,11 +517,14 @@ including the unchanged customer SDK after genuine catalog recovery, passed
 the 129-functional-case compiled checkpoint. These source observations do not establish what an
 inaccessible deployment currently serves.
 
-The C# consumer reads machine identity from the fixed path
-`/run/secrets/terrascale/dashboard.json`. This is a new consumer boundary,
-**not an existing, verified OCI delivery contract**. The file was absent in the
-07:39 UTC presence-only check; no secret material was read. Automatic provisioning,
-delivery and rotation must be implemented and qualified before deployment.
+At that checkpoint, the C# consumer expected machine identity at
+`/run/secrets/terrascale/dashboard.json`. The file was absent in the
+07:39 UTC presence-only check; no secret material was read. This historical
+consumer boundary has since been replaced: production runtime secrets are Fly
+secrets on each Fly app, delivered as environment variables. CI secrets are
+GitHub Actions secrets; the complete inventory lives in terrascale under
+`ops/secrets/`. See [`identity-descriptor.md`](identity-descriptor.md).
+Provisioning and rotation still require live qualification.
 There is no endpoint override, production demo selection or manual fallback.
 
 `DashboardCredentials` describes state-project/service credentials, ts-auth
@@ -531,7 +534,7 @@ organizations, sessions, credentials and indexes, auth flows/budgets/device
 grants, invitations, notifications, saved queries, PAT indexes and billing
 bindings. Hosted startup now establishes the fixed database and twenty
 collections through the official SDK after receiving an admitted state-project
-identity. Automatic tenant/project authority, Vault delivery, live bootstrap
+identity. Automatic tenant/project authority, Fly-secret delivery, live bootstrap
 qualification and import of existing Go persistent state are still required.
 
 Endpoints use TerraBase's global origin `https://api.terrascale.tech/`
@@ -582,7 +585,7 @@ external client exists.
 | Sentry/GlitchTip errors and CSP `report-uri` | not an interface; the Go app read `SENTRY_DSN` and `DASHBOARD_CSP_REPORT_URL` | Not ported. The C# app sends no error reports. |
 
 Before deployment, finish native browser journeys, official SDK distribution
-and live Vault/ts-auth/TerraBase checks, auth-budget contention qualification,
+and live Fly-secret/ts-auth/TerraBase checks, auth-budget contention qualification,
 persistent restart/cross-instance checks, and the whole
 account-creation-to-ts-typescript-SDK flow. The Fly image (`Dockerfile`) and
 the `fly.toml` health check (`/readyz`) now target the C# application, and the
@@ -591,6 +594,11 @@ workflow yet. Keep `AGENTS.md` and `CLAUDE.md` untouched; the user's C# request 
 their older Go stack instructions.
 
 ## Identity, administrator and TypeScript qualification audit
+
+The delivery observations below are historical. The current runtime reads
+identity from Fly-secret environment variables, not a descriptor file; see
+[`identity-descriptor.md`](identity-descriptor.md). CI secrets are GitHub Actions
+secrets. The complete inventory lives in terrascale under `ops/secrets/`.
 
 The read-only audit on 2026-10-11 found no delivered
 `/run/secrets/terrascale/dashboard.json` on this development machine.
@@ -601,7 +609,7 @@ genuinely absent collections, and rereads concurrent `name_taken` conflicts.
 Readiness verifies every required collection without writes. Unrelated
 conflicts, mismatched identities, authorization failures and outages fail
 closed. `ManagementCredential` is validated but provides no machine-bootstrap
-authority. OCI-owned automation must create the canonical service project and
+authority. Service provisioning automation must create the canonical service project and
 admit its storage credential, then deliver and rotate the complete descriptor.
 Collection inventory includes public-account identity claims, pending billing
 changes and original-scope checkout bindings. A delivered file alone does not qualify TLS,
@@ -670,7 +678,7 @@ establishes this live TypeScript lane, which remains unverified.
 
 Fixed database/collection startup is implemented and all thirteen native TUnit
 E2E scenarios pass against an isolated external producer protocol fixture.
-Service-project provisioning, Vault delivery and
+Service-project provisioning, Fly-secret delivery and
 the Go-state import remain incomplete. No production data has been read,
 changed or deleted by this audit.
 The [TS-598 introduction](https://github.com/TerraScale/terrascale/blob/a095400a19bcc432ac27d0afaca4eba042b636a7/docs/auth/platform-contract.md)
@@ -692,7 +700,7 @@ already exposes the necessary database operations:
 | Write migration records | `PutDocumentAsync` with `TerraBasePrecondition.Absent` or `.Matches(version)` | Preserve create-only semantics and opaque producer versions; never replace an unrelated destination record. |
 | Commit related records | `TransactAsync` with `Create`, conditional `Put`, `Assert` and `AssertAbsent` | Atomically write bounded related records and their durable migration checkpoint. The SDK admits 1–1024 operations in one database, not a cross-database transaction. |
 
-OCI-owned automation must first establish the dashboard service's canonical
+Service provisioning automation must first establish the dashboard service's canonical
 organization/project and admitted storage credential, then automatically
 deliver the descriptor. The [official Management client](https://github.com/TerraScale/ts-dotnet/blob/130925898daf0207134d9582b7b672a5a1c3233b/src/TerraScale.DotNet/TerraBase/Management/TerraBaseManagementClient.cs)
 can create organizations, projects and databases for an authenticated ts-auth
@@ -702,7 +710,7 @@ come from an authenticated principal. It is not a documented
 machine-bootstrap grant. A guessed service user, a browser-supplied user ID or
 the unused `ManagementCredential` cannot establish that authority. The
 dashboard must not reuse ts-auth's separately owned storage-signing key.
-Credential acquisition and rotation need the owning producer and Vault
+Credential acquisition and rotation need the owning producer and Fly-secret
 contract; the available SDK operations do not close that prerequisite.
 
 Database/collection startup runs automatically before traffic admission, using
@@ -710,7 +718,7 @@ the fixed inventory without feature switches or manual credentials. Replicas
 tolerate concurrent creation through documented idempotence/conflict
 contracts. A cold restart must preserve existing data. Qualify empty
 bootstrap, interrupted creation, simultaneous replicas, denied scopes,
-malformed identity, discovery/Vault outage and credential rotation against
+malformed identity, discovery/secret-delivery outage and credential rotation against
 real services before production cutover.
 
 The Go state format needs a versioned adapter rather than collection copying.

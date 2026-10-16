@@ -2,7 +2,7 @@ app = "ts-dashboard"
 primary_region = "gru"
 swap_size_mb = 900
 
-# The image reads its identity from OCI Vault delivery and discovers ts-auth and
+# The image reads its identity from Fly secrets and discovers ts-auth and
 # TerraBase itself (docs/zero-configuration.md): there is no [env] to set.
 # While the Fly secret DEMO=true is set it serves the in-memory public demo (README).
 

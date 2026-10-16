@@ -1,11 +1,12 @@
 # Stripe live cutover — TS-709
 
 The [zero-configuration contract](zero-configuration.md) requires billing to be
-always available, with vendor keys stored once in OCI Vault and delivered
-automatically. This document retains the authorization, data-integrity and
-financial acceptance boundaries; it does not introduce a billing enable switch.
-Automatic delivery and removal of current demo/mode gates are pending runtime
-work. Preparation alone does not authorize charges, refunds or destructive resets.
+always available. Production runtime secrets are Fly secrets on each Fly app;
+CI secrets are GitHub Actions secrets. The complete inventory lives in the
+terrascale repository under `ops/secrets/`. This document retains the
+authorization, data-integrity and financial acceptance boundaries; it does not introduce a billing enable switch.
+Live secret-delivery qualification and removal of current demo/mode gates
+remain runtime work. Preparation alone does not authorize charges, refunds or destructive resets.
 
 ## Verify the serving target
 
@@ -34,21 +35,22 @@ the login pages retain CSRF controls. Actual authentication was not exercised.
 Fly has ten deployed `Payments__Stripe__*` secrets, but no current `STRIPE_*`
 or `DASHBOARD_PUBLIC_ORIGIN` settings. The Go application ignored those legacy
 names, so that inspection found billing unconfigured. Do not add compatibility
-aliases or copy replacement keys by hand; automatic Vault delivery remains
-required and unqualified.
+aliases; the current Fly-secret contract is documented in
+[`identity-descriptor.md`](identity-descriptor.md).
 
-Record Machine/release IDs and Vault secret OCIDs/version numbers in the
-ticket. Never record credential values. Reset obsolete application data and
+Record Machine/release IDs and Fly secret names/digests in the ticket. Never
+record credential values. Reset obsolete application data and
 re-bootstrap through the SDK in the existing provisioned database when needed;
 do not replace the serving app, cell or volume. Do not touch Forgejo, ts-ops or
 homelab hosts.
 
-## Vault delivery and provider verification
+## Fly secrets and provider verification
 
 The vendor-issued Stripe account key and endpoint-specific signing secret are
-stored once in OCI Vault. Production automation must discover the correct
-versions and deliver them without operator extraction, dotenv assembly or Fly
-secret copying. This documentation does not implement that pipeline.
+stored as Fly secrets on the dashboard app and delivered as environment
+variables. CI credentials belong in GitHub Actions secrets. Use the terrascale
+`ops/secrets/` inventory; never assemble dotenv files or record secret values.
+This documentation does not provision secrets.
 
 Verify account authorization, restricted-key permissions, six distinct recurring
 prices, matching live products, the production webhook URL/API version/events
@@ -110,8 +112,8 @@ Verified Stripe sandbox deliveries remain required before live approval.
 ## Production acceptance
 
 Deploy the reviewed runtime through its normal quality and integrity gates.
-OCI Vault must deliver the verified credentials automatically; manual secret
-import and demo-switch recipes are retired. Existing delivery and switch paths
+Fly secrets must supply the verified runtime credentials on the serving app;
+demo-switch recipes are retired. Existing delivery and switch paths
 remain runtime gaps, so this document cannot certify a completed cutover.
 
 Explicit authorization remains required for actual charges/refunds and approved

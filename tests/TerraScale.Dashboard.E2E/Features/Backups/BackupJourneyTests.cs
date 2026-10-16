@@ -118,7 +118,7 @@ public sealed class BackupJourneyTests(DashboardRootFixture fixture)
         var final = await ReadAsync(producer, "/__test/observations");
         Check(final.GetProperty("failures").GetArrayLength() == 0 && final.GetProperty("databases").GetArrayLength() == 0,
             "All native/MCP backup requests matched the frozen producer contract and native cleanup deleted each real database");
-        Console.WriteLine("BACKUP PROTOCOL E2E: isolated producer snapshot restore verified with actual app HTTP/MCP + official SDK; live backup storage/scheduler/Vault qualification remains open.");
+        Console.WriteLine("BACKUP PROTOCOL E2E: isolated producer snapshot restore verified with actual app HTTP/MCP + official SDK; live backup storage/scheduler/secret-delivery qualification remains open.");
         async Task<int> ScoreAsync(string databaseId) => (await CallAsync(replica, secret, "get_document", new { databaseId, collection = "users", documentId = "snapshot-row" })).GetProperty("value").GetProperty("score").GetInt32();
     }
 
