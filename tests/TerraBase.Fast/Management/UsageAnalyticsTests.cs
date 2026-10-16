@@ -124,17 +124,20 @@ public sealed class UsageAnalyticsTests
             {
                 Interlocked.Increment(ref firstSeriesReads);
             }
-        };
-        hook.AfterGet = async (collection, id, _) =>
-        {
-            if (collection == SystemCatalog.DatabaseState(first.Id) + "usage" && id == "ops")
+
+            // Lifetime totals are every machine's ops documents of the usage collection, listed.
+            if (collection == SystemCatalog.DatabaseState(first.Id) + "usage")
             {
                 Interlocked.Increment(ref firstMeterReads);
             }
-            if (collection == SystemCatalog.DatabaseState(second.Id) + "usage" && id == "ops")
+
+            if (collection == SystemCatalog.DatabaseState(second.Id) + "usage")
             {
                 Interlocked.Increment(ref secondMeterReads);
             }
+        };
+        hook.AfterGet = async (collection, id, _) =>
+        {
             if (collection == $"projects/{first.Project}/databases" && id == second.Id && Volatile.Read(ref firstSeriesReads) == 1 && supportedVersion is null)
             {
                 // The second tenant keeps its accepted snapshot; only its following meter read sees the new version.

@@ -84,13 +84,17 @@ public interface IStorageTransaction : IAsyncDisposable
     /// it is the same on every member and distinct after deletion/recreation or copying. The system database's is fixed: it
     /// is one database on every member.
     /// </summary>
-    Guid Scope { get; }
+    const int MaxSystemGroupChanges = 16_384;
+
+    /// <summary>Most bytes one system database transaction's change group may hold; it travels in one 4 MiB batch.</summary>
+    const int MaxSystemGroupBytes = 3 * 1024 * 1024;
 
     /// <summary>
-    /// Whether a write stores the materialized document, canonical JSON with fields in name order (a client database),
-    /// rather than the bytes written (the system database, until it becomes a lattice database too).
+    /// Identity that scopes document ETags: derived from a client database's organization, project and database ids, so
+    /// it is the same on every member and distinct after deletion/recreation or copying. The system database's is fixed: it
+    /// is one database on every member.
     /// </summary>
-    bool Materializes { get; }
+    Guid Scope { get; }
 
     /// <summary>Reads one live document, or <see langword="null"/> when it is absent or deleted.</summary>
     ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken);

@@ -84,8 +84,6 @@ internal sealed partial class SqliteStorageTransaction(
 
     public Guid Scope { get; } = store.Scope;
 
-    public bool Materializes => !store.IsSystem;
-
     public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
         RunAsync(() => ReadDocument(collection, id), cancellationToken);
 
