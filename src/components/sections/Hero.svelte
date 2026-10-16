@@ -156,6 +156,7 @@
     display: grid;
     place-items: center;
     pointer-events: none;
+    container-type: size;
   }
 
   /* The map spans the viewport width (capped), so it is never cropped. */
