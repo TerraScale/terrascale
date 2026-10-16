@@ -25,7 +25,6 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     internal static readonly string PeerSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
 
     private readonly ConcurrentQueue<string> output = new();
-    private readonly ConcurrentQueue<Uri> listening = new();
     private readonly string directory;
     private TestListenerRelay? publicFront;
     private TestListenerRelay? internalFront;

@@ -3153,6 +3153,23 @@ public sealed class PeerStreamTests
             return false;
         }
 
+        // Whether the copy comes back under an incarnation other than `damaged` within the deadline.
+        public async Task<bool> UntilRebuiltAsync(TenantContext database, Ulid damaged)
+        {
+            var deadline = DateTime.UtcNow + Deadline;
+            while (DateTime.UtcNow < deadline)
+            {
+                if (await HeldIncarnationAsync(database) is { } incarnation && incarnation != damaged)
+                {
+                    return true;
+                }
+
+                await Task.Delay(100);
+            }
+
+            return false;
+        }
+
         // Whether `peer` acknowledges `changeId` within the deadline.
         public async Task<bool> UntilAckedAsync(TenantContext database, ReplicaId peer, long changeId)
         {
