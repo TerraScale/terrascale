@@ -70,6 +70,9 @@ const url = client.buildAuthorizationUrl(config, {
 else if (data is not null && current.Key == "emails") {
 @(await RenderPartialAsync<AuthenticationEmailsView, AuthenticationPage>(Model))
 }
+else if (data is not null && current.Key == "emails") {
+@(await RenderPartialAsync<AuthenticationEmailsView, AuthenticationPage>(Model))
+}
 else if (data is not null) {
 @if (current.Key == "sessions") { <dl class="ts-kv"><dt>Session ends when</dt><dd>The user signs out, an admin revokes it, or the password changes or is reset</dd><dt>Password change</dt><dd>Invalidates every session issued before it</dd><dt>Access tokens</dt><dd>Short-lived; refresh with the session</dd></dl> }
 <section class="ts-card" id="@("auth-" + current.Key)" aria-labelledby="@("auth-" + current.Key + "-title")"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="@("auth-" + current.Key + "-title")">@(current.Key == "sessions" ? "Active sessions" : current.Title)</h2><p class="ts-card-description">@(current.Key == "sessions" ? "Most recent first." : current.Description)</p></div></header><div class="ts-card-body">@{ Table(data.Tables[current.Key]); }</div></section>
