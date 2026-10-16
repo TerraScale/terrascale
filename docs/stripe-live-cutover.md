@@ -32,8 +32,8 @@ inspection on 2026-10-09 at 07:10 UTC found Machine
 `d8d96000b74e78` started in `gru` on completed release `v135`, with its check
 passing. Readiness, native password login and email-code pages returned `200`;
 the login pages retain CSRF controls. Actual authentication was not exercised.
-Fly has ten deployed `Payments__Stripe__*` secrets, but no current `STRIPE_*`
-or `DASHBOARD_PUBLIC_ORIGIN` settings. The Go application ignored those legacy
+That 2026-10-09 inspection found ten deployed `Payments__Stripe__*` secrets,
+but no `STRIPE_*` or `DASHBOARD_PUBLIC_ORIGIN` settings. The Go application ignored those legacy
 names, so that inspection found billing unconfigured. Do not add compatibility
 aliases; the current Fly-secret contract is documented in
 [`identity-descriptor.md`](identity-descriptor.md).
