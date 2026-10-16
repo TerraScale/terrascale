@@ -11,7 +11,7 @@ import tempfile
 import textwrap
 
 workflow = Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
-match = re.search(r"      - name: Report the Slow result\n.*?        run: \|\n(.*?)\n  preview:", workflow.read_text(), re.DOTALL)
+match = re.search(r"      - name: Report the Slow result\n.*?        run: \|\n(.*?)(?=\n  [a-z][a-z0-9-]*:|\Z)", workflow.read_text(), re.DOTALL)
 assert match, "Slow report block not found"
 script = "set -euo pipefail\n" + textwrap.dedent(match[1])
 script = script.replace("${{ matrix.area }}", "auth").replace("${{ matrix.runner }}", "alpha")

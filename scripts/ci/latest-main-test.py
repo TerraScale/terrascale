@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Exercise stale-main rejection and the workflow's unchanged exact-tree Fast gate."""
+"""Exercise stale-main rejection after the same-run Fast gate."""
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import tempfile
-import textwrap
 
 root = Path(__file__).resolve().parents[2]
 workflow = (root / ".github/workflows/ci.yml").read_text()
@@ -15,38 +14,31 @@ assert "group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
 assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in concurrency
 deploy = workflow.split("\n  deploy:\n", 1)[1].split("\n  e2e:\n", 1)[0]
 steps = dict(re.findall(r"^      - name: ([^\n]+)\n(.*?)(?=^      - |\Z)", deploy, re.M | re.S))
-gate = steps["Wait for Fast on this tree"]
-command = textwrap.dedent(gate.split("        run: |\n", 1)[1]).replace("terrascale/", f"{root}/")
+gate = steps["Require current main before rollout"]
+command = gate.split("        run: |\n", 1)[1].strip().replace("terrascale/", f"{root}/")
 initial = steps["Skip a superseded main before building"].split("        run: ", 1)[1].strip().replace("terrascale/", f"{root}/")
-assert command.index("fast-gate.sh") < command.index("current-main.sh")
+assert "needs: [images, test]" in deploy
+assert "fast-gate.sh" not in workflow
 assert "if: steps.qualified.outputs.current == 'true'" in steps["Deploy TerraBase (gru, sjc, fra)"]
 assert "if: steps.qualified.outputs.current == 'true'" in steps["Deploy ts-auth (gru, sjc, fra)"]
 assert "deployed: ${{ steps.deploy-auth.outcome == 'success' }}" in deploy
-assert "if: needs.deploy.outputs.deployed == 'true'" in workflow.split("\n  e2e:\n", 1)[1]
+e2e = workflow.split("\n  e2e:\n", 1)[1].split("\n    steps:", 1)[0]
+assert re.findall(r"^    if: (.+)$", e2e, re.M) == ["github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.deploy.outputs.deployed == 'true'"]
 
-sha, other, head = "a" * 40, "b" * 40, "c" * 40
+sha, other = "a" * 40, "b" * 40
 prefix = "repos/TerraScale/terrascale"
 base = {
     f"{prefix}/git/ref/heads/main": sha,
-    f"{prefix}/commits/{sha}": "tree-main",
-    f"{prefix}/commits/{sha}/pulls": head,
-    f"{prefix}/commits/{head}": "tree-main",
-    f"{prefix}/commits/{head}/check-runs?check_name=test": "completed success",
-    f"{prefix}/commits/{sha}/check-runs?check_name=test": "completed failure",
 }
 cases = [
     ("current", "current", {}, 0, "current=true\n"),
     ("stale rerun", "current", {f"{prefix}/git/ref/heads/main": other}, 0, "current=false\n"),
     ("API failure", "current", {f"{prefix}/git/ref/heads/main": None}, 1, ""),
     ("invalid response", "current", {f"{prefix}/git/ref/heads/main": "null"}, 1, ""),
-    ("same PR tree", "gate", {}, 0, "current=true\n"),
+    ("current after Fast", "gate", {}, 0, "current=true\n"),
     ("superseded during Fast", "gate", {f"{prefix}/git/ref/heads/main": other}, 0, "current=false\n"),
-    ("different PR tree", "gate", {f"{prefix}/commits/{head}": "tree-other"}, 1, ""),
-    ("failed PR Fast", "gate", {f"{prefix}/commits/{head}/check-runs?check_name=test": "completed failure"}, 1, ""),
-    ("main Fast", "gate", {
-        f"{prefix}/commits/{head}": "tree-other",
-        f"{prefix}/commits/{sha}/check-runs?check_name=test": "completed success",
-    }, 0, "current=true\n"),
+    ("API failure after Fast", "gate", {f"{prefix}/git/ref/heads/main": None}, 1, ""),
+    ("invalid response after Fast", "gate", {f"{prefix}/git/ref/heads/main": "null"}, 1, ""),
 ]
 for name, action, changes, code, output in cases:
     with tempfile.TemporaryDirectory(prefix="latest-main-") as directory:
@@ -66,4 +58,4 @@ for name, action, changes, code, output in cases:
         assert result.returncode == code, (name, result.returncode, result.stderr)
         assert (result_file.read_text() if result_file.exists() else "") == output, name
 
-print(f"latest-main-test: ok ({len(cases)} freshness, API failure and exact-tree Fast controls)")
+print(f"latest-main-test: ok ({len(cases)} freshness and API failure controls, same-run Fast dependency)")

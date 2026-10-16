@@ -9,6 +9,7 @@ using Bogus;
 using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
@@ -64,7 +65,18 @@ public sealed class DataDirectoryTests
             string key;
             Uri document;
             string before;
-            await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = dataDirectory))
+            await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = dataDirectory, services =>
+            {
+                var registration = services.Single(service => service.ServiceType == typeof(SqliteStorageEngine));
+                services.Remove(registration);
+                services.AddSingleton(provider =>
+                {
+                    var engine = (SqliteStorageEngine)registration.ImplementationFactory!(provider);
+                    // Keep a completed readiness probe cached while comparing the directory's complete contents.
+                    engine.ReadinessClock = new FakeTimeProvider();
+                    return engine;
+                });
+            }))
             {
                 using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
                 key = await api.Server.IssueAsync(tenant.OrganizationId, "documents:read");
@@ -76,6 +88,8 @@ public sealed class DataDirectoryTests
                 using var written = await tenant.Data.PutAsJsonAsync(document, new { name = new Faker().Name.FullName() });
                 written.EnsureSuccessStatusCode();
                 before = await tenant.Data.GetStringAsync(document);
+                using var ready = await api.Server.Client.GetAsync(new Uri("/readyz", UriKind.Relative));
+                ready.EnsureSuccessStatusCode();
                 var files = Directory.GetFileSystemEntries(dataDirectory, "*", SearchOption.AllDirectories);
 
                 await AssertStartupRefusedAsync(dataDirectory, InUse);

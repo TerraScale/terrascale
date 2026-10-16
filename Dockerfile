@@ -8,7 +8,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.1-resolute@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675 AS sdk
 
 FROM sdk AS base
-# BuildKit exposes the shared host's CPUs; test hosts use the alpha slot's eight-CPU budget.
+# Test hosts retain the eight-CPU .NET budget across runner types.
 # Publish/runtime stages have their own base and retain Fly's automatic CPU discovery.
 ARG DOTNET_PROCESSOR_COUNT=8
 ARG DOTNET_GCHeapCount=8
@@ -31,39 +31,54 @@ RUN npx --yes playwright@1.63.0 install --with-deps chromium \
 COPY --from=ts-dotnet --exclude=.git . /src/ts-dotnet
 WORKDIR /src/terrascale
 
-FROM base AS source
-COPY . .
+# COPY from this filtered stage keys restore on manifest contents, not changes to application source.
+FROM base AS restore-inputs
+COPY . /restore-inputs
+RUN mkdir /restore-manifests \
+    && cd /restore-inputs \
+    && find . -type f \( -name '*.csproj' -o -name '*.props' -o -name '*.targets' \
+        -o -name '*.slnx' -o -name '*.slnf' -o -name '*packages.lock.json' \
+        -o -name 'NuGet.config' -o -name 'global.json' -o -name 'dotnet-tools.json' \
+        -o -name 'Makefile' \) -exec cp --parents '{}' /restore-manifests/ \;
 
-# Packages are restored into this layer, shared by every area (and deduplicated across concurrent CI jobs): a BuildKit
+# Shared packages are restored into this layer (and deduplicated across concurrent CI jobs): a BuildKit
 # cache mount is best-effort and may come up empty in a later stage, so it only holds NuGet's download cache.
-FROM source AS restored
+FROM base AS restored
+COPY --from=restore-inputs /restore-manifests/ .
 RUN --mount=type=cache,target=/root/.local/share/NuGet/http-cache,id=nuget-http \
     --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
     make restore
 
+FROM restored AS source
+COPY . .
+
 # One build and one test stage per area; CI runs the areas as parallel jobs. A build stage checks whitespace format,
 # builds its projects in Release with analyzers as errors (libs.slnf, auth.slnf, terrabase.slnf) and runs its static
 # checks: BuildKit reuses it only for byte-identical inputs. The test stage runs the area's tests on that build (its
-# `dotnet build` calls are incremental no-ops; `-o restore` keeps restore from rewriting project.assets.json, which
-# would force a recompile). CI passes no-cache-filters for test-<area>, so tests always execute. build-auth also builds
-# the TerraBase that ts-auth's tests start (auth.slnf does not include it).
-FROM restored AS build-libs
+# `dotnet build` calls reuse compiled outputs; `-o restore` retains the assets prepared by the build stage).
+# CI passes no-cache-filters for test-<area>, so tests always execute. build-auth also builds the TerraBase that
+# ts-auth's tests start (auth.slnf does not include it); publishing restores the SDK's linux-x64 assets.
+FROM source AS build-libs
 RUN make -o restore fmt-check libs-build CONFIGURATION=Release
 
 FROM build-libs AS test-libs
 RUN make -o restore libs-check libs-test CONFIGURATION=Release && touch /passed
 
-FROM restored AS build-auth
+FROM source AS build-auth
+ARG TS_AUTH_REVISION
 RUN make -o restore fmt-check auth-check auth-build CONFIGURATION=Release \
-    && dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo
+    && dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo \
+    && make auth-publish RUNTIME=linux-x64 PUBLISH_DIR=/out
 
 FROM build-auth AS test-auth
+ARG TS_AUTH_REVISION
 RUN make -o restore auth-audit auth-test-fast CONFIGURATION=Release && touch /passed
 
-FROM restored AS build-terrabase
+FROM source AS build-terrabase
 # The commit /healthz reports as revision (MSBuild reads it from the environment); the image has no .git.
 ARG TERRABASE_REVISION
-RUN make -o restore fmt-check terrabase-check CONFIGURATION=Release
+RUN make -o restore fmt-check terrabase-check CONFIGURATION=Release \
+    && dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --no-restore --output /out
 
 FROM build-terrabase AS test-terrabase
 ARG TERRABASE_REVISION
@@ -78,13 +93,15 @@ COPY --from=test-terrabase /passed /terrabase
 # Slow exports each suite's log and exit code for CI to report; `test-slow` exports both area directories.
 # Plain text: TUnit colours its output here, and the report parses lines like "failed <test> (<duration>)".
 # Each area runs independently so an auth failure cannot prevent TerraBase Slow from executing.
-FROM restored AS slow-auth-run
+FROM build-auth AS slow-auth-run
+ARG TS_AUTH_REVISION
 RUN mkdir /slow && { make -o restore auth-test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi; echo $? > /slow/exit; } 2>&1 | tee /slow/log
 
 FROM scratch AS test-slow-auth
 COPY --from=slow-auth-run /slow /
 
-FROM restored AS slow-terrabase-run
+FROM build-terrabase AS slow-terrabase-run
+ARG TERRABASE_REVISION
 # BuildKit secret mounts never enter a layer or build arg. No org-level provisioning credential reaches CI.
 RUN --mount=type=secret,id=tigris-ci,required=true \
     mkdir /slow && { set -a; . /run/secrets/tigris-ci; set +a; \
@@ -98,28 +115,12 @@ COPY --from=slow-auth-run /slow /auth/
 COPY --from=slow-terrabase-run /slow /terrabase/
 
 # Fly images: the self-contained release executables (`make terrabase-publish` / `auth-publish` flags) on the chiseled
-# runtime-deps base (6 MB: no shell, no package manager). These stages skip the test stages: CI deploys only a tree whose
-# `test` passed (scripts/fly/fast-gate.sh). Run admin commands with `fly ssh console -C '/app/<binary> ...'`.
+# runtime-deps base (6 MB: no shell, no package manager). Every consumer reuses its area's compiled/published build layer.
+# CI deployment needs this same run's `test`. Run admin commands with `fly ssh console -C '/app/<binary> ...'`.
 # root: Fly mounts volumes root-owned.
-FROM sdk AS publish-terrabase
-# CI=true turns on locked-mode restore (Directory.Build.props).
-ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 NUGET_SCRATCH=/nuget-scratch
-WORKDIR /src/terrascale
-COPY . .
-# Shown by TerraBase's /healthz as revision.
-ARG TERRABASE_REVISION
-RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --output /out
+FROM build-terrabase AS publish-terrabase
 
-FROM sdk AS publish-ts-auth
-ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 NUGET_SCRATCH=/nuget-scratch
-COPY --from=ts-dotnet --exclude=.git . /src/ts-dotnet
-WORKDIR /src/terrascale
-COPY . .
-# Shown by ts-auth's /healthz as <version>+<revision>.
-ARG TS_AUTH_REVISION
-RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    dotnet publish src/TerraScale.Authentication --configuration Release --runtime linux-x64 --self-contained --output /out
+FROM build-auth AS publish-ts-auth
 
 # Fly mounts TerraBase's volume at /data.
 FROM mcr.microsoft.com/dotnet/runtime-deps:11.0-resolute-chiseled AS terrabase

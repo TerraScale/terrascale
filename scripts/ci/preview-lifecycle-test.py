@@ -19,7 +19,7 @@ assert "group: preview-${{ matrix.pr }}" in cleanup and "pr: ${{ fromJSON(needs.
 assert "cancel-in-progress: true" in cleanup, "Deletion must stop an active preview before deleting its app"
 assert "fail-fast: false" in cleanup, "One PR's failed deletion must not cancel the others"
 for job in (preview, discover, cleanup):
-    assert "    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}\n" in job and "runs-on: alpha" not in job
+    assert "    runs-on: ubuntu-latest\n" in job and "runs-on: alpha" not in job
 
 # Discovery publishes what it decided even when it fails; cleanup runs only for a non-empty JSON list.
 cleanup_if = (
