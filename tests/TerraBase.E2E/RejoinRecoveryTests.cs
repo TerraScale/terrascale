@@ -2,7 +2,11 @@ using System.Net;
 
 namespace TerraBase.E2E;
 
-/// <summary>Cancellation during a real local outage must recover the region before returning the original error.</summary>
+/// <summary>
+/// Cancellation during a real local outage must recover the region before returning the original error. It stops a local
+/// node, so it runs in the required local stage (the local-only category), never on Fly.
+/// </summary>
+[Category("local-only")]
 public sealed class RejoinRecoveryTests
 {
     [Test]

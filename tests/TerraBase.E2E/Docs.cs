@@ -168,8 +168,7 @@ internal static class Docs
             var response = await send();
             var refused = response.StatusCode == HttpStatusCode.TooManyRequests
                 || (refusedBeforeRun && response.StatusCode == HttpStatusCode.ServiceUnavailable
-                    && await response.Content.ReadAsStringAsync(token) is var answer
-                    && (answer.Contains("\"remote_region_unavailable\"", StringComparison.Ordinal) || answer.Contains("\"confirmation_busy\"", StringComparison.Ordinal)));
+                    && ExecutedNothing(await response.Content.ReadAsStringAsync(token)));
             if (!refused || clock.Elapsed > Converge.Deadline)
             {
                 return response;
@@ -178,6 +177,19 @@ internal static class Docs
             var wait = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(1);
             response.Dispose();
             await Task.Delay(wait, token);
+        }
+    }
+
+    // Only the error code itself counts: a code named in a message, a body that is not JSON or the proxy's own 503 may have run.
+    private static bool ExecutedNothing(string answer)
+    {
+        try
+        {
+            return JsonNode.Parse(answer)?["error"]?["code"]?.GetValue<string>() is "remote_region_unavailable" or "confirmation_busy";
+        }
+        catch (Exception error) when (error is JsonException or InvalidOperationException)
+        {
+            return false;
         }
     }
 

@@ -235,7 +235,8 @@ The candidates on #108 run on them.
 Update a row in the same PR that changes its status: a slice that lands removes its `Gaps.cs` entries and marks the row
 "pass" with the commit of the run that proved it. Re-run `make terrabase-e2e` locally and `make terrabase-e2e` plus
 `make terrabase-e2e-fly-outage` on Fly at the release commit, and record both in "Last run". The other `fly-outage`
-scenarios run separately with the command in docs/terrabase/replication-e2e.md, never at the same time on the same app.
+scenarios run separately with the command in docs/terrabase/replication/31-live-outage-proof.md, never at the same time
+on the same app.
 
 ## Backup qualification producer (#164)
 

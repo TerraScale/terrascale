@@ -7,8 +7,10 @@ namespace TerraBase.E2E;
 
 /// <summary>
 /// The live outage proof's own calls against a stand-in for a region at the handler level: which refusals a probe write
-/// sends again, the durability it reports, and the tombstone answer. It runs without Fly, so every local run checks them.
+/// sends again, the durability it reports, and the tombstone answer. It runs without Fly, so the required local stage (the
+/// local-only category) checks them.
 /// </summary>
+[Category("local-only")]
 public sealed class DocsTests
 {
     private static readonly Uri Document = new("/v1/doc", UriKind.Relative);
@@ -29,11 +31,12 @@ public sealed class DocsTests
         await Assert.That(sends).IsEqualTo(3);
     }
 
-    // An ambiguous commit, a 503 that only mentions a code outside a JSON string, and the proxy's own 503 may each have
-    // run (or say nothing): sent once, and the 503 is the failure.
+    // An ambiguous commit (also when its message names a refusal code), a 503 that only mentions a code outside a JSON
+    // string, and the proxy's own 503 may each have run (or say nothing): sent once, and the 503 is the failure.
     [Test]
     [Scenario(Nodes.Harness)]
     [Arguments("{\"error\":{\"code\":\"write_outcome_unknown\",\"message\":\"m\",\"region\":\"gru\",\"machine\":\"m-gru\"}}")]
+    [Arguments("{\"error\":{\"code\":\"write_outcome_unknown\",\"message\":\"remote_region_unavailable\"}}")]
     [Arguments("remote_region_unavailable")]
     [Arguments("")]
     public async Task Any_other_503_is_sent_exactly_once(string body)
