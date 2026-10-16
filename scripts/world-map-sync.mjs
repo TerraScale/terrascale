@@ -46,11 +46,18 @@ if (pinMatches.length !== regions.length) {
   )
 }
 
+// dotted-map puts a pin on the grid point nearest the city, which can be a sea point next to the
+// coast (San Jose lands one dot into the Pacific). Snap each pin to the nearest land dot instead,
+// preferring the same row, so it sits on the city's dot.
+const landDots = map.getPoints().filter((p) => p.svgOptions?.color !== SENTINEL)
 const placed = regions.map((r, i) => {
   const pin = pinMatches[i][0]
   const cx = Number(pin.match(/cx="([^"]+)"/)[1])
   const cy = Number(pin.match(/cy="([^"]+)"/)[1])
-  return { ...r, x: cx, y: cy }
+  const dist = (p) => Math.hypot(p.x - cx, p.y - cy) + Math.abs(p.y - cy) * 1e-6
+  const land = landDots.reduce((best, p) => (dist(p) < dist(best) ? p : best))
+  if (dist(land) > 1.5) throw new Error(`${r.id}: no land dot within 1.5 grid steps of the pin`)
+  return { ...r, x: land.x, y: land.y }
 })
 
 const cleanSvg = svg.replace(pinRegex, '')

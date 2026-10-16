@@ -111,6 +111,7 @@
 
         <pre class="code__pre"><code>{#each tokens as t, i (i)}{#if t.className}<span class={t.className}>{t.text}</span>{:else}{t.text}{/if}{/each}</code></pre>
       </div>
+      <pre class="code__pre"><code>{#each tokens as t, i (i)}{#if t.className}<span class={t.className}>{t.text}</span>{:else}{t.text}{/if}{/each}</code></pre>
     </div>
   </div>
 </section>
@@ -166,6 +167,7 @@
 
   .code__bullets {
     list-style: none;
+    margin: var(--ts-s2) 0 0;
     padding: 0;
     margin: 16px 0 0;
     display: grid;
@@ -352,8 +354,14 @@
     transition: filter 150ms ease;
   }
 
-  .code__tab.is-active .code__tab-icon {
+  .code__tab[aria-selected='true'] .code__tab-icon {
     filter: none;
+    opacity: 1;
+  }
+
+  .code__panel :global(.code__copy-icon) {
+    width: var(--ts-icon-sm);
+    height: var(--ts-icon-sm);
   }
 
   .code__copy-btn {
@@ -405,7 +413,7 @@
   }
 
   .code__pre code {
-    font-family: inherit;
+    font: inherit;
   }
 
   @media (max-width: 1280px) {

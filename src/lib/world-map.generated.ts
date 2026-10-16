@@ -28,7 +28,7 @@ export const REGIONS: readonly Region[] = [
     "city": "San Jose",
     "lat": 37.34,
     "lng": -121.89,
-    "x": 16,
+    "x": 17,
     "y": 21.650635094610966
   },
   {

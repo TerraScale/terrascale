@@ -18,6 +18,7 @@ export const iconManifest = {
   chevronRight: { collection: 'lucide', icon: 'chevron-right' },
   clock: { collection: 'lucide', icon: 'clock' },
   code2: { collection: 'lucide', icon: 'code-2' },
+  copy: { collection: 'lucide', icon: 'copy' },
   database: { collection: 'lucide', icon: 'database' },
   dollarSign: { collection: 'lucide', icon: 'dollar-sign' },
   externalLink: { collection: 'lucide', icon: 'external-link' },

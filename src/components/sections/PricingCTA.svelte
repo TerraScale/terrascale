@@ -2,7 +2,7 @@
   import Icon from '@/components/Icon.svelte'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import { dict } from '@/lib/i18n'
-  import { launchPhase, registrationUrl } from '@/lib/site'
+  import { registrationUrl } from '@/lib/site'
 </script>
 
 <section class="pricing-cta">

@@ -1,5 +1,8 @@
 @import "tailwindcss";
+@import "./tokens.css";
+@import "./components.css";
 
+/* Self-hosted fonts (OFL, see static/fonts/OFL-*.txt). Oxanium is only used when a direction sets it as display. */
 @font-face {
   font-family: 'Geist';
   src: url('/fonts/geist.woff2') format('woff2');
@@ -107,12 +110,8 @@ html {
 
 body {
   min-height: 100vh;
-  background-color: var(--ts-bg-base);
-  color: var(--ts-text);
-  font-family: var(--ts-font-body);
+  font-size: var(--ts-fs-lg);
   text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
 }
 
@@ -313,3 +312,17 @@ svg {
     animation: none !important;
   }
 }
+
+/* Two-tone headings: the second phrase takes the direction's heading-muted colour. */
+.ts-h-muted {
+  color: var(--ts-heading-muted);
+}
+
+/* Landing's own highlighter classes (src/lib/highlight.ts). */
+.tok-keyword { color: var(--ts-syn-keyword); }
+.tok-string  { color: var(--ts-syn-string); }
+.tok-comment { color: var(--ts-syn-comment); }
+.tok-fn      { color: var(--ts-syn-fn); }
+.tok-num     { color: var(--ts-syn-number); }
+.tok-op      { color: var(--ts-syn-punct); }
+

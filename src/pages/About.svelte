@@ -16,317 +16,167 @@
     icon: pillarIcons[i] ?? 'database',
     ...pillar,
   }))
-  const regions = launchRegions.map((region) => region.name)
+  const regions = launchRegions.map((region) => ({ id: region.id, name: region.name }))
 </script>
 
-<section class="about-hero">
-  <div class="about-hero__grid" aria-hidden="true"></div>
-  <div class="about-hero__inner">
-    <div class="about-hero__eyebrow">
-      <Icon name="globe" className="about-hero__eyebrow-icon" />
-      {$dict.about.eyebrow}
-    </div>
+<section class="ts-section about-hero">
+  <div class="ts-container about-hero__inner">
+    <span class="ts-eyebrow"><span class="ts-dot" aria-hidden="true"></span>{$dict.about.eyebrow}</span>
     <h1 class="about-hero__title">
-      {$dict.about.titleLead}<br />
-      <span class="ts-text-gradient">{$dict.about.titleAccent}</span>
+      {$dict.about.titleLead}
+      <span class="ts-h-muted">{$dict.about.titleAccent}</span>
     </h1>
-    <p class="about-hero__subtitle">
-      {$dict.about.subtitle}
-    </p>
-    <div class="about-hero__actions">
-      <RouteLink href="/pricing" class="ts-btn ts-btn-primary cta-shine">
+    <p class="ts-lede about-hero__lede">{$dict.about.subtitle}</p>
+    <div class="ts-actions">
+      <RouteLink href="/pricing" class="ts-btn ts-btn-primary ts-btn-lg">
         {$dict.about.ctaPricing}
-        <Icon name="arrowRight" className="about-hero__action-icon" />
+        <Icon name="arrowRight" className="about__icon" />
       </RouteLink>
-      <RouteLink href="/contact" class="ts-btn ts-btn-glass">
+      <RouteLink href="/contact" class="ts-btn ts-btn-secondary ts-btn-lg">
+        <Icon name="messageSquare" className="about__icon" />
         {$dict.about.ctaContact}
-        <Icon name="messageSquare" className="about-hero__action-icon" />
       </RouteLink>
     </div>
   </div>
 </section>
 
-<section class="about-section">
-  <div class="about-section__inner">
+<section class="ts-section about-section">
+  <div class="ts-container about-section__inner">
     <div class="about-section__intro">
-      <div class="about-section__eyebrow">{$dict.about.missionEyebrow}</div>
+      <span class="ts-eyebrow"><span class="ts-dot" aria-hidden="true"></span>{$dict.about.missionEyebrow}</span>
       <h2 class="about-section__title">{$dict.about.missionTitle}</h2>
-      <p class="about-section__text">
-        {$dict.about.missionText}
-      </p>
+      <p class="about-section__text">{$dict.about.missionText}</p>
     </div>
 
     <div class="about-pillars">
       {#each pillars as pillar (pillar.title)}
-        <article class="about-pillar ts-glass">
-          <div class="about-pillar__icon">
-            <Icon name={pillar.icon} className="about-pillar__icon-svg" />
+        <article class="about-pillar">
+          <span class="ts-icon-tile"><Icon name={pillar.icon} /></span>
+          <div>
+            <h3 class="about-pillar__title">{pillar.title}</h3>
+            <p class="about-pillar__text">{pillar.text}</p>
           </div>
-          <h3 class="about-pillar__title">{pillar.title}</h3>
-          <p class="about-pillar__text">{pillar.text}</p>
         </article>
       {/each}
     </div>
   </div>
 </section>
 
-<section class="about-band">
-  <div class="about-band__inner ts-glass">
-    <div>
-      <div class="about-section__eyebrow">{$dict.about.pricingPrincipleEyebrow}</div>
-      <h2 class="about-band__title">{$dict.about.bandTitle}</h2>
-      <p class="about-band__text">
-        {$dict.about.bandText}
-      </p>
+<section class="ts-section about-band">
+  <div class="ts-container about-section__inner">
+    <div class="about-section__intro">
+      <span class="ts-eyebrow"><span class="ts-dot" aria-hidden="true"></span>{$dict.about.pricingPrincipleEyebrow}</span>
+      <h2 class="about-section__title">{$dict.about.bandTitle}</h2>
+      <p class="about-section__text">{$dict.about.bandText}</p>
     </div>
-    <div class="about-regions" aria-label={$dict.about.eyebrow}>
-      {#each regions as region (region)}
-        <span class="about-region">
-          <span class="about-region__dot"></span>
-          {region}
-        </span>
+    <ul class="about-regions" aria-label={$dict.about.eyebrow}>
+      {#each regions as region (region.id)}
+        <li class="about-region">
+          <span class="ts-badge ts-badge-outline about-region__code">{region.id}</span>
+          {region.name}
+        </li>
       {/each}
-    </div>
+    </ul>
   </div>
 </section>
 
 <style>
-  .about-hero {
-    position: relative;
-    overflow: hidden;
-    padding: 112px 0 88px;
-  }
-
-  .about-hero__grid {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    opacity: 0.55;
-    background-image:
-      linear-gradient(var(--ts-grid-color) 1px, transparent 1px),
-      linear-gradient(90deg, var(--ts-grid-color) 1px, transparent 1px);
-    background-size: 32px 32px;
-  }
-
-  .about-hero__inner,
-  .about-section__inner,
-  .about-band__inner {
-    position: relative;
-    max-width: 1120px;
-    margin: 0 auto;
-    padding: 0 40px;
-  }
-
   .about-hero__inner {
-    text-align: center;
-  }
-
-  .about-hero__eyebrow,
-  .about-section__eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 12px;
-    border-radius: 4px;
-    background: rgba(var(--ts-primary-rgb), 0.1);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.25);
-    color: var(--ts-primary-light);
-    font-family: var(--ts-font-accent);
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-  }
-
-  :global(.about-hero__eyebrow-icon) {
-    width: 12px;
-    height: 12px;
+    display: grid;
+    gap: var(--ts-s5);
+    justify-items: start;
   }
 
   .about-hero__title {
-    font-size: clamp(2.8rem, 6vw + 0.5rem, 5.6rem);
-    font-weight: 700;
-    color: var(--ts-text);
-    line-height: 0.98;
-    letter-spacing: -0.035em;
-    margin: 24px 0 24px;
-  }
-
-  .about-hero__subtitle,
-  .about-section__text,
-  .about-band__text {
-    font-family: var(--ts-font-accent);
-    color: var(--ts-text-muted);
-    line-height: 1.7;
-  }
-
-  .about-hero__subtitle {
     max-width: 820px;
-    margin: 0 auto 34px;
-    font-size: 18px;
+    font-size: var(--ts-fs-5xl);
+    font-weight: var(--ts-display-weight);
+    letter-spacing: var(--ts-display-tracking);
+    line-height: 1.04;
   }
 
-  .about-hero__actions {
-    display: flex;
-    justify-content: center;
-    gap: 12px;
-    flex-wrap: wrap;
+  .about-hero__lede {
+    margin-top: 0;
   }
 
-  :global(.about-hero__action-icon) {
-    width: 14px;
-    height: 14px;
-  }
-
-  .about-section {
-    padding: 72px 0;
+  .about-hero :global(.about__icon) {
+    width: var(--ts-icon);
+    height: var(--ts-icon);
   }
 
   .about-section__inner {
     display: grid;
-    grid-template-columns: 0.82fr 1.18fr;
-    gap: 42px;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: var(--ts-s12);
     align-items: start;
   }
 
-  .about-section__title,
-  .about-band__title {
-    color: var(--ts-text);
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    line-height: 1.12;
-    margin: 18px 0 16px;
+  .about-section__intro {
+    display: grid;
+    gap: var(--ts-s4);
+    justify-items: start;
   }
 
   .about-section__title {
-    font-size: clamp(1.9rem, 2.2vw + 0.5rem, 3rem);
+    font-size: var(--ts-fs-3xl);
   }
 
-  .about-section__text,
-  .about-band__text {
-    font-size: 16px;
-    margin: 0;
-  }
-
-  .about-pillars {
-    display: grid;
-    gap: 16px;
+  .about-section__text {
+    color: var(--ts-ink-2);
+    line-height: var(--ts-lh-prose);
   }
 
   .about-pillar {
-    border-radius: 12px;
-    padding: 24px;
-    display: grid;
-    grid-template-columns: auto 1fr;
-    column-gap: 16px;
-    align-items: start;
+    display: flex;
+    gap: var(--ts-s4);
+    padding: var(--ts-s5) 0;
+    border-top: 1px solid var(--ts-line);
   }
 
-  .about-pillar__icon {
-    width: 42px;
-    height: 42px;
-    border-radius: 8px;
-    background: rgba(var(--ts-primary-rgb), 0.14);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.3);
-    color: var(--ts-primary-light);
+  .about-pillar:last-child {
+    border-bottom: 1px solid var(--ts-line);
+  }
+
+  /* Title centred on the 32px icon tile; the text hangs under it. */
+  .about-pillar__title {
     display: flex;
     align-items: center;
-    justify-content: center;
-  }
-
-  :global(.about-pillar__icon-svg) {
-    width: 20px;
-    height: 20px;
-  }
-
-  .about-pillar__title {
-    margin: 0 0 8px;
-    color: var(--ts-text);
-    font-size: 19px;
-    font-weight: 700;
+    min-height: 32px;
+    font-size: var(--ts-fs-lg);
   }
 
   .about-pillar__text {
-    grid-column: 2;
-    margin: 0;
-    color: var(--ts-text-muted);
-    font-size: 14.5px;
-    line-height: 1.65;
-  }
-
-  .about-band {
-    padding: 16px 0 96px;
-  }
-
-  .about-band__inner {
-    border-radius: 16px;
-    padding: 36px 40px;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 36px;
-    align-items: center;
-    background:
-      radial-gradient(ellipse 70% 120% at 0% 0%, rgba(var(--ts-primary-rgb), 0.14), transparent 65%),
-      var(--ts-glass-bg);
-  }
-
-  .about-band__title {
-    font-size: clamp(1.7rem, 2vw + 0.5rem, 2.5rem);
+    margin-top: var(--ts-s1);
+    color: var(--ts-ink-2);
   }
 
   .about-regions {
-    display: grid;
-    gap: 10px;
-    min-width: 210px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--ts-line);
   }
 
   .about-region {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 9px 12px;
-    border-radius: 6px;
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.22);
-    background: rgba(var(--ts-primary-rgb), 0.08);
-    color: var(--ts-text);
-    font-family: var(--ts-font-accent);
-    font-size: 13px;
-    font-weight: 700;
+    gap: var(--ts-s3);
+    height: 48px;
+    border-bottom: 1px solid var(--ts-line);
+    color: var(--ts-ink);
   }
 
-  .about-region__dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 4px;
-    background: var(--ts-secondary);
-    box-shadow: 0 0 10px rgba(var(--ts-secondary-rgb), 0.7);
+  .about-region__code {
+    font-family: var(--ts-font-mono);
   }
 
   @media (max-width: 860px) {
-    .about-section__inner,
-    .about-band__inner {
-      grid-template-columns: 1fr;
+    .about-hero__title {
+      font-size: var(--ts-fs-4xl);
     }
-  }
-
-  @media (max-width: 640px) {
-    .about-hero {
-      padding: 72px 0 56px;
-    }
-    .about-hero__inner,
-    .about-section__inner,
-    .about-band__inner {
-      padding-left: 20px;
-      padding-right: 20px;
-    }
-    .about-section {
-      padding: 54px 0;
-    }
-    .about-pillar {
-      grid-template-columns: 1fr;
-    }
-    .about-pillar__text {
-      grid-column: 1;
+    .about-section__inner {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--ts-s8);
     }
   }
 </style>

@@ -128,6 +128,8 @@
 </section>
 
 <style>
+  /* The floating nav overlaps the hero, so the map shows through its frost. The first line of
+     content sits as far below the nav as the first section of every other page. */
   .hero {
     position: relative;
     isolation: isolate;
@@ -163,8 +165,8 @@
     aspect-ratio: 119 / 60;
   }
 
-  .hero__globe-map,
-  .hero__globe-lines {
+  /* Dots are a mask, so the direction's line colour paints them. */
+  .hero__dots {
     position: absolute;
     inset: 0;
     width: 100%;
