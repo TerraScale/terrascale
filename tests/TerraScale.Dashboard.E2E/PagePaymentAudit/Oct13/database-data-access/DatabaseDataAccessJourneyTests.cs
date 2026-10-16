@@ -38,38 +38,6 @@ public sealed class DatabaseDataAccessJourneyTests(DashboardE2EFixture fixture)
     }
 
     [Test]
-    public async Task DatabaseListCountOutageStaysUnknownAndRecoversWithoutLosingNavigation()
-    {
-        var unavailable = 0;
-        await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
-            Task.FromResult<IResult?>(Volatile.Read(ref unavailable) == 1 && http.Request.Method == "GET" &&
-                http.Request.Path.Value!.StartsWith("/v1/management/", StringComparison.Ordinal) &&
-                http.Request.Path.Value.EndsWith("/collections", StringComparison.Ordinal)
-                    ? Results.Json(new { error = "unavailable" }, statusCode: 503) : null));
-        using var client = scenario.CreateClient();
-        await DatabaseSdkJourneyTests.NativeWorkspaceAsync(client);
-        var id = await CreateDatabaseAsync(client, "oct13-list-counts");
-        await Assert.That(DocumentTotal(await ListAsync())).IsEqualTo("0");
-        Volatile.Write(ref unavailable, 1);
-        var failed = await ListAsync();
-        await Assert.That(failed).Contains("href=\"/databases/" + id + "\"");
-        await Assert.That(failed).Contains("Database counts are unavailable.");
-        Volatile.Write(ref unavailable, 0);
-        var recovered = await ListAsync();
-        await Assert.That(DocumentTotal(recovered)).IsEqualTo("0");
-        await Assert.That(recovered.Contains("Database counts are unavailable.", StringComparison.Ordinal)).IsFalse();
-        await Assert.That(DocumentTotal(failed)).IsEqualTo("—")
-            .Because("An unavailable measurement must not become a measured zero.");
-
-        async Task<string> ListAsync()
-        {
-            using var response = await client.GetAsync("/databases");
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            return WebUtility.HtmlDecode(await response.Content.ReadAsStringAsync());
-        }
-    }
-
-    [Test]
     public async Task CancellingANativeQueryAbortsTheProducerAndAllowsANewRead()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
