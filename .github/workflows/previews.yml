@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   # Fork PRs never get a preview (ci.yml) and receive no Fly token.

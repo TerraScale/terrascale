@@ -227,6 +227,7 @@ jobs:
           bash terrascale/scripts/fly/preview-test.sh
           python3 terrascale/scripts/ci/preview-lifecycle-test.py
           bash terrascale/scripts/fly/volume-reset-test.sh
+          bash terrascale/scripts/fly/preview-test.sh
           bash terrascale/scripts/terrabase/storage-format-check-test.sh
           bash terrascale/scripts/terrabase/e2e-summary-test.sh
           bash terrascale/scripts/e2e/ci-oidc-credential-test.sh
@@ -451,6 +452,13 @@ jobs:
         run: >-
           gh pr comment ${{ github.event.pull_request.number }} -R "$GITHUB_REPOSITORY" --edit-last --create-if-none
           --body "Preview: https://$APP.fly.dev (TerraBase + ts-auth at ${{ github.sha }}; stops when idle, deleted on close or after 24 h)"
+      # GitHub's hourly schedule (previews.yml) is best effort: every preview update also reaps closed and old previews.
+      - name: Reap closed and old previews
+        if: ${{ !cancelled() }}
+        working-directory: terrascale
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/fly/preview.sh reap
 
   # The shared deploy group prevents overlapping rollouts; ts-auth rolls out after TerraBase.
   deploy:
