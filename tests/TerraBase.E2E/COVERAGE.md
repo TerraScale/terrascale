@@ -10,9 +10,8 @@ runs against the new replicated path.
 in the cluster's setup (the collection created in gru never reaches sjc), before its own assertions.
 
 **Release rule.** Release correctness and the 1M-document acceptance stay **BLOCKED** until every row's replacement passes
-against the design-C replicated path at the exact release commit, both locally and on Fly. A row that is missing or an
-expected failure blocks. The obsolete binary harness is not coming back: crash and storage-stall scenarios need new
-harness work on the design-C transport (listed under "Missing").
+against the design-C replicated path at the exact release commit, both locally and on Fly. A row that is partial, an
+expected failure or missing blocks. The obsolete binary harness is not coming back.
 
 Status words:
 
@@ -229,7 +228,7 @@ The candidates on #108 run on them.
 | PitrLabHost: `Runs_the_PitrLab_job…` | always, unless `TERRABASE_PITR_JOB` is set | It is the PitrLab backup/PITR harness host (benchmark/docs/pitr-100m.md), not a scenario |
 | ThreeRegionFaultE2ETests: partition, backlog, both skew tests | on Fly | Fly has no switch for a partition or a clock skew between machines |
 | ThreeRegionFaultE2ETests: region down, restart, ack-then-stop, restarted backlog; RepairAndContractE2ETests: deleted database | on Fly without `TERRABASE_E2E_FLY_OUTAGE=1` | They stop Fly machines |
-| CrashAndStallE2ETests (all but the proxy self-check); RepairAndContractE2ETests: anti-entropy repair, restore, unique under partition | on Fly | They kill local processes, lock or edit local files, or partition; Fly has no such switch |
+| CrashAndStallE2ETests (all but the proxy self-check); RepairAndContractE2ETests: anti-entropy repair, restore, unique under partition, lag series | on Fly | They kill local processes, lock or edit local files, or partition; Fly has no such switch |
 
 ## Keeping this current
 
