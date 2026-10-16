@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraScale.Dashboard.Features.Usage;
+using TerraScale.Dashboard.E2E.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.Features.Usage;
 

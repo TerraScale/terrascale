@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using TerraScale.Dashboard.E2E.Features.Databases;
 
 namespace TerraScale.Dashboard.E2E.Features.Billing;
 
