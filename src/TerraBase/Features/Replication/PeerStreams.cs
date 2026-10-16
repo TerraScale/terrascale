@@ -970,6 +970,10 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             cursor.BehindSince ??= _time.GetTimestamp();
             cursor.RetryAt = _time.GetTimestamp() + (long)(MaxBackoff.TotalSeconds * _time.TimestampFrequency);
         }
+
+        await ledger.AddAsync(
+            database, incarnation, placed ? (from, (long)ack.ChangeId) : null, (long)ack.ChangeId, ack.Stable, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     // Forgets a cursor's incarnation and position: the next pass reads both again from the copy in place.
