@@ -29,6 +29,12 @@ const (
 	MonitorMaxRunBytes    = 28_000_000_000
 	MonitorMaxRSSBytes    = 8_000_000_000
 
+	// programCeil* bound the explicit overrides a run may pass (user approval 2026-10-16: a US$25 hard stop for the
+	// 1K→100M ladder on host delta; stored and disk ceilings sized for one 100M pass and the host's free space).
+	programCeilUSD    = 25.0
+	programCeilStored = int64(350) << 30
+	programCeilRun    = int64(700) << 30
+
 	// Tigris list prices (2026-10-12); egress is free.
 	usdPerGiBMonth = 0.02
 	usdPerClassA   = 0.005 / 1000
@@ -47,6 +53,10 @@ type MonitorConfig struct {
 	// Test only: a lower stored-bytes limit and a shorter inventory interval, for a run against the local emulator.
 	TestMaxStoredBytes int64
 	TestInterval       time.Duration
+	// Explicit limits for an approved program that exceeds the G1 constants (each must stay at or below its ceiling).
+	MaxUSD         float64
+	MaxStoredBytes int64
+	MaxRunBytes    int64
 }
 
 // MonitorSample is one line of evidence/monitor.jsonl.
@@ -132,6 +142,29 @@ func (c *counters) add(now map[string]float64) map[string]float64 {
 // evidence/monitor-final.json.
 func Monitor(ctx context.Context, r *Run, cfg MonitorConfig) (MonitorSample, error) {
 	lim := limits{stored: MonitorMaxStoredBytes, usd: MonitorMaxUSD, run: MonitorMaxRunBytes, rss: MonitorMaxRSSBytes}
+	if cfg.MaxUSD != 0 || cfg.MaxStoredBytes != 0 || cfg.MaxRunBytes != 0 {
+		if cfg.MaxUSD != 0 && (cfg.MaxUSD <= 0 || cfg.MaxUSD > programCeilUSD) {
+			return MonitorSample{}, fmt.Errorf("a usd limit must be above 0 and at most $%.2f", programCeilUSD)
+		}
+
+		if cfg.MaxStoredBytes != 0 && (cfg.MaxStoredBytes <= 0 || cfg.MaxStoredBytes > programCeilStored) {
+			return MonitorSample{}, fmt.Errorf("a stored-bytes limit must be above 0 and at most %d", programCeilStored)
+		}
+
+		if cfg.MaxRunBytes != 0 && (cfg.MaxRunBytes <= 0 || cfg.MaxRunBytes > programCeilRun) {
+			return MonitorSample{}, fmt.Errorf("a run-bytes limit must be above 0 and at most %d", programCeilRun)
+		}
+
+		if cfg.TestMaxStoredBytes != 0 || cfg.TestInterval != 0 {
+			return MonitorSample{}, fmt.Errorf("test overrides and explicit limits cannot be combined")
+		}
+
+		// The ceilings bind together: one limit raised does not raise the others.
+		lim.usd = max(cfg.MaxUSD, lim.usd)
+		lim.stored = max(cfg.MaxStoredBytes, lim.stored)
+		lim.run = max(cfg.MaxRunBytes, lim.run)
+	}
+
 	interval := 10 * time.Minute
 	test := cfg.TestMaxStoredBytes != 0 || cfg.TestInterval != 0
 	if cfg.TestMaxStoredBytes != 0 {

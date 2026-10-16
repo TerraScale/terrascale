@@ -129,6 +129,9 @@ func run(ctx context.Context, cmd string, args []string) error {
 		base       = fs.String("base", "", "monitor: the run base counted against the disk limit (default: the run directory's parent)")
 		testStored = fs.Int64("test-max-stored-bytes", 0, "monitor, TEST ONLY: a lower stored-bytes limit (local emulator runs)")
 		testEvery  = fs.Duration("test-interval", 0, "monitor, TEST ONLY: a shorter listing interval (local emulator runs)")
+		maxUSD     = fs.Float64("max-usd", 0, "monitor: an approved program's usd limit, above the G1 default and at most $25")
+		maxStored  = fs.Int64("max-stored-bytes", 0, "monitor: an approved program's stored-bytes limit, above the G1 default and at most 350 GiB")
+		maxRun     = fs.Int64("max-run-bytes", 0, "monitor: an approved program's run-base disk limit, above the G1 default and at most 700 GiB")
 	)
 	fs.Parse(args)
 	if cmd == "node" && rest == nil {
@@ -314,7 +317,10 @@ func run(ctx context.Context, cmd string, args []string) error {
 		if b == "" {
 			b = filepath.Dir(r.Dir)
 		}
-		final, err := pitrbench.Monitor(ctx, r, pitrbench.MonitorConfig{LabDLL: *labDLL, Base: b, TestMaxStoredBytes: *testStored, TestInterval: *testEvery})
+		final, err := pitrbench.Monitor(ctx, r, pitrbench.MonitorConfig{
+			LabDLL: *labDLL, Base: b, TestMaxStoredBytes: *testStored, TestInterval: *testEvery,
+			MaxUSD: *maxUSD, MaxStoredBytes: *maxStored, MaxRunBytes: *maxRun,
+		})
 		_ = printJSON(final)
 		return err
 	case "shipped":

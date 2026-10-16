@@ -3,6 +3,8 @@ package pitrbench
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -26,6 +28,10 @@ type NodeState struct {
 	Log          string `json:"log"`
 	StartedMs    int64  `json:"started_ms"`
 	Starts       int    `json:"starts"`
+	// PeerSecret is the node's TERRABASE_PEER_SECRET: the internal listener refuses every request without its
+	// X-TerraBase-Peer-Credential value (src/TerraBase/Features/Replication/PeerCredential.cs). node.json holds it
+	// beside the data directory it protects; it is never printed.
+	PeerSecret string `json:"peer_secret,omitempty"`
 }
 
 // envNames are the only variables the env file may set: the backup bucket (Fly's Tigris names), the master key, and
@@ -63,7 +69,7 @@ func (r *Run) Client(timeout time.Duration) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewClient(n.InternalPort, r.Owner, timeout), nil
+	return NewClient(n.InternalPort, n.PeerSecret, r.Owner, timeout), nil
 }
 
 // StartNode starts the pinned binary on the run's data directory, detached (it outlives this command), at nice 19,
@@ -82,6 +88,13 @@ func StartNode(ctx context.Context, r *Run) (*NodeState, error) {
 	}
 	if n.PID != 0 && alive(n.PID) {
 		return nil, fmt.Errorf("node pid %d is still running", n.PID)
+	}
+	if n.PeerSecret == "" {
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			return nil, err
+		}
+		n.PeerSecret = hex.EncodeToString(secret)
 	}
 	if sum, err := FileSHA256(r.Binary); err != nil || sum != r.BinarySHA256 {
 		return nil, fmt.Errorf("binary %s does not match the pinned sha256 (%v)", r.Binary, err)
@@ -171,6 +184,7 @@ func nodeEnv(r *Run, n *NodeState) ([]string, error) {
 		"TERRABASE_PORT="+strconv.Itoa(n.Port),
 		"TERRABASE_INTERNAL_PORT="+strconv.Itoa(n.InternalPort),
 		"TERRABASE_METRICS_PORT="+strconv.Itoa(n.MetricsPort),
+		"TERRABASE_PEER_SECRET="+n.PeerSecret,
 	), nil
 }
 

@@ -965,6 +965,33 @@ matrix)
 	cmd_rss_report
 	restore_summary
 	;;
+# The ladder's matrix with the spend monitor running beside every writer phase (MONITOR_ARGS: the approved program's
+# explicit --max-usd/--max-stored-bytes/--max-run-bytes, all validated by pitr-bench monitor). FAULTS=1 adds the fault
+# matrix after the summary. The monitor is stopped with the run's node and writers at the end.
+matrix-monitored)
+	cmd_build
+	cmd_source
+	setsid nice -n 19 "$PB" monitor --run "$RUN" --lab-dll "$LAB_DLL" --base "$BASE" $MONITOR_ARGS </dev/null >"$BASE/out/monitor.out" 2>&1 &
+	echo $! >"$BASE/out/monitor.pid"
+	log "monitor started (pid $(cat "$BASE/out/monitor.pid")) args: ${MONITOR_ARGS:-G1 defaults}"
+	cmd_load_a
+	cmd_load_b
+	cmd_mutations
+	cmd_audit "$BASE/s3/src-root" src
+	snapcuts
+	cmd_tcuts
+	cmd_path_a
+	cmd_stop
+	if [[ ${FAULTS:-0} == 1 ]]; then
+		cmd_copy pristine
+		cmd_fault_matrix
+	fi
+	if [[ -s $BASE/out/monitor.pid ]] && kill -0 "$(cat "$BASE/out/monitor.pid")" 2>/dev/null; then
+		kill "$(cat "$BASE/out/monitor.pid")" 2>/dev/null || true
+	fi
+	cmd_rss_report
+	restore_summary
+	;;
 build) cmd_build ;;
 source) cmd_source ;;
 load-a) cmd_load_a ;;
