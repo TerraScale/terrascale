@@ -244,6 +244,12 @@ internal sealed partial class SqliteDatabaseStore(
 
     internal bool RequiresRemoteProof { get; init; }
 
+    /// <summary>
+    /// Whether every write transaction syncs the write-ahead log at its commit (<c>synchronous = FULL</c>), as a durable one
+    /// does: the system database, whose acknowledged catalog and API keys survive an OS crash (docs/terrabase/decisions/0012).
+    /// </summary>
+    internal bool SyncsEveryCommit { get; init; }
+
     public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken) =>
         await BeginAsync(write, durable: false, cancellationToken).ConfigureAwait(false);
 
