@@ -14,7 +14,7 @@ head: [['meta', { name: 'robots', content: 'noindex' }]]
 Create one consistent SQLite file from a Turso, libSQL or SQLite database, check it and upload it with the [import steps](/ar/guides/import#import-step-by-step).
 
 ::: warning Pending feature
-Import follows the proposed import contract v1 and is not available on any serving release yet. The commands on this page run on your own machine. SQLite commands were checked with SQLite 3.51 and Turso CLI flags with Turso CLI 1.0.26; confirm flags with `--help` for your version. TerraBase never connects to your database.
+Import follows the proposed import contract v1 and is not available on any serving release yet. The commands on this page run on your own machine. SQLite commands were checked with SQLite 3.51 and Turso CLI flags with Turso CLI 1.0.26; confirm flags with `--help` for your version. No export from a real Turso account has been tested yet. TerraBase never connects to your database.
 :::
 
 ## 1. Rehearse with synthetic data
@@ -59,25 +59,23 @@ Expect no blocking issues, and `mixed_storage_classes` warnings: `customers.bala
 
 The import accepts exactly one SQLite database file in rollback-journal mode. A file in WAL mode is rejected with `wal_mode_source`, because rows still in its `-wal` companion would be missing without any sign in the file itself.
 
-**From Turso.** `turso db export` can write a snapshot as `<name>.db` plus a `<name>.db-wal` file beside it. `VACUUM INTO` reads both and writes one rollback-mode file:
+**From Turso.** `turso db export` can write a snapshot as `<name>.db` plus a `<name>.db-wal` file beside it. A read-only `VACUUM INTO` reads both and writes one new rollback-mode file:
 
 ```bash
 turso db export YOUR_DATABASE --output-file turso-export.db
-sqlite3 turso-export.db "VACUUM INTO 'export.db'"
+sqlite3 -readonly turso-export.db "VACUUM INTO 'export.db'"
 chmod 600 export.db
 ```
 
-Keep `turso-export.db-wal` beside `turso-export.db` until `VACUUM INTO` finishes, then delete both. The export uses your own Turso CLI login; TerraBase never receives a Turso token. You do not need `--with-metadata`.
+Run `VACUUM INTO` even when `turso-export.db` already reads as rollback mode, and never upload the exported file directly. SQLite still applies a `-wal` file found beside it, but the uploaded file alone would miss those rows. Keep `turso-export.db-wal` beside `turso-export.db` until `VACUUM INTO` finishes, then delete both. The export uses your own Turso CLI login; TerraBase never receives a Turso token. You do not need `--with-metadata`.
 
 **From a local SQLite or libSQL file:**
 
 ```bash
-sqlite3 local.db "VACUUM INTO 'export.db'"
+sqlite3 -readonly local.db "VACUUM INTO 'export.db'"
 ```
 
-`VACUUM INTO` reads one consistent snapshot, even while the database is in use. Do not use `.backup`: its copy keeps the WAL-mode flag and is rejected. Never copy a live database file directly. A copy taken while another process writes can be torn or stale, and no check of the file alone can detect every such copy.
-
-Alternatively, on a **copy** that keeps `copy.db` and `copy.db-wal` together, `sqlite3 copy.db "PRAGMA journal_mode=DELETE"` folds the WAL in and switches the file to rollback mode. Never run it on the live database.
+`VACUUM INTO` reads one consistent snapshot, even while the database is in use. Always pass `-readonly`. Without it, `sqlite3` checkpoints the WAL into the source file when it closes and deletes the `-wal` file, which changes your source or export pair. With it, the `.db` and `-wal` files stay byte-for-byte unchanged; only a `-shm` index file can appear beside them. Do not use `.backup`: its copy keeps the WAL-mode flag and is rejected. Never copy a live database file directly. A copy taken while another process writes can be torn or stale, and no check of the file alone can detect every such copy.
 
 SQLite documents that a vacuum can renumber the `rowid` of tables without an `INTEGER PRIMARY KEY`. Such tables take their document IDs from the rowids in `export.db`.
 
@@ -128,7 +126,7 @@ ORDER BY 1;
 PRAGMA foreign_key_check;
 ```
 
-**Virtual tables.** Views, triggers, virtual tables, their shadow tables (such as `notes_fts_data`) and SQLite's internal `sqlite_*` tables are excluded automatically and listed in `skipped`. Rebuild a full-text (FTS5) or R*Tree index from its source table after the import. A virtual table that holds its own content gets a `not_imported` warning, and that content is not imported.
+**Virtual tables.** Views, triggers, virtual tables, the shadow tables SQLite's FTS3, FTS4, FTS5, R*Tree and Geopoly modules create for them (such as `notes_fts_data`) and SQLite's internal `sqlite_*` tables are excluded automatically and listed in `skipped`. Any other table is imported, even one named like a shadow table. Rebuild a full-text (FTS5) or R*Tree index from its source table after the import. A virtual table that holds its own content gets a `not_imported` warning, and that content is not imported.
 
 ```sql
 SELECT name FROM sqlite_schema WHERE sql LIKE 'CREATE VIRTUAL TABLE%';
@@ -147,7 +145,7 @@ Each value maps by its **storage class**, never by the column's declared type.
 | Storage class | Class in `mapping` | JSON value |
 | --- | --- | --- |
 | `INTEGER` | `integer` | Number with exact 64-bit digits |
-| `REAL` | `float` | Number; `±Infinity` and nonzero magnitudes below 1e-307 are `invalid_value` |
+| `REAL` | `float` | Number; zero is valid; `±Infinity`, nonzero magnitudes below 1e-307 and magnitudes of 1e308 or more are `invalid_value` |
 | `TEXT` | `string` | String |
 | `BLOB` | `base64` | Standard base64 string |
 | `NULL` | | `null` |

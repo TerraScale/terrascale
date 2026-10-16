@@ -157,7 +157,7 @@ Upload `dump.sql` with `FORMAT=postgres_plain`. TerraBase reads only table, enum
 | PostgreSQL type | `mapping` | JSON value |
 | --- | --- | --- |
 | `smallint`, `integer`, `bigint` and `serial` forms | `integer` | Number with exact 64-bit digits |
-| `real`, `double precision` | `float` | Number as dumped; `NaN`, `±Infinity` and nonzero magnitudes below 1e-307 are `invalid_value` |
+| `real`, `double precision` | `float` | Number as dumped; zero is valid; `NaN`, `±Infinity`, nonzero magnitudes below 1e-307 and magnitudes of 1e308 or more are `invalid_value` |
 | `numeric`, `decimal` | `decimal_string` | String with the exact digits, never rounded; `NaN` stays `"NaN"` |
 | `boolean` | `boolean` | `true` or `false` |
 | `text`, `varchar`, `char`, `name`, `citext`, enums | `string` | String; `char` padding is kept |

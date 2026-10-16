@@ -32,10 +32,10 @@ Prepare your export with its guide:
 
 ## Before you start
 
-- A project access token with `databases:write`, `documents:write` and `databases:read`. A token limited to one database reaches only that database, so use a project-wide token. Legacy API keys are not accepted. See [authentication](/hi/guides/authentication).
+- A project access token for this project with `databases:write`, `documents:write` and `databases:read`. A request without one, including a legacy API key, answers `401`. A token for another project or narrowed to another database answers `404`. See [authentication](/hi/guides/authentication).
 - An export file prepared with the [PostgreSQL](/hi/guides/import-postgresql) or [Turso](/hi/guides/import-turso) guide.
 - `bash` or `zsh`, `curl` 7.76 or newer, and `jq`.
-- Room in your plan. The destination is an ordinary database, so your plan's database limit applies: a Hobby project that already has its database cannot create one. Imported documents count toward your storage quota and are metered as document writes, and upload parts are metered as request bytes. See [pricing](/hi/pricing/).
+- Room in your plan. The destination counts as one of your plan's databases. Imported documents count toward your organization's storage quota and are metered as document writes; import calls, upload bytes included, are metered as requests. An import never bypasses a quota. See [pricing](/hi/pricing/).
 
 No SDK or CLI wraps import in contract v1. The steps below use its public HTTP routes. **Pending:** a guided dashboard flow.
 
@@ -46,7 +46,12 @@ No SDK or CLI wraps import in contract v1. The steps below use its public HTTP r
 - The export file contains all of your data. Restrict it with `chmod 600`, keep it out of chats, tickets, repositories and shared drives, and delete it when you accept the import.
 - Preview, progress and error responses contain table names, keys and values. Treat them as customer data.
 
-**Retention of the uploaded file.** TerraBase stores the upload in the destination's region. It deletes the file when the copy completes, when you delete the destination, and 7 days after the job failed or was cancelled (`source.retainedUntil`).
+**Retention of the uploaded file.** TerraBase stores the upload in the destination's region and deletes it:
+
+- When the copy completes, or when you delete the destination or its `terrascale-import` record.
+- When an incomplete upload has been idle for 1 day. The job stays in `awaiting_source`, and the upload restarts at offset 0.
+- When a preview (`ready` or `rejected`) has been left alone for 7 days. **Pending:** how to continue such a job. Until that is documented, start or cancel within 7 days.
+- 7 days after the job failed or was cancelled (`source.retainedUntil`). A later upload extends this.
 
 ## Import step by step
 
@@ -58,22 +63,25 @@ Run these in one shell session from the directory that holds your export.
    export TERRASCALE_API_URL='https://YOUR_AUTHORIZED_API_HOST'
    export TERRASCALE_PROJECT_ID='YOUR_PROJECT_ID'
    # TERRASCALE_ACCESS_TOKEN comes from your secret manager, never a command-line argument.
-   SOURCE=dump.sql FORMAT=postgres_plain DB="import-$(date -u +%Y%m%d-%H%M%S)"
+   SOURCE=dump.sql FORMAT=postgres_plain DB="import-$(date -u +%Y%m%d-%H%M%S)" REGION=
    P="$TERRASCALE_API_URL/v1/projects/$TERRASCALE_PROJECT_ID"
    D="$P/databases/$DB"
-   auth() { printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN"; }
-   api() { curl -sS --fail-with-body -H @<(auth) "$@"; }
+   headers() {
+     printf 'Authorization: Bearer %s\n' "$TERRASCALE_ACCESS_TOKEN"
+     [ -z "$REGION" ] || printf 'X-TerraScale-Region-Pin: %s\n' "$REGION"
+   }
+   api() { curl -sS --fail-with-body -H @<(headers) "$@"; }
    job() { api "$D/import" > job.json && jq -r .state job.json; }
    echo "$DB"
    ```
 
-   Use `FORMAT=sqlite` for a Turso or SQLite file. `DB` is a fresh name for the new destination; note it, and set `DB` to it again if you continue in another shell. On macOS, replace `sha256sum` in the next step with `shasum -a 256`.
+   Use `FORMAT=sqlite` for a Turso or SQLite file. `DB` is a fresh name for the new destination: a lowercase letter, then lowercase letters, digits, `_` or `-`, at most 63 characters. Note `DB` and, after step 2, `REGION`, and set both again if you continue in another shell. On macOS, replace `sha256sum` in the next step with `shasum -a 256`.
 
 2. Create the destination database, then attach the import to it. Declaring the exact size and SHA-256 binds the import to this file.
 
    ```bash
-   jq -n --arg name "$DB" '{$name}' |
-     api -H 'Content-Type: application/json' --data-binary @- "$P/databases" > /dev/null
+   REGION=$(jq -n --arg name "$DB" '{$name}' |
+     api -H 'Content-Type: application/json' --data-binary @- "$P/databases" | jq -r .homeRegion)
    jq -n --arg format "$FORMAT" \
      --argjson sourceBytes "$(wc -c < "$SOURCE")" \
      --arg sourceSha256 "$(sha256sum "$SOURCE" | cut -d ' ' -f 1)" \
@@ -81,7 +89,7 @@ Run these in one shell session from the directory that holds your export.
      api -H 'Content-Type: application/json' --data-binary @- "$D/import" | jq .state
    ```
 
-   The state is `awaiting_source`. Create the database without replicas; add them after the import completes. Repeating the identical attach request is safe: it answers with the existing job. Because `DB` is a fresh name, a `409 name_taken` from a repeated database request can only be your own database.
+   The state is `awaiting_source`. The database is created in the region that receives the request, without replicas; a database with replica regions answers `409 destination_replicated`, so add replicas after the import completes. Repeating the identical attach request is safe: it answers with the existing job. Because `DB` is a fresh name, a `409 name_taken` from a repeated database request can only be your own database.
 
 3. Upload the file in parts of at most 4 MiB, then wait for analysis:
 
@@ -135,13 +143,13 @@ Run these in one shell session from the directory that holds your export.
 
 Do not write to the destination before the import completes. A document the import did not write stops the copy with `destination_modified`.
 
-Each response's `region` is the destination's home region, where the import runs. A call that reaches another region answers `421 wrong_region` with an `X-TerraBase-Database-Home` header. Repeat it with an `X-TerraScale-Region-Pin` header set to that region.
+The import runs in the destination's home region. After step 2, `api` pins every call to it with `X-TerraScale-Region-Pin`. A call that reaches another region answers `421 wrong_region` with an `X-TerraBase-Database-Home` header naming the home region.
 
 ## Review the preview
 
 | Field | Meaning |
 | --- | --- |
-| `tables[]` | One plan per source table: `source`, target `collection`, `excluded`, `rows`, `idPolicy`, `primaryKey`, `columns`, `constraints` and `issues` |
+| `tables[]` | One plan per source table: `source`, target `collection`, `excluded`, `rows`, `idPolicy`, `primaryKey`, `columns`, `constraints` and `issues`. An unnamed constraint has `name` `null`. |
 | `columns[].mapping` | How values become JSON; see the [PostgreSQL](/hi/guides/import-postgresql#type-mapping) and [Turso](/hi/guides/import-turso#type-mapping) mappings |
 | `issues[]` | `blocking` issues stop the import; warnings are for you to accept. A value issue carries its `row`. At most 50 per table. |
 | `skipped[]` | Objects that are listed and never imported or run, such as functions, views, indexes, sequences, grants and SQLite internal tables. At most 200 entries; `skippedTruncated` marks more. |
@@ -212,18 +220,23 @@ When the copy finishes, the job compares, for each table:
 
 | Response or `error.code` | What to do |
 | --- | --- |
+| `401` | Use a project access token; legacy API keys are not accepted. Do not retry automatically. |
+| `403 forbidden_scope` | Use a token with the required scopes. |
+| `404 unknown_database` | Check `DB` and that the token belongs to this project and is not narrowed to another database. |
 | `409 destination_not_empty` | The database already has collections. Create a new database for the import. |
+| `409 destination_replicated` | Create a new database without replica regions; add replicas after the import completes. |
 | `409 import_exists` | The database already has a different import. Use a new database. |
 | `409 offset_mismatch` | Run step 3 again; it continues from `receivedBytes`. |
 | `409 preview_changed`, `409 preview_blocked` | Fetch the job, review the current preview, resolve blocking issues, then start with its `preview.id`. |
 | `409 source_required` | Upload the same file again with step 3, then resume. |
 | `413 payload_too_large` | The file is over 1 GiB. Export fewer tables into separate imports. |
-| `421 wrong_region` | Repeat with `X-TerraScale-Region-Pin`. |
-| `503 capacity`, `503 unavailable` | Wait, then retry the same call. |
+| `421 wrong_region` | Set `REGION` to the `X-TerraBase-Database-Home` value and repeat. |
+| `429 tenant_busy`, `429 tenant_memory`, `503 capacity`, `503 unavailable` | Wait, then retry the same call. |
 | `unsupported_source_format`, `wal_mode_source`, `unsupported_statement`, `malformed_source` | Re-export as your source guide describes, then import into a new database. |
 | `unsupported_type`, `missing_primary_key`, `invalid_value`, `invalid_document_id`, `document_too_large` | Change [options](#options): exclude the reported column or table, or set `missingPrimaryKey`. Or fix the source and import a new export into a new database. |
-| `duplicate_document_id`, `destination_modified` | Delete the destination, resolve the cause, then import into a new database. |
+| `duplicate_document_id`, `destination_modified` | Two source keys map to one ID, or something else wrote to the destination; the message names the cause. Delete the destination, resolve it, then import into a new database. |
 | `quota_exceeded` | Resume after your plan allows more. |
+| `preview_changed` as the job's error | TerraBase's mapping changed after you confirmed; the job is `analyzing` again. Review the new preview and start with its `preview.id`. |
 | `write_failed` with `retryable: true` | Resume. |
 | `validation_failed` | Do not use the destination. Compare `validation.tables`, then import again into a new database. |
 
@@ -243,11 +256,13 @@ api -X DELETE "$D"
 ## Limits
 
 - 1 GiB per export file, uploaded in parts of at most 4 MiB.
-- 1000 tables per import and 1600 columns per table.
+- At most 1 GiB of uploads staged at once per organization, counting incomplete uploads at their declared size. More answers `503 capacity`.
+- 1000 tables per import and 1600 columns per table; a SQLite schema of at most 20000 objects or 16 MiB of SQL.
 - Each document: 1 MiB, 16 levels of nesting and 4096 values.
 - PostgreSQL: 16 MiB per line in the dump.
 - Analyses and copies are queued. A started import can wait in `queued`, and a busy region answers `503 capacity` until there is room.
 - The first data error stops the copy; there is no row-level skip.
+- **Pending:** copy throughput on the hosted service. Plan for an import of millions of rows to take hours.
 
 Not supported in contract v1: direct connections to a source database, ongoing sync or change data capture, importing into a database that holds data, enforcing constraints, PostgreSQL arrays and composite types, and one collection per partitioned table.
 
