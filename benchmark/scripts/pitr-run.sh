@@ -109,8 +109,9 @@ lab() {
 	(
 		if [[ -n $env ]]; then
 			# The whole 0600 env file: the master key for every job, the bucket and credentials for an s3 source.
-			while IFS== read -r name value; do
-				export "$name=$value"
+			# Each line exports verbatim: splitting on = would eat a base64 key's padding.
+			while IFS= read -r line; do
+				export "$line"
 			done < <(grep -E '^(AWS_ENDPOINT_URL_S3|AWS_REGION|BUCKET_NAME|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|TERRABASE_MASTER_KEY|SSL_CERT_FILE)=' "$env")
 		fi
 		export TERRABASE_PITR_JOB=$job DOTNET_gcServer=0 DOTNET_GCHeapHardLimit=0x40000000
