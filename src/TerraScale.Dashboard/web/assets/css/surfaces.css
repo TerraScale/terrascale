@@ -271,6 +271,73 @@
   }
 }
 
+/* KPI tiles (prototype b-kpis): icon + label, value, detail, thin meter. */
+.ts-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--ts-s3);
+  margin: 0;
+}
+
+.ts-kpi {
+  display: grid;
+  align-content: start;
+  gap: var(--ts-s2);
+  min-width: 0;
+  padding: var(--ts-s5);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface);
+}
+
+.ts-kpi-label {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-s3);
+  min-width: 0;
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-sm);
+}
+
+.ts-kpi-value {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ts-ink);
+  font: 500 var(--ts-fs-3xl) / 1 var(--ts-font-mono);
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-kpi-value small {
+  margin-left: 4px;
+  color: var(--ts-ink-3);
+  font: 400 var(--ts-fs-md) / 1 var(--ts-font-sans);
+  letter-spacing: 0;
+}
+
+.ts-kpi-detail {
+  margin: 0;
+  color: var(--ts-ink-3);
+  font-size: var(--ts-fs-sm);
+}
+
+/* Thin meter: reuses the existing progress track at 4px. */
+.ts-kpi .ts-progress {
+  height: 4px;
+}
+
+@media (max-width: 899.98px) {
+  .ts-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 47.99rem) {
+  .ts-kpis {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* For stats whose values are words ("Not recorded") rather than numbers. */
 .ts-stats-compact .ts-stat-value {
   font-size: var(--ts-fs-xl);
