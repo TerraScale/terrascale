@@ -93,7 +93,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
         await Assert.That(initial["version"]!.GetValue<long>()).IsEqualTo(0);
         await Assert.That(initial["branding"]!["brand_name"]).IsNull();
         await Assert.That(initial["defaults"]!["brand_name"]!.GetValue<string>()).IsEqualTo("TerraScale");
-        await Assert.That(initial["defaults"]!["primary_color"]!.GetValue<string>()).IsEqualTo("#2158e8");
+        await Assert.That(initial["defaults"]!["primary_color"]!.GetValue<string>()).IsEqualTo(EmailPalette.Default.Light.Button);
 
         foreach (var (branding, field) in new (JsonObject, string)[]
         {
@@ -298,7 +298,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
     public async Task Themes_and_preview_colour_schemes_decide_the_dark_styles()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
-        const string DarkCanvas = ".canvas{background-color:#0a0c12 !important}";
+        var darkCanvas = $".canvas{{background-color:{EmailPalette.Default.Dark.Canvas} !important}}";
         async Task<string> Html(string scheme, string? theme)
         {
             var body = new JsonObject { ["kind"] = "sign_in_code", ["locale"] = "en", ["color_scheme"] = scheme };
@@ -311,12 +311,12 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
         }
 
         var auto = await Html("auto", null);
-        await Assert.That(auto).Contains("@media (prefers-color-scheme:dark){\n" + DarkCanvas);
+        await Assert.That(auto).Contains("@media (prefers-color-scheme:dark){\n" + darkCanvas);
         await Assert.That(auto).Contains("<meta name=\"color-scheme\" content=\"light dark\">");
-        await Assert.That(await Html("dark", null)).Contains("</style>").And.Contains("\n" + DarkCanvas).And.DoesNotContain("prefers-color-scheme");
-        await Assert.That(await Html("light", null)).DoesNotContain(DarkCanvas);
-        await Assert.That(await Html("dark", "light")).DoesNotContain(DarkCanvas).And.Contains("content=\"light only\"");
-        await Assert.That(await Html("light", "dark")).Contains(DarkCanvas).And.DoesNotContain("prefers-color-scheme");
+        await Assert.That(await Html("dark", null)).Contains("</style>").And.Contains("\n" + darkCanvas).And.DoesNotContain("prefers-color-scheme");
+        await Assert.That(await Html("light", null)).DoesNotContain(darkCanvas);
+        await Assert.That(await Html("dark", "light")).DoesNotContain(darkCanvas).And.Contains("content=\"light only\"");
+        await Assert.That(await Html("light", "dark")).Contains(darkCanvas).And.DoesNotContain("prefers-color-scheme");
 
         using var invalid = await SendAsync(oidc, HttpMethod.Post, Base + "/preview", new JsonObject { ["kind"] = "sign_in_code", ["locale"] = "en", ["color_scheme"] = "sepia" });
         await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
@@ -532,8 +532,11 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
         await Assert.That(message.Text).EndsWith("Acme Inc.\nRua Exemplo 100, São Paulo\nNeed help? help@acme.test\nAcme Cloud\n");
         await Assert.That(message.Html).Contains("src=\"https://cdn.example.test/icon.png\"").And.Contains(">Acme Cloud</td>")
             .And.Contains("href=\"mailto:help@acme.test\"").And.DoesNotContain("email-logo.png").And.DoesNotContain("terrascale.tech");
-        // The code box takes the accent (the primary colour when no accent is set).
-        await Assert.That(message.Html).Contains("background-color:#fdedf0;border:1px solid #f8c6d1;");
+        // The code box takes the accent (the primary colour when no accent is set), mixed into the card.
+        var accent = EmailBrand.Merge(oidc.Server.App.Services.GetRequiredService<AuthEmails>().Brand, new EmailBranding { PrimaryColor = "#e11d48" });
+        var (fill, border) = accent.CodeBoxOn(EmailPalette.Default.Light.Card, 0.08, 0.25);
+        await Assert.That(accent.AccentColor).IsEqualTo("#e11d48");
+        await Assert.That(message.Html).Contains($"background-color:{fill};border:1px solid {border};");
 
         // Rolling back to the defaults sends the TerraScale email again.
         using (var restore = await SendAsync(oidc, HttpMethod.Post, Base + "/versions/0/restore", Body(2)))

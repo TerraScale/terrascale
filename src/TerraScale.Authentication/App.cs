@@ -183,6 +183,7 @@ public static class App
             builder.Services.AddSingleton<IEmailSender, LoggingEmailSender>();
         }
 
+        builder.Services.AddSingleton(EmailPalette.Default);
         builder.Services.AddSingleton<AuthEmails>();
         builder.Services.AddSingleton<EmailSettings>();
         builder.Services.AddSingleton<SignInMail>();

@@ -127,26 +127,20 @@ public sealed record EmailBrand(
     string? SenderName,
     string? ReplyTo)
 {
-    private const string Card = "#ffffff";
-    private const string DarkCard = "#11141c";
-
     /// <summary>Button text: black or white, whichever contrasts more with the button; one of them always reaches 4.5:1.</summary>
-    public string ButtonTextColor => Contrast(this.PrimaryColor, "#ffffff") >= Contrast(this.PrimaryColor, "#000000") ? "#ffffff" : "#000000";
+    public string ButtonTextColor => TextOn(this.PrimaryColor);
 
     /// <summary>Button corner radius.</summary>
-    public string ButtonRadius => this.ButtonStyle switch { "pill" => "999px", "square" => "0", _ => "8px" };
+    public string ButtonRadius => this.ButtonStyle switch { "pill" => "999px", "square" => "0", _ => "6px" };
 
-    /// <summary>Links on the light card: the accent, darkened until it reaches 4.5:1.</summary>
-    public string LinkColor => Readable(this.AccentColor, Card, "#000000");
+    /// <summary>Black or white, whichever contrasts more with <paramref name="fill"/>.</summary>
+    public static string TextOn(string fill) => Contrast(fill, "#ffffff") >= Contrast(fill, "#000000") ? "#ffffff" : "#000000";
 
-    /// <summary>Links on the dark card: the accent, lightened until it reaches 4.5:1.</summary>
-    public string LinkDarkColor => Readable(this.AccentColor, DarkCard, "#ffffff");
+    /// <summary>Links on <paramref name="card"/>: the accent, moved toward <paramref name="toward"/> until it reaches 4.5:1.</summary>
+    public string LinkOn(string card, string toward) => Readable(this.AccentColor, card, toward);
 
-    /// <summary>Code box fill and border, tinted with the accent.</summary>
-    public (string Fill, string Border) CodeBox => (Mix(this.AccentColor, Card, 0.08), Mix(this.AccentColor, Card, 0.25));
-
-    /// <summary>The same in dark mode.</summary>
-    public (string Fill, string Border) CodeBoxDark => (Mix(this.AccentColor, DarkCard, 0.12), Mix(this.AccentColor, DarkCard, 0.35));
+    /// <summary>Code box fill and border on <paramref name="card"/>: the accent mixed in at the given amounts.</summary>
+    public (string Fill, string Border) CodeBoxOn(string card, double fill, double border) => (Mix(this.AccentColor, card, fill), Mix(this.AccentColor, card, border));
 
     /// <summary>
     /// Merges <paramref name="branding"/> over <paramref name="defaults"/>. A custom logo replaces both default logos; a
@@ -245,7 +239,7 @@ public sealed record EmailBrand(
 /// works without images or styles. The copy takes <c>{{ name }}</c> placeholders and nothing else: there is no logic to
 /// run, and every value is HTML-encoded by the layout.
 /// </summary>
-public sealed partial class AuthEmails(AuthOptions options)
+public sealed partial class AuthEmails(AuthOptions options, EmailPalette palette)
 {
     /// <summary>English, the fallback locale.</summary>
     public const string English = "en";
@@ -277,11 +271,11 @@ public sealed partial class AuthEmails(AuthOptions options)
         "TerraScale",
         new Uri(options.PublicOrigin, "/admin/email-logo.png"),
         new Uri(options.PublicOrigin, "/admin/email-logo-dark.png"),
-        LogoWidth: 150,
-        LogoHeight: 36,
+        LogoWidth: 100,
+        LogoHeight: 24,
         IconUrl: null,
-        PrimaryColor: "#2158e8",
-        AccentColor: "#2158e8",
+        PrimaryColor: palette.Light.Button,
+        AccentColor: palette.Light.Link,
         Theme: "auto",
         ButtonStyle: "rounded",
         FooterText: null,
@@ -404,6 +398,7 @@ public sealed partial class AuthEmails(AuthOptions options)
             brand.FooterText?.Split('\n') ?? [],
             brand.SupportEmail is not null || brand.SupportUrl is not null ? chrome.Support : null,
             brand,
+            palette,
             brand.Theme switch
             {
                 "light" => EmailDarkMode.None,
@@ -628,6 +623,7 @@ public sealed partial class AuthEmails(AuthOptions options)
 /// <param name="FooterLines">The brand's footer text, line by line.</param>
 /// <param name="Support">The label before the support address or page, when the brand has one.</param>
 /// <param name="Brand">The sender's brand.</param>
+/// <param name="Palette">The light and dark colours around the brand.</param>
 /// <param name="Dark">When the dark styles apply.</param>
 public sealed record AuthEmailView(
     string Lang,
@@ -645,4 +641,5 @@ public sealed record AuthEmailView(
     IReadOnlyList<string> FooterLines,
     string? Support,
     EmailBrand Brand,
+    EmailPalette Palette,
     EmailDarkMode Dark);

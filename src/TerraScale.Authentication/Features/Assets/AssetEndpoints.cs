@@ -7,8 +7,9 @@ public static class EmbeddedAssets
 {
     private static readonly Dictionary<string, (string Resource, string ContentType)> Admin = new(StringComparer.Ordinal)
     {
-        ["admin.css"] = ("assets/admin/admin.css", "text/css; charset=utf-8"),
         ["datastar.js"] = ("assets/admin/datastar.js", "text/javascript; charset=utf-8"),
+        // ts-resources' horizontal TerraScale logo (blue, and blue with a light wordmark for dark backgrounds) and cube mark,
+        // with inline fills in place of the source files' <style> blocks, which the asset CSP (style-src 'none') covers.
         ["logo.svg"] = ("assets/admin/logo.svg", "image/svg+xml"),
         ["logo-icon-blue.svg"] = ("assets/admin/logo-icon-blue.svg", "image/svg+xml"),
         // Email clients do not show SVG; these are the dashboard's horizontal logos rasterized at 2x.

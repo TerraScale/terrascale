@@ -54,7 +54,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Assets/admin/admin.css" LogicalName="assets/admin/admin.css" />
     <EmbeddedResource Include="Assets/admin/datastar.js" LogicalName="assets/admin/datastar.js" />
     <EmbeddedResource Include="Assets/admin/logo.svg" LogicalName="assets/admin/logo.svg" />
     <EmbeddedResource Include="Assets/admin/logo-icon-blue.svg" LogicalName="assets/admin/logo-icon-blue.svg" />

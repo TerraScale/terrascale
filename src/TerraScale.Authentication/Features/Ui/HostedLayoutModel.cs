@@ -23,7 +23,7 @@ public sealed partial record HostedLayoutModel
             : DefaultAccent;
     }
 
-    /// <summary>Page title, shown as <c>{title} · ts-auth</c>.</summary>
+    /// <summary>Page title, shown as <c>{title} · TerraScale</c>.</summary>
     public string Title { get; }
 
     /// <summary>Per-response CSP nonce for inline styles and scripts.</summary>
@@ -94,4 +94,12 @@ form.inline { display: contents; }
 .theme-picker { width: auto; height: 28px; padding: 0 8px; font-size: 12px; }
 @media (max-width: 640px) { .card { padding: 24px; } }
 """;
+
+    private static string ReadTokens()
+    {
+        using var stream = typeof(HostedLayoutModel).Assembly.GetManifestResourceStream("assets/ui/tokens.css")
+            ?? throw new InvalidOperationException("assets/ui/tokens.css is not embedded.");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
 }

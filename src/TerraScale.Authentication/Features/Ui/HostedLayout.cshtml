@@ -1,14 +1,17 @@
 @inherits RazorLayoutSlice<HostedLayoutModel>
 <!doctype html>
-<html lang="en">
+@* The hosted pages are dark only (user decision 2026-10-12); the tokens resolve light-dark() to their dark values. *@
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>@Model.Title · ts-auth</title>
+<meta name="color-scheme" content="dark">
+<title>@Model.Title · TerraScale</title>
+<link rel="icon" href="/admin/icon.svg" type="image/svg+xml">
 <style nonce="@Model.Nonce">@WriteHtml(HostedLayoutModel.PageCss)</style>
 @if (Model.AccentColor is { } accent)
 {
-<style nonce="@Model.Nonce">:root{--accent:@accent}</style>
+<style nonce="@Model.Nonce">:root{--ts-primary:@accent;--ts-primary-hover:@accent;--ts-on-primary:#ffffff;--ts-accent:@accent}</style>
 }
 @await RenderSectionAsync("head")
 <script nonce="@Model.Nonce">

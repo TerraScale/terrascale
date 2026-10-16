@@ -6,7 +6,6 @@ namespace TerraScale.Authentication.Fast.Platform;
 public sealed class AssetTests
 {
     [Test]
-    [Arguments("/admin/admin.css", "text/css")]
     [Arguments("/admin/datastar.js", "text/javascript")]
     [Arguments("/admin/logo.svg", "image/svg+xml")]
     [Arguments("/admin/logo-icon-blue.svg", "image/svg+xml")]
@@ -29,6 +28,7 @@ public sealed class AssetTests
 
     [Test]
     [Arguments("/admin/missing.css")]
+    [Arguments("/admin/admin.css")]
     [Arguments("/admin/..%2FTerraScale.Authentication.dll")]
     [Arguments("/fonts/admin.css")]
     public async Task Unknown_assets_are_not_found(string path)
