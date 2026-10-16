@@ -3,6 +3,7 @@ using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management;
 
@@ -19,6 +20,8 @@ public sealed class StartOwnershipTransferEndpoint(IAccessService access) : Endp
         Post(ManagementRoute.OwnershipTransfer);
         Metadata(AnchoredRevocation.Instance);
         Name("startOwnershipTransfer");
+        // It replaces a pending offer, which a restore could bring back: anchored before it is acknowledged (CatalogGate).
+        Metadata(AnchoredRevocation.Instance);
         Summary("Offers ownership to a member");
         Description($"userId: a member who is not an owner (404 when not a member, 409 when already an owner). Needs owner. Replaces a pending transfer; expires after 7 days. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);

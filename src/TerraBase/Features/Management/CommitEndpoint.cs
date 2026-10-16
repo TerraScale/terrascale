@@ -198,6 +198,12 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
         "decline_invitation", "start_transfer", "confirm_transfer", "cancel_transfer", "set_plan", "set_database_regions",
     ], StringComparer.Ordinal);
 
+    /// <summary>Every Management operation a commit accepts, for the classification test.</summary>
+    internal static IEnumerable<string> Operations => Members.Keys;
+
+    /// <summary>The operations whose commit is anchored before it is acknowledged.</summary>
+    internal static IReadOnlySet<string> AnchoredOperations => RevokingOps;
+
     private Microsoft.AspNetCore.Http.HttpResults.FileContentHttpResult Respond(CommitOutcome outcome)
     {
         if (outcome.Replayed)
