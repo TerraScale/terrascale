@@ -16,6 +16,32 @@ namespace TerraScale.Authentication.Fast.Store;
 public sealed class StorageReadinessTests(TerraBaseFixture fixture)
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Storage_readiness_overlaps_reads_but_never_writes_before_catalog_validation(bool missingCollection)
+    {
+        var (tenant, database) = await fixture.CreateDatabaseAsync();
+        if (missingCollection)
+        {
+            await database.DropCollectionAsync(AuthStore.ChallengeCollection);
+        }
+
+        using var requests = new OverlappingReads { InnerHandler = TerraBaseFixture.NewHandler() };
+        using var http = new HttpClient(requests);
+        var probedDatabase = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
+        {
+            BaseAddress = fixture.Server.InternalAddress,
+        }).Database(tenant.Project.Id, "auth");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var result = await new TerraBaseStorageHealth(probedDatabase).CheckAsync(deadline.Token);
+
+        await Assert.That(result.Healthy).IsEqualTo(!missingCollection);
+        await Assert.That(requests.MutatedBeforeCatalog).IsFalse();
+        await Assert.That(requests.Mutations).IsEqualTo(missingCollection ? 0 : 2);
+        await Assert.That((await database.ListDocumentsAsync(AuthStore.HealthCollection)).Items.Count).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task Storage_readiness_checks_required_collections_beyond_the_first_catalog_page()
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
@@ -175,6 +201,45 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
     }
 
     private static Task<bool> ReadyWithinAsync(AuthTestServer auth, TimeSpan limit) => ReadinessWait.ReadyWithinAsync(auth.Client, limit);
+
+    private sealed class OverlappingReads : DelegatingHandler
+    {
+        private readonly TaskCompletionSource catalogStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource documentStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private bool catalogCompleted;
+
+        public bool MutatedBeforeCatalog { get; private set; }
+
+        public int Mutations { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var catalog = request.RequestUri!.AbsolutePath.EndsWith("/collections", StringComparison.Ordinal);
+            if (catalog)
+            {
+                this.catalogStarted.TrySetResult();
+                await this.documentStarted.Task.WaitAsync(cancellationToken);
+            }
+            else if (request.Method == HttpMethod.Get)
+            {
+                this.documentStarted.TrySetResult();
+                await this.catalogStarted.Task.WaitAsync(cancellationToken);
+            }
+            else
+            {
+                this.Mutations++;
+                this.MutatedBeforeCatalog |= !Volatile.Read(ref this.catalogCompleted);
+            }
+
+            var response = await base.SendAsync(request, cancellationToken);
+            if (catalog)
+            {
+                Volatile.Write(ref this.catalogCompleted, true);
+            }
+
+            return response;
+        }
+    }
 
     private sealed class CatalogRequests : DelegatingHandler
     {
