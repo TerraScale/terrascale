@@ -109,6 +109,12 @@ type TokenSource interface {
 	Token(context.Context) (string, error)
 }
 
+// TokenSource supplies access tokens; TerraBase validates their claims.
+// Sources also implementing Invalidate(string) refresh once on a 401.
+type TokenSource interface {
+	Token(context.Context) (string, error)
+}
+
 // Resolver resolves a TerraBase endpoint. Resolution errors stop the call;
 // the client never falls back to another endpoint. A retry keeps the endpoint
 // resolved for the original call.
