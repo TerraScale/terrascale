@@ -167,6 +167,31 @@ and abort is idempotent. The original TerraBase Slow regression proves cancellat
 reader and allows another query in the same transaction. Both targeted tests passed on mariogk-dev. This supplement
 covers the patch; it does not repeat the package or Rust advisory audit above.
 
+### Patch 0006 (2026-10-14)
+
+`SqliteDataReader` uses the existing native column-declaration binding before falling back to schema queries,
+and numeric or null values do not look up a GUID declaration. This avoids schema-query preparation when native
+metadata supplies the declaration; expressions with no native declaration retain the existing fallback.
+No native package, dependency, configuration, public API signature or persisted format changes.
+
+Real-native comparison against the parent commit measured these metadata changes:
+
+| Query | Before | Patch 0006 |
+|---|---|---|
+| Table GUID column | GUID declaration and `Guid` value | Unchanged |
+| Second-table GUID column in a join | First table's same-named column declaration | Correct source declaration (`UNIQUEIDENTIFIER`) and `Guid` value |
+| Aliased VARCHAR column | TEXT | VARCHAR |
+| View over GUID/VARCHAR columns | GUID/`Guid`, VARCHAR | Native affinities NUMERIC/`string`, TEXT |
+| Literal column from a FROM-subquery | INTEGER/`long` metadata | BLOB/`byte[]` metadata; value remains `long` |
+
+The view case loses GUID conversion. TerraBase creates no views, declares no GUID/UNIQUEIDENTIFIER columns,
+and does not call these type-metadata APIs; its FROM-subquery reads values by runtime type.
+
+Real-native regression tests cover both GUID encodings, text, blobs, integers, reals, nulls and expression columns
+across result sets. Join and view tests pin the changed metadata behaviour. Native metadata returns GUID and
+VARCHAR declarations for table columns in the pinned library. Hosted performance qualification remains pending. This supplement does not
+repeat the package or Rust advisory audit above.
+
 ## 6. Rust crates in `libturso_sdk_kit`
 
 Read-only, against upstream's workspace at `5c168be5ef6a32ac966daf5983502a4f694b37ad` (a fresh clone), with tools from
