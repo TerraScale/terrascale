@@ -273,3 +273,14 @@ every chunk, page and persisted row resolves to its document value on gru (serve
 their range and body, and the old HTTP handle resumes or answers 409 `must_refetch`. Six seed/cut pairs; results in
 `benchmark/bench/2026-10-14-replication-v1.md`. The shim models only log cuts: torn main-database pages after a
 checkpoint are not simulated, and no Fly machine lost power.
+
+## Shape cache headers (FR-24)
+
+`ShapeCacheE2ETests` runs once per serving origin (gru, sjc, fra) of a three-region cluster, pinned to one machine for the
+shape handle's lifetime, through the public shape, manifest (FR-22) and presigned-object paths. It seals a chunk, then
+fetches it from its presigned URL with no TerraBase credential. Every answer must be the manifest's TBS1 bytes (size,
+SHA-256) with `public, max-age=31536000, immutable`; the bootstrap 307, snapshot page, chunk, manifest and bounded live tail
+and malformed-offset errors must be `private, no-store`. The object is fetched twice, with identical ciphertext required.
+Cache-hit evidence and origin storage-read counts per cache location belong to V3 (#305). This test is outside
+`local-only`, so the post-deploy e2e job's `Category!=local-only` run on `main` covers it with the GitHub OIDC project
+token. It needs FR-22 (#283) and FR-24 (#315) deployed.
