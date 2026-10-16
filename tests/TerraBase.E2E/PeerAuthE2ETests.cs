@@ -57,7 +57,7 @@ public sealed class PeerAuthE2ETests
         var canary = regions.Document(EntityIds.New().ToString());
         var canaryBody = new JsonObject { ["step"] = "before" };
         await Docs.PutAsync(regions[Cluster.Gru], canary, canaryBody, cancellationToken);
-        _ = await Converge.UntilAsync(() => Docs.ReadAsync(regions[Cluster.Sjc], canary), document => document is not null, "the canary on sjc");
+        _ = await Converge.UntilAsync(() => Docs.ReadAsync(regions[Cluster.Sjc], canary), document => document is not null, "the canary on sjc", cancellationToken);
 
         var forgedHttp = regions.Document(EntityIds.New().ToString());
         var forgedGrpc = ForgedDatabase();
@@ -79,11 +79,11 @@ public sealed class PeerAuthE2ETests
         // A legitimate write after the refusals: it replicates, so the refusals did not wedge the peer streams.
         var after = regions.Document(EntityIds.New().ToString());
         await Docs.PutAsync(regions[Cluster.Gru], after, new JsonObject { ["step"] = "after" }, cancellationToken);
-        _ = await Converge.UntilAsync(() => Docs.ReadAsync(regions[Cluster.Sjc], after), document => document?["step"]?.GetValue<string>() == "after", "the write after the refusals on sjc");
+        _ = await Converge.UntilAsync(() => Docs.ReadAsync(regions[Cluster.Sjc], after), document => document?["step"]?.GetValue<string>() == "after", "the write after the refusals on sjc", cancellationToken);
 
         var reverse = regions.Document(EntityIds.New().ToString());
         await Docs.PutAsync(regions[Cluster.Sjc], reverse, new JsonObject { ["step"] = "reverse" }, cancellationToken);
-        _ = await Converge.UntilAsync(() => Docs.ReadAsync(regions[Cluster.Gru], reverse), document => document?["step"]?.GetValue<string>() == "reverse", "the reverse write on gru");
+        _ = await Converge.UntilAsync(() => Docs.ReadAsync(regions[Cluster.Gru], reverse), document => document?["step"]?.GetValue<string>() == "reverse", "the reverse write on gru", cancellationToken);
 
         foreach (var region in regions.Regions)
         {

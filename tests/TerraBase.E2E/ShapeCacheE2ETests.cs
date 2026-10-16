@@ -118,7 +118,7 @@ public sealed class ShapeCacheE2ETests
             var body = await manifest.Content.ReadFromJsonAsync<JsonElement>(token);
             await Assert.That(body.GetProperty("handle").GetString()).IsEqualTo(handle);
             return [.. body.GetProperty("objects").EnumerateArray().Select(entry => entry.Clone())];
-        }, listed => listed.Length >= 2 && listed[1].GetProperty("expires_at").GetDateTimeOffset() - DateTimeOffset.UtcNow >= TimeSpan.FromSeconds(15), $"{region}'s manifest of {firstPage} and chunk {snapshot}");
+        }, listed => listed.Length >= 2 && listed[1].GetProperty("expires_at").GetDateTimeOffset() - DateTimeOffset.UtcNow >= TimeSpan.FromSeconds(15), $"{region}'s manifest of {firstPage} and chunk {snapshot}", token);
         await Assert.That(objects[0].GetProperty("offset").GetString()).IsEqualTo(firstPage);
         await Assert.That(objects[0].GetProperty("next_offset").GetString()).IsEqualTo(snapshot);
         await Assert.That(objects[1].GetProperty("offset").GetString()).IsEqualTo(snapshot);
