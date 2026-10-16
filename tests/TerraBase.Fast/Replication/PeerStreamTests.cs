@@ -484,6 +484,30 @@ public sealed class PeerStreamTests
         await AssertAuthenticatedAsync(sjc);
     }
 
+    // The race behind A_peer_silent_for_24_hours…'s intermittent failure: after its refill, the returning peer's frontier
+    // reports wrote bookkeeping rows here (no group of this machine's), so the head passed the ack and the ack never followed.
+    [Test]
+    public async Task An_idle_stream_acknowledges_up_to_the_head_past_rows_without_groups_of_its_own()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
+
+        // A row with no group of gru's: the bookkeeping a frontier report from sjc writes on gru.
+        var before = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        var stamp = gru.Api.Server.Services.GetRequiredService<LocalReplica>().Clock.Tick();
+        await gru.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RecordFrontierAsync(cluster.Database, sjc.Node, stamp, CancellationToken.None);
+        var head = await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None);
+        await Assert.That(head).IsGreaterThan(before);
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, head)).IsTrue();
+    }
+
     [Test]
     public async Task A_peer_silent_for_24_hours_stops_holding_change_groups_and_refills_when_it_returns()
     {
@@ -2953,7 +2977,20 @@ public sealed class PeerStreamTests
             });
             using var service = Api.Service(Api.User);
             using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+            var body = await response.Content.ReadAsStringAsync();
+            if (response.StatusCode == HttpStatusCode.Conflict && body.Contains("\"id_taken\"", StringComparison.Ordinal))
+            {
+                // A machine started after another pulled its catalog before serving (CatalogGate): the registration is here
+                // already, and the databases get their local files as on a first request.
+                foreach (var placed in new[] { database, cluster.Second })
+                {
+                    await Assert.That(await Api.Server.Services.GetRequiredService<ITenantDirectory>().EnsureLocalDatabaseAsync(placed, CancellationToken.None) is Done).IsTrue();
+                }
+
+                return;
+            }
+
+            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(body);
         }
     }
 

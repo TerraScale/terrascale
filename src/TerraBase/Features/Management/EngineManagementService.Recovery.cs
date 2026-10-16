@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -54,6 +55,8 @@ internal sealed partial class EngineManagementService
                     }
                 }
             }
+
+            await DrainPrefixDeletesAsync(cancellationToken).ConfigureAwait(false);
         }
 
         await AuditFilesAsync(hasCatalog, version, cancellationToken).ConfigureAwait(false);

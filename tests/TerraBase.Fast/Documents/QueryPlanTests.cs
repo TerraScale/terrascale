@@ -35,7 +35,7 @@ public sealed class QueryPlanTests
         ["DropCollection"] = "SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name=?)",
         ["CountDocuments"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=?)",
         ["ListCollectionStats"] = "SCAN collections USING COVERING INDEX sqlite_autoindex_collections_1 | SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=?) LEFT-JOIN",
-        ["DeleteCollectionDocuments"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection>=? AND collection<?)",
+        ["PrefixDocuments"] = "SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection>=? AND collection<?)",
         ["DeleteCollectionNames"] = "SEARCH collections USING COVERING INDEX sqlite_autoindex_collections_1 (name>=? AND name<?)",
         ["DeleteCollectionStates"] = "SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>=? AND collection<?)",
         // The system database's documents and states, by (collection, id); inserts have no plan.

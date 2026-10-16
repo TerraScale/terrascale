@@ -184,6 +184,8 @@ internal sealed partial class EngineManagementService
             {
                 _ = await FinishDatabaseCleanupAsync(storage, CancellationToken.None).ConfigureAwait(false);
             }
+
+            await DrainPrefixDeletesAsync(CancellationToken.None).ConfigureAwait(false);
         }
 
         if (result is CommitOutcome)

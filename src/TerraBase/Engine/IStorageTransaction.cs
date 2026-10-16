@@ -296,7 +296,7 @@ public interface IStorageTransaction : IAsyncDisposable
     /// reaches any more (a deleted database's or project's), which every machine purges when it learns of the deletion.
     /// Returns how many live documents were removed. A client database refuses it with <see cref="NotSupportedException"/>.
     /// </summary>
-    ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken);
+    ValueTask<long> DeleteCollectionsAsync(string prefix, int limit, CancellationToken cancellationToken);
 
     /// <summary>Lists the secondary indexes of this database in name order.</summary>
     ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken);

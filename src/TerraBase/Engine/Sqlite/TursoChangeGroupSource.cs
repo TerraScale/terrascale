@@ -195,11 +195,16 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         }
     }
 
+    // The catalog keeps its tombstones (docs/terrabase/system-catalog-invariants.md): it records peers' stable stamps and
+    // frontiers like any database, but reports no stable stamp and no horizon, so no machine collects or forgets any of its
+    // states (see ExecuteAsync and ForgetAsync).
     public async ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken) =>
-        await ReadAsync(database, (transaction, now) => transaction.GetStableAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
+        database == ChangeGroups.System ? default
+        : await ReadAsync(database, (transaction, now) => transaction.GetStableAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken) =>
-        await ReadAsync(database, (transaction, now) => transaction.GetHorizonAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
+        database == ChangeGroups.System ? default
+        : await ReadAsync(database, (transaction, now) => transaction.GetHorizonAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<int?> ForgetAsync(
         TenantContext database, Ulid incarnation, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken)

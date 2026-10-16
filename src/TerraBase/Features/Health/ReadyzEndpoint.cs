@@ -7,8 +7,8 @@ namespace TerraBase.Features.Health;
 
 /// <summary>
 /// <c>GET /readyz</c>: 200 only while the storage engine is open, the data directory is writable, ts-auth's signing keys
-/// are loaded (when <c>auth-issuer</c> is set), a catalog follower has caught up with its primary once and the server is
-/// not shutting down; 503 otherwise. Unauthenticated, on the administrative and client listeners, for load balancers.
+/// are loaded (when <c>auth-issuer</c> is set), the catalog is verified against every started machine since this start
+/// (<see cref="Replication.ICatalogGate"/>) and the server is not shutting down; 503 otherwise. Unauthenticated, on the administrative and client listeners, for load balancers.
 /// </summary>
 public sealed class ReadyzEndpoint(
     INodeReadiness readiness, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
@@ -19,7 +19,7 @@ public sealed class ReadyzEndpoint(
         Get("/readyz");
         Name("readyz");
         Summary("Readiness probe");
-        Description("503 while the storage engine is closed, the data directory is not writable, ts-auth's signing keys have not been fetched yet (when auth-issuer is set), a catalog follower has not caught up with its primary yet or the server is shutting down.");
+        Description("503 while the storage engine is closed, the data directory is not writable, ts-auth's signing keys have not been fetched yet (when auth-issuer is set), the catalog is not verified against every started machine since this start (restore gate) or the server is shutting down.");
         Tags("Health");
         Produces<StatusBody>();
         Produces<StatusBody>(StatusCodes.Status503ServiceUnavailable);

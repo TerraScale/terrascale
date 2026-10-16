@@ -11,7 +11,6 @@ using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
-using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -26,7 +25,7 @@ namespace TerraBase.Features.Management;
 /// and writes are atomic. Names are unique per parent through <c>*_names</c> collections keyed by the
 /// lowercased name; organization names are unique per creator, so they reveal nothing across tenants.
 /// State other slices keep under a database or project
-/// (<see cref="SystemCatalog.DatabaseState"/>, <see cref="SystemCatalog.ProjectState"/>) is deleted with it.
+/// (<see cref="SystemCatalog.DatabaseState"/>, <see cref="SystemCatalog.ProjectState"/>) is deleted after it, in bounded chunks (DrainPrefixDeletesAsync).
 /// </summary>
 /// <remarks>
 /// Membership is stored twice: <c>organizations/{id}/members</c> (who belongs, with its
@@ -346,8 +345,9 @@ internal sealed partial class EngineManagementService(
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<DeleteProjectResult> DeleteProjectAsync(
-        string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
-        await WriteAsync<DeleteProjectResult>(async transaction =>
+        string userId, string organizationId, string projectId, CancellationToken cancellationToken)
+    {
+        var deleted = await WriteAsync<DeleteProjectResult>(async transaction =>
         {
             var access = await WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
             if (access is not OrganizationMember)
@@ -376,9 +376,17 @@ internal sealed partial class EngineManagementService(
             await transaction.DeleteAsync(ProjectOrganizations, project.Id, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectNames(organizationId), Key(project.Name), cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(Projects(organizationId), project.Id, cancellationToken).ConfigureAwait(false);
-            await transaction.DeleteCollectionsAsync(SystemCatalog.ProjectState(project.Id), cancellationToken).ConfigureAwait(false);
+            await PutAsync(transaction, PendingPrefixDeletes, SystemCatalog.ProjectState(project.Id), SystemCatalog.ProjectState(project.Id), Id, cancellationToken)
+                .ConfigureAwait(false);
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (deleted is Done)
+        {
+            await DrainPrefixDeletesAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        return deleted;
+    }
 
     // Decision 0013: a new database's replica regions when its request names none, every other serving region; null where
     // writes are confirmed in another region and none serves, so the database cannot be created yet.
@@ -611,6 +619,7 @@ internal sealed partial class EngineManagementService(
             return error;
         }
 
+        await DrainPrefixDeletesAsync(CancellationToken.None).ConfigureAwait(false);
         checkpoint("delete.finalized", storage);
         return true;
     }
@@ -685,7 +694,8 @@ internal sealed partial class EngineManagementService(
             _ = await transaction.TombstoneAsync(EngineManagedBackupService.BackedUpDatabases, database.Id, cancellationToken).ConfigureAwait(false);
         }
 
-        await transaction.DeleteCollectionsAsync(SystemCatalog.DatabaseState(database.Id), cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, PendingPrefixDeletes, SystemCatalog.DatabaseState(database.Id), SystemCatalog.DatabaseState(database.Id), Id, cancellationToken)
+            .ConfigureAwait(false);
         await TouchOrganizationAsync(transaction, storage.OrganizationId, cancellationToken).ConfigureAwait(false);
         return storage;
     }

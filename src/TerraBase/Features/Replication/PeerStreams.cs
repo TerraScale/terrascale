@@ -729,6 +729,17 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
 
             if (groups.Count == 0)
             {
+                if (newest > acked)
+                {
+                    // Nothing up to the newest change id is for the peer: acknowledged here, so retention drops those rows and a resumed stream
+                    // starts past them. Without it an idle database's ack stays below its head while the bookkeeping rows grow.
+                    await _source.AckAsync(database, peer, newest, default, cancellationToken).ConfigureAwait(false);
+                    lock (link.Gate)
+                    {
+                        cursor.Acked = newest;
+                    }
+                }
+
                 if (_time.GetElapsedTime(cursor.FrontierAt) >= FrontierEvery || cursor.FrontierAt == 0)
                 {
                     await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database, incarnation), Hlc = frontier.Value } }, cancellationToken)

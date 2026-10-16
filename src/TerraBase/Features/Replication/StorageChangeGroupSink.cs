@@ -38,7 +38,9 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             {
                 foreach (var delta in groups[next].Deltas)
                 {
-                    _ = groups[next].Stale
+                    // The catalog never collects a tombstone, so a catalog document this machine lacks was never a collected
+                    // deletion (a restored catalog lacks its own later entries): a stale catalog state joins like any other.
+                    _ = groups[next].Stale && database != ChangeGroups.System
                         ? await transaction.JoinStaleAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, origin), cancellationToken).ConfigureAwait(false)
                         : await transaction.JoinAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, origin), cancellationToken).ConfigureAwait(false);
                     applied = applied.Value < delta.Stamp.Value ? delta.Stamp : applied;
