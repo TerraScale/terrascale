@@ -16,9 +16,6 @@ public sealed class RepairAndContractE2ETests
 {
     private static readonly string[] All = [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
 
-    // The stream lags R4a-2 publishes and the CDC tail lag of design section 18, as Prometheus names them.
-    private static readonly string[] ReplicationSeries = ["terrabase_replication_send_lag", "terrabase_replication_ack_lag", "terrabase_replication_tail_lag"];
-
     // Anti-entropy rounds run every 60 s and repair a bucket that differs in two consecutive rounds (design section 10).
     private static readonly TimeSpan RepairWindow = TimeSpan.FromSeconds(200);
 
@@ -171,36 +168,43 @@ public sealed class RepairAndContractE2ETests
     }
 
     // Replication is observable: /health/replication in every region names the two others as peers with a lag of at most
-    // 5 s once a write converged, and the Prometheus listener exposes the stream lags R4a-2 publishes and the CDC tail lag
-    // (design section 18).
+    // 5 s once a write converged.
     [Test]
     [Scenario(Nodes.InProcess)]
     public async Task Every_region_reports_its_peers_and_replication_lag_on_health_and_metrics()
     {
-        await Gaps.RunAsync("replication-metrics", async () =>
+        await using var cluster = await Cluster.StartAsync(All);
+        var uri = cluster.Document(EntityIds.New().ToString());
+        await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["value"] = "observable" });
+        foreach (var region in cluster.Regions)
         {
-            await using var cluster = await Cluster.StartAsync(All);
-            var uri = cluster.Document(EntityIds.New().ToString());
-            await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["value"] = "observable" });
-            foreach (var region in cluster.Regions)
-            {
-                var health = await Converge.UntilAsync(
-                    () => Docs.GetJsonAsync(cluster[region], new Uri("/health/replication", UriKind.Relative)),
-                    body => body?["status"]?.GetValue<string>() == "ok", $"replication health of {region}");
-                var peers = health!["peers"]!.AsArray().Select(peer => peer!["region"]!.GetValue<string>()).Order(StringComparer.Ordinal).ToArray();
-                await Assert.That(peers).IsEquivalentTo(cluster.Regions.Where(other => other != region).Order(StringComparer.Ordinal).ToArray());
-                await Assert.That(health["peers"]!.AsArray().All(peer => peer!["lagSeconds"]?.GetValue<double>() <= 5)).IsTrue();
-                if (!Cluster.FlyRequested)
-                {
-                    using var metrics = new HttpClient { BaseAddress = cluster.MetricsAddress(region) };
-                    var text = await metrics.GetStringAsync(new Uri("/metrics", UriKind.Relative));
-                    foreach (var series in ReplicationSeries)
-                    {
-                        await Assert.That(text).Contains(series);
-                    }
-                }
-            }
-        });
+            var health = await Converge.UntilAsync(
+                () => Docs.GetJsonAsync(cluster[region], new Uri("/health/replication", UriKind.Relative)),
+                body => body?["status"]?.GetValue<string>() == "ok", $"replication health of {region}");
+            var peers = health!["peers"]!.AsArray().Select(peer => peer!["region"]!.GetValue<string>()).Order(StringComparer.Ordinal).ToArray();
+            await Assert.That(peers).IsEquivalentTo(cluster.Regions.Where(other => other != region).Order(StringComparer.Ordinal).ToArray());
+            await Assert.That(health["peers"]!.AsArray().All(peer => peer!["lagSeconds"]?.GetValue<double>() <= 5)).IsTrue();
+        }
+    }
+
+    // The stream lags R4a-2 publishes and R3's CDC tail lag (design section 18), one test per series so each has its own
+    // outcome: a sample line, not only its HELP/TYPE header, on every region.
+    [Test]
+    [Arguments("terrabase_replication_send_lag")]
+    [Arguments("terrabase_replication_ack_lag")]
+    [Arguments("terrabase_replication_tail_lag")]
+    [Scenario(Nodes.InProcess)]
+    public async Task Every_region_publishes_the_replication_lag_series(string series)
+    {
+        Skip.When(Cluster.FlyRequested, "reads a local node's metrics listener");
+        await using var cluster = await Cluster.StartAsync(All);
+        await Converge.SeedAllAsync(cluster, cluster.Document(EntityIds.New().ToString()), new JsonObject { ["value"] = "observable" });
+        foreach (var region in cluster.Regions)
+        {
+            using var metrics = new HttpClient { BaseAddress = cluster.MetricsAddress(region) };
+            _ = await Converge.UntilAsync(() => metrics.GetStringAsync(new Uri("/metrics", UriKind.Relative)),
+                text => text.Split('\n').Any(line => line.StartsWith(series, StringComparison.Ordinal)), $"a {series} sample on {region}");
+        }
     }
 
     // One hot database does not hold back another: while a 3000-document burst replicates in one database, a single write
