@@ -108,8 +108,11 @@ lab() {
 	local job=$1 env=${2:-} out=$BASE/out/$(basename "$1" .json).out
 	(
 		if [[ -n $env ]]; then
-			TERRABASE_MASTER_KEY=$(sed -n 's/^TERRABASE_MASTER_KEY=//p' "$env")
-			export TERRABASE_MASTER_KEY
+			# The whole 0600 env file: the master key for every job, the bucket and credentials for an s3 source.
+			# Each line exports verbatim: splitting on = would eat a base64 key's padding.
+			while IFS= read -r line; do
+				export "$line"
+			done < <(grep -E '^(AWS_ENDPOINT_URL_S3|AWS_REGION|BUCKET_NAME|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|TERRABASE_MASTER_KEY|SSL_CERT_FILE)=' "$env")
 		fi
 		export TERRABASE_PITR_JOB=$job DOTNET_gcServer=0 DOTNET_GCHeapHardLimit=0x40000000
 		nice -n 19 dotnet "$LAB_DLL" --treenode-filter '/*/*/PitrLabHost/*' --output detailed
@@ -372,16 +375,25 @@ cmd_tcuts() {
 }
 
 # audit ROOT LABEL
+# pitrsrc ROOT: an s3 source for Tigris (bucket and credentials from the environment), the emulator's dir otherwise.
+pitrsrc() {
+	if [[ $TARGET == tigris ]]; then
+		echo '{"kind":"s3"}'
+	else
+		jq -nc --arg root "$1" '{kind:"dir",root:$root}'
+	fi
+}
+
 cmd_audit() {
 	local root=$1 label=$2
-	jq -n --arg root "$root" --arg db "$(db_prefix)" --arg keys "$(keys_prefix)" --arg out "$BASE/out/audit-$label-db.json" \
-		'{mode:"audit",source:{kind:"dir",root:$root},database_prefix:$db,keys_prefix:$keys,out:$out}' >"$BASE/jobs/audit-$label-db.json"
-	jq -n --arg root "$root" --arg out "$BASE/out/audit-$label-system.json" \
-		'{mode:"audit",source:{kind:"dir",root:$root},database_prefix:"v1/_system/",keys_prefix:"v1/keys/_system/",out:$out}' >"$BASE/jobs/audit-$label-system.json"
+	jq -nc --argjson src "$(pitrsrc "$root")" --arg db "$(db_prefix)" --arg keys "$(keys_prefix)" --arg out "$BASE/out/audit-$label-db.json" \
+		'{mode:"audit",source:$src,database_prefix:$db,keys_prefix:$keys,out:$out}' >"$BASE/jobs/audit-$label-db.json"
+	jq -nc --argjson src "$(pitrsrc "$root")" --arg out "$BASE/out/audit-$label-system.json" \
+		'{mode:"audit",source:$src,database_prefix:"v1/_system/",keys_prefix:"v1/keys/_system/",out:$out}' >"$BASE/jobs/audit-$label-system.json"
 	for part in db system; do
 		local lock=(flock -o "$LOCK")
 		[[ -n ${NO_LOCK:-} ]] && lock=()
-		"${lock[@]}" bash -c "$(declare -f lab log); BASE='$BASE' LAB_DLL='$LAB_DLL' lab '$BASE/jobs/audit-$label-$part.json' '${AUDIT_ENV:-$BASE/secrets/source.env}'"
+		"${lock[@]}" bash -c "$(declare -f lab log); BASE='$BASE' LAB_DLL='$LAB_DLL' lab '$BASE/jobs/audit-$label-$part.json' '${AUDIT_ENV:-${SOURCE_ENV:-$BASE/secrets/source.env}}'"
 		log "audit $label $part: $(jq -c '{verdict,problems:[.problems[].kind],totals}' "$BASE/out/audit-$label-$part.json")"
 	done
 }
@@ -438,9 +450,9 @@ cmd_path_a() {
 cmd_copy() {
 	local dest=$BASE/copies/$1 job=$BASE/jobs/download-$1.json
 	mkdir -p "$BASE/copies"
-	jq -n --arg src "$BASE/s3/src-root" --arg db "$(db_prefix)" --arg keys "$(keys_prefix)" --arg root "$dest" --arg m "$BASE/out/download-$1-manifest.json" \
-		'{mode:"download",source:{kind:"dir",root:$src},prefixes:[$db,$keys],root:$root,manifest:$m}' >"$job"
-	bash -c "$(declare -f lab log); BASE='$BASE' LAB_DLL='$LAB_DLL' lab '$job'" # a local copy of under a GB: short, no lock
+	jq -nc --argjson src "$(pitrsrc "$BASE/s3/src-root")" --arg db "$(db_prefix)" --arg keys "$(keys_prefix)" --arg root "$dest" --arg m "$BASE/out/download-$1-manifest.json" \
+		'{mode:"download",source:$src,prefixes:[$db,$keys],root:$root,manifest:$m}' >"$job"
+	bash -c "$(declare -f lab log); BASE='$BASE' LAB_DLL='$LAB_DLL' lab '$job' '${SOURCE_ENV:-}'" # a local copy of under a GB: short, no lock
 	log "copy $1: $(grep -m1 '^download:' "$BASE/out/download-$1.out" || true)"
 }
 
@@ -452,7 +464,7 @@ tstart() {
 
 # target_up LABEL ROOT [KEY_FROM]: s3-serve on ROOT plus a fresh, isolated target node that adopts the run's tenant.
 target_up() {
-	local label=$1 root=$2 from=${3:-$BASE/secrets/source.env} tdir=$BASE/targets/$1 pid
+	local label=$1 root=$2 from=${3:-${SOURCE_ENV:-$BASE/secrets/source.env}} tdir=$BASE/targets/$1 pid
 	mkdir -p "$BASE/targets"
 	if [[ ! -e $BASE/s3/t-$label.ready.json ]]; then
 		cmd_serve "t-$label" "$root"
@@ -535,7 +547,7 @@ cmd_mutate() {
 		'{mode:"mutate",from:$from,to:$to,mutation:{kind:$kind,key:$key},out:$out}' >"$job"
 	lab "$job"
 	log "fault $label: $(jq -c '{kind,key,new_key}' "$BASE/out/mutate-$label.json")"
-	[[ -n ${NO_AUDIT:-} ]] || AUDIT_ENV=$BASE/secrets/source.env NO_LOCK=1 cmd_audit "$to" "$label" || true
+	[[ -n ${NO_AUDIT:-} ]] || AUDIT_ENV="${SOURCE_ENV:-$BASE/secrets/source.env}" NO_LOCK=1 cmd_audit "$to" "$label" || true
 }
 
 # fault KIND KEY CUT LABEL: the mutated copy (made now unless mutate made it) restored at CUT on a fresh target.
@@ -666,7 +678,7 @@ delete_range() {
 		[[ -d $BASE/faults/$label-$k ]] || MUTATE_FROM=$prev NO_AUDIT=1 cmd_mutate delete_segment "${keys[$k]}" "$label-$k" >&2
 		prev=$BASE/faults/$label-$k
 	done
-	AUDIT_ENV=$BASE/secrets/source.env NO_LOCK=1 cmd_audit "$prev" "$label" >&2 || true
+	AUDIT_ENV="${SOURCE_ENV:-$BASE/secrets/source.env}" NO_LOCK=1 cmd_audit "$prev" "$label" >&2 || true
 	echo "$prev"
 }
 
@@ -729,7 +741,7 @@ defect_p1_restores() {
 			[[ -d $BASE/faults/p1a-$k ]] || MUTATE_FROM=$prev NO_AUDIT=1 cmd_mutate delete_segment "${keys[$k]}" "p1a-$k"
 			prev=$BASE/faults/p1a-$k
 		done
-		AUDIT_ENV=$BASE/secrets/source.env NO_LOCK=1 cmd_audit "$prev" p1a || true
+		AUDIT_ENV="${SOURCE_ENV:-$BASE/secrets/source.env}" NO_LOCK=1 cmd_audit "$prev" p1a || true
 		NO_RESTART=1 cmd_path_b "$prev" p1a C2
 	fi
 	read -r final final_at < <(jq -r '[.generations[].segments[]] | max_by(.at_ms) | "\(.key) \(.at_ms)"' "$BASE/out/audit-src-db.json")
@@ -975,15 +987,26 @@ matrix-monitored)
 	echo $! >"$BASE/out/monitor.pid"
 	log "monitor started (pid $(cat "$BASE/out/monitor.pid")) args: ${MONITOR_ARGS:-G1 defaults}"
 	cmd_load_a
-	cmd_load_b
+	# PLAIN=1 runs load-b with no restart and no SIGKILL: current main's crash recovery rebuilds a killed
+	# single node's files only from a replica peer ("no certified refill from an intact source"), so the CK
+	# scenario cannot pass without a second node; the kill path is reported as a product finding instead.
+	if [[ ${PLAIN:-0} == 1 ]]; then
+		cmd_load_b_plain
+	else
+		cmd_load_b
+	fi
 	cmd_mutations
 	cmd_audit "$BASE/s3/src-root" src
 	snapcuts
 	cmd_tcuts
 	cmd_path_a
 	cmd_stop
-	if [[ ${FAULTS:-0} == 1 ]]; then
+	if [[ ${PATHB:-1} == 1 ]]; then
 		cmd_copy pristine
+		cmd_copy pathb
+		cmd_path_b "$BASE/copies/pathb" pathb
+	fi
+	if [[ ${FAULTS:-0} == 1 ]]; then
 		cmd_fault_matrix
 	fi
 	if [[ -s $BASE/out/monitor.pid ]] && kill -0 "$(cat "$BASE/out/monitor.pid")" 2>/dev/null; then
