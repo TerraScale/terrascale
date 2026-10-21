@@ -446,7 +446,7 @@ internal sealed partial class SqliteStorageTransaction(
     private T WithQueryBudget<T>(Func<T> execute, CancellationToken cancellationToken, QueryObservation? observation = null)
     {
         session.ObserveQueries(observation);
-        var budget = StartQueryBudget();
+        var budget = StartQueryBudget(cancellationToken);
         try
         {
             var result = execute();
@@ -473,7 +473,7 @@ internal sealed partial class SqliteStorageTransaction(
     private QueryBudget? _queryBudget;
 
     // The handler and its removal run only on workers while this transaction owns the connection.
-    private QueryBudget StartQueryBudget()
+    private QueryBudget StartQueryBudget(CancellationToken cancellationToken)
     {
         var budget = new QueryBudget(store.Time, store.QueryBudget,
             !store.IsSystem && QosContext.Current is { } tenant ? QosPolicy.For(tenant.Plan) : null);

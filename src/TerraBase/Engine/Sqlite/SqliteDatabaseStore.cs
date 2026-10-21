@@ -60,7 +60,7 @@ internal sealed partial class SqliteDatabaseStore(
     /// bootstrap SQL is a format change.
     /// </summary>
     internal static readonly byte[] FormatDigest =
-        SHA256.HashData(Encoding.UTF8.GetBytes(SystemSchemaSql + ClientSchemaSql + UniqueSchemaSql + ChangeLogTriggerSql));
+        SHA256.HashData(Encoding.UTF8.GetBytes(SystemSchemaSql + ClientSchemaSql + UniqueSchemaSql));
 
     // Greenfield bootstrap only: an older on-disk shape must be discarded, never upgraded. Turso stores only rowid tables
     // and its provider splits command text at every ';', so there are no WITHOUT ROWID tables and no triggers
@@ -1335,9 +1335,6 @@ internal sealed partial class SqliteDatabaseStore(
         RenewIncarnation(connection, transaction);
         cancellationToken.ThrowIfCancellationRequested();
         transaction.Commit();
-        using var trigger = new Turso.TursoConnection(new Turso.TursoConnectionStringBuilder { DataSource = connection.DataSource }.ConnectionString);
-        trigger.Open();
-        trigger.ExecuteNonQuery(ChangeLogTriggerSql);
     }
 
     // Returns the schema version (0 for an empty file); throws for any other format. Versions never increase: a format
