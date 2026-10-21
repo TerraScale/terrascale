@@ -3,7 +3,6 @@ using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management;
 

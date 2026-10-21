@@ -1197,6 +1197,7 @@ internal sealed partial class SqliteStorageTransaction(
             try
             {
                 result = new CommitResult(offset, IsClient && _captured > 0 && !_captureSuspended ? ReadCommitMarker() : null);
+                Committed = result;
             }
             catch
             {
@@ -1209,17 +1210,9 @@ internal sealed partial class SqliteStorageTransaction(
 
                 throw;
             }
-
-            Committed = result;
-            Follow("the after-commit hook", store.AfterSqliteCommit);
-            if (ChangedReaderState)
-            {
-                result = new CommitResult(offset, IsClient && _captured > 0 && !_captureSuspended ? ReadCommitMarker() : null);
-                Committed = result;
-            }
             finally
             {
-                // A marker failure cannot skip cache invalidation or waking waiters for the committed write.
+                // A marker failure cannot skip cache invalidation for the committed write.
                 Follow("the after-commit hook", store.AfterSqliteCommit);
                 if (ChangedReaderState)
                 {
@@ -1228,20 +1221,9 @@ internal sealed partial class SqliteStorageTransaction(
 
                 if (_statisticsChanged)
                 {
-                    // Sessions opened before ANALYZE still use the old statistics.
+                    // Only query plans depend on it: a session opened before the ANALYZE plans without the new statistics.
                     Follow("moving the statistics generation", store.StatisticsChanged);
                 }
-
-                if (_offset is not null)
-                {
-                    Follow("the commit notification", committed);
-                }
-            }
-
-            if (_statisticsChanged)
-            {
-                // Only query plans depend on it: a session opened before the ANALYZE plans without the new statistics.
-                Follow("moving the statistics generation", store.StatisticsChanged);
             }
 
             return result;

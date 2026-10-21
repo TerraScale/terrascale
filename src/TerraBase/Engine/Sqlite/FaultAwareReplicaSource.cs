@@ -61,6 +61,9 @@ internal sealed class FaultAwareReplicaSource(
     public ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken) =>
         ReadAsync(database, null, () => source.HorizonAsync(database, cancellationToken), RefuseFrontier, cancellationToken);
 
+    public ValueTask<RefillBasis?> RefillBasisAsync(TenantContext database, CancellationToken cancellationToken) =>
+        ReadAsync(database, null, () => source.RefillBasisAsync(database, cancellationToken), static () => null, cancellationToken);
+
     public ValueTask<int?> ForgetAsync(
         TenantContext database, Ulid incarnation, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
         ReadAsync(database, incarnation, () => source.ForgetAsync(database, incarnation, keys, horizon, cancellationToken), static () => null, cancellationToken);

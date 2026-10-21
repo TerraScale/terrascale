@@ -206,6 +206,21 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         database == ChangeGroups.System ? default
         : await ReadAsync(database, (transaction, now) => transaction.GetHorizonAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
 
+    public async ValueTask<RefillBasis?> RefillBasisAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        {
+            return null;
+        }
+
+        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            var (collected, applied) = await transaction.GetRefillBasisAsync(_engine.Member.Clock.Tick(), cancellationToken).ConfigureAwait(false);
+            return new RefillBasis(collected, applied);
+        }
+    }
+
     public async ValueTask<int?> ForgetAsync(
         TenantContext database, Ulid incarnation, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken)
     {

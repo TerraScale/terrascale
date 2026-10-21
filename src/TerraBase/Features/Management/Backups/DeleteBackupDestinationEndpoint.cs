@@ -4,7 +4,6 @@ using TerraBase.Features.Backup;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
-using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management.Backups;
 
