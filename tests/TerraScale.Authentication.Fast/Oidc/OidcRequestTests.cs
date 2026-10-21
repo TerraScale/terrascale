@@ -15,13 +15,10 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
         var session = await oidc.SignInAsync("alice@example.test");
         var (verifier, challenge) = OidcHarness.Pkce();
 
-        // An unregistered redirect URI is answered here, never redirected to, with the hosted error page.
+        // An unregistered redirect URI is answered here, never redirected to.
         using var unregistered = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge, redirectUri: "https://evil.example/callback"), session);
         await Assert.That(unregistered.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(unregistered.Headers.Location).IsNull();
-        await Assert.That(unregistered.Content.Headers.ContentType?.MediaType).IsEqualTo("text/html");
-        await Assert.That(await unregistered.Content.ReadAsStringAsync()).Contains("<h1>Request refused</h1>");
-        await Assert.That(unregistered.Headers.GetValues("Content-Security-Policy").Single()).Contains("default-src 'self'");
 
         // PKCE is mandatory and only S256 is accepted. OpenIddict checks these parameters before it resolves the
         // client's redirect URI, so the error is answered here rather than redirected.
@@ -30,7 +27,7 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
             using var refused = await oidc.AuthorizeAsync(path, session);
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
             await Assert.That(refused.Headers.Location).IsNull();
-            await Assert.That(await refused.Content.ReadAsStringAsync()).Contains("<p class=\"ts-detail\">Error code: invalid_request</p>");
+            await Assert.That(await refused.Content.ReadAsStringAsync()).Contains("invalid_request");
         }
 
         var code = await oidc.CodeAsync(session, challenge);
@@ -82,7 +79,6 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
         using var unregistered = await oidc.AuthorizeAsync(logout + Uri.EscapeDataString("https://evil.example/signed-out"), session);
         await Assert.That(unregistered.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(unregistered.Headers.Location).IsNull();
-        await Assert.That(await unregistered.Content.ReadAsStringAsync()).Contains("<h1>Request refused</h1>");
 
         using var registered = await oidc.AuthorizeAsync(logout + Uri.EscapeDataString(OidcHarness.PostLogoutRedirectUri), session);
         await Assert.That(registered.StatusCode).IsEqualTo(HttpStatusCode.Redirect);

@@ -164,8 +164,7 @@ internal static class SignInFlow
         context.Response.Headers.RetryAfter = retryAfter;
         context.Response.Headers.CacheControl = "no-store";
         return SignInPageModel.Render(context,
-            new SignInPageModel(step, OidcIssuer.Slug, email, next, $"Too many attempts. Try again in {retryAfter} seconds.") { Limited = true },
-            StatusCodes.Status429TooManyRequests);
+            new SignInPageModel(step, OidcIssuer.Slug, email, next, $"Too many attempts. Try again in {retryAfter} seconds."), StatusCodes.Status429TooManyRequests);
     }
 
     public static bool WrongSlug(HttpContext context) => !string.Equals(context.GetRouteValue("slug") as string, OidcIssuer.Slug, StringComparison.Ordinal);
