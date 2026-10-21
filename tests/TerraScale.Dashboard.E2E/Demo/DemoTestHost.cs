@@ -18,7 +18,7 @@ public static class DemoTestHost
             await DatastarEvents.PatchSignalsAsync(context, new { count = 1 });
             await DatastarEvents.PatchSignalsAsync(context, new { count = 2 });
         });
-        app.MapGet("/__test/elements", (HttpContext context) => DatastarEvents.PatchElementsAsync(context, TerraScale.Dashboard.UI.Slices.RegionMap.Create()));
+        app.MapGet("/__test/elements", (HttpContext context) => DatastarEvents.PatchElementsAsync(context, TerraScale.Dashboard.Shared.UI.Slices.RegionMap.Create()));
         BillingWebhookScenario.MapRoutes(app);
         InvitationExpiryScenario.MapRoutes(app);
         OrganizationProviderScenario.MapRoutes(app);

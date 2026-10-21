@@ -2,7 +2,6 @@ using System.Net;
 using System.Text.Json;
 using TerraScale.Dashboard.E2E.Features.Billing;
 using TUnit.Core;
-using TerraScale.Dashboard.E2E.Features.Billing;
 
 namespace TerraScale.Dashboard.E2E.Features.Organizations;
 

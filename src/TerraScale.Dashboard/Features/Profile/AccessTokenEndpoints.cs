@@ -1,5 +1,5 @@
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Profile;
 
@@ -41,7 +41,7 @@ public static class AccessTokenEndpoints
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
             try { await tokens.RevokeAsync(context, id, http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-            return HttpRedirects.SeeOther("/profile?tab=access-tokens");
+            return HttpRedirects.SeeOther("/profile?tab=danger");
         });
         return endpoints;
     }

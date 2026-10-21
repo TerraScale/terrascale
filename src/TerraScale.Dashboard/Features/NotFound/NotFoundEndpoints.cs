@@ -1,7 +1,7 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.NotFound;
 

@@ -1,5 +1,5 @@
 using TerraScale.DotNet.TerraBase;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Imports;
 

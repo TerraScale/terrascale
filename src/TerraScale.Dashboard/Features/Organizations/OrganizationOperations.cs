@@ -1,3 +1,4 @@
+using TerraScale.Dashboard.Features.Auth;
 
 namespace TerraScale.Dashboard.Features.Organizations;
 

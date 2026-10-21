@@ -1,6 +1,8 @@
 using TerraScale.Dashboard.Features.Onboarding;
 using TerraScale.Dashboard.Shared.UI;
 
+using TerraScale.Dashboard.Features.Billing.Invoices;
+using TerraScale.Dashboard.Features.Billing.Plans;
 namespace TerraScale.Dashboard.Features.Billing;
 
 public sealed record BillingPage(ShellModel Shell, IReadOnlyList<BillingPlan> Plans, string Error = "")

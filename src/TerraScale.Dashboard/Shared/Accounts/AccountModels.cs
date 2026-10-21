@@ -49,8 +49,8 @@ public sealed class OrganizationRecord
     public bool PaidExcess { get; set; }
     public bool Archived { get; set; }
     public bool DeletionRequested { get; set; }
-    public TerraScale.Dashboard.Features.Billing.InternalBillingPolicy? InternalBilling { get; set; }
-    public Dictionary<string, TerraScale.Dashboard.Features.Billing.InternalBillingAlert> InternalBillingAlerts { get; set; } = [];
+    public InternalBillingPolicy? InternalBilling { get; set; }
+    public Dictionary<string, InternalBillingAlert> InternalBillingAlerts { get; set; } = [];
     [JsonIgnore] public string PendingOwnerUserId { get; set; } = "";
     [JsonIgnore] public DateTimeOffset? PendingOwnerExpiresAt { get; set; }
     [JsonIgnore] public Dictionary<string, MemberRecord> Members { get; set; } = [];
@@ -97,8 +97,19 @@ public sealed class ProjectRecord
     public long SpendCapCents { get; set; }
     public OperationLimits OperationLimits { get; set; } = new();
     public Dictionary<string, DatabaseRecord> Databases { get; set; } = [];
-    public Dictionary<string, TerraScale.Dashboard.Features.QuerySubscriptions.SharedResultConfiguration> SharedResultConfigs { get; set; } = [];
+    public Dictionary<string, SharedResultConfiguration> SharedResultConfigs { get; set; } = [];
     [JsonIgnore] public DateTimeOffset CreatedAt { get; set; }
+}
+
+public sealed class SharedResultConfiguration
+{
+    public string Id { get; set; } = "";
+    public string DatabaseId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Query { get; set; } = "";
+    public string Transport { get; set; } = "";
+    public string Status { get; set; } = "saved";
+    public DateTimeOffset CreatedAt { get; set; }
 }
 
 public sealed class DatabaseRecord

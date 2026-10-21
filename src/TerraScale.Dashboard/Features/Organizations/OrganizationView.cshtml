@@ -19,7 +19,7 @@ else
     else if (Model.Tab == "organization")
     {
         var current = Model.Shell.Context.Project;
-        var plan = org.BillingStatus == "billing_required" ? null : TerraScale.Dashboard.Features.Billing.PlanCatalog.For(org);
+        var plan = org.BillingStatus == "billing_required" ? null : TerraScale.Dashboard.Shared.Accounts.PlanCatalog.For(org);
         var pending = Model.InvitationRows.Count(item => item.Status == "pending");
         <dl class="ts-kpis" aria-label="Organization summary">
             <div class="ts-kpi"><dt class="ts-kpi-label"><span class="ts-org-kpi-icon" aria-hidden="true">@Icons.Render("FolderKanban", 16)</span>Projects</dt><dd class="ts-kpi-value">@org.Projects.Count</dd><dd class="ts-kpi-detail">@(current is null ? "No project selected" : current.Name + " is current") · @org.Projects.Values.Sum(project => project.Databases.Count) databases</dd></div>
@@ -50,7 +50,7 @@ else
         <section class="ts-card ts-card-boxed ts-card-flush" id="projects" aria-labelledby="projects-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="projects-title">Projects</h2><p class="ts-card-description">@(org.Kind == "personal" ? "Personal workspace" : "Business workspace") · Projects returned by the TerraScale Dashboard API</p></div>@if (Model.CanProvision) { <div class="ts-card-actions"><button class="ts-btn ts-btn-primary ts-btn-sm" type="button" command="show-modal" commandfor="create-project">@Icons.Render("Plus", 16)<span>Create project</span></button></div> }</header><div class="ts-card-body">
         @if (org.Projects.Count == 0) { <div class="ts-empty" role="status"><p class="ts-empty-title">No projects returned</p><p class="ts-empty-detail">The API did not return projects for this organization.</p></div> }
         else { <div class="ts-table-wrap" tabindex="0" role="region" aria-label="Organization projects"><table class="ts-table"><thead><tr><th>Project</th><th>Slug</th><th>Regions</th><th>Primary</th><th>Backup</th><th class="ts-table-num">Databases</th><th>Status</th><th>Created</th><th class="ts-table-actions">Actions</th></tr></thead><tbody>@foreach (var project in org.Projects.Values.OrderBy(item => item.Name))
-        { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationProjectRow, TerraScale.Dashboard.Features.Organizations.ProjectDialogModel>(new(Model, project))) }
+        { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Projects.OrganizationProjectRow, TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialogModel>(new(Model, project))) }
         </tbody></table></div> }</div></section>
 
     }
@@ -58,13 +58,13 @@ else
     {
         @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationMembers, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))
     }
-    else if (Model.Tab == "audit") { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationAuditView, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model)) }
+    else if (Model.Tab == "audit") { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Audit.OrganizationAuditView, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model)) }
     else if (Model.Tab == "danger")
     {
-        <section class="ts-card ts-card-boxed ts-org-danger" id="organization-danger" aria-labelledby="organization-danger-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="organization-danger-title">Danger zone</h2><p class="ts-card-description">Leave, transfer, or delete this organization.</p></div></header><div class="ts-card-body">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationOwnershipView, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))</div></section>
+        <section class="ts-card ts-card-boxed ts-org-danger" id="organization-danger" aria-labelledby="organization-danger-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="organization-danger-title">Danger zone</h2><p class="ts-card-description">Leave, transfer, or delete this organization.</p></div></header><div class="ts-card-body">@(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Lifecycle.OrganizationOwnershipView, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model))</div></section>
     }
-    @if (Model.Tab == "projects" && Model.CanProvision) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.ProjectDialog, TerraScale.Dashboard.Features.Organizations.ProjectDialogModel>(new(Model))) }
-    @if (Model.OpenCreateOrganization) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.OrganizationWizardView, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model)) }
+    @if (Model.Tab == "projects" && Model.CanProvision) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialog, TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialogModel>(new(Model))) }
+    @if (Model.OpenCreateOrganization) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Wizard.OrganizationWizardView, TerraScale.Dashboard.Features.Organizations.OrganizationPage>(Model)) }
 </main>
 }
 @functions {

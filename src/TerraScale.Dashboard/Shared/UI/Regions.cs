@@ -1,4 +1,4 @@
-namespace TerraScale.Dashboard.UI;
+namespace TerraScale.Dashboard.Shared.UI;
 
 // Display facts for region codes. Codes match case-insensitively; unknown codes get no name or flag.
 public static class Regions

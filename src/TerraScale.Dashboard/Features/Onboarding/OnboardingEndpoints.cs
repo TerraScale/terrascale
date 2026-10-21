@@ -2,6 +2,7 @@ using System.Net.Mail;
 using System.Text;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Shared.UI;
+using TerraScale.Dashboard.Shared.Validation;
 
 namespace TerraScale.Dashboard.Features.Onboarding;
 

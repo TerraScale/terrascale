@@ -64,7 +64,7 @@ public sealed class DatabaseListMetricsJourneyTests(DashboardRootFixture fixture
         {
             command = "plan",
             organizationId = identity.RootElement.GetProperty("organizationId").GetString()!,
-            value = TerraScale.Dashboard.Features.Accounts.OrganizationRecord.StarterPlanId
+            value = TerraScale.Dashboard.Shared.Accounts.OrganizationRecord.StarterPlanId
         }))
             await Assert.That(plan.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var csrf = await HttpJourney.CsrfAsync(client, "/databases");

@@ -13,7 +13,7 @@ using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
-using AccountService = TerraScale.Dashboard.Features.Accounts.AccountService;
+using AccountService = TerraScale.Dashboard.Shared.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.E2E.PagePaymentAudit.Oct13.PaymentWebhookCorrectness;
 

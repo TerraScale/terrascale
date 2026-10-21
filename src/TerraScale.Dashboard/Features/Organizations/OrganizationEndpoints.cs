@@ -167,7 +167,7 @@ public static class OrganizationEndpoints
                     _ => "cancel"
                 }, id ?? form["userID"].ToString(), form["role"].ToString(), http.RequestAborted);
             }
-            return AuthEndpoints.SeeOther(operation.StartsWith("ownership", StringComparison.Ordinal) ? "/organization?tab=danger" : "/organization?tab=members");
+            return HttpRedirects.SeeOther(operation.StartsWith("ownership", StringComparison.Ordinal) ? "/organization?tab=danger" : "/organization?tab=members");
         }
         catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode, operation.StartsWith("ownership", StringComparison.Ordinal) ? "danger" : null); }
     }
@@ -183,7 +183,7 @@ public static class OrganizationEndpoints
             if (operation == "leave") await lifecycle.LeaveAsync(context, http.RequestAborted);
             else if (operation == "delete-project") await lifecycle.DeleteProjectAsync(context, projectId!, form["confirmation"].ToString(), http.RequestAborted);
             else await lifecycle.RequestDeletionAsync(context, form["confirmation"].ToString(), http.RequestAborted);
-            return AuthEndpoints.SeeOther(operation == "delete-project" ? "/organization?tab=projects" : operation == "delete" ? "/organization?tab=danger" : "/organization");
+            return HttpRedirects.SeeOther(operation == "delete-project" ? "/organization?tab=projects" : operation == "delete" ? "/organization?tab=danger" : "/organization");
         }
         catch (AccountAccessException error) { return await PageAsync(http, context, placement, error.Message, error.StatusCode, operation == "delete-project" ? "projects" : "danger"); }
     }

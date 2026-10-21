@@ -20,7 +20,7 @@ public static class AuthenticationConsole
             {
                 var section = http.Request.Query["section"].ToString();
                 return AuthenticationSection.Find(section) is not null
-                    ? AuthEndpoints.SeeOther(prefix + "/" + Uri.EscapeDataString(section))
+                    ? HttpRedirects.SeeOther(prefix + "/" + Uri.EscapeDataString(section))
                     : await PageAsync(http, sessions, accounts, "overview");
             });
             endpoints.MapGet(prefix + "/{section}", async (HttpContext http, string section, DashboardSessions sessions, AccountService accounts) => await PageAsync(http, sessions, accounts, section));
@@ -46,7 +46,7 @@ public static class AuthenticationConsole
         if (section is null) return Results.NotFound();
         var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
         if (context is null) return AccountEndpoints.LoginRedirect(http);
-        if (context.Project is null) return AuthEndpoints.SeeOther("/");
+        if (context.Project is null) return HttpRedirects.SeeOther("/");
         // Only the public demo registers this; production has no binding and keeps the 503 unavailable page.
         var data = http.RequestServices.GetService<IAuthenticationDemoData>()?.Snapshot;
         var page = AuthenticationView.Create(new(ShellModel.For(http, context, key == "overview" ? "Authentication" : "Authentication · " + section.Title), section, http.Request.Query["q"].ToString(), data));

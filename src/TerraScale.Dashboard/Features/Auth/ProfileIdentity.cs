@@ -14,7 +14,7 @@ public static class ProfileAuthEndpoints
         SubmitAsync(context, sessions, async (session, form) =>
         {
             await identity.StartPasswordChangeAsync(session, form["currentPassword"].ToString(), EnrollmentEndpoints.ClientIp(context), context.RequestAborted);
-            return AuthEndpoints.SeeOther("/profile?tab=security&status=code-sent");
+            return HttpRedirects.SeeOther("/profile?tab=security&status=code-sent");
         });
 
     private static Task<IResult> CompleteAsync(HttpContext context, DashboardSessions sessions, IProfileIdentityGateway identity) =>
@@ -25,7 +25,7 @@ public static class ProfileAuthEndpoints
             // ts-auth signed the user out everywhere; remove persistent browser records as well as the current cookie.
             await sessions.RevokeUserAsync(session.UserId, context.RequestAborted);
             await sessions.EndAsync(context);
-            return AuthEndpoints.SeeOther("/login");
+            return HttpRedirects.SeeOther("/login");
         });
 
     private static async Task<IResult> SubmitAsync(HttpContext context, DashboardSessions sessions, Func<SessionRecord, IFormCollection, Task<IResult>> action)
@@ -34,7 +34,7 @@ public static class ProfileAuthEndpoints
         var form = await context.Request.ReadFormAsync(context.RequestAborted);
         if (!Csrf.Validate(context, form)) return Results.StatusCode(StatusCodes.Status403Forbidden);
         var session = await sessions.ReadAsync(context);
-        if (session is null) return AuthEndpoints.SeeOther("/login");
+        if (session is null) return HttpRedirects.SeeOther("/login");
         var budget = context.RequestServices.GetRequiredService<IAuthAttemptBudget>();
         try
         {

@@ -1,7 +1,7 @@
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Analytics;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Databases;
 
@@ -14,14 +14,14 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     public int Ready => All.Count(database => database.Status == "ready");
     public int Progress => All.Count(database => database.Status is "provisioning" or "accepted" or "pending");
     public int Failed => All.Count(database => database.Status == "failed");
-    public IReadOnlyList<string> Regions => All.SelectMany(DatabaseService.Regions).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase).ToArray();
+    public IReadOnlyList<string> Regions => All.SelectMany(DatabaseService.Regions).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(TerraScale.Dashboard.Shared.UI.Regions.Rank).ThenBy(code => code, StringComparer.OrdinalIgnoreCase).ToArray();
     public IReadOnlyList<string> Selected => Selection ?? (Context.Project is null || Context.Project.Region.Length == 0 ? [] : [Context.Project.Region]);
     public bool CanProvision => Context.Organization?.CanProvision(Context.UserId) ?? false;
     public string Description => Search.Length == 0 ? $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} in this project" : $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} matching \"{Search}\"";
     public static string Tone(string status) => status switch { "ready" => "success", "failed" => "danger", "provisioning" or "accepted" or "pending" => "warning", _ => "neutral" };
     // Shown while the only listed region is the one that answered: TerraBase publishes no region catalog yet.
     public const string SingleRegionNotice = "TerraBase does not list its other regions yet, so adding replica regions is unavailable here.";
-    public static string RegionDisplay(string code) => code switch { "" => "Not configured", _ => TerraScale.Dashboard.UI.Regions.Name(code) is { Length: > 0 } name ? $"{code.ToLowerInvariant()} · {name}" : code.ToLowerInvariant() };
+    public static string RegionDisplay(string code) => code switch { "" => "Not configured", _ => TerraScale.Dashboard.Shared.UI.Regions.Name(code) is { Length: > 0 } name ? $"{code.ToLowerInvariant()} · {name}" : code.ToLowerInvariant() };
     public static string Bytes(long bytes) => bytes < 1024 ? $"{bytes} B" : bytes < 1024 * 1024 ? $"{bytes / 1024d:0.0} KiB" : $"{bytes / (1024d * 1024):0.0} MiB";
     public DatabaseListMetrics? Metrics { get; init; }
     public string Range { get; init; } = "24h";
@@ -33,8 +33,8 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     {
         var metric = Metrics?.Databases.GetValueOrDefault(databaseId);
         string N(long value) => value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
-        yield return ("Reads", metric?.Reads is { } reads ? TerraScale.Dashboard.Features.Home.OperationChart.Compact(reads) : null, metric?.Reads is { } r ? N(r) + " reads in " + Range : "", metric?.ReadTrend, "ts-cat-1");
-        yield return ("Writes", metric?.Writes is { } writes ? TerraScale.Dashboard.Features.Home.OperationChart.Compact(writes) : null, metric?.Writes is { } w ? N(w) + " puts, patches and deletes in " + Range : "", metric?.WriteTrend, "ts-cat-2");
+        yield return ("Reads", metric?.Reads is { } reads ? TerraScale.Dashboard.Shared.Charts.ChartGeometry.Compact(reads) : null, metric?.Reads is { } r ? N(r) + " reads in " + Range : "", metric?.ReadTrend, "ts-cat-1");
+        yield return ("Writes", metric?.Writes is { } writes ? TerraScale.Dashboard.Shared.Charts.ChartGeometry.Compact(writes) : null, metric?.Writes is { } w ? N(w) + " puts, patches and deletes in " + Range : "", metric?.WriteTrend, "ts-cat-2");
         yield return ("Storage", metric?.StorageBytes is { } bytes ? TerraScale.Dashboard.Features.Usage.UsageFormat.Bytes(bytes) : null, metric?.StorageBytes is { } b ? N(b) + " bytes in the latest bucket, summed across every reporting region" : "", null, "");
         yield return ("p95 latency", metric?.P95Ms is { } ms ? ms.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " ms" : null, "Highest region p95 in the latest bucket", null, "");
     }
@@ -107,7 +107,7 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
     public IReadOnlyList<DatabaseRecord> Branches => Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal).ToArray();
     public string Placement => DatabaseService.Regions(Database).Count == 0 ? DatabasesPage.RegionDisplay("")
         : string.Join(", ", DatabaseService.Regions(Database).Select(DatabasesPage.RegionDisplay));
-    public (string Tone, string Title, string Body) CreatedState => DatabasesPage.State(Database.Status) switch
+    public (string Tone, string Title, string Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
     {
         "success" => ("success", Database.Name + " is ready", DatabaseService.Regions(Database).Count == 1
             ? "It serves " + Placement + ". Add a collection in Documents, or connect with an API key."
@@ -211,15 +211,4 @@ public sealed record DatabaseReplicationModel(TerraScale.Dashboard.Features.Usag
     }
     public double? P95(string region) => Activity?.Regions.FirstOrDefault(row => row.Code.Equals(region, StringComparison.OrdinalIgnoreCase))?.LatestP95Ms;
     public string AnalyticsPath => "/analytics?database=" + Uri.EscapeDataString(DatabaseId) + "&project=" + Uri.EscapeDataString(ProjectId) + "&range=" + Range;
-}
-
-public sealed record DatabaseFrameModel(DatabaseRecord Database, string Tab, string Collection = "")
-{
-    public static readonly (string Key, string Label)[] Tabs = [("overview", "Overview"), ("documents", "Documents"), ("sql", "SQL"), ("schema", "Schema"), ("indexes", "Indexes"), ("replication", "Replication"), ("backups", "Backups"), ("branches", "Branches"), ("import", "Import and export"), ("danger", "Danger zone")];
-    public static string Title(string section) => section switch
-    {
-        "sql" => "SQL console",
-        "history" => "Document history",
-        _ => Tabs.FirstOrDefault(tab => tab.Key == section).Label ?? section
-    };
 }
