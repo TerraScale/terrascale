@@ -348,9 +348,11 @@ jobs:
             area: auth
             token: FLY_TOKEN_TS_AUTH
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
+      # ghcr.io/terrascale/<target>: the multi-arch images ts-orch runs.
+      packages: write
     steps:
       - *checkout
       - name: Skip a superseded main before building
@@ -380,6 +382,33 @@ jobs:
           cache-from: ${{ format('type=gha,scope={0}', matrix.area) }}
           build-args: *build-args
           push: true
+      # ghcr gets linux/amd64 + linux/arm64 (arm64 cross-published). Never blocks the Fly rollout.
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: steps.current.outputs.current == 'true'
+        continue-on-error: true
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        id: ghcr
+        if: steps.current.outputs.current == 'true'
+        continue-on-error: true
+        with:
+          context: terrascale
+          file: terrascale/Dockerfile
+          build-contexts: ts-dotnet=ts-dotnet
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/terrascale/${{ matrix.target }}:${{ github.sha }}
+            ghcr.io/terrascale/${{ matrix.target }}:main
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: ${{ format('type=gha,scope={0}', matrix.area) }}
+          build-args: *build-args
+          push: true
+      - if: steps.ghcr.outputs.digest != ''
+        run: echo "ghcr.io/terrascale/${{ matrix.target }}@${{ steps.ghcr.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
 
   preview:
     needs: test

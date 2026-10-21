@@ -5,7 +5,8 @@
 # this same tree (Makefile TERRABASE_BINARY).
 
 # Match global.json and keep the SDK's targeting packs aligned with locked NuGet dependencies.
-FROM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.1-resolute@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675 AS sdk
+# Build stages run on the builder's platform; the arm64 images cross-publish (publish-* stages).
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.1-resolute@sha256:d0a39ca4acefe992f26030f8fb8c60e1b14ac088822cb3fdfbe536ecf843a675 AS sdk
 
 FROM sdk AS base
 # Test hosts retain the eight-CPU .NET budget across runner types.
@@ -118,9 +119,14 @@ COPY --from=slow-terrabase-run /slow /terrabase/
 # runtime-deps base (6 MB: no shell, no package manager). Every consumer reuses its area's compiled/published build layer.
 # CI deployment needs this same run's `test`. Run admin commands with `fly ssh console -C '/app/<binary> ...'`.
 # root: Fly mounts volumes root-owned.
+# A linux/arm64 target (ghcr images, CI `images` job) republishes for linux-arm64; amd64 keeps the build stage's /out.
 FROM build-terrabase AS publish-terrabase
+ARG TARGETARCH TERRABASE_REVISION
+RUN if [ "$TARGETARCH" = arm64 ]; then rm -rf /out && make terrabase-publish RUNTIME=linux-arm64 PUBLISH_DIR=/out; fi
 
 FROM build-auth AS publish-ts-auth
+ARG TARGETARCH TS_AUTH_REVISION
+RUN if [ "$TARGETARCH" = arm64 ]; then rm -rf /out && make auth-publish RUNTIME=linux-arm64 PUBLISH_DIR=/out; fi
 
 # Fly mounts TerraBase's volume at /data.
 FROM mcr.microsoft.com/dotnet/runtime-deps:11.0-resolute-chiseled AS terrabase
