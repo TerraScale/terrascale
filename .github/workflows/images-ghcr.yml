@@ -44,4 +44,6 @@ jobs:
           # Reads CI's main layer cache; never writes it.
           cache-from: type=gha,scope=dashboard-image
           push: true
-      - run: echo "ghcr.io/terrascale/ts-dashboard@${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+      # Index digest plus each platform's child digest (ts-orch specs pin the linux/arm64 child).
+      - run: |
+          { echo '```'; docker buildx imagetools inspect "ghcr.io/terrascale/ts-dashboard@${{ steps.push.outputs.digest }}"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
