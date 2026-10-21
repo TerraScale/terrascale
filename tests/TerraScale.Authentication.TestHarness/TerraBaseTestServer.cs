@@ -422,7 +422,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         try
         {
             using var entry = JsonDocument.Parse(line.AsMemory(json));
-            return entry.RootElement.TryGetProperty("address", out var address) && Uri.TryCreate(address.GetString(), UriKind.Absolute, out var uri) ? uri : null;
+            // Outside Development the public and metrics listeners bind every interface ([::]); reach them on loopback.
+            return entry.RootElement.TryGetProperty("address", out var address)
+                && Uri.TryCreate(address.GetString()?.Replace("[::]", "127.0.0.1", StringComparison.Ordinal), UriKind.Absolute, out var uri) ? uri : null;
         }
         catch (JsonException)
         {
