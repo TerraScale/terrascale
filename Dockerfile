@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 # The final stage is the actual application. Only DEMO=true selects its in-memory demo providers.
 
-FROM node:24-bookworm-slim AS node-modules
+# Build stages run on the builder's platform; the output is portable IL, so one publish serves amd64 and arm64.
+FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS node-modules
 # The asset build's npm project.
 WORKDIR /src/src/TerraScale.Dashboard/web
 COPY src/TerraScale.Dashboard/web/package.json src/TerraScale.Dashboard/web/package-lock.json src/TerraScale.Dashboard/web/.npmrc ./
@@ -9,7 +10,7 @@ RUN --mount=type=cache,target=/root/.npm \
     npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
 
 # The SDK pinned by global.json.
-FROM mcr.microsoft.com/dotnet/sdk:10.0.401-noble AS publish
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.401-noble AS publish
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 # The project build bundles CSS and JS with node (BundleDashboardAssets).
 COPY --from=node-modules /usr/local/bin/node /usr/local/bin/node
