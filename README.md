@@ -41,6 +41,7 @@ fly secrets unset DEMO --app ts-dashboard       # serve the real application
 ## Off Fly
 Production off Fly needs `TS_DASHBOARD_TERRABASE_URL` (TerraBase's private listener, e.g. `http://127.0.0.1:8081`) and
 listens on `ASPNETCORE_URLS` (default port 8080); a loopback TLS edge must send `X-Forwarded-Proto` and `X-Forwarded-For`.
+Each secret may instead arrive as a file named by `<NAME>_FILE` (ts-orch delivers OCI Vault secrets that way).
 
 More: [development](docs/development.md), [migration status](docs/csharp-migration.md),
 [zero-configuration contract](docs/zero-configuration.md).

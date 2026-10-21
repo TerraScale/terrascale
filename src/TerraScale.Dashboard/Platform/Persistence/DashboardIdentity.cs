@@ -1,8 +1,7 @@
 namespace TerraScale.Dashboard.Platform.Persistence;
 
-// Fly secrets are the only secret store: `fly secrets set` delivers them as
-// environment variables. No file, default or fallback exists, and the values
-// are never logged or echoed.
+// Each secret arrives as an environment variable, or as a file named by <NAME>_FILE (ts-orch delivers OCI Vault
+// secrets as files). No default or fallback exists, and the values are never logged or echoed.
 public interface IDashboardIdentity
 {
     Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken);
@@ -28,8 +27,8 @@ public sealed class DashboardIdentity(Func<string, string?> environment) : IDash
         return Task.FromResult(credentials);
     }
 
-    private string Read(string name) => environment(name) is { Length: > 0 } value
-        ? value
+    private string Read(string name) => environment(name) is { Length: > 0 } value ? value
+        : environment(name + "_FILE") is { Length: > 0 } path ? File.ReadAllText(path).TrimEnd('\r', '\n')
         : throw new IOException($"Dashboard secret {name} is not set.");
 }
 
