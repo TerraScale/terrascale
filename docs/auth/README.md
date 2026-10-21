@@ -1,6 +1,7 @@
 # ts-auth
 
 Read the [required zero-configuration operating contract](zero-configuration.md).
+Off Fly, see [ts-auth off Fly](off-fly.md).
 Current configuration paths described below are implementation limitations, not
 production activation instructions.
 

@@ -19,6 +19,10 @@ public sealed class ConfigurationTests
 
         var local = TerraBaseOptions.FromValues(new Dictionary<string, string>());
         await Assert.That((local.Region, local.MachineId, local.App)).IsEqualTo(("local", "local", (string?)null));
+        // Off Fly a production node trusts the platform's tokens, as ts-terrabase does; Development trusts none unless set.
+        var offFly = TerraBaseOptions.FromValues(new Dictionary<string, string>(), production: true);
+        await Assert.That((offFly.AuthIssuer, offFly.AuthAudiences.Single())).IsEqualTo((TerraBaseOptions.PlatformAuthIssuer, TerraBaseOptions.PlatformAuthAudience));
+        await Assert.That(local.AuthIssuer).IsNull();
 
         Environment.SetEnvironmentVariable("FLY_REGION", "sjc");
         Environment.SetEnvironmentVariable("FLY_MACHINE_ID", "d894655b3ed118");

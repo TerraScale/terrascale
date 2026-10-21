@@ -45,10 +45,11 @@ public static class App
     /// next to ts-auth, that machine. When it does not answer, <see cref="TerraBaseOtherRegions"/> do. Off Fly (local
     /// development), the TerraBase on this machine, whose internal listener is on loopback there, in Development only: a
     /// production ts-auth off Fly has no storage to fall back on and refuses to start (<see cref="AuthConfigurationException"/>)
-    /// instead of writing to whatever listens there. <paramref name="fly"/> holds Fly's machine environment
+    /// instead of writing to whatever listens there. <see cref="AuthOptions.TerraBaseUrl"/>, when set, wins in any environment:
+    /// a host off Fly names its TerraBase. <paramref name="fly"/> holds Fly's machine environment
     /// (<c>FLY_APP_NAME</c>, <c>FLY_REGION</c>).
     /// </summary>
-    public static Uri TerraBaseOrigin(AuthOptions options, IConfiguration fly) => TerraBaseApp(options, fly) switch
+    public static Uri TerraBaseOrigin(AuthOptions options, IConfiguration fly) => options.TerraBaseUrl ?? TerraBaseApp(options, fly) switch
     {
         null => new("http://127.0.0.1:8081"),
         var app when fly["FLY_REGION"] is { Length: > 0 } region => new($"http://{region}.{app}.internal:8081"),
@@ -57,9 +58,10 @@ public static class App
 
     /// <summary>
     /// Where storage goes when this region's TerraBase does not answer: the nearest started machine of the app, then every
-    /// started machine (the nearest can be this region's own, started but not answering). None off Fly.
+    /// started machine (the nearest can be this region's own, started but not answering). None off Fly or with
+    /// <see cref="AuthOptions.TerraBaseUrl"/>.
     /// </summary>
-    public static IReadOnlyList<DnsEndPoint> TerraBaseOtherRegions(AuthOptions options, IConfiguration fly) => TerraBaseApp(options, fly) switch
+    public static IReadOnlyList<DnsEndPoint> TerraBaseOtherRegions(AuthOptions options, IConfiguration fly) => options.TerraBaseUrl is not null ? [] : TerraBaseApp(options, fly) switch
     {
         null => [],
         var app => [new($"top1.nearest.of.{app}.internal", 8081), new($"{app}.internal", 8081)],
@@ -67,10 +69,10 @@ public static class App
 
     /// <summary>
     /// The TerraBase that takes every write (<see cref="AuthorityRegion"/>'s), with no fallback; in a preview, its one machine.
-    /// Null off Fly, where the local TerraBase is the only one.
+    /// Null off Fly or with <see cref="AuthOptions.TerraBaseUrl"/>, where that one TerraBase takes everything.
     /// </summary>
     public static Uri? TerraBaseAuthority(AuthOptions options, IConfiguration fly) =>
-        string.IsNullOrEmpty(fly["FLY_APP_NAME"]) ? null
+        options.TerraBaseUrl is not null || string.IsNullOrEmpty(fly["FLY_APP_NAME"]) ? null
         : TerraBaseApp(options, fly) == "ts-terrabase" ? new($"http://{AuthorityRegion}.ts-terrabase.internal:8081")
         : TerraBaseOrigin(options, fly);
 
@@ -79,7 +81,7 @@ public static class App
     {
         null or "" when options.Development => null,
         null or "" => throw new AuthConfigurationException(
-            "Off Fly (FLY_APP_NAME unset) ts-auth stores in the loopback TerraBase only in Development: set TS_AUTH_ENVIRONMENT=Development, or run it on Fly"),
+            "Off Fly (FLY_APP_NAME unset) ts-auth stores in the loopback TerraBase only in Development: set TS_AUTH_TERRABASE_URL, set TS_AUTH_ENVIRONMENT=Development, or run it on Fly"),
         var app when app.StartsWith("ts-pr-", StringComparison.Ordinal) => app,
         _ => "ts-terrabase",
     };
@@ -199,10 +201,11 @@ public static class App
 
         configure?.Invoke(builder);
 
-        // On Fly, a missing or malformed peer credential stops the start here, not at the first storage request.
-        if (!string.IsNullOrEmpty(builder.Configuration["FLY_APP_NAME"]) && string.IsNullOrEmpty(builder.Configuration[TerraBaseTransport.PeerSecretVariable]))
+        // On Fly or with a named TerraBase, a missing or malformed peer credential stops the start here, not at the first storage request.
+        if ((!string.IsNullOrEmpty(builder.Configuration["FLY_APP_NAME"]) || options.TerraBaseUrl is not null)
+            && string.IsNullOrEmpty(builder.Configuration[TerraBaseTransport.PeerSecretVariable]))
         {
-            throw new AuthConfigurationException($"{TerraBaseTransport.PeerSecretVariable} is required on Fly");
+            throw new AuthConfigurationException($"{TerraBaseTransport.PeerSecretVariable} is required on Fly and with TS_AUTH_TERRABASE_URL");
         }
 
         if (builder.Configuration[TerraBaseTransport.PeerSecretVariable] is { Length: > 0 } peerSecret)

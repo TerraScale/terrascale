@@ -176,6 +176,45 @@ public sealed record TerraBaseOptions
     /// <summary>Continuous backup to object storage (TS-633); <see langword="null"/> turns it off.</summary>
     public BackupSettings? Backup { get; init; }
 
+    /// <summary>
+    /// The host environment: <c>--environment=</c> (WebApplicationFactory's argument override), then <c>DOTNET_ENVIRONMENT</c>,
+    /// then <c>ASPNETCORE_ENVIRONMENT</c>, as the slim host reads them; Production when none is set.
+    /// </summary>
+    public static string EnvironmentName(IReadOnlyList<string> args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        return args.LastOrDefault(argument => argument.StartsWith("--environment=", StringComparison.Ordinal))?[14..]
+            ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
+            ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
+            ?? Environments.Production;
+    }
+
+    /// <summary>
+    /// Replaces every secret variable (<c>TERRABASE_*</c> and the Tigris bucket variables) that has a <c>&lt;NAME&gt;_FILE</c>
+    /// companion with that file's contents, trailing newline trimmed: a host that mounts secrets as files (OCI Vault on gru)
+    /// delivers them this way. The file wins over the variable. Call before <see cref="FromProcess"/>.
+    /// </summary>
+    public static void ReadSecretFiles()
+    {
+        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            if (entry.Key is string key && key.EndsWith("_FILE", StringComparison.Ordinal) && entry.Value is string { Length: > 0 } path
+                && key[..^"_FILE".Length] is var name
+                && (name.StartsWith(EnvironmentPrefix, StringComparison.Ordinal) || BackupSettings.TigrisVariables.Any(variable => variable.Variable == name)))
+            {
+                try
+                {
+                    Environment.SetEnvironmentVariable(name, File.ReadAllText(path).TrimEnd('\r', '\n'));
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+                {
+                    // Names the variable, never the file's contents.
+                    throw new TerraBaseConfigurationException($"{key} must name a readable file");
+                }
+            }
+        }
+    }
+
     /// <summary>Reads and validates the configuration of this process.</summary>
     public static TerraBaseOptions FromProcess(IReadOnlyList<string> args)
     {
@@ -224,11 +263,14 @@ public sealed record TerraBaseOptions
             }
         }
 
-        return FromValues(values);
+        return FromValues(values, EnvironmentName(args) != Environments.Development);
     }
 
-    /// <summary>Validates settings keyed by their argument name.</summary>
-    public static TerraBaseOptions FromValues(IReadOnlyDictionary<string, string> values)
+    /// <summary>
+    /// Validates settings keyed by their argument name. <paramref name="production"/>: the host is not Development, so a node
+    /// off Fly without <c>auth-issuer</c> trusts the platform's tokens, as <c>ts-terrabase</c> does.
+    /// </summary>
+    public static TerraBaseOptions FromValues(IReadOnlyDictionary<string, string> values, bool production = false)
     {
         ArgumentNullException.ThrowIfNull(values);
         foreach (var key in values.Keys)
@@ -256,7 +298,7 @@ public sealed record TerraBaseOptions
         }
 
         var (authIssuer, authAudiences) = ParseAuth(values);
-        if (app == ProductionApp && authIssuer is null)
+        if ((app == ProductionApp || (app is null && production)) && authIssuer is null)
         {
             authIssuer = PlatformAuthIssuer;
             authAudiences = [PlatformAuthAudience];
