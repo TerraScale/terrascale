@@ -31,7 +31,13 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     private (int Internal, int Public, int Metrics) backendPorts;
     private Process? process;
 
-    private TerraBaseTestServer(string directory) => this.directory = directory;
+    private readonly bool production;
+
+    private TerraBaseTestServer(string directory, bool production)
+    {
+        this.directory = directory;
+        this.production = production;
+    }
 
     internal (int Internal, int Public, int Metrics) BackendPorts => this.backendPorts;
 
@@ -54,7 +60,17 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     public HttpClient PublicHttp { get; } = new(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
 
     /// <summary>Starts <c>TERRABASE_BINARY</c>; returns the reason instead when it names no file.</summary>
-    public static async Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(CancellationToken cancellationToken = default)
+    public static Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(CancellationToken cancellationToken = default) =>
+        StartAsync(production: false, cancellationToken);
+
+    /// <summary>
+    /// <see cref="StartAsync(CancellationToken)"/> in Production, as on a host off Fly, with a backup bucket nothing answers for
+    /// (backup ships in the background).
+    /// </summary>
+    public static Task<(TerraBaseTestServer? Server, string? Unavailable)> StartProductionAsync(CancellationToken cancellationToken = default) =>
+        StartAsync(production: true, cancellationToken);
+
+    private static async Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(bool production, CancellationToken cancellationToken)
     {
         var binary = Environment.GetEnvironmentVariable("TERRABASE_BINARY");
         if (string.IsNullOrEmpty(binary) || !File.Exists(binary))
@@ -62,7 +78,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             return (null, "TERRABASE_BINARY must name the TerraBase binary built from this commit (make auth-test-fast sets it)");
         }
 
-        var server = new TerraBaseTestServer(Directory.CreateTempSubdirectory("terrabase-test-").FullName);
+        var server = new TerraBaseTestServer(Directory.CreateTempSubdirectory("terrabase-test-").FullName, production);
         try
         {
             await server.StartAsync(binary, cancellationToken);
@@ -292,8 +308,19 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             // This fixture credential is never inherited from the invoking environment.
             start.Environment[PeerSecretVariable] = PeerSecret;
 
+            if (this.production)
+            {
+                // Outside Development TerraBase needs its Tigris bucket and master key; port 1 refuses every upload.
+                start.Environment["AWS_ENDPOINT_URL_S3"] = "https://127.0.0.1:1";
+                start.Environment["AWS_REGION"] = "auto";
+                start.Environment["BUCKET_NAME"] = "terrabase-test";
+                start.Environment["AWS_ACCESS_KEY_ID"] = "test";
+                start.Environment["AWS_SECRET_ACCESS_KEY"] = "test";
+                start.Environment["TERRABASE_MASTER_KEY"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+            }
+
             // All three backend ports are freshly owned by this child, including metrics on every restart.
-            start.ArgumentList.Add("--environment=Development");
+            start.ArgumentList.Add(this.production ? "--environment=Production" : "--environment=Development");
             start.ArgumentList.Add("--port=0");
             start.ArgumentList.Add("--internal-port=0");
             start.ArgumentList.Add("--metrics-port=0");

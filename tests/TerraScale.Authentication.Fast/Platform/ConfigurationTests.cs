@@ -378,6 +378,38 @@ public sealed class ConfigurationTests
     }
 
     [Test]
+    public async Task Production_off_fly_stores_in_the_terrabase_its_url_names()
+    {
+        // Both binaries in Production without any FLY_* variable, as on a host off Fly: ts-auth finds TerraBase's
+        // loopback internal listener through TS_AUTH_TERRABASE_URL alone.
+        var (started, unavailable) = await TerraBaseTestServer.StartProductionAsync();
+        await using var terrabase = started ?? throw new InvalidOperationException(unavailable);
+        var settings = AuthTestServer.DefaultSettings();
+        settings.Remove("environment");
+        settings["terrabase-url"] = terrabase.InternalAddress.GetLeftPart(UriPartial.Authority);
+        await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string>
+        {
+            ["TERRABASE_PEER_SECRET"] = TerraBaseTestServer.PeerSecret,
+        });
+
+        using var health = await service.Client.GetAsync("/healthz");
+
+        await Assert.That(health.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        // Ready only after ts-auth read and wrote its storage in that TerraBase.
+        await Assert.That(await ReadinessWait.ReadyWithinAsync(service.Client, TimeSpan.FromSeconds(60))).IsTrue();
+    }
+
+    [Test]
+    public async Task A_named_terrabase_without_the_peer_credential_refuses_to_start()
+    {
+        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(
+            settings: values => values["terrabase-url"] = "http://127.0.0.1:8081",
+            configure: builder => builder.Configuration["TERRABASE_PEER_SECRET"] = string.Empty));
+
+        await Assert.That(exception!.Message).IsEqualTo("TERRABASE_PEER_SECRET is required on Fly and with TS_AUTH_TERRABASE_URL");
+    }
+
+    [Test]
     public async Task Production_starts_without_storage_settings()
     {
         var settings = AuthTestServer.DefaultSettings();
@@ -500,7 +532,7 @@ public sealed class ConfigurationTests
                 RedirectStandardError = true,
                 RedirectStandardOutput = true,
             };
-            foreach (var name in start.Environment.Keys.Where(key => key.StartsWith("TS_AUTH_", StringComparison.Ordinal) || key.StartsWith("OTEL_", StringComparison.Ordinal) || key.StartsWith("Logging__", StringComparison.Ordinal)).ToList())
+            foreach (var name in start.Environment.Keys.Where(key => key.StartsWith("TS_AUTH_", StringComparison.Ordinal) || key.StartsWith("FLY_", StringComparison.Ordinal) || key.StartsWith("OTEL_", StringComparison.Ordinal) || key.StartsWith("Logging__", StringComparison.Ordinal)).ToList())
             {
                 start.Environment.Remove(name);
             }
@@ -562,7 +594,7 @@ public sealed class ConfigurationTests
     }
 
     private const string StorageOffFly =
-        "Off Fly (FLY_APP_NAME unset) ts-auth stores in the loopback TerraBase only in Development: set TS_AUTH_ENVIRONMENT=Development, or run it on Fly";
+        "Off Fly (FLY_APP_NAME unset) ts-auth stores in the loopback TerraBase only in Development: set TS_AUTH_TERRABASE_URL, set TS_AUTH_ENVIRONMENT=Development, or run it on Fly";
 
     // Answers every TerraBase request with 503 and records where it was sent; nothing leaves the process.
     private sealed class RecordingTransport(System.Collections.Concurrent.ConcurrentQueue<Uri> sent) : HttpMessageHandler

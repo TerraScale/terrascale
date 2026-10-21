@@ -34,6 +34,7 @@ public sealed partial record AuthOptions
         "access-token-audiences",
         "service-clients",
         "invitation-url",
+        "terrabase-url",
         "environment");
 
     /// <summary>Plain-HTTP listen address of the public API (8090, behind Fly Proxy, which terminates TLS). Not 8080: in a PR preview ts-auth shares one machine, and so its ports, with TerraBase.</summary>
@@ -95,6 +96,12 @@ public sealed partial record AuthOptions
     /// it no invitation email is sent and callers deliver the token they are answered.
     /// </summary>
     public Uri? InvitationUrl { get; init; }
+
+    /// <summary>
+    /// Origin of the TerraBase internal listener that holds ts-auth's storage (<c>TS_AUTH_TERRABASE_URL</c>, for example
+    /// <c>http://127.0.0.1:8081</c> on a host off Fly). Unset, storage follows Fly's machine environment.
+    /// </summary>
+    public Uri? TerraBaseUrl { get; init; }
 
     /// <summary>Whether <c>TS_AUTH_ENVIRONMENT=Development</c> disables the production guards.</summary>
     public bool Development { get; init; }
@@ -209,6 +216,7 @@ public sealed partial record AuthOptions
             AccessTokenAudiences = [.. ParseAudiences(Optional("access-token-audiences")).Prepend(TerraBaseAudience).Distinct(StringComparer.Ordinal)],
             ServiceClients = ParseServiceClients(Optional("service-clients")),
             InvitationUrl = Optional("invitation-url") is { } invitationUrl ? ParseInvitationUrl(invitationUrl, development) : null,
+            TerraBaseUrl = Optional("terrabase-url") is { } terraBaseUrl ? ParseOrigin("terrabase-url", terraBaseUrl) : null,
             Development = development,
         };
         options.EnforceProductionGuards();
@@ -275,6 +283,12 @@ public sealed partial record AuthOptions
         {
             throw Invalid("TS_AUTH_ACCESS_TOKEN_AUDIENCES must not name this service's platform issuer");
         }
+    }
+
+    private static Uri ParseOrigin(string key, string raw)
+    {
+        var url = AbsoluteHttpUrl(key, raw);
+        return url.AbsolutePath == "/" ? url : throw Invalid($"{EnvName(key)} must be an origin without a path");
     }
 
     private static Uri AbsoluteHttpUrl(string key, string raw)

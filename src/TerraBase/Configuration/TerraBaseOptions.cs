@@ -176,6 +176,19 @@ public sealed record TerraBaseOptions
     /// <summary>Continuous backup to object storage (TS-633); <see langword="null"/> turns it off.</summary>
     public BackupSettings? Backup { get; init; }
 
+    /// <summary>
+    /// The host environment: <c>--environment=</c> (WebApplicationFactory's argument override), then <c>DOTNET_ENVIRONMENT</c>,
+    /// then <c>ASPNETCORE_ENVIRONMENT</c>, as the slim host reads them; Production when none is set.
+    /// </summary>
+    public static string EnvironmentName(IReadOnlyList<string> args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        return args.LastOrDefault(argument => argument.StartsWith("--environment=", StringComparison.Ordinal))?[14..]
+            ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
+            ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
+            ?? Environments.Production;
+    }
+
     /// <summary>Reads and validates the configuration of this process.</summary>
     public static TerraBaseOptions FromProcess(IReadOnlyList<string> args)
     {
@@ -224,11 +237,14 @@ public sealed record TerraBaseOptions
             }
         }
 
-        return FromValues(values);
+        return FromValues(values, EnvironmentName(args) != Environments.Development);
     }
 
-    /// <summary>Validates settings keyed by their argument name.</summary>
-    public static TerraBaseOptions FromValues(IReadOnlyDictionary<string, string> values)
+    /// <summary>
+    /// Validates settings keyed by their argument name. <paramref name="production"/>: the host is not Development, so a node
+    /// off Fly without <c>auth-issuer</c> trusts the platform's tokens, as <c>ts-terrabase</c> does.
+    /// </summary>
+    public static TerraBaseOptions FromValues(IReadOnlyDictionary<string, string> values, bool production = false)
     {
         ArgumentNullException.ThrowIfNull(values);
         foreach (var key in values.Keys)
@@ -256,7 +272,7 @@ public sealed record TerraBaseOptions
         }
 
         var (authIssuer, authAudiences) = ParseAuth(values);
-        if (app == ProductionApp && authIssuer is null)
+        if ((app == ProductionApp || (app is null && production)) && authIssuer is null)
         {
             authIssuer = PlatformAuthIssuer;
             authAudiences = [PlatformAuthAudience];

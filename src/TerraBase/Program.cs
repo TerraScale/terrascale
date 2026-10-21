@@ -29,10 +29,7 @@ if (args is ["--storage-format"])
 }
 
 // Match the slim host's environment precedence; WebApplicationFactory supplies an argument override.
-var environmentName = args.LastOrDefault(argument => argument.StartsWith("--environment=", StringComparison.Ordinal))?[14..]
-    ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
-    ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
-    ?? Environments.Production;
+var environmentName = TerraBaseOptions.EnvironmentName(args);
 TerraBaseOptions options;
 PeerCredential peerCredential;
 IPAddress internalAddress;

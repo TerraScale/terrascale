@@ -2,6 +2,7 @@
 
 Read the [required zero-configuration operating contract](zero-configuration.md).
 On Fly, identity and membership come from the platform: see [TerraBase on Fly.io](fly.md).
+Off Fly, see [TerraBase off Fly](off-fly.md).
 Current configuration paths described below are implementation limitations, not
 production activation instructions.
 
