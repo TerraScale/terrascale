@@ -1,0 +1,77 @@
+# Public multi-arch images ts-orch runs (REFACTOR.md W8): ghcr.io/terrascale/{terrabase,ts-auth}:<sha> and :main,
+# linux/amd64 + linux/arm64 (arm64 cross-published from the amd64 builder, Dockerfile publish-* stages).
+# Independent of CI's Fly images; the digest goes to the job summary.
+name: Images (GHCR)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: terrabase
+            area: terrabase
+          - target: ts-auth
+            area: auth
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: terrascale
+          persist-credentials: false
+      # The ts-dotnet revision ci.yml pins (TS_DOTNET_REV); the repository is public.
+      - id: ts-dotnet
+        run: |
+          rev=$(sed -nE 's/^  TS_DOTNET_REV: ([0-9a-f]{40})$/\1/p' terrascale/.github/workflows/ci.yml)
+          test -n "$rev"
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: TerraScale/ts-dotnet
+          ref: ${{ steps.ts-dotnet.outputs.rev }}
+          path: ts-dotnet
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver: docker-container
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        id: push
+        with:
+          context: terrascale
+          file: terrascale/Dockerfile
+          build-contexts: ts-dotnet=ts-dotnet
+          target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/terrascale/${{ matrix.target }}:${{ github.sha }}
+            ${{ github.ref == 'refs/heads/main' && format('ghcr.io/terrascale/{0}:main', matrix.target) || '' }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: |
+            TERRABASE_REVISION=${{ github.sha }}
+            TS_AUTH_REVISION=${{ github.sha }}
+          # Reads CI's main build caches; never writes them.
+          cache-from: type=gha,scope=${{ matrix.area }}
+          push: true
+      # Index digest plus each platform's child digest (ts-orch specs pin the linux/arm64 child).
+      - run: |
+          { echo '```'; docker buildx imagetools inspect "ghcr.io/terrascale/${{ matrix.target }}@${{ steps.push.outputs.digest }}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
