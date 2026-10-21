@@ -16,31 +16,6 @@ namespace TerraScale.Authentication.Fast.Store;
 public sealed class StorageReadinessTests(TerraBaseFixture fixture)
 {
     [Test]
-    public async Task Storage_readiness_checks_required_collections_beyond_the_first_catalog_page()
-    {
-        var (tenant, database) = await fixture.CreateDatabaseAsync();
-        for (var index = 0; index < 200; index++)
-        {
-            await database.CreateCollectionAsync($"extra_{index:D3}");
-        }
-
-        using var requests = new CatalogRequests { InnerHandler = TerraBaseFixture.NewHandler() };
-        using var http = new HttpClient(requests);
-        var probedDatabase = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
-        {
-            BaseAddress = fixture.Server.InternalAddress,
-        }).Database(tenant.Project.Id, "auth");
-        var health = new TerraBaseStorageHealth(probedDatabase);
-        await Assert.That((await health.CheckAsync(CancellationToken.None)).Healthy).IsTrue();
-        await Assert.That(requests.Count).IsEqualTo(2);
-        await Assert.That((await database.ListDocumentsAsync(AuthStore.HealthCollection)).Items.Count).IsEqualTo(0);
-
-        await database.DropCollectionAsync(AuthStore.ChallengeCollection);
-        await Assert.That((await health.CheckAsync(CancellationToken.None)).Healthy).IsFalse();
-        await Assert.That((await database.ListDocumentsAsync(AuthStore.HealthCollection)).Items.Count).IsEqualTo(0);
-    }
-
-    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task Storage_readiness_overlaps_reads_but_never_writes_before_catalog_validation(bool missingCollection)
@@ -63,6 +38,31 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         await Assert.That(result.Healthy).IsEqualTo(!missingCollection);
         await Assert.That(requests.MutatedBeforeCatalog).IsFalse();
         await Assert.That(requests.Mutations).IsEqualTo(missingCollection ? 0 : 2);
+        await Assert.That((await database.ListDocumentsAsync(AuthStore.HealthCollection)).Items.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Storage_readiness_checks_required_collections_beyond_the_first_catalog_page()
+    {
+        var (tenant, database) = await fixture.CreateDatabaseAsync();
+        for (var index = 0; index < 200; index++)
+        {
+            await database.CreateCollectionAsync($"extra_{index:D3}");
+        }
+
+        using var requests = new CatalogRequests { InnerHandler = TerraBaseFixture.NewHandler() };
+        using var http = new HttpClient(requests);
+        var probedDatabase = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
+        {
+            BaseAddress = fixture.Server.InternalAddress,
+        }).Database(tenant.Project.Id, "auth");
+        var health = new TerraBaseStorageHealth(probedDatabase);
+        await Assert.That((await health.CheckAsync(CancellationToken.None)).Healthy).IsTrue();
+        await Assert.That(requests.Count).IsEqualTo(2);
+        await Assert.That((await database.ListDocumentsAsync(AuthStore.HealthCollection)).Items.Count).IsEqualTo(0);
+
+        await database.DropCollectionAsync(AuthStore.ChallengeCollection);
+        await Assert.That((await health.CheckAsync(CancellationToken.None)).Healthy).IsFalse();
         await Assert.That((await database.ListDocumentsAsync(AuthStore.HealthCollection)).Items.Count).IsEqualTo(0);
     }
 
