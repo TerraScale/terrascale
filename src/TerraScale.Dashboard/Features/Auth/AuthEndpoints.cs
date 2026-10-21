@@ -83,7 +83,7 @@ public static class AuthEndpoints
             if (form["confirmPassword"].ToString().Length == 0) return Failure(model with { ConfirmPasswordError = "Enter your password again." });
             if (password != form["confirmPassword"]) return Failure(model with { ConfirmPasswordError = "Passwords do not match." });
         }
-        // Fly Proxy is the only production reverse proxy; client-supplied headers elsewhere are ignored.
+        // Fly Proxy sends Fly-Client-IP; off Fly, UseForwardedHeaders took the loopback edge's X-Forwarded-For.
         var ip = context.Connection.RemoteIpAddress?.ToString() ?? "";
         if (Environment.GetEnvironmentVariable("FLY_APP_NAME") is not null &&
             System.Net.IPAddress.TryParse(context.Request.Headers["Fly-Client-IP"], out var flyIp)) ip = flyIp.ToString();

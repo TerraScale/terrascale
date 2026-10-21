@@ -107,9 +107,10 @@ the invitations the dashboard sends. ts-auth does not enforce it.
 The dashboard keeps its own state in the `ts-dashboard` database of the
 ts-dashboard project `00000000000000000000000005`, which TerraBase seeds on every
 start (terrascale `PlatformDatabases.cs`). It reaches TerraBase's private
-listener at `http://gru.ts-terrabase.internal:8081` on Fly and
-`http://127.0.0.1:8081` only in Development off Fly; Production off Fly refuses
-to start. Only the `terrabase-state` HTTP client sends
+listener at `TS_DASHBOARD_TERRABASE_URL` when set (any environment, an http(s)
+origin such as `http://127.0.0.1:8081`), else `http://gru.ts-terrabase.internal:8081`
+on Fly and `http://127.0.0.1:8081` only in Development; otherwise it refuses to
+start. Only the `terrabase-state` HTTP client sends
 `X-TerraBase-Peer-Credential`, and only to that origin: its handler
 (`TerraBasePeerCredential`) refuses any other destination and its primary
 handler follows no redirects. The shared `platform` client (ts-auth, the public

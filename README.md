@@ -38,5 +38,9 @@ fly secrets set DEMO=true --app ts-dashboard    # serve the demo
 fly secrets unset DEMO --app ts-dashboard       # serve the real application
 ```
 
+## Off Fly
+Production off Fly needs `TS_DASHBOARD_TERRABASE_URL` (TerraBase's private listener, e.g. `http://127.0.0.1:8081`) and
+listens on `ASPNETCORE_URLS` (default port 8080); a loopback TLS edge must send `X-Forwarded-Proto` and `X-Forwarded-For`.
+
 More: [development](docs/development.md), [migration status](docs/csharp-migration.md),
 [zero-configuration contract](docs/zero-configuration.md).
