@@ -5,7 +5,7 @@ using TerraScale.Dashboard.Shared.Charts;
 namespace TerraScale.Dashboard.Features.Home;
 
 public sealed record HomeRequestPoint(DateTimeOffset Start, IReadOnlyDictionary<string, long> Requests);
-public sealed record HomeRequestChart(string Label, string GradientId, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks, IReadOnlyList<RequestPath> Paths, IReadOnlyList<RequestColumn> Columns)
+public sealed record HomeRequestChart(string Label, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks, IReadOnlyList<RequestPath> Paths, IReadOnlyList<RequestColumn> Columns)
 {
     public static HomeRequestChart For(HomePage page)
     {

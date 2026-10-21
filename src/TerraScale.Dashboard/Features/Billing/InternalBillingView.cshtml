@@ -1,6 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Billing.InternalBillingViewModel>
 @using System.Globalization
 @using TerraScale.Dashboard.Features.Billing
+@using TerraScale.Dashboard.Features.Usage
 <section class="ts-card" id="internal-bill" aria-labelledby="internal-bill-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="internal-bill-title">Internal computed bill</h2><p class="ts-card-description">Report-only estimate from every project's UTC month-to-date usage. Reads are free. Storage uses the current logical size for a full month, not historical byte-seconds. No Stripe charges.</p></div></header><div class="ts-card-body">
 @if (!Model.Bill.Available) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">Internal bill unavailable</p><p class="ts-alert-body">@Model.Bill.Error</p></div> }
 else

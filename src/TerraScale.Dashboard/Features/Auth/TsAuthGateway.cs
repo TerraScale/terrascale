@@ -4,17 +4,6 @@ using TerraScale.DotNet;
 
 namespace TerraScale.Dashboard.Features.Auth;
 
-public interface IAuthGateway
-{
-    Task<SessionRecord> PasswordAsync(string email, string password, string ip, CancellationToken cancellationToken);
-    Task<SessionRecord> EmailCodeAsync(string email, string code, string ip, CancellationToken cancellationToken);
-    Task StartEmailCodeAsync(string email, string ip, CancellationToken cancellationToken);
-    Task StartPasswordResetAsync(string email, string ip, CancellationToken cancellationToken);
-    Task CompletePasswordResetAsync(string email, string code, string password, string ip, CancellationToken cancellationToken);
-    Task<bool> IsActiveAsync(SessionRecord session, CancellationToken cancellationToken);
-    Task RevokeAsync(SessionRecord session, CancellationToken cancellationToken);
-}
-
 // Every ts-auth call goes through the official ts-dotnet client: headless grants
 // and enrollment, OIDC, the RFC 8693 exchange and the platform API.
 public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClientFactory http, TimeProvider time) : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, IAuthRefreshGateway, IAuthLogoutGateway

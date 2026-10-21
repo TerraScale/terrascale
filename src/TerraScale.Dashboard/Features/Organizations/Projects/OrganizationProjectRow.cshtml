@@ -1,5 +1,6 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialogModel>
 @using TerraScale.Dashboard.Features.Organizations
+@using TerraScale.Dashboard.Features.Organizations.Projects
 @inject AssetUrls Assets
 @if (Model.Project is { } project)
 {
@@ -21,11 +22,11 @@
             @if (Model.Page.CanManage)
             {
                 <button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" command="show-modal" commandfor="rename-project-@project.Id">@Icons.Render("Pencil", 14)<span>Rename</span></button>
-                @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.ProjectDialog, ProjectDialogModel>(Model))
+                @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Projects.ProjectDialog, ProjectDialogModel>(Model))
                 @if (!current && !project.IsDefault && Model.Page.Shell.Context.Organization?.Projects.Count > 1)
                 {
                     <button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" command="show-modal" commandfor="delete-project-@project.Id" aria-label="Delete @project.Name">@Icons.Render("Trash2", 14)</button>
-                    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.ProjectDeleteView, ProjectDialogModel>(Model))
+                    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.Projects.ProjectDeleteView, ProjectDialogModel>(Model))
                 }
             }
         </div></td>

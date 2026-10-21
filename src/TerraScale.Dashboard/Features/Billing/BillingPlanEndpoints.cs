@@ -1,7 +1,8 @@
 using Stripe;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Onboarding;
-using AccountService = TerraScale.Dashboard.Features.Accounts.AccountService;
+using TerraScale.Dashboard.Shared.Validation;
+using AccountService = TerraScale.Dashboard.Shared.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.Features.Billing;
 

@@ -33,7 +33,7 @@ public static class OrganizationWizard
                 }
                 if (form["step"] != "project") throw new AccountAccessException("Choose an organization setup step.", 400);
                 if (!context.Organization.CanProvision(context.UserId)) throw new AccountAccessException("Confirm this organization's billing before creating its first project.", 409);
-                if (context.Organization.Projects.Count > 0) return AuthEndpoints.SeeOther("/organization?tab=projects");
+                if (context.Organization.Projects.Count > 0) return HttpRedirects.SeeOther("/organization?tab=projects");
                 return await OrganizationEndpoints.MutateAsync(http, sessions, accounts, placement, "projects");
             }
             catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)

@@ -1,6 +1,8 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Mcp;
 
 namespace TerraScale.Dashboard.Features.Profile;
@@ -54,3 +56,20 @@ public sealed class ProfileMcpTools(IHttpContextAccessor http, AccountService ac
     private AccountContext Scope(string? organizationId, string? projectId) => DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
     private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 }
+
+public sealed record DashboardMcpProfile(string UserId, string AccountId, string Name, string Email, string Phone, string Locale,
+    string ActiveOrganizationId, string ActiveProjectId, string OrganizationId, string ProjectId, string OrganizationName,
+    string Role, IReadOnlyList<string> Permissions,
+    [property: Description("Real MFA status is unavailable from the current owning provider contract; null does not mean disabled.")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    bool? MfaEnabled,
+    [property: Description("Real passkey records are unavailable from the current owning provider contract; null does not mean no passkeys.")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    IReadOnlyList<DashboardMcpPasskey>? Passkeys,
+    IReadOnlyList<ProfileToken> AccessTokens);
+
+public sealed record DashboardMcpPasskey(string Id, string Name, DateTimeOffset CreatedAt);
+
+public sealed record DashboardMcpSaved(bool Saved);
+public sealed record DashboardMcpRevoked(bool Revoked);
+public sealed record DashboardMcpAccessTokens(IReadOnlyList<ProfileToken> AccessTokens);

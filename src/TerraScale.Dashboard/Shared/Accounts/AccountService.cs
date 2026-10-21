@@ -6,6 +6,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
 using TerraScale.DotNet;
 
+using TerraScale.Dashboard.Features.Auth;
 namespace TerraScale.Dashboard.Shared.Accounts;
 
 // ts-auth decides which organizations and projects exist and the caller's role

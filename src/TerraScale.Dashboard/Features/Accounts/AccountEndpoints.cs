@@ -29,7 +29,7 @@ public static class AccountEndpoints
             try { await accounts.SwitchOrganizationAsync(session, form["organizationId"].ToString(), http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
             var selected = await accounts.GetContextAsync(session, http.RequestAborted);
-            return AuthEndpoints.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
+            return HttpRedirects.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
         }).WithGroupName("integration").WithName("switchDashboardOrganization").WithTags("Workspace")
             .WithSummary("Select an organization the current user can access")
             .Accepts<SwitchOrganizationRequest>("application/x-www-form-urlencoded")
@@ -44,7 +44,7 @@ public static class AccountEndpoints
             try { await accounts.SwitchProjectAsync(session, form["projectId"].ToString(), http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
             var selected = await accounts.GetContextAsync(session, http.RequestAborted);
-            return AuthEndpoints.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
+            return HttpRedirects.SeeOther(SwitchReturnPath(form["returnUrl"].ToString(), selected));
         }).WithGroupName("integration").WithName("switchDashboardProject").WithTags("Workspace")
             .WithSummary("Select a project the current user can access")
             .Accepts<SwitchProjectRequest>("application/x-www-form-urlencoded")

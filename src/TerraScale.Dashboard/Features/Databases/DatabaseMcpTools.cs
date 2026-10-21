@@ -26,7 +26,7 @@ public sealed class DatabaseMcpTools(IHttpContextAccessor http, AccountService a
     {
         var context = Scope(organizationId, projectId);
         var db = DatabaseService.Database(context, databaseId);
-        var placement = await databases.PlacementAsync(DatabaseService.Regions(db), Cancellation);
+        var placement = await databases.PlacementAsync(DatabaseService.Regions(db), Cancellation, DatabaseService.Regions(db));
         IReadOnlyList<CollectionStats>? contents = null;
         string? unavailable = null;
         try
@@ -49,7 +49,8 @@ public sealed class DatabaseMcpTools(IHttpContextAccessor http, AccountService a
             (error is not OperationCanceledException || !Cancellation.IsCancellationRequested))
         { unavailable = unavailable is null ? "Backup measurements are unavailable." : unavailable + " Backup measurements are unavailable."; }
         return new(db.Id, db.Name, db.Status, db.Region, DatabaseService.Regions(db), db.CreatedAt, db.Endpoint,
-            placement.Select(region => DatabasesPage.RegionDisplay(region.Code)).ToArray(), contents?.Count, contents?.Sum(item => item.Documents), contents?.Sum(item => item.Bytes),
+            // MCP labels are an existing response contract, independent of page display casing.
+            placement.Select(region => region.Code.ToUpperInvariant() switch { "SFO" => "SFO · San Francisco", "GRU" => "GRU · São Paulo", "" => "Not configured", var code => code }).ToArray(), contents?.Count, contents?.Sum(item => item.Documents), contents?.Sum(item => item.Bytes),
             unavailable, backupsEnabled, context.CanManage, db.Status == "ready" && context.CanManage && context.Organization!.CanProvision(context.UserId));
     }
 

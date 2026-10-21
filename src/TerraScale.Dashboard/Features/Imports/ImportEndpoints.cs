@@ -6,7 +6,7 @@ using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Platform.Datastar;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard.Features.Imports;
@@ -45,7 +45,7 @@ public static class ImportEndpoints
                 var job = await imports.CreateAsync(context, form["database"].ToString(), form["format"].ToString(),
                     long.TryParse(form["sourceBytes"], NumberStyles.None, CultureInfo.InvariantCulture, out var bytes) ? bytes : 0,
                     form["sourceSha256"].ToString(), form["missingPrimaryKey"].ToString(), http.RequestAborted);
-                return DatabaseEndpoints.WantsHtml(http) ? AuthEndpoints.SeeOther(JobPath(job.Database)) : Results.Json(job, statusCode: 201);
+                return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(JobPath(job.Database)) : Results.Json(job, statusCode: 201);
             }
             catch (Exception error) when (KnownFailure(http, error))
             {
@@ -109,7 +109,7 @@ public static class ImportEndpoints
                         "cancel" => await imports.CancelAsync(context, database, http.RequestAborted),
                         _ => await imports.ResumeAsync(context, database, http.RequestAborted)
                     };
-                    return DatabaseEndpoints.WantsHtml(http) ? AuthEndpoints.SeeOther(JobPath(job.Database)) : Results.Json(job, statusCode: 202);
+                    return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(JobPath(job.Database)) : Results.Json(job, statusCode: 202);
                 }
                 catch (Exception error) when (KnownFailure(http, error))
                 {

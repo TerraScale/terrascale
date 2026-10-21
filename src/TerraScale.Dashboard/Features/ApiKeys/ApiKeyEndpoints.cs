@@ -51,7 +51,7 @@ public static class ApiKeyEndpoints
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             try { await keys.RevokeAsync(context, keyId, http.RequestAborted); }
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
-            return DatabaseEndpoints.WantsHtml(http) ? AuthEndpoints.SeeOther("/api-keys") : Results.NoContent();
+            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys") : Results.NoContent();
         }).WithGroupName("integration").WithName("revokeDashboardCredentialById").WithTags("Credentials")
             .WithSummary("Revoke a project key")
             .WithDescription("Revocation prevents new tokens. Already-issued offline JWTs remain valid until expiry.")
@@ -65,7 +65,7 @@ public static class ApiKeyEndpoints
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             try { await keys.RevokeAsync(context, form["keyId"].ToString(), http.RequestAborted); }
             catch (Exception error) when (DatabaseEndpoints.KnownFailure(error)) { return DatabaseEndpoints.WantsHtml(http) ? await PageAsync(http, context, keys, DatabaseEndpoints.Message(error), status: DatabaseEndpoints.Status(error)) : DatabaseEndpoints.Failure(error); }
-            return DatabaseEndpoints.WantsHtml(http) ? AuthEndpoints.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
+            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther("/api-keys" + http.Request.QueryString) : Results.NoContent();
         }).WithGroupName("integration").WithName("revokeDashboardCredential").WithTags("Credentials")
             .WithSummary("Revoke a key selected by its form ID")
             .Accepts<RevokeProjectCredentialRequest>("application/x-www-form-urlencoded")

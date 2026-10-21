@@ -22,7 +22,7 @@ using TerraScale.Dashboard.Platform.Development;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Platform.Contracts;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard;
