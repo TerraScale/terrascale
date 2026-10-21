@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.AspNetCore.HttpOverrides;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Billing;
@@ -75,6 +76,9 @@ public static class DashboardApplication
         configureTestHost?.Invoke(builder);
         var app = builder.Build();
 
+        // Off Fly a TLS edge on the same host proxies over loopback. Only loopback peers (the default known
+        // proxies) may set the scheme and client IP; a browser's own forwarding headers never reach past the edge.
+        app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto });
         app.Use(async (context, next) =>
         {
             // Fly forces HTTPS at the edge. Infer deployment from its vendor-owned identity,
