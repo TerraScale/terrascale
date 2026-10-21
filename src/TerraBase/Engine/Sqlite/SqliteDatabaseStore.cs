@@ -36,15 +36,6 @@ internal sealed partial class SqliteDatabaseStore(
     internal Counter<long>? SchemaEvaluations { get; } = schemaEvaluations;
     internal Counter<long>? StorageReads { get; } = storageReads;
 
-    /// <summary>Host-owned counter of repaired events the changes feed found below their origin's newest event here.</summary>
-    internal Counter<long>? FeedHoles { get; init; }
-
-    /// <summary>Where storage paths of this database report problems an operator must see.</summary>
-    internal ILogger? Logger => logger;
-
-    /// <summary>The database's id (its file name), for log lines.</summary>
-    internal string Name => name;
-
     internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TimeProvider? time = null, Action? committed = null)
         : this(name, path, pool, io, pragmas, null, time, committed) { }
 
@@ -252,12 +243,6 @@ internal sealed partial class SqliteDatabaseStore(
     internal LocalReplica? Member { get; init; }
 
     internal bool RequiresRemoteProof { get; init; }
-
-    /// <summary>
-    /// Whether every write transaction syncs the write-ahead log at its commit (<c>synchronous = FULL</c>), as a durable one
-    /// does: the system database, whose acknowledged catalog and API keys survive an OS crash (docs/terrabase/decisions/0012).
-    /// </summary>
-    internal bool SyncsEveryCommit { get; init; }
 
     public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken) =>
         await BeginAsync(write, durable: false, cancellationToken).ConfigureAwait(false);

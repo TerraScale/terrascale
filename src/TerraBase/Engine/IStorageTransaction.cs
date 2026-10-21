@@ -171,16 +171,6 @@ public interface IStorageTransaction : IAsyncDisposable
     /// </summary>
     ValueTask<bool> JoinAsync(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Joins a replicated state as <see cref="JoinAsync"/> does, unless it may bring back a deletion this machine collected
-    /// (docs/terrabase/multi-region-replication.md section 11): into a document it no longer holds, from below its collection
-    /// watermark. A whole state (<paramref name="whole"/>: a stale group's or a repair's) then joins only where this machine
-    /// never held the document, or held a version newer than any collection; otherwise only its entries above the watermark
-    /// join. A delta it applied before is dropped, and one it never saw throws <see cref="StaleDeltaException"/>. Returns
-    /// whether anything changed.
-    /// </summary>
-    ValueTask<bool> JoinReplicatedAsync(string collection, string id, DocumentState state, EntryVersion at, bool whole, CancellationToken cancellationToken);
-
     /// <summary>Records in <c>_tb_peers</c> that every change of <paramref name="origin"/> up to <paramref name="applied"/> it streamed was joined here.</summary>
     ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken);
 
@@ -288,7 +278,7 @@ public interface IStorageTransaction : IAsyncDisposable
     /// reaches any more (a deleted database's or project's), which every machine purges when it learns of the deletion.
     /// Returns how many live documents were removed. A client database refuses it with <see cref="NotSupportedException"/>.
     /// </summary>
-    ValueTask<long> DeleteCollectionsAsync(string prefix, int limit, CancellationToken cancellationToken);
+    ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken);
 
     /// <summary>Lists the secondary indexes of this database in name order.</summary>
     ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken);

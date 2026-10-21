@@ -16,8 +16,6 @@ public sealed class DeleteBackupDestinationEndpoint(IProjectBackupDestinations d
         Delete(BackupDestinationRoute.Path);
         Metadata(AnchoredRevocation.Instance);
         Name("deleteBackupDestination");
-        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
-        Metadata(AnchoredRevocation.Instance);
         Summary("Delete a project's customer backup destination");
         Description(BackupDestinationRoute.Description);
         Tags("Backups");

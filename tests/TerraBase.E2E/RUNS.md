@@ -1,6 +1,6 @@
 # E2E runs
 
-Full summaries of the repeat runs `COVERAGE.md` lists, as `make terrabase-e2e` printed them, grouped by candidate. Each block names its own commit, and results never carry over between candidates. Newest last. CI's
+Full summaries of the repeat runs `COVERAGE.md` lists, as `make terrabase-e2e` printed them. Newest last. CI's
 `terrabase-check` validates every block (`scripts/terrabase/e2e-summary.sh check`).
 
 ## Main `e30ffdc2` plus the honest-gaps change `f1cfbc0f` (delta, 2 runs)
@@ -45,7 +45,6 @@ E2E run (honest gaps f1cfbc0f, run 1 of 2 (delta)), 2026-10-13T04:30Z on delta
 | `Answer_served_from_another_region_is_refused` | harness check | no node (harness) | none |  |
 | `Answer_without_a_region_header_is_refused` | harness check | no node (harness) | none |  |
 | `Pinned_request_carries_the_preferred_region_and_is_accepted_when_that_region_serves_it` | harness check | no node (harness) | none |  |
-| `Resetting_a_link_while_its_connections_close_never_throws` | harness check | no node (harness) | none |  |
 | `The_lossy_link_delivers_bytes_intact_through_its_delays_and_throughput_cap` | harness check | no node (harness) | NetworkFault |  |
 | `The_scenario_failing_its_own_way_is_the_gap` | harness check | no node (harness) | none |  |
 | `A_storage_stall_on_one_region_loses_no_acknowledged_write_and_the_regions_converge` | not supported | in-process nodes | StorageStall | E2E harness: the storage stall hook (Cluster.StallStorageAsync) not wired to this scenario; no storage stall hook: cannot stall sjc's database file for 10 s while gru, sjc, fra write; it needs Cluster.StallStorageAsync (#106) |
@@ -141,7 +140,6 @@ E2E run (honest gaps f1cfbc0f, run 2 of 2 (delta)), 2026-10-13T04:34Z on delta
 | `Answer_served_from_another_region_is_refused` | harness check | no node (harness) | none |  |
 | `Answer_without_a_region_header_is_refused` | harness check | no node (harness) | none |  |
 | `Pinned_request_carries_the_preferred_region_and_is_accepted_when_that_region_serves_it` | harness check | no node (harness) | none |  |
-| `Resetting_a_link_while_its_connections_close_never_throws` | harness check | no node (harness) | none |  |
 | `The_lossy_link_delivers_bytes_intact_through_its_delays_and_throughput_cap` | harness check | no node (harness) | NetworkFault |  |
 | `The_scenario_failing_its_own_way_is_the_gap` | harness check | no node (harness) | none |  |
 | `A_storage_stall_on_one_region_loses_no_acknowledged_write_and_the_regions_converge` | not supported | in-process nodes | StorageStall | E2E harness: the storage stall hook (Cluster.StallStorageAsync) not wired to this scenario; no storage stall hook: cannot stall sjc's database file for 10 s while gru, sjc, fra write; it needs Cluster.StallStorageAsync (#106) |
@@ -310,7 +308,6 @@ E2E run (#105 94086cd6 on main, run 2 of 3 (mariogk-dev)), 2026-10-12T10:53Z on 
 | `Answer_served_from_another_region_is_refused` | harness check | no node (harness) | none |  |
 | `Answer_without_a_region_header_is_refused` | harness check | no node (harness) | none |  |
 | `Pinned_request_carries_the_preferred_region_and_is_accepted_when_that_region_serves_it` | harness check | no node (harness) | none |  |
-| `Resetting_a_link_while_its_connections_close_never_throws` | harness check | no node (harness) | none |  |
 | `The_lossy_link_delivers_bytes_intact_through_its_delays_and_throughput_cap` | harness check | no node (harness) | NetworkFault |  |
 | `The_scenario_failing_its_own_way_is_the_gap` | harness check | no node (harness) | none |  |
 | `A_database_deleted_while_a_region_is_down_does_not_come_back` | not supported | in-process nodes | NodeStop | the catalog as a lattice database (R10a) and garbage collection (R7); never reached its assertions: the cluster's setup cannot finish without it (NotConvergedException with "collection on sjc did not converge") |

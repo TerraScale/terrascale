@@ -100,11 +100,9 @@ internal sealed class ProjectBackupDestinations(
                 };
             }
 
-            // Any stored record, readable or not, is replaced; only a definite absence is a first destination.
-            var replaced = await transaction.GetAsync(Collection(projectId), Current, cancellationToken).ConfigureAwait(false) is not null;
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, Collection(projectId), Current, record, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
-            return new SavedBackupDestination(record.Destination, replaced);
+            return record.Destination;
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
     public async Task<DeleteBackupDestinationResult> DeleteAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>

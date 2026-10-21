@@ -15,8 +15,6 @@ public sealed class DeleteSavedQueryEndpoint(IManagementService management, IQue
         Delete(ProjectApiRoute.SavedQuery);
         Metadata(AnchoredRevocation.Instance);
         Name("deleteSavedQuery");
-        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
-        Metadata(AnchoredRevocation.Instance);
         Summary("Deletes a saved query");
         Description(ProjectApiRoute.IdentityDescription);
         Tags("Queries");

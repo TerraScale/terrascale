@@ -16,8 +16,6 @@ public sealed class DeleteManagedDatabaseEndpoint(IManagementService management,
         Delete(ProjectApiRoute.Database);
         Metadata(AnchoredRevocation.Instance);
         Name("deleteDatabase");
-        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
-        Metadata(AnchoredRevocation.Instance);
         Summary("Deletes a database and its data");
         Description("Branches of the database are independent copies and are not deleted. A database is deleted in its home region (421 wrong_region elsewhere) once it has no replica regions (409 database_replicated): remove them with PATCH first." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");

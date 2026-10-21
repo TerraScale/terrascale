@@ -195,31 +195,11 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         }
     }
 
-    // The catalog keeps its tombstones (docs/terrabase/system-catalog-invariants.md): it records peers' stable stamps and
-    // frontiers like any database, but reports no stable stamp and no horizon, so no machine collects or forgets any of its
-    // states (see ExecuteAsync and ForgetAsync).
     public async ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken) =>
-        database == ChangeGroups.System ? default
-        : await ReadAsync(database, (transaction, now) => transaction.GetStableAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
+        await ReadAsync(database, (transaction, now) => transaction.GetStableAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken) =>
-        database == ChangeGroups.System ? default
-        : await ReadAsync(database, (transaction, now) => transaction.GetHorizonAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
-
-    public async ValueTask<RefillBasis?> RefillBasisAsync(TenantContext database, CancellationToken cancellationToken)
-    {
-        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
-        {
-            return null;
-        }
-
-        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
-        await using (transaction.ConfigureAwait(false))
-        {
-            var (collected, applied) = await transaction.GetRefillBasisAsync(_engine.Member.Clock.Tick(), cancellationToken).ConfigureAwait(false);
-            return new RefillBasis(collected, applied);
-        }
-    }
+        await ReadAsync(database, (transaction, now) => transaction.GetHorizonAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<int?> ForgetAsync(
         TenantContext database, Ulid incarnation, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken)
@@ -242,39 +222,6 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             return forgotten;
         }
     }
-
-    public async ValueTask AdoptAsync(TenantContext database, RefillBasis basis, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(basis);
-        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
-        {
-            return;
-        }
-
-        var transaction = (SqliteStorageTransaction)await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
-        await using (transaction.ConfigureAwait(false))
-        {
-            await transaction.AdoptAsync(basis.CollectedBelow, basis.Applied, cancellationToken).ConfigureAwait(false);
-            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    public async ValueTask<Hlc?> AppliedFromAsync(TenantContext database, ReplicaId origin, CancellationToken cancellationToken)
-    {
-        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
-        {
-            return null;
-        }
-
-        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
-        await using (transaction.ConfigureAwait(false))
-        {
-            return await transaction.GetAppliedFromAsync(origin, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    public async ValueTask<Hlc> ReportedStableAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) =>
-        await ReadAsync(database, (transaction, _) => transaction.GetReportedStableAsync(peer, cancellationToken), cancellationToken).ConfigureAwait(false);
 
     // A stamp read on a read transaction, at this machine's clock; 0 when this machine does not hold the database.
     private async ValueTask<Hlc> ReadAsync(TenantContext database, Func<SqliteStorageTransaction, Hlc, ValueTask<Hlc>> read, CancellationToken cancellationToken)

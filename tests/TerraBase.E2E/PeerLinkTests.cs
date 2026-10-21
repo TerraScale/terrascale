@@ -9,7 +9,6 @@ public sealed class PeerLinkTests
     // A connection's pump aborts its client when it ends, and Reset (a partition) aborts every open client: both can reach
     // the same client. The second abort finds its socket already gone.
     [Test]
-    [Scenario(Nodes.Harness)]
     public async Task Aborting_a_connection_twice_does_not_throw()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -26,7 +25,6 @@ public sealed class PeerLinkTests
     // Many connections close from their own side while partitions reset the link from several threads at once: no reset
     // throws, and the link still carries a new connection afterwards.
     [Test]
-    [Scenario(Nodes.Harness)]
     public async Task Resetting_a_link_while_its_connections_close_never_throws()
     {
         using var target = new TcpListener(IPAddress.Loopback, 0);

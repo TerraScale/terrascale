@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.Net;
+using System.Net.Sockets;
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.OpenApi;
@@ -199,15 +200,21 @@ public static class Listeners
     }
 
     /// <summary>
-    /// The address of the internal listener: the machine's private 6PN address, which Fly sets as <c>FLY_PRIVATE_IP</c>
-    /// (also <c>fly-local-6pn</c> in <c>/etc/hosts</c>); loopback off Fly.
+    /// The address of the internal listener: the machine's private address on Fly, which Fly lists as <c>fly-local-6pn</c>
+    /// in <c>/etc/hosts</c>; loopback off Fly.
     /// </summary>
     public static IPAddress InternalAddress(TerraBaseOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return options.App is null ? IPAddress.Loopback
-            : IPAddress.TryParse(Environment.GetEnvironmentVariable("FLY_PRIVATE_IP"), out var address) ? address
-            : throw new TerraBaseConfigurationException("FLY_PRIVATE_IP must name the machine's private address");
+        try
+        {
+            return options.App is null ? IPAddress.Loopback
+                : Dns.GetHostAddresses("fly-local-6pn").First(address => address.AddressFamily == AddressFamily.InterNetworkV6);
+        }
+        catch (Exception error) when (error is SocketException or InvalidOperationException)
+        {
+            throw new TerraBaseConfigurationException("fly-local-6pn must resolve to the machine's private IPv6 address");
+        }
     }
 
     /// <summary>

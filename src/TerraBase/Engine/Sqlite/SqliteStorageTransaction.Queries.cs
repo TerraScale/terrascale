@@ -82,13 +82,11 @@ internal sealed partial class SqliteStorageTransaction
         return new SqlQueryPlan(steps, indexes);
     }
 
-    public ValueTask<long> DeleteCollectionsAsync(string prefix, int limit, CancellationToken cancellationToken) =>
+    public ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
             ThrowIfReadOnly();
             ArgumentException.ThrowIfNullOrEmpty(prefix);
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, IStorageTransaction.MaxSystemGroupChanges);
             if (!store.IsSystem)
             {
                 throw new NotSupportedException("a client database drops collections one at a time, with tombstones");

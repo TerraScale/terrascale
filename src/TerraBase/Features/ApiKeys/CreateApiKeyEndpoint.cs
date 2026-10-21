@@ -1,5 +1,4 @@
 using TerraBase.Errors;
-using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -31,7 +30,7 @@ public sealed record CreatedApiKeyBody(
 /// <c>POST /admin/api-keys</c>: issues a scoped client API key for one organization. Served only on the internal
 /// administrative listener, so it trusts the local operator.
 /// </summary>
-public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, TimeProvider time, ICatalogGate gate) : Endpoint<CreateApiKeyRequest, IResult>
+public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, TimeProvider time) : Endpoint<CreateApiKeyRequest, IResult>
 {
     private const int MaxNameLength = 100;
 
@@ -56,12 +55,6 @@ public sealed class CreateApiKeyEndpoint(IApiKeyStore keys, TimeProvider time, I
     public override async ValueTask<IResult> HandleAsync(CreateApiKeyRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        // Anonymous (the local operator), but it checks the scope against the catalog: not on an unverified one (CatalogGate).
-        if (!gate.IsOpen)
-        {
-            return ErrorResponse.From(new Unavailable("this machine's catalog is not verified against the other machines yet", "catalog_unverified"));
-        }
-
         if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > MaxNameLength)
         {
             return ErrorResponse.From(new Validation("name must be 1 to 100 characters"));

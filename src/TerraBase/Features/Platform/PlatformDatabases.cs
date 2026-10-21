@@ -1,5 +1,4 @@
 using TerraBase.Errors;
-using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 using ZLogger;
 
@@ -80,23 +79,15 @@ public interface IPlatformCatalog
 }
 
 /// <summary>
-/// Seeds the platform databases on every start, in the background so TerraBase serves at once: once the catalog gate is open,
-/// retries until the catalog takes the writes.
+/// Seeds the platform databases on every start, in the background so TerraBase serves at once: retries until the catalog
+/// takes the writes.
 /// </summary>
-internal sealed class PlatformSeed(IPlatformCatalog catalog, ICatalogGate gate, TimeProvider time, ILogger<PlatformSeed> logger) : BackgroundService
+internal sealed class PlatformSeed(IPlatformCatalog catalog, TimeProvider time, ILogger<PlatformSeed> logger) : BackgroundService
 {
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan GatePass = TimeSpan.FromSeconds(1);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // An unverified catalog may be a restored copy, and a seeded one is no longer a new cluster's (CatalogGate genesis):
-        // the bootstrap of a new cluster's first machine and a new machine's trust would both be refused.
-        while (!gate.IsOpen)
-        {
-            await Task.Delay(GatePass, time, stoppingToken).ConfigureAwait(false);
-        }
-
         string? failure = null;
         while (!stoppingToken.IsCancellationRequested)
         {

@@ -38,11 +38,7 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             {
                 foreach (var delta in groups[next].Deltas)
                 {
-                    // The catalog never collects a tombstone, so a catalog document this machine lacks was never a collected
-                    // deletion (a restored catalog lacks its own later entries): a stale catalog state joins like any other.
-                    _ = groups[next].Stale && database != ChangeGroups.System
-                        ? await transaction.JoinStaleAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, origin), cancellationToken).ConfigureAwait(false)
-                        : await transaction.JoinAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, origin), cancellationToken).ConfigureAwait(false);
+                    _ = await transaction.JoinAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, origin), cancellationToken).ConfigureAwait(false);
                     applied = applied.Value < delta.Stamp.Value ? delta.Stamp : applied;
                 }
             }
@@ -82,7 +78,7 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             foreach (var state in chunk.Where(state => state.State.MaxStamp.Value != 0))
             {
                 // Origin 0: a repair (section 9), so the tailer never ships it and it moves no origin's applied stamp.
-                changed += await transaction.JoinReplicatedAsync(state.Collection, state.Id, state.State, new EntryVersion(state.State.MaxStamp, default), whole: true, cancellationToken)
+                changed += await transaction.JoinAsync(state.Collection, state.Id, state.State, new EntryVersion(state.State.MaxStamp, default), cancellationToken)
                     .ConfigureAwait(false) ? 1 : 0;
             }
 

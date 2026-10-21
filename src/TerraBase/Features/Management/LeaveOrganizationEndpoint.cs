@@ -15,8 +15,6 @@ public sealed class LeaveOrganizationEndpoint(IAccessService access) : EndpointW
         Post(ManagementRoute.Leave);
         Metadata(AnchoredRevocation.Instance);
         Name("leaveOrganization");
-        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
-        Metadata(AnchoredRevocation.Instance);
         Summary("Leaves an organization");
         Description($"Needs member. 409 for the last owner, who must make another member an owner first. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);

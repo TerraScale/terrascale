@@ -51,10 +51,6 @@ public sealed class RegionTests
         await AssertStartupRefusedAsync(region);
 
     [Test]
-    public async Task A_fly_machine_without_its_private_address_stops_the_real_process() =>
-        await AssertStartupRefusedAsync("gru", "FLY_PRIVATE_IP");
-
-    [Test]
     public async Task Every_client_response_keeps_its_region_including_cleared_errors()
     {
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
@@ -216,7 +212,7 @@ public sealed class RegionTests
         }
     }
 
-    private static async Task AssertStartupRefusedAsync(string region, string named = "FLY_REGION")
+    private static async Task AssertStartupRefusedAsync(string region)
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-region-").FullName;
         try
@@ -235,7 +231,6 @@ public sealed class RegionTests
             start.Environment["FLY_REGION"] = region;
             start.Environment["FLY_MACHINE_ID"] = "d894655b3ed118";
             start.Environment["FLY_APP_NAME"] = "ts-terrabase";
-            start.Environment.Remove("FLY_PRIVATE_IP");
             start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, typeof(Program).Assembly.GetName().Name + ".dll"));
             foreach (var name in TerraBaseOptions.SettingNames)
             {
@@ -258,7 +253,7 @@ public sealed class RegionTests
 
                 await Assert.That(process.ExitCode).IsEqualTo(2);
                 await Assert.That(await output).IsEmpty();
-                await Assert.That(await error).Contains(named);
+                await Assert.That(await error).Contains("FLY_REGION");
                 await Assert.That(await error).DoesNotContain(region);
 
                 await Assert.That(Directory.EnumerateFileSystemEntries(directory)).IsEmpty();

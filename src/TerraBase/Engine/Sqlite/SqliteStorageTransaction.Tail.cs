@@ -65,10 +65,9 @@ internal sealed partial class SqliteStorageTransaction
     /// <paramref name="after"/>: a later read from anywhere in between may start there; and when the first group committed
     /// (Unix seconds).
     /// </summary>
-    /// With <paramref name="stale"/>, each group's deltas are whole states (<see cref="OriginGroup.Stale"/>).
     internal ValueTask<(List<OriginGroup> Groups, long Quiet, long? FirstCommitted)> ReadChangeGroupsAsync(
-        long after, int maxGroups, int maxBytes, ReplicaId self, bool stale, CancellationToken cancellationToken) =>
-        RunAsync(() => ReadChangeGroups(after, maxGroups, maxBytes, self, stale, cancellationToken), cancellationToken);
+        long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken) =>
+        RunAsync(() => ReadChangeGroups(after, maxGroups, maxBytes, self, cancellationToken), cancellationToken);
 
     // A supported immutable version can travel as a dependency without rewriting its future remote stamp.
     private DocumentState? ReadCatalogVersionProof()
@@ -87,8 +86,7 @@ internal sealed partial class SqliteStorageTransaction
 
     // Worker-only. Rows come in commit order: one writer per file, so a transaction's rows are contiguous and end with its
     // commit row (change_type 2), and a reader never sees part of one.
-    private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) ReadChangeGroups(
-        long after, int maxGroups, int maxBytes, ReplicaId self, bool stale, CancellationToken cancellationToken)
+    private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) ReadChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken)
     {
         try
         {
@@ -152,7 +150,7 @@ internal sealed partial class SqliteStorageTransaction
                                 return (groups, quiet, first);
                             }
 
-                            groups.Add(new OriginGroup(from, transaction.Deltas, stale));
+                            groups.Add(new OriginGroup(from, transaction.Deltas));
                             first ??= reader.IsDBNull(4) ? null : reader.GetInt64(4);
                             bytes += size;
                             if (groups.Count == maxGroups)
@@ -444,7 +442,6 @@ internal sealed partial class SqliteStorageTransaction
         private List<(string Table, byte[] Image)>? _rows = [];
         private Dictionary<(string Table, string Id), string>? _documents;
 
-        // Each a delta, or with `whole` (a stale read) the document's whole state as of the commit.
         public List<ChangeDelta> Deltas { get; } = [];
 
         public void Add(string table, byte[] image, ReplicaId self)

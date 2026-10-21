@@ -15,8 +15,6 @@ public sealed class DeleteOrganizationEndpoint(IManagementService management) : 
         Delete(ManagementRoute.Organization);
         Metadata(AnchoredRevocation.Instance);
         Name("deleteOrganization");
-        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
-        Metadata(AnchoredRevocation.Instance);
         Summary("Deletes an organization");
         Description("Needs owner (403 otherwise). Fails with 409 while the organization still has projects. Also deletes its members, invitations, ownership transfer and audit log." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);

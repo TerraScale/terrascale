@@ -204,20 +204,6 @@ internal sealed partial class SqliteStorageTransaction
                     target.Parameters.AddWithValue("$id", resume?.Id ?? string.Empty);
                     target.Parameters.AddWithValue("$limit", (long)(maxStates - states.Count + 1));
                 }
-
-                if (all)
-                {
-                    break;
-                }
-
-                void Bind(Turso.Data.Sqlite.SqliteCommand target)
-                {
-                    target.Parameters.AddWithValue("$bucket", (long)bucket);
-                    target.Parameters.AddWithValue("$resume", resume is null ? 0 : 1);
-                    target.Parameters.AddWithValue("$collection", resume?.Collection ?? string.Empty);
-                    target.Parameters.AddWithValue("$id", resume?.Id ?? string.Empty);
-                    target.Parameters.AddWithValue("$limit", (long)(maxStates - states.Count + 1));
-                }
             }
 
             return (states, (BucketCursor?)null);

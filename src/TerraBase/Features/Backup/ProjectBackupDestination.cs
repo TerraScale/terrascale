@@ -43,13 +43,8 @@ public sealed record ProjectBackupDestinationRecord(int Version, string Revision
 /// <summary>A configured destination, or why its catalog record could not be read.</summary>
 public readonly union ReadBackupDestinationResult(ProjectBackupDestinationRecord, NotFound, Unavailable);
 
-/// <summary>A saved destination and whether it replaced one, decided in the transaction that wrote it.</summary>
-/// <param name="Destination">The saved destination.</param>
-/// <param name="Replaced">False only when no destination was stored.</param>
-public sealed record SavedBackupDestination(ProjectBackupDestination Destination, bool Replaced);
-
 /// <summary>A saved destination, or why it could not be saved.</summary>
-public readonly union SaveBackupDestinationResult(SavedBackupDestination, NotFound, Forbidden, Unavailable);
+public readonly union SaveBackupDestinationResult(ProjectBackupDestination, NotFound, Forbidden, Unavailable);
 
 /// <summary>A detached destination, or why it could not be detached.</summary>
 public readonly union DeleteBackupDestinationResult(Done, NotFound, Forbidden, Unavailable);

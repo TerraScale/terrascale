@@ -66,9 +66,6 @@ public sealed class FakeS3
     /// <summary>An optional asynchronous barrier before an object PUT; receives its bucket key, never its content.</summary>
     public Func<string, CancellationToken, Task>? BeforePut { get; set; }
 
-    /// <summary>An optional callback after a platform object PUT is stored, with its key and content (a bucket kept on disk).</summary>
-    public Action<string, byte[]>? AfterPut { get; set; }
-
     /// <summary>An optional asynchronous barrier before an object GET returns; receives the bucket key, never its content.</summary>
     public Func<string, CancellationToken, Task>? BeforeGet { get; set; }
 
@@ -253,9 +250,6 @@ public sealed class FakeS3
         ArgumentNullException.ThrowIfNull(content);
         _objects[key] = content;
     }
-
-    /// <summary>Removes an object from this test's bucket, as a lifecycle rule or an operator could.</summary>
-    public bool RemoveObject(string key) => _objects.TryRemove(key, out _);
 
     /// <summary>Seeds an object in this test's bucket, including historical keys whose timestamp is encoded in the key.</summary>
     public void SeedObject(bool customer, string key, byte[] content)
