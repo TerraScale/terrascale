@@ -43,7 +43,6 @@ public sealed class TenantLookupCacheTests
                 members.Join(new ClusterMember("sfo-member", string.Empty, "sfo-1", string.Empty));
                 services.AddSingleton<IMemberDirectory>(members);
             });
-            await CatalogBootstrap.OpenAsync(gru.Server);
             var tenants = gru.Server.Services.GetRequiredService<ITenantDirectory>();
             var organization = await gru.CreateOrganizationAsync(faker.Company.CompanyName());
             var project = await gru.CreateProjectAsync(organization, faker.Random.AlphaNumeric(12));

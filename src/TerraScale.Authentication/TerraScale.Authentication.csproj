@@ -62,5 +62,6 @@
     <EmbeddedResource Include="Assets/fonts/oxanium-latin-wght-normal.woff2" LogicalName="assets/fonts/oxanium-latin-wght-normal.woff2" />
     <EmbeddedResource Include="Assets/fonts/jetbrains-mono-latin-wght-normal.woff2" LogicalName="assets/fonts/jetbrains-mono-latin-wght-normal.woff2" />
     <EmbeddedResource Include="Assets/fonts/Geist-Variable.woff2" LogicalName="assets/fonts/Geist-Variable.woff2" />
+    <EmbeddedResource Include="Assets/ui/tokens.css" LogicalName="assets/ui/tokens.css" />
   </ItemGroup>
 </Project>

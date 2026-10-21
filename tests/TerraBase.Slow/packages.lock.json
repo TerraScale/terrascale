@@ -602,19 +602,6 @@
           "TUnit.Core": "1.73.19"
         }
       },
-      "Turso.Data.Common": {
-        "type": "Transitive",
-        "resolved": "0.8.2",
-        "contentHash": "ODSAH09qNwyahal7ORQZ98osKWGha5ih23/K1P+Q5eyi6gW/7fz8xygmv+KDtu/RcY77V1+SRGuFuj86fd+sGw==",
-        "dependencies": {
-          "Turso.Data.Native": "0.8.2"
-        }
-      },
-      "Turso.Data.Native": {
-        "type": "Transitive",
-        "resolved": "0.8.2",
-        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
-      },
       "Utf8StringInterpolation": {
         "type": "Transitive",
         "resolved": "1.3.1",

@@ -233,54 +233,21 @@ public sealed class DatabaseChangesTests
     }
 
     [Test]
-    public async Task An_anti_entropy_repair_is_filed_under_the_original_node_and_its_cursor_resumes()
+    public async Task An_anti_entropy_repair_streams_under_this_machine_and_its_cursor_resumes()
     {
         await using var api = await DocumentApi.StartAsync();
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        // A repair joins with origin 0 (R6), which no cursor can name; the event it brings is gru's.
-        var gru = ReplicaId.Of(4518, 13, 1);
-        var id = DocumentApi.NewId();
-        var stamp = await JoinAsync(store, gru, DateTimeOffset.UtcNow, repair: true, id);
+        // A repair joins with origin 0 (R6), which no cursor can name.
+        await JoinAsync(store, default, DateTimeOffset.UtcNow);
         using var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes");
         _ = await stream.NextAsync();
         var repaired = await stream.NextAsync();
-        await Assert.That(repaired.Data.GetProperty("id").GetString()).IsEqualTo(id);
-        await Assert.That(repaired.Data.GetProperty("origin").GetString()).IsEqualTo(gru.Value.ToString("x16", System.Globalization.CultureInfo.InvariantCulture));
-        await Assert.That(repaired.Data.GetProperty("version").GetString()).IsEqualTo(stamp.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        await Assert.That(repaired.Data.GetProperty("origin").GetString()).IsNotEqualTo(new string('0', 16));
         var after = DocumentApi.NewId();
         (await api.PutAsync(after, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
         using var resumed = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(repaired.Id)}");
         _ = await resumed.NextAsync();
         await Assert.That((await resumed.NextAsync()).Data.GetProperty("id").GetString()).IsEqualTo(after);
-    }
-
-    [Test]
-    public async Task A_repair_below_an_origins_newest_event_here_makes_a_cursor_past_it_410_on_this_machine()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-        var gru = ReplicaId.Of(4518, 14, 1);
-        var now = DateTimeOffset.UtcNow;
-        // gru's later event arrives on the stream first; a reader takes it.
-        _ = await JoinAsync(store, gru, now, repair: false, DocumentApi.NewId());
-        string past;
-        using (var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes"))
-        {
-            _ = await stream.NextAsync();
-            past = (await stream.ChangesAsync(1))[0].Id;
-        }
-
-        // Then a repair brings gru's earlier event: the reader's cursor is past it, so here it must not resume silently.
-        var hole = DocumentApi.NewId();
-        _ = await JoinAsync(store, gru, now - TimeSpan.FromSeconds(1), repair: true, hole);
-        // A broken refill ordering guarantee pages: the hole is counted.
-        await Assert.That(await api.Server.MetricAsync("terrabase_feed_holes_total")).IsEqualTo(1);
-        await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(past)}", UriKind.Relative)),
-            HttpStatusCode.Gone, "cursor_expired", "events after the cursor are no longer retained here; start again with cursor=now and re-read");
-        // A reader from the start of retention still gets the repaired event.
-        using var fresh = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes");
-        _ = await fresh.NextAsync();
-        await Assert.That((await fresh.ChangesAsync(2)).Select(change => change.Data.GetProperty("id").GetString())).Contains(hole);
     }
 
     [Test]
@@ -657,18 +624,12 @@ public sealed class DatabaseChangesTests
     }
 
     // Joins one document written by `origin` at `at` into the store, as a peer stream does; returns its stamp.
-    private static Task<Hlc> JoinAsync(IDatabaseStore store, ReplicaId origin, DateTimeOffset at) => JoinAsync(store, origin, at, repair: false, DocumentApi.NewId());
-
-    // Joins one document written by `origin` at `at` into the store: as a peer stream does, or as an anti-entropy repair
-    // does (origin 0 on the join, R6); returns its stamp.
-    private static async Task<Hlc> JoinAsync(IDatabaseStore store, ReplicaId origin, DateTimeOffset at, bool repair, string id)
+    private static async Task<Hlc> JoinAsync(IDatabaseStore store, ReplicaId origin, DateTimeOffset at)
     {
         var version = new EntryVersion(new Hlc((ulong)at.ToUnixTimeMilliseconds() << 16), origin);
         using var body = JsonDocument.Parse("""{"joined":true}""");
         await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-        var delta = DocumentState.Bottom.Put(version, body.RootElement);
-        _ = await transaction.JoinAsync(DocumentApi.Collection, id, repair ? delta : delta.DeltaAt(version.Stamp),
-            repair ? new EntryVersion(version.Stamp, default) : version, CancellationToken.None);
+        _ = await transaction.JoinAsync(DocumentApi.Collection, DocumentApi.NewId(), DocumentState.Bottom.Put(version, body.RootElement).DeltaAt(version.Stamp), version, CancellationToken.None);
         _ = await transaction.CommitAsync(CancellationToken.None);
         return version.Stamp;
     }

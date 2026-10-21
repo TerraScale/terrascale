@@ -11,7 +11,7 @@ namespace TerraBase.E2E;
 /// <summary>
 /// A node killed with SIGKILL right after acknowledging writes, a storage stall (the database file locked by another
 /// writer, so commits cannot proceed), and the lossy link the peer traffic will run through. The single-node halves run
-/// on today's write path and must pass. The replicated halves run in three regions; <see cref="Gaps"/> names any that still fail.
+/// on today's write path and must pass. The replicated halves wait on the slices <see cref="Gaps"/> names.
 /// Local only: they kill processes and lock files of their own nodes.
 /// </summary>
 public sealed class CrashAndStallE2ETests
@@ -72,8 +72,8 @@ public sealed class CrashAndStallE2ETests
         Console.WriteLine($"SIGKILL after {acked.Length} acknowledged writes ({unacknowledged.Length} in flight): all acknowledged writes survived");
     }
 
-    // The replicated half: gru, a separate OS process, is killed right after its acknowledgements, before it can have
-    // shipped them all, and every region must still end with every acknowledged write once gru is back.
+    // The replicated half: the writer is killed right after its acknowledgements, before it can have shipped them, and every
+    // region must still end with every acknowledged write once it is back.
     [Test]
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Writes_acknowledged_before_a_SIGKILL_reach_every_region_once_the_node_is_back()

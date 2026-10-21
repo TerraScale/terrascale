@@ -446,7 +446,7 @@ internal sealed partial class SqliteStorageTransaction(
     private T WithQueryBudget<T>(Func<T> execute, CancellationToken cancellationToken, QueryObservation? observation = null)
     {
         session.ObserveQueries(observation);
-        var budget = StartQueryBudget();
+        var budget = StartQueryBudget(cancellationToken);
         try
         {
             var result = execute();
@@ -473,7 +473,7 @@ internal sealed partial class SqliteStorageTransaction(
     private QueryBudget? _queryBudget;
 
     // The handler and its removal run only on workers while this transaction owns the connection.
-    private QueryBudget StartQueryBudget()
+    private QueryBudget StartQueryBudget(CancellationToken cancellationToken)
     {
         var budget = new QueryBudget(store.Time, store.QueryBudget,
             !store.IsSystem && QosContext.Current is { } tenant ? QosPolicy.For(tenant.Plan) : null);
@@ -1214,28 +1214,7 @@ internal sealed partial class SqliteStorageTransaction(
             Follow("the after-commit hook", store.AfterSqliteCommit);
             if (ChangedReaderState)
             {
-                result = new CommitResult(offset, IsClient && _captured > 0 && !_captureSuspended ? ReadCommitMarker() : null);
-                Committed = result;
-            }
-            finally
-            {
-                // A marker failure cannot skip cache invalidation or waking waiters for the committed write.
-                Follow("the after-commit hook", store.AfterSqliteCommit);
-                if (ChangedReaderState)
-                {
-                    Follow("forgetting the collection names", store.ForgetCollections);
-                }
-
-                if (_statisticsChanged)
-                {
-                    // Sessions opened before ANALYZE still use the old statistics.
-                    Follow("moving the statistics generation", store.StatisticsChanged);
-                }
-
-                if (_offset is not null)
-                {
-                    Follow("the commit notification", committed);
-                }
+                Follow("forgetting the collection names", store.ForgetCollections);
             }
 
             if (_statisticsChanged)

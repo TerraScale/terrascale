@@ -212,9 +212,7 @@ public sealed class ThreeRegionE2ETests
                     _ = await Docs.OpsAsync(cluster[region], uri, Op("inc", "n", 1));
                 }
             }));
-            // Equal copies are not enough: every region may still lack the same in-flight inc.
-            var settled = await Converge.UntilAsync(() => Converge.AllAsync(cluster, uri),
-                copies => copies.Identical && copies.Value?["n"]?.ToJsonString() == $"{times * All.Length}", "three-way inc");
+            var settled = await Converge.SettledAsync(cluster, uri, "three-way inc");
             Expected.Check(settled.Value!["n"]?.ToJsonString() == $"{times * All.Length}", $"{times} inc in each region sum to {times * All.Length}; {settled}");
         });
     }

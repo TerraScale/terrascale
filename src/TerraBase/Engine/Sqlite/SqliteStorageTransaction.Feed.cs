@@ -1,5 +1,4 @@
 using TerraBase.Engine.Lattices;
-using ZLogger;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -124,52 +123,14 @@ internal sealed partial class SqliteStorageTransaction
             return;
         }
 
-        if (at.Node.Value != 0)
+        // An anti-entropy repair (origin 0, R6) is filed as this machine's event at a fresh stamp: no cursor can name
+        // origin 0, and a fresh stamp keeps this machine's events in commit order. Repairs never ship, so other machines
+        // file their own repairs the same way.
+        if (at.Node.Value == 0)
         {
-            InsertFeedRow(collection, id, at, live);
-            return;
+            at = new EntryVersion(Member.Clock.Tick(), Member.Id);
         }
 
-        // An anti-entropy repair (origin 0, R6) is filed under the original identity of every event it brought, as the
-        // machines that got those events on their origins' streams filed them, so a cursor means the same everywhere. A
-        // repair that changed no versioned entry (nothing to name) is this machine's event at a fresh stamp.
-        var events = RepairedEvents(before ?? DocumentState.Bottom, state);
-        if (events.Count == 0)
-        {
-            InsertFeedRow(collection, id, new EntryVersion(Member.Clock.Tick(), Member.Id), live);
-            return;
-        }
-
-        foreach (var (node, stamp) in events)
-        {
-            HoleCheck(node, stamp);
-            InsertFeedRow(collection, id, new EntryVersion(stamp, node), live);
-        }
-    }
-
-    // Worker-only. A repaired event at or below the newest event of its origin already here is a hole a reader on this
-    // machine may have passed: its origin's floor rises just past that newest event, so such a cursor is 410 here (and so is
-    // one before the hole, which could have read it: a broken guarantee costs re-reads, never events). Holes cannot
-    // happen while a refill's repairs commit before the origin's later stream batches (R3's ordering guarantee); this only
-    // keeps a broken guarantee from turning into silent loss on this machine.
-    private void HoleCheck(ReplicaId node, Hlc stamp)
-    {
-        var newest = Command("SELECT max(stamp) FROM _tb_feed WHERE origin = $origin;");
-        newest.Parameters.AddWithValue("$origin", unchecked((long)node.Value));
-        if (newest.ExecuteScalar() is long head && head >= Version(stamp))
-        {
-            var raise = Command("UPDATE _tb_feed_floor SET stamp = max(stamp, $stamp) WHERE origin = $origin;");
-            raise.Parameters.AddWithValue("$origin", unchecked((long)node.Value));
-            raise.Parameters.AddWithValue("$stamp", head + 1);
-            raise.ExecuteNonQuery();
-            store.FeedHoles?.Add(1);
-            store.Logger?.ZLogError($"Changes feed hole in database {store.Name:@Database}: a repaired event of origin {node.Value:x16} at stamp {stamp.Value} landed at or below that origin's newest event {head}; the refill ordering guarantee is broken, and cursors past it are now 410 here but not on other machines");
-        }
-    }
-
-    // Worker-only.
-    private void InsertFeedRow(string collection, string id, EntryVersion at, bool live)
-    {
         var origin = unchecked((long)at.Node.Value);
         // Retention may empty the feed: Turso reuses rowids even with AUTOINCREMENT after a reopen.
         var seq = Command("UPDATE _tb_feed_sequence SET seq = seq + 1 WHERE id = 1 AND seq < 9223372036854775807 RETURNING seq;").ExecuteScalar() is long next
@@ -189,56 +150,6 @@ internal sealed partial class SqliteStorageTransaction
         insert.Parameters.AddWithValue("$prefix", prefix.Hash.ToArray());
         insert.ExecuteNonQuery();
         RehashFeedAfter(origin, at.Stamp, prefix);
-    }
-
-    // The events a repair brought into a document: per node, the newest stamp among the entries that differ between the
-    // two states (a clear, a field's base, a counter, an added or removed set element).
-    internal static Dictionary<ReplicaId, Hlc> RepairedEvents(DocumentState before, DocumentState after)
-    {
-        var events = new Dictionary<ReplicaId, Hlc>();
-        void Add(ReplicaId node, Hlc stamp)
-        {
-            if (node.Value != 0 && stamp.Value != 0 && (!events.TryGetValue(node, out var known) || known.Value < stamp.Value))
-            {
-                events[node] = stamp;
-            }
-        }
-
-        if (after.Clear is { } clear && after.Clear != before.Clear)
-        {
-            Add(clear.Version.Node, clear.Version.Stamp);
-        }
-
-        foreach (var (name, field) in after.Fields)
-        {
-            var old = before.Fields.GetValueOrDefault(name);
-            if (field.Base is { } @base && @base != old?.Base)
-            {
-                Add(@base.Version.Node, @base.Version.Stamp);
-            }
-
-            foreach (var (node, counter) in field.Counters)
-            {
-                if (old is null || !old.Counters.TryGetValue(node, out var had) || had != counter)
-                {
-                    Add(node, new Hlc(Math.Max(counter.Epoch.Stamp.Value, counter.Changed.Value)));
-                }
-            }
-
-            foreach (var (key, dot) in field.Dots)
-            {
-                if (old is null || !old.Dots.TryGetValue(key, out var had))
-                {
-                    Add(key.Version.Node, key.Version.Stamp);
-                }
-                else if (had != dot && dot.RemovedAt is { } removed)
-                {
-                    Add(removed.Node, removed.Stamp);
-                }
-            }
-        }
-
-        return events;
     }
 
     // The stamp `age` before `stamp`'s instant (0 when that is before the epoch).

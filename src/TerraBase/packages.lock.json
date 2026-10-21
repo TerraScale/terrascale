@@ -138,15 +138,6 @@
         "resolved": "0.6.5",
         "contentHash": "IKLnqJCGYrZPVpSUIBS+63c19YzETWN+/qY+KSili715vEmiNcJsH7XOTwBurhWbFaiUwkJcS2eYvgN9BmZUeA=="
       },
-      "Turso.Data.Sqlite.Provider": {
-        "type": "Direct",
-        "requested": "[0.8.2, )",
-        "resolved": "0.8.2",
-        "contentHash": "lYdm9gYDMuUJHm+Zux938PtKF/9fBi7lNEMqaEnwH3Kb96LPCdWxzrl1fOKzAJ4mc3zVUQnfzJCB/oGkB+rkkA==",
-        "dependencies": {
-          "Turso.Data.Common": "0.8.2"
-        }
-      },
       "Ulid": {
         "type": "Direct",
         "requested": "[1.4.1, )",
@@ -479,19 +470,6 @@
         "type": "Transitive",
         "resolved": "8.0.0",
         "contentHash": "ne1843evDugl0md7Fjzy6QjJrzsjh46ZKbhf8GwBXb5f/gw97J4bxMs0NQKifDuThh/f0bZ0e62NPl1jzTuRqA=="
-      },
-      "Turso.Data.Common": {
-        "type": "Transitive",
-        "resolved": "0.8.2",
-        "contentHash": "ODSAH09qNwyahal7ORQZ98osKWGha5ih23/K1P+Q5eyi6gW/7fz8xygmv+KDtu/RcY77V1+SRGuFuj86fd+sGw==",
-        "dependencies": {
-          "Turso.Data.Native": "0.8.2"
-        }
-      },
-      "Turso.Data.Native": {
-        "type": "Transitive",
-        "resolved": "0.8.2",
-        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
       },
       "Utf8StringInterpolation": {
         "type": "Transitive",

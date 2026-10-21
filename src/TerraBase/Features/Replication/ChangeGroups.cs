@@ -12,11 +12,7 @@ namespace TerraBase.Features.Replication;
 /// </summary>
 /// <param name="ChangeId">Larger than every earlier group's of the database on this machine.</param>
 /// <param name="Deltas">1 to <see cref="ChangeGroups.MaxDeltas"/> deltas.</param>
-/// <param name="Stale">
-/// Read again for a receiver that may have collected a newer deletion of its documents (section 11): each delta is then the
-/// document's whole state as of that commit, so the receiver joins it only where it cannot bring that deletion back.
-/// </param>
-public sealed record OriginGroup(long ChangeId, IReadOnlyList<ChangeDelta> Deltas, bool Stale = false);
+public sealed record OriginGroup(long ChangeId, IReadOnlyList<ChangeDelta> Deltas);
 
 /// <summary>A document operation or immutable catalog-version dependency; the stamp advances the sending origin only for its own group.</summary>
 /// <param name="Collection">The document's collection: a collection name or a reserved metadata collection.</param>
@@ -186,7 +182,7 @@ internal static class ChangeGroups
         var list = new V1.GroupList();
         foreach (var group in groups)
         {
-            var wire = new V1.Group { ChangeId = checked((ulong)group.ChangeId), Stale = group.Stale };
+            var wire = new V1.Group { ChangeId = checked((ulong)group.ChangeId) };
             wire.Deltas.AddRange(group.Deltas.Select(delta => new V1.Delta
             {
                 Collection = delta.Collection,

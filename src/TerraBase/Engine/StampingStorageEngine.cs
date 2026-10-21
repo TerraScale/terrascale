@@ -187,12 +187,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
             string collection, string id, ReadOnlyMemory<byte> json, IReadOnlyList<FieldOperation> operations, CancellationToken cancellationToken) =>
             WriteAsync(collection, id, () => inner.PatchAsync(collection, id, json, operations, cancellationToken), cancellationToken);
 
-        public ValueTask<bool> JoinReplicatedAsync(
-            string collection, string id, Lattices.DocumentState state, Lattices.EntryVersion at, bool whole, CancellationToken cancellationToken) =>
-            collection == DocumentDelta.Collections
-                ? WriteCollectionAsync(() => inner.JoinReplicatedAsync(collection, id, state, at, whole, cancellationToken), cancellationToken)
-                : WriteAsync(collection, id, () => inner.JoinReplicatedAsync(collection, id, state, at, whole, cancellationToken), cancellationToken);
-
         // A collection's metadata document drops or creates its collection, as a replicated delta of a collection it lacks may.
         public ValueTask<bool> JoinAsync(string collection, string id, Lattices.DocumentState delta, Lattices.EntryVersion at, CancellationToken cancellationToken) =>
             collection == DocumentDelta.Collections
@@ -279,8 +273,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         public ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken) =>
             RunAsync(() => inner.ExplainSqlAsync(query, cancellationToken), cancellationToken);
 
-        public ValueTask<long> DeleteCollectionsAsync(string prefix, int limit, CancellationToken cancellationToken) =>
-            WriteCollectionAsync(() => inner.DeleteCollectionsAsync(prefix, limit, cancellationToken), cancellationToken);
+        public ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken) =>
+            WriteCollectionAsync(() => inner.DeleteCollectionsAsync(prefix, cancellationToken), cancellationToken);
 
         public ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.ListIndexesAsync(cancellationToken), cancellationToken);

@@ -712,10 +712,6 @@ public sealed class Cluster : IAsyncDisposable
         private readonly string _project = EntityIds.New().ToString();
         private readonly string _database = EntityIds.New().ToString();
 
-        // The first region's user owns the organization on every node: once the catalog replicates (R10a), a node that
-        // answers id_taken holds the first region's organization, and only its owner can set its plan.
-        private string? _owner;
-
         // Every machine reaches each peer through a PeerLink of its own: its view of the shared directory names the link, not
         // the peer's listener. A partition cuts the links between two regions both ways, on the real peer path, so the CDC
         // groups and acks stop at once; links made later (a restart, a new view) start cut until the heal.
@@ -848,21 +844,8 @@ public sealed class Cluster : IAsyncDisposable
                 await StartNodeAsync(node);
             }
 
-            // The catalog gate (R10a) is closed until verified: a lone region is a new cluster, which the operator's bootstrap
-            // opens; every node then waits for its gate before the first commit.
-            if (regions.Length == 1)
-            {
-                await CatalogBootstrap.OpenAsync(_nodes[regions[0]].Api!.Server);
-            }
-
-            foreach (var node in _nodes.Values)
-            {
-                await CatalogBootstrap.WaitOpenAsync(node.Api!.Server);
-            }
-
             // Registered once in the first region; every other node registers the same ids too, which a replicated catalog
             // (R10a) answers with 409 id_taken or name_taken: it already holds them. Until then each node keeps its own catalog.
-            _owner = _nodes[regions[0]].Api!.User;
             foreach (var node in _nodes.Values)
             {
                 await CommitAsync(node.Api!, Registration(OrganizationId, _project, _database, "canary", [.. regions.Where(region => region != node.Region)]),
@@ -919,13 +902,6 @@ public sealed class Cluster : IAsyncDisposable
             await StartNodeAsync(node);
             try
             {
-                // A lone node has nothing to pull from after a restart: the operator open (R10a).
-                if (_nodes.Count == 1)
-                {
-                    await File.WriteAllTextAsync(Path.Combine(node.Api!.Server.DataDirectory, "catalog-open"), "e2e: a lone node restarted");
-                }
-
-                await CatalogBootstrap.WaitOpenAsync(node.Api!.Server);
                 await AuthorizeAsync(node, restart: true);
                 // Nodes restarted together answer 503 catalog_unverified until their gates verify each other's catalogs;
                 // ready means the persisted binding serves the database to the new project token.
@@ -992,7 +968,7 @@ public sealed class Cluster : IAsyncDisposable
         private async Task AuthorizeAsync(Node node, bool restart)
         {
             var api = node.Api!;
-            node.User ??= _owner ?? api.User;
+            node.User ??= api.User;
             if (!restart)
             {
                 // The enterprise plan lifts the organization's request budget, as the cross-region suite does. Fly's plan is its own.
@@ -1013,9 +989,9 @@ public sealed class Cluster : IAsyncDisposable
         }
 
         // With alreadyHeld, a 409 naming ids or names already taken counts as done: the catalog brought them.
-        private static async Task CommitAsync(ManagementApi api, string user, string commit, bool alreadyHeld = false)
+        private static async Task CommitAsync(ManagementApi api, string commit, bool alreadyHeld = false)
         {
-            using var service = api.Service(user);
+            using var service = api.Service(api.User);
             using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
             if (!alreadyHeld || !await Cluster.TakenAsync(response))
             {

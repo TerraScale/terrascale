@@ -38,6 +38,9 @@ public sealed partial record HostedLayoutModel
     [GeneratedRegex(@"\A#[0-9A-Fa-f]{6}\z")]
     private static partial Regex HexColor();
 
+    /// <summary>The embedded design tokens (<c>assets/ui/tokens.css</c>); the email palette reads its colours from them.</summary>
+    public static readonly string TokensCss = ReadTokens();
+
     /// <summary>The shared hosted-page stylesheet.</summary>
     public const string PageCss = """
 @font-face { font-family: "Geist"; src: url("/fonts/Geist-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }

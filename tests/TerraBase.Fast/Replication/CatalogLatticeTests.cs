@@ -44,57 +44,6 @@ public sealed class CatalogLatticeTests
         await Assert.That(await region.ReadAsync("organizations", organization)).IsNotNull();
     }
 
-    // Every mutating route not anchored before it acknowledges: grants, creations, renames, preferences, reads through POST,
-    // restores into new databases, tenant data, and two that anchor themselves: the management commit (per operation) and
-    // setting a backup destination (when it replaces one).
-    private static readonly string[] NotAnchored =
-    [
-        "DELETE /v1/projects/{project}/databases/{database}/collections/{collection}",
-        "DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key",
-        "DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/schema",
-        "DELETE /v1/projects/{project}/databases/{database}/indexes/{index}",
-        "PATCH /v1/management/organizations/{organization}",
-        "PATCH /v1/management/organizations/{organization}/projects/{project}",
-        "PATCH /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key",
-        "POST /admin/api-keys",
-        "POST /v1/management/commits",
-        "POST /v1/management/documents/{collection}/query",
-        "POST /v1/management/invitations/accept",
-        "POST /v1/management/invitations/lookup",
-        "POST /v1/management/organizations",
-        "POST /v1/management/organizations/{organization}/invitations",
-        "POST /v1/management/organizations/{organization}/projects",
-        "POST /v1/management/organizations/{organization}/projects/{project}/api-keys",
-        "POST /v1/management/organizations/{organization}/projects/{project}/binding",
-        "POST /v1/projects/{project}/databases",
-        "POST /v1/projects/{project}/databases/{database}/backups",
-        "POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore",
-        "POST /v1/projects/{project}/databases/{database}/branches",
-        "POST /v1/projects/{project}/databases/{database}/collections",
-        "POST /v1/projects/{project}/databases/{database}/collections/{collection}/documents",
-        "POST /v1/projects/{project}/databases/{database}/collections/{collection}/query",
-        "POST /v1/projects/{project}/databases/{database}/index-recommendations/{recommendation}/apply",
-        "POST /v1/projects/{project}/databases/{database}/indexes",
-        "POST /v1/projects/{project}/databases/{database}/point-in-time/plan",
-        "POST /v1/projects/{project}/databases/{database}/point-in-time/restore",
-        "POST /v1/projects/{project}/databases/{database}/sql",
-        "POST /v1/projects/{project}/databases/{database}/sql/check",
-        "POST /v1/projects/{project}/databases/{database}/sql/explain",
-        "POST /v1/projects/{project}/databases/{database}/transactions",
-        "POST /v1/projects/{project}/saved-queries",
-        "PUT /v1/management/current-organization",
-        // Retention, not access: a shortened retention lost to a restore lists older audit events again and grants nothing.
-        "PUT /v1/management/organizations/{organization}/audit-retention",
-        "PUT /v1/management/organizations/{organization}/members/{user}",
-        "PUT /v1/projects/{project}/backup-destination",
-        "PUT /v1/projects/{project}/databases/{database}",
-        "PUT /v1/projects/{project}/databases/{database}/auto-index/{collection}",
-        "PUT /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key",
-        "PUT /v1/projects/{project}/databases/{database}/collections/{collection}/schema",
-        "PUT /v1/projects/{project}/databases/{database}/schema/{collection}",
-        "PUT /v1/projects/{project}/saved-queries/{query}",
-    ];
-
     [Test]
     public async Task An_organization_created_in_one_region_reaches_every_region_with_the_same_document_and_version()
     {
@@ -280,15 +229,6 @@ public sealed class CatalogLatticeTests
             var store = await SystemAsync();
             await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
             return await transaction.GetAsync(collection, id, CancellationToken.None);
-        }
-
-        // The ids of a catalog collection's live documents on this machine.
-        public async Task<string[]> IdsAsync(string collection)
-        {
-            var store = await SystemAsync();
-            await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-            var page = await transaction.ListAsync(collection, null, 100, 1024 * 1024, CancellationToken.None);
-            return [.. page.Documents.Select(document => document.Id).Order(StringComparer.Ordinal)];
         }
 
         public async Task<string?> ReadAsync(string collection, string id) =>

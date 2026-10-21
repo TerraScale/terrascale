@@ -16,25 +16,10 @@ namespace TerraBase.Engine.Sqlite;
 internal static class TursoCopy
 {
     /// <summary>
-    /// Rows one copy transaction holds at most (with <see cref="ChunkBytes"/>): Turso reads every dirty page a
-    /// transaction spilled back in at commit, so one transaction over every row of a large database peaks at about
-    /// 2.2× the file in memory (P11). The target file is scratch until <see cref="Write(TursoConnection,string,long,long,CancellationToken)"/> returns, so committing
-    /// in bounded chunks changes nothing the reader can see.
-    /// </summary>
-    internal const long ChunkRows = 10_000;
-
-    /// <summary>Bytes of row data one copy transaction holds at most (with <see cref="ChunkRows"/>).</summary>
-    internal const long ChunkBytes = 32 * 1024 * 1024;
-
-    /// <summary>
     /// Writes the database <paramref name="source"/> reads, as of its open read transaction, to a new file at
     /// <paramref name="target"/>, with its log checkpointed into it.
     /// </summary>
-    public static void Write(TursoConnection source, string target, CancellationToken cancellationToken) =>
-        Write(source, target, ChunkRows, ChunkBytes, cancellationToken);
-
-    /// <summary>Writes with an overriding chunk policy, so tests can exercise many commits on a small database.</summary>
-    internal static void Write(TursoConnection source, string target, long chunkRows, long chunkBytes, CancellationToken cancellationToken)
+    public static void Write(TursoConnection source, string target, CancellationToken cancellationToken)
     {
         var objects = new List<(string Type, string Name, string Table, string Sql)>();
         using (var schema = source.CreateCommand())
@@ -53,6 +38,7 @@ internal static class TursoCopy
         var version = Scalar(source, "PRAGMA user_version;");
         using var copy = new TursoConnection($"Data Source={target}");
         copy.Open();
+        Execute(copy, "BEGIN IMMEDIATE;");
         // Tables and their rows first, then indexes, which build faster over the loaded rows.
         foreach (var (_, name, _, sql) in objects.Where(item => item.Type == "table"))
         {
@@ -60,7 +46,7 @@ internal static class TursoCopy
             // Sealed shapes belong to the source lineage: copies and backups rebuild them under a new handle.
             if (name is not ("_tb_shape_chunk" or "_tb_shape_snapshot"))
             {
-                CopyRows(source, copy, name, chunkRows, chunkBytes, cancellationToken);
+                CopyRows(source, copy, name, cancellationToken);
             }
         }
 
@@ -88,11 +74,12 @@ internal static class TursoCopy
         }
 
         Execute(copy, $"PRAGMA user_version = {Convert.ToInt64(version, System.Globalization.CultureInfo.InvariantCulture)};");
+        Execute(copy, "COMMIT;");
         // Turso leaves the log next to the file when the connection closes; the copy is moved without it.
         Execute(copy, "PRAGMA wal_checkpoint(TRUNCATE);");
     }
 
-    private static void CopyRows(TursoConnection source, TursoConnection copy, string table, long chunkRows, long chunkBytes, CancellationToken cancellationToken)
+    private static void CopyRows(TursoConnection source, TursoConnection copy, string table, CancellationToken cancellationToken)
     {
         var (columns, alias) = TableShape.Read(source, table);
         // The rowid alias column is the rowid: name it once.
@@ -100,10 +87,6 @@ internal static class TursoCopy
         var insert = $"INSERT INTO {TableShape.Quote(table)} ({string.Join(", ", names)}) VALUES ({string.Join(", ", names.Select((_, i) => $"$v{i}"))});";
         using var read = source.CreateCommand();
         read.CommandText = alias >= 0 ? $"SELECT * FROM {TableShape.Quote(table)};" : $"SELECT rowid, * FROM {TableShape.Quote(table)};";
-        var rowsInChunk = 0L;
-        var bytesInChunk = 0L;
-        // An unfinished chunk rolls back when the connection closes: the target is scratch until Write returns.
-        Execute(copy, "BEGIN IMMEDIATE;");
         using var rows = read.ExecuteReader();
         while (rows.Read())
         {
@@ -112,24 +95,11 @@ internal static class TursoCopy
             write.CommandText = insert;
             for (var i = 0; i < rows.FieldCount; i++)
             {
-                var value = rows.GetValue(i);
-                write.Parameters.Add(new TursoParameter($"$v{i}", value));
-                bytesInChunk += value switch { string text => text.Length, byte[] blob => blob.LongLength, null => 0, _ => sizeof(long) };
+                write.Parameters.Add(new TursoParameter($"$v{i}", rows.GetValue(i)));
             }
 
             write.ExecuteNonQuery();
-            if (++rowsInChunk < chunkRows && bytesInChunk < chunkBytes)
-            {
-                continue;
-            }
-
-            Execute(copy, "COMMIT;");
-            rowsInChunk = 0;
-            bytesInChunk = 0;
-            Execute(copy, "BEGIN IMMEDIATE;");
         }
-
-        Execute(copy, "COMMIT;");
     }
 
     private static void Execute(TursoConnection connection, string sql)

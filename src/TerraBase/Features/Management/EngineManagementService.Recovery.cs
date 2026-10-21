@@ -2,7 +2,6 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Backups;
-using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -55,8 +54,6 @@ internal sealed partial class EngineManagementService
                     }
                 }
             }
-
-            await DrainPrefixDeletesAsync(cancellationToken).ConfigureAwait(false);
         }
 
         await AuditFilesAsync(hasCatalog, version, cancellationToken).ConfigureAwait(false);
@@ -124,10 +121,7 @@ internal sealed partial class EngineManagementService
     private async ValueTask<CatalogCheck> FinishDatabaseCleanupAsync(
         TenantContext storage, CancellationToken cancellationToken, bool abandonedCreation = false)
     {
-        // This also protects a create whose registration committed before a later error was reported. A registered database
-        // keeps its files: another region may have registered the same chosen id while this machine's own creation of it
-        // failed (the catalog replicates, docs/terrabase/multi-region-replication.md section 15), and the file here is then
-        // its local copy. Only the intent goes.
+        // This also protects a create whose registration committed before a later error was reported.
         var registered = await HasDatabaseRowAsync(storage, cancellationToken).ConfigureAwait(false);
         if (registered is Unavailable refused)
         {

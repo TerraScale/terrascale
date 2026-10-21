@@ -194,12 +194,14 @@ public sealed class MetricsTests
         // Generate an HTTP server measurement before scraping.
         using var warmup = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
 
-        using var response = await server.Client.GetAsync(new Uri("/metrics", UriKind.Relative));
-        var text = await response.Content.ReadAsStringAsync();
-
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("text/plain");
-        await Assert.That(text).Contains("http_server_request_duration_seconds");
+        // Kestrel records the request duration after the response is sent: a scrape can arrive before it.
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            using var response = await server.Client.GetAsync(new Uri("/metrics", UriKind.Relative), token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("text/plain");
+            return (await response.Content.ReadAsStringAsync(token)).Contains("http_server_request_duration_seconds", StringComparison.Ordinal);
+        });
     }
 
     private const string IsolationChildFlag = "TERRABASE_TEST_METRICS_ISOLATION_CHILD";

@@ -10,13 +10,13 @@ runs against the new replicated path.
 in the cluster's setup (the collection created in gru never reaches sjc), before its own assertions.
 
 **Release rule.** Release correctness and the 1M-document acceptance stay **BLOCKED** until every row's replacement passes
-against the design-C replicated path at the exact release commit, both locally and on Fly. A row that is partial, an
-expected failure or missing blocks. The obsolete binary harness is not coming back.
+against the design-C replicated path at the exact release commit, both locally and on Fly. A row that is missing or an
+expected failure blocks. The obsolete binary harness is not coming back: crash and storage-stall scenarios need new
+harness work on the design-C transport (listed under "Missing").
 
 Status words:
 
-- **pass**: every test of the row ran on the design-C replicated path (nodes as stated in the row) and held.
-- **partial**: some of the row's tests pass, the rest are expected failures (named in the row).
+- **pass**: the replacement runs on the design-C replicated path and passes.
 - **expected failure (slice)**: the replacement exists and is a strict expected failure in `Gaps.cs` until that slice
   lands. It counts only when the scenario fails its own way with the gap's declared signature (`Expected.cs`). A 5xx, a
   crash, a lock or a harness error fails the test. It fails as soon as it passes.
@@ -29,32 +29,13 @@ Status words:
   refusal fails the test and is never counted as a gap. Scenarios that stop Fly machines keep their own guard and run only
   in the pinned disposable outage run.
 
-## Candidates
-
-Each candidate's results stay under its own SHA; counts are never merged across candidates. A candidate counts only once
-the R3 owner acknowledged that exact SHA on #108 and both owners' repeats are posted there.
-
-| Candidate | SHA (frozen branch) | Base (harness) | Strict owner, 3 runs | R3 owner, 3 runs | Recorded |
-| --- | --- | --- | --- | --- | --- |
-| combined | `f929c623` (`test/e2e-candidate-f929c623`) | #106 `81fa4fcb` | 37/4/11/1/2/0 of 55 | 37/4/11/1/2/0 of 55 | historical |
-| candidate 2 | `f1ddb954` | #111 `07f8d81f` | 43/4/9/0/3/1 of 60 | 43/4/9/0/3/1 of 60 | historical (unique failed under load; undeclared tests) |
-| candidate-3 | `ab499d84` (`test/candidate-3`) | #112 `8b8758ff` | 45/4/8/0/3/0 of 60 | 45/4/8/0/3/0 of 60 | recorded; superseded by candidate-8 |
-| candidate-4 | `4193f8fe` (`test/candidate-4`) | #114 `594b052a` | 49/4/6/0/3/0 of 62 | not run (stale, per COS) | historical, strict owner only |
-| candidate-5 | `77f0072c` (`test/candidate-5`) | `200e08e1` = #114 `594b052a` + R8 #118 `90c1b833` | 53/4/4/0/3/0 of 64 | not run (stale, per COS) | historical, strict owner only |
-| candidate-6 | `5148157a` (local) | `5b5a028f` = #120 `811dbf6e` + R8 `90c1b833` | 53/4/4/0/3/0 ×2, 52/4/4/0/3/**1** | not run | historical; run 3 failed on the PeerLink abort race |
-| candidate-7 | `4b350f97` (local) | `187af4e8` = `e8b458e5` + `a77a7574` + R8 `90c1b833` | 53/6/4/0/3/0 of 66 | 52/6/4/0/3/**1**, 53/6/4/0/3/0 ×2 | **failed**: an R3 run's writer gate stopped at 195 of 200 under host load 38.7/16 |
-| candidate-8 | `70b55472` (local) | `dea6b364` = `80c67345` + R8 `90c1b833` | 53/13/4/0/3/0 of 73 | 53/13/4/0/3/0 of 73 | **yes: rows below** |
-
-Counts read actual pass / harness check / expected failure / not supported / skip / fail.
-
 ## Last runs
 
 Summaries come from `make terrabase-e2e` itself (`tests/TerraBase.E2E/Outcomes.cs`, `scripts/terrabase/e2e-summary.sh`),
-never from a pass count. Each test declares its nodes and faults (`ScenarioAttribute`; the harness owner's own tests carry
-it with their OK). Each line says whether a test ran on in-process nodes, separate OS processes or no node
-(harness check), and whether its partition was simulated or its fault a TCP-proxy network fault. CI's `terrabase-check`
-rejects a block here or in `RUNS.md` that lacks a category, the commit, the working-tree patch identity, the stacked-on
-line or a test's nodes and faults, or whose counts do not add up.
+never from a pass count. Each test declares its nodes and faults (`ScenarioAttribute`); each line says whether it ran on
+in-process nodes, separate OS processes or no node (harness check), and whether its partition was simulated or its fault
+a TCP-proxy network fault. CI's `terrabase-check` rejects a block here or in `RUNS.md` that lacks a category, the commit,
+the working-tree patch identity, the stacked-on line or a test's nodes and faults, or whose counts do not add up.
 
 **Acceptance candidates** are published on #108 by the strict-test owner (one named candidate per batch, frozen branch).
 Each counts once the R3 owner acknowledges its exact SHA and both owners' 3 repeats are posted there.
@@ -77,23 +58,7 @@ under the heavy lock, `flock -o /tmp/ts-heavy.lock`). They are identical test by
 | 1 of 2 | `f1cfbc0f` | none (origin/main `e30ffdc28753`) | clean | 44 | 19 | 5 | 3 | 4 | 0 | 75 | 10.54 8.36 7.21 → 6.44 11.14 9.12 |
 | 2 of 2 | `f1cfbc0f` | none (same) | clean | 44 | 19 | 5 | 3 | 4 | 0 | 75 | 6.44 11.14 9.12 → 4.47 9.94 9.23 |
 
-**Harness checks (13):**
-- 4 harness self-checks;
-- 2 PeerLink regressions;
-- 7 recorder controls (`ExpectedTests`): a 5xx, a real NullReferenceException, a real `database is locked`, a convergence
-  without the signature and a plain harness timeout all fail a listed gap.
-
-**Skipped in every run:** the RegionProcesses child host, the benchmark's cluster host, the Fly outage test.
-
-**Expected failures (4)**, each failing its own way with its declared signature:
-- E11 (R9): `only SELECT statements are supported`;
-- E12 (R10a): `sjc's database on gru did not converge`;
-- E13 (R11): `/move answered 404`;
-- the deleted database (R10a + R7): `the new database on sjc did not converge`.
-
-The commits after candidate-8's code on this branch change only `COVERAGE.md` and `RUNS.md`.
-
-The strict owner's last run in full:
+The last run in full:
 
 <!-- e2e-summary -->
 E2E run (honest gaps f1cfbc0f, run 2 of 2 (delta)), 2026-10-13T04:34Z on delta
@@ -135,7 +100,6 @@ E2E run (honest gaps f1cfbc0f, run 2 of 2 (delta)), 2026-10-13T04:34Z on delta
 | `Answer_served_from_another_region_is_refused` | harness check | no node (harness) | none |  |
 | `Answer_without_a_region_header_is_refused` | harness check | no node (harness) | none |  |
 | `Pinned_request_carries_the_preferred_region_and_is_accepted_when_that_region_serves_it` | harness check | no node (harness) | none |  |
-| `Resetting_a_link_while_its_connections_close_never_throws` | harness check | no node (harness) | none |  |
 | `The_lossy_link_delivers_bytes_intact_through_its_delays_and_throughput_cap` | harness check | no node (harness) | NetworkFault |  |
 | `The_scenario_failing_its_own_way_is_the_gap` | harness check | no node (harness) | none |  |
 | `A_storage_stall_on_one_region_loses_no_acknowledged_write_and_the_regions_converge` | not supported | in-process nodes | StorageStall | E2E harness: the storage stall hook (Cluster.StallStorageAsync) not wired to this scenario; no storage stall hook: cannot stall sjc's database file for 10 s while gru, sjc, fra write; it needs Cluster.StallStorageAsync (#106) |
@@ -202,7 +166,7 @@ E2E run (honest gaps f1cfbc0f, run 2 of 2 (delta)), 2026-10-13T04:34Z on delta
 | 5 | Concurrent different-field writes, 3-way | (none) | ThreeRegionE2ETests: `Concurrent_writes_to_different_fields_in_three_regions_all_survive` | setup-blocked (R3) | 94086cd6: not supported (setup-blocked) | |
 | 6 | Delete vs concurrent edit | ReplicationTests: `A_version_read_on_one_member_deletes_the_document_on_the_other`; Slow/ReplicationSlowTests: `Two_nodes_converge_after_many_concurrent_writes_and_deletes` | ReplicationE2ETests: `Delete_in_one_region_and_edit_in_the_other…` (E5); ThreeRegionE2ETests: `Delete_in_one_region_and_edits_in_the_other_two…` | setup-blocked (R3) | 94086cd6: not supported (setup-blocked) | Many concurrent deletes: the benchmark's 1 % deletes |
 | 7 | Partition, then heal | CrossRegionTests: `Partitioned_regions_keep_serving_their_writes_and_converge_after_heal`; Slow/CrossRegion/CrossRegionPartitionTests: `Regions_converge_without_losing_or_corrupting_writes_through_a_lossy_partitioned_link_and_restarts` | ThreeRegionFaultE2ETests: `Partitioned_region_keeps_accepting_writes_and_converges_after_the_partition_heals` | setup-blocked (R3) | 94086cd6: not supported (setup-blocked) | `Cluster.Partition` throws until R4a wires its streams in. Local only; Fly has no partition switch (skipped there, with the reason) |
-| 8 | Region down, then rejoin | Fast/CrossRegion/CrossRegionDeletionTests: `A_restarted_region_removes_…`; (Fly) FlyOutageE2ETests | ThreeRegionFaultE2ETests: `Region_down_then_back_catches_up_on_every_write_made_while_it_was_down`; ReplicationMatrixTests: `Each_region_rejoins_with_writes_and_tombstones_from_both_survivors` ×3 (local); FlyOutageE2ETests: `Each_region_machine_stopped_then_started…` (E7: gru, sjc and fra in turn, each a collection of its own) | setup-blocked (R3); E7 also needs R6 | 94086cd6: not supported (setup-blocked) | Both run one shared proof: writes, a delete and a conflicting patch from both survivors, then backlog, tombstone ETags, conflict and digest. Fly runs only through `make terrabase-e2e-fly-outage`, which fails unless E7 is an actual pass; no live run recorded yet |
+| 8 | Region down, then rejoin | Fast/CrossRegion/CrossRegionDeletionTests: `A_restarted_region_removes_…`; (Fly) FlyOutageE2ETests | ThreeRegionFaultE2ETests: `Region_down_then_back_catches_up_on_every_write_made_while_it_was_down`; FlyOutageE2ETests: `Sjc_machine_stopped_then_started…` (E7) | setup-blocked (R3); E7 also needs R6 | 94086cd6: not supported (setup-blocked) | Fly runs only through `make terrabase-e2e-fly-outage` |
 | 9 | Node restart mid-replication (receiver); restore to an older state | ReplicationTests: `A_restarted_node_resumes_after_its_peers_applied_prefix`; Slow/ReceiverRestoreTests: `A_caught_up_sender_repairs_a_restarted_receiver_restored_to_an_older_frontier` | ThreeRegionFaultE2ETests: `Restart_in_the_middle_of_replication_loses_no_write`; RepairAndContractE2ETests: `A_region_restored_to_an_older_copy_of_its_data_catches_up_without_undoing_later_writes` | setup-blocked (R3; restore: R6) | 94086cd6: not supported (setup-blocked) | Restore copies sjc's data directory back to a snapshot taken 100 writes earlier |
 | 10 | Sender restarts with an unsent backlog | Fast/Replication/HintedHandoffTests: `A_restarted_sender_replays_durable_backlog_when_its_peer_returns_without_new_writes` | ThreeRegionFaultE2ETests: `A_restarted_region_replays_its_backlog_to_a_region_that_returns` | setup-blocked (R3) | 94086cd6: not supported (setup-blocked) | New in this change |
 | 11 | Clock skew | Fast/Replication/ReplicatedStampTests: `A_stamp_far_ahead_is_applied_and_counted_but_moves_the_clock_only_the_skew_ahead` | ThreeRegionFaultE2ETests: `Causally_later_write_wins_everywhere_despite_clock_skew` (±2 s), `Concurrent_writes_with_a_clock_2_s_ahead_converge_and_the_writer_ahead_wins` | setup-blocked (R3) | 94086cd6: not supported (setup-blocked) | Missing: the `terrabase.clock.skew_capped` counter assertion (R4a metrics). Local only (skipped on Fly) |
@@ -227,7 +191,7 @@ E2E run (honest gaps f1cfbc0f, run 2 of 2 (delta)), 2026-10-13T04:34Z on delta
 
 ## Counts (2026-10-12, at 94086cd6 on main)
 
-| Row status | Rows |
+| Status | Rows |
 | --- | ---: |
 | pass on design C (replicated) | 0 |
 | setup-blocked (a slice) | 29 |
@@ -259,19 +223,18 @@ The candidates on #108 run on them.
 
 | Test | Skipped when | Reason |
 | --- | --- | --- |
-| FlyOutageE2ETests: `Each_region_machine_stopped_then_started…` | locally, or on Fly without `TERRABASE_E2E_FLY_OUTAGE=1` | It stops a machine, so it runs alone through `make terrabase-e2e-fly-outage`, and only on a pinned disposable app (`Cluster.FlyMachineFaults`), never production |
+| FlyOutageE2ETests: `Sjc_machine_stopped_then_started…` | locally, or on Fly without `TERRABASE_E2E_FLY_OUTAGE=1` | It stops a machine, so it runs alone through `make terrabase-e2e-fly-outage`, and only on a pinned disposable app (`Cluster.FlyMachineFaults`), never production |
 | BenchmarkClusterHost: `Hosts_three_local_regions…` | always, unless `TERRABASE_BENCH_CLUSTER_FILE` is set | It is the benchmark's local cluster host, not a scenario |
 | PitrLabHost: `Runs_the_PitrLab_job…` | always, unless `TERRABASE_PITR_JOB` is set | It is the PitrLab backup/PITR harness host (benchmark/docs/pitr-100m.md), not a scenario |
 | ThreeRegionFaultE2ETests: partition, backlog, both skew tests | on Fly | Fly has no switch for a partition or a clock skew between machines |
 | ThreeRegionFaultE2ETests: region down, restart, ack-then-stop, restarted backlog; RepairAndContractE2ETests: deleted database | on Fly without `TERRABASE_E2E_FLY_OUTAGE=1` | They stop Fly machines |
-| CrashAndStallE2ETests (all but the proxy self-check); RepairAndContractE2ETests: anti-entropy repair, restore, unique under partition, lag series | on Fly | They kill local processes, lock or edit local files, or partition; Fly has no such switch |
+| CrashAndStallE2ETests (all but the proxy self-check); RepairAndContractE2ETests: anti-entropy repair, restore, unique under partition | on Fly | They kill local processes, lock or edit local files, or partition; Fly has no such switch |
 
 ## Keeping this current
 
 Update a row in the same PR that changes its status: a slice that lands removes its `Gaps.cs` entries and marks the row
 "pass" with the commit of the run that proved it. Re-run `make terrabase-e2e` locally and `make terrabase-e2e` plus
-`make terrabase-e2e-fly-outage` on Fly at the release commit, and record both in "Last run". The other `fly-outage`
-scenarios run separately with the command in docs/terrabase/replication-e2e.md, never at the same time on the same app.
+`make terrabase-e2e-fly-outage` on Fly at the release commit, and record both in "Last run".
 
 ## Backup qualification producer (#164)
 

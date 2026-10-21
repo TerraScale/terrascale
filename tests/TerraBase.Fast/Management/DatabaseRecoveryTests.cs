@@ -21,9 +21,6 @@ namespace TerraBase.Fast.Management;
 
 public sealed class DatabaseRecoveryTests
 {
-    // This machine's cleanup intents: the test servers run as machine "local" (TerraBaseOptions.MachineId off Fly).
-    private const string Pending = "machines/local/pending_database_cleanup";
-
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -227,64 +224,6 @@ public sealed class DatabaseRecoveryTests
         {
             replacement = await final.CreateDatabaseAsync(state.Organization, state.Project, state.TargetName, finalOwner);
             await Assert.That(replacement).IsNotEqualTo(target);
-        }
-    }
-
-    [Test]
-    public async Task A_deleted_databases_catalog_state_larger_than_one_change_group_goes_in_chunks_that_a_restart_resumes()
-    {
-        await using var state = new RecoveryData();
-        var keys = new List<(string Collection, string Id)>();
-        var chunks = 0;
-        string target;
-        string prefix;
-        // Lets the first chunk through, then fails before every later one: a crash between chunks that no pass gets past.
-        await using (var api = await state.StartAsync(services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
-        {
-            if (step == "prefix.chunk" && Interlocked.Increment(ref chunks) > 1)
-            {
-                throw new InvalidOperationException("interrupted between chunks");
-            }
-        })))
-        {
-            await state.SeedAsync(api);
-            using var owner = api.As(state.User);
-            target = await api.CreateDatabaseAsync(state.Organization, state.Project, state.TargetName, owner);
-            state.TargetPath = state.Path(target);
-            prefix = SystemCatalog.DatabaseState(target);
-            // More documents under the database's state than one system change group holds (16,384), in two collections.
-            var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
-            foreach (var collection in new[] { prefix + "fill_a", prefix + "fill_b" })
-            {
-                await using var write = await system.BeginTransactionAsync(write: true, CancellationToken.None);
-                for (var i = 0; i < 8_500; i++)
-                {
-                    var id = EntityIds.New().ToString();
-                    _ = await write.PutAsync(collection, id, """{"n":1}"""u8.ToArray(), CancellationToken.None);
-                    keys.Add((collection, id));
-                }
-
-                await write.CommitAsync(CancellationToken.None);
-            }
-
-            using var deleted = await owner.DeleteAsync(Uri(state.Databases + "/" + target));
-            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-            // The record went first, with the intent; then exactly one chunk of tombstones before the interruption.
-            await state.AssertUnregisteredAsync(api, owner, target);
-            await state.AssertFilesGoneAsync(target);
-            await Assert.That(await CatalogAsync(api, PrefixDeletes, prefix)).IsNotNull();
-            await Assert.That(await StateAsync(api, keys)).IsEqualTo((keys.Count - 1024, 1024));
-        }
-
-        for (var restart = 0; restart < 2; restart++)
-        {
-            // Startup resumes the intent: every document of the state is a tombstone, the intent is gone, nothing came back.
-            await using var api = await state.StartAsync();
-            using var owner = api.As(state.User);
-            await Assert.That(await StateAsync(api, keys)).IsEqualTo((0, keys.Count));
-            await Assert.That(await CatalogAsync(api, PrefixDeletes, prefix)).IsNull();
-            await state.AssertUnregisteredAsync(api, owner, target);
-            await state.AssertPreservedAsync(api, owner);
         }
     }
 
@@ -642,7 +581,7 @@ public sealed class DatabaseRecoveryTests
         await Assert.That(File.Exists(state.Path(target))).IsTrue();
         // No public listener exists after failed startup; inspect the persisted catalog with the existing helper.
         await Assert.That(await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db")))
-            .Contains(line => line.StartsWith(Pending + "|" + target + "|", StringComparison.Ordinal));
+            .Contains(line => line.StartsWith("pending_database_cleanup|" + target + "|", StringComparison.Ordinal));
 
         for (var restart = 0; restart < 2; restart++)
         {
@@ -1220,10 +1159,8 @@ public sealed class DatabaseRecoveryTests
     }
 
     [Test]
-    public async Task An_intent_naming_a_registered_database_keeps_its_data_and_is_cleared_at_startup()
+    public async Task An_intent_conflicting_with_a_registered_database_refuses_startup_without_deleting_data()
     {
-        // Another region may register the same chosen id while this machine's own creation of it failed: the database
-        // exists, so its file here is its local copy.
         await using var state = new RecoveryData();
         await using (var api = await state.StartAsync())
         {
@@ -1231,20 +1168,19 @@ public sealed class DatabaseRecoveryTests
             var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
             await using var transaction = await system.BeginTransactionAsync(write: true, CancellationToken.None);
             var storage = new TenantContext(state.Organization, PlanTier.Hobby, state.Project, state.Source);
-            await transaction.PutAsync(Pending, state.Source,
+            await transaction.PutAsync("pending_database_cleanup", state.Source,
                 JsonSerializer.SerializeToUtf8Bytes(storage, TerraBaseJsonContext.Default.TenantContext), CancellationToken.None);
             await transaction.CommitAsync(CancellationToken.None);
         }
 
         var source = await File.ReadAllBytesAsync(state.Path(state.Source));
         var neighbor = await File.ReadAllBytesAsync(state.Path(state.Neighbor));
-        var catalog = (await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db")))
-            .Where(line => !line.StartsWith(Pending + "|", StringComparison.Ordinal)).ToList();
-        await using (var restarted = await state.StartAsync())
+        var catalog = await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"));
+        await Assert.That(async () =>
         {
-            await Assert.That((await PendingAsync(restarted)).Documents).IsEmpty();
-        }
-
+            await using var failed = await state.StartAsync();
+        }).Throws<InvalidOperationException>();
+        await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(state.Directory)).IsFalse();
         await Assert.That((await File.ReadAllBytesAsync(state.Path(state.Source))).SequenceEqual(source)).IsTrue();
         await Assert.That((await File.ReadAllBytesAsync(state.Path(state.Neighbor))).SequenceEqual(neighbor)).IsTrue();
         await Assert.That(await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"))).IsEquivalentTo(catalog);
@@ -1774,7 +1710,7 @@ public sealed class DatabaseRecoveryTests
             }).Throws<IOException>();
             await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(state.Directory)).IsFalse();
             await Assert.That(await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db")))
-                .Contains(line => line.StartsWith(Pending + "|" + database + "|", StringComparison.Ordinal));
+                .Contains(line => line.StartsWith("pending_database_cleanup|" + database + "|", StringComparison.Ordinal));
             await AssertExternalPreservedAsync();
         }
         finally
@@ -1898,7 +1834,7 @@ public sealed class DatabaseRecoveryTests
         await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(state.Directory)).IsFalse();
         await AssertAbsentDirectoryAsync();
         await Assert.That(await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db")))
-            .Contains(line => line.StartsWith(Pending + "|" + database + "|", StringComparison.Ordinal));
+            .Contains(line => line.StartsWith("pending_database_cleanup|" + database + "|", StringComparison.Ordinal));
         for (var restart = 0; restart < 2; restart++)
         {
             await using var recovered = await state.StartAsync();
@@ -2141,7 +2077,7 @@ public sealed class DatabaseRecoveryTests
             using var refused = await creating.WaitAsync(TimeSpan.FromSeconds(10));
             await ErrorAssert.ErrorAsync(refused, HttpStatusCode.ServiceUnavailable, "unavailable",
                 "the management catalog has an old or unsupported format; discard the affected data");
-            await Assert.That(await CatalogAsync(api, Pending, target)).IsEqualTo(intent);
+            await Assert.That(await CatalogAsync(api, "pending_database_cleanup", target)).IsEqualTo(intent);
             await Assert.That(await CatalogAsync(api, $"projects/{state.Project}/databases", target)).IsNull();
             await Assert.That((await File.ReadAllBytesAsync(state.Path(target))).SequenceEqual(bytes)).IsTrue();
             await Assert.That(await DocumentFiles.ReadAsync(systemPath)).IsEquivalentTo(catalog);
@@ -2153,7 +2089,7 @@ public sealed class DatabaseRecoveryTests
             using var owner = unavailable.As(state.User);
             await ErrorAssert.ErrorAsync(owner.GetAsync(Uri(state.Databases)), HttpStatusCode.ServiceUnavailable, "unavailable",
                 "the management catalog has an old or unsupported format; discard the affected data");
-            await Assert.That(await CatalogAsync(unavailable, Pending, target)).IsEqualTo(intent);
+            await Assert.That(await CatalogAsync(unavailable, "pending_database_cleanup", target)).IsEqualTo(intent);
             await Assert.That((await File.ReadAllBytesAsync(state.Path(target))).SequenceEqual(preserved)).IsTrue();
             await Assert.That(await DocumentFiles.ReadAsync(systemPath)).IsEquivalentTo(catalog);
             await AssertReadyAsync(unavailable);
@@ -2303,7 +2239,7 @@ public sealed class DatabaseRecoveryTests
             using var refused = await deleting.WaitAsync(TimeSpan.FromSeconds(10));
             await ErrorAssert.ErrorAsync(refused, HttpStatusCode.ServiceUnavailable, "unavailable",
                 "the management catalog has an old or unsupported format; discard the affected data");
-            await Assert.That(await CatalogAsync(api, Pending, target)).IsEqualTo(intent);
+            await Assert.That(await CatalogAsync(api, "pending_database_cleanup", target)).IsEqualTo(intent);
             await Assert.That(await DocumentFiles.ReadAsync(systemPath)).IsEquivalentTo(catalog);
             await state.AssertFilesGoneAsync(target);
         }
@@ -2313,7 +2249,7 @@ public sealed class DatabaseRecoveryTests
             using var owner = unavailable.As(state.User);
             await ErrorAssert.ErrorAsync(owner.GetAsync(Uri(state.Databases)), HttpStatusCode.ServiceUnavailable, "unavailable",
                 "the management catalog has an old or unsupported format; discard the affected data");
-            await Assert.That(await CatalogAsync(unavailable, Pending, target)).IsEqualTo(intent);
+            await Assert.That(await CatalogAsync(unavailable, "pending_database_cleanup", target)).IsEqualTo(intent);
             await Assert.That(await DocumentFiles.ReadAsync(systemPath)).IsEquivalentTo(catalog);
             await state.AssertFilesGoneAsync(target);
             await AssertReadyAsync(unavailable);
@@ -2363,7 +2299,7 @@ public sealed class DatabaseRecoveryTests
     {
         var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
         await using var transaction = await system.BeginTransactionAsync(write: false, CancellationToken.None);
-        return await transaction.ListAsync(Pending, null, 100, 1024 * 1024, CancellationToken.None);
+        return await transaction.ListAsync("pending_database_cleanup", null, 100, 1024 * 1024, CancellationToken.None);
     }
 
     private static async Task<string?> CatalogAsync(ManagementApi api, string collection, string id)
