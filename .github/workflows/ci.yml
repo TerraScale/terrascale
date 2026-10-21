@@ -348,11 +348,9 @@ jobs:
             area: auth
             token: FLY_TOKEN_TS_AUTH
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     permissions:
       contents: read
-      # ghcr.io/terrascale/<target>: the multi-arch images ts-orch runs.
-      packages: write
     steps:
       - *checkout
       - name: Skip a superseded main before building
@@ -382,18 +380,38 @@ jobs:
           cache-from: ${{ format('type=gha,scope={0}', matrix.area) }}
           build-args: *build-args
           push: true
-      # ghcr gets linux/amd64 + linux/arm64 (arm64 cross-published). Never blocks the Fly rollout.
+
+  # ghcr.io/terrascale/<target>:<sha>: linux/amd64 + linux/arm64 (arm64 cross-published) images ts-orch runs.
+  # Separate from the Fly `images` job so neither blocks the other.
+  ghcr:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: terrabase
+            area: terrabase
+          - target: ts-auth
+            area: auth
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - *checkout
+      - *checkout-ts-dotnet
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          driver: docker-container
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        if: steps.current.outputs.current == 'true'
-        continue-on-error: true
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        id: ghcr
-        if: steps.current.outputs.current == 'true'
-        continue-on-error: true
+        id: push
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -407,8 +425,7 @@ jobs:
           cache-from: ${{ format('type=gha,scope={0}', matrix.area) }}
           build-args: *build-args
           push: true
-      - if: steps.ghcr.outputs.digest != ''
-        run: echo "ghcr.io/terrascale/${{ matrix.target }}@${{ steps.ghcr.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+      - run: echo "ghcr.io/terrascale/${{ matrix.target }}@${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
 
   preview:
     needs: test

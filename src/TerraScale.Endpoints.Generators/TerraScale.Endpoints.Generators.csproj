@@ -2,6 +2,8 @@
   <PropertyGroup>
     <!-- Roslyn loads analyzers on netstandard2.0 in every host (SDK, Visual Studio, Rider). -->
     <TargetFramework>netstandard2.0</TargetFramework>
+    <!-- Publishing for a runtime flows the RID to every reference; the compiler loads this on the build host, whatever the target. -->
+    <PlatformTarget>AnyCPU</PlatformTarget>
     <RootNamespace>TerraScale.Endpoints.Generators</RootNamespace>
     <IsRoslynComponent>true</IsRoslynComponent>
     <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
