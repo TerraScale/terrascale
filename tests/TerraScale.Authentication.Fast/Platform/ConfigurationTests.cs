@@ -378,7 +378,7 @@ public sealed class ConfigurationTests
     }
 
     [Test]
-    public async Task Production_off_fly_stores_in_the_terrabase_its_url_names()
+    public async Task Production_off_fly_starts_against_the_terrabase_its_url_names()
     {
         // Both binaries in Production without any FLY_* variable, as on a host off Fly: ts-auth finds TerraBase's
         // loopback internal listener through TS_AUTH_TERRABASE_URL alone.
@@ -387,16 +387,32 @@ public sealed class ConfigurationTests
         var settings = AuthTestServer.DefaultSettings();
         settings.Remove("environment");
         settings["terrabase-url"] = terrabase.InternalAddress.GetLeftPart(UriPartial.Authority);
-        await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string>
+        // Secrets arrive as <NAME>_FILE with a trailing newline, as OCI Vault mounts them; each file wins over a malformed
+        // variable, which would stop the start if it were read.
+        var secrets = Directory.CreateTempSubdirectory("ts-auth-secrets-");
+        try
         {
-            ["TERRABASE_PEER_SECRET"] = TerraBaseTestServer.PeerSecret,
-        });
+            var masterKey = Path.Combine(secrets.FullName, "master-key");
+            var peerSecret = Path.Combine(secrets.FullName, "peer-secret");
+            await File.WriteAllTextAsync(masterKey, settings["master-key"] + "\n");
+            await File.WriteAllTextAsync(peerSecret, TerraBaseTestServer.PeerSecret + "\n");
+            settings["master-key"] = "not-a-key";
+            await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string>
+            {
+                ["TS_AUTH_MASTER_KEY_FILE"] = masterKey,
+                ["TERRABASE_PEER_SECRET"] = "not-a-peer-secret",
+                ["TERRABASE_PEER_SECRET_FILE"] = peerSecret,
+            });
 
-        using var health = await service.Client.GetAsync("/healthz");
+            using var health = await service.Client.GetAsync("/healthz");
 
-        await Assert.That(health.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        // Ready only after ts-auth read and wrote its storage in that TerraBase.
-        await Assert.That(await ReadinessWait.ReadyWithinAsync(service.Client, TimeSpan.FromSeconds(60))).IsTrue();
+            // Not /readyz: a production TerraBase opens its catalog only after reading it back from a reachable backup bucket.
+            await Assert.That(health.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+        finally
+        {
+            secrets.Delete(recursive: true);
+        }
     }
 
     [Test]

@@ -316,7 +316,15 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 start.Environment["BUCKET_NAME"] = "terrabase-test";
                 start.Environment["AWS_ACCESS_KEY_ID"] = "test";
                 start.Environment["AWS_SECRET_ACCESS_KEY"] = "test";
-                start.Environment["TERRABASE_MASTER_KEY"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+                // Secrets arrive as files with a trailing newline, as OCI Vault mounts them; each file wins over a malformed
+                // variable, which would stop the start if it were read.
+                var secrets = Directory.CreateDirectory(Path.Combine(this.directory, "secrets")).FullName;
+                File.WriteAllText(Path.Combine(secrets, "master-key"), Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)) + "\n");
+                File.WriteAllText(Path.Combine(secrets, "peer-secret"), PeerSecret + "\n");
+                start.Environment["TERRABASE_MASTER_KEY_FILE"] = Path.Combine(secrets, "master-key");
+                start.Environment[PeerSecretVariable] = "not-a-peer-secret";
+                start.Environment["TERRABASE_MASTER_KEY"] = "not-a-key";
+                start.Environment[PeerSecretVariable + "_FILE"] = Path.Combine(secrets, "peer-secret");
             }
 
             // All three backend ports are freshly owned by this child, including metrics on every restart.

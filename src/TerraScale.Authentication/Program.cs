@@ -7,6 +7,7 @@ using TerraScale.Authentication.Security;
 AuthOptions options;
 try
 {
+    AuthOptions.ReadSecretFiles();
     options = AuthOptions.FromProcess(args);
 }
 catch (AuthConfigurationException error)

@@ -189,6 +189,32 @@ public sealed record TerraBaseOptions
             ?? Environments.Production;
     }
 
+    /// <summary>
+    /// Replaces every secret variable (<c>TERRABASE_*</c> and the Tigris bucket variables) that has a <c>&lt;NAME&gt;_FILE</c>
+    /// companion with that file's contents, trailing newline trimmed: a host that mounts secrets as files (OCI Vault on gru)
+    /// delivers them this way. The file wins over the variable. Call before <see cref="FromProcess"/>.
+    /// </summary>
+    public static void ReadSecretFiles()
+    {
+        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            if (entry.Key is string key && key.EndsWith("_FILE", StringComparison.Ordinal) && entry.Value is string { Length: > 0 } path
+                && key[..^"_FILE".Length] is var name
+                && (name.StartsWith(EnvironmentPrefix, StringComparison.Ordinal) || BackupSettings.TigrisVariables.Any(variable => variable.Variable == name)))
+            {
+                try
+                {
+                    Environment.SetEnvironmentVariable(name, File.ReadAllText(path).TrimEnd('\r', '\n'));
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+                {
+                    // Names the variable, never the file's contents.
+                    throw new TerraBaseConfigurationException($"{key} must name a readable file");
+                }
+            }
+        }
+    }
+
     /// <summary>Reads and validates the configuration of this process.</summary>
     public static TerraBaseOptions FromProcess(IReadOnlyList<string> args)
     {

@@ -35,6 +35,7 @@ PeerCredential peerCredential;
 IPAddress internalAddress;
 try
 {
+    TerraBaseOptions.ReadSecretFiles();
     options = TerraBaseOptions.FromProcess(args);
     peerCredential = PeerCredential.FromProcess(options);
     internalAddress = Listeners.InternalAddress(options);

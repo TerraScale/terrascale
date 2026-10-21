@@ -116,13 +116,39 @@ public sealed partial record AuthOptions
         + $"ErrorReporting = {(this.SentryDsn is null ? "off" : "on")}, DashboardClient = {(this.DashboardClient is null ? "off" : "on")}, "
         + $"AccessTokenAudiences = {this.AccessTokenAudiences.Count}, ServiceClients = {this.ServiceClients.Count} }}";
 
+    /// <summary>
+    /// Replaces every secret variable (<c>TS_AUTH_*</c>, <c>CLOUDFLARE_*</c>, <c>TERRABASE_PEER_SECRET</c>) that has a
+    /// <c>&lt;NAME&gt;_FILE</c> companion with that file's contents, trailing newline trimmed: a host that mounts secrets as
+    /// files (OCI Vault on gru) delivers them this way. The file wins over the variable. Call before <see cref="FromProcess"/>.
+    /// </summary>
+    public static void ReadSecretFiles()
+    {
+        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            if (entry.Key is string key && key.EndsWith("_FILE", StringComparison.Ordinal) && entry.Value is string { Length: > 0 } path
+                && key[..^"_FILE".Length] is var name
+                && (name.StartsWith("TS_AUTH_", StringComparison.Ordinal) || name.StartsWith("CLOUDFLARE_", StringComparison.Ordinal) || name == "TERRABASE_PEER_SECRET"))
+            {
+                try
+                {
+                    Environment.SetEnvironmentVariable(name, File.ReadAllText(path).TrimEnd('\r', '\n'));
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+                {
+                    // Names the variable, never the path's contents.
+                    throw Invalid($"{key} must name a readable file");
+                }
+            }
+        }
+    }
+
     /// <summary>Reads <c>TS_AUTH_*</c> environment variables, then <c>--key=value</c> arguments, which win.</summary>
     public static AuthOptions FromProcess(IEnumerable<string> args)
     {
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
         {
-            if (entry.Key is string key && key.StartsWith("TS_AUTH_", StringComparison.Ordinal) && entry.Value is string value)
+            if (entry.Key is string key && key.StartsWith("TS_AUTH_", StringComparison.Ordinal) && !key.EndsWith("_FILE", StringComparison.Ordinal) && entry.Value is string value)
             {
                 values[key["TS_AUTH_".Length..].ToLowerInvariant().Replace('_', '-')] = value;
             }
