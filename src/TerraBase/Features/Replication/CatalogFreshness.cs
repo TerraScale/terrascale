@@ -32,6 +32,8 @@ internal sealed class CatalogFreshness(IMembership membership, AntiEntropy antiE
             return false;
         }
 
+        // Finish storage reads before the proofs' final age check; no await afterward can spend their remaining window.
+        var recorded = engine.SystemDatabaseExists ? await CatalogGate.RecordedAsync(engine, cancellationToken).ConfigureAwait(false) : [];
         var held = await antiEntropy.CatalogHeldWithinAsync(window, cancellationToken).ConfigureAwait(false);
         var listed = AntiEntropy.Peers(view, membership.Self.Name);
         if (!listed.All(peer => held.Contains(peer.Name)))
@@ -41,7 +43,6 @@ internal sealed class CatalogFreshness(IMembership membership, AntiEntropy antiE
 
         // A region the directory dropped (a partial or self-only view) still needs a proof from one of its machines, so a
         // partition stays bounded by the window whatever the directory lists. A record without a region counts as its own.
-        var recorded = engine.SystemDatabaseExists ? await CatalogGate.RecordedAsync(engine, cancellationToken).ConfigureAwait(false) : [];
         return recorded.Where(machine => machine.Value != options.Region)
             .GroupBy(machine => machine.Value ?? machine.Key, StringComparer.Ordinal)
             .All(region => listed.Any(peer => peer.Region == region.Key) || region.Any(machine => held.Contains(machine.Key)));
