@@ -14,7 +14,7 @@ namespace TerraScale.DotNet.TerraBase;
 /// <see cref="HttpClient"/> that it never disposes. Thread-safe; each subscription owns its own state and does no work
 /// outside its enumeration. Request deadlines (30 seconds), the 8 MiB response bound and retries are fixed.
 /// </summary>
-public sealed class TerraBaseShapeClient
+public sealed partial class TerraBaseShapeClient
 {
     private const int MaxResponseBytes = 8 * 1024 * 1024;
     private const int MaxRequestLine = 8 * 1024 - 64;
