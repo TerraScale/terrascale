@@ -71,7 +71,7 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Logout_revokes_the_session_and_returns_only_to_a_registered_uri()
+    public async Task Logout_revokes_the_session_and_continues_only_to_a_registered_uri()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
         await oidc.CreateUserAsync();
@@ -84,10 +84,16 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
         await Assert.That(unregistered.Headers.Location).IsNull();
         await Assert.That(await unregistered.Content.ReadAsStringAsync()).Contains("<h1>Request refused</h1>");
 
+        // A registered URI gets the hosted Signed out page, which continues there (with state) by link and meta refresh.
         using var registered = await oidc.AuthorizeAsync(logout + Uri.EscapeDataString(OidcHarness.PostLogoutRedirectUri), session);
-        await Assert.That(registered.StatusCode).IsEqualTo(HttpStatusCode.Redirect);
-        await Assert.That(registered.Headers.Location!.GetLeftPart(UriPartial.Path)).IsEqualTo(OidcHarness.PostLogoutRedirectUri);
-        await Assert.That(OidcHarness.Query(registered.Headers.Location!)["state"]).IsEqualTo("x");
+        var signedOut = await registered.Content.ReadAsStringAsync();
+        var returnTo = $"{OidcHarness.PostLogoutRedirectUri}?state=x";
+        await Assert.That(registered.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(registered.Headers.Location).IsNull();
+        await Assert.That(signedOut).Contains("<h1>Signed out</h1>");
+        await Assert.That(signedOut).Contains("You are signed out.");
+        await Assert.That(signedOut).Contains($"<meta http-equiv=\"refresh\" content=\"2;url={returnTo}\">");
+        await Assert.That(signedOut).Contains($"<a class=\"btn\" href=\"{returnTo}\">Continue");
         await Assert.That(ClearsSessionCookie(registered)).IsTrue();
 
         // The session is gone server-side, not just forgotten by the browser.
@@ -98,7 +104,10 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
         var second = await oidc.SignInAsync("alice@example.test");
         using var page = await oidc.AuthorizeAsync($"/{OidcIssuer.Slug}/oauth/logout", second);
         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await page.Content.ReadAsStringAsync()).Contains("You are signed out.");
+        var plain = await page.Content.ReadAsStringAsync();
+        await Assert.That(plain).Contains("You are signed out.");
+        // Without a redirect URI the page stays put.
+        await Assert.That(plain).DoesNotContain("http-equiv=\"refresh\"");
         await Assert.That(ClearsSessionCookie(page)).IsTrue();
         using var afterPage = await oidc.AuthorizeAsync(OidcHarness.AuthorizePath(challenge), second);
         await Assert.That(afterPage.Headers.Location!.OriginalString).StartsWith($"/ui/{OidcIssuer.Slug}/sign-in?next=");

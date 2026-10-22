@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Net.Http.Headers;
 using Microsoft.Playwright;
@@ -9,7 +10,7 @@ using TerraScale.Authentication.Tests;
 namespace TerraScale.Authentication.Fast.Oidc;
 
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
-public sealed class HostedSignInTests(TerraBaseFixture fixture)
+public sealed partial class HostedSignInTests(TerraBaseFixture fixture)
 {
     private const string SignIn = $"/ui/{OidcIssuer.Slug}/sign-in";
 
@@ -138,6 +139,77 @@ public sealed class HostedSignInTests(TerraBaseFixture fixture)
     }
 
     [Test]
+    public async Task Hosted_sign_up_creates_the_account_and_password_sign_in_and_reset_work()
+    {
+        var clock = new ManualClock(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600 * 3600));
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        const string Address = "new@example.test";
+        const string Password = "correct horse battery";
+
+        using var forged = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up", new() { ["email"] = Address, ["password"] = Password }, "https://evil.example");
+        await Assert.That(forged.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+
+        using var started = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up", new() { ["email"] = Address, ["password"] = Password, ["next"] = string.Empty });
+        var verifyPage = await started.Content.ReadAsStringAsync();
+        await Assert.That(started.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(verifyPage).Contains("<h1>Verify your email</h1>");
+        var pending = PendingToken().Match(verifyPage).Groups[1].Value;
+        await Assert.That(pending).IsNotEmpty();
+        var code = await oidc.Email.NextCodeAsync(Address);
+
+        var verify = new Dictionary<string, string> { ["email"] = Address, ["code"] = code == "000000" ? "111111" : "000000", ["pending_token"] = pending, ["next"] = string.Empty };
+        using (var wrong = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up/verify", verify))
+        {
+            await Assert.That(wrong.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+            await Assert.That(OidcHarness.SessionCookie(wrong)).IsNull();
+        }
+
+        using (var created = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-up/verify", new(verify) { ["code"] = code }))
+        {
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(await created.Content.ReadAsStringAsync()).Contains("You are signed in.");
+            await Assert.That(OidcHarness.SessionCookie(created)).IsNotNull();
+        }
+
+        // The new account signs in with its password; the step without one only asks for it.
+        using (var step = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-in/password", new() { ["email"] = Address }))
+        {
+            await Assert.That(await step.Content.ReadAsStringAsync()).Contains("id=\"sign-in-password\"");
+            await Assert.That(OidcHarness.SessionCookie(step)).IsNull();
+        }
+
+        await Assert.That(await PasswordSignInAsync(oidc, Address, "wrong password!")).IsNull();
+        await Assert.That(await PasswordSignInAsync(oidc, Address, Password)).IsNotNull();
+
+        // Reset: the mail start cooldown is per address, so let it pass first.
+        clock.Advance(TimeSpan.FromSeconds(61));
+        using (var reset = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset", new() { ["email"] = Address }))
+        {
+            await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(await reset.Content.ReadAsStringAsync()).Contains("<h1>Choose a new password</h1>");
+        }
+
+        var resetCode = await oidc.Email.NextCodeAsync(Address);
+        using (var done = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/reset/complete", new() { ["email"] = Address, ["code"] = resetCode, ["password"] = "a brand new passphrase" }))
+        {
+            await Assert.That(done.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(await done.Content.ReadAsStringAsync()).Contains("<h1>Password updated</h1>");
+        }
+
+        await Assert.That(await PasswordSignInAsync(oidc, Address, Password)).IsNull();
+        await Assert.That(await PasswordSignInAsync(oidc, Address, "a brand new passphrase")).IsNotNull();
+    }
+
+    private static async Task<string?> PasswordSignInAsync(OidcHarness oidc, string address, string password)
+    {
+        using var response = await oidc.PostFormAsync($"/ui/{OidcIssuer.Slug}/sign-in/password", new() { ["email"] = address, ["password"] = password, ["next"] = string.Empty });
+        return OidcHarness.SessionCookie(response);
+    }
+
+    [GeneratedRegex("name=\"pending_token\" value=\"([^\"]+)\"")]
+    private static partial Regex PendingToken();
+
+    [Test]
     public async Task The_sign_in_page_drops_a_next_that_is_not_this_issuers_authorize_url()
     {
         await using var server = await AuthTestServer.StartAsync();
@@ -188,7 +260,7 @@ public sealed class HostedSignInTests(TerraBaseFixture fixture)
     [Test]
     [Arguments(1440, 900)]
     [Arguments(390, 844)]
-    public async Task The_card_is_centred_and_the_powered_footer_sits_below_it(int width, int height)
+    public async Task The_card_is_centred_and_the_footer_sits_below_it(int width, int height)
     {
         await using var server = await AuthTestServer.StartAsync();
         var violations = new List<string>();
@@ -197,11 +269,14 @@ public sealed class HostedSignInTests(TerraBaseFixture fixture)
         var page = await OpenSignInAsync(context, server, violations);
 
         var card = (await page.Locator(".card").BoundingBoxAsync())!;
-        var powered = (await page.Locator(".auth-powered").BoundingBoxAsync())!;
+        var footer = (await page.Locator(".auth-foot").BoundingBoxAsync())!;
         await Assert.That(Math.Abs(card.X + card.Width / 2 - width / 2.0)).IsLessThanOrEqualTo(1);
         await Assert.That(Math.Abs(card.Y + card.Height / 2 - height / 2.0)).IsLessThanOrEqualTo(1);
-        await Assert.That(await page.Locator(".card .auth-powered").CountAsync()).IsEqualTo(0);
-        await Assert.That(powered.Y).IsGreaterThanOrEqualTo(card.Y + card.Height);
+        await Assert.That(await page.Locator(".card .foot-links").CountAsync()).IsEqualTo(0);
+        await Assert.That(footer.Y).IsGreaterThanOrEqualTo(card.Y + card.Height);
+        // The footer links and the Lucide icons load from committed files, inside the CSP.
+        await Assert.That(await page.Locator(".foot-links a").CountAsync()).IsEqualTo(4);
+        await Assert.That(await page.Locator("svg.icon use").First.GetAttributeAsync("href")).StartsWith("/admin/icons.svg#i-");
         await Assert.That(violations).IsEmpty();
     }
 

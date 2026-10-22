@@ -868,7 +868,7 @@ paths:
       operationId: oauth_device_authorization
       tags: [OAuth]
       summary: Device authorization endpoint
-      description: RFC 8628 for the public ts-cli client. verification_uri is the dashboard's page; codes live 10 minutes.
+      description: RFC 8628 for the public ts-cli client (client_id 00000000000000000000000007). verification_uri is ts-auth's hosted page, {issuer origin}/ui/terrascale/device, where the user signs in and approves or denies; codes live 10 minutes and interval is 5.
       security: [{}]
       requestBody:
         required: true
@@ -886,45 +886,6 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OAuthError' }
-  /terrascale/headless/v1/device/approve:
-    post:
-      operationId: headless_device_approve
-      tags: [Headless]
-      summary: Approve a device code for a signed-in user
-      description: |
-        ts-dashboard, with HTTP Basic, for the user signed in on its device page. 400 invalid_code for an unknown,
-        expired or already decided user code; 400 invalid_grant for a subject token that is not a live sign-in token
-        of the dashboard.
-      security:
-        - clientBasic: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/DeviceDecisionRequest' }
-      responses:
-        '204': { description: 'Approved; the device gets its tokens at its next poll.' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/Unavailable' }
-  /terrascale/headless/v1/device/deny:
-    post:
-      operationId: headless_device_deny
-      tags: [Headless]
-      summary: Deny a device code for a signed-in user
-      description: As approve; the device's next poll answers access_denied.
-      security:
-        - clientBasic: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/DeviceDecisionRequest' }
-      responses:
-        '204': { description: 'Denied.' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/Unavailable' }
   /terrascale/oauth/token:
     post:
       operationId: oauth_token
@@ -1508,7 +1469,7 @@ components:
       type: object
       required: [client_id]
       properties:
-        client_id: { type: string, const: ts-cli }
+        client_id: { type: string, const: '00000000000000000000000007', description: The ts-cli client. }
         scope: { type: string, description: 'For example openid email offline_access.' }
     DeviceAuthorizationResponse:
       type: object
@@ -1520,13 +1481,6 @@ components:
         verification_uri_complete: { type: string, format: uri }
         expires_in: { type: integer }
         interval: { type: integer }
-    DeviceDecisionRequest:
-      type: object
-      required: [user_code, subject_token]
-      additionalProperties: false
-      properties:
-        user_code: { type: string }
-        subject_token: { type: string, description: "The signed-in user's sign-in access token." }
     DeviceCodeGrant:
       type: object
       description: ts-cli polling for the tokens of an approved device code (RFC 8628).
@@ -1534,7 +1488,7 @@ components:
       properties:
         grant_type: { type: string, const: 'urn:ietf:params:oauth:grant-type:device_code' }
         device_code: { type: string }
-        client_id: { type: string, const: ts-cli }
+        client_id: { type: string, const: '00000000000000000000000007', description: The ts-cli client. }
     ClientCredentialsGrant:
       type: object
       description: An API key exchanged for an organization or project token.

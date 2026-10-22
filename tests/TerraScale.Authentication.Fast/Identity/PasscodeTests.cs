@@ -55,7 +55,7 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         await Assert.That(OidcHarness.SessionCookie(verify)).IsNull();
         if (factor == "active")
         {
-            await Assert.That(await verify.Content.ReadAsStringAsync()).Contains("That code is wrong or has expired.");
+            await Assert.That(await verify.Content.ReadAsStringAsync()).Contains("<strong>That code is wrong or expired</strong>");
         }
 
         await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.SessionCollection)).Items.Count).IsEqualTo(0);

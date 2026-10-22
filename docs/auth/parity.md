@@ -23,12 +23,14 @@ Nothing here implies acceptance against a live TerraBase deployment.
 | Key ring, email, operator instances, rate limiting | TS-431 | Partly ported (TS-488): per-instance ES256 key ring with startup bootstrap and scheduled rotation (TS-703: a new key every 30 days, published two days before it signs; keys retire two days after their successor activates; at most 16 keys), the shared attempt limiter (one-minute windows), Cloudflare Email Sending over HTTPS (replacing SMTP) with the logging fallback; observability landed in TS-426. Lookup and rotation validate the ring's count and timestamps. Malformed, oversized and unreadable rings fail closed unchanged. Each signing key lives in its own TerraBase `signing_keys` document, sealed under `TS_AUTH_MASTER_KEY` from Fly secrets; retirement uses version-conditional deletes. The limiter uses conditional writes on the TS-489 store (`rate_limits`); any storage failure other than caller cancellation answers 503. Fast and slow tests run against the real pinned TerraBase, including two replicas racing. Limiter bucket ids are HMAC-keyed from the master key; callers pass identifiers the service already holds, and a caller limiting by attacker-chosen text (Rust's guest-mailbox folding) ports with that caller. Without Cloudflare email settings outside Development, email is logged and a startup warning is emitted; whether flows that need delivery must refuse to start is decided with the first flow (TS-490). Operator instances, the management-key gate (with management keys, TS-490) and Data Protection keys in TerraBase are not yet ported |
 | Users, sessions and email passcodes | TS-490 (TS-432 design) | Implemented on the TerraBase store; served only through the TS-491 hosted sign-in page (see below) |
 | Hosted email-passcode sign-in for existing accounts | TS-491 | Served at `/ui/terrascale/sign-in` for the `terrascale` instance; fast test covers a passcode sign-in that resumes `authorize` |
-| Headless API for ts-dashboard: sign-up with email verification, password sign-in, email-code sign-in, password reset, RFC 7009 revocation | TS-582 | Served for the `terrascale` instance and the `ts-dashboard` client (see below) |
-| Email links, hosted sign-up and recovery pages, management users/sessions/keys | TS-432 design (not in TS-490/TS-491/TS-582) | Not implemented |
+| Headless API for ts-dashboard: sign-up with email verification, password sign-in, email-code sign-in, password reset, RFC 7009 revocation | TS-582 | Served for the `terrascale` instance and the `ts-dashboard` client until the dashboard uses the hosted pages (HA1); removal follows |
+| Hosted sign-in (email code, password), sign-up and password-reset pages, signed-out page, v3 design | HA1 | Served for the `terrascale` instance |
+| Email links, account and session-list pages, management users/sessions/keys | TS-432 design | Not implemented |
 | Auth email templates, branding and copy API | TS-583 | Served: HTML + plain-text emails in `en` and `pt-BR` for every kind (the sign-in code, email verification and password reset are sent today), and `/v1/{slug}/email/*` for the `ts-dashboard` client: branding, per-kind copy with `{{ name }}` placeholders only, previews, rate-limited test sends, versions and restore. Fast tests cover authentication, validation, encoding, conflicts under concurrent saves, rollback, snapshots of every kind and the next code email using the saved branding. Sender domains (custom From addresses with sender-domain DNS authentication) are not implemented |
 | OAuth 2.0/OIDC provider on OpenIddict: authorization code with S256 PKCE, rotating refresh tokens, discovery, JWKS, userinfo, RP-initiated logout | TS-491 (TS-433 design) | Served for one issuer, `{public origin}/terrascale`, and the `ts-dashboard` client. ES256 access tokens (`at+jwt`, configured audiences, email claims) and identity tokens from the key ring; client credentials for configured service clients; exactly-once code and refresh redemption with reuse revocation. Fast test covers sign-in, code redemption, token verification with IdentityModel, userinfo and identity-token rejection (see below) |
 | Introspection, client management API, token pruning | TS-433 design (not in TS-491) | Not implemented; TS-704 adds peer-IP admission limits on every token grant and IP/email limits on hosted sign-in |
-| Device flow, guest accounts, browser CORS | TS-495 (TS-433 design) | Not implemented |
+| Device flow (RFC 8628) for the ts CLI, approved on the hosted device page | HA1 | Served for the `terrascale` instance and the `ts-cli` client |
+| Guest accounts, browser CORS | TS-495 (TS-433 design) | Not implemented |
 | MFA (TOTP, recovery codes, step-up) | TS-707 (TS-434 design) | Internal TOTP and recovery-code persistence implemented; no MFA HTTP endpoints or sign-in enforcement yet. [Slice status and deployment prerequisite](mfa.md). Email passcodes moved to TS-490 |
 | Passkeys | TS-435 | Not yet ported |
 | OIDC, GitHub and SAML federation | TS-436 | Not yet ported |
@@ -36,7 +38,7 @@ Nothing here implies acceptance against a live TerraBase deployment.
 | Invitations, ownership transfer, audit of the platform | TS-598 | Served: email invitations to an organization or project role, ownership transfer, and audit events written with every change (see the [port guide](csharp-port.md#invitations-ownership-transfer-and-audit)) |
 | API keys exchanged for organization and project tokens (client credentials, token exchange) | TS-598 | Served: organization and project keys, rotation with a grace, the client-credentials and token-exchange grants (see the [port guide](csharp-port.md#api-keys-and-organization-and-project-tokens)) |
 | Per-project tenants (one issuer per customer project) | TS-598 | Partly served: `{origin}/{project id}` issuers with their own key ring, discovery and JWKS while the project exists (404 otherwise); their OAuth endpoints answer 404 until the project tenant surface (contract slice 9). Fast tests cover issuer, keys, isolation from the platform's keys, and 404 for unknown and deleted projects |
-| `usage:read` and `billing:*` scopes, project suspension, platform administrators, ts-cli device flow, ts-auth's own storage token | TS-598 | Contract v1.1 published; not served |
+| `usage:read` and `billing:*` scopes, project suspension, platform administrators, ts-auth's own storage token | TS-598 | Contract v1.1 published; not served |
 | End-user organizations of a project tenant, enrollment domains, authorization checks | TS-437 | Not yet ported |
 | SCIM directories, users, groups (including operator repair runbooks) | TS-438 | Not yet ported |
 | JWT templates, webhooks, signed audit log | TS-439 | Not yet ported |
@@ -203,7 +205,7 @@ of them.
 
 Client credentials are served for configured service clients only.
 
-Not implemented: introspection, device flow, guest
+Not implemented: introspection, guest
 accounts, CORS, forced reauthentication for `prompt=login` or
 `max_age`, per-instance issuers, token and authorization
 pruning. TS-704 adds peer-IP admission limits on every token request. After sign-out everywhere or logout,

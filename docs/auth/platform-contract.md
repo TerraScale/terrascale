@@ -471,30 +471,32 @@ without a signed-in user.
 | Client | Type | Grants |
 | --- | --- | --- |
 | `ts-dashboard` | confidential | authorization code + S256 PKCE, refresh token, the headless grants (TS-582), token exchange |
-| `ts-cli` | public | device code (RFC 8628), refresh token, token exchange |
+| `ts-cli` (client id `00000000000000000000000007`) | public | device code (RFC 8628), refresh token, token exchange |
 | service clients (`TS_AUTH_SERVICE_CLIENTS`) | confidential | client credentials |
 | API keys (ULID clients) | confidential | client credentials |
 
-**Device flow for ts-cli.** Users sign in and approve on ts-dashboard's own
-pages, never on a ts-auth page:
+**Device flow for ts-cli.** Users sign in and approve on ts-auth's own hosted
+page (HA1, 2026-10-22), like every other TerraScale sign-in:
 
-1. ts-cli posts `client_id=ts-cli` (and optionally `scope`, such as
-   `openid email offline_access`) to `POST /terrascale/oauth/device`. The
+1. ts-cli posts `client_id=00000000000000000000000007` (the `ts-cli` client;
+   client ids are TerraScale ids) and optionally `scope`, such as
+   `openid email offline_access`, to `POST /terrascale/oauth/device`. The
    answer is RFC 8628's `{device_code, user_code, verification_uri,
-   verification_uri_complete, expires_in, interval}`; `verification_uri` is the
-   dashboard's page (`TS_AUTH_DEVICE_VERIFICATION_URI`, for example
-   `https://dash.terrascale.tech/device`). Codes live 10 minutes.
-2. The signed-in user enters or confirms the code on that page, and the
-   dashboard backend calls `POST /terrascale/headless/v1/device/approve` or
-   `…/deny` with its HTTP Basic credentials and the JSON body
-   `{"user_code":"…","subject_token":"<the user's sign-in access token>"}`
-   (`204`; `400 invalid_code` for an unknown, expired or decided code;
-   `400 invalid_grant` for a subject token that is not a live sign-in token of
-   the dashboard).
+   verification_uri_complete, expires_in, interval}`; `verification_uri` is
+   `{issuer origin}/ui/terrascale/device` and `verification_uri_complete` adds
+   `?user_code=`. Codes live 10 minutes; `interval` is 5 seconds.
+2. The page asks a browser without a session to sign in first and returns with
+   the code. It shows the code, the client and the signed-in account; opening
+   it never approves. The user approves or denies with an explicit,
+   origin-checked form post. Each code lookup charges the IP sign-in budget and
+   20 per user per 15 minutes. Active MFA users are refused, as at every user
+   grant.
 3. ts-cli polls `POST /terrascale/oauth/token` with
    `grant_type=urn:ietf:params:oauth:grant-type:device_code`, `device_code` and
    `client_id`, at `interval` seconds, and handles `authorization_pending`,
-   `slow_down`, `access_denied` and `expired_token` as RFC 8628 says. Approved,
+   `slow_down` (a poll sooner than `interval` after the previous one),
+   `access_denied` and `expired_token` as RFC 8628 says. A device code is
+   redeemed once. Approved,
    it gets a sign-in access token and a refresh token, and exchanges the access
    token for organization and project tokens (section 6.2).
 
