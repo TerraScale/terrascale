@@ -28,7 +28,7 @@ internal static class FeedReadersBenchmark
         {
             foreach (var requested in new[] { 1, 10, 100 })
             {
-                for (var repeat = 1; repeat <= 5; repeat++)
+                for (var repeat = 1; repeat <= 3; repeat++)
                 {
                     await RunAsync(requested, repeat).ConfigureAwait(false);
                 }
