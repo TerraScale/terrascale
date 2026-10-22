@@ -44,9 +44,9 @@ internal sealed class PeerPresence
             Dictionary<ReplicaId, bool> progress = [];
             if (_nodes is not null)
             {
-                foreach (var known in _nodes.Values)
+                foreach (var (region, identity) in _nodes.Values)
                 {
-                    if ((placement is null || placement.Includes(known.Region)) && known.Node is { } node)
+                    if ((placement is null || placement.Includes(region)) && identity is { } node)
                     {
                         _ = progress.TryAdd(node, false);
                     }

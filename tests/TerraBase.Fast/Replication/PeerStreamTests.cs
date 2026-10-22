@@ -2167,9 +2167,10 @@ public sealed class PeerStreamTests
         });
         await Assert.That(await sjc.UntilAsync(deleted, """{"n":1}""")).IsTrue();
 
-        // sjc goes away holding the live document; gru deletes it. A day later sjc no longer holds back gru's horizon, so gru
-        // collects the tombstone: nothing on gru remembers the document ever existed.
+        // sjc leaves the directory holding the live document; gru deletes it. A day after observing its absence gru can collect.
+        var away = sjc.Node;
         await sjc.StopAsync();
+        await Assert.That(await gru.UntilUnlistedAsync(away)).IsTrue();
         await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", deleted, CancellationToken.None));
         await Assert.That(await gru.HasStateAsync("items", deleted)).IsTrue();
         clock.Offset = TimeSpan.FromHours(25);
@@ -2958,6 +2959,23 @@ public sealed class PeerStreamTests
                 }
 
                 await Task.Delay(200);
+            }
+
+            return true;
+        }
+
+        private async Task<bool> UntilUnlistedAsync(ReplicaId peer)
+        {
+            var presence = Api.Server.Services.GetRequiredService<LocalReplica>().Presence;
+            var deadline = DateTime.UtcNow + Deadline;
+            while (!presence.Absent(peer, long.MaxValue))
+            {
+                if (DateTime.UtcNow >= deadline)
+                {
+                    return false;
+                }
+
+                await Task.Delay(100);
             }
 
             return true;
