@@ -134,11 +134,30 @@ internal sealed partial class SqliteStorageTransaction
                     PutRow(collection, id, null);
                 }
 
+                var affected = !IsMetadata(collection) ? ReplaceUniqueKeys(collection, id, null, cancellationToken, local: false) : [];
                 foreach (var sql in ForgetStatements)
                 {
                     var delete = Command(sql, collection);
                     delete.Parameters.AddWithValue("$id", id);
                     delete.ExecuteNonQuery();
+                }
+
+                if (IsClient && collection == DocumentDelta.Indexes)
+                {
+                    IndexDefinitionMetadata(id, null, cancellationToken);
+                }
+                else if (IsClient && collection == DocumentDelta.Unique)
+                {
+                    ReprojectUnique(id, cancellationToken);
+                }
+                else if (IsClient && collection == DocumentDelta.Collections && HasTable(id))
+                {
+                    var stamp = new Hlc(horizon.Value - 1);
+                    DropCoveredCollection(id, new(new(stamp, new ReplicaId(ulong.MaxValue)), true, stamp), cancellationToken);
+                }
+                else if (!IsMetadata(collection))
+                {
+                    ReconcileUnique(collection, affected, cancellationToken);
                 }
 
                 forgotten++;
