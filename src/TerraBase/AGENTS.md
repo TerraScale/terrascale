@@ -41,7 +41,7 @@ The project MUST follow a **feature-sliced design** so related and dependent fil
 
 ### Configuration
 
-- Production values have one correct setting in code. Derive identity and discovery automatically (`FLY_REGION`, `FLY_MACHINE_ID`, `FLY_APP_NAME`, `.internal` DNS) and obtain secrets from fly secrets. Do not add operator settings.
+- Production values have one correct setting in code. Derive identity and discovery automatically (`TS_REGION`, `TS_NODE`, `TS_PEERS_FILE` from ts-orch; see `docs/terrabase/ts-orch.md`) and obtain secrets from OCI Vault through ts-orch. Do not add operator settings.
 - Validate derived inputs and credentials at startup. Reject invalid inputs and fail closed.
 - Error messages name settings, never their values. Never log secrets, keys, tokens or credentials.
 
@@ -67,7 +67,7 @@ The project MUST follow a **feature-sliced design** so related and dependent fil
 
 ## Networking
 
-- Clients connect to the public `api.` host; Fly Proxy routes to the nearest region. Allow an explicit static override and pin sessions. Never hardcode regional endpoints in client code. Follow `docs/terrabase/region-identity.md`.
+- Clients connect to the public `api.` host; the ts-orch edge routes to a serving region. Allow an explicit static override and pin sessions. Never hardcode regional endpoints in client code. Follow `docs/terrabase/region-identity.md`.
 - TerraBase-to-TerraBase communication MUST use **gRPC** with checked-in, versioned `.proto` contracts.
 - Inter-node gRPC MUST use **LZ4 compression** to reduce bandwidth usage.
 - Do not introduce alternative inter-node protocols without explicit human approval.

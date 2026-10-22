@@ -14,7 +14,7 @@ times, and every replica ends in the same state.
                  ▼
                turso_cdc ──tailer──> change groups (one per Turso txn, local-origin rows only)
                  │                     │                          ┌─> receiver: join, materialize, ack
-                 │                     └──gRPC Push over 6PN──────┘   (origin = gru, never re-shipped)
+                 │                     └──gRPC Push over NetBird──┘   (origin = gru, never re-shipped)
                  ├──tailer──> _tb_feed (per-origin index) ──> GET /databases/{id}/changes (SSE)
                  └──_tb_merkle (4096 buckets) <── anti-entropy Digest/ReadBucket ──> peers
 ```

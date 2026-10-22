@@ -876,7 +876,7 @@ The rest of the platform management API (contract section 7), in
 ts-auth creates its collections at startup in the seeded `ts-auth` database (see "Storage database" above);
 qualification and storage-integrity requirements still gate safe serving.
 Every auth replica reads and writes through gru's TerraBase internal listener
-(`http://gru.ts-terrabase.internal:8081`, with no fallback; discovery and the JWKS read its own region's,
+(port 8081 on gru's NetBird address, with no fallback; discovery and the JWKS read its own region's,
 see "Storage endpoints") and never resends a request.
 
 The pinned server's [decision 0003](https://git.terrascale.tech/TerraScale-Old/terrabase-premonorepo/src/commit/ff256067015433c8c40b59879f1282d2a40480ce/docs/decisions/0003-sqlite-synchronous-normal.md)
