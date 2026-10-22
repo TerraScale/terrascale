@@ -60,3 +60,25 @@ func TestInternalCredentialAndRedirectIsolation(t *testing.T) {
 		t.Fatal("invalid credential reached the listener")
 	}
 }
+
+func TestInternalClientRejectsNonAbsolutePaths(t *testing.T) {
+	t.Parallel()
+	c := NewClient(8081, strings.Repeat("a", 64), "", time.Second)
+	transport := &recordingTransport{}
+	c.hc.Transport = transport
+	for _, path := range []string{"", "readyz", "@example.test:8081/readyz"} {
+		if _, err := c.Do(t.Context(), http.MethodGet, path, nil); err == nil {
+			t.Fatalf("expected non-absolute path %q to fail", path)
+		}
+	}
+	if transport.calls != 0 {
+		t.Fatal("non-absolute path reached the transport")
+	}
+}
+
+type recordingTransport struct{ calls int }
+
+func (t *recordingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	t.calls++
+	return nil, fmt.Errorf("unexpected transport call")
+}

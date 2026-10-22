@@ -46,6 +46,9 @@ type Response struct {
 
 // Do sends one request; path is absolute ("/v1/...").
 func (c *Client) Do(ctx context.Context, method, path string, body []byte) (Response, error) {
+	if !strings.HasPrefix(path, "/") {
+		return Response{}, fmt.Errorf("internal request path must start with /")
+	}
 	if _, err := hex.DecodeString(c.secret); len(c.secret) != 64 || err != nil {
 		return Response{}, fmt.Errorf("TERRABASE_PEER_SECRET must contain 64 hexadecimal characters")
 	}
