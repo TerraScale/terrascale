@@ -1,5 +1,7 @@
 # 31. Live outage proof: every region down and back on Fly
 
+> Superseded 2026-10-22: Fly live mode is deleted. Live runs and the outage proof (`make terrabase-e2e-orch-outage`) now target ts-orch; see [e2e-ts-orch.md](../e2e-ts-orch.md).
+
 `make terrabase-e2e-fly-outage` proves on Fly what the local replication matrix proves on in-process nodes: each region
 can go down while the other two keep writing, deleting and conflicting, and it rejoins with all of it. Both runs share one
 proof, `ReplicationMatrixTests.RejoinAsync` (tests/TerraBase.E2E).

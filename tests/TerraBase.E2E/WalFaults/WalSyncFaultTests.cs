@@ -97,7 +97,7 @@ public sealed class WalSyncFaultTests
 
         public static Run Create()
         {
-            Skip.When(Cluster.FlyRequested, "runs a local process");
+            Skip.When(Cluster.Live, "runs a local process");
             Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
             return new Run(Directory.CreateTempSubdirectory("walfaults-").FullName);
         }

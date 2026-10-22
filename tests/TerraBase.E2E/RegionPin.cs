@@ -28,33 +28,3 @@ internal sealed class RegionPin(string region, string? served = null) : Delegati
 /// <summary>A request pinned to one region that Fly served from another, or that reported no region.</summary>
 internal sealed class RegionMismatchException(string pinned, string served, HttpMethod method, Uri? uri)
     : Exception($"{method} {uri} is pinned to {pinned} but was served by {served}");
-
-/// <summary>
-/// Pins every request to one Fly machine with <c>fly-force-instance-id</c>, which Fly routes to that machine or fails (it
-/// never answers from another), and refuses an answer that does not name that machine and its region
-/// (<c>X-TerraBase-Machine</c>, <c>X-TerraBase-Region</c>): the identity of every edge a disposable-app run records.
-/// <c>served</c> is the region (and, when known, the machine) TerraBase replays the request to, as for <see cref="RegionPin"/>:
-/// the forced machine cannot answer as another region, so an answer from <c>served</c> is the replay's.
-/// </summary>
-internal sealed class MachinePin(string region, string machine, (string Region, string? Machine)? served = null) : DelegatingHandler
-{
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-    {
-        request.Headers.Add("fly-force-instance-id", machine);
-        var response = await base.SendAsync(request, cancellationToken);
-        // Fly's own errors carry no TerraBase headers: the status says what answered instead.
-        var answered = $"{Header(response, "X-TerraBase-Region")}/{Header(response, "X-TerraBase-Machine")} (HTTP {(int)response.StatusCode})";
-        var (expectedRegion, expectedMachine) = served ?? (region, machine);
-        if (Header(response, "X-TerraBase-Region") == expectedRegion && (expectedMachine is null || Header(response, "X-TerraBase-Machine") == expectedMachine))
-        {
-            return response;
-        }
-
-        response.Dispose();
-        throw new RegionMismatchException(
-            served is null ? $"{region}/{machine}" : $"{region}/{machine}, answered by {expectedRegion}/{expectedMachine ?? "any machine"}", answered, request.Method, request.RequestUri);
-    }
-
-    private static string Header(HttpResponseMessage response, string name) =>
-        response.Headers.TryGetValues(name, out var values) ? string.Join(',', values) : $"(no {name})";
-}

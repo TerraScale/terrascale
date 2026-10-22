@@ -6,7 +6,7 @@ namespace TerraBase.E2E;
 /// <summary>Polling until replication has converged, and the latency reports.</summary>
 internal static class Converge
 {
-    // Replication is asynchronous; the Fly path crosses regions over the public proxy.
+    // Replication is asynchronous; the ts-orch path crosses regions over NetBird.
     public static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan Interval = TimeSpan.FromMilliseconds(20);
 

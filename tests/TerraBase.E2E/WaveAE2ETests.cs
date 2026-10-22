@@ -6,10 +6,10 @@ using TerraBase.Primitives;
 namespace TerraBase.E2E;
 
 /// <summary>
-/// V5: Wave A's write contract between real regions, on local nodes and on a pinned disposable Fly app. A 2xx write is
-/// remote durable (A3): another region serves it at once, a write with no reachable peer answers a defined 503, and a write
-/// survives its origin's SIGKILL right after the 201 (Fly). A replicated collection drop never deletes a write the
-/// receiver made after it (A7). Faults stop, kill or partition machines, so on Fly they run only in a fault run.
+/// V5: Wave A's write contract between real regions, on local nodes and on ts-orch. A 2xx write is remote durable (A3):
+/// another region serves it at once, and a write with no reachable peer answers a defined 503. A replicated collection drop
+/// never deletes a write the receiver made after it (A7). Partitions need local nodes; RemoteAckE2ETests covers a SIGKILL
+/// of the origin right after the 201 with separate processes.
 /// </summary>
 public sealed class WaveAE2ETests
 {
@@ -46,13 +46,12 @@ public sealed class WaveAE2ETests
     }
 
     [Test]
-    [Category("fly-outage")]
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task A_write_with_no_reachable_peer_answers_a_defined_503()
     {
-        SkipOnFlyUnlessFaultRun();
+        SkipLive();
         await using var cluster = await Cluster.StartAsync(All);
-        await cluster.IsolateAsync(Cluster.Gru);
+        cluster.Isolate(Cluster.Gru);
         try
         {
             var id = EntityIds.New().ToString();
@@ -69,54 +68,17 @@ public sealed class WaveAE2ETests
         }
         finally
         {
-            await cluster.HealAllAsync();
+            cluster.Heal();
         }
-    }
-
-    [Test]
-    [Category("fly-outage")]
-    [Scenario(Nodes.InProcess, Faults.ProcessKill)]
-    public async Task A_201_survives_the_origin_machines_SIGKILL_right_after_it()
-    {
-        Skip.When(!Cluster.FlyMachineFaults, "SIGKILLs a Fly machine; locally RemoteAckE2ETests covers it with separate processes");
-        await using var cluster = await Cluster.StartAsync(All);
-        var id = EntityIds.New().ToString();
-        using (var response = await cluster[Cluster.Gru].PutAsJsonAsync(cluster.Document(id), new { survives = true }))
-        {
-            await Assert.That((await Docs.BodyAsync(response))?["durability"]?.GetValue<string>()).IsEqualTo("remote_durable");
-        }
-
-        var killed = Stopwatch.GetTimestamp();
-        await cluster.KillAsync(Cluster.Gru);
-        foreach (var region in new[] { Cluster.Sjc, Cluster.Fra })
-        {
-            _ = await Converge.UntilAsync(() => Docs.ReadAsync(cluster[region], cluster.Document(id)), read => read is not null, $"the write on {region} after gru's SIGKILL");
-        }
-
-        Converge.Report("V5 origin SIGKILL after 201: write served by sjc and fra", killed);
-        // The restart policy brings gru back on its volume; it must still serve the write.
-        _ = await Converge.UntilAsync(async () =>
-        {
-            try
-            {
-                return await Docs.ReadAsync(cluster[Cluster.Gru], cluster.Document(id));
-            }
-            catch (Exception error) when (error is HttpRequestException or RegionMismatchException)
-            {
-                return null;
-            }
-        }, read => read is not null, "gru serves the write after its restart", TimeSpan.FromMinutes(4));
-        Converge.Report("V5 origin SIGKILL after 201: gru back and serving", killed);
     }
 
     // A7: gru drops the collection while its direct link to sjc is cut; sjc then writes a new document (fra confirms both).
     // After the heal the drop removed what it covered and nothing newer, in every region.
     [Test]
-    [Category("fly-outage")]
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task A_write_made_after_a_replicated_drop_survives_it_in_every_region()
     {
-        SkipOnFlyUnlessFaultRun();
+        SkipLive();
         await using var cluster = await Cluster.StartAsync(All);
         var covered = EntityIds.New().ToString();
         await Converge.SeedAllAsync(cluster, cluster.Document(covered), new JsonObject { ["before"] = "drop" });
@@ -128,7 +90,7 @@ public sealed class WaveAE2ETests
                     && peer["status"]?.GetValue<string>() == "ok") == true, $"{region} streams to fra before the cut");
         }
 
-        await cluster.IsolateAsync(Cluster.Gru, Cluster.Sjc);
+        cluster.Isolate(Cluster.Gru, Cluster.Sjc);
         try
         {
             using (var dropped = await cluster[Cluster.Gru].DeleteAsync(new Uri($"{cluster.DatabasePath}/collections/{cluster.Collection}", UriKind.Relative)))
@@ -139,7 +101,7 @@ public sealed class WaveAE2ETests
             var later = EntityIds.New().ToString();
             var body = new JsonObject { ["after"] = "drop" };
             await Docs.PutAsync(cluster[Cluster.Sjc], cluster.Document(later), body);
-            await cluster.HealAllAsync();
+            cluster.Heal();
             var healed = Stopwatch.GetTimestamp();
             var expected = Docs.Digest([(later, Docs.Canonical(body))]);
             var listings = await Converge.UntilAsync(
@@ -149,7 +111,7 @@ public sealed class WaveAE2ETests
         }
         finally
         {
-            await cluster.HealAllAsync();
+            cluster.Heal();
         }
     }
 
@@ -166,6 +128,6 @@ public sealed class WaveAE2ETests
         }
     }
 
-    private static void SkipOnFlyUnlessFaultRun() =>
-        Skip.When(Cluster.FlyRequested && !Cluster.FlyMachineFaults, "partitions Fly machines: run alone on a pinned disposable app (TERRABASE_E2E_FLY_OUTAGE=1)");
+    private static void SkipLive() =>
+        Skip.When(Cluster.Live, "partitions regions: ts-orch has no partition switch, so local nodes only");
 }

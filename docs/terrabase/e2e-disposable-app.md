@@ -1,5 +1,7 @@
 # Three-region acceptance on a disposable Fly app (runbook, not executed)
 
+> Superseded 2026-10-22: Fly live mode is deleted. Live runs and the outage proof (`make terrabase-e2e-orch-outage`) now target ts-orch; see [e2e-ts-orch.md](e2e-ts-orch.md).
+
 Status: prepared by the R3 harness owner, 2026-10-12. Nothing here has been created or run. It is the plan for proving
 replication across three actual Fly regions without touching production: every step that creates, credentials or
 faults something is listed with the approval it needs.

@@ -7,7 +7,7 @@ namespace TerraBase.E2E;
 
 /// <summary>
 /// Leaderless multi-region writes in both directions between gru and sjc. Each scenario waits for convergence with a
-/// deadline and logs how long replication took. Local by default; set <c>TERRABASE_E2E_FLY_URL</c> to run them against Fly.
+/// deadline and logs how long replication took. Local by default; set <c>TERRABASE_E2E_ORCH_NODES</c> to run them against ts-orch.
 /// </summary>
 public sealed class ReplicationE2ETests
 {

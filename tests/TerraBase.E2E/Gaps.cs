@@ -36,14 +36,14 @@ internal static class Gaps
 
     /// <summary>Runs <paramref name="scenario"/>: plainly, or as a strict expected failure while it is listed.</summary>
     /// <remarks>
-    /// No scenario is skipped for its credential: on Fly every request carries the bound e2e project's ts-auth project token
-    /// (databases:* and documents:*), so an authentication refusal is a failure, never a gap. A scenario that faults Fly
-    /// machines keeps its own guard (SkipOnFlyUnlessOutageRun, Cluster's fault checks).
+    /// No scenario is skipped for its credential: on ts-orch every request carries the e2e project's ts-auth project token
+    /// (databases:* and documents:*), so an authentication refusal is a failure, never a gap. A scenario that stops ts-orch
+    /// regions keeps its own guard (SkipLiveUnlessOutageRun, Cluster's fault checks).
     /// </remarks>
     public static async Task RunAsync(string id, Func<Task> scenario)
     {
         // A pinned run is acceptance evidence: only passing scenarios count, so a listed one fails before its cluster starts.
-        if (Cluster.FlyPinned && PinnedRefusal(id) is { } refusal)
+        if (Cluster.LivePinned && PinnedRefusal(id) is { } refusal)
         {
             throw new InvalidOperationException(refusal);
         }
