@@ -38,7 +38,7 @@ internal sealed class DatabaseChanges(IStorageEngine engine, IMemoryBudget memor
     : IDatabaseChanges
 {
     /// <summary>Open streams per database on one machine.</summary>
-    internal const int MaxPerDatabase = 32;
+    internal const int MaxPerDatabase = 128;
 
     private const int MaxConnections = 1024;
     private const int PageEvents = 256;
