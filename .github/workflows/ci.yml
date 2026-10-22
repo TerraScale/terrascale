@@ -10,8 +10,9 @@ name: CI
 #   the area's Slow suite on the warm build (user decision Q-MAIN-GREEN); Slow never blocks. `make docker-test` runs
 #   all three Fast stages.
 # - main (pushes to main, workflow_dispatch), one job per touched auth/terrabase area: the merge group already proved
-#   Fast for this exact tree, so it builds once, writes the area cache, publishes the ghcr image ts-orch deploys and
-#   runs Slow. A Slow failure on main opens (or comments on) one `slow-failure` issue per failed test.
+#   Fast for this exact tree, so it builds once, writes the area cache and publishes the ghcr image ts-orch deploys.
+# - slow (after main): the area's Slow suite on main's cached build; a newer main cancels it. A Slow failure on main
+#   opens (or comments on) one `slow-failure` issue per failed test.
 
 on:
   pull_request:
@@ -192,7 +193,7 @@ jobs:
       # Slow never blocks: its failures mark these steps, not the job.
       - &slow-credentials
         name: Supply bucket-scoped CI storage credentials
-        if: matrix.area == 'terrabase' && (github.event_name == 'pull_request' || github.job == 'main')
+        if: matrix.area == 'terrabase' && (github.event_name == 'pull_request' || github.job == 'slow')
         continue-on-error: true
         env:
           TIGRIS_CI_CREDENTIALS: ${{ secrets.TIGRIS_CI_CREDENTIALS }}
@@ -200,9 +201,9 @@ jobs:
           [[ -n $TIGRIS_CI_CREDENTIALS ]] || { echo 'TIGRIS_CI_CREDENTIALS is required' >&2; exit 1; }
           umask 077
           printf '%s\n' "$TIGRIS_CI_CREDENTIALS" > "$RUNNER_TEMP/tigris-ci.env"
-      # Slow reuses the build stage above in this builder: on pull requests here, on main in the main job.
+      # Slow reuses the build stage above in this builder: on pull requests here, on main in the slow job.
       - &slow
-        if: matrix.area != 'libs' && (github.event_name == 'pull_request' || github.job == 'main')
+        if: matrix.area != 'libs' && (github.event_name == 'pull_request' || github.job == 'slow')
         continue-on-error: true
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -222,7 +223,7 @@ jobs:
         run: rm -f "$RUNNER_TEMP/tigris-ci.env"
       - &slow-report
         name: Report the Slow result
-        if: ${{ !cancelled() && matrix.area != 'libs' && (github.event_name == 'pull_request' || github.job == 'main') }}
+        if: ${{ !cancelled() && matrix.area != 'libs' && (github.event_name == 'pull_request' || github.job == 'slow') }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -280,11 +281,10 @@ jobs:
       matrix:
         area: ${{ fromJSON(needs.changes.outputs.main) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
-      issues: write
     steps:
       - *checkout
       - *checkout-ts-dotnet
@@ -317,6 +317,29 @@ jobs:
           IMAGE: ghcr.io/terrascale/${{ matrix.area == 'auth' && 'ts-auth' || 'terrabase' }}@${{ steps.image.outputs.digest }}
         run: |
           { echo '```'; docker buildx imagetools inspect "$IMAGE"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Only the newest main runs Slow for an area: a newer push cancels the older Slow, never the image publish above.
+  slow:
+    needs: [changes, main]
+    if: >-
+      !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && needs.changes.outputs.main != '[]'
+    concurrency:
+      group: ${{ github.workflow }}-slow-${{ github.ref_name }}-${{ matrix.area }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        area: ${{ fromJSON(needs.changes.outputs.main) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - *checkout
+      - *checkout-ts-dotnet
+      - *setup-builder
       - *slow-credentials
       - *slow
       - *slow-cleanup
