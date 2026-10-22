@@ -83,14 +83,16 @@ public sealed class ProtocolTests
     }
 
     [Test]
-    [Arguments("tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV_secret", "01ARZ3NDEKTSV4RRFFQ69G5FAV")]
+    [Arguments("01ARZ3NDEKTSV4RRFFQ69G5FAV_0123456789abcdefghjkmnpqrstvwxyzaaaaaaaaaaaaaaaaaaaa", "01ARZ3NDEKTSV4RRFFQ69G5FAV")]
     public async Task ClientIdIsTheKeysUlid(string key, string expected) =>
         await Assert.That(Tokens.ClientId(key)).IsEqualTo(expected);
 
     [Test]
-    [Arguments("sk_01ARZ3NDEKTSV4RRFFQ69G5FAV_secret")]
-    [Arguments("tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV_")]
-    [Arguments("tsk_not-a-ulid-at-all-here-xx_secret")]
+    [Arguments("tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [Arguments("01ARZ3NDEKTSV4RRFFQ69G5FAV_")]
+    [Arguments("01ARZ3NDEKTSV4RRFFQ69G5FAV_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [Arguments("01ARZ3NDEKTSV4RRFFQ69G5FAV_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaau")]
+    [Arguments("not-a-ulid-at-all-here-xx_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
     public async Task MalformedKeyIsRejectedWithoutEchoingIt(string key)
     {
         var rejected = false;

@@ -11,7 +11,7 @@ import (
 
 const fakeProject = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
-var fakeAPIKey = "tsk_0" + strings.Repeat("0", 25) + "_" + strings.Repeat("a", 52)
+var fakeAPIKey = "0" + strings.Repeat("0", 25) + "_" + strings.Repeat("a", 52)
 
 // useKeyFile writes content to a 0600 file in a test dir and points TS_BENCH_KEY_FILE at it.
 func useKeyFile(t *testing.T, content string) string {
@@ -91,7 +91,7 @@ func TestBenchCredentialsRejectsUnreadableFile(t *testing.T) {
 func TestBenchCredentialsRejectsInvalidKey(t *testing.T) {
 	cases := map[string]string{
 		"not json":    `not json SECRETVALUE`,
-		"bad api_key": `{"api_key":"tsk_bad_SECRETVALUE","project":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}`,
+		"bad api_key": `{"api_key":"bad_SECRETVALUE","project":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}`,
 		"lowercase project": fmt.Sprintf(`{"api_key":"%s","project":"%s"}`,
 			fakeAPIKey, strings.ToLower(fakeProject)),
 		"missing project": fmt.Sprintf(`{"api_key":"%s"}`, fakeAPIKey),

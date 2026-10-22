@@ -10,7 +10,7 @@ namespace ApiBench;
 internal static class Program
 {
     // Startup only constructs clients, so this placeholder is never sent anywhere.
-    private const string StartupKey = "tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV_startup";
+    private const string StartupKey = "01ARZ3NDEKTSV4RRFFQ69G5FAV_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const UnixFileMode GroupOrOther = UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute
         | UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute;
 
@@ -66,7 +66,7 @@ internal static class Program
         }
         catch (FormatException)
         {
-            Console.Error.WriteLine("api-bench: credentials api_key is not a tsk_ project key");
+            Console.Error.WriteLine("api-bench: credentials api_key is not a <ULID>_<52 base32> project key");
             return 2;
         }
 

@@ -55,7 +55,7 @@ service ownership decided by the user on 2026-10-06
    - `scope` (space-separated) holds the scope the operation needs, or the route answers `403 forbidden_scope`.
 
    `org_id` is not used by the public API. ts-auth maps roles to scopes; TerraBase checks scopes, never roles
-   on public routes. `sub` (a user id, or an API key id `tsk_…`) is recorded as the actor. Existing legacy projects
+   on public routes. `sub` (a user id, or an API key id, its ULID) is recorded as the actor. Existing legacy projects
    resolve to their original records only after an explicit binding is verified against ts-auth. Unverified
    mappings answer `404` for project JWTs, including database creation. An authorized database create enrolls
    a fresh ts-auth project with a verified binding in an opaque storage namespace without user membership.
