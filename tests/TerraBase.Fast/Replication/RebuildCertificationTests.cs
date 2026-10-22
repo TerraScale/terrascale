@@ -550,10 +550,9 @@ public sealed class RebuildCertificationTests
     {
         await using var pair = await Pair.StartAsync();
         var (kept, only) = await pair.SeedAsync();
-        // 1024 documents of about 1.5 KiB under 1000-byte ids: a page's states fill the source's 2 MiB read bound and the
-        // keys and framing come on top, so the decoded page exceeds 2 MiB (measured below, not assumed).
-        var json = $$"""{"v":"{{new string('v', 1500)}}"}""";
-        var ids = Enumerable.Range(0, 1024).Select(index => $"{EntityIds.New()}-{index:D4}-{new string('k', 968)}").ToArray();
+        // Larger documents fill the same 2 MiB page with fewer writes; keys and framing exceed that bound below.
+        var json = $$"""{"v":"{{new string('v', 8192)}}"}""";
+        var ids = Enumerable.Range(0, 256).Select(index => $"{EntityIds.New()}-{index:D4}-{new string('k', 968)}").ToArray();
         foreach (var chunk in ids.Chunk(256))
         {
             await pair.Gru.WriteAsync(async transaction =>
