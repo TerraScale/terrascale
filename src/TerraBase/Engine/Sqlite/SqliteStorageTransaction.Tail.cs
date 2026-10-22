@@ -197,7 +197,7 @@ internal sealed partial class SqliteStorageTransaction
     /// The incarnation of this file, read in this transaction: under the writer for a write transaction, so a file reopened
     /// at the same path while the caller waited for it (a copy, restore or rebuild) shows as the other incarnation it is.
     /// </summary>
-    internal ValueTask<Ulid> GetIncarnationAsync(CancellationToken cancellationToken) =>
+    public ValueTask<Ulid> GetIncarnationAsync(CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
             var text = Command(SqliteStatements.Incarnation).ExecuteScalar() as string;

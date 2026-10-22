@@ -73,8 +73,36 @@ internal sealed partial class SqliteStorageTransaction
             stable = Math.Min(stable, (ulong)reported);
         }
 
-        return new Hlc(stable > HorizonMargin ? stable - HorizonMargin : 0);
+        return new Hlc(Math.Max(CollectedBefore().Value, stable > HorizonMargin ? stable - HorizonMargin : 0));
     }
+
+    /// <summary>The durable collected-state frontier, read in this transaction's snapshot.</summary>
+    internal ValueTask<Hlc> GetCollectedBeforeAsync(CancellationToken cancellationToken) => RunAsync(CollectedBefore, cancellationToken);
+
+    /// <summary>Inherits a certified source's frontier after baseline import and before side-copy salvage.</summary>
+    internal async ValueTask InheritCollectedBeforeAsync(Hlc collectedBefore, CancellationToken cancellationToken)
+    {
+        _ = await RunAsync(() =>
+        {
+            AdvanceCollectedBefore(collectedBefore);
+            return true;
+        }, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    // A returning peer may lower the current horizon, but cannot undo a committed collection.
+    private Hlc CollectedBefore() => Command("SELECT CASE WHEN typeof(stamp) = 'integer' AND stamp >= 0 THEN stamp ELSE -1 END FROM _tb_gc_floor WHERE id = 1;")
+        .ExecuteScalar() is long stamp && stamp >= 0
+        ? new Hlc((ulong)stamp) : throw StoredDataCorruption.Create("the collected-state frontier is missing or invalid");
+
+    private void AdvanceCollectedBefore(Hlc horizon)
+    {
+        var command = Command("UPDATE _tb_gc_floor SET stamp = max(stamp, $stamp) WHERE id = 1;");
+        command.Parameters.AddWithValue("$stamp", Version(horizon));
+        command.ExecuteNonQuery();
+    }
+
+    private static ClearEntry CollectedClear(Hlc horizon) =>
+        new(new EntryVersion(new Hlc(horizon.Value - 1), new ReplicaId(ulong.MaxValue)), true, new Hlc(horizon.Value - 1));
 
     /// <summary>
     /// Deletes up to 1024 states of deleted documents whose every entry lies below <paramref name="horizon"/>, oldest first;
@@ -109,6 +137,11 @@ internal sealed partial class SqliteStorageTransaction
                 delete.ExecuteNonQuery();
             }
 
+            if (dead.Count > 0)
+            {
+                AdvanceCollectedBefore(horizon);
+            }
+
             return dead.Count;
         }, cancellationToken, mutation: true);
 
@@ -118,47 +151,95 @@ internal sealed partial class SqliteStorageTransaction
     /// there). A newer state stays: the peer lacks it because it has not received it yet. Returns how many went.
     /// </summary>
     internal ValueTask<int> ForgetAsync(IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
-        RunAsync(() =>
+        RunAsync(() => Forget(keys, horizon, refill: false, cancellationToken), cancellationToken, mutation: true);
+
+    internal ValueTask<int> ForgetRefillAsync(IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
+        RunAsync(() => Forget(keys, horizon, refill: true, cancellationToken), cancellationToken, mutation: true);
+
+    private int Forget(IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, bool refill, CancellationToken cancellationToken)
+    {
+        var forgotten = 0;
+        foreach (var (collection, id) in keys)
         {
-            var forgotten = 0;
-            foreach (var (collection, id) in keys)
+            cancellationToken.ThrowIfCancellationRequested();
+            var state = ReadState(collection, id);
+            if (state.MaxStamp.Value == 0 || state.MaxStamp.Value >= horizon.Value)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var state = ReadState(collection, id);
-                if (state.MaxStamp.Value == 0 || state.MaxStamp.Value >= horizon.Value)
-                {
-                    continue;
-                }
-
-                if (HasTable(collection))
-                {
-                    PutRow(collection, id, null);
-                }
-
-                // The documents it shared a unique key with are reprojected once it is gone: a hidden loser may now win.
-                if (IsClient)
-                {
-                    BeginUniqueAffected();
-                    Command("DELETE FROM _tb_unique_affected;").ExecuteNonQuery();
-                    QueueUniqueContenders(collection, id);
-                }
-
-                RemoveMerkleState(collection, id);
-                foreach (var sql in ForgetStatements)
-                {
-                    var delete = Command(sql, collection);
-                    delete.Parameters.AddWithValue("$id", id);
-                    delete.ExecuteNonQuery();
-                }
-
-                if (IsClient)
-                {
-                    ReconcileUnique(collection, UniqueProjectionIds(cancellationToken), cancellationToken);
-                }
-
-                forgotten++;
+                continue;
             }
 
-            return forgotten;
-        }, cancellationToken, mutation: true);
+            var indexCollection = IsClient && collection == DocumentDelta.Indexes
+                ? ReadIndexes(cancellationToken).Find(index => index.Name == id)?.Collection : null;
+            if (HasTable(collection))
+            {
+                PutRow(collection, id, null);
+            }
+
+            var affected = !IsMetadata(collection) ? ReplaceUniqueKeys(collection, id, null, cancellationToken, local: false) : [];
+
+            RemoveMerkleState(collection, id);
+            foreach (var sql in ForgetStatements)
+            {
+                var delete = Command(sql, collection);
+                delete.Parameters.AddWithValue("$id", id);
+                delete.ExecuteNonQuery();
+            }
+
+            if (IsClient && collection == DocumentDelta.Indexes)
+            {
+                IndexDefinitionMetadata(id, null, cancellationToken);
+            }
+            else if (IsClient && collection == DocumentDelta.Unique)
+            {
+                ReprojectUnique(id, cancellationToken);
+            }
+            else if (!IsMetadata(collection))
+            {
+                ReconcileUnique(collection, affected, cancellationToken);
+            }
+
+            if (IsClient)
+            {
+                RemoveEmptyForgottenCollection(collection is DocumentDelta.Collections or DocumentDelta.Unique ? id : collection, cancellationToken);
+                if (indexCollection is not null)
+                {
+                    RemoveEmptyForgottenCollection(indexCollection, cancellationToken);
+                }
+            }
+
+            forgotten++;
+        }
+
+        if (!refill && forgotten > 0)
+        {
+            AdvanceCollectedBefore(horizon);
+        }
+
+        return forgotten;
+    }
+
+    private void RemoveEmptyForgottenCollection(string collection, CancellationToken cancellationToken)
+    {
+        if (IsMetadata(collection) || !HasTable(collection) || ReadState(DocumentDelta.Collections, collection).MaxStamp.Value != 0)
+        {
+            return;
+        }
+
+        // Remaining keys can be valid baseline survivors, even when older than the absence frontier.
+        if (Command("SELECT 1 FROM _tb_state WHERE collection = $collection LIMIT 1;", collection).ExecuteScalar() is not null)
+        {
+            return;
+        }
+
+        if (ReadIndexes(cancellationToken).Any(index => index.Collection == collection)
+            || Materialize(ReadState(DocumentDelta.Unique, collection)) is not null)
+        {
+            return;
+        }
+
+        DropTable(collection);
+        Command(SqliteStatements.DropCollection, collection).ExecuteNonQuery();
+        DropUniqueCollection(collection, local: false);
+        ChangedReaderState = true;
+    }
 }

@@ -114,9 +114,10 @@ public interface IChangeGroupSink
 
     /// <summary>
     /// Joins whole states anti-entropy read from a peer, as repairs (origin 0: never shipped again, and no origin's applied
-    /// stamp moves), durably. Returns how many documents changed, or null when this machine does not hold the database.
+    /// stamp moves), durably. Every chunk checks <paramref name="incarnation"/> under its writer. Returns how many documents
+    /// changed, or null when this machine no longer holds that incarnation; earlier chunks may already have committed.
     /// </summary>
-    ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken);
+    ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken);
 
     /// <summary>
     /// Records that this machine holds every event of <paramref name="origin"/> stamped below <paramref name="frontier"/>

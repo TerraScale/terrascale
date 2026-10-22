@@ -1090,12 +1090,12 @@ public sealed class PeerStreamDeadlineTests
         public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken) =>
             sink.ApplyAsync(database, origin, groups, cancellationToken);
 
-        public async ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
+        public async ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
         {
             _ = held.Entered.TrySetResult();
             try
             {
-                return await held.Release.Task.WaitAsync(cancellationToken) ? await sink.RepairAsync(database, states, cancellationToken) : null;
+                return await held.Release.Task.WaitAsync(cancellationToken) ? await sink.RepairAsync(database, incarnation, states, cancellationToken) : null;
             }
             finally
             {

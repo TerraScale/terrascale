@@ -309,7 +309,7 @@ public sealed class RebuildFaultSafetyTests
             _ = await rebuilding.CommitAsync(CancellationToken.None);
         }
         var repair = services.GetRequiredService<IRebuildRepair>();
-        await Assert.That(await repair.RecordRefillAsync(database, replacement, "held-reader-source", Ulid.NewUlid(), 1, CancellationToken.None)).IsTrue();
+        await Assert.That(await repair.RecordRefillAsync(database, replacement, "held-reader-source", Ulid.NewUlid(), 1, default, CancellationToken.None)).IsTrue();
         await ledger.SaveAsync(swapped with { Phase = RebuildPhase.Salvaged }, CancellationToken.None);
         await Assert.That(await repair.CompleteRebuildAsync(database, copy.Incarnation, replacement, CancellationToken.None)).IsTrue();
         var certified = await ledger.GetAsync(database, CancellationToken.None);
@@ -435,7 +435,7 @@ public sealed class RebuildFaultSafetyTests
             _ = await rebuilding.CommitAsync(CancellationToken.None);
         }
         var repair = services.GetRequiredService<IRebuildRepair>();
-        await Assert.That(await repair.RecordRefillAsync(database, replacement, "held-backup-tap-source", Ulid.NewUlid(), 1, CancellationToken.None)).IsTrue();
+        await Assert.That(await repair.RecordRefillAsync(database, replacement, "held-backup-tap-source", Ulid.NewUlid(), 1, default, CancellationToken.None)).IsTrue();
         await ledger.SaveAsync(swapped with { Phase = RebuildPhase.Salvaged }, CancellationToken.None);
         await Assert.That(await repair.CompleteRebuildAsync(database, copy.Incarnation, replacement, CancellationToken.None)).IsTrue();
         var certified = await ledger.GetAsync(database, CancellationToken.None);

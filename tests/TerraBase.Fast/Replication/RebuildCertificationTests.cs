@@ -472,9 +472,9 @@ public sealed class RebuildCertificationTests
         var none = pair.Token;
         await Assert.That(await repair.RepairRebuildAsync(pair.Database, faulted, page, none)).IsNull().Because("the faulted incarnation");
         await Assert.That(await repair.RepairRebuildAsync(pair.Database, Ulid.NewUlid(), page, none)).IsNull().Because("an incarnation not in place");
-        await Assert.That(await repair.RecordRefillAsync(pair.Database, Ulid.NewUlid(), pair.Gru.Name, source.Incarnation, source.Head, none)).IsFalse();
+        await Assert.That(await repair.RecordRefillAsync(pair.Database, Ulid.NewUlid(), pair.Gru.Name, source.Incarnation, source.Head, source.CollectedBefore, none)).IsFalse();
         await Assert.That(await repair.CompleteRebuildAsync(pair.Database, faulted, rebuilt, none)).IsFalse().Because("no refill is recorded");
-        _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () => await pair.Sjc.Service<IChangeGroupSink>().RepairAsync(pair.Database, page, none));
+        _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () => await pair.Sjc.Service<IChangeGroupSink>().RepairAsync(pair.Database, rebuilt, page, none));
         await Assert.That(await pair.Sjc.ReadAsync(kept)).IsNull().Because("no refused write reached the rebuilt copy");
         await Assert.That(await repair.RepairRebuildAsync(pair.Database, rebuilt, page, none)).IsEqualTo(1);
         await Assert.That(await pair.Sjc.ReadAsync(kept)).IsEqualTo("""{"n":1}""");
@@ -765,7 +765,7 @@ public sealed class RebuildCertificationTests
         await Assert.That(await pair.Sjc.CertificateAsync()).IsEmpty();
         await Assert.That(await pair.Sjc.RefillSourceAsync()).IsNull();
         await Assert.That(await repair.RepairRebuildAsync(pair.Database, corrupted, [intact], pair.Token)).IsNull();
-        await Assert.That(await repair.RecordRefillAsync(pair.Database, corrupted, pair.Gru.Name, source, 0, pair.Token)).IsFalse();
+        await Assert.That(await repair.RecordRefillAsync(pair.Database, corrupted, pair.Gru.Name, source, 0, default, pair.Token)).IsFalse();
         await Assert.That(await repair.CompleteRebuildAsync(pair.Database, faulted, corrupted, pair.Token)).IsFalse();
         var storage = pair.Sjc.Service<IRebuildStorage>();
         await Assert.That(await storage.FinalizeAsync(pair.Database, corrupted, storage.SidePath(pair.Database, faulted), pair.Token)).IsFalse();
@@ -1814,6 +1814,27 @@ public sealed class RebuildCertificationTests
     // A global host-local observation scope also reaches the dedicated SQLite writer (which restores QoS, not arbitrary AsyncLocals).
     private sealed class ObservedRepair(IRebuildRepair inner, AdmissionProbe probe, TenantContext watched) : IRebuildRepair
     {
+        public async ValueTask<int?> RefillRebuildAsync(TenantContext database, Ulid newIncarnation, IReadOnlyList<int> buckets,
+            BucketCursor? after, IReadOnlyList<RepairState> states, Hlc collectedBefore, CancellationToken cancellationToken)
+        {
+            lock (probe.Gate)
+            {
+                probe.ActiveJoins++;
+            }
+
+            try
+            {
+                return await inner.RefillRebuildAsync(database, newIncarnation, buckets, after, states, collectedBefore, cancellationToken);
+            }
+            finally
+            {
+                lock (probe.Gate)
+                {
+                    probe.ActiveJoins--;
+                }
+            }
+        }
+
         public async ValueTask<int?> RepairRebuildAsync(TenantContext database, Ulid newIncarnation, IReadOnlyList<RepairState> states,
             CancellationToken cancellationToken)
         {
@@ -1841,8 +1862,8 @@ public sealed class RebuildCertificationTests
         }
 
         public ValueTask<bool> RecordRefillAsync(TenantContext database, Ulid newIncarnation, string sourceMachine,
-            Ulid sourceIncarnation, long head, CancellationToken cancellationToken) =>
-            inner.RecordRefillAsync(database, newIncarnation, sourceMachine, sourceIncarnation, head, cancellationToken);
+            Ulid sourceIncarnation, long head, Hlc collectedBefore, CancellationToken cancellationToken) =>
+            inner.RecordRefillAsync(database, newIncarnation, sourceMachine, sourceIncarnation, head, collectedBefore, cancellationToken);
 
         public ValueTask<bool> CompleteRebuildAsync(TenantContext database, Ulid oldIncarnation, Ulid newIncarnation,
             CancellationToken cancellationToken) => inner.CompleteRebuildAsync(database, oldIncarnation, newIncarnation, cancellationToken);

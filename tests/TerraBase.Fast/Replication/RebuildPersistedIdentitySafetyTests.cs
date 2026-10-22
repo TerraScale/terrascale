@@ -20,11 +20,13 @@ namespace TerraBase.Fast.Replication;
 public sealed class RebuildPersistedIdentitySafetyTests
 {
     public enum InvalidIdentity { Missing, Malformed, Empty, Overflow, Noncanonical }
-    public enum IdentityOperation { Repair, Refill, Completion, CompletionPublication, CertifiedRetry, Finalization }
+    public enum IdentityOperation { Repair, RefillPage, Refill, Completion, CompletionPublication, CertifiedRetry, Finalization }
 
     [Test]
     [Arguments(IdentityOperation.Repair, InvalidIdentity.Missing)]
     [Arguments(IdentityOperation.Repair, InvalidIdentity.Malformed)]
+    [Arguments(IdentityOperation.RefillPage, InvalidIdentity.Missing)]
+    [Arguments(IdentityOperation.RefillPage, InvalidIdentity.Malformed)]
     [Arguments(IdentityOperation.Refill, InvalidIdentity.Missing)]
     [Arguments(IdentityOperation.Refill, InvalidIdentity.Malformed)]
     [Arguments(IdentityOperation.Completion, InvalidIdentity.Missing)]
@@ -41,7 +43,7 @@ public sealed class RebuildPersistedIdentitySafetyTests
     public async Task Invalid_persisted_receiver_identity_faults_the_exact_copy_and_keeps_every_retained_byte(
         IdentityOperation operation, InvalidIdentity identity)
     {
-        var completing = operation is not (IdentityOperation.Repair or IdentityOperation.Refill);
+        var completing = operation is not (IdentityOperation.Repair or IdentityOperation.RefillPage or IdentityOperation.Refill);
         await using var fixture = await Fixture.StartAsync(salvaged: completing);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var certified = operation is IdentityOperation.CertifiedRetry or IdentityOperation.Finalization;
@@ -86,8 +88,12 @@ public sealed class RebuildPersistedIdentitySafetyTests
                         _ = await fixture.Repair.RepairRebuildAsync(fixture.Database, fixture.Rebuilt,
                             [states[0] with { Id = "must-not-land" }], deadline.Token);
                         break;
+                    case IdentityOperation.RefillPage:
+                        _ = await fixture.Repair.RefillRebuildAsync(fixture.Database, fixture.Rebuilt,
+                            [DocumentStateEncoding.Bucket(states[0].Collection, states[0].Id)], null, [states[0]], default, deadline.Token);
+                        break;
                     case IdentityOperation.Refill:
-                        _ = await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "identity-source", fixture.Source, 1, deadline.Token);
+                        _ = await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "identity-source", fixture.Source, 1, default, deadline.Token);
                         break;
                     case IdentityOperation.Finalization:
                         _ = await fixture.Storage.FinalizeAsync(fixture.Database, fixture.Rebuilt, fixture.Side, deadline.Token);
@@ -115,7 +121,7 @@ public sealed class RebuildPersistedIdentitySafetyTests
         await Assert.That(fixture.Copy.RebuildRow?.Refill).IsNull();
         await AssertOrdinaryWriteRefusedAsync(fixture.Copy, deadline.Token);
         await Assert.That(await fixture.Repair.RepairRebuildAsync(fixture.Database, fixture.Rebuilt, states, deadline.Token)).IsNull();
-        await Assert.That(await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "identity-source", fixture.Source, 1, deadline.Token)).IsFalse();
+        await Assert.That(await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "identity-source", fixture.Source, 1, default, deadline.Token)).IsFalse();
         await Assert.That(await fixture.Repair.CompleteRebuildAsync(fixture.Database, fixture.Original, fixture.Rebuilt, deadline.Token)).IsFalse();
         await Assert.That(await fixture.Storage.FinalizeAsync(fixture.Database, fixture.Rebuilt, fixture.Side, deadline.Token)).IsFalse();
         await using (var read = await fixture.Copy.BeginTransactionAsync(write: false, deadline.Token))
@@ -391,7 +397,7 @@ public sealed class RebuildPersistedIdentitySafetyTests
                 }
                 if (salvaged)
                 {
-                    await Assert.That(await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, CancellationToken.None)).IsTrue();
+                    await Assert.That(await fixture.Repair.RecordRefillAsync(fixture.Database, fixture.Rebuilt, "cert-ledger-source", fixture.Source, 1, default, CancellationToken.None)).IsTrue();
                     await fixture.Ledger.SaveAsync(swapped with { Phase = RebuildPhase.Salvaged }, CancellationToken.None);
                 }
                 fixture.Copy = (SqliteDatabaseStore)(await fixture.Engine.OpenDatabaseAsync(fixture.Database, CancellationToken.None))!;

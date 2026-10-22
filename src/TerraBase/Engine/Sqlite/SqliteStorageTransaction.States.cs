@@ -54,7 +54,7 @@ internal sealed partial class SqliteStorageTransaction
 
         var state = ReadState(collection, id, localWrite: true);
         var member = Member;
-        var stamp = member.Clock.Tick(state.MaxStamp);
+        var stamp = member.Clock.Tick(new Hlc(Math.Max(state.MaxStamp.Value, CollectedBefore().Value)));
         return (state, new EntryVersion(stamp, member.Id));
     }
 

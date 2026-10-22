@@ -577,7 +577,8 @@ public sealed class DatabaseChangesTests
             issued.Add((first.Id, "p(before repair)", [p]));
         }
 
-        await Assert.That(await sink.RepairAsync(await fra.TenantOfAsync(), [new RepairState(DocumentApi.Collection, e, Full(eStamp, o))], CancellationToken.None)).IsEqualTo(1);
+        var incarnation = (await fra.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await fra.TenantOfAsync(), CancellationToken.None))!.Incarnation;
+        await Assert.That(await sink.RepairAsync(await fra.TenantOfAsync(), incarnation, [new RepairState(DocumentApi.Collection, e, Full(eStamp, o))], CancellationToken.None)).IsEqualTo(1);
         if (!repairAfterReaderPassedP)
         {
             _ = await sink.ApplyAsync(await fra.TenantOfAsync(), o, [Group(3, p, pStamp, o)], CancellationToken.None);

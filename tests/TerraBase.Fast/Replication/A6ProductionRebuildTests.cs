@@ -341,7 +341,7 @@ public sealed class A6ProductionRebuildTests
         var repair = services.GetRequiredService<IRebuildRepair>();
         await Assert.That(await repair.RepairRebuildAsync(database, replacement, await SideStatesAsync(storage, side), CancellationToken.None)).IsNull()
             .Because("the faulted replacement accepts no more repairs in place");
-        await Assert.That(await repair.RecordRefillAsync(database, replacement, "a6-source", Ulid.NewUlid(), 1, CancellationToken.None)).IsFalse();
+        await Assert.That(await repair.RecordRefillAsync(database, replacement, "a6-source", Ulid.NewUlid(), 1, default, CancellationToken.None)).IsFalse();
         var store = await engine.OpenDatabaseAsync(database, CancellationToken.None) ?? throw new InvalidOperationException("the database is missing");
         await using var reading = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         await Assert.That(await reading.GetAsync("items", crashed.Document, CancellationToken.None)).IsNotNull().Because("the repair committed before the crash");
@@ -381,7 +381,7 @@ public sealed class A6ProductionRebuildTests
         }
 
         // A stand-in source: the proof is what Salvaged requires, and no certificate follows.
-        if (!await repair.RecordRefillAsync(database, replacement, "a6-source", Ulid.NewUlid(), 1, CancellationToken.None))
+        if (!await repair.RecordRefillAsync(database, replacement, "a6-source", Ulid.NewUlid(), 1, default, CancellationToken.None))
         {
             throw new InvalidOperationException("the refill proof was refused");
         }

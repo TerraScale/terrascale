@@ -272,7 +272,7 @@ public sealed class StateAdmissionTests
         {
             await fixture.SwapAndSalvageAsync();
             await Assert.That(await repair.RepairRebuildAsync(fixture.Database, fixture.Store.Incarnation, refresh, Token)).IsEqualTo(1);
-            await Assert.That(await repair.RecordRefillAsync(fixture.Database, fixture.Store.Incarnation, "hash-source", sourcePin, 1, Token)).IsTrue();
+            await Assert.That(await repair.RecordRefillAsync(fixture.Database, fixture.Store.Incarnation, "hash-source", sourcePin, 1, default, Token)).IsTrue();
         }
         else
         {
@@ -357,7 +357,7 @@ public sealed class StateAdmissionTests
         await Assert.That(await source.AckAsync(fixture.Database, pin, peer, 1, default, Token)).IsFalse();
         await Assert.That(await source.ReadAsync(fixture.Database, pin, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, Token)).IsNull();
         await Assert.That(await repair.RepairRebuildAsync(fixture.Database, pin, refresh, Token)).IsNull();
-        await Assert.That(await repair.RecordRefillAsync(fixture.Database, pin, "hash-source", sourcePin, 2, Token)).IsFalse();
+        await Assert.That(await repair.RecordRefillAsync(fixture.Database, pin, "hash-source", sourcePin, 2, default, Token)).IsFalse();
         await Assert.That(await repair.CompleteRebuildAsync(fixture.Database, original, pin, Token)).IsFalse();
         await Assert.That(fixture.Service<SqliteStorageEngine>().Ledger.FailedClosed).IsNull();
         if (receiver)

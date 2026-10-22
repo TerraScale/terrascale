@@ -418,8 +418,8 @@ public sealed class RegionProcessHost
         public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken) =>
             Held(database) ? throw new IOException("the harness holds this database's replication") : inner.ApplyAsync(database, origin, groups, cancellationToken);
 
-        public ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
-            Held(database) ? throw new IOException("the harness holds this database's replication") : inner.RepairAsync(database, states, cancellationToken);
+        public ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
+            Held(database) ? throw new IOException("the harness holds this database's replication") : inner.RepairAsync(database, incarnation, states, cancellationToken);
 
         public ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken) =>
             Held(database) ? ValueTask.CompletedTask : inner.RecordFrontierAsync(database, origin, frontier, cancellationToken);

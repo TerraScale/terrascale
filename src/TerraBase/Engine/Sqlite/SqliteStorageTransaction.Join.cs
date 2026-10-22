@@ -17,6 +17,9 @@ internal sealed partial class SqliteStorageTransaction
         return await RunAsync(() => Join(collection, id, delta, at, cancellationToken), cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
+    internal ValueTask<bool> JoinBaselineAsync(string collection, string id, DocumentState state, EntryVersion at, CancellationToken cancellationToken) =>
+        RunAsync(() => Join(collection, id, state, at, cancellationToken, baseline: true), cancellationToken, mutation: true);
+
     public async ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken)
     {
         _ = await RunAsync(() =>
@@ -42,7 +45,7 @@ internal sealed partial class SqliteStorageTransaction
     }
 
     // Worker-only, inside a mutation.
-    private bool Join(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken)
+    private bool Join(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken, bool baseline = false)
     {
         ThrowIfReadOnly();
         Member.Clock.Observe(at.Stamp);
@@ -51,6 +54,17 @@ internal sealed partial class SqliteStorageTransaction
         {
             collectionDrop = dropped;
             var clear = new DocumentState(dropped, DocumentState.Bottom.Fields);
+            delta = clear.Join(delta);
+            if (delta.Equals(clear))
+            {
+                return false;
+            }
+        }
+
+        var state = ReadState(collection, id);
+        if (!baseline && state.MaxStamp.Value == 0 && CollectedBefore() is { Value: > 0 } floor)
+        {
+            var clear = new DocumentState(CollectedClear(floor), DocumentState.Bottom.Fields);
             delta = clear.Join(delta);
             if (delta.Equals(clear))
             {
@@ -71,7 +85,6 @@ internal sealed partial class SqliteStorageTransaction
             }
         }
 
-        var state = ReadState(collection, id);
         var next = state.Join(delta);
         if (next.Equals(state))
         {

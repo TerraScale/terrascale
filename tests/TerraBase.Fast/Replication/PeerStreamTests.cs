@@ -3007,7 +3007,7 @@ public sealed class PeerStreamTests
         public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken) =>
             sink.ApplyAsync(database, origin, groups, cancellationToken);
 
-        public async ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
+        public async ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
         {
             if (machine.HeldRepairs is { } held)
             {
@@ -3023,7 +3023,7 @@ public sealed class PeerStreamTests
                 }
             }
 
-            return machine.RefusesRepairs ? null : await sink.RepairAsync(database, states, cancellationToken);
+            return machine.RefusesRepairs ? null : await sink.RepairAsync(database, incarnation, states, cancellationToken);
         }
     }
 
