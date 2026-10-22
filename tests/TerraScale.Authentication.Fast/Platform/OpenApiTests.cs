@@ -255,11 +255,19 @@ public sealed partial class OpenApiTests
     }
 
     [Test]
-    public async Task Scalar_renders_the_contract_without_browser_errors()
+    [Arguments(ColorScheme.Light, 1440, 900)]
+    [Arguments(ColorScheme.Dark, 1440, 900)]
+    [Arguments(ColorScheme.Light, 390, 844)]
+    [Arguments(ColorScheme.Dark, 390, 844)]
+    public async Task Scalar_renders_the_contract_without_browser_errors(ColorScheme colorScheme, int width, int height)
     {
         await using var server = await AuthTestServer.StartAsync();
         var browser = await Chromium.BrowserAsync();
-        await using var context = await browser.NewContextAsync();
+        await using var context = await browser.NewContextAsync(new()
+        {
+            ColorScheme = colorScheme,
+            ViewportSize = new() { Width = width, Height = height },
+        });
         var page = await context.NewPageAsync();
         var errors = new List<string>();
         page.Console += (_, message) =>
