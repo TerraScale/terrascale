@@ -59,7 +59,7 @@ nice -n 19 dotnet /home/mariogk/.cache/r4-final-micro-after/bin/RemoteAckBench/r
 
 ## Focused waiter results
 
-Final A then B completed at 13:51:14Z. Each process ran five repeats per workload after warmup. The harness links production waiter/admission/marker/tenant types; its refusal record is a benchmark-local copy. It runs no transport, receiver, authentication or disk. All raw repetitions are in [2026-10-22-r4-durability-raw.md](2026-10-22-r4-durability-raw.md).
+Final A then B completed at 13:51:14Z. These five-repeat results predate the user’s reduced three-repeat rule; the current harness uses three for future runs. Each process ran five repeats per workload after warmup. The harness links production waiter/admission/marker/tenant types; its refusal record is a benchmark-local copy. It runs no transport, receiver, authentication or disk. All raw repetitions are in [2026-10-22-r4-durability-raw.md](2026-10-22-r4-durability-raw.md).
 
 Latency is registration-to-continuation workload latency: later waiters include registration of remaining waiters and processing of earlier ACKs. The 100 ms profile injects one initial scheduling delay, not a WAN or per-message delay. CPU/allocation totals cover registration, ACK calls, observation continuations and release, divided by all ACK calls. Noisy workloads count wrong-incarnation and duplicate calls in that denominator; compare identical workloads only. Maximum pending is the constructed registration count, 256 or 4,096, not an instrumented production peak. Batch16 has 16 ACK calls for 256 waiters; the 16-database noisy workload has 12,288 calls.
 

@@ -21,7 +21,7 @@ foreach (var delay in new[] { 0, 100 })
 {
     foreach (var (databases, batches, noise) in new[] { (1, false, false), (1, true, false), (1, false, true), (16, false, true) })
     {
-        for (var repeat = 1; repeat <= 5; repeat++)
+        for (var repeat = 1; repeat <= 3; repeat++)
         {
             await RunAsync(databases, batches, noise, delay, repeat, report: true);
         }

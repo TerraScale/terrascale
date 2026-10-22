@@ -12,10 +12,10 @@ all waiters; it is simulated scheduling delay, not a WAN measurement.
    nice -n 19 dotnet build benchmark/dotnet/RemoteAckBench -c Release --artifacts-path /home/mariogk/.cache/r4-ack-after
    ```
 
-2. Run both executable DLLs back-to-back on the same host. Each invocation emits five repeats for every profile.
+2. Run both executable DLLs back-to-back on the same host. Each invocation emits three repeats for every profile.
    Locate their generated paths with `rg --files /home/mariogk/.cache/r4-ack-before /home/mariogk/.cache/r4-ack-after`.
    Prefix each execution with `nice -n 19 dotnet`, passing `baseline` or `candidate` as the sole argument.
-   For five paired process repetitions, alternate the two invocations five times.
+   Run the pair once; each process performs the three workload repetitions.
 
 3. Save stdout in `benchmark/bench/`; retain all repetitions and summarize median and min–max separately for
    each workload/profile. Record host, app commit, linked source SHA-256, SDK, host load and exact commands.
