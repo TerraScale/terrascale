@@ -476,7 +476,7 @@ public sealed class TerraBaseChangesContractTests
         await Assert.That(sent[0].Headers.GetValues("X-TerraScale-Region-Pin").Single()).IsEqualTo("sjc");
         await Assert.That(sent[0].Headers.GetValues("Last-Event-ID").Single()).IsEqualTo("previous");
         await Assert.That(sent[0].Headers.Authorization!.Scheme).IsEqualTo("Bearer");
-        await Assert.That(sent[0].Headers.Authorization.Parameter).IsEqualTo("project-user-token");
+        await Assert.That(sent[0].Headers.Authorization!.Parameter).IsEqualTo("project-user-token");
         await Assert.That(sent[0].Headers.Accept.Single().MediaType).IsEqualTo("text/event-stream");
     }
 
