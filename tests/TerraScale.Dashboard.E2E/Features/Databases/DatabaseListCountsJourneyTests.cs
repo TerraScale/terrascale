@@ -59,7 +59,7 @@ public sealed class DatabaseListCountsJourneyTests(DashboardRootFixture fixture)
         await Assert.That(known.Contains("Try again", StringComparison.Ordinal)).IsFalse();
         Volatile.Write(ref measurement, failure);
         var unknown = await TotalsAsync(replica);
-        await Assert.That(unknown).Contains(">Unavailable</dd>");
+        await Assert.That(unknown).Contains(">Unknown</dd>");
         await Assert.That(unknown).Contains("No zero count is inferred.");
         await Assert.That(unknown.Contains("Across ", StringComparison.Ordinal)).IsFalse();
         await Assert.That(unknown).Contains("href=\"/databases?range=24h\">Try again</a>");
@@ -70,7 +70,7 @@ public sealed class DatabaseListCountsJourneyTests(DashboardRootFixture fixture)
         var zero = await TotalsAsync(replica);
         await Assert.That(zero).Contains(">0</dd>");
         await Assert.That(zero).Contains("Across 2 collections, 0 B");
-        await Assert.That(zero.Contains("Unavailable", StringComparison.Ordinal)).IsFalse();
+        await Assert.That(zero.Contains("Unknown", StringComparison.Ordinal)).IsFalse();
 
         static async Task<string> TotalsAsync(HttpClient instance)
         {
