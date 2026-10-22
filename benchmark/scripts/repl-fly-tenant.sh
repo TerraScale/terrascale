@@ -12,7 +12,7 @@
 # database "bench" (home gru, replicas sjc and fra). It is never the e2e tenant. The owner is a synthetic user id.
 # Key: documents:read and documents:write, narrowed to the bench database, expiring after 30 days.
 #
-# Where things go (nothing is written to this host's disk, echoed or logged; the key only travels through a pipe):
+# The API key only travels through a pipe; the peer header uses a temporary owner-only file removed on exit:
 #   Fly secret TS_BENCH_API_KEY on app ts-bench (an app with no machines between runs; the Fly benchmark driver runs its
 #     load machines there, and they read the key from their environment)
 #   GitHub repository variables (not secret): TS_BENCH_FLY_OWNER, TS_BENCH_FLY_ORGANIZATION, TS_BENCH_FLY_PROJECT,
@@ -20,6 +20,7 @@
 #
 # It reaches TerraBase through `flyctl proxy` to gru's internal listener (port 8081, h2c, fly-local-6pn), where the
 # platform operator acts as a named user (X-TerraBase-User-Id) and issues keys (POST /admin/api-keys).
+set +x
 set -euo pipefail
 shopt -s inherit_errexit
 
@@ -46,14 +47,18 @@ ulid() {
 variable() { gh variable get "$1" --repo "$repo" 2> /dev/null || true; }
 
 open_proxy() {
+  [[ ${TERRABASE_PEER_SECRET:-} =~ ^[0-9a-fA-F]{64}$ ]] || die "TERRABASE_PEER_SECRET must contain 64 hexadecimal characters"
+  peer_header=$(mktemp)
+  trap '[[ -z ${proxy:-} ]] || kill "$proxy" 2> /dev/null || true; rm -f -- "$peer_header"' EXIT
+  chmod 600 "$peer_header"
+  printf 'X-TerraBase-Peer-Credential: %s\n' "$TERRABASE_PEER_SECRET" > "$peer_header"
   local gru
   gru=$(flyctl dig AAAA "gru.$app.internal" --app "$app" --short 2> /dev/null | head -1)
   [[ -n "$gru" ]] || die "gru.$app.internal has no address: is gru running?"
   flyctl proxy "$port:8081" "$gru" --app "$app" > /dev/null 2>&1 &
   proxy=$!
-  trap 'kill "$proxy" 2> /dev/null || true' EXIT
   for _ in $(seq 1 30); do
-    curl -s -o /dev/null --http2-prior-knowledge "$base/" && return 0
+    curl -q -s -o /dev/null --http2-prior-knowledge --max-redirs 0 -H "@$peer_header" "$base/" && return 0
     sleep 1
   done
   die "gru's internal listener did not answer through flyctl proxy"
@@ -63,7 +68,7 @@ open_proxy() {
 internal() {
   local method=$1 path=$2
   shift 2
-  local args=(-sS --fail-with-body --http2-prior-knowledge -X "$method" -H 'content-type: application/json')
+  local args=(-q -sS --fail-with-body --http2-prior-knowledge --max-redirs 0 -H "@$peer_header" -X "$method" -H 'content-type: application/json')
   [[ -n "${owner:-}" ]] && args+=(-H "X-TerraBase-User-Id: $owner")
   curl "${args[@]}" "$base$path" "$@"
 }

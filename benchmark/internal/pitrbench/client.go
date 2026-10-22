@@ -3,6 +3,7 @@ package pitrbench
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,9 +13,7 @@ import (
 	"time"
 )
 
-// Client talks to a node's internal listener (loopback off Fly, HTTP/2 without TLS) as the platform operator: on a
-// project's routes it holds every scope, so no credential exists to leak. Off Fly the listener is reachable only on
-// this host.
+// Client talks to a local node's authenticated internal listener over HTTP/2 without TLS.
 type Client struct {
 	base   string
 	owner  string
@@ -31,7 +30,8 @@ func NewClient(port int, peerSecret, owner string, timeout time.Duration) *Clien
 		base:   "http://127.0.0.1:" + strconv.Itoa(port),
 		owner:  owner,
 		secret: peerSecret,
-		hc:     &http.Client{Transport: &http.Transport{Protocols: &p, IdleConnTimeout: 90 * time.Second}, Timeout: timeout},
+		hc: &http.Client{Transport: &http.Transport{Protocols: &p, IdleConnTimeout: 90 * time.Second}, Timeout: timeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}
 }
 
@@ -46,6 +46,9 @@ type Response struct {
 
 // Do sends one request; path is absolute ("/v1/...").
 func (c *Client) Do(ctx context.Context, method, path string, body []byte) (Response, error) {
+	if _, err := hex.DecodeString(c.secret); len(c.secret) != 64 || err != nil {
+		return Response{}, fmt.Errorf("TERRABASE_PEER_SECRET must contain 64 hexadecimal characters")
+	}
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)

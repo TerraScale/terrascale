@@ -469,7 +469,7 @@ func newTestRun(t *testing.T, docs, split int64) (*Run, *fakeDB) {
 	if err := r.Save(); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSON(filepath.Join(r.Dir, "node.json"), NodeState{InternalPort: portN}); err != nil {
+	if err := writeJSON(filepath.Join(r.Dir, "node.json"), NodeState{InternalPort: portN, PeerSecret: strings.Repeat("a", 64)}); err != nil {
 		t.Fatal(err)
 	}
 	return r, db

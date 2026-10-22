@@ -13,6 +13,8 @@ import (
 
 const secret = "tsk_FAKE_SECRET_never_shown"
 
+var peerSecret = strings.Repeat("b", 64)
+
 type tenant struct {
 	t    *testing.T
 	dir  string // fake Fly, GitHub and TerraBase state
@@ -40,17 +42,24 @@ func newTenant(t *testing.T) *tenant {
 // run runs one command of the script and answers its stdout and stderr together.
 func (tn *tenant) run(command string) string {
 	tn.t.Helper()
+	out, err := tn.runWithPeer(command, peerSecret)
+	if err != nil {
+		tn.t.Fatalf("%s: %v\n%s", command, err, out)
+	}
+	return out
+}
+
+func (tn *tenant) runWithPeer(command, peer string) (string, error) {
+	tn.t.Helper()
 	fakes, _ := filepath.Abs("testdata/fakes")
 	script, _ := filepath.Abs("repl-fly-tenant.sh")
-	cmd := exec.Command("bash", script, command)
+	cmd := exec.Command("bash", "-x", script, command)
 	cmd.Dir = tn.work
-	cmd.Env = append(os.Environ(), "PATH="+fakes+":"+os.Getenv("PATH"), "HOME="+tn.work, "FAKE_DIR="+tn.dir, "FAKE_LOG="+tn.log, "FAKE_SECRET="+secret)
+	cmd.Env = append(os.Environ(), "PATH="+fakes+":"+os.Getenv("PATH"), "HOME="+tn.work, "FAKE_DIR="+tn.dir, "FAKE_LOG="+tn.log, "FAKE_SECRET="+secret, "TERRABASE_PEER_SECRET="+peer, "TMPDIR="+tn.work)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
-	if err := cmd.Run(); err != nil {
-		tn.t.Fatalf("%s: %v\n%s", command, err, out.String())
-	}
-	return out.String()
+	err := cmd.Run()
+	return out.String(), err
 }
 
 func (tn *tenant) calls() string {
@@ -66,12 +75,12 @@ func (tn *tenant) variable(name string) string {
 // noSecretOutside fails if the key appears anywhere but the fake Fly secret store: output, argv log or any file.
 func (tn *tenant) noSecretOutside(output string) {
 	tn.t.Helper()
-	if strings.Contains(output, secret) || strings.Contains(tn.calls(), secret) {
+	if strings.Contains(output, secret) || strings.Contains(tn.calls(), secret) || strings.Contains(output, peerSecret) || strings.Contains(tn.calls(), peerSecret) {
 		tn.t.Fatal("the key appeared in output or on a command line")
 	}
 	_ = filepath.Walk(filepath.Dir(tn.dir), func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() && path != filepath.Join(tn.dir, "fly-secrets") {
-			if b, _ := os.ReadFile(path); bytes.Contains(b, []byte(secret)) {
+			if b, _ := os.ReadFile(path); bytes.Contains(b, []byte(secret)) || bytes.Contains(b, []byte(peerSecret)) {
 				tn.t.Fatalf("the key was written to %s", path)
 			}
 		}
@@ -80,6 +89,7 @@ func (tn *tenant) noSecretOutside(output string) {
 }
 
 func TestDryRunChangesNothing(t *testing.T) {
+	t.Parallel()
 	tn := newTenant(t)
 	out := tn.run("dry-run")
 	if !strings.Contains(out, "dry run: nothing was changed") || !strings.Contains(out, "TS_BENCH_API_KEY on app ts-bench") {
@@ -93,6 +103,7 @@ func TestDryRunChangesNothing(t *testing.T) {
 }
 
 func TestInstallHandsTheKeyOnlyToFlyAndRotatesOnTheNextRun(t *testing.T) {
+	t.Parallel()
 	tn := newTenant(t)
 	out := tn.run("install")
 	tn.noSecretOutside(out)
@@ -124,6 +135,7 @@ func TestInstallHandsTheKeyOnlyToFlyAndRotatesOnTheNextRun(t *testing.T) {
 }
 
 func TestStatusCleanupAndRevoke(t *testing.T) {
+	t.Parallel()
 	tn := newTenant(t)
 	if out := tn.run("status"); !strings.Contains(out, "not installed") {
 		t.Fatalf("status before install:\n%s", out)
@@ -149,5 +161,20 @@ func TestStatusCleanupAndRevoke(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tn.dir, "fly-secrets")); !os.IsNotExist(err) {
 		t.Fatal("revoke must remove the Fly secret")
+	}
+}
+
+func TestMissingOrMalformedPeerCredentialFailsBeforeProxy(t *testing.T) {
+	t.Parallel()
+	for _, peer := range []string{"", "short", strings.Repeat("g", 64), strings.Repeat("a", 63) + "\n"} {
+		tn := newTenant(t)
+		out, err := tn.runWithPeer("install", peer)
+		if err == nil || !strings.Contains(out, "TERRABASE_PEER_SECRET must contain 64 hexadecimal characters") {
+			t.Fatalf("invalid peer credential did not fail closed: %v", err)
+		}
+		if strings.Contains(tn.calls(), "flyctl proxy") || strings.Contains(tn.calls(), "curl") {
+			t.Fatal("invalid credential reached the internal listener")
+		}
+		tn.noSecretOutside(out)
 	}
 }
