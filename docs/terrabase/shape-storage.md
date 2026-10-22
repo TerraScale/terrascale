@@ -12,7 +12,7 @@ the signed 64-bit sequence refuses the write rather than reusing an offset.
 
 `seq` is a unique column independent of `rowid`; neither SQLite rowids nor
 `AUTOINCREMENT` define offsets. Turso 0.8.2 can restart an emptied table's
-autoincrement sequence after a reopen (see [the spike](turso-spike.md)). The R8
+autoincrement sequence after a reopen (see the [historical spike](https://github.com/TerraScale/terrascale/blob/e7fa366ddb289f5612c93d316b316fb92c568151/docs/terrabase/turso-spike.md)). The R8
 vector cursor remains based on origin and stamp; it does not change with this
 local sequence.
 

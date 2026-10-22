@@ -15,6 +15,19 @@ Agent and contributor rules: [`AGENTS.md`](AGENTS.md).
 | `scripts/` | `scripts/libs`, `scripts/auth`, `scripts/terrabase` |
 | `.github/workflows/` | CI (GitHub Actions, GitHub-hosted runners); `Dockerfile` holds its build and test stages |
 
+## Production
+
+Production is moving to OCI `gru` (`sa-saopaulo-1`, host `ts-gru-1`) under
+[`ts-orch`](https://github.com/TerraScale/ts-orchestrator). The regional footprint also includes
+`sjc` (`us-sanjose-1`) and `fra` (`eu-frankfurt-1`); a region token alone does not prove a service is ready.
+GitHub Actions builds and checks on GitHub-hosted runners and publishes images to GHCR.
+The orchestrator owns artifact admission and rollout authority, private NetBird networking, and
+OCI Vault credential delivery using instance principals. See its
+[region contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/automatic-regions.md) and
+[secret delivery contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/secrets.md)
+for implementation limits and operational ownership. Tigris backup storage retains its Fly organization
+connection and `fly.storage.tigris.dev` endpoint; compute ownership does not change that integration.
+
 ## Make targets
 
 Run them from the repository root. Locally, prefix each with `nice -n 19`.
@@ -32,7 +45,7 @@ Run them from the repository root. Locally, prefix each with `nice -n 19`.
 
 `make dev` runs TerraBase and ts-auth on this machine through the [Aspire](https://aspire.dev) TypeScript AppHost in
 `aspire/apphost.mts`, with the Aspire dashboard for their logs, traces and health. It is local development only; nothing
-here deploys or touches Fly.io.
+here deploys or touches production.
 
 - Needs Node.js 20.19+ and ts-dotnet at the revision pinned in `.github/workflows/ci.yml` (`TS_DOTNET_REV`). The Aspire
   CLI is a local dotnet tool (`dotnet-tools.json`), run as `dotnet aspire` after `dotnet tool restore` (`make dev` runs
@@ -48,8 +61,8 @@ here deploys or touches Fly.io.
 
   Direct `dotnet` and `make` commands take the same checkout as `TsDotnetRoot` (`-p:TsDotnetRoot=<dir>` or the
   environment variable).
-- Every listener stays on loopback: TerraBase binds `127.0.0.1` in Development off Fly (8080 public, 8081 internal,
-  9091 metrics) and ts-auth listens on `127.0.0.1:8090` (metrics 9092). Off Fly, ts-auth stores in the TerraBase at
+- Every listener stays on loopback: TerraBase binds `127.0.0.1` in Development (8080 public, 8081 internal,
+  9091 metrics) and ts-auth listens on `127.0.0.1:8090` (metrics 9092). Locally, ts-auth stores in the TerraBase at
   `127.0.0.1:8081`.
 - Each run is disposable: TerraBase starts from an empty data directory (`$TMPDIR/terrascale-aspire-terrabase`, emptied
   at the start of every run), and ts-auth gets a new master key that is never written to disk.

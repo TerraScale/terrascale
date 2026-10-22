@@ -1,0 +1,55 @@
+ts-heavy-any: beta ~/remote-builds/feat-repl-v2-v5-harness
+commit bba212ffcfca135b4b6027d369acc78c5936fbdf host beta 2026-10-14T17:12:39Z environment=local faults=0
+== WaveAE2ETests 2026-10-14T17:14:26Z
+skipped A_201_survives_the_origin_machines_SIGKILL_right_after_it (33ms)
+V5 peer-down local:gru: HTTP 503 remote_region_unavailable in 18 ms
+V5 remote-ack local:gru: 201 remote_durable in 109 ms; first read held by [sjc,fra] 128 ms after send
+V5 remote-ack local:fra: 201 remote_durable in 105 ms; first read held by [gru,sjc] 125 ms after send
+V5 remote-ack local:sjc: 201 remote_durable in 109 ms; first read held by [gru] 131 ms after send
+passed A_write_with_no_reachable_peer_answers_a_defined_503 (6s 168ms)
+    V5 peer-down local:gru: HTTP 503 remote_region_unavailable in 18 ms
+passed A_201_is_remote_durable_and_another_region_serves_it_at_once(sjc) (6s 168ms)
+    V5 remote-ack local:sjc: 201 remote_durable in 109 ms; first read held by [gru] 131 ms after send
+passed A_201_is_remote_durable_and_another_region_serves_it_at_once(gru) (6s 168ms)
+    V5 remote-ack local:gru: 201 remote_durable in 109 ms; first read held by [sjc,fra] 128 ms after send
+passed A_201_is_remote_durable_and_another_region_serves_it_at_once(fra) (6s 168ms)
+    V5 remote-ack local:fra: 201 remote_durable in 105 ms; first read held by [gru,sjc] 125 ms after send
+replication latency, V5 drop safety: converged to gru=Listing { Count = 1, Digest = 2B2F8606CA4C6C59637BA7B7030B49BE12D65091A56CF4812730A8ED098C1C82 } sjc=Listing { Count = 1, Digest = 2B2F8606CA4C6C59637BA7B7030B49BE12D65091A56CF4812730A8ED098C1C82 } fra=Listing { Count = 1, Digest = 2B2F8606CA4C6C59637BA7B7030B49BE12D65091A56CF4812730A8ED098C1C82 }: 1008 ms
+passed A_write_made_after_a_replicated_drop_survives_it_in_every_region (12s 516ms)
+    replication latency, V5 drop safety: converged to gru=Listing { Count = 1, Digest = 2B2F8606CA4C6C59637BA7B7030B49BE12D65091A56CF4812730A8ED098C1C82 } sjc=Listing { Count = 1, Digest = 2B2F8606CA4C6C59637BA7B7030B49BE12D65091A56CF4812730A8ED098C1C82 } fra=Listing { Count = 1, Digest = 2B2F8606CA4C6C59637BA7B7030B49BE12D65091A56CF4812730A8ED098C1C82 }: 1008 ms
+  total: 6
+  failed: 0
+  succeeded: 5
+  skipped: 1
+log /tmp/v2v5-local-5/WaveAE2ETests.log sha256 d103718aec883a8a2ec0443ad309b924be780838e16b6e6b4699ee79d11dce15
+== ShapeConvergenceE2ETests 2026-10-14T17:14:40Z
+V2 clock skew sjc +2000 ms: every shape view equals its region's listing (31 documents) 50 ms; gru: view 31/EDB1C653778A listed 31/EDB1C653778A caught-up=True refetches=0 responses=2; sjc: view 31/EDB1C653778A listed 31/EDB1C653778A caught-up=True refetches=0 responses=2; fra: view 31/EDB1C653778A listed 31/EDB1C653778A caught-up=True refetches=0 responses=2; regions local:gru local:sjc local:fra
+passed Shape_clients_converge_under_clock_skew(sjc, 2000) (6s 754ms)
+    V2 clock skew sjc +2000 ms: every shape view equals its region's listing (31 documents) 50 ms; gru: view 31/EDB1C653778A listed 31/EDB1C653778A caught-up=True refetches=0 responses=2; sjc: view 31/EDB1C653778A listed 31/EDB1C653778A caught-up=True refetches=0 responses=2; fra: view 31/EDB1C653778A listed 31/EDB1C653778A caught-up=True refetches=0 responses=2; regions local:gru local:sjc local:fra
+V2 clock skew fra -2000 ms: every shape view equals its region's listing (31 documents) 51 ms; gru: view 31/FD106F05FB10 listed 31/FD106F05FB10 caught-up=True refetches=0 responses=2; sjc: view 31/FD106F05FB10 listed 31/FD106F05FB10 caught-up=True refetches=0 responses=2; fra: view 31/FD106F05FB10 listed 31/FD106F05FB10 caught-up=True refetches=0 responses=2; regions local:gru local:sjc local:fra
+passed Shape_clients_converge_under_clock_skew(fra, -2000) (7s 644ms)
+    V2 clock skew fra -2000 ms: every shape view equals its region's listing (31 documents) 51 ms; gru: view 31/FD106F05FB10 listed 31/FD106F05FB10 caught-up=True refetches=0 responses=2; sjc: view 31/FD106F05FB10 listed 31/FD106F05FB10 caught-up=True refetches=0 responses=2; fra: view 31/FD106F05FB10 listed 31/FD106F05FB10 caught-up=True refetches=0 responses=2; regions local:gru local:sjc local:fra
+V2 seed: every shape view equals its region's listing (30 documents) 4550 ms; gru: view 30/AAC6E9BF0B6C listed 30/AAC6E9BF0B6C caught-up=True refetches=0 responses=141; sjc: view 30/AAC6E9BF0B6C listed 30/AAC6E9BF0B6C caught-up=True refetches=0 responses=140; fra: view 30/AAC6E9BF0B6C listed 30/AAC6E9BF0B6C caught-up=True refetches=0 responses=141; regions local:gru local:sjc local:fra
+V2 before the drop: every shape view equals its region's listing (30 documents) 5107 ms; gru: view 30/FA0AFB03F5D4 listed 30/FA0AFB03F5D4 caught-up=True refetches=0 responses=163; sjc: view 30/FA0AFB03F5D4 listed 30/FA0AFB03F5D4 caught-up=True refetches=0 responses=164; fra: view 30/FA0AFB03F5D4 listed 30/FA0AFB03F5D4 caught-up=True refetches=0 responses=164; regions local:gru local:sjc local:fra
+V2 after the drop: every shape view equals its region's listing (0 documents) 46 ms; gru: view 0/E3B0C44298FC listed 0/E3B0C44298FC caught-up=True refetches=0 responses=163; sjc: view 0/E3B0C44298FC listed 0/E3B0C44298FC caught-up=True refetches=0 responses=165; fra: view 0/E3B0C44298FC listed 0/E3B0C44298FC caught-up=True refetches=0 responses=165; regions local:gru local:sjc local:fra
+V2 before the loss: every shape view equals its region's listing (30 documents) 5396 ms; gru: view 30/CDD46C998B7B listed 30/CDD46C998B7B caught-up=True refetches=0 responses=6; sjc: view 30/CDD46C998B7B listed 30/CDD46C998B7B caught-up=True refetches=0 responses=6; fra: view 30/CDD46C998B7B listed 30/CDD46C998B7B caught-up=True refetches=0 responses=7; regions local:gru local:sjc local:fra
+V2 after the re-create: every shape view equals its region's listing (30 documents) 66 ms; gru: view 30/A81C8E0C1008 listed 30/A81C8E0C1008 caught-up=True refetches=0 responses=165; sjc: view 30/A81C8E0C1008 listed 30/A81C8E0C1008 caught-up=True refetches=0 responses=167; fra: view 30/A81C8E0C1008 listed 30/A81C8E0C1008 caught-up=True refetches=0 responses=167; regions local:gru local:sjc local:fra
+passed Shape_clients_follow_a_collection_drop_and_re_create (11s 867ms)
+    V2 before the drop: every shape view equals its region's listing (30 documents) 5107 ms; gru: view 30/FA0AFB03F5D4 listed 30/FA0AFB03F5D4 caught-up=True refetches=0 responses=163; sjc: view 30/FA0AFB03F5D4 listed 30/FA0AFB03F5D4 caught-up=True refetches=0 responses=164; fra: view 30/FA0AFB03F5D4 listed 30/FA0AFB03F5D4 caught-up=True refetches=0 responses=164; regions local:gru local:sjc local:fra
+    V2 after the drop: every shape view equals its region's listing (0 documents) 46 ms; gru: view 0/E3B0C44298FC listed 0/E3B0C44298FC caught-up=True refetches=0 responses=163; sjc: view 0/E3B0C44298FC listed 0/E3B0C44298FC caught-up=True refetches=0 responses=165; fra: view 0/E3B0C44298FC listed 0/E3B0C44298FC caught-up=True refetches=0 responses=165; regions local:gru local:sjc local:fra
+    V2 after the re-create: every shape view equals its region's listing (30 documents) 66 ms; gru: view 30/A81C8E0C1008 listed 30/A81C8E0C1008 caught-up=True refetches=0 responses=165; sjc: view 30/A81C8E0C1008 listed 30/A81C8E0C1008 caught-up=True refetches=0 responses=167; fra: view 30/A81C8E0C1008 listed 30/A81C8E0C1008 caught-up=True refetches=0 responses=167; regions local:gru local:sjc local:fra
+V2 partition heal: every shape view equals its region's listing (71 documents) 132 ms; gru: view 71/5EFF6C944A3C listed 71/5EFF6C944A3C caught-up=True refetches=0 responses=146; sjc: view 71/5EFF6C944A3C listed 71/5EFF6C944A3C caught-up=True refetches=0 responses=144; fra: view 71/5EFF6C944A3C listed 71/5EFF6C944A3C caught-up=True refetches=0 responses=146; regions local:gru local:sjc local:fra
+passed Shape_clients_in_every_region_converge_after_a_partition_heals (12s 109ms)
+    V2 seed: every shape view equals its region's listing (30 documents) 4550 ms; gru: view 30/AAC6E9BF0B6C listed 30/AAC6E9BF0B6C caught-up=True refetches=0 responses=141; sjc: view 30/AAC6E9BF0B6C listed 30/AAC6E9BF0B6C caught-up=True refetches=0 responses=140; fra: view 30/AAC6E9BF0B6C listed 30/AAC6E9BF0B6C caught-up=True refetches=0 responses=141; regions local:gru local:sjc local:fra
+    V2 partition heal: every shape view equals its region's listing (71 documents) 132 ms; gru: view 71/5EFF6C944A3C listed 71/5EFF6C944A3C caught-up=True refetches=0 responses=146; sjc: view 71/5EFF6C944A3C listed 71/5EFF6C944A3C caught-up=True refetches=0 responses=144; fra: view 71/5EFF6C944A3C listed 71/5EFF6C944A3C caught-up=True refetches=0 responses=146; regions local:gru local:sjc local:fra
+V2 after the anti-entropy repair: every shape view equals its region's listing (30 documents) 120101 ms; gru: view 30/CDD46C998B7B listed 30/CDD46C998B7B caught-up=True refetches=0 responses=3817; sjc: view 30/CDD46C998B7B listed 30/CDD46C998B7B caught-up=True refetches=0 responses=3817; fra: view 30/CDD46C998B7B listed 30/CDD46C998B7B caught-up=True refetches=0 responses=3818; regions local:gru local:sjc local:fra
+passed Shape_clients_converge_after_anti_entropy_repairs_a_lost_document (2m 12s 279ms)
+    V2 before the loss: every shape view equals its region's listing (30 documents) 5396 ms; gru: view 30/CDD46C998B7B listed 30/CDD46C998B7B caught-up=True refetches=0 responses=6; sjc: view 30/CDD46C998B7B listed 30/CDD46C998B7B caught-up=True refetches=0 responses=6; fra: view 30/CDD46C998B7B listed 30/CDD46C998B7B caught-up=True refetches=0 responses=7; regions local:gru local:sjc local:fra
+    V2 after the anti-entropy repair: every shape view equals its region's listing (30 documents) 120101 ms; gru: view 30/CDD46C998B7B listed 30/CDD46C998B7B caught-up=True refetches=0 responses=3817; sjc: view 30/CDD46C998B7B listed 30/CDD46C998B7B caught-up=True refetches=0 responses=3817; fra: view 30/CDD46C998B7B listed 30/CDD46C998B7B caught-up=True refetches=0 responses=3818; regions local:gru local:sjc local:fra
+  total: 5
+  failed: 0
+  succeeded: 5
+  skipped: 0
+log /tmp/v2v5-local-5/ShapeConvergenceE2ETests.log sha256 e754dca370f4e2b68ded04a6a05f77096085cb9aaf035f9abac400ffe6b8bbdf
+
+[exited with code 0]

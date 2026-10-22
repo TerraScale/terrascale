@@ -1,5 +1,6 @@
-# 21. Slice plan: Replication outage window
+# 21. Replication outage window
 
-**Replication outage window.** Between R2a and R10a, main does not replicate across machines. This is acceptable:
-the Fly apps hold no customer data yet and nothing replicates on Fly today (no peer configuration), but it must be a
-known state. The e2e job marks E1 to E7 expected-failure in that window.
+A runtime migration or destructive storage reset needs its own reviewed targets,
+backup evidence and recovery procedure. The OCI/ts-orch migration does not establish
+that an outage or reset is safe. Preserve data and verify the actual serving fleet
+before scheduling an operation. See [OCI hosting](../../oci.md).

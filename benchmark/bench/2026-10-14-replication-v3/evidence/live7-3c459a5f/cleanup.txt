@@ -1,5 +1,0 @@
-ts-vtest-load cleanup after live7 (manual, not timestamped by run.sh):
-  flyctl machine list -a ts-vtest-load --json | jq length  -> 0
-  flyctl apps destroy ts-vtest-load -y                    -> Destroyed app ts-vtest-load
-Done between 2026-10-14T19:34:24Z (last ledger line) and 2026-10-14T19:40:56Z.
-ts-vtest-tb machine list captured just before 2026-10-14T19:40:56Z: only launch/start events since the 19:21-19:22Z rollout of vtest-3c459a5fa160, no exit.

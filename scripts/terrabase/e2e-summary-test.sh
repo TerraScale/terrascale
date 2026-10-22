@@ -16,12 +16,12 @@ cat > "$tmp/results.jsonl" <<'JSON'
 {"test":"E2","category":"expected-failure","detail":"the CDC source (R3)","nodes":"in-process nodes","faults":"none"}
 {"test":"E10","category":"expected-failure","detail":"the changes feed (R8)","nodes":"in-process nodes","faults":"none"}
 {"test":"Partition","category":"not-supported","detail":"R3; no local link","nodes":"in-process nodes","faults":"SimulatedPartition"}
-{"test":"Outage","category":"skip","detail":"Fly outage test: set TERRABASE_E2E_FLY_URL","nodes":"in-process nodes","faults":"NodeStop"}
+{"test":"Outage","category":"skip","detail":"Outage test requires a live endpoint","nodes":"in-process nodes","faults":"NodeStop"}
 JSON
 "$summary" report "$tmp/results.jsonl" test > "$tmp/report.md" || fail "a run without failures must exit 0"
 for line in '| actual pass | 1 |' '| harness check | 1 |' '| expected failure | 3 |' '| not supported | 1 |' '| skip | 1 |' '| fail | 0 |' '| total | 7 |' \
   '| `Kill` | actual pass | separate OS processes | ProcessKill |  |' '| `Partition` | not supported | in-process nodes | SimulatedPartition | R3; no local link |' \
-  '| `Outage` | skip | in-process nodes | NodeStop | Fly outage test: set TERRABASE_E2E_FLY_URL |' '| `E1` | expected failure | in-process nodes | none | the CDC source (R3) |'; do
+  '| `Outage` | skip | in-process nodes | NodeStop | Outage test requires a live endpoint |' '| `E1` | expected failure | in-process nodes | none | the CDC source (R3) |'; do
   grep -qF -- "$line" "$tmp/report.md" || fail "report lacks: $line"
 done
 grep -qE '^- Commit: `[0-9a-f]{40}`; working tree: (clean|[0-9a-f]{64})$' "$tmp/report.md" || fail "report lacks the commit and patch identity"

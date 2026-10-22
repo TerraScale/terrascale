@@ -99,8 +99,7 @@ principles are retained in `internal/benchmark`; the old fixed 80/20 client is
 superseded. TS-606's direct regional HTTPS measurement and honest unavailable
 metrics are retained as protocol requirements.
 
-[Prerequisite evidence](bench/2026-10-08-prerequisites.md) records why no live
-capacity number is claimed yet.
+No live capacity number is claimed; retained reports state their measured environment.
 
 ## TS-832 API benchmark
 
@@ -114,4 +113,12 @@ Run it against production; the key comes from the file named by `TS_BENCH_KEY_FI
 nice -n 19 make api-bench CLUSTER_STATE=stable   # or CLUSTER_STATE=changing
 ```
 
-Reports land in [bench/results/](bench/results/).
+Reports land in `bench/results/` when a run produces evidence.
+
+## Cloud benchmark boundary
+
+Production is moving to OCI under `ts-orch`, starting with host `ts-gru-1`. Region codes map to OCI regions: `gru` → `sa-saopaulo-1`, `sjc` → `us-sanjose-1`, `fra` → `eu-frankfurt-1`. CI uses GitHub-hosted runners and GHCR.
+
+Production secrets belong in OCI Vault; authorized hosts read narrowly granted secrets with instance principals. Do not copy production credentials into benchmark reports or target files. See the orchestrator's [secrets contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/secrets.md).
+
+The local replication, PITR and shape harnesses remain local evidence. A future cloud run must supply verified per-region endpoints and measured host limits; no retired cloud measurement is evidence for OCI capacity. The shape load command currently starts only the local two-node host.

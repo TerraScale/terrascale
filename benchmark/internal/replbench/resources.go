@@ -1,13 +1,8 @@
 package replbench
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -41,11 +36,11 @@ func seriesOf(xs []float64) Series {
 // NodeResources is what one node (local: the host process, shared by every node) used during the load.
 type NodeResources struct {
 	CPUCores  Series  `json:"cpu_cores"` // cores busy (1.0 = one core fully used)
-	MemMB     Series  `json:"mem_mb"`    // local: process RSS; Fly: machine memory in use (total - available)
+	MemMB     Series  `json:"mem_mb"`    // process RSS
 	SwapMB    Series  `json:"swap_mb"`
 	DiskMB    float64 `json:"disk_mb"`             // data on the volume (local: the node's data directory) at the end
-	StealPct  Series  `json:"steal_pct,omitzero"`  // Fly: share of CPU time stolen by the host
-	Throttled float64 `json:"throttled,omitempty"` // Fly: fly_instance_cpu_throttle at the end
+	StealPct  Series  `json:"steal_pct,omitzero"`  // share of CPU time stolen by the host
+	Throttled float64 `json:"throttled,omitempty"` // CPU throttling at the end
 }
 
 // Resources is the per-node record of a run and where it came from.
@@ -170,85 +165,4 @@ func procMem(pid int) (rss, swap float64) {
 		}
 	}
 	return rss, swap
-}
-
-// FlyResources reads every machine of app from Fly's Prometheus API over [start, end], one point per 15 s. token is a
-// flyctl token ("fm2_…"); it is sent as "FlyV1 <token>" and never logged.
-func FlyResources(ctx context.Context, org, app, token string, start, end time.Time) (Resources, error) {
-	sel := `app="` + app + `"`
-	queries := map[string]string{
-		"cpu":    `sum by (instance,region) (rate(fly_instance_cpu{` + sel + `,mode!~"idle|steal|guest|guest_nice"}[30s])) / sum by (instance,region) (rate(fly_instance_cpu{` + sel + `}[30s])) * count by (instance,region) (fly_instance_cpu{` + sel + `,mode="idle"})`,
-		"steal":  `100 * sum by (instance,region) (rate(fly_instance_cpu{` + sel + `,mode="steal"}[30s])) / sum by (instance,region) (rate(fly_instance_cpu{` + sel + `}[30s]))`,
-		"mem":    `(fly_instance_memory_mem_total{` + sel + `} - fly_instance_memory_mem_available{` + sel + `}) / 1048576`,
-		"swap":   `(fly_instance_memory_swap_total{` + sel + `} - fly_instance_memory_swap_free{` + sel + `}) / 1048576`,
-		"disk":   `(fly_instance_filesystem_blocks{` + sel + `,mount="/data"} - fly_instance_filesystem_blocks_free{` + sel + `,mount="/data"}) * fly_instance_filesystem_block_size{` + sel + `,mount="/data"} / 1048576`,
-		"thrott": `fly_instance_cpu_throttle{` + sel + `}`,
-	}
-	series := map[string]map[string][]float64{} // query -> "region/instance" -> values
-	for name, q := range queries {
-		got, err := promRange(ctx, org, token, q, start, end)
-		if err != nil {
-			return Resources{}, fmt.Errorf("%s: %w", name, err)
-		}
-		series[name] = got
-	}
-	out := Resources{Source: "Fly Prometheus API (api.fly.io/prometheus/" + org + "), 15 s steps", Nodes: map[string]NodeResources{}}
-	for node := range series["mem"] {
-		last := func(xs []float64) float64 {
-			if len(xs) == 0 {
-				return 0
-			}
-			return xs[len(xs)-1]
-		}
-		out.Nodes[node] = NodeResources{
-			CPUCores:  seriesOf(series["cpu"][node]),
-			MemMB:     seriesOf(series["mem"][node]),
-			SwapMB:    seriesOf(series["swap"][node]),
-			DiskMB:    last(series["disk"][node]),
-			StealPct:  seriesOf(series["steal"][node]),
-			Throttled: last(series["thrott"][node]),
-		}
-	}
-	return out, nil
-}
-
-func promRange(ctx context.Context, org, token, query string, start, end time.Time) (map[string][]float64, error) {
-	q := url.Values{"query": {query}, "start": {strconv.FormatInt(start.Unix(), 10)}, "end": {strconv.FormatInt(end.Unix(), 10)}, "step": {"15"}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.fly.io/prometheus/"+url.PathEscape(org)+"/api/v1/query_range?"+q.Encode(), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "FlyV1 "+strings.TrimPrefix(token, "FlyV1 "))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %.200s", resp.StatusCode, b)
-	}
-	var body struct {
-		Data struct {
-			Result []struct {
-				Metric map[string]string `json:"metric"`
-				Values [][2]any          `json:"values"`
-			} `json:"result"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(b, &body); err != nil {
-		return nil, err
-	}
-	out := map[string][]float64{}
-	for _, r := range body.Data.Result {
-		key := r.Metric["region"] + "/" + r.Metric["instance"]
-		for _, v := range r.Values {
-			if s, ok := v[1].(string); ok {
-				if f, err := strconv.ParseFloat(s, 64); err == nil {
-					out[key] = append(out[key], f)
-				}
-			}
-		}
-	}
-	return out, nil
 }

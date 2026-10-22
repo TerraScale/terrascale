@@ -1,6 +1,0 @@
-FROM mcr.microsoft.com/dotnet/runtime-deps:11.0-resolute-chiseled
-COPY publish/terrabase /app/terrabase
-USER 0
-ENV ASPNETCORE_HTTP_PORTS=
-WORKDIR /data
-ENTRYPOINT ["/app/terrabase"]

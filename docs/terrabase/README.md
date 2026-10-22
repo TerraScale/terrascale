@@ -1,10 +1,10 @@
 # TerraBase
 
 Read the [required zero-configuration operating contract](zero-configuration.md).
-On Fly, identity and membership come from the platform: see [TerraBase on Fly.io](fly.md).
-Off Fly, see [TerraBase off Fly](off-fly.md); on ts-orch, see [TerraBase on ts-orch](ts-orch.md).
-Current configuration paths described below are implementation limitations, not
-production activation instructions.
+Current configuration paths are implementation limitations, not production activation instructions.
+
+Hosting: [OCI and ts-orch](../oci.md); node discovery: [TerraBase on ts-orch](ts-orch.md).
+Local processes: [TerraBase local host](local-host.md).
 
 TerraBase is a leaderless, multi-region document database focused on fast and
 efficient synchronization and replication. This repository is the C#/.NET 11
@@ -51,11 +51,9 @@ Verify a download with `sha256sum -c terrabase-linux-amd64.sha256` (or
 
 ## Configuration
 
-Production identity, membership, region discovery, listeners and backup are
-automatic under the [operating contract](zero-configuration.md). Production runtime
-credentials arrive from Fly secrets on each Fly app; CI uses GitHub Actions secrets.
-The repository's secret manifest location is `ops/secrets/`.
-Limits and timeouts have one correct setting in code.
+Production identity, membership, region discovery and backup follow the
+[operating contract](zero-configuration.md). OCI Vault delivers runtime credentials;
+CI uses GitHub Actions secrets. Limits and timeouts have one correct setting in code.
 
 **Current gap (TS-773):** the runtime still parses `TERRABASE_*`/`--name`
 options and guards listeners, authentication, backup and cross-region replication
@@ -65,8 +63,8 @@ while replacing them; missing authentication must never grant access.
 
 ### Health probes
 
-Both probes are unauthenticated, return no tenant data, and are served on the internal listener and on
-the public listener, where Fly's health checks read them.
+Both probes are unauthenticated, return no tenant data, and are served on the internal
+and public listeners.
 
 - `GET /healthz`: liveness, `200 {"status":"ok","version":"<version>","region":"<region>"}`.
 - `GET /health/replication`: the public replication summary for status pages (region codes, `ok`/`degraded`, lag

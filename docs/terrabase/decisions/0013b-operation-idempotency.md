@@ -69,15 +69,14 @@ Configuration alone (a PRAGMA) is never cited as proof. Each claim cites its fau
 
 ## 3. Scope: every production mutating route, no switches
 
-- **Where the contract holds.** On every machine that belongs to a cell: one with a member directory. On Fly that is
-  the app's internal DNS, and it covers the production app, the acceptance app `ts-terrabase-e2e` and PR previews. In
+- **Where the contract holds.** On every machine that belongs to a cell: one with a member directory. In production that is the admitted membership directory. In
   tests it is the multi-machine suites' directory.
   - The seam `IRemoteDurability` is registered by the same rule as the membership (`AddTerraBaseCluster`).
   - A DNS failure or a partition does not remove the directory, so the machine fails closed. It never falls back.
   - No app name, setting, flag or per-database durability level selects behaviour.
-- **The one documented limitation: a cell of one.** A machine without a directory (off Fly: development, and the
+- **The one documented limitation: a cell of one.** A machine without a directory (development, and the
   single-machine Fast servers) has no second region. It answers after B1 with `durability: "local_durable"`. It never
-  runs on Fly and never in acceptance.
+  runs in a production cell or in acceptance.
 - **Every production mutating route is in scope.** That covers:
   - documents (`PUT`, `PATCH` including `inc`/`append`/`add`/`remove`, `DELETE`, `POST`);
   - transactions;
@@ -97,9 +96,8 @@ Configuration alone (a PRAGMA) is never cited as proof. Each claim cites its fau
   - Each delivery PR lists the routes still uncovered.
   - Covered routes answer `remote_durable`. Uncovered ones keep answering `local_durable`, which is true, and the
     release notes name them.
-- **Single-machine Fly apps fail clearly.** A PR preview runs one machine in gru, so its writes answer
-  `503 remote_region_unavailable` (section 4). That includes the platform databases placed in gru, sjc and fra. A
-  second preview region is a tooling change outside this record.
+- **Single-machine production cells fail clearly.** A cell with only one region has no remote region, so its writes answer
+  `503 remote_region_unavailable` (section 4). That includes the platform databases placed in gru, sjc and fra. Adding another test region is a tooling change outside this record.
 
 ## 4. Outcome state machine
 
@@ -347,7 +345,7 @@ A retry never executes a key that any acceptor has reserved.
 - Every in-scope route.
 - Placement create, update and move.
 - Existing single-region databases failing clearly.
-- Default region discovery, and a Fly directory failure with no local fallback.
+- Default region discovery, and a membership directory failure with no local fallback.
 - Maximum-size transactions with the record.
 - Waiter and byte bounds; cleanup under a stalled remote; storage and memory pressure.
 - Cancellation after commit, while unrelated databases progress.
@@ -378,7 +376,7 @@ running in parallel, are possible later work, not part of this design.
 
 | # | Component | What it costs | Measured today |
 | --- | --- | --- | --- |
-| 1 | Client to the accepting machine (Fly edge to the nearest region) and back, at the end | One client round trip | No |
+| 1 | Client to the accepting machine (regional ingress) and back, at the end | One client round trip | No |
 | 2 | Validation, authorization, key latch, fingerprint | Local CPU | No |
 | 3 | **Majority reservation round** (section 6): `Reserve` to every placed region's acceptor at once. Each acceptor syncs its reservation (FULL) before it answers. The round ends at the first majority. | One **cross-region round trip** to the nearest other placed region's acceptor, plus that acceptor's sync. Plus the own region's acceptor sync: local, or one in-region round trip if another machine is the acceptor. **This is an extra round trip that unkeyed writes and design C do not have.** | No |
 | 4 | Local execution and **B1**: apply, record, `COMMIT` with FULL. The group-commit batch shares one log sync. | One local log sync, plus the apply | No (B1 correctness proven; no timing) |
@@ -405,9 +403,9 @@ prove correctness only. Timings from a development host or local processes are n
 
 **Measurement plan (before the contract or any latency is announced; results in `benchmark/bench/<date>-remote-durable-writes.md`):**
 - **Where.**
-  - On the existing three-region acceptance app `ts-terrabase-e2e` (gru, sjc, fra), placed in all three regions. One
+  - On a planned isolated OCI acceptance target, verified serving gru, sjc and fra and placed in all three regions. One
     load client runs in each region, against its own region.
-  - Fly cannot shape 6PN traffic, so the degraded-link cases run separately on the local three-process topology
+  - Degraded-link cases run separately on the local three-process topology
     (`RegionProcesses`), with its link proxy adding fixed delays. Those are labelled local, never WAN.
 - **Before and after.**
   - *Before:* the current release path (local commit only, NORMAL), same app, same workload.

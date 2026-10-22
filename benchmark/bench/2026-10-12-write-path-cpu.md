@@ -12,7 +12,7 @@ Profile-driven optimization of the TerraBase write path, without touching any re
 ## What the profile showed (before)
 
 The process used 2.6 of 12 cores at about 1,550 documents/s. Throughput is bound by the write lane's commits, not CPU.
-CPU and allocations still decide how much a 2-vCPU, 512 MB Fly machine can take.
+CPU and allocations still decide how much a 2-vCPU, 512 MB machine can take.
 
 | Hotspot (share of CPU samples, excluding waits) | Share | Fix in this change |
 | --- | ---: | --- |
@@ -46,7 +46,7 @@ Means per request (requests/s ≈ docs/s):
 
 ## Not measured
 
-- Fly machines. A 2-vCPU machine is CPU-bound much sooner, where the 15 % should matter more, but that has not been measured.
+- Cloud machines. A 2-vCPU machine is CPU-bound much sooner, where the 15 % should matter more, but that has not been measured.
 - Requests authenticated by API key rather than a ts-auth JWT: the token cache does not apply to them.
 - Clients that mint a new token per request: they get no cache hits.
 - Replication: out of scope until R4a.

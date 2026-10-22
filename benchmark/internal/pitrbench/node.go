@@ -34,7 +34,7 @@ type NodeState struct {
 	PeerSecret string `json:"peer_secret,omitempty"`
 }
 
-// envNames are the only variables the env file may set: the backup bucket (Fly's Tigris names), the master key, and
+// envNames are the only variables the env file may set: the backup bucket (S3-compatible names), the master key, and
 // SSL_CERT_FILE for the local S3 emulator's certificate. Values are passed to the node and never printed.
 var envNames = map[string]bool{
 	"AWS_ENDPOINT_URL_S3": true, "AWS_REGION": true, "BUCKET_NAME": true, "AWS_ACCESS_KEY_ID": true,
@@ -158,13 +158,13 @@ func StartNode(ctx context.Context, r *Run) (*NodeState, error) {
 	}
 }
 
-// nodeEnv is this process's environment without any Fly, TerraBase, AWS or TLS-trust settings, plus the run's
+// nodeEnv is this process's environment without any TerraBase, AWS or TLS-trust settings, plus the run's
 // whitelisted env file and the node's own settings.
 func nodeEnv(r *Run, n *NodeState) ([]string, error) {
 	var env []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(name, "FLY_") || strings.HasPrefix(name, "TERRABASE_") || strings.HasPrefix(name, "AWS_") ||
+		if strings.HasPrefix(name, "TERRABASE_") || strings.HasPrefix(name, "AWS_") ||
 			strings.HasPrefix(name, "SSL_CERT_") || name == "BUCKET_NAME" || name == "PRIMARY_REGION" ||
 			name == "DOTNET_ENVIRONMENT" || name == "ASPNETCORE_ENVIRONMENT" {
 			continue

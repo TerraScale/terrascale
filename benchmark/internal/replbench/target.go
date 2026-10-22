@@ -19,27 +19,24 @@ import (
 	"time"
 )
 
-// Targets names the cluster under test. The local cluster host writes it as JSON; a Fly run builds it from flags.
+// Targets names the cluster under test. The local cluster host writes it as JSON.
 type Targets struct {
-	Kind     string                  `json:"kind"` // "local" or "fly"
+	Kind     string                  `json:"kind"` // "local" or an explicit remote target kind
 	Project  string                  `json:"project"`
 	Database string                  `json:"database"`
 	Regions  map[string]RegionTarget `json:"regions"`
 	// Local only: the host process holding every node, and each node's data directory.
 	PID      int               `json:"pid,omitempty"`
 	DataDirs map[string]string `json:"data_dirs,omitempty"`
-	// Fly only: the app, its org (for the metrics API) and each region's machine size.
-	App      string            `json:"app,omitempty"`
-	Org      string            `json:"org,omitempty"`
+	// Each remote region's machine size.
 	Machines map[string]string `json:"machines,omitempty"`
 }
 
-// RegionTarget is one region's endpoint. Pin sends fly-prefer-region and refuses an answer served from elsewhere.
+// RegionTarget is one region's direct endpoint.
 type RegionTarget struct {
 	URL   string `json:"url"`
 	Token string `json:"token"`
 	CAPEM string `json:"ca_pem,omitempty"`
-	Pin   bool   `json:"pin,omitempty"`
 }
 
 // LoadTargets reads a targets file and checks it names at least two regions with a URL and token each.
@@ -56,7 +53,7 @@ func LoadTargets(path string) (Targets, error) {
 		return Targets{}, fmt.Errorf("%s: needs project, database and at least one region", path)
 	}
 	for name, r := range t.Regions {
-		// A Fly run's targets carry no key: the machines read it from the TS_BENCH_API_KEY Fly secret.
+		// Remote targets may read their key from the process environment.
 		if r.Token == "" {
 			r.Token = os.Getenv("TS_BENCH_API_KEY")
 			t.Regions[name] = r
@@ -68,7 +65,7 @@ func LoadTargets(path string) (Targets, error) {
 	return t, nil
 }
 
-// ErrRegionMismatch is a pinned request Fly served from another region.
+// ErrRegionMismatch records a response from an unexpected region.
 var ErrRegionMismatch = errors.New("served by another region")
 
 // Region is one region's API client. Requests are never retried here; callers decide.
@@ -76,7 +73,6 @@ type Region struct {
 	Name     string
 	base     *url.URL
 	token    string
-	pin      bool
 	client   *http.Client
 	dbPath   string
 	Mismatch atomic.Int64
@@ -101,7 +97,6 @@ func NewRegion(name string, t Targets, conns int) (*Region, error) {
 		Name:   name,
 		base:   base,
 		token:  rt.Token,
-		pin:    rt.Pin,
 		client: &http.Client{Transport: tr, Timeout: 60 * time.Second},
 		dbPath: "/v1/projects/" + t.Project + "/databases/" + t.Database,
 	}, nil
@@ -134,9 +129,6 @@ func (r *Region) Do(ctx context.Context, method, path string, body []byte, conte
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	if r.pin {
-		req.Header.Set("fly-prefer-region", r.Name)
-	}
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return Response{}, err
@@ -145,10 +137,6 @@ func (r *Region) Do(ctx context.Context, method, path string, body []byte, conte
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return Response{}, err
-	}
-	if r.pin && resp.Header.Get("fly-region") != r.Name {
-		r.Mismatch.Add(1)
-		return Response{}, fmt.Errorf("%w: pinned %s, served %q", ErrRegionMismatch, r.Name, resp.Header.Get("fly-region"))
 	}
 	out := Response{Status: resp.StatusCode, Body: b}
 	if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {

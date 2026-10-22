@@ -2,7 +2,7 @@
 
 `tests/TerraBase.E2E` runs on in-process nodes by default. With `TERRABASE_E2E_ORCH_NODES` set, the same scenarios run
 against the disposable ts-orch service `terrabase-e2e`: one node per region (gru, sjc, fra), host networking, client
-listener on port 18080. The runner must be on the NetBird mesh (delta, mariogk-dev or beta). Fly live mode is gone.
+listener on port 18080. The runner must be on the NetBird mesh (delta, mariogk-dev or beta).
 
 ## Variables
 

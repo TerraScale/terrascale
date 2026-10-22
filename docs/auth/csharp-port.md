@@ -64,7 +64,7 @@ settings in `.env` (gitignored); without it, throwaway Development values are us
 
 ## Configuration changes from the Rust service
 
-The Fly image is the self-contained executable on the chiseled
+The runtime image is the self-contained executable on the chiseled
 `runtime-deps` base (see the root Dockerfile and docs/terrabase/ci.md).
 
 
@@ -76,39 +76,16 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
   identity and first-key bootstrap, retrying after five seconds and backing off; `/readyz` answers 503 until startup
   succeeds, so ts-auth may start before TerraBase and recovers on its own
   ([signing-keys.md](signing-keys.md)). `TS_AUTH_DATABASE` is gone.
-- **Storage endpoints:** fixed in code (`App.TerraBaseOrigin`, `App.TerraBaseOtherRegions`, `App.TerraBaseAuthority`,
-  `App.AuthorityRegion`, `Hosting/TerraBaseTransport.cs`, `AuthStore`). Off Fly only Development uses the loopback
-  TerraBase (`http://127.0.0.1:8081`) for everything; a Production ts-auth off Fly refuses to start (exit 2) rather than
-  store there. On Fly (without `FLY_REGION`, which Fly sets on every machine, it refuses to start):
-  - **Every write and every authorization read goes to the designated region, gru**
-    (`http://gru.ts-terrabase.internal:8081`), from every region: all reads but discovery's and the JWKS's, GET requests
-    and background work included. Every ts-auth write is conditional (`If-None-Match: *`, `If-Match`, transaction
-    asserts), and TerraBase checks a precondition only against the copy it is sent to, so single-use passcodes,
-    challenges, authorization codes and refresh-token rotation, email and name claims, lockout counters and every other
-    check-then-write hold only while one copy orders them. Session validation, token checks, refresh-token state,
-    revocations and membership and role checks read the same copy, so a revocation or removal takes effect everywhere at
-    once. When gru's TerraBase does not answer, these operations fail closed: 503 `temporarily_unavailable`, never
-    another region. Replication slice R12 (lattice-native ts-auth) removes this limit.
-  - **Discovery and the JWKS read the own region** (`http://<FLY_REGION>.ts-terrabase.internal:8081`), through two
-    explicit calls only (`AuthStore.GetLocalAsync` for a project tenant's existence, `KeyRing.GetPublishedAsync` for the
-    keys); they decide nothing about authorization. The key ring keeps the two sources apart: this region's copy has its
-    own cache, in-flight reads and failure backoff, used only for publication, while signing, signature checks (ts-auth's
-    own included), readiness, rotation and first keys read gru's. A JWKS read never becomes a security decision, and gru
-    being down never fails a healthy JWKS. A copy without a tenant's keys yet publishes gru's, which creates a project's
-    first key there; a missing local key set never causes a create of its own. A project tenant's key is stored only in
-    a gru transaction that also asserts the project still exists there, so a copy that still lists a deleted project
-    never adds a key for it (the JWKS answers 404). Instances that race to create a live project's first key each add
-    one, all kept and published: at most one per ts-auth instance. A point read the own copy lacks (a project
-    created moments ago) is read from gru. When no machine of the own region answers a new connection (none is started,
-    so the name does not resolve; it refuses; or it does not answer within 2 s), the connection goes to the nearest started
-    machine (`top1.nearest.of.ts-terrabase.internal`), then to any (`ts-terrabase.internal`).
-  - Only connections move; a request is never resent. Connections are replaced every 30 s and HTTP/2 pings (every 5 s)
-    drop one to a machine that vanished, so these reads are back in the own region within about 30 s of it answering
-    again. A TerraBase that cannot be reached answers 503 `temporarily_unavailable`. `/readyz` is ready only while gru
-    takes writes.
-  - Both TerraBase storage transports send `X-TerraBase-Peer-Credential` from the shared Fly secret `TERRABASE_PEER_SECRET` (64 hexadecimal characters). A missing or malformed secret refuses ts-auth startup on Fly. There is no member list, CA or failover setting. In a PR preview (`FLY_APP_NAME` is
-    `ts-pr-<n>`, in the separate org `terrascale-previews`) the app's one machine runs TerraBase next to ts-auth, so
-    reads and writes go to `http://<FLY_REGION>.ts-pr-<n>.internal:8081`: that same machine.
+- **Storage endpoints and authorization:** authorization reads and writes use the same
+  authoritative TerraBase copy. Every write is conditional; choosing another copy after
+  an unavailable authority would weaken single-use codes, revocations and membership checks.
+  These operations fail closed with 503 `temporarily_unavailable` when the authority is unreachable.
+  Discovery and JWKS publication do not decide authorization. Signing, key validation,
+  readiness, rotation and first-key creation use the authoritative copy; a stale publication
+  copy must not recreate a deleted project's keys.
+  Both storage transports send `X-TerraBase-Peer-Credential` from `TERRABASE_PEER_SECRET`.
+  OCI Vault delivers production credentials. The deployment transport is being migrated
+  under ts-orch; see [hosting status](../oci.md) and [local hosts](local-host.md).
 - **Consistency across regions.** Writes and authorization reads see one copy, gru's, so every conditional write keeps
   the guarantee it had with a single region and every revocation applies at once. What remains:
   - While gru's TerraBase is down or unreachable, ts-auth authenticates and authorizes nothing, in any region (503):
@@ -124,15 +101,11 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
     stops accepting the key within the replication lag plus about 11 minutes and the fetch time, and with no bound while
     its fetches fail; token expiry still applies. A scheduled retirement keeps a superseded key published for two days,
     longer than any token it signed; the bound matters for the emergency removal of a compromised key.
-- **Listeners.** The public API listens on `0.0.0.0:8090` (`TS_AUTH_LISTEN`)
-  behind Fly Proxy, which terminates TLS. Prometheus `GET /metrics` is served
-  only on a second listener, `0.0.0.0:9092` (`TS_AUTH_METRICS_LISTEN`), which
-  answers 404 to anything else; the public listener never serves it. Fly's
-  `[[metrics]]` scraper reaches that port over the machine's private IPv4 (a
-  6PN-only bind is not scrapable, `docs/fly/spike-1a.md`), and no Fly service
-  exposes it. Both settings exist so tests and local runs can bind ephemeral
-  ports. Traces and logs are pushed over OpenTelemetry OTLP when the standard
-  `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+- **Listeners.** The public API listens on `0.0.0.0:8090` (`TS_AUTH_LISTEN`).
+  Prometheus `GET /metrics` is served only on `0.0.0.0:9092`
+  (`TS_AUTH_METRICS_LISTEN`), which answers 404 to anything else; the public
+  listener never serves metrics. Tests and local runs can bind ephemeral ports.
+  Traces and logs use OpenTelemetry OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 - **`TS_AUTH_SENTRY_DSN`** enables error reporting to GlitchTip through the
   Sentry SDK, for errors only. It is a deployment secret and must never be
   committed. Events are scrubbed before they leave the process: only
@@ -259,7 +232,7 @@ endpoint URIs resolve: `terrascale` for every endpoint, an existing project
 request gets the bare origin, under which nothing matches, so it answers 404.
 Signing and validation use the request tenant's key ring. Base and request URIs
 come from the origin, never the request's Host header or scheme. TLS
-terminates in front of the service (Fly Proxy).
+terminates in front of the service (regional ingress).
 
 Routes: discovery, JWKS, `authorize`, `token`, `userinfo` and `logout` under
 `/terrascale/`, and the hosted sign-in at `/ui/terrascale/sign-in` and
@@ -922,7 +895,7 @@ reports 503 while it is missing.
 
 ts-auth generates its ES256 signing keys and stores each one as its own
 document in `signing_keys`, addressed by instance and `kid` (a ULID). Each
-key's d ‖ X ‖ Y is sealed under `TS_AUTH_MASTER_KEY` (a fly secret) with
+key's d ‖ X ‖ Y is sealed under `TS_AUTH_MASTER_KEY` (a Vault secret) with
 `signing-key:<kid>:<instance>` as associated data, so a key copied to another
 instance or under another kid fails to open. The document also stores its
 `instanceId`, `masterKeyId` (an HKDF-derived identifier of the master key), the
@@ -956,7 +929,7 @@ failed read lookups answer 503 for five seconds (`FailedReadBackoff`).
 
 `SigningKeyRotation` runs on every replica. At startup it seeds TerraScale's owner and projects, then provisions the
 first encrypted signing key if the ring is empty (`KeyRing.ProvisionAsync`). Existing keys must verify and open under
-the Fly-secret master key; unusable keys are never replaced ([signing-keys.md](signing-keys.md)). `/readyz` stays 503
+the Vault-managed master key; unusable keys are never replaced ([signing-keys.md](signing-keys.md)). `/readyz` stays 503
 until this replica's bootstrap completes, and every readiness pass rechecks public metadata.
 After the bootstrap, and then hourly, `KeyRing.RotateIfDueAsync` adds a key
 once the newest is 30 days old (`RotationAge`), published at once and signing
@@ -968,7 +941,7 @@ signing for at least `Overlap`, which exceeds `Jwt.MaxLifetime` (24 hours), so
 a retired key has no live token; it answers 409 `signing_key_limit` if 16 keys
 would remain. Two replicas rotating at once may each add a key; both are
 published and the next rotations retire the extra one. Timestamps use the
-replica's clock (NTP on Fly). A rotation never creates the platform issuer's
+replica's clock (host NTP). A rotation never creates the platform issuer's
 first key. Project tenants (any other instance) get their first key on first
 use.
 

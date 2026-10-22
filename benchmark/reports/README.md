@@ -5,5 +5,5 @@ and exclusive creation to prevent overwrites. Matching raw JSONL, aggregate JSON
 and Markdown tables live under `bench/<region>/<ULID>/`.
 
 No live report exists yet. See
-[the prerequisites](../bench/2026-10-08-prerequisites.md). Synthetic fixtures
+the prerequisites (retired evidence removed). Synthetic fixtures
 are confined to temporary unit-test directories.

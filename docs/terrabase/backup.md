@@ -1,10 +1,11 @@
 # Continuous backup
 
-TerraBase streams every Turso database file of a node (each database and `_system.db`) to an S3-compatible bucket, Tigris in
-production (Fly's object store), about once a second, and restores any database as of a chosen second (TS-633). The design follows
-[Litestream](https://litestream.io/how-it-works/) (generations, snapshots, log segments), written in C# inside the
-server. It ships, per file, the changes Turso captures on the file's writer connection (`turso_cdc`, mode `after`), not
-per API database, so it keeps working whatever sits above the storage engine. [Why not the write-ahead log](#why-the-change-log-not-the-write-ahead-log).
+TerraBase streams every Turso database file of a node (each database and `_system.db`) to Tigris,
+about once a second, and restores a database as of a chosen second (TS-633).
+Tigris remains managed through the Fly organization; compute runs on OCI.
+The [Litestream](https://litestream.io/how-it-works/) design uses generations, snapshots and log segments.
+Shipping captures Turso changes on each file's writer connection (`turso_cdc`, mode `after`).
+See [Tigris access](../tigris.md) for the retained storage integration.
 
 The older scheduled backups (`…/backups`, local snapshot files next to the database) are unchanged. They are not off-node.
 
@@ -25,13 +26,10 @@ unless its Tigris bucket and master key are present, so no deployed node runs wi
 without backup; tests use an in-memory S3 fake. Retention and rotation use the correct settings in code; there is no
 backup activation step or operator tuning table.
 
-Settings come from the environment. The Tigris variables that Fly sets when a bucket is attached fill
-`backup-endpoint`, `backup-region`, `backup-bucket`, `backup-access-key-id` and `backup-secret-key`
-(`AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`).
-`master-key` comes from the fly secret `TERRABASE_MASTER_KEY` (32 bytes, base64).
-
-Production (`ts-terrabase`) has its bucket `ts-terrabase` attached and the secret set. Each PR preview gets its own
-bucket `terrascale-ts-pr-<n>` and a random master key from `scripts/fly/preview.sh`, destroyed with the preview.
+Tigris bucket settings use `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`,
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`; `TERRABASE_MASTER_KEY` is a
+32-byte base64 key delivered through OCI Vault. Mounted secret files are also supported.
+The Tigris endpoint remains `https://fly.storage.tigris.dev`.
 
 ### Customer buckets (TS-635)
 
@@ -612,19 +610,17 @@ until R10a.
 
 ## Verify a rollout
 
-`scripts/fly/deploy.sh` checks each region's new machine twice before it moves on: `/healthz`, then `/backupz`
-(pinned with `fly-force-instance-id`, retried for about 90 s). `/backupz` answers 200 once backup has found the
-node's files and every file the node ships has reached the bucket with less than a minute of lag, and 503 otherwise.
-A 503 stops the rollout (fix forward). `/backupz` is not a Fly health check: a Tigris outage never takes a node out of
-service, it only shows on `/backupz` and in the metrics.
+`/backupz` answers 200 once backup has found the node's files and every file the
+node ships has reached the bucket with less than a minute of lag, and 503 otherwise.
+A `/backupz` 503 must stop rollout advancement. Verify that the current runtime
+enforces this gate; the requirement is not evidence of an implemented OCI rollout gate.
+A Tigris outage appears on `/backupz` and in backup metrics.
 
 After a rollout, also check:
 
-1. Grafana (fly-metrics.net): `terrabase_backup_lag_seconds` stays under 2 s under writes,
-   `terrabase_backup_last_success_seconds` keeps moving, and `terrabase_backup_failures_total`,
-   `terrabase_backup_holes_total` and `terrabase_backup_abandoned_total` do not rise. Lag approximates the recovery
-   point only while holes and drops stay at zero (see [How shipping works](#how-shipping-works)). `/v1/backup` is on
-   the loopback admin listener and the image has no shell, so the metrics are the way in.
+1. Metrics: `terrabase_backup_lag_seconds` stays under 2 s under writes,
+   `terrabase_backup_last_success_seconds` advances, and failure, hole and abandoned
+   counters do not rise. Lag approximates the recovery point only while holes and drops stay zero.
 2. Restore: `POST …/point-in-time/restore` of a scratch database to a second between two writes; check that the first
    write is in the new database and the second is not; delete the restored database.
 
@@ -662,7 +658,7 @@ On Turso 0.8.2 that cannot work, measured with the engine itself:
 
 - Turso checkpoints the log on its own and ignores `wal_autocheckpoint = 0`: 3000 commits restarted it 11 times, so
   the tap would find a hole on almost every pass.
-- A checkpoint from a second connection is a second writer, which Turso does not survive (`turso-spike.md`).
+- A checkpoint from a second connection is a second writer, which Turso does not survive ([historical engine spike](https://github.com/TerraScale/terrascale/blob/e7fa366ddb289f5612c93d316b316fb92c568151/docs/terrabase/turso-spike.md)).
 - There is no online backup API (`BackupDatabase` fails with "database is locked"), `VACUUM INTO` on any connection but
   the writer copies an older view, and `wal_checkpoint(TRUNCATE)`, which would let the file be copied as is, waits for
   every reader, so a stalled reader would stop snapshots.
@@ -694,5 +690,6 @@ its SQL), a segment is a change log, and replay applies rows instead of pages.
 
 ## Restore acceptance and catalog security
 
-See [the local restore drill](local-restore-drill.md) for the required Fast backup/wipe/restore test and
-Fly/Tigris acceptance requirements. The catalog security gate is held separately in [PR #213](https://github.com/TerraScale/terrascale/pull/213).
+See [the local restore drill](local-restore-drill.md) for Fast backup/wipe/restore coverage.
+Production Tigris recovery needs separate acceptance evidence. The catalog security
+gate is held separately in [PR #213](https://github.com/TerraScale/terrascale/pull/213).

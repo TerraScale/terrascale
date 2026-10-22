@@ -1,9 +1,0 @@
-2026-10-14T17:24:54Z created organization 01M4XQ40WDCJCGH19F0K98E41T, project 01M4XQ40WQ6K3PAD27H65H9Y24, database 01M4XQ40X17KFMF37R2KV61GNJ (gru + sjc, fra) on ts-vtest-tb
-Error: error loading appv2 config: failed to grab app config from existing machines, error: could not create a fly.toml from any machines :-(
-No machines configured for this app
-2026-10-14T17:24:58Z commit ok: "set_database_regions"
-2026-10-14T17:24:58Z commit ok: "delete_database"
-2026-10-14T17:24:58Z WARNING: "delete_project" failed: curl: (22) The requested URL returned error: 409
-{"error":{"code":"not_empty","message":"delete what it contains first","op":0}}
-2026-10-14T17:24:58Z WARNING: "delete_organization" failed: curl: (22) The requested URL returned error: 409
-{"error":{"code":"not_empty","message":"delete what it contains first","op":0}}

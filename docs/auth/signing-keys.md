@@ -3,7 +3,7 @@
 Every ts-auth replica uses the pre-created TerraBase database `ts-auth` through ts-dotnet. Startup creates the
 collections, seeds the TerraScale owner and projects, registers OIDC clients, then provisions the platform issuer's
 first signing key only when the ring is empty. The generated ES256 private key is encrypted with `TS_AUTH_MASTER_KEY`,
-which is supplied by Fly secrets. Private key material and the master key never appear in responses or logs.
+which is supplied by OCI Vault. Private key material and the master key never appear in responses or logs.
 
 ## Behaviour
 
@@ -15,8 +15,8 @@ which is supplied by Fly secrets. Private key material and the master key never 
 - Scheduled rotation adds keys after 30 days, with a two-day publication overlap. Project tenants receive their first
   key only while their project exists at the storage authority.
 
-`ts-auth provision-signing-key` remains an idempotent Fly SSH diagnostic command. Normal startup requires no operator
-provisioning step.
+`ts-auth provision-signing-key` remains an idempotent diagnostic command.
+Normal startup requires no operator provisioning step.
 
 ## Recovery implications
 

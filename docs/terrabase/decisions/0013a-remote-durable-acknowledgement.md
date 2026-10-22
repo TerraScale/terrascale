@@ -200,9 +200,8 @@ only precheck eligibility, never durability: success still requires the eligible
     acknowledged write.
   - Streams do not forward remote-origin groups. After the origin's loss, anti-entropy rounds between the remaining
     regions copy the write on: two differing rounds, 60 s apart.
-- **A cell of one.** A machine without a member directory has no second region: off Fly, development and the
-  single-machine Fast servers. It answers after B1 with `local_durable`, and never on Fly. On Fly the directory is the
-  app's DNS, and a DNS failure or partition keeps it strict.
+- **A cell of one.** A machine without a member directory has no second region: development and the
+  single-machine Fast servers. It answers after B1 with `local_durable`, only in isolated local cells. A production member-directory failure or partition keeps it strict.
 
 ## 6. Routes and rollout
 
@@ -292,7 +291,7 @@ only precheck eligibility, never durability: success still requires the eligible
   - the stale-read / delayed-`inc` case left unknown, with no deduplication promised.
 - **Topology:**
   - All six directions of gru, sjc and fra.
-  - A Fly DNS failure with no fallback to a cell of one.
+  - A member-directory failure with no fallback to a cell of one.
 - **Prerequisite, not reproduced here:** delivery 3's shipped-binary evidence (database file, checkpoint/reset,
   `EIO`/`ENOSPC`, connection reuse) is required before the guarantee is claimed.
 - **Placement:** two-region placement is merged (#184); its fail-first and mutation evidence belongs to that delivery.

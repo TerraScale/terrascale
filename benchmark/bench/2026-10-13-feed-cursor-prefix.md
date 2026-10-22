@@ -3,7 +3,7 @@
 Measured on beta, 2026-10-13, .NET 11.0.0-rc.1.26425.128 Release, vendored Turso driver/core 0.8.2,
 Linux 7.2.10, AMD Ryzen 5 PRO 6650H. Each measured process had `MemoryMax=512M`, `MemorySwapMax=0`,
 `CPUQuota=200%` and `taskset -c 0,1`, at nice 19. The executable recorded actual `memory.max=536870912`,
-`memory.swap.max=0`, `cpu.max=200000 100000` and `Cpus_allowed_list: 0-1` before measuring. These are local resource limits, not Fly shared-CPU measurements.
+`memory.swap.max=0`, `cpu.max=200000 100000` and `Cpus_allowed_list: 0-1` before measuring. These are local resource limits, not cloud measurements.
 
 These timings precede B1's persisted sequence and commit-offset columns. The current fixture includes those columns
 and advances their counters; performance of the combined storage tree has not been remeasured.

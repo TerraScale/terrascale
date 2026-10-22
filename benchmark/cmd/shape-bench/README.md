@@ -27,7 +27,7 @@ cd benchmark && ~/.local/bin/ts-heavy go run ./cmd/shape-bench
 ```
 
 It starts `tests/TerraBase.E2E`'s `BenchmarkClusterHost` with `TERRABASE_BENCH_REGIONS=gru,sjc` (the local host of
-`make benchmark-repl-local`: test-only ts-auth stand-in and temporary data directory, no Fly), waits for its targets
+`make benchmark-repl-local`: test-only ts-auth stand-in and temporary data directory, local only), waits for its targets
 file, runs every step and writes `bench/<date>-<host>-<ULID>.md` and `.json` through `apibench.WriteReport`. Deleting
 the targets file at the end stops the host.
 
@@ -74,7 +74,7 @@ the targets file at the end stops the host.
   received upsert of an in-window write per stream, including redeliveries through grace), not measured. It excludes
   warmup writes and other storage work. Compare it with `storage_reads_delta`, which is measured.
 - Two regions are required for database placement. All client traffic targets gru; sjc replicates in the same process.
-  Both nodes use loopback: no WAN, Fly Proxy or TLS.
+  Both nodes use loopback: no WAN, edge proxy or TLS.
 - A step stops the run with an error when a measurement is invalid: a follower refused other than by its cap
   (`changes_busy`, `shape_busy`, `shape_too_large` before admission) or a retry the protocol allows (a QoS 429 is
   repeated, never an error), a stream that ends early, a failed write or one unanswered at the end of the grace, a node
@@ -98,11 +98,7 @@ is 120 s from `-start`: readers open evenly over 60 s and repeat a `shape_busy` 
 in the status counts); the writer then sends 20 documents/s, the 30 s window opens after a 5 s warmup,
 deliveries count through a 5 s grace, and the after scrape follows a 6 s settle.
 
-- On Fly (`-app <terrabase app>`, one process per load machine, `-shard i -shards k`): readers use the node of their own
-  region, `http://<FLY_REGION>.<app>.internal:8080`; shard 0 creates `-collection`, writes, and scrapes every node it
-  finds through `regions.<app>.internal` and `<region>.<app>.internal` on port 9091. The key is the `TS_BENCH_API_KEY`
-  Fly secret. Each shard writes `-out`; `shape-bench merge -out <base> shard0.json …` writes `<base>.md` and `.json`.
-- Without `-app` it starts the local two-node host (as above), runs one shard against gru, scrapes both nodes and merges
+- It starts the local two-node host (as above), runs one shard against gru, scrapes both nodes and merges
   the report itself.
 - Per step and node: `terrabase.shape.seals` (sealed objects: chunks and snapshot pages), mirrored objects
   (`terrabase.shape.mirror.lag` count; FR-22), storage reads by path, the parked gauge at window start, and node CPU

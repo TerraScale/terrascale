@@ -22,7 +22,7 @@
   the last event of an (origin, stamp) carries an `id:` (a stamp holds one document today, as stamps are minted per
   document, but a reader that leaves inside one never skips the rest of it). These rules assume a machine receives an
   origin's events within the retention (otherwise it refills, R6).
-- **Opaque cursor.** base64url of a marker, the issue instant, issuing node and Fly machine ID, then per origin in
+- **Opaque cursor.** base64url of a marker, the issue instant, issuing node and runtime machine ID, then per origin in
   ascending order its node, stamp, retention floor and SHA-256 prefix hash. Integers are 8-byte big-endian; the header
   is 18 bytes plus the issuing machine ID (length-prefixed ASCII, at most 63 bytes), and each origin 56 bytes. The hash chains event identities (stamp, deletion bit, length-prefixed UTF-8
   collection and document id), including filtered events. Each `_tb_feed` row persists the running hash through it,
@@ -36,31 +36,13 @@
   layout returns 410 `cursor_expired`; there are no alternate layouts or compatibility branches. No public API or
   schema version changes (`PRAGMA user_version` remains 1), nor changes to replication, authentication or lattice
   conflict semantics. Persisted prefix columns change the internal storage format; greenfield storage must be recreated
-  at the reviewed storage cutover, with no migration. The internal format-9 rollout uses
-  `ops/fly/greenfield-no-customer-data` to approve exactly `9-f707baac47dc` while only dogfood data exists. CI refuses
-  format drift before mutation and never resets volumes. After the entire format-changing main push run completes,
-  the reset owner stops auth and all old TerraBase machines, stages every old TerraBase machine on the approved image,
-  then runs the guarded manual reset with `--image` through gru → sjc → fra. Main merges and push-run retries stay held;
-  before each region, verify no main push CI run is queued or running. After all regions are reset and healthy, retry
-  the failed normal deployment to restart auth. Verify the exact format, open catalog gates, both platform databases
-  (`ts-auth` and `ts-dashboard`), owner, organization, projects, dashboard client and fresh signing keys in every region.
-  **Delete the marker after the complete reset and normal rollout pass, before serving customer data.**
+  at the reviewed storage cutover, with no migration.
   An issued cursor with no origin is not
   "no cursor": it is expired by the retention rules above.
-- **Issuer routing.** A resume on another machine answers 421 `cursor_elsewhere`, with
-  `fly-replay: instance=<issuer>;timeout=2s;fallback=force_self`, before any SSE bytes. Fly Proxy replays the original
-  URL, headers and credential to the issuer, which resumes on its own history. If that machine is unavailable, the
-  documented proxy fallback returns the request to the initial serving machine with `fly-replay-failed`; that machine
-  verifies the prefix and answers 200 or 410. Requests already carrying `Fly-Replay-Src` or `fly-replay-failed` never
-  issue another replay, preventing loops and respecting Fly's prohibition on replaying a fallback. Outside Fly Proxy,
-  the client receives the 421 and header directly. A network timeout or a prior regional replay can therefore still
-  invoke conservative prefix validation, even when the issuer has not permanently disappeared.
-  Off Fly, the derived machine identity is `local`, so ordinary local resumes do not require a proxy.
-  The replay/fallback contract is documented at
-  <https://docs.fly.io/networking/dynamic-request-routing#replay-timeout-and-fallback>.
-  Fast exercises the routing headers and SSE outcome over real listeners with a test proxy and unchanged database
-  identity and credential. This is not a deployed Fly Proxy measurement; pairwise replay latency remains to be
-  measured after the deployment hold is lifted.
+- **Issuer routing.** A resume that belongs to another node requires either reaching
+  that issuer or conservative retained-prefix validation before returning 200; invalid
+  or unavailable retained history returns 410. OCI ingress replay/fallback behavior is
+  unverified. Do not infer routing support from local test-proxy coverage.
 - **410 frequency and recovery impact.** Matching retained prefixes resume with 200 in all six directed gru/sjc/fra
   pairs in Fast, including collection-filtered events sharing a stamp. This is controlled integration coverage, not a
   measured production error rate. Prefix verification is conservative: a destination behind the consumed prefix,
@@ -106,19 +88,10 @@
   A local write that must exceed a future document stamp retains that mint without a cap, so later local writes to
   other documents advance past it and a feed cursor cannot skip them because their stamps went backwards.
 - Metrics: `terrabase.changes.streams` (open streams).
-- Tests: Fast `DatabaseChangesTests` (events, `cursor=now`, `Last-Event-ID`, filter, joined remote writes under their
-  origin, 410 at retention, limits, heartbeat, errors); e2e `ChangesFeedE2ETests` and E10, each in two cases through the
-  client listener. Issuer stopped (the `local-only` category, in CI's required stage): sjc (E10: gru) stops, and fra
-  (E10: sjc) must answer the resume itself with every later write once in per-origin order, after the local stand-in
-  for Fly's proxy recorded the replay to the stopped issuer and its `fly-replay-failed` fallback. Issuer up (locally and
-  in the deploy run on Fly): the resume entering at fra (E10: sjc) must be answered by sjc (E10: gru), the issuer. On
-  Fly the resume is forced (`fly-force-instance-id`) onto the edge's machine, the pinned one or, unpinned, the one that
-  answered the edge's `/healthz` as itself, so a Fly fallback to the issuer's region cannot pass for a replay; the
-  issuer-stopped cases refuse to start against Fly.
-  Separate OS processes repeat the stopped case with a SIGKILL, read through the internal listener, which never
-  replays. On a pinned disposable app, the fly-outage run stops the sjc machine and requires the fra machine to answer
-  (docs/terrabase/e2e-disposable-app.md); it has not run, so Fly's handling of the instance replay from a
-  `fly-force-instance-id` request is unproven.
+Fast `DatabaseChangesTests` covers events, `cursor=now`, `Last-Event-ID`, filtering,
+joined remote writes, retention expiry, limits, heartbeats and errors. Process-separated
+stopped-issuer coverage uses SIGKILL and the internal listener. Such local coverage
+is not deployed ingress or cross-region routing evidence.
 
 R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
 table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables). The engine swap (1b, PR #21) lands separately: on Turso,

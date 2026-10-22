@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// A multi-machine run (one load machine per region on Fly) splits the runner in three steps: setup writes a State, each
+// A multi-machine run (one load machine per region) splits the runner in three steps: setup writes a State, each
 // region's machine loads with Config.Only and writes a Partial, and verify merges the partials and checks every region.
 
 // State is what setup created: the collections and the conflict documents.

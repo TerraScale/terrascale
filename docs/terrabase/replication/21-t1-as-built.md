@@ -3,7 +3,7 @@
 **T1 as built** (2026-10-12, storage format 3): the engine is Turso (`Turso.Data.Sqlite.Provider` 0.8.2; since vendored with fixes, `src/vendor/Turso.Data.Sqlite`). Each database
 file has one writer connection (`SqliteDatabaseStore`, opened by the first writer under the writer gate, kept until the
 store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open. Continuous backup reads `turso_cdc`
-(`backup.md`); Turso's quirks are in `turso-spike.md` ("Found while swapping the engine"). Notes for R3:
+(`backup.md`); Turso's quirks are in [historical engine spike](https://github.com/TerraScale/terrascale/blob/e7fa366ddb289f5612c93d316b316fb92c568151/docs/terrabase/turso-spike.md) ("Found while swapping the engine"). Notes for R3:
 
 - **Table.** `turso_cdc(change_id INTEGER PRIMARY KEY AUTOINCREMENT, change_time, change_txn_id, change_type, table_name,
   id, before, after, updates)`. `change_type`: 1 insert, 0 update, -1 delete, 2 commit. `id` is the rowid. In mode `after`
