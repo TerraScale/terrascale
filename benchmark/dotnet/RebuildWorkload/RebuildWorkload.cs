@@ -93,6 +93,29 @@ namespace TerraBase.Fast.Benchmark
             }
             allocated = GC.GetTotalAllocatedBytes() - allocated;
             Console.WriteLine($"R6 recovery outcome {outcome.GetType().Name} after {total:F3} seconds");
+            if (outcome is not RebuildOutcome.Completed)
+            {
+                await using var failure = new FileStream(output + ".failure.json", FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                await using var diagnostic = new Utf8JsonWriter(failure);
+                diagnostic.WriteStartObject();
+                diagnostic.WriteString("host", Environment.MachineName);
+                diagnostic.WriteString("scope", "two real Kestrel hosts in one process; recovery-only samples; no completed certification or post-recovery proof");
+                diagnostic.WriteNumber("docs", count);
+                diagnostic.WriteString("outcome", outcome.GetType().Name);
+                if (outcome is RebuildOutcome.Refused refused)
+                {
+                    diagnostic.WriteString("reason", refused.Reason);
+                }
+                diagnostic.WriteNumber("total_seconds", total);
+                diagnostic.WriteNumber("rebuild_seconds", observation.RebuildSeconds);
+                diagnostic.WriteNumber("refill_seconds", observation.RefillSeconds);
+                diagnostic.WriteNumber("sampled_process_peak_rss_bytes", peak.Rss);
+                diagnostic.WriteNumber("sampled_process_peak_managed_bytes", peak.Managed);
+                diagnostic.WriteNumber("process_allocated_bytes", allocated);
+                diagnostic.WriteBoolean("certified", false);
+                diagnostic.WriteEndObject();
+                await diagnostic.FlushAsync(cancellationToken);
+            }
             Require(outcome is RebuildOutcome.Completed, "production recovery did not complete: " + outcome);
             var rebuilt = ((RebuildOutcome.Completed)outcome).NewIncarnation;
             Require(rebuilt != old && (await StoreAsync(receiver, database, cancellationToken)).Incarnation == rebuilt, "incarnation did not change");
