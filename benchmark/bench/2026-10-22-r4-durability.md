@@ -34,6 +34,8 @@ Both deadline and takeover elapsed times use each process's local monotonic Time
 
 Q-RELAND: dropped both legacy ack re-lands as already covered on main `758a84be`: `TursoChangeGroupSource.RetainsAsync` follows retained quiet ranges, and `PeerStreams` has an asynchronous ACK ledger. The original connected-stream retention regression and both sender-bookkeeping regressions pass unchanged (3/3, beta Release); reapplying their older sender code is unnecessary.
 
+After rebasing #381 locally onto that main revision, the relevant Fast selection passed again (46/46), as did the vendored driver tests (22/22), with no skipped tests and a zero-warning Release build. Evidence is retained in `/home/mariogk/.cache/r4-rebased-current-main.log`; the rebase and report update are held locally while the merge queue exceeds the permitted two entries.
+
 ## Measurement identity and reproduction
 
 All runs used beta: Linux x86-64, AMD Ryzen 5 PRO 6650H, 12 logical CPUs, SDK `11.0.100-rc.1.26425.128`, Release, `nice -n 19`. The host was shared with other replication work. R0 captured load averages around 20–45 during the earlier phases; a post-focused-run snapshot was `11.63 18.42 22.77`. Scheduling/GC variation is visible in the spreads; do not transfer these absolute numbers to production.
