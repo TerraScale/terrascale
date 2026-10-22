@@ -364,6 +364,8 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<CollectionInfo?> GetCollectionAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionAsync(name, cancellationToken);
         public ValueTask<JsonElement?> GetCollectionSchemaAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionSchemaAsync(name, cancellationToken);
         public ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken) => inner.SetCollectionSchemaAsync(name, schema, cancellationToken);
+        public ValueTask<JsonElement?> GetCollectionTableAsync(string name, CancellationToken cancellationToken) => inner.GetCollectionTableAsync(name, cancellationToken);
+        public ValueTask<bool> SetCollectionTableAsync(string name, JsonElement definition, CancellationToken cancellationToken) => inner.SetCollectionTableAsync(name, definition, cancellationToken);
 
         public ValueTask<bool> HasCollectionStateAsync(string name, bool prefix, CancellationToken cancellationToken) => inner.HasCollectionStateAsync(name, prefix, cancellationToken);
         public ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(string? afterName, int limit, CancellationToken cancellationToken) => inner.ListCollectionsAsync(afterName, limit, cancellationToken);

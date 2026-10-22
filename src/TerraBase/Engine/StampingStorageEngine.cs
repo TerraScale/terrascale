@@ -304,6 +304,12 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         public ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken) =>
             WriteCollectionAsync(() => inner.SetCollectionSchemaAsync(name, schema, cancellationToken), cancellationToken);
 
+        public ValueTask<JsonElement?> GetCollectionTableAsync(string name, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.GetCollectionTableAsync(name, cancellationToken), cancellationToken);
+
+        public ValueTask<bool> SetCollectionTableAsync(string name, JsonElement definition, CancellationToken cancellationToken) =>
+            WriteCollectionAsync(() => inner.SetCollectionTableAsync(name, definition, cancellationToken), cancellationToken);
+
         public ValueTask<bool> HasCollectionStateAsync(string name, bool prefix, CancellationToken cancellationToken) =>
             RunAsync(() => inner.HasCollectionStateAsync(name, prefix, cancellationToken), cancellationToken);
 

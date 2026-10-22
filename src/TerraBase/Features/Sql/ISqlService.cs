@@ -3,7 +3,7 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Sql;
 
 /// <summary>The storage class of a SQL value; blobs are refused because a JSON document cannot hold bytes.</summary>
-public enum SqlValueKind
+internal enum SqlValueKind
 {
     /// <summary>SQL <c>NULL</c>; a missing field.</summary>
     Null,
@@ -23,7 +23,7 @@ public enum SqlValueKind
 /// <param name="Integer">The value when <paramref name="Kind"/> is <see cref="SqlValueKind.Integer"/>.</param>
 /// <param name="Real">The value when <paramref name="Kind"/> is <see cref="SqlValueKind.Real"/>.</param>
 /// <param name="Text">The value when <paramref name="Kind"/> is <see cref="SqlValueKind.Text"/>.</param>
-public readonly record struct SqlValue(SqlValueKind Kind, long Integer = 0, double Real = 0, string? Text = null)
+internal readonly record struct SqlValue(SqlValueKind Kind, long Integer = 0, double Real = 0, string? Text = null)
 {
     /// <summary>SQL <c>NULL</c>.</summary>
     public static SqlValue Null => default;
@@ -42,19 +42,19 @@ public readonly record struct SqlValue(SqlValueKind Kind, long Integer = 0, doub
 /// <param name="Sql">The statement text, at most 16 KiB.</param>
 /// <param name="Args">Positional arguments for <c>?</c> and <c>?NNN</c>.</param>
 /// <param name="Named">Named arguments for <c>:name</c>, <c>@name</c> and <c>$name</c>, keyed without the prefix.</param>
-public sealed record SqlCommand(string Sql, IReadOnlyList<SqlValue> Args, IReadOnlyDictionary<string, SqlValue> Named);
+internal sealed record SqlCommand(string Sql, IReadOnlyList<SqlValue> Args, IReadOnlyDictionary<string, SqlValue> Named);
 
 /// <summary>A result column.</summary>
 /// <param name="Name">Column name as SQLite reports it.</param>
 /// <param name="DeclType">Declared type of a table column, or <see langword="null"/> for an expression.</param>
-public sealed record SqlColumn(string Name, string? DeclType);
+internal sealed record SqlColumn(string Name, string? DeclType);
 
 /// <summary>What a statement returned.</summary>
 /// <param name="Columns">Result columns; empty for statements without rows.</param>
 /// <param name="Rows">Rows in order, each with one value per column.</param>
 /// <param name="RowsAffected">Rows a write inserted, updated or deleted; 0 for reads and DDL.</param>
 /// <param name="LastInsertRowid">The integer primary key of the last inserted row, when the table has one.</param>
-public sealed record SqlResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, long RowsAffected, long? LastInsertRowid);
+internal sealed record SqlResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<IReadOnlyList<SqlValue>> Rows, long RowsAffected, long? LastInsertRowid);
 
 /// <summary>Why a statement failed, in SQLite's vocabulary so libSQL and PostgreSQL clients can map it.</summary>
 /// <param name="Code">
@@ -63,26 +63,26 @@ public sealed record SqlResult(IReadOnlyList<SqlColumn> Columns, IReadOnlyList<I
 /// database), <c>SQLITE_TOOBIG</c> (a limit), <c>SQLITE_INTERRUPT</c> (work budget or timeout).
 /// </param>
 /// <param name="Message">Human-readable reason; never quotes client text.</param>
-public sealed record SqlError(string Code, string Message);
+internal sealed record SqlError(string Code, string Message);
 
 /// <summary>What a statement would take and return, without running its writes.</summary>
 /// <param name="Params">One entry per parameter: its name with prefix, or <see langword="null"/> for <c>?</c>.</param>
 /// <param name="Columns">Result columns.</param>
 /// <param name="IsExplain">Whether the statement is <c>EXPLAIN</c>.</param>
 /// <param name="IsReadOnly">Whether the statement only reads.</param>
-public sealed record SqlDescription(IReadOnlyList<string?> Params, IReadOnlyList<SqlColumn> Columns, bool IsExplain, bool IsReadOnly);
+internal sealed record SqlDescription(IReadOnlyList<string?> Params, IReadOnlyList<SqlColumn> Columns, bool IsExplain, bool IsReadOnly);
 
 /// <summary>A statement's rows, or why it failed.</summary>
-public readonly union SqlOutcome(SqlResult, SqlError);
+internal readonly union SqlOutcome(SqlResult, SqlError);
 
 /// <summary>A statement's description, or why it cannot run.</summary>
-public readonly union SqlDescribeOutcome(SqlDescription, SqlError);
+internal readonly union SqlDescribeOutcome(SqlDescription, SqlError);
 
 /// <summary>
 /// A SQL connection to one database: autocommit, or inside a transaction that may span requests. Not thread-safe:
 /// one request drives it at a time.
 /// </summary>
-public interface ISqlSession : IAsyncDisposable
+internal interface ISqlSession : IAsyncDisposable
 {
     /// <summary>Whether no transaction is open.</summary>
     bool IsAutocommit { get; }
@@ -101,7 +101,7 @@ public interface ISqlSession : IAsyncDisposable
 }
 
 /// <summary>Runs relational SQL over a database's collections; shared by the HTTP SQL API, Hrana and PostgreSQL wire.</summary>
-public interface ISqlService
+internal interface ISqlService
 {
     /// <summary>Opens a session; writes and DDL fail with <c>SQLITE_AUTH</c> unless <paramref name="canWrite"/>.</summary>
     ISqlSession Open(TenantContext database, bool canWrite);
