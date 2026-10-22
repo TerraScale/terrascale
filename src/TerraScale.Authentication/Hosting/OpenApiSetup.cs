@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.OpenApi;
+using Scalar.AspNetCore;
 using TerraScale.Authentication.Configuration;
 
 namespace TerraScale.Authentication.Hosting;
@@ -50,7 +51,7 @@ public static partial class OpenApiSetup
     /// </summary>
     public static IServiceCollection AddAuthOpenApi(this IServiceCollection services) =>
         services
-            .Configure<Scalar.AspNetCore.ScalarOptions>(scalar => scalar.DefaultFonts = false)
+            .Configure<ScalarOptions>(scalar => scalar.DisableDefaultFonts().WithNonce())
             .Configure<OpenApiOptions>("v1", options =>
         {
             options.AddOperationTransformer((operation, context, _) =>

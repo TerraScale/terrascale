@@ -11,6 +11,7 @@ using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SignIn;
 using TerraScale.Authentication.Features.SigningKeys;
+using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet.TerraBase;
@@ -226,6 +227,15 @@ public static class App
             app.Logger.ZLogWarning($"CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN are not configured: email is logged, not delivered");
         }
 
+        app.Use((HttpContext context, RequestDelegate next) =>
+        {
+            context.Response.OnStarting(() =>
+            {
+                BrowserSecurity.ApplyResponseHeaders(context.Response, options.PublicOrigin.Scheme == Uri.UriSchemeHttps);
+                return Task.CompletedTask;
+            });
+            return next(context);
+        });
         app.UseAuthMetrics();
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
         TokenRateLimitMiddleware.UsePeerGuard(app);
