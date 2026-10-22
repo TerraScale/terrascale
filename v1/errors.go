@@ -46,9 +46,19 @@ const (
 	ErrCommitUncertain      ErrorCode = "commit_uncertain"      // also matches mutation transport failures; the write may have committed
 	ErrWriteOutcomeUnknown  ErrorCode = "write_outcome_unknown" // 503: the write may have committed without remote confirmation
 	ErrDependenciesUnavail  ErrorCode = "dependencies_unavailable"
-	ErrDatabaseReplicated   ErrorCode = "database_replicated" // 409: delete of a database with replica regions
-	ErrIndexExists          ErrorCode = "index_exists"        // 409: an index with the name, or on the same fields of the collection
-	ErrUniqueViolation      ErrorCode = "unique_violation"    // 409: a document write or transaction duplicates a unique key; the whole transaction rolls back
+	// ErrRemoteRegionUnavailable, ErrConfirmationBusy and ErrCatalogStale are
+	// 503s refused before execution; replay-safe requests retry them.
+	ErrRemoteRegionUnavailable ErrorCode = "remote_region_unavailable"
+	ErrConfirmationBusy        ErrorCode = "confirmation_busy"
+	ErrCatalogStale            ErrorCode = "catalog_stale"
+	// ErrCopyFaulted is a 503: this node's database copy awaits certified
+	// recovery. Retrying the same node does not help, so it is not retried.
+	ErrCopyFaulted        ErrorCode = "copy_faulted"
+	ErrQuotaExceeded      ErrorCode = "quota_exceeded"      // 429
+	ErrRequestTimeout     ErrorCode = "request_timeout"     // 408
+	ErrDatabaseReplicated ErrorCode = "database_replicated" // 409: delete of a database with replica regions
+	ErrIndexExists        ErrorCode = "index_exists"        // 409: an index with the name, or on the same fields of the collection
+	ErrUniqueViolation    ErrorCode = "unique_violation"    // 409: a document write or transaction duplicates a unique key; the whole transaction rolls back
 	// ErrSchemaRequiresEmptyCollection is a 409: unique keys change only while
 	// the collection is empty.
 	ErrSchemaRequiresEmptyCollection ErrorCode = "schema_requires_empty_collection"
