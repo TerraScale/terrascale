@@ -83,43 +83,6 @@ public sealed class ForgetProjectionTests
         }
     }
 
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Forgetting_collection_metadata_removes_old_projections_and_preserves_newer_documents(bool newerSurvivor)
-    {
-        var token = TestContext.Current!.Execution.CancellationToken;
-        await using var cluster = await PeerStreamTests.Cluster.StartAsync("gru");
-        var machine = cluster["gru"];
-        var old = EntityIds.New().ToString();
-        var newer = EntityIds.New().ToString();
-        await RepairAsync(machine,
-            new(DocumentDelta.Collections, "items", Put(1000, $$"""{"created_at":1,"entity_id":"{{EntityIds.New()}}"}""")),
-            new("items", old, Put(2000, """{"old":true}""")));
-        if (newerSurvivor)
-        {
-            await RepairAsync(machine, new RepairState("items", newer, Put(4000, """{"new":true}""")));
-        }
-
-        await ForgetAsync(machine, DocumentDelta.Collections, "items");
-        await Assert.That(await machine.HasStateAsync(DocumentDelta.Collections, "items")).IsFalse();
-        await Assert.That(await machine.HasStateAsync("items", old)).IsFalse();
-        await Assert.That(await machine.ReadAsync(old)).IsNull();
-        await machine.StopAsync();
-        await machine.StartAsync();
-        await Assert.That(await machine.ReadAsync(old)).IsNull();
-        if (newerSurvivor)
-        {
-            await Assert.That(await machine.ReadAsync(newer)).IsEqualTo("""{"new":true}""");
-            await Assert.That(await machine.HasStateAsync("items", newer)).IsTrue();
-        }
-        else
-        {
-            await using var read = await (await machine.StoreAsync()).BeginTransactionAsync(write: false, token);
-            await Assert.That((await read.ListCollectionsAsync(null, 100, token)).Collections.Any(collection => collection.Name == "items")).IsFalse();
-        }
-    }
-
     private static async Task RepairAsync(PeerStreamTests.Machine machine, params RepairState[] states) =>
         _ = await machine.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(
             machine.Cluster.Database, (await machine.StoreAsync()).Incarnation, states, TestContext.Current!.Execution.CancellationToken);

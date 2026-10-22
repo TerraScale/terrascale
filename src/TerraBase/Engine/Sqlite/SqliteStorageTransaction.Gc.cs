@@ -150,11 +150,6 @@ internal sealed partial class SqliteStorageTransaction
                 {
                     ReprojectUnique(id, cancellationToken);
                 }
-                else if (IsClient && collection == DocumentDelta.Collections && HasTable(id))
-                {
-                    var stamp = new Hlc(horizon.Value - 1);
-                    DropCoveredCollection(id, new(new(stamp, new ReplicaId(ulong.MaxValue)), true, stamp), cancellationToken);
-                }
                 else if (!IsMetadata(collection))
                 {
                     ReconcileUnique(collection, affected, cancellationToken);
