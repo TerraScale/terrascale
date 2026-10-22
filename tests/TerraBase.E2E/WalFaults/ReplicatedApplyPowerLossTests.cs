@@ -1,11 +1,9 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Testing;
 using TerraBase.Primitives;
-using TerraBase.Tenancy;
 
 namespace TerraBase.E2E.WalFaults;
 
@@ -23,16 +21,10 @@ public sealed class ReplicatedApplyPowerLossTests
     {
         Skip.When(Cluster.Live, "kills a local node process and edits its files");
         Skip.When(WalSyncFaults.Library is null, "needs Linux and cc to build the write-ahead log fault shim");
-        await using var node = await PowerLossNode.StartAsync();
-        var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
-        await node.CommitAsync(EntityIds.New().ToString(), new JsonObject
-        {
-            ["id"] = EntityIds.New().ToString(),
-            ["ops"] = new JsonArray(
-                new JsonObject { ["op"] = "create_organization", ["id"] = database.OrganizationId, ["name"] = $"power-{database.OrganizationId}" },
-                new JsonObject { ["op"] = "create_project", ["organization"] = database.OrganizationId, ["id"] = database.ProjectId, ["name"] = "power" },
-                new JsonObject { ["op"] = "create_database", ["organization"] = database.OrganizationId, ["project"] = database.ProjectId, ["name"] = "canary", ["id"] = database.DatabaseId }),
-        });
+        await using var regions = await RegionProcesses.StartWithWalFaultsAsync(Cluster.Gru, Cluster.Sjc);
+        var database = regions.Tenant;
+        // The peer verifies the restarted catalog, but cannot supply lost test documents through replay or repair.
+        regions.HoldReplication(Cluster.Sjc);
 
         // Three groups of another region's machine in one batch, of 1,000, 100 and 1 documents: more than one transaction's
         // 1,024, so the receiver joins them in two transactions (groups never split). Every log sync is held 300 ms, so
@@ -42,7 +34,7 @@ public sealed class ReplicatedApplyPowerLossTests
         int[] sizes = [1000, 100, 1];
         var ids = sizes.Select(size => Enumerable.Range(0, size).Select(_ => EntityIds.New().ToString()).ToArray()).ToArray();
         var delay = TimeSpan.FromMilliseconds(300);
-        using (var channel = PeerChannel.Create(node.Address, PeerTls.Credential))
+        using (var channel = PeerChannel.Create(regions[Cluster.Gru].BaseAddress!, PeerTls.Credential))
         {
             using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Push();
             await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = origin.Value, Region = "sjc", Machine = "zzzz-sender" } });
@@ -61,7 +53,7 @@ public sealed class ReplicatedApplyPowerLossTests
                 await Assert.That(await call.ResponseStream.MoveNext(warm.Token) && call.ResponseStream.Current.Ack is { ChangeId: 1, Refused: false }).IsTrue();
             }
 
-            node.DelaySyncs(delay);
+            regions.Faults(Cluster.Gru).Delay(delay);
             var clock = System.Diagnostics.Stopwatch.StartNew();
             await call.RequestStream.WriteAsync(new PushFrame
             {
@@ -76,21 +68,24 @@ public sealed class ReplicatedApplyPowerLossTests
             using var timeout = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout);
             await Assert.That(await call.ResponseStream.MoveNext(timeout.Token)).IsTrue();
             // The power fails at the ack: any later sync ends the process unsynced, so only syncs made before the ack count.
-            node.KillAtNextSync();
+            regions.Faults(Cluster.Gru).KillAtSync(1);
             var acked = clock.Elapsed;
             await Assert.That(call.ResponseStream.Current.Ack is { ChangeId: 4, Refused: false }).IsTrue().Because(call.ResponseStream.Current.ToString());
             await Assert.That(acked).IsGreaterThanOrEqualTo(delay * 2).Because("the ack waits for both transactions' log syncs");
         }
 
-        await node.PowerLossAsync();
-        node.ClearFaults();
-        await node.StartAgainAsync();
+        await regions.PowerLossAsync(Cluster.Gru);
+        regions.Faults(Cluster.Gru).Clear();
+        await regions.StartAgainAsync(Cluster.Gru);
 
         // The first and last document of each group: both transactions survived.
         foreach (var (index, id) in ids.Index().SelectMany(group => new[] { (group.Index, group.Item[0]), (group.Index, group.Item[^1]) }))
         {
             var read = new Uri($"/v1/projects/{database.ProjectId}/databases/canary/collections/items/documents/by-key?id={id}", UriKind.Relative);
-            var document = await Docs.ReadAsync(node.Client, read);
+            _ = await Converge.UntilAsync(() => Docs.StatusAsync(regions[Cluster.Gru], read),
+                status => status == System.Net.HttpStatusCode.OK, "the restarted receiver serves the acknowledged document");
+            await Assert.That(await Docs.ReadAsync(regions[Cluster.Sjc], read)).IsNull().Because("the catalog peer must not supply a lost document");
+            var document = await Docs.ReadAsync(regions[Cluster.Gru], read);
             await Assert.That(document?["n"]?.GetValue<int>()).IsEqualTo(index).Because($"group {index + 1} was acknowledged before the power loss");
         }
     }

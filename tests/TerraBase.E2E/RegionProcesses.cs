@@ -157,6 +157,13 @@ internal sealed class RegionProcesses : IAsyncDisposable
     /// <summary>The harness database's write-ahead log on the region.</summary>
     public string TenantWal(string region) => Path.Combine(_regions[region].DataDirectory, _organization, _project, _database + ".db-wal");
 
+    /// <summary>Kills the region and drops every log byte the shim did not observe successfully synced.</summary>
+    public async Task PowerLossAsync(string region)
+    {
+        await KillAsync(region);
+        Faults(region).DropUnsynced(_regions[region].DataDirectory);
+    }
+
     /// <summary>
     /// A power loss at the sync the region's shim was armed to kill: waits for that SIGKILL, drops every unsynced byte of
     /// every log, then writes back the dropped frames of the database's log but the last, torn after
