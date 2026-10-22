@@ -626,6 +626,7 @@ public sealed class ExplainSqlBoundaryTests
     {
         var credentials = System.IO.Path.Combine(directory, "user.creds");
         await File.WriteAllTextAsync(credentials, "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n");
+        // These boundary checks retain deliberately staged catalog state until the request has revalidated it.
         return await ManagementApi.StartAsync(settings =>
         {
             settings["region"] = "gru-1";
@@ -637,7 +638,7 @@ public sealed class ExplainSqlBoundaryTests
             members.Join(new ClusterMember("sfo-member", string.Empty, "sfo-1", string.Empty));
             services.AddSingleton<IMemberDirectory>(members);
             hook?.Install(services);
-        });
+        }, time: new FakeTimeProvider(TimeProvider.System.GetUtcNow()));
     }
 
     private static Task<ManagementApi> StartAsync() =>
