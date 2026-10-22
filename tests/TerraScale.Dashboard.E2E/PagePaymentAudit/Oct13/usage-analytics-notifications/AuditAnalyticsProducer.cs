@@ -18,14 +18,14 @@ public sealed class AuditAnalyticsProducer
         Reads++;
         if (Mode == "offline") return Task.FromResult<IResult?>(Results.StatusCode(503));
         var projectId = http.Request.Path.Value.Split('/', StringSplitOptions.RemoveEmptyEntries)[2];
-        object Sample(DateTimeOffset start, bool missingLatency = false) => new
+        object Sample(DateTimeOffset start, bool missingLatency = false, bool idle = false) => new
         {
             start = start.ToOffset(TimeSpan.FromHours(-3)),
-            requests = new Dictionary<string, long> { ["GET"] = Mode == "missing" ? 9_007_199_254_740_993L : 10 },
+            requests = new Dictionary<string, long> { ["GET"] = idle ? 0 : Mode == "missing" ? 9_007_199_254_740_993L : 10 },
             operations = new Dictionary<string, long> { ["document_read"] = 4 },
             errors = 1,
-            latency = new { p50Ms = missingLatency || Mode == "missing" ? (double?)null : 0.5, p95Ms = missingLatency || Mode == "missing" ? (double?)null : 1.75, p99Ms = missingLatency || Mode == "missing" ? (double?)null : 9 },
-            storageBytes = Mode == "missing" ? (long?)null : 4096,
+            latency = new { p50Ms = missingLatency || idle || Mode == "missing" ? (double?)null : 0.5, p95Ms = missingLatency || idle || Mode == "missing" ? (double?)null : 1.75, p99Ms = missingLatency || idle || Mode == "missing" ? (double?)null : 9 },
+            storageBytes = Mode == "missing" || idle ? (long?)null : 4096,
             clientBandwidth = new { bytesSent = 6, bytesReceived = 7 },
             replicationBandwidth = new { bytesSent = 8, bytesReceived = 9 }
         };
@@ -34,6 +34,8 @@ public sealed class AuditAnalyticsProducer
             databaseId = DatabaseId,
             region = Mode == "foreign-region" ? "sfo" : "gru",
             series = Mode == "sparse" ? new[] { Sample(From), Sample(From.AddMinutes(2)) } :
+                // The newest bucket is partial: no requests and no storage sample yet.
+                Mode == "latest-partial" ? new[] { Sample(From), Sample(From.AddMinutes(1), idle: true) } :
                 Mode == "explicit-gap" ? new[] { Sample(From), Sample(From.AddMinutes(1), missingLatency: true), Sample(From.AddMinutes(2)) } : new[] { Sample(From) }
         };
         LastBody = JsonSerializer.SerializeToElement(new

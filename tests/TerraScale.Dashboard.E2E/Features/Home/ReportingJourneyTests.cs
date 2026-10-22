@@ -91,7 +91,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(await Stat("#analytics-summary", "Replication received").InnerTextAsync()).IsEqualTo("9 B");
             await ScenarioAsync("not-metered");
             await flow.GotoAsync(ownerPage, "/analytics");
-            await ownerPage.GetByText("No analytics measurements for these filters.", new() { Exact = true }).WaitForAsync();
+            await ownerPage.GetByText("TerraBase has no analytics for this project or database yet. They start with its first database.", new() { Exact = true }).WaitForAsync();
             await ownerPage.Locator("#analytics-range").SelectOptionAsync("7d");
             await ApplyAnalyticsAsync();
             await Assert.That(QueryHelpers.ParseQuery(new Uri(ownerPage.Url).Query)["range"].ToString()).IsEqualTo("7d");

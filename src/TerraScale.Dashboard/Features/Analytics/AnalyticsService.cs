@@ -18,7 +18,9 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
         {
             var batch = await backend.ReadAsync(selection, cancellationToken);
             if (batch.State == AnalyticsSourceState.Unavailable) return new(shell, selection, null, [], Empty: "Analytics measurements are unavailable.");
-            if (batch.Points.Count == 0 || batch.State == AnalyticsSourceState.NotMetered) return new(shell, selection, null, []);
+            if (batch.State == AnalyticsSourceState.NotMetered)
+                return new(shell, selection, null, [], Empty: "TerraBase has no analytics for this project or database yet. They start with its first database.");
+            if (batch.Points.Count == 0) return new(shell, selection, null, []);
             var (totals, charts) = Build(selection, batch.Points);
             return new(shell, selection, totals, charts);
         }
@@ -40,8 +42,8 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
         var latencies = new SortedDictionary<string, AnalyticsSeries>(StringComparer.Ordinal);
         var errors = new long[starts.Length]; var storage = new long[starts.Length]; var pointCounts = new int[starts.Length]; var storageSamples = new int[starts.Length]; var storageMissing = Enumerable.Repeat(true, starts.Length).ToArray(); var sent = new long[starts.Length]; var received = new long[starts.Length]; var replicationSent = new long[starts.Length]; var replicationReceived = new long[starts.Length];
         long requestTotal = 0, operationTotal = 0, errorTotal = 0, clientTotal = 0, replicationSentTotal = 0, replicationReceivedTotal = 0;
-        double? p95 = null;
-        var regions = new Dictionary<string, (long Requests, double? LatestP95Ms)>(StringComparer.Ordinal);
+        var p95ByBucket = new double?[starts.Length];
+        var regions = new Dictionary<string, (long Requests, int Bucket, double? LatestP95Ms)>(StringComparer.Ordinal);
         foreach (var point in points)
         {
             var index = indices[point.Start.ToUniversalTime()];
@@ -71,13 +73,15 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
                 series.Values[index] = checked((long)Math.Round(value * 1000, MidpointRounding.AwayFromZero));
                 series.Missing![index] = false;
             }
-            if (index == starts.Length - 1 && point.P95Ms is { } latest) p95 = Math.Max(p95 ?? 0, latest);
+            if (point.P95Ms is { } observed) p95ByBucket[index] = Math.Max(p95ByBucket[index] ?? 0, observed);
             var regionCode = point.Region.ToLowerInvariant();
             if (regionCode.Length > 0)
             {
                 var row = regions.GetValueOrDefault(regionCode);
                 var pointRequests = point.Requests.Values.Aggregate(0L, (sum, count) => checked(sum + Nonnegative(count)));
-                regions[regionCode] = (checked(row.Requests + pointRequests), index == starts.Length - 1 ? MaxLatency(row.LatestP95Ms, point.P95Ms) : row.LatestP95Ms);
+                // The current bucket is partial, so p95 comes from each region's latest bucket that observed requests.
+                regions[regionCode] = point.P95Ms is null || index < row.Bucket ? row with { Requests = checked(row.Requests + pointRequests) }
+                    : (checked(row.Requests + pointRequests), index, index == row.Bucket ? MaxLatency(row.LatestP95Ms, point.P95Ms) : point.P95Ms);
             }
         }
         var regionRows = regions.Select(item => new AnalyticsRegionRow(item.Key, Regions.Country(item.Key), item.Value.Requests, item.Value.LatestP95Ms))
@@ -91,7 +95,10 @@ public sealed class AnalyticsService(IAnalyticsBackend backend)
         Add("Storage (bytes)", new AnalyticsSeries("Storage", storage, storageMissing));
         Add("Client bandwidth (bytes)", new AnalyticsSeries("Sent", sent), new AnalyticsSeries("Received", received));
         Add("Replication bandwidth (bytes)", new AnalyticsSeries("Sent", replicationSent), new AnalyticsSeries("Received", replicationReceived));
-        return (new(requestTotal, errorTotal, operationTotal, storageMissing[^1] ? null : storage[^1], clientTotal, replicationSentTotal, replicationReceivedTotal, p95, regionRows), charts);
+        var latestStorage = Array.FindLastIndex(storageMissing, missing => !missing);
+        var latestLatency = Array.FindLastIndex(p95ByBucket, value => value is not null);
+        return (new(requestTotal, errorTotal, operationTotal, latestStorage < 0 ? null : storage[latestStorage], clientTotal, replicationSentTotal, replicationReceivedTotal,
+            latestLatency < 0 ? null : p95ByBucket[latestLatency], regionRows), charts);
 
         void Add(string title, params AnalyticsSeries[] series) => charts.Add(new(title, AnalyticsLinePlot.For(title + ", " + selection.Range, selection.Range, starts, series), selection));
         void AddCounters(SortedDictionary<string, long[]> target, IReadOnlyDictionary<string, long> values, int index, ref long total)

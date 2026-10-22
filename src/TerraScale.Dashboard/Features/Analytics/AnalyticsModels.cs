@@ -15,11 +15,14 @@ public sealed record AnalyticsSelection(AccountContext Context, string Range, st
             throw new AccountAccessException("Database is unavailable.", 404);
         var projectRegions = project.Databases.Values.SelectMany(db => db.Regions.Prepend(db.Region)).Where(code => code.Length > 0).Distinct().ToArray();
         var databaseRegions = project.Databases.Values.Where(db => databaseId.Length == 0 || db.Id == databaseId).SelectMany(db => db.Regions.Prepend(db.Region)).Where(code => code.Length > 0).Distinct().ToArray();
-        if (region.Length > 0 && !databaseRegions.Contains(region))
+        // Region links carry lowercase codes; keep the stored spelling so filters and provider reads match.
+        var stored = databaseRegions.FirstOrDefault(code => string.Equals(code, region, StringComparison.OrdinalIgnoreCase));
+        if (region.Length > 0 && stored is null)
         {
-            if (databaseId.Length == 0 || !projectRegions.Contains(region)) throw new AccountAccessException("Select a region used by this database or project.", 400);
+            if (databaseId.Length == 0 || !projectRegions.Contains(region, StringComparer.OrdinalIgnoreCase)) throw new AccountAccessException("Select a region used by this database or project.", 400);
             region = "";
         }
+        else if (region.Length > 0) region = stored!;
         return new(context with { Project = project }, range is "1h" or "24h" or "7d" or "30d" ? range : "24h", databaseId, region);
     }
     public IReadOnlyList<string> Regions => Context.Project!.Databases.Values.Where(db => DatabaseId.Length == 0 || db.Id == DatabaseId)

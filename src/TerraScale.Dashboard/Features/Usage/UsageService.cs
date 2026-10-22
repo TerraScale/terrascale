@@ -6,12 +6,12 @@ using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Usage;
 
-public sealed record UsageDatabaseRow(SpendingDatabase Spending, string Status, UsageReading? Reading, int SharePercent, UsageStorageFact? Storage = null)
+public sealed record UsageDatabaseRow(SpendingDatabase Spending, string Status, UsageReading? Reading, int? SharePercent, UsageStorageFact? Storage = null)
 {
     public long? LogicalBytes => Reading?.LogicalBytes ?? Storage?.LogicalBytes;
     public long? Documents => Reading?.Documents ?? Storage?.Documents;
 }
-public sealed record UsageProjectRow(SpendingProject Spending, UsageReading? Reading, bool Selected, int SharePercent, UsageStorageFact? Storage = null)
+public sealed record UsageProjectRow(SpendingProject Spending, UsageReading? Reading, bool Selected, int? SharePercent, UsageStorageFact? Storage = null)
 {
     public long? LogicalBytes => Reading?.LogicalBytes ?? Storage?.LogicalBytes;
 }
@@ -29,7 +29,7 @@ public sealed record UsagePage(ShellModel Shell, UsageSelection Selection, strin
     public long? ScopeLogicalBytes => Scope?.LogicalBytes ?? StoredScope?.LogicalBytes;
     public bool ScopeStorageMeasured => ScopeLogicalBytes is not null;
     public int ActiveDatabases => Selection.Context.Project?.Databases.Count ?? 0;
-    public int RegionCount => Selection.Context.Project?.Databases.Values.Select(database => database.Region).Where(region => region.Length > 0).Distinct().Count() ?? 0;
+    public int RegionCount => Selection.Context.Project?.Databases.Values.SelectMany(database => database.Regions.Prepend(database.Region)).Where(region => region.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Count() ?? 0;
     public string HistoryDescription => "The selected " + (Selection.DatabaseId.Length > 0 ? "database" : "project") + ", " + char.ToLowerInvariant(Selection.RangeLabel[0]) + Selection.RangeLabel[1..];
     public string ProjectHref(string projectId, string tab = "overview") => "/usage?tab=" + tab + "&project=" + Uri.EscapeDataString(projectId) +
         "&range=" + Uri.EscapeDataString(Selection.Range) +
@@ -98,7 +98,7 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
             var fact = stored?.Projects.GetValueOrDefault(project.Id)?.Total;
             var bytes = reading?.LogicalBytes ?? fact?.LogicalBytes;
             return new UsageProjectRow(project, reading, project.Id == selection.Context.Project?.Id,
-                bytes is not null && organizationStorage is not null ? Share(bytes.Value, organizationStorage.Value) : 0, fact);
+                bytes is not null && organizationStorage is not null ? Share(bytes.Value, organizationStorage.Value) : null, fact);
         }).ToArray();
         var scopedDatabases = scope?.Items ?? [];
         var selectedProject = controls.Projects.FirstOrDefault(project => project.Id == selection.Context.Project?.Id);
@@ -107,7 +107,7 @@ public sealed class UsageService(IUsageMeasurements measurements, SpendingServic
             selection.DatabaseId.Length > 0 ? scope : scopedDatabases.FirstOrDefault(reading => reading.DatabaseId == database.Id), 0,
             stored?.Projects.GetValueOrDefault(selection.Context.Project!.Id)?.Databases.GetValueOrDefault(database.Id))).ToArray();
         var knownDatabaseTotal = UsageStorageSnapshot.SumCounters(databaseRows.Select(database => database.LogicalBytes));
-        databaseRows = databaseRows.Select(database => database with { SharePercent = database.LogicalBytes is { } bytes && knownDatabaseTotal is { } total ? Share(bytes, total) : 0 }).ToArray();
+        databaseRows = databaseRows.Select(database => database with { SharePercent = database.LogicalBytes is { } bytes && knownDatabaseTotal is { } total ? Share(bytes, total) : null }).ToArray();
         var history = scope is not null ? AnalyticsLinePlot.For("Reads and writes, " + selection.RangeLabel, selection.Range, scope.Series.Select(point => point.Start).ToArray(),
             [new("Reads", scope.Series.Select(point => point.Reads).ToArray()), new("Writes", scope.Series.Select(point => point.Writes).ToArray())]) : null;
         return new(shell, selection, tab, saved, controls, projects, databaseRows, allowances, name, scope, history, source,
