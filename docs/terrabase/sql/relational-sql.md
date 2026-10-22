@@ -105,7 +105,9 @@ WITH "t" AS (SELECT json_extract(doc, '$."c1"') AS "c1", … FROM main."t" WHERE
 
 All statements run as one transaction (all or nothing). Response:
 `{"results": [{"columns": [...], "rows": [[...]], "rows_affected": 0, "last_insert_rowid": null}]}`.
-Errors: `400 sql_error` with `{"error": {"code", "message", "statement"}}`, `409 sql_conflict`, `413 sql_too_large`.
+Errors: `400 sql_error` with `{"error": {"code", "message", "statement", "sqlite_code"}}`, `403 forbidden_scope`
+(`SQLITE_AUTH`), `409 sql_conflict`, `413 sql_too_large`. `sqlite_code` carries the `SqlError` code (DECISION, SQ1-b:
+the HTTP code stays the API's own vocabulary; clients that map SQLite codes read `sqlite_code`).
 
 ### Hrana over HTTP (libSQL clients)
 

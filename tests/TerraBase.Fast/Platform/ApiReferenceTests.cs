@@ -78,6 +78,7 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/point-in-time/restore TsAuth(databases:write) restorePointInTime Backups
         POST /v1/projects/{project}/databases/{database}/sql TsAuth(databases:read) runSql Queries
         POST /v1/projects/{project}/databases/{database}/sql/check TsAuth(databases:read) checkSql Queries
+        POST /v1/projects/{project}/databases/{database}/sql/execute TsAuth(documents:read) executeSql Queries
         POST /v1/projects/{project}/databases/{database}/sql/explain TsAuth(databases:read) explainSql Queries
         POST /v1/projects/{project}/databases/{database}/transactions TsAuth(documents:write) runTransaction Transactions
         POST /v1/projects/{project}/saved-queries TsAuth(databases:write) createSavedQuery Queries
