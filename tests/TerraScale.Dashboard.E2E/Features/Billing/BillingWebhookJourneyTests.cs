@@ -92,13 +92,10 @@ public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
             var oversizedBody = oversizedPrefix + new string('x', bodyLimit + 1 - oversizedPrefix.Length - 2) + "\"}";
             await Assert.That(Encoding.UTF8.GetByteCount(oversizedBody)).IsEqualTo(bodyLimit + 1);
             var oversizedSignature = EventUtility.GenerateSignatureHeader(oversizedBody, "whsec_demo");
-            // Separate framing checks from connection-reuse behavior tracked in https://github.com/TerraScale/ts-dashboard/issues/18.
-            using var knownLengthClient = fixture.CreateClient();
-            using var oversized = await SendWebhookAsync(knownLengthClient, WebhookPaths[0], oversizedBody, oversizedSignature);
+            using var oversized = await SendWebhookAsync(anonymous, WebhookPaths[0], oversizedBody, oversizedSignature);
             await Assert.That(oversized.StatusCode).IsEqualTo(HttpStatusCode.RequestEntityTooLarge)
                 .Because("The 1 MiB + 1 body limit rejects before validating or syncing a provider event.");
-            using var chunkedClient = fixture.CreateClient();
-            using var chunkedOversized = await SendWebhookAsync(chunkedClient, WebhookPaths[1], oversizedBody, oversizedSignature, chunked: true);
+            using var chunkedOversized = await SendWebhookAsync(anonymous, WebhookPaths[1], oversizedBody, oversizedSignature, chunked: true);
             await Assert.That(chunkedOversized.StatusCode).IsEqualTo(HttpStatusCode.RequestEntityTooLarge)
                 .Because("The same limit applies when chunked HTTP provides no Content-Length.");
         }
@@ -118,6 +115,32 @@ public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
             .Because("Duplicate and out-of-order stale snapshots cannot downgrade current provider state.");
         await Assert.That(organization.GetProperty("billingStatus").GetString()).IsEqualTo("active")
             .Because("A validated paid-plan trial keeps the organization's existing active billing entitlement.");
+    }
+
+    [Test]
+    [Arguments(false, 1)]
+    [Arguments(true, 1)]
+    [Arguments(false, 64 * 1024 + 1)]
+    [Arguments(true, 64 * 1024 + 1)]
+    public async Task OversizedWebhookAllowsFollowUpPostOnSameClientPool(bool chunked, int excess)
+    {
+        using var client = new HttpClient(new HttpClientHandler { MaxConnectionsPerServer = 1 })
+        { BaseAddress = fixture.Origin, Timeout = TimeSpan.FromSeconds(30) };
+        var body = new string('x', (1 << 20) + excess);
+        foreach (var path in WebhookPaths)
+        {
+            using (var rejected = await SendWebhookAsync(client, path, body, "t=1,v1=forged", chunked))
+            {
+                await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.RequestEntityTooLarge);
+                if (excess > 64 * 1024)
+                    await Assert.That(rejected.Headers.ConnectionClose).IsEqualTo(true)
+                        .Because("An undrained HTTP/1.1 rejection must tell the pool to retire its connection.");
+            }
+
+            using var followUp = await SendWebhookAsync(client, path, "{}", "t=1,v1=forged");
+            await Assert.That(followUp.StatusCode).IsEqualTo(HttpStatusCode.BadRequest)
+                .Because("A subsequent non-idempotent POST must receive a real response without a transport retry.");
+        }
     }
 
     [Test]
