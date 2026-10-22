@@ -8,11 +8,10 @@ namespace TerraBase.E2E;
 /// <summary>
 /// Replication across gru, sjc and fra under faults: partitions, a region down and back, a restart in the middle of
 /// replication, a replication backlog and clock skew. Partitions and skew need the local nodes, so on Fly those tests are
-/// skipped with the reason. Stopping a machine on Fly touches the shared app, so there those tests run only from the
+/// skipped with the reason. Stopping a machine on Fly touches the shared app, so there those tests skip; they ran only from the
 /// separate disposable runs described in docs/terrabase/replication/31-live-outage-proof.md, alone on the app. What each scenario
 /// waits on is in <see cref="Gaps"/>.
 /// </summary>
-[Category("fly-outage")]
 public sealed class ThreeRegionFaultE2ETests
 {
     private static readonly string[] All = [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
@@ -68,7 +67,7 @@ public sealed class ThreeRegionFaultE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task Region_down_then_back_catches_up_on_every_write_made_while_it_was_down()
     {
-        SkipOnFlyUnlessOutageRun();
+        SkipLiveUnlessOutageRun();
         await Gaps.RunAsync("region-down-rejoin", async () =>
         {
             const int count = 300;
@@ -101,7 +100,7 @@ public sealed class ThreeRegionFaultE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task Restart_in_the_middle_of_replication_loses_no_write()
     {
-        SkipOnFlyUnlessOutageRun();
+        SkipLiveUnlessOutageRun();
         await Gaps.RunAsync("restart-mid-replication", async () =>
         {
             const int count = 800;
@@ -131,7 +130,7 @@ public sealed class ThreeRegionFaultE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task Writes_acknowledged_just_before_their_region_stops_reach_every_region_after_it_returns()
     {
-        SkipOnFlyUnlessOutageRun();
+        SkipLiveUnlessOutageRun();
         const int count = 200;
         await Gaps.RunAsync("ack-then-stop", async () =>
         {
@@ -154,7 +153,7 @@ public sealed class ThreeRegionFaultE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task A_restarted_region_replays_its_backlog_to_a_region_that_returns()
     {
-        SkipOnFlyUnlessOutageRun();
+        SkipLiveUnlessOutageRun();
         const int count = 300;
         await Gaps.RunAsync("restarted-sender-backlog", async () =>
         {
@@ -275,7 +274,6 @@ public sealed class ThreeRegionFaultE2ETests
         });
     }
 
-    private static void SkipOnFlyUnlessOutageRun() =>
-        Skip.When(Cluster.FlyRequested && !Cluster.FlyMachineFaults,
-            "stops a Fly machine: run it alone on a pinned disposable app with a separate disposable run; no dedicated runner exists (docs/terrabase/replication/31-live-outage-proof.md)");
+    private static void SkipLiveUnlessOutageRun() =>
+        Skip.When(Cluster.FlyRequested, "stops a region: local nodes only; the deploy run never stops a Fly machine");
 }

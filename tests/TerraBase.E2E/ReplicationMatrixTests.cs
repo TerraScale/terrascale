@@ -45,7 +45,7 @@ public sealed class ReplicationMatrixTests
     public async Task Each_region_rejoins_with_writes_and_tombstones_from_both_survivors(string offline, CancellationToken cancellationToken)
     {
         Skip.When(Cluster.FlyRequested,
-            "each parallel outage owns local nodes; live outage proof runs separately on a pinned disposable app with make terrabase-e2e-fly-outage");
+            "each parallel outage owns local nodes; the deploy run never stops a Fly machine");
         await RejoinOwnedAsync(offline, cancellationToken);
     }
 

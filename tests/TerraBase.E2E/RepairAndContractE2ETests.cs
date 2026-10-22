@@ -134,10 +134,9 @@ public sealed class RepairAndContractE2ETests
     // database or its documents back anywhere.
     [Test]
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
-    [Category("fly-outage")]
     public async Task A_database_deleted_while_a_region_is_down_does_not_come_back()
     {
-        SkipOnFlyUnlessOutageRun();
+        SkipLiveUnlessOutageRun();
         await Gaps.RunAsync("deleted-database-stays-deleted", async () =>
         {
             await using var cluster = await Cluster.StartAsync(All);
@@ -327,7 +326,6 @@ public sealed class RepairAndContractE2ETests
         }
     }
 
-    private static void SkipOnFlyUnlessOutageRun() =>
-        Skip.When(Cluster.FlyRequested && !Cluster.FlyMachineFaults,
-            "stops a Fly machine: run it alone on a pinned disposable app with a separate disposable run; no dedicated runner exists (docs/terrabase/replication/31-live-outage-proof.md)");
+    private static void SkipLiveUnlessOutageRun() =>
+        Skip.When(Cluster.FlyRequested, "stops a region: local nodes only; the deploy run never stops a Fly machine");
 }

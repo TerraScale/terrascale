@@ -44,7 +44,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test handoff-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
-	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-replication-matrix terrabase-e2e-local terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
+	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-replication-matrix terrabase-e2e-local terrabase-e2e terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local benchmark-repl-fly
 
 # Global: the whole solution.
@@ -205,18 +205,6 @@ terrabase-e2e: terrabase-build
 	rm -f "$(E2E_RESULTS)"
 	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build $(TEST_ARGS) || status=$$?; \
 	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-local}" || status=1; exit $$status
-
-# Stops each region of the Fly app in one isolated test: run alone, never with terrabase-e2e or other fly-outage tests.
-# It fails unless the run records exactly one test, the all-regions outage proof (FlyOutageE2ETests), as an actual pass on
-# Fly machines: a skip, a second test or a missing result is never live evidence.
-terrabase-e2e-fly-outage: terrabase-build
-	rm -f "$(E2E_RESULTS)"
-	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_FLY_OUTAGE=1 TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --treenode-filter '/*/*/*/*[Category=replication-matrix-fly-outage]' --minimum-expected-tests 1 $(TEST_ARGS) || status=$$?; \
-	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-fly-outage}" || status=1; \
-	jq -se 'length == 1 and (.[0] | .category == "pass" and .nodes == "Fly machines" and .faults == "NodeStop" \
-		and (.test | sub("\\(.*$$"; "")) == "Each_region_machine_stopped_then_started_catches_up_on_writes_tombstones_and_conflicts_from_both_survivors")' \
-		"$(E2E_RESULTS)" > /dev/null \
-		|| { echo "terrabase-e2e-fly-outage: the run is not exactly one actual pass of the all-regions outage proof on Fly machines" >&2; status=1; }; exit $$status
 
 terrabase-check: terrabase-build terrabase-analyzer-check
 	scripts/terrabase/e2e-summary.sh check tests/TerraBase.E2E/COVERAGE.md tests/TerraBase.E2E/RUNS.md
