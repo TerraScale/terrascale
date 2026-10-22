@@ -323,7 +323,7 @@ jobs:
     needs: [changes, main]
     if: >-
       !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      && needs.changes.outputs.main != '[]'
+      && github.ref == 'refs/heads/main' && needs.changes.outputs.main != '[]'
     concurrency:
       group: ${{ github.workflow }}-slow-${{ github.ref_name }}-${{ matrix.area }}
       cancel-in-progress: true
