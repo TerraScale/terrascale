@@ -26,6 +26,19 @@ use crate::client::{SharedClient, SKIP_AUTH_MARKER, SKIP_SESSION_MARKER};
 use crate::error::{Error, ErrorKind, Result};
 use crate::transport::{Method, Request};
 
+/// The one global ts-auth issuer of TerraBase platform tokens. Regional auth
+/// endpoints never change it; there is no trailing slash.
+pub const TERRASCALE_ISSUER: &str = "https://auth.terrascale.tech/terrascale";
+/// The exact TerraBase resource audience; a trailing slash is a different audience.
+pub const TERRABASE_AUDIENCE: &str = "https://api.terrascale.tech";
+/// The only TerraBase scopes. Send a subset joined by single spaces.
+pub const TERRABASE_SCOPES: [&str; 4] = [
+    "databases:read",
+    "databases:write",
+    "documents:read",
+    "documents:write",
+];
+
 const MAX_USER_PAGE_SIZE: u32 = 100;
 const MAX_AUDIT_PAGE_SIZE: u32 = 100;
 const MAX_JWT_TEMPLATE_NAME_BYTES: usize = 48;
