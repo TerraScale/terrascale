@@ -40,7 +40,7 @@ public sealed class ApiKeyService(IHttpClientFactory http, TimeProvider time)
         if (kind is not ("key" or "api-key")) throw new AccountAccessException("Machine clients are not issued by this view.", 503);
         var database = databaseId.Length > 0 ? DatabaseService.Database(context, databaseId) : null;
         var permissions = scopes.Select(scope => scope.Trim()).Select(scope => scope switch { "database:read" => "documents:read", "database:write" => "documents:write", _ => scope }).Distinct(StringComparer.Ordinal).ToArray();
-        if (permissions.Length == 0 || permissions.Any(scope => scope is not ("documents:read" or "documents:write"))) throw new AccountAccessException("Choose read and/or write permission.", 422);
+        if (permissions.Length == 0 || permissions.Any(scope => scope is not ("documents:read" or "documents:write" or "databases:read" or "databases:write"))) throw new AccountAccessException("Choose read and/or write permission.", 422);
         var scope = DatabaseService.Scope(context);
         var result = await Client().CreateProjectApiKeyAsync(context.Session.AccessToken, scope.OrganizationId, scope.ProjectId,
             new(name, permissions, database?.Name), cancellationToken);
@@ -110,11 +110,21 @@ public sealed record ApiKeysPage(TerraScale.Dashboard.Shared.UI.ShellModel Shell
         var scopes = DraftScopes.Split([',', ' ', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries)
             .Select(scope => scope.Replace("documents:", "database:", StringComparison.Ordinal)).Distinct().Order(StringComparer.Ordinal).ToArray();
         var value = string.Join(',', scopes);
-        return value is "database:read" or "database:write" or "database:read,database:write" ? value : "";
+        return value is "database:read" or "database:write" or "database:read,database:write" or Full ? value : "";
     }
     public string DraftDatabaseFor(string kind) => Create == kind ? Context.Project?.Databases.GetValueOrDefault(DraftDatabaseId)?.Name ?? "All project databases (current and future)" : "All project databases (current and future)";
     public string PermissionSignals(string kind) => System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string> { ["_" + kind + "Access"] = AccessFor(kind), ["_" + kind + "Database"] = DraftDatabaseFor(kind) });
-    public static string PermissionSummary(string kind) => "$_" + kind + "Access === 'database:read,database:write' ? 'Can read, create, update, and delete records.' : $_" + kind + "Access === 'database:read' ? 'Can read records. Cannot create, update, or delete them.' : $_" + kind + "Access === 'database:write' ? 'Can create, update, and delete records. Cannot read or query them.' : 'Choose an access level before creating this credential.'";
+    // Documents plus database management: create and delete databases, indexes and saved queries (a seed or migration script).
+    public const string Full = "database:read,database:write,databases:read,databases:write";
+    public static string Summary(string access) => access switch
+    {
+        Full => "Can read and change records, and create and delete databases and indexes.",
+        "database:read,database:write" => "Can read, create, update, and delete records.",
+        "database:read" => "Can read records. Cannot create, update, or delete them.",
+        "database:write" => "Can create, update, and delete records. Cannot read or query them.",
+        _ => "Choose an access level before creating this credential.",
+    };
+    public static string PermissionSummary(string kind) => "$_" + kind + "Access === '" + Full + "' ? '" + Summary(Full) + "' : $_" + kind + "Access === 'database:read,database:write' ? 'Can read, create, update, and delete records.' : $_" + kind + "Access === 'database:read' ? 'Can read records. Cannot create, update, or delete them.' : $_" + kind + "Access === 'database:write' ? 'Can create, update, and delete records. Cannot read or query them.' : 'Choose an access level before creating this credential.'";
     public static (string Label, string Tone, string Icon) CredentialType(ProjectCredential key)
     {
         if (key.Scopes.Contains("*")) return ("Full-access key", "rose", "ShieldAlert");
