@@ -418,7 +418,10 @@ internal sealed partial class SqliteDatabaseStore(
                 return connection.BeginTransaction(deferred: !write);
             }, cancellationToken).ConfigureAwait(false);
             return new SqliteStorageTransaction(
-                this, session, transaction, runner, write, durable, write ? Committed : null, ownsAdmission) { Operation = operation };
+                this, session, transaction, runner, write, durable, write ? Committed : null, ownsAdmission)
+            {
+                Operation = operation,
+            };
         }
         catch (Exception error)
         {
@@ -1160,6 +1163,8 @@ internal sealed partial class SqliteDatabaseStore(
         pool.Discard(session);
     }
 
+    private Task ReturnAsync(SqliteSession session) => io.RunAsync(() => Return(session), CancellationToken.None);
+
     /// <summary>
     /// Closes idle sessions and refuses new ones; a rented session is closed when it is returned.
     /// The engine calls this when the database is deleted and at shutdown.
@@ -1173,6 +1178,9 @@ internal sealed partial class SqliteDatabaseStore(
             ReleaseWriter();
         }
     }
+
+    // The caller holds an admission.
+    private Task<SqliteSession> RentAsync(CancellationToken cancellationToken) => RentAsync(io, cancellationToken);
 
     // Opens a session on runner when none is idle: write transactions open theirs on the write lane.
     private async Task<SqliteSession> RentAsync(SqliteRunner runner, CancellationToken cancellationToken)
