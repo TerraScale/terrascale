@@ -59,6 +59,10 @@ export { ExactDecimal } from "./v1/json.js";
 
 export { staticBaseUrlResolver } from "./v1/transport.js";
 export { V1Databases } from "./v1/catalog.js";
+export { V1SavedQueries } from "./v1/saved-queries.js";
+/** @typedef {import("./v1/saved-queries.js").V1SavedQuery} V1SavedQuery */
+/** @typedef {import("./v1/saved-queries.js").V1SavedQueryRequest} V1SavedQueryRequest */
+/** @typedef {import("./v1/saved-queries.js").V1SavedQueryPage} V1SavedQueryPage */
 /** @typedef {import("./v1/transport.js").TerraBaseV1ClientConfig} TerraBaseClientConfig */
 /** @typedef {import("./v1/transport.js").V1EndpointContext} V1EndpointContext */
 /** @typedef {import("./v1/transport.js").V1EndpointResolver} V1EndpointResolver */
