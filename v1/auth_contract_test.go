@@ -56,7 +56,7 @@ func TestContract401And403AreDistinct(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = c.Database(testProject, "main").Collection("users").Get(t.Context(), "key")
+			_, err = c.Database(testProject, "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FAV")
 			var apiErr *v1.APIError
 			if !errors.As(err, &apiErr) || apiErr.Status != tc.status || !errors.Is(err, tc.code) {
 				t.Fatalf("error = %v", err)
