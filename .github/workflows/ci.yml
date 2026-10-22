@@ -1,11 +1,14 @@
-# Required formatting, build, security, contract/Fast and actual-application packaging (image build and
-# readiness smoke test). images-ghcr.yml publishes main's image for ts-orch; Slow runs independently in slow.yml.
+# Required formatting, build, security, contract/Fast and, on pull requests, actual-application packaging
+# (image build and readiness smoke test) in one job. images-ghcr.yml builds and publishes main's image for
+# ts-orch; Slow runs independently in slow.yml. Markdown-only changes run nothing.
 name: CI
 
 on:
   pull_request:
+    paths-ignore: ["**/*.md"]
   push:
     branches: [main]
+    paths-ignore: ["**/*.md"]
 
 permissions:
   contents: read
@@ -51,32 +54,24 @@ jobs:
           name: fast-results
           path: test-results/tunit/fast.trx
           if-no-files-found: warn
-
-  image:
-    needs: check
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    env:
-      IMAGE: ts-dashboard:${{ github.sha }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+      # Main's image is built and published by images-ghcr.yml; the pull request proved it starts.
+      - if: github.event_name == 'pull_request'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           build-args: SOURCE_REVISION=${{ github.sha }}
-          tags: ${{ env.IMAGE }}
+          tags: ts-dashboard:${{ github.sha }}
           load: true
           push: false
-          # Pull requests read main's layer cache; only main writes it (PR-scoped caches are invisible to other PRs).
+          # Reads main's layer cache, which images-ghcr.yml writes (PR-scoped caches are invisible to other PRs).
           cache-from: type=gha,scope=dashboard-image
-          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=dashboard-image' || '' }}
       # DEMO=true is ready without secrets (README).
       - name: Smoke-test the image's readiness and revision
+        if: github.event_name == 'pull_request'
         run: |
-          docker run -d --name app -e DEMO=true -p 127.0.0.1:8080:8080 "$IMAGE"
+          docker run -d --name app -e DEMO=true -p 127.0.0.1:8080:8080 "ts-dashboard:$GITHUB_SHA"
           for _ in $(seq 60); do curl -fs http://127.0.0.1:8080/health/ready -o ready.json && break; sleep 2; done
           jq -e --arg sha "$GITHUB_SHA" '.status == "ok" and (.version | endswith("+" + $sha))' ready.json \
             || { docker logs app 2>&1 | tail -n 50; exit 1; }

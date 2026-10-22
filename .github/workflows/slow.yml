@@ -1,8 +1,11 @@
-# Independent, non-blocking Slow results receive an issue report on failure.
+# Independent, non-blocking Slow results; a failed main run receives an issue report.
+# Runs on main pushes, on demand, and on pull requests labelled full-ci (terrascale's rule): PR runs
+# held every org job slot. Running-app evidence for a PR: add the label or gh workflow run slow.yml --ref <branch>.
 name: Slow
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
   workflow_dispatch:
@@ -21,6 +24,7 @@ env:
 
 jobs:
   slow:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
