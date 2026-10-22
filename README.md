@@ -13,10 +13,9 @@ exact server revision, local test evidence and remaining qualification gaps.
 All entity IDs are canonical uppercase, 26-character Crockford ULIDs. Use
 `sdk.NewID()` (or `v1.NewID()`) to generate one and `ValidateID` to validate it.
 Generation is concurrency-safe and monotonic within a millisecond. Entity
-IDs reject UUIDs, prefixes and lowercase forms. Caller-supplied document keys
-are opaque UTF-8 strings: 1 to 256 UTF-16 units, without control characters.
-Slashes, punctuation and Unicode are query-encoded once. Generated document
-keys remain canonical ULIDs; an application payload may contain its own `id`.
+IDs reject UUIDs, prefixes and lowercase forms. Document keys use the same
+contract: every document ID is a canonical ULID, sent once as the `id` query
+parameter and rejected otherwise. An application payload may contain its own `id`.
 OAuth client names, database and
 collection names, region/service catalog names, versions and credentials
 remain protocol names or opaque tokens, not entity IDs.
@@ -128,8 +127,8 @@ cause; a server response retains its `*tb.APIError`. Other writes and
 `500 internal_error` are never retried. First-party retry budgets must be fixed
 in code; existing tuning options remain implementation inventory. Public
 database creation is POST and is never replayed after a transient rejection.
-Point document operations use `/documents/by-key?id=…`, with the opaque key
-query-encoded once. Keys never enter path segments.
+Point document operations use `/documents/by-key?id=…`, with the document's
+ULID as the query value. Keys never enter path segments.
 Listing and generated creation use GET and POST `/documents`, respectively.
 The old `/documents/{id}` point routes are removed.
 The pinned server still implements If-Match/ETags and lacks deduplicated PUT,

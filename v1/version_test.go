@@ -127,7 +127,7 @@ func TestWriteOutcomeUnknownIsNeverReplayed(t *testing.T) {
 			if conditional {
 				options = append(options, v1.IfMatch("tbv1-current"))
 			}
-			_, err := users.Put(t.Context(), "key", map[string]any{"n": 1}, options...)
+			_, err := users.Put(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2", map[string]any{"n": 1}, options...)
 			var apiErr *v1.APIError
 			if !errors.Is(err, v1.ErrWriteOutcomeUnknown) || !errors.Is(err, v1.ErrCommitUncertain) || !errors.As(err, &apiErr) {
 				t.Fatalf("uncertain write error = %v", err)
@@ -141,14 +141,14 @@ func TestWriteOutcomeUnknownIsNeverReplayed(t *testing.T) {
 
 func TestCurrentDurabilityAcknowledgements(t *testing.T) {
 	users, db, _ := scriptedUsers(t,
-		scripted{status: http.StatusOK, body: `{"id":"key","version":"tbv1-next","offset":"7","durability":"remote_durable"}`},
-		scripted{status: http.StatusOK, body: `{"offset":"7","durability":"unchanged","results":[{"id":"key","asserted":true}]}`},
+		scripted{status: http.StatusOK, body: `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2","version":"tbv1-next","offset":"7","durability":"remote_durable"}`},
+		scripted{status: http.StatusOK, body: `{"offset":"7","durability":"unchanged","results":[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2","asserted":true}]}`},
 	)
-	written, err := users.Put(t.Context(), "key", map[string]any{"n": 1})
+	written, err := users.Put(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2", map[string]any{"n": 1})
 	if err != nil || written.Durability != v1.RemoteDurable {
 		t.Fatalf("write=%+v error=%v", written, err)
 	}
-	asserted, err := db.Tx().AssertAbsent("users", "key").Commit(t.Context())
+	asserted, err := db.Tx().AssertAbsent("users", "01ARZ3NDEKTSV4RRFFQ69G5FD2").Commit(t.Context())
 	if err != nil || asserted.Durability != v1.Unchanged {
 		t.Fatalf("assertion=%+v error=%v", asserted, err)
 	}

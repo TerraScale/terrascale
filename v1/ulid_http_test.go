@@ -111,17 +111,17 @@ func TestULIDMalformedHTTPResponses(t *testing.T) {
 
 func TestPayloadIDsReachHTTP(t *testing.T) {
 	users, db, transport := scriptedUsers(t,
-		scripted{status: http.StatusOK, body: `{"id":"caller-key","version":"opaque","offset":"1","durability":"local_durable"}`},
-		scripted{status: http.StatusOK, body: `{"id":"caller-key","version":"opaque","offset":"1","durability":"local_durable","document":{"id":null}}`},
-		scripted{status: http.StatusOK, body: `{"offset":"1","durability":"local_durable","results":[{"id":"caller-key","version":"opaque","document":{"id":null}}]}`})
+		scripted{status: http.StatusOK, body: `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD4","version":"opaque","offset":"1","durability":"local_durable"}`},
+		scripted{status: http.StatusOK, body: `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD4","version":"opaque","offset":"1","durability":"local_durable","document":{"id":null}}`},
+		scripted{status: http.StatusOK, body: `{"offset":"1","durability":"local_durable","results":[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD4","version":"opaque","document":{"id":null}}]}`})
 	payload := json.RawMessage(`{"i\u0064":null}`)
-	if _, err := users.Put(t.Context(), "caller-key", payload); err != nil {
+	if _, err := users.Put(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD4", payload); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := users.Patch(t.Context(), "caller-key", v1.Ops(v1.Set("/id", nil))); err != nil {
+	if _, err := users.Patch(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD4", v1.Ops(v1.Set("/id", nil))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Tx().Patch("users", "caller-key", v1.MergePatch(payload)).Commit(t.Context()); err != nil {
+	if _, err := db.Tx().Patch("users", "01ARZ3NDEKTSV4RRFFQ69G5FD4", v1.MergePatch(payload)).Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if len(transport.requests) != 3 {

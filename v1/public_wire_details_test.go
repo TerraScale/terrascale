@@ -18,14 +18,14 @@ func TestSetPatchOperationsAndUnknownOutcome(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				raw, err := io.ReadAll(r.Body)
-				if err != nil || string(raw) != `{"ops":[{"op":"add","path":"/tags","value":"new"},{"op":"remove","path":"/tags","value":"old"}]}` || r.Method != http.MethodPatch || r.URL.Path != parityDatabase+"/collections/users/documents/by-key" || r.URL.Query().Get("id") != "caller/key" || r.Header.Get("Content-Type") != "application/vnd.terrabase.ops+json" {
+				if err != nil || string(raw) != `{"ops":[{"op":"add","path":"/tags","value":"new"},{"op":"remove","path":"/tags","value":"old"}]}` || r.Method != http.MethodPatch || r.URL.Path != parityDatabase+"/collections/users/documents/by-key" || r.URL.Query().Get("id") != "01ARZ3NDEKTSV4RRFFQ69G5FD5" || r.Header.Get("Content-Type") != "application/vnd.terrabase.ops+json" {
 					t.Error("incorrect set patch")
 				}
 				if unknown {
 					w.WriteHeader(http.StatusServiceUnavailable)
 					io.WriteString(w, `{"error":{"code":"write_outcome_unknown","message":"confirmation unknown","region":"gru","machine":"machine-1"}}`)
 				} else {
-					io.WriteString(w, `{"id":"caller/key","version":"opaque","offset":"1","durability":"remote_durable","document":{"tags":["new"]}}`)
+					io.WriteString(w, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD5","version":"opaque","offset":"1","durability":"remote_durable","document":{"tags":["new"]}}`)
 				}
 			}))
 			t.Cleanup(server.Close)
@@ -33,7 +33,7 @@ func TestSetPatchOperationsAndUnknownOutcome(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			out, err := c.Database(parityProject, "main").Collection("users").Patch(t.Context(), "caller/key", tb.Ops(tb.Add("/tags", "new"), tb.Remove("/tags", "old")), tb.IfMatch("opaque"))
+			out, err := c.Database(parityProject, "main").Collection("users").Patch(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD5", tb.Ops(tb.Add("/tags", "new"), tb.Remove("/tags", "old")), tb.IfMatch("opaque"))
 			if unknown {
 				var api *tb.APIError
 				if !errors.As(err, &api) || !errors.Is(err, tb.ErrWriteOutcomeUnknown) || api.Region != "gru" || api.Machine != "machine-1" {
@@ -98,8 +98,8 @@ func TestPublicRecommendationEscapesProducerIdentifier(t *testing.T) {
 }
 
 func TestSchemaValidationErrorPreservesBoundedDetails(t *testing.T) {
-	c := parityClient(t, http.MethodPut, parityDatabase+"/collections/users/documents/by-key", "id=caller%2Fkey", `{"name":1}`, `{"error":{"code":"schema_validation_failed","message":"document does not match schema","details":[{"path":"/name","keyword":"type"}]}}`, http.StatusBadRequest)
-	_, err := c.Database(parityProject, "main").Collection("users").Put(t.Context(), "caller/key", map[string]int{"name": 1})
+	c := parityClient(t, http.MethodPut, parityDatabase+"/collections/users/documents/by-key", "id=01ARZ3NDEKTSV4RRFFQ69G5FD5", `{"name":1}`, `{"error":{"code":"schema_validation_failed","message":"document does not match schema","details":[{"path":"/name","keyword":"type"}]}}`, http.StatusBadRequest)
+	_, err := c.Database(parityProject, "main").Collection("users").Put(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD5", map[string]int{"name": 1})
 	var api *tb.APIError
 	if !errors.As(err, &api) || api.Code != "schema_validation_failed" || len(api.Details) != 1 || api.Details[0].Path != "/name" || api.Details[0].Keyword != "type" {
 		t.Fatalf("validation = %v", err)

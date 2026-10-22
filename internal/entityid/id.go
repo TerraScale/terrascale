@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -29,23 +27,8 @@ func Check(id string) error {
 	return nil
 }
 
-// DocumentKey checks the server's opaque key boundary, counted in UTF-16 units.
-func DocumentKey(key string) error {
-	if key == "" || !utf8.ValidString(key) {
-		return errors.New("document key must be valid UTF-8, 1 to 256 UTF-16 units, without control characters")
-	}
-	units := 0
-	for _, r := range key {
-		units++
-		if r > 0xffff {
-			units++
-		}
-		if unicode.IsControl(r) || units > 256 {
-			return errors.New("document key must be valid UTF-8, 1 to 256 UTF-16 units, without control characters")
-		}
-	}
-	return nil
-}
+// DocumentKey checks a document ID: every document key is a canonical ULID.
+func DocumentKey(key string) error { return Check(key) }
 
 // Model checks explicitly tagged fields of SDK protocol models. Raw JSON,
 // map keys, timestamps and untagged scalar values remain application data.

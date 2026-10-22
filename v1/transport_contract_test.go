@@ -37,10 +37,10 @@ func TestTokenSourceExchangeToPublicAPI(t *testing.T) {
 	t.Cleanup(issuer.Close)
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		if r.Header.Get("Authorization") != "Bearer "+token || r.URL.Path != "/v1/projects/"+testProject+"/databases/main/collections/users/documents/by-key" || r.URL.Query().Get("id") != "a/b" {
+		if r.Header.Get("Authorization") != "Bearer "+token || r.URL.Path != "/v1/projects/"+testProject+"/databases/main/collections/users/documents/by-key" || r.URL.Query().Get("id") != "01ARZ3NDEKTSV4RRFFQ69G5FD2" {
 			t.Error("wrong resource request or credential boundary")
 		}
-		fmt.Fprint(w, `{"id":"a/b","version":"tbv1-fixture","state":"value","document":{"id":"application","n":9007199254740993}}`)
+		fmt.Fprint(w, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2","version":"tbv1-fixture","state":"value","document":{"id":"application","n":9007199254740993}}`)
 	}))
 	t.Cleanup(api.Close)
 	source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Issuer: issuer.URL + "/terrascale", Key: key, Project: testProject, Scopes: []string{tsauth.ScopeDocumentsRead}})
@@ -52,7 +52,7 @@ func TestTokenSourceExchangeToPublicAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		doc, err := c.Database(testProject, "main").Collection("users").Get(t.Context(), "a/b")
+		doc, err := c.Database(testProject, "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2")
 		if err != nil || !strings.Contains(string(doc.Document), "9007199254740993") {
 			t.Fatalf("document=%+v error=%v", doc, err)
 		}
@@ -75,7 +75,7 @@ func TestTokenSourceFailuresDoNotSendOrReportUncertainCommit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = c.Database(testProject, "main").Collection("users").Put(t.Context(), "key", map[string]any{})
+			_, err = c.Database(testProject, "main").Collection("users").Put(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2", map[string]any{})
 			if err == nil || errors.Is(err, v1.ErrCommitUncertain) || tc.err != nil && !errors.Is(err, failure) {
 				t.Fatalf("error=%v", err)
 			}
@@ -119,7 +119,7 @@ func TestTokenSource401RefreshesOnceWithoutPermissionFallback(t *testing.T) {
 					err = e
 				}
 			} else {
-				_, err = db.Collection("users").Get(t.Context(), "key")
+				_, err = db.Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2")
 			}
 			var apiErr *v1.APIError
 			if !errors.Is(err, v1.ErrInvalidKey) || !errors.As(err, &apiErr) || apiErr.RequestID != "final-denial" || hits.Load() != 2 || source.calls != 2 || source.invalidations != 1 {
@@ -152,7 +152,7 @@ func TestUnsupportedScopeAndRevokedCredentialExchangeStopsBeforeResource(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = c.Database(testProject, "main").Collection("users").Get(t.Context(), "key")
+			_, err = c.Database(testProject, "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2")
 			var oauthErr *tsauth.Error
 			if !errors.As(err, &oauthErr) || oauthErr.Code != code || oauthErr.Status != status {
 				t.Fatalf("exchange=%v", err)
@@ -190,7 +190,7 @@ func TestErrorResponsePreservesBodyAndRequestID(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = c.Database(testProject, "main").Collection("users").Get(t.Context(), "key")
+			_, err = c.Database(testProject, "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2")
 			var apiErr *v1.APIError
 			if !errors.As(err, &apiErr) || !errors.Is(err, tc.code) || apiErr.Status != tc.status || string(apiErr.Body) != tc.body || apiErr.RequestID != "fixture-request" || apiErr.ETag != "tombstone" || hits.Load() != 1 {
 				t.Fatalf("error=%+v hits=%d", apiErr, hits.Load())
@@ -200,7 +200,7 @@ func TestErrorResponsePreservesBodyAndRequestID(t *testing.T) {
 }
 
 func TestTypedResponsesRejectEmptyNullAndTrailingValues(t *testing.T) {
-	for _, body := range []string{"", " ", "null", `{} ]`, `{} {}`, `{"id":"key","version":"v","state":"value","document":{}} ]`} {
+	for _, body := range []string{"", " ", "null", `{} ]`, `{} {}`, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2","version":"v","state":"value","document":{}} ]`} {
 		t.Run(fmt.Sprintf("%q", body), func(t *testing.T) {
 			peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }))
 			t.Cleanup(peer.Close)
@@ -208,7 +208,7 @@ func TestTypedResponsesRejectEmptyNullAndTrailingValues(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := c.Database(testProject, "main").Collection("users").Get(t.Context(), "key"); err == nil {
+			if _, err := c.Database(testProject, "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2"); err == nil {
 				t.Fatal("accepted malformed success body")
 			}
 		})
@@ -220,7 +220,7 @@ func TestTypedResponsesRejectEmptyNullAndTrailingValues(t *testing.T) {
 }
 
 func TestSQLRowsRejectMissingNullOrNonobjectValues(t *testing.T) {
-	for _, row := range []string{`{"id":"key"}`, `{"id":"key","value":null}`, `{"id":"key","value":[]}`, `{"id":"key","value":1}`} {
+	for _, row := range []string{`{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2"}`, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2","value":null}`, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2","value":[]}`, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2","value":1}`} {
 		t.Run(row, func(t *testing.T) {
 			peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				fmt.Fprintf(w, `{"matched":1,"truncated":false,"rows":[%s]}`, row)
@@ -247,7 +247,7 @@ func TestCancellationBeforeTokenOrHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.Database(testProject, "main").Collection("users").Put(ctx, "key", map[string]any{})
+	_, err = c.Database(testProject, "main").Collection("users").Put(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FD2", map[string]any{})
 	if !errors.Is(err, context.Canceled) || errors.Is(err, v1.ErrCommitUncertain) {
 		t.Fatalf("cancel=%v", err)
 	}
@@ -262,7 +262,7 @@ func TestPUTRetriesOnlyKnownRejectionsWithCAS(t *testing.T) {
 					t.Error("sent unsupported idempotency key")
 				}
 				body, _ := io.ReadAll(r.Body)
-				if string(body) != `{"n":1}` || r.URL.Query().Get("id") != "client-key" {
+				if string(body) != `{"n":1}` || r.URL.Query().Get("id") != "01ARZ3NDEKTSV4RRFFQ69G5FD4" {
 					t.Error("write identity or body changed")
 				}
 				if hits.Add(1) == 1 {
@@ -271,7 +271,7 @@ func TestPUTRetriesOnlyKnownRejectionsWithCAS(t *testing.T) {
 					fmt.Fprint(w, `{"error":{"code":"rate_limited"}}`)
 					return
 				}
-				fmt.Fprint(w, `{"id":"client-key","version":"new","offset":"1","durability":"local_durable"}`)
+				fmt.Fprint(w, `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD4","version":"new","offset":"1","durability":"local_durable"}`)
 			}))
 			t.Cleanup(peer.Close)
 			c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken})
@@ -282,7 +282,7 @@ func TestPUTRetriesOnlyKnownRejectionsWithCAS(t *testing.T) {
 			if conditional {
 				opts = []v1.WriteOption{v1.IfMatch("old")}
 			}
-			_, err = c.Database(testProject, "main").Collection("users").Put(t.Context(), "client-key", map[string]any{"n": 1}, opts...)
+			_, err = c.Database(testProject, "main").Collection("users").Put(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD4", map[string]any{"n": 1}, opts...)
 			if conditional && (err != nil || hits.Load() != 2) || !conditional && (!errors.Is(err, v1.ErrRateLimited) || hits.Load() != 1) {
 				t.Fatalf("hits=%d error=%v", hits.Load(), err)
 			}

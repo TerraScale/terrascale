@@ -29,7 +29,7 @@ func TestTransactionQuotesOpaqueVersionsAndOmitsZeroFilter(t *testing.T) {
 			t.Error("zero filter must be omitted")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"offset":"1","durability":"local_durable","results":[{"id":"caller-key","version":"opaque","document":{"id":"application"}},{"asserted":true,"count":"0"}]}`))
+		w.Write([]byte(`{"offset":"1","durability":"local_durable","results":[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD3","version":"opaque","document":{"id":"application"}},{"asserted":true,"count":"0"}]}`))
 	}))
 	t.Cleanup(peer.Close)
 	c, err := v1.New(v1.Config{BaseURL: peer.URL, Token: testToken, MaxRetries: -1})
@@ -37,7 +37,7 @@ func TestTransactionQuotesOpaqueVersionsAndOmitsZeroFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	zero := uint64(0)
-	result, err := c.Database(testProject, "main").Tx().Patch("users", "caller-key", v1.MergePatch(map[string]any{"id": "application"}), v1.IfMatch("opaque-version")).AssertCount("users", v1.Filter{}, v1.CountBounds{Lte: &zero}).Commit(t.Context())
+	result, err := c.Database(testProject, "main").Tx().Patch("users", "01ARZ3NDEKTSV4RRFFQ69G5FD3", v1.MergePatch(map[string]any{"id": "application"}), v1.IfMatch("opaque-version")).AssertCount("users", v1.Filter{}, v1.CountBounds{Lte: &zero}).Commit(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestTransactionRejectsMissingAndExtraAssertionResults(t *testing.T) {
 	for _, body := range []string{`{"offset":"1","durability":"local_durable","results":[]}`, `{"offset":"1","durability":"local_durable","results":[{"asserted":true},{"asserted":true}]}`} {
 		t.Run(body, func(t *testing.T) {
 			_, db, _ := scriptedUsers(t, scripted{status: http.StatusOK, body: body})
-			if _, err := db.Tx().AssertAbsent("users", "caller-key").Commit(t.Context()); err == nil {
+			if _, err := db.Tx().AssertAbsent("users", "01ARZ3NDEKTSV4RRFFQ69G5FD3").Commit(t.Context()); err == nil {
 				t.Fatal("accepted mismatched transaction results")
 			}
 		})
@@ -83,7 +83,7 @@ func TestRequiredDocumentResponseMembers(t *testing.T) {
 		for _, field := range fields {
 			for _, null := range []bool{false, true} {
 				t.Run(operation+"/"+field+fmt.Sprint("/null=", null), func(t *testing.T) {
-					body := map[string]any{"id": testProject, "version": "opaque", "state": "value", "document": map[string]any{}, "offset": "1", "durability": "local_durable", "results": []any{map[string]any{"id": "caller-key", "version": "opaque"}}, "name": "users", "created_at": "1"}
+					body := map[string]any{"id": testProject, "version": "opaque", "state": "value", "document": map[string]any{}, "offset": "1", "durability": "local_durable", "results": []any{map[string]any{"id": "01ARZ3NDEKTSV4RRFFQ69G5FD3", "version": "opaque"}}, "name": "users", "created_at": "1"}
 					if null {
 						body[field] = nil
 					} else {
@@ -96,11 +96,11 @@ func TestRequiredDocumentResponseMembers(t *testing.T) {
 					users, db, _ := scriptedUsers(t, scripted{status: http.StatusOK, body: string(raw)})
 					switch operation {
 					case "get":
-						_, err = users.Get(t.Context(), "caller-key")
+						_, err = users.Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD3")
 					case "put":
-						_, err = users.Put(t.Context(), "caller-key", map[string]any{})
+						_, err = users.Put(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD3", map[string]any{})
 					case "tx":
-						_, err = db.Tx().Put("users", "caller-key", map[string]any{}).Commit(t.Context())
+						_, err = db.Tx().Put("users", "01ARZ3NDEKTSV4RRFFQ69G5FD3", map[string]any{}).Commit(t.Context())
 					case "collection":
 						_, err = users.Info(t.Context())
 					}
@@ -142,7 +142,7 @@ func TestPatchResponsesRequireStoredObject(t *testing.T) {
 	for _, raw := range []string{"", "null", "[]", `"text"`, "1", "true", " {} "} {
 		for _, transaction := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%q/transaction=%v", raw, transaction), func(t *testing.T) {
-				row := `{"id":"caller-key","version":"opaque"`
+				row := `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD3","version":"opaque"`
 				if raw != "" {
 					row += `,"document":` + raw
 				}
@@ -155,9 +155,9 @@ func TestPatchResponsesRequireStoredObject(t *testing.T) {
 				users, db, transport := scriptedUsers(t, scripted{status: http.StatusOK, body: body})
 				var err error
 				if transaction {
-					_, err = db.Tx().Patch("users", "caller-key", v1.MergePatch(map[string]any{}), v1.IfMatch("opaque")).Commit(t.Context())
+					_, err = db.Tx().Patch("users", "01ARZ3NDEKTSV4RRFFQ69G5FD3", v1.MergePatch(map[string]any{}), v1.IfMatch("opaque")).Commit(t.Context())
 				} else {
-					_, err = users.Patch(t.Context(), "caller-key", v1.MergePatch(map[string]any{}), v1.IfMatch("opaque"))
+					_, err = users.Patch(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD3", v1.MergePatch(map[string]any{}), v1.IfMatch("opaque"))
 				}
 				if (err == nil) != (raw == " {} ") {
 					t.Fatalf("stored document %q: %v", raw, err)

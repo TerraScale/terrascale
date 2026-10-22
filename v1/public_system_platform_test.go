@@ -72,7 +72,7 @@ func TestAnonymousPublicProbes(t *testing.T) {
 }
 
 func TestPublicPlatformExploreContracts(t *testing.T) {
-	const document = `{"id":"customer/a%2Fb+ café","version":"tbv2-opaque","state":"value","document":{"token":"[redacted]","count":9007199254740993}}`
+	const document = `{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD6","version":"tbv2-opaque","state":"value","document":{"token":"[redacted]","count":9007199254740993}}`
 	for _, endpoint := range []string{"databases", "collections", "documents", "point"} {
 		t.Run(endpoint, func(t *testing.T) {
 			path, query, reply := "/v1/platform/databases", "", `{"items":[{"name":"ts-auth","id":"`+parityID+`","homeRegion":"gru","replicaRegions":["sjc"]}]}`
@@ -82,7 +82,7 @@ func TestPublicPlatformExploreContracts(t *testing.T) {
 			case "documents":
 				path, query, reply = path+"/ts-auth/collections/users/documents", "cursor=opaque%2B%2F%3D&limit=2", `{"items":[`+document+`],"next_cursor":"next"}`
 			case "point":
-				path, query, reply = path+"/ts-auth/collections/users/documents/by-key", "id=customer%2Fa%252Fb%2B+caf%C3%A9", document
+				path, query, reply = path+"/ts-auth/collections/users/documents/by-key", "id=01ARZ3NDEKTSV4RRFFQ69G5FD6", document
 			}
 			c := parityClient(t, http.MethodGet, path, query, "", reply, http.StatusOK)
 			switch endpoint {
@@ -98,12 +98,12 @@ func TestPublicPlatformExploreContracts(t *testing.T) {
 				}
 			case "documents":
 				out, err := c.PlatformDocuments(t.Context(), "ts-auth", "users", tb.ListOptions{Limit: 2, Cursor: "opaque+/="})
-				if err != nil || out.Items[0].ID != "customer/a%2Fb+ café" || out.NextCursor != "next" {
+				if err != nil || out.Items[0].ID != "01ARZ3NDEKTSV4RRFFQ69G5FD6" || out.NextCursor != "next" {
 					t.Fatalf("documents = %+v, %v", out, err)
 				}
 			case "point":
-				out, err := c.PlatformDocument(t.Context(), "ts-auth", "users", "customer/a%2Fb+ café")
-				if err != nil || out.ID != "customer/a%2Fb+ café" || string(out.Document) != `{"token":"[redacted]","count":9007199254740993}` {
+				out, err := c.PlatformDocument(t.Context(), "ts-auth", "users", "01ARZ3NDEKTSV4RRFFQ69G5FD6")
+				if err != nil || out.ID != "01ARZ3NDEKTSV4RRFFQ69G5FD6" || string(out.Document) != `{"token":"[redacted]","count":9007199254740993}` {
 					t.Fatalf("document = %+v, %v", out, err)
 				}
 			}
