@@ -21,7 +21,7 @@ namespace TerraScale.Dashboard.E2E;
 
 // An external, test-only HTTP producer for the production state adapter and
 // unmodified official Documents SDK. The producer-seeded platform database is
-// fixture-owned; this does not qualify Fly secret delivery or a live deployment.
+// fixture-owned; this does not qualify OCI Vault secret delivery or a live deployment.
 public sealed class StateSdkScenario : IAsyncDisposable
 {
     private readonly string root;
@@ -165,7 +165,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var uri = request.RequestUri!;
-            // Off Fly, Development reaches TerraBase's private listener on loopback port 8081: cleartext HTTP/2 with the peer credential.
+            // Development reaches TerraBase's private listener on loopback port 8081: cleartext HTTP/2 with the peer credential.
             var stateRequest = uri.Host == "127.0.0.1" && uri.Port == 8081;
             if (!stateRequest && request.Headers.Contains(TerraBasePeerCredential.Header))
             {
@@ -198,7 +198,7 @@ public sealed class StateSdkScenario : IAsyncDisposable
         public async Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken)
         {
             var value = await underlying.ReadAsync(cancellationToken);
-            if (protocol.Mode == "fly-secrets-unavailable") throw new IOException("The test-only secret delivery is unavailable.");
+            if (protocol.Mode == "secret-delivery-unavailable") throw new IOException("The test-only secret delivery is unavailable.");
             if (protocol.Mode == "invalid-auth-client-secret") value = value with { AuthClientSecret = "" };
             if (protocol.Mode == "invalid-session-key") value = value with { SessionEncryptionKey = "invalid" };
             if (protocol.Mode == "invalid-peer-secret") value = value with { TerraBasePeerSecret = value.TerraBasePeerSecret[..63] + "g" };

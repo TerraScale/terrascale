@@ -76,14 +76,11 @@ public static class DashboardApplication
         configureTestHost?.Invoke(builder);
         var app = builder.Build();
 
-        // Off Fly a TLS edge on the same host proxies over loopback. Only loopback peers (the default known
+        // ts-orch's TLS edge on the same host proxies over loopback. Only loopback peers (the default known
         // proxies) may set the scheme and client IP; a browser's own forwarding headers never reach past the edge.
         app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto });
         app.Use(async (context, next) =>
         {
-            // Fly forces HTTPS at the edge. Infer deployment from its vendor-owned identity,
-            // never from a browser-supplied forwarding header or a cookie-security switch.
-            if (Environment.GetEnvironmentVariable("FLY_APP_NAME") is not null) context.Request.Scheme = "https";
             var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
             context.Items["nonce"] = nonce;
             context.Response.Headers.XContentTypeOptions = "nosniff";
@@ -152,7 +149,7 @@ public static class DashboardApplication
         app.MapGet("/health/ready", async (IDashboardState state, CancellationToken cancellationToken) =>
         {
             await state.CheckReadyAsync(cancellationToken);
-            return Results.Json(new { status = "ok", version = BuildVersion, region = Environment.GetEnvironmentVariable("FLY_REGION") });
+            return Results.Json(new { status = "ok", version = BuildVersion });
         });
         app.MapAuth();
         app.MapAccountFeatures();

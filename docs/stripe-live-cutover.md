@@ -1,8 +1,8 @@
 # Stripe live cutover — TS-709
 
 The [zero-configuration contract](zero-configuration.md) requires billing to be
-always available. Production runtime secrets are Fly secrets on each Fly app,
-delivered as environment variables; CI secrets are GitHub Actions secrets. The
+always available. Production runtime secrets come from OCI Vault through ts-orch
+using instance principal, delivered as protected files; CI secrets are GitHub Actions secrets. The
 complete inventory lives in the terrascale repository under `ops/secrets/`.
 This document retains the authorization, data-integrity and financial
 acceptance boundaries; it does not introduce a billing enable switch.
@@ -10,49 +10,27 @@ The production binary has no demo or billing mode switches. Preparation alone do
 
 ## Verify the serving target
 
-The production Fly app is `ts-dashboard` (`fly.toml`). The C# application's
-fixed public origin is `https://dash.terrascale.tech` (`StripeBilling.Origin`);
-the webhook is `https://dash.terrascale.tech/api/v1/billing/stripe/webhook`.
-Verify the app, serving Machine, release, secret names/digests, readiness and
-native login immediately before any change:
+The production dashboard runs on OCI gru under ts-orch. Its fixed public origin
+is `https://dash.terrascale.tech` (`StripeBilling.Origin`); the webhook is
+`https://dash.terrascale.tech/api/v1/billing/stripe/webhook`.
+Verify the serving release, readiness and native login immediately before a change:
 
 ```sh
-fly status -a ts-dashboard
-fly releases -a ts-dashboard
-fly secrets list -a ts-dashboard
+curl -fsS https://dash.terrascale.tech/health/ready
 curl -fsS https://dash.terrascale.tech/readyz
 scripts/smoke-native-login.sh https://dash.terrascale.tech
 ```
 
-The greenfield rebuild removed the old dashboard machine. The rollout creates
-one machine in each of gru, sjc and fra and checks the tested commit and region
-from `/health/ready`. State is in TerraBase, never a dashboard volume.
+Record the source revision and OCI Vault secret version identifiers, never values.
+State stays in TerraBase, database provisioning belongs to TerraBase startup,
+and identity bootstrap belongs to ts-auth. See [OCI deployment](oci-deployment.md).
 
-Historical (Go application on `https://dash.terrascale.tech`): read-only
-inspection on 2026-10-09 at 07:10 UTC found Machine
-`d8d96000b74e78` started in `gru` on completed release `v135`, with its check
-passing. Readiness, native password login and email-code pages returned `200`;
-the login pages retain CSRF controls. Actual authentication was not exercised.
-That 2026-10-09 inspection found ten deployed `Payments__Stripe__*` secrets,
-but no `STRIPE_*` or `DASHBOARD_PUBLIC_ORIGIN` settings. The Go application ignored those legacy
-names, so that inspection found billing unconfigured. Do not add compatibility
-aliases; the current Fly-secret contract is documented in
-[`identity-descriptor.md`](identity-descriptor.md).
+## OCI Vault secrets and provider verification
 
-Record Machine/release IDs and Fly secret names/digests in the ticket. Never
-record credential values. Database provisioning belongs to TerraBase startup;
-identity bootstrap belongs to ts-auth. Do not touch Forgejo, ts-ops or
-homelab hosts.
-
-## Fly secrets and provider verification
-
-The vendor-issued Stripe account key and endpoint-specific signing secret are
-`STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` Fly secrets on `ts-dashboard`.
-Fly injects them into the application as environment variables. There is no
-identity file or external vault. CI credentials belong in GitHub Actions
-secrets. Use the terrascale `ops/secrets/` inventory; never assemble dotenv
-files or record secret values. This documentation does not provision secrets.
-See [identity-descriptor.md](identity-descriptor.md) for formats and ownership.
+`STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` arrive through ts-orch's OCI Vault
+delivery as files named by `<NAME>_FILE`. CI credentials belong in GitHub Actions
+secrets. Never assemble dotenv files or record secret values. This documentation
+does not provision secrets; see [identity-descriptor.md](identity-descriptor.md).
 
 Verify account authorization, restricted-key permissions, six distinct recurring
 prices, matching live products, the production webhook URL/API version/events
@@ -114,7 +92,7 @@ Verified Stripe sandbox deliveries remain required before live approval.
 ## Production acceptance
 
 Deploy the reviewed runtime through its normal quality and integrity gates.
-Fly secrets must deliver the verified runtime credentials automatically; manual
+OCI Vault delivery must supply the verified runtime credentials automatically; manual
 secret import and demo-switch recipes are retired. Existing delivery and switch paths
 remain runtime gaps, so this document cannot certify a completed cutover.
 

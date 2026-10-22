@@ -70,7 +70,7 @@ public sealed class DemoModeJourneyTests(DashboardRootFixture fixture)
         start.ArgumentList.Add(application);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TS_", StringComparison.Ordinal) ||
-                     name.StartsWith("STRIPE_", StringComparison.Ordinal) || name.StartsWith("FLY_", StringComparison.Ordinal) ||
+                     name.StartsWith("STRIPE_", StringComparison.Ordinal) ||
                      name.StartsWith("ASPNETCORE_", StringComparison.Ordinal) || name == "DEMO").ToArray())
             start.Environment.Remove(name);
         if (demo is not null) start.Environment["DEMO"] = demo;

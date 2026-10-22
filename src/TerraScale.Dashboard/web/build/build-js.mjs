@@ -254,7 +254,7 @@ async function build() {
 }
 
 // Brotli at quality 11 is too slow to run per request but shrinks the Monaco
-// core by a fifth over the server's on-the-fly compression.
+// core by a fifth over the server's dynamic compression.
 const compress = promisify(brotliCompress);
 async function precompress(file) {
   const compressed = await compress(file.contents, {

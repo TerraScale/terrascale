@@ -5,12 +5,13 @@ claim that the current runtime or deployed fleet already implements it.
 
 - Every feature is always available and every region serves automatically.
   There are no feature flags, region activation steps, deploy toggles or kill switches.
-- Everything runs on Fly.io. Nodes join Fly's private network, reach TerraBase
-  through `.internal` DNS and infer their region from `FLY_REGION`.
-- Fly secrets are the only secret store and arrive as environment variables.
-  Vendor-issued credentials (Stripe) are set once with `fly secrets set`;
-  nobody copies them into code or config. The dashboard's names and formats are
-  in [identity-descriptor.md](identity-descriptor.md).
+- The dashboard runs on OCI gru under ts-orch, behind its loopback TLS edge.
+  TerraBase's private listener comes from `TS_DASHBOARD_TERRABASE_URL` in the
+  ts-orch service spec; no provider metadata or private DNS fallback is used.
+- Production secrets come from OCI Vault through ts-orch using instance principal
+  and arrive as protected files named by `<NAME>_FILE`. CI secrets stay in GitHub
+  Actions secrets. Nobody copies secret values into code or config; names and
+  formats are in [identity-descriptor.md](identity-descriptor.md).
 - Each value has one correct setting in code. Production exposes no tuning
   knobs. Fakes, demo stores and authentication bypasses belong only in test
   code and test binaries, except the user-authorized `DEMO=true` public demo
