@@ -29,6 +29,8 @@ public sealed class RebuildFaultSafetyTests
             services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) => checkpoint?.Invoke(step, database)));
         var (database, store) = await CreateAsync(api);
         var faults = api.Server.Services.GetRequiredService<IReplicaCopyFaults>();
+        // Admit forensic inspection while SYSTEM is healthy; its first read follows the native commit below.
+        await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         Task? recording = null;
         checkpoint = (step, marked) =>
         {
@@ -46,7 +48,6 @@ public sealed class RebuildFaultSafetyTests
         await Assert.That(recording).IsNotNull();
         await recording!;
         await Assert.That(await faults.RefusedAsync(database, store.Incarnation, CancellationToken.None)).IsTrue();
-        await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         await Assert.That(await read.GetAsync("items", "landed", CancellationToken.None)).IsNotNull()
             .Because("the native commit landed, but the damaged copy must acknowledge no success or replay");
     }
@@ -62,6 +63,8 @@ public sealed class RebuildFaultSafetyTests
             services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) => checkpoint?.Invoke(step, database)));
         var (database, store) = await CreateAsync(api);
         var faults = api.Server.Services.GetRequiredService<IReplicaCopyFaults>();
+        // A new operation must not write an intent to SYSTEM after the injected node fault.
+        await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         var reset = false;
         Task? recording = null;
         checkpoint = (step, marked) =>
@@ -87,7 +90,6 @@ public sealed class RebuildFaultSafetyTests
             await recording;
         }
         await Assert.That(await faults.RefusedAsync(database, store.Incarnation, CancellationToken.None)).IsTrue();
-        await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         await Assert.That(await read.GetAsync("items", "landed", CancellationToken.None)).IsNotNull();
     }
 

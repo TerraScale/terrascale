@@ -29,6 +29,8 @@ internal sealed partial class SqliteStorageTransaction(
     bool ownsAdmission)
     : IStorageTransaction
 {
+    internal SqliteDatabaseStore.CopyOperation? Operation { get; init; }
+
     // Bounds one commit's written bytes, every repeated write and its framing included.
     private const long MaxWrittenBytes = 7 * 1024 * 1024;
     private const int MaxDocumentBytes = DocumentJson.MaxBytes;
@@ -1540,6 +1542,7 @@ internal sealed partial class SqliteStorageTransaction(
                 // Still admitted until pooled or closed, including an eviction checkpoint.
                 store.Return(session);
             }, CancellationToken.None).ConfigureAwait(false);
+            Operation?.Complete();
         }
         finally
         {
@@ -1555,7 +1558,7 @@ internal sealed partial class SqliteStorageTransaction(
             {
                 try
                 {
-                    store.End(write, ownsAdmission);
+                    await store.EndAsync(write, ownsAdmission, Operation).ConfigureAwait(false);
                 }
                 finally
                 {

@@ -353,10 +353,11 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
 
         List<SideRow> rows = [];
         var bytes = 0L;
+        var documents = DocumentBytes(connection, keys.Select(key => (key.Collection, key.Id)), cancellationToken);
         foreach (var (collection, id, state) in keys)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var size = Encoding.UTF8.GetByteCount(collection) + Encoding.UTF8.GetByteCount(id) + state + DocumentBytes(connection, collection, id);
+            var size = Encoding.UTF8.GetByteCount(collection) + Encoding.UTF8.GetByteCount(id) + state + documents[(collection, id)];
             if (rows.Count > 0 && bytes + size > maxBytes)
             {
                 break;
@@ -442,11 +443,12 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
         using var connection = Working(workingPath);
         using var snapshot = connection.BeginTransaction(deferred: true);
         List<RepairState> states = [];
+        var documents = DocumentBytes(connection, rows.Select(row => (row.Collection, row.Id)), cancellationToken);
         foreach (var row in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var keyBytes = Encoding.UTF8.GetByteCount(row.Collection) + Encoding.UTF8.GetByteCount(row.Id);
-            var documentBytes = DocumentBytes(connection, row.Collection, row.Id);
+            var documentBytes = documents[(row.Collection, row.Id)];
             // Hash affinity permits BLOBs: reject them before any getter can allocate their unmeasured payload.
             using (var preflight = connection.CreateCommand())
             {
@@ -518,9 +520,41 @@ internal sealed partial class SqliteStorageEngine : IRebuildStorage
         }
     }
 
-    // The bytes of the document a stored state was written with, without reading it.
-    private static long DocumentBytes(SqliteConnection connection, string collection, string id) =>
-        DocumentQuery(connection, collection, id, "octet_length(body)", "octet_length(doc)") is long bytes ? bytes : 0;
+    // Measure a bounded page without reading bodies or preparing two queries for every key.
+    private static Dictionary<(string Collection, string Id), long> DocumentBytes(
+        SqliteConnection connection, IEnumerable<(string Collection, string Id)> keys, CancellationToken cancellationToken)
+    {
+        Dictionary<(string Collection, string Id), long> lengths = [];
+        foreach (var collection in keys.GroupBy(key => key.Collection, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = $table;";
+            command.Parameters.AddWithValue("$table", collection.Key);
+            var table = command.ExecuteScalar() is not null;
+            command.Parameters.Clear();
+            command.Parameters.AddWithValue("$collection", collection.Key);
+            var values = string.Join(",", collection.Select((key, index) =>
+            {
+                var parameter = "$id" + index;
+                command.Parameters.AddWithValue(parameter, key.Id);
+                return "(" + parameter + ")";
+            }));
+            var loser = "(SELECT octet_length(body) FROM _tb_unique_conflicts WHERE collection = $collection AND id = ids.id)";
+            var length = table
+                ? $"coalesce({loser}, (SELECT octet_length(doc) FROM {SqliteStorageTransaction.Table(collection.Key)} WHERE id = ids.id))"
+                : loser;
+            command.CommandText = $"WITH ids(id) AS (VALUES {values}) SELECT ids.id, {length} FROM ids;";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                lengths[(collection.Key, reader.GetString(0))] = reader.IsDBNull(1) ? 0 : reader.GetInt64(1);
+            }
+        }
+
+        return lengths;
+    }
 
     // The document a stored state was written with: a hidden uniqueness loser's body, else its collection row.
     private static byte[] Document(SqliteConnection connection, string collection, string id) =>

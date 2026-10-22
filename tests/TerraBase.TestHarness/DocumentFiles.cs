@@ -17,6 +17,15 @@ public static class DocumentFiles
         using var meter = new Meter("TerraBase.Testing.DocumentFiles");
         await using var io = new SqliteIoPool(1, 1, meter);
         var system = Path.GetFileName(path) == "_system.db";
+        if (system)
+        {
+            // A current-format catalog has its node-local operation journal published first.
+            var journal = Path.Combine(Path.GetDirectoryName(path)!, SqliteStorageEngine.IntentName + ".db");
+            if (!File.Exists(journal))
+            {
+                await SqliteDatabaseStore.InitializeAsync("_system", journal, io, string.Empty, CancellationToken.None);
+            }
+        }
         // The name chooses the schema the file bootstraps: the system database keeps its documents in one table.
         await SqliteDatabaseStore.InitializeAsync(system ? "_system" : "fixture", path, io, string.Empty, CancellationToken.None);
         // Built, never interpolated: a path may contain ';' or quotes.

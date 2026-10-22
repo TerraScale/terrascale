@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -11,13 +12,14 @@ using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.TerraBase;
+using Turso.Data.Sqlite;
 
 namespace TerraScale.Authentication.Fast.Store;
 
 /// <summary>
 /// No startup order between ts-auth and TerraBase: ts-auth starts without TerraBase, answers 503 on <c>/readyz</c>, and
 /// becomes ready by itself once TerraBase serves and startup provisions the issuer's first signing key; a TerraBase
-/// clean shutdown and restart keeps existing keys. An unclean copy awaits certified recovery and keeps auth unready.
+/// clean shutdown and idle crash keep existing keys. An uncertain copy awaits certified recovery and keeps auth unready.
 /// Each test owns its TerraBase
 /// process (the one built from this commit), so it can stop it.
 /// </summary>
@@ -120,6 +122,8 @@ public sealed class StorageRecoveryTests
         await Assert.That(keys.Items.Count).IsEqualTo(1);
 
         await terrabase.StopAsync();
+        // Model death after durable intent publication, before trusted operation retirement.
+        await LeaveInterruptedIntentAsync(terrabase, tenant.Organization.Id, tenant.Project.Id, created.Id);
         var image = await terrabase.SnapshotDatabaseFilesAsync(tenant.Organization.Id, tenant.Project.Id, created.Id);
         await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", Recovery)).IsTrue();
         await terrabase.RestartAsync();
@@ -173,6 +177,52 @@ public sealed class StorageRecoveryTests
     {
         var jwks = await auth.Client.GetFromJsonAsync<JsonElement>($"/{OidcIssuer.Slug}/.well-known/jwks.json");
         return jwks.GetProperty("keys").EnumerateArray().Single().GetProperty("kid").GetString()!;
+    }
+
+    private static async Task LeaveInterruptedIntentAsync(TerraBaseTestServer server, string organization, string project, string database)
+    {
+        var root = server.StoppedDataDirectory;
+        var identity = await File.ReadAllBytesAsync(Path.Combine(root, ".terrabase.replica"));
+        if (identity.Length != 44 || identity[0] != 2 || identity[7] != 0)
+        {
+            throw new InvalidOperationException("The fixture needs the killed process's running replica identity.");
+        }
+
+        var replica = ((ulong)BinaryPrimitives.ReadUInt32LittleEndian(identity.AsSpan(1)) << 16)
+            | BinaryPrimitives.ReadUInt16LittleEndian(identity.AsSpan(5));
+        await using var tenant = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(root, organization, project, database + ".db"),
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        await tenant.OpenAsync();
+        await using var read = tenant.CreateCommand();
+        read.CommandText = "SELECT incarnation FROM commit_offset WHERE id = 1;";
+        var incarnation = (string)(await read.ExecuteScalarAsync() ?? throw new InvalidOperationException("The fixture copy has no incarnation."));
+
+        await using var journal = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(root, "_intents.db"),
+            Mode = SqliteOpenMode.ReadWrite,
+            Pooling = false,
+        }.ToString());
+        await journal.OpenAsync();
+        await using var write = journal.CreateCommand();
+        write.CommandText = "PRAGMA synchronous = FULL;";
+        _ = await write.ExecuteNonQueryAsync();
+        write.CommandText = """
+            INSERT INTO _tb_write_intent (organization, project, database, incarnation, replica)
+            VALUES ($organization, $project, $database, $incarnation, $replica)
+            ON CONFLICT (organization, project, database) DO UPDATE
+                SET incarnation = excluded.incarnation, replica = excluded.replica;
+            """;
+        write.Parameters.AddWithValue("$organization", organization);
+        write.Parameters.AddWithValue("$project", project);
+        write.Parameters.AddWithValue("$database", database);
+        write.Parameters.AddWithValue("$incarnation", incarnation);
+        write.Parameters.AddWithValue("$replica", unchecked((long)replica));
+        _ = await write.ExecuteNonQueryAsync();
     }
 
     private static Task<AuthTestServer> StartAuthAsync(TerraBaseTestServer terrabase, TerraBaseTestTenant tenant, string? serviceClients = null, bool provision = false) =>

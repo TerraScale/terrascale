@@ -1,0 +1,216 @@
+{
+  "a": "528d775dd9577e342afe2111a865304276606477",
+  "b": "9b62cdc26fe4e455ed3a48ee05d33c260604df95",
+  "docs": 100000,
+  "repeats": 3,
+  "host": "mariogk-dev",
+  "scope": "Two real Kestrel hosts in one process; recovery-only samples exclude setup and full verification; all six certified with matching exact document digests.",
+  "samples": [
+    {
+      "variant": "a",
+      "repeat": 1,
+      "artifact": "a-100000-1.json",
+      "sha256": "5f7d9b751165531f00d834d7d24f5d29b05188881510ccd8239ef6cfc237d4df",
+      "result": {
+        "host": "mariogk-dev",
+        "scope": "two real Kestrel hosts in one process; sampled RSS, managed memory and allocations include both; setup and full verification excluded",
+        "docs": 100000,
+        "total_seconds": 678.6352202,
+        "rebuild_seconds": 678.607416,
+        "refill_seconds": 348.8454268,
+        "post_completion_write_visible_seconds": 0.064467,
+        "sampled_process_peak_rss_bytes": 937447424,
+        "sampled_process_peak_managed_bytes": 141753936,
+        "process_allocated_bytes": 34301178296,
+        "document_digest": "df592804e04cac9581a26e97afd594777e95ed2afb980e6147f516acf73c6494",
+        "certified": true
+      }
+    },
+    {
+      "variant": "a",
+      "repeat": 2,
+      "artifact": "a-100000-2.json",
+      "sha256": "b751850870cc0d0f536a728348f527d9f533a12884cc3a66ea260596ddf15d3b",
+      "result": {
+        "host": "mariogk-dev",
+        "scope": "two real Kestrel hosts in one process; sampled RSS, managed memory and allocations include both; setup and full verification excluded",
+        "docs": 100000,
+        "total_seconds": 690.6750548,
+        "rebuild_seconds": 690.6489539,
+        "refill_seconds": 358.1520071,
+        "post_completion_write_visible_seconds": 0.1197302,
+        "sampled_process_peak_rss_bytes": 952676352,
+        "sampled_process_peak_managed_bytes": 140514336,
+        "process_allocated_bytes": 34345044672,
+        "document_digest": "df592804e04cac9581a26e97afd594777e95ed2afb980e6147f516acf73c6494",
+        "certified": true
+      }
+    },
+    {
+      "variant": "a",
+      "repeat": 3,
+      "artifact": "a-100000-3.json",
+      "sha256": "8bb0b65fd0ba312d4d853c2429f2b828eea7bc10be5f79c74a67f5af6e595e15",
+      "result": {
+        "host": "mariogk-dev",
+        "scope": "two real Kestrel hosts in one process; sampled RSS, managed memory and allocations include both; setup and full verification excluded",
+        "docs": 100000,
+        "total_seconds": 672.8142905,
+        "rebuild_seconds": 672.7851558,
+        "refill_seconds": 356.9662907,
+        "post_completion_write_visible_seconds": 0.1007844,
+        "sampled_process_peak_rss_bytes": 979177472,
+        "sampled_process_peak_managed_bytes": 145881968,
+        "process_allocated_bytes": 34283015336,
+        "document_digest": "df592804e04cac9581a26e97afd594777e95ed2afb980e6147f516acf73c6494",
+        "certified": true
+      }
+    },
+    {
+      "variant": "b",
+      "repeat": 1,
+      "artifact": "b-100000-1.json",
+      "sha256": "fa252d7962951aa146ade6f3024b59f246fb347b629d2eae004b5501684a2a4c",
+      "result": {
+        "host": "mariogk-dev",
+        "scope": "two real Kestrel hosts in one process; sampled RSS, managed memory and allocations include both; setup and full verification excluded",
+        "docs": 100000,
+        "total_seconds": 635.8858378,
+        "rebuild_seconds": 635.860573,
+        "refill_seconds": 351.0084438,
+        "post_completion_write_visible_seconds": 0.0592344,
+        "sampled_process_peak_rss_bytes": 916639744,
+        "sampled_process_peak_managed_bytes": 141106992,
+        "process_allocated_bytes": 36837915968,
+        "document_digest": "df592804e04cac9581a26e97afd594777e95ed2afb980e6147f516acf73c6494",
+        "certified": true
+      }
+    },
+    {
+      "variant": "b",
+      "repeat": 2,
+      "artifact": "b-100000-2.json",
+      "sha256": "67c427e9e7cae2adf7d8802d3a5f50b8829fb3c6bc93aa4405f5c24d22b88e3f",
+      "result": {
+        "host": "mariogk-dev",
+        "scope": "two real Kestrel hosts in one process; sampled RSS, managed memory and allocations include both; setup and full verification excluded",
+        "docs": 100000,
+        "total_seconds": 648.3831511,
+        "rebuild_seconds": 648.3579877,
+        "refill_seconds": 360.2789511,
+        "post_completion_write_visible_seconds": 0.0907107,
+        "sampled_process_peak_rss_bytes": 923590656,
+        "sampled_process_peak_managed_bytes": 143503552,
+        "process_allocated_bytes": 36876348808,
+        "document_digest": "df592804e04cac9581a26e97afd594777e95ed2afb980e6147f516acf73c6494",
+        "certified": true
+      }
+    },
+    {
+      "variant": "b",
+      "repeat": 3,
+      "artifact": "b-100000-3.json",
+      "sha256": "3b966c4b27b59992fce8b34dccce86e04c1f8ffd509ea2df09d28706ca08167b",
+      "result": {
+        "host": "mariogk-dev",
+        "scope": "two real Kestrel hosts in one process; sampled RSS, managed memory and allocations include both; setup and full verification excluded",
+        "docs": 100000,
+        "total_seconds": 635.9050529,
+        "rebuild_seconds": 635.8788128,
+        "refill_seconds": 347.9241569,
+        "post_completion_write_visible_seconds": 0.0979195,
+        "sampled_process_peak_rss_bytes": 891219968,
+        "sampled_process_peak_managed_bytes": 137147152,
+        "process_allocated_bytes": 36838728360,
+        "document_digest": "df592804e04cac9581a26e97afd594777e95ed2afb980e6147f516acf73c6494",
+        "certified": true
+      }
+    }
+  ],
+  "summary": [
+    {
+      "metric": "rebuild_seconds",
+      "a": {
+        "median": 678.607416,
+        "minimum": 672.7851558,
+        "maximum": 690.6489539
+      },
+      "b": {
+        "median": 635.8788128,
+        "minimum": 635.860573,
+        "maximum": 648.3579877
+      },
+      "median_change_percent": -6.296512857442737
+    },
+    {
+      "metric": "refill_seconds",
+      "a": {
+        "median": 356.9662907,
+        "minimum": 348.8454268,
+        "maximum": 358.1520071
+      },
+      "b": {
+        "median": 351.0084438,
+        "minimum": 347.9241569,
+        "maximum": 360.2789511
+      },
+      "median_change_percent": -1.6690222733123705
+    },
+    {
+      "metric": "sampled_process_peak_rss_bytes",
+      "a": {
+        "median": 908.54296875,
+        "minimum": 894.01953125,
+        "maximum": 933.81640625
+      },
+      "b": {
+        "median": 874.17578125,
+        "minimum": 849.93359375,
+        "maximum": 880.8046875
+      },
+      "median_change_percent": -3.7826705705821917
+    },
+    {
+      "metric": "sampled_process_peak_managed_bytes",
+      "a": {
+        "median": 135.1870880126953,
+        "minimum": 134.00491333007812,
+        "maximum": 139.12388610839844
+      },
+      "b": {
+        "median": 134.5701141357422,
+        "minimum": 130.79371643066406,
+        "maximum": 136.85565185546875
+      },
+      "median_change_percent": -0.4563852110603839
+    },
+    {
+      "metric": "process_allocated_bytes",
+      "a": {
+        "median": 31.945461682975292,
+        "minimum": 31.928546108305454,
+        "maximum": 31.986315429210663
+      },
+      "b": {
+        "median": 34.308739341795444,
+        "minimum": 34.30798274278641,
+        "maximum": 34.34377611428499
+      },
+      "median_change_percent": 7.397851007048106
+    },
+    {
+      "metric": "post_completion_write_visible_seconds",
+      "a": {
+        "median": 0.1007844,
+        "minimum": 0.064467,
+        "maximum": 0.1197302
+      },
+      "b": {
+        "median": 0.0907107,
+        "minimum": 0.0592344,
+        "maximum": 0.0979195
+      },
+      "median_change_percent": -9.995296891185534
+    }
+  ]
+}

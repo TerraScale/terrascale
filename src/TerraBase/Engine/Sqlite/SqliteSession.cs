@@ -217,19 +217,16 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         typeof(SqliteConnection).GetField("_database", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
     /// <summary>
-    /// Closes the connection. The native handle is closed even when disposing a command or the provider's own close
-    /// throws, so once this returns, or throws, the session holds no file open.
+    /// Releases a quiescent connection without graceful close or checkpoint. The native handle is closed even when
+    /// disposing a command or the provider's own close throws, so the session holds no file open afterward.
     /// </summary>
     public void Dispose()
     {
         var handle = NativeHandle?.GetValue(connection) as Turso.Raw.Public.Handles.TursoDatabaseHandle;
         try
         {
-            // Terminal before command disposal: even a throwing command cannot fall back to graceful native close.
-            if (connection.CloseRefusal?.Invoke() is not null)
-            {
-                handle?.Deinitialize();
-            }
+            // Idle eviction must not mutate storage after its operation's durable intent has retired.
+            handle?.Deinitialize();
             foreach (var command in _commands.Values)
             {
                 command.Dispose();

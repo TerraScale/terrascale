@@ -366,6 +366,11 @@ public sealed class ShapeHandleTests
                 await Assert.That(await api.Server.Services.GetRequiredService<IChangeGroupSource>()
                     .HeadAsync(tenant, original.Incarnation, CancellationToken.None)).IsNotNull();
 
+                // Intentionally leave an operation unfinished to model a crash during native work. No I/O admission is held;
+                // its active count keeps shutdown's checkpoint from retiring the simulated interrupted operation's intent.
+                var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+                var native = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(tenant, CancellationToken.None))!;
+                _ = await native.BeginOperationAsync(CancellationToken.None);
                 // Captured while live: the file then says the process is running, so the next start is unclean.
                 running = await File.ReadAllBytesAsync(identity);
             }

@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Text;
 using Google.Protobuf;
 using Grpc.Core;
 using TerraBase.Engine;
@@ -111,11 +110,27 @@ internal sealed class RebuildCertification(
                 }
             }
 
-            BucketCursor? previous = null;
+            (int Bucket, string Collection, string Id)? previous = null;
             using (var call = client.ReadBucket(request, deadline: TimeProvider.System.GetUtcNow().UtcDateTime + RefillTimeout, cancellationToken: cancellationToken))
             {
-                while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
+                while (true)
                 {
+                    bool next;
+                    try
+                    {
+                        next = await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (RpcException error) when (!cancellationToken.IsCancellationRequested && error.StatusCode == StatusCode.DeadlineExceeded)
+                    {
+                        // Keep applied coverage; the fresh pinned digest below determines which buckets still need copying.
+                        break;
+                    }
+
+                    if (!next)
+                    {
+                        break;
+                    }
+
                     if (call.ResponseStream.Current.Incarnation.Length != 16 || new Ulid(call.ResponseStream.Current.Incarnation.Span) != source)
                     {
                         return false;
@@ -130,9 +145,9 @@ internal sealed class RebuildCertification(
                     foreach (var state in page)
                     {
                         var bucket = DocumentStateEncoding.Bucket(state.Collection, state.Id);
-                        if (!requested[bucket] || previous is not null && (bucket < previous.Bucket || bucket == previous.Bucket
-                            && (CompareKey(state.Collection, previous.Collection) < 0 || state.Collection == previous.Collection
-                                && CompareKey(state.Id, previous.Id) <= 0)))
+                        if (!requested[bucket] || previous is { } prior && (bucket < prior.Bucket || bucket == prior.Bucket
+                            && (CompareKey(state.Collection, prior.Collection) < 0 || state.Collection == prior.Collection
+                                && CompareKey(state.Id, prior.Id) <= 0)))
                         {
                             throw new InvalidDataException("a rebuild source returned an unrequested, repeated or reordered state key");
                         }
@@ -143,7 +158,7 @@ internal sealed class RebuildCertification(
                             BinaryPrimitives.ReadUInt64LittleEndian(observed.AsSpan(offset)) ^ (ulong)(digest >> 64));
                         BinaryPrimitives.WriteUInt64LittleEndian(observed.AsSpan(offset + 8),
                             BinaryPrimitives.ReadUInt64LittleEndian(observed.AsSpan(offset + 8)) ^ (ulong)digest);
-                        previous = new BucketCursor(bucket, state.Collection, state.Id);
+                        previous = (bucket, state.Collection, state.Id);
                     }
 
                     if (await repair.RepairRebuildAsync(database, receiver, page, cancellationToken).ConfigureAwait(false) is null)
@@ -240,5 +255,5 @@ internal sealed class RebuildCertification(
     }
 
     // SQLite's BINARY collation orders UTF-8 bytes, including supplementary Unicode characters.
-    private static int CompareKey(string left, string right) => Encoding.UTF8.GetBytes(left).AsSpan().SequenceCompareTo(Encoding.UTF8.GetBytes(right));
+    private static int CompareKey(string left, string right) => Utf8Ordinal.Instance.Compare(left, right);
 }

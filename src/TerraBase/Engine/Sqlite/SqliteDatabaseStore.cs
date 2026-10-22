@@ -260,9 +260,6 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>This node's copy faults and rebuilds; null for stores built outside an engine.</summary>
     internal RebuildLedger? Ledger { get; init; }
 
-    // Set once this incarnation's write intent is durable in this process (RebuildLedger.RecordIntentAsync).
-    private bool _intentRecorded;
-
     // A known fault refuses this exact open copy before recording it can wait on SYSTEM or the ledger gate. A new
     // incarnation has another store; a faulted store never clears this marker.
     internal string? CopyFault
@@ -297,19 +294,8 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>The ledger's generation when <see cref="RebuildRow"/> was loaded, before publication.</summary>
     internal long LoadedGeneration { get; set; }
 
-    // Before this process first opens a client transaction or raw copy source, a FULL intent records the incarnation:
-    // an unclean exit faults it at the next start, including damage detected by a read that never recorded its fault.
-    private async ValueTask RecordIntentAsync(CancellationToken cancellationToken)
-    {
-        if (Ledger is { } ledger && !IsSystem && !Volatile.Read(ref _intentRecorded))
-        {
-            await ledger.RecordIntentAsync(this, cancellationToken).ConfigureAwait(false);
-            Volatile.Write(ref _intentRecorded, true);
-        }
-    }
-
-    /// <summary>Settles refusal and records source use before copying takes the engine's creation lock.</summary>
-    internal async ValueTask PrepareCopyAsync(CancellationToken cancellationToken)
+    /// <summary>Settles refusal before copying takes the engine's creation lock.</summary>
+    internal async ValueTask<CopyOperation?> PrepareCopyAsync(CancellationToken cancellationToken)
     {
         if (Ledger is { } ledger && !IsSystem)
         {
@@ -317,9 +303,7 @@ internal sealed partial class SqliteDatabaseStore(
         }
 
         ThrowIfRefused(rebuild: false);
-        // Opens SYSTEM outside creation: recording a raw-source fault must never lazily acquire creation from inside it.
-        await RecordIntentAsync(cancellationToken).ConfigureAwait(false);
-        ThrowIfRefused(rebuild: false);
+        return await BeginOperationAsync(cancellationToken).ConfigureAwait(false);
     }
 
     // Throws when the ledger refuses a write now; a rebuild's own write is refused only when the node failed closed.
@@ -383,9 +367,6 @@ internal sealed partial class SqliteDatabaseStore(
             ThrowIfRefused(rebuild);
         }
 
-        // Before renting a session: its setup and BEGIN can also detect damage. SYSTEM skips this recursive ledger write.
-        await RecordIntentAsync(cancellationToken).ConfigureAwait(false);
-
         // Every write transaction syncs the write-ahead log at its commit (synchronous = FULL): what a write answers, the
         // system database's catalog and keys (decision 0012) and a client database's documents (0013), survives a power loss.
         durable |= write;
@@ -395,11 +376,14 @@ internal sealed partial class SqliteDatabaseStore(
             io.Admit();
         }
         var writing = false;
+        CopyOperation? operation = null;
         SqliteSession? session = null;
         var beginStarted = false;
         SqliteRunner runner = write ? WriteLane : io;
         try
         {
+            // Setup and BEGIN can also detect damage; record before opening a native session.
+            operation = await io.WithAdmissionAsync(() => BeginOperationAsync(cancellationToken)).ConfigureAwait(false);
             if (write)
             {
                 await AcquireWriterAsync(writer, cancellationToken).ConfigureAwait(false);
@@ -434,7 +418,10 @@ internal sealed partial class SqliteDatabaseStore(
                 return connection.BeginTransaction(deferred: !write);
             }, cancellationToken).ConfigureAwait(false);
             return new SqliteStorageTransaction(
-                this, session, transaction, runner, write, durable, write ? Committed : null, ownsAdmission);
+                this, session, transaction, runner, write, durable, write ? Committed : null, ownsAdmission)
+            {
+                Operation = operation,
+            };
         }
         catch (Exception error)
         {
@@ -461,6 +448,7 @@ internal sealed partial class SqliteDatabaseStore(
                     // the idle pool, retain admission until its worker-owned close has finished.
                     await runner.RunAsync(() => pool.Discard(session), CancellationToken.None).ConfigureAwait(false);
                 }
+                operation?.Complete();
             }
             finally
             {
@@ -475,7 +463,7 @@ internal sealed partial class SqliteDatabaseStore(
                 }
                 finally
                 {
-                    End(writing, ownsAdmission);
+                    await EndAsync(writing, ownsAdmission, operation).ConfigureAwait(false);
                 }
             }
 
@@ -577,19 +565,6 @@ internal sealed partial class SqliteDatabaseStore(
             if (Closed && _writerSession is { } session)
             {
                 _writerSession = null;
-                try
-                {
-                    // Preserve a refused copy and its log byte-for-byte for salvage; only healthy closes checkpoint.
-                    if (CloseRefusal is null)
-                    {
-                        Scalar(session.Connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
-                    }
-                }
-                catch (SqliteException)
-                {
-                    // Best effort: the log stays and replays at the next open.
-                }
-
                 pool.Discard(session);
             }
         }
@@ -657,7 +632,7 @@ internal sealed partial class SqliteDatabaseStore(
     }
 
     /// <summary>Releases what <see cref="BeginTransactionAsync"/> took; called once per transaction.</summary>
-    internal void End(bool write, bool ownsAdmission)
+    internal async ValueTask EndAsync(bool write, bool ownsAdmission, CopyOperation? operation)
     {
         try
         {
@@ -669,9 +644,19 @@ internal sealed partial class SqliteDatabaseStore(
         }
         finally
         {
-            if (ownsAdmission)
+            try
             {
-                io.Release();
+                if (operation is not null)
+                {
+                    await operation.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                if (ownsAdmission)
+                {
+                    io.Release();
+                }
             }
         }
     }
@@ -696,7 +681,7 @@ internal sealed partial class SqliteDatabaseStore(
                     sourceError ??= ExceptionDispatchInfo.Capture(error);
                 })
                 {
-                    CloseRefusal = () => CloseRefusal,
+                    CloseRefusal = () => CloseRefusal ?? "terminal copy source close",
                 };
                 if (Tenant is { } tenant)
                 {
@@ -772,20 +757,32 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>Runs <paramref name="call"/> on the writer connection; the caller holds the writer (<see cref="WithWritersHeldAsync"/>).</summary>
     internal async Task<T> OnWriterAsync<T>(Func<SqliteSession, T> call, CancellationToken cancellationToken)
     {
-        var writer = await WriterSessionAsync(cancellationToken).ConfigureAwait(false);
+        await using var operation = await BeginOperationAsync(cancellationToken).ConfigureAwait(false);
+        SqliteSession? writer = null;
         try
         {
-            return await writer.ExecuteAsync(WriteLane, () => call(writer), cancellationToken).ConfigureAwait(false);
+            writer = await WriterSessionAsync(cancellationToken).ConfigureAwait(false);
+            var result = await writer.ExecuteAsync(WriteLane, () => call(writer), cancellationToken).ConfigureAwait(false);
+            operation?.Complete();
+            return result;
         }
-        catch (SqliteException)
+        catch (Exception error)
         {
+            if (SqliteStorageTransaction.Damaged(error))
+            {
+                NoteCopyFault("writer maintenance reported I/O failure or corruption");
+                await RecordCopyFaultAsync(CopyFault!).ConfigureAwait(false);
+            }
             // The connection may be left mid-statement: the next writer opens a fresh one.
-            await WriteLane.RunAsync(() => Discard(writer), CancellationToken.None).ConfigureAwait(false);
+            if (writer is not null)
+            {
+                await WriteLane.RunAsync(() => Discard(writer), CancellationToken.None).ConfigureAwait(false);
+            }
+            operation?.Complete();
             throw;
         }
     }
 
-    /// <summary>Rents a session for work outside a transaction (continuous backup); the caller holds an admission.</summary>
     // Group commit (docs/design/anna-core.md section 4.1): client writes queue here, and one loop at a time runs a batch
     // of them in one write transaction, each inside its own savepoint, so the database's single SQLite writer commits
     // once per batch instead of once per write.
@@ -1129,13 +1126,8 @@ internal sealed partial class SqliteDatabaseStore(
         }
     }
 
-    internal Task<SqliteSession> RentSessionAsync(CancellationToken cancellationToken) => RentAsync(cancellationToken);
-
-    /// <summary>Gives back a session from <see cref="RentSessionAsync"/>; a closed store closes it.</summary>
-    internal Task ReturnSessionAsync(SqliteSession session) => ReturnAsync(session);
-
     /// <summary>Takes back a session whose work has ended; the pool keeps it idle or closes it.</summary>
-    /// <remarks>Call on an I/O thread: an eviction can checkpoint the WAL of another database.</remarks>
+    /// <remarks>Call on an I/O thread; idle eviction only deinitializes quiescent handles.</remarks>
     internal void Return(SqliteSession session)
     {
         // The writer connection stays the store's; ReleaseWriter closes it once the store closed.

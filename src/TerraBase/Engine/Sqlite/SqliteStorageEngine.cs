@@ -365,12 +365,13 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// <param name="afterBootstrap">Optional integration-test hook before a tenant database's baseline is seeded.</param>
     /// <param name="backupTime">The host's UTC clock for snapshot boundaries, independent of query deadlines.</param>
     /// <param name="schemaMemory">Shared process admission for collection schema evaluation.</param>
+    /// <param name="replicaOwner">Trusted node identity; defaults to the host name for direct construction.</param>
     public SqliteStorageEngine(
         string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<SqliteStorageEngine> logger,
         TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
         TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
         Action<SqliteDatabaseStore>? afterBootstrap = null, TimeSpan? queryBudget = null,
-        TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null)
+        TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null, string? replicaOwner = null)
     {
         _dataDirectory = dataDirectory;
         _schemaMemory = schemaMemory;
@@ -390,7 +391,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         _ownership = Own(dataDirectory);
         try
         {
-            ReplicaId = ReplicaIdentityFile.Start(dataDirectory);
+            CheckIntentJournal();
+            ReplicaId = ReplicaIdentityFile.Start(dataDirectory, replicaOwner ?? Environment.MachineName);
             // Stamps follow the host's clock: the query deadline's clock may be a test's fake that never moves.
             Member = new LocalReplica(ReplicaId, new MemberClock(HostTime, meter));
             meter.CreateObservableGauge("terrabase.replica.member", () => (long)ReplicaId.Member, description: "This member's number in its replica id.");
@@ -413,6 +415,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         ArgumentNullException.ThrowIfNull(recordIntent);
         var (key, path) = Locate(database);
         SqliteDatabaseStore? store = null;
+        SqliteDatabaseStore.CopyOperation? copyOperation = null;
         if (source is not null)
         {
             if (!string.Equals(source.OrganizationId, database.OrganizationId, StringComparison.Ordinal))
@@ -427,8 +430,11 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 return false;
             }
 
-            await store.PrepareCopyAsync(cancellationToken).ConfigureAwait(false);
+            copyOperation = await store.PrepareCopyAsync(cancellationToken).ConfigureAwait(false);
         }
+        await using var sourceOperation = copyOperation;
+        // CopyToAsync awaits source disposal and records native source faults on every exit.
+        copyOperation?.Complete();
 
         Task<SqliteDatabaseStore> initialization;
         await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
@@ -543,7 +549,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             return false;
         }
 
-        await store.PrepareCopyAsync(cancellationToken).ConfigureAwait(false);
+        await using var sourceOperation = await store.PrepareCopyAsync(cancellationToken).ConfigureAwait(false);
+        sourceOperation?.Complete();
         Task<SqliteDatabaseStore> initialization;
         await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -786,7 +793,11 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                         || entry.FileName.SequenceEqual(SystemName + FileExtension)
                         || entry.FileName.SequenceEqual(SystemName + FileExtension + "-wal")
                         || entry.FileName.SequenceEqual(SystemName + FileExtension + "-shm")
-                        || entry.FileName.SequenceEqual(SystemName + FileExtension + "-journal"));
+                        || entry.FileName.SequenceEqual(SystemName + FileExtension + "-journal")
+                        || entry.FileName.SequenceEqual(IntentName + FileExtension)
+                        || entry.FileName.SequenceEqual(IntentName + FileExtension + "-wal")
+                        || entry.FileName.SequenceEqual(IntentName + FileExtension + "-shm")
+                        || entry.FileName.SequenceEqual(IntentName + FileExtension + "-journal"));
                 return reservedRootName
                     ? entry.IsDirectory || link
                     : !entry.IsDirectory || link || CollisionDatabaseIdFromFileName(entry.FileName.ToString()) is not null;
@@ -832,34 +843,50 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_system is null)
             {
-                var created = await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
-                // Once published, complete the opening even if cancellation arrives.
-                var openingToken = created ? CancellationToken.None : cancellationToken;
-                system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
-                    RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
-                {
-                    QueryBudget = QueryBudget,
-                    Member = Member,
-                    Checkpoint = _checkpoint,
-                    Ledger = Ledger,
-                };
+                SqliteDatabaseStore? openingSystem = null;
                 try
                 {
-                    await system.BootstrapAsync(openingToken).ConfigureAwait(false);
-                    await system.SeedClockAsync(openingToken).ConfigureAwait(false);
+                    _ = await Io.WithAdmissionAsync(async () =>
+                    {
+                        await OpenIntentStoreLockedAsync(cancellationToken).ConfigureAwait(false);
+                        return true;
+                    }).ConfigureAwait(false);
+                    var created = await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
+                    // Once published, complete the opening even if cancellation arrives.
+                    var openingToken = created ? CancellationToken.None : cancellationToken;
+                    openingSystem = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time,
+                        RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations, _storageReads)
+                    {
+                        QueryBudget = QueryBudget,
+                        Member = Member,
+                        Checkpoint = _checkpoint,
+                        Ledger = Ledger,
+                    };
+                    await openingSystem.BootstrapAsync(openingToken).ConfigureAwait(false);
+                    await openingSystem.SeedClockAsync(openingToken).ConfigureAwait(false);
                     // Before anything else uses the system database or any client database writes.
                     _ = await Io.WithAdmissionAsync(async () =>
                     {
-                        await Ledger.RecoverAsync(system, openingToken).ConfigureAwait(false);
+                        await Ledger.RecoverAsync(openingSystem, openingToken).ConfigureAwait(false);
                         return true;
                     }).ConfigureAwait(false);
+                    Volatile.Write(ref _system, openingSystem);
                 }
                 catch
                 {
-                    await Io.RunAsync(system.Dispose, CancellationToken.None).ConfigureAwait(false);
+                    try
+                    {
+                        await CloseIntentStoreAsync().ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        if (openingSystem is not null)
+                        {
+                            await Io.RunAsync(openingSystem.Dispose, CancellationToken.None).ConfigureAwait(false);
+                        }
+                    }
                     throw;
                 }
-                Volatile.Write(ref _system, system);
             }
 
             return _system;
@@ -999,15 +1026,34 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             _stopping.Dispose();
         }
 
+        // Admitted cleanup can still publish faults or retire intents; keep both node-local writers open for it.
+        await drained.ConfigureAwait(false);
+
         Task? closed = null;
         List<string> files = [];
         // A copy/create holds this through every step. Let it finish before closing its stores.
         await _creation.WaitAsync().ConfigureAwait(false);
         try
         {
+            foreach (var store in _stores.Values.Concat(_system is { } closingSystem ? [closingSystem] : []))
+            {
+                try
+                {
+                    _ = await Io.WithAdmissionAsync(async () =>
+                    {
+                        await store.CheckpointOnCloseAsync().ConfigureAwait(false);
+                        return true;
+                    }).ConfigureAwait(false);
+                }
+                catch (Exception error)
+                {
+                    errors.Add(error);
+                }
+            }
             closed = await Io.RunAsync(() =>
             {
-                foreach (var store in _stores.Values.Concat(_system is { } system ? [system] : []))
+                foreach (var store in _stores.Values.Concat(_system is { } system ? [system] : [])
+                    .Concat(_intents is { } intents ? [intents] : []))
                 {
                     files.Add(store.FilePath);
                     try
@@ -1055,8 +1101,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             errors.Add(error);
         }
 
-        // Release of the last admission follows pooling/closure, including queued-BEGIN cleanup.
-        await drained.ConfigureAwait(false);
         try
         {
             await Io.DisposeAsync().ConfigureAwait(false);
@@ -1195,6 +1239,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private static bool IsFlatDatabaseFile(string name) =>
         !string.Equals(name, SystemName + FileExtension, StringComparison.Ordinal)
         && !Sidecars.Any(sidecar => string.Equals(name, SystemName + FileExtension + sidecar, StringComparison.Ordinal))
+        && !string.Equals(name, IntentName + FileExtension, StringComparison.Ordinal)
+        && !Sidecars.Any(sidecar => string.Equals(name, IntentName + FileExtension + sidecar, StringComparison.Ordinal))
         && (name.EndsWith(FileExtension, StringComparison.Ordinal)
             || Sidecars.Any(sidecar => name.EndsWith(FileExtension + sidecar, StringComparison.Ordinal)));
 
