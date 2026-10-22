@@ -1677,6 +1677,10 @@ public sealed class PeerStreamTests
             await push.CompleteAsync();
         }
 
+        var sender = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "gru");
+        cluster.Members.Leave(sender.Name);
+        await Assert.That(await sjc.UntilStreamsAsync([])).IsTrue();
+
         var storage = gru.Api.Server.Services.GetRequiredService<IRebuildStorage>();
         var old = await gru.IncarnationAsync();
         var renewed = await storage.SwapAsync(cluster.Database, old, storage.SidePath(cluster.Database, old), CancellationToken.None);
@@ -1716,6 +1720,7 @@ public sealed class PeerStreamTests
         try
         {
             cluster.Members.Join(member);
+            cluster.Members.Join(sender);
             await digested.Task.WaitAsync(Deadline);
             await sjc.RepairWaits.Task.WaitAsync(Deadline);
             await Assert.That(await sjc.ReadAsync(lost)).IsNull();
