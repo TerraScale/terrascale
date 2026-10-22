@@ -1,4 +1,3 @@
-#![allow(deprecated)] // Exercises the native API kept until v1 replaces it.
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -67,8 +66,6 @@ fn client(mock: Arc<Mock>) -> TerraScaleClient {
     let transport: Arc<dyn HttpTransport> = mock;
     TerraScaleClient::with_transport(
         ClientConfig::builder()
-            .api_base_url("https://api.test")
-            .api_key("ts_test_key")
             .auth_base_url("https://auth.test")
             .auth_api_key("sk_test_key")
             .build()
@@ -96,7 +93,6 @@ async fn public_auth_origin_discovers_regions_and_fails_over_safe_reads() {
     mock.push(Response::json(200, &json!({"data": []})));
     let sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
-            .api_base_url("https://api.test")
             .auth_base_url("https://auth.terrascale.tech")
             .auth_api_key("sk_test_key")
             .build()
@@ -145,7 +141,6 @@ async fn public_auth_proxy_opt_in_skips_discovery() {
     mock.push(Response::json(200, &json!({"data": []})));
     let sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
-            .api_base_url("https://api.test")
             .auth_base_url("https://auth.terrascale.tech")
             .auth_reverse_proxy(true)
             .auth_api_key("sk_test_key")
@@ -178,7 +173,6 @@ async fn auth_discovery_rejects_a_mismatched_origin_before_credentials() {
     ));
     let sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
-            .api_base_url("https://api.test")
             .auth_base_url("https://auth.terrascale.tech")
             .auth_api_key("sk_test_key")
             .build()
@@ -200,8 +194,6 @@ fn retry_client(mock: Arc<Mock>) -> TerraScaleClient {
     let transport: Arc<dyn HttpTransport> = mock;
     TerraScaleClient::with_transport(
         ClientConfig::builder()
-            .api_base_url("https://api.test")
-            .api_key("ts_test_key")
             .auth_base_url("https://auth.test")
             .auth_api_key("sk_test_key")
             .max_retry_attempts(1)
@@ -651,8 +643,6 @@ async fn client_idempotency_key_never_reaches_ts_auth_mutations() {
     let transport: Arc<dyn HttpTransport> = mock.clone();
     let sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
-            .api_base_url("https://api.test")
-            .api_key("ts_test_key")
             .auth_base_url("https://auth.test")
             .auth_api_key("sk_test_key")
             .max_retry_attempts(2)
@@ -680,51 +670,26 @@ async fn client_idempotency_key_never_reaches_ts_auth_mutations() {
 #[tokio::test]
 async fn terrabase_headers_do_not_leak_to_ts_auth_requests() {
     let mock = Mock::new();
-    mock.push(empty(503)); // Native TerraBase point attempt
     mock.push(empty(503)); // ts-auth attempt
     let transport: Arc<dyn HttpTransport> = mock.clone();
     let sdk = TerraScaleClient::with_transport(
         ClientConfig::builder()
-            .api_base_url("https://api.test")
-            .api_key("ts_test_key")
             .auth_base_url("https://auth.test")
             .auth_api_key("sk_test_key")
-            .tenant_id("00000000-0000-0000-0000-000000000001")
             .max_retry_attempts(0)
             .build()
             .expect("config"),
         transport,
     );
 
-    // Native scope is explicit in the path; only the native key reaches TerraBase.
-    let scope = terrascale::DatabaseScope::new(
-        "00000000-0000-0000-0000-000000000001".parse().unwrap(),
-        "00000000-0000-0000-0000-000000000002".parse().unwrap(),
-        0,
-    );
-    let _ = sdk
-        .documents()
-        .get(
-            &scope,
-            "00000000-0000-0000-0000-000000000003".parse().unwrap(),
-            "00000000-0000-0000-0000-000000000004".parse().unwrap(),
-        )
-        .await;
-    let terrabase = mock.request(0);
-    assert!(terrabase.url.contains("/v1/tenants/00000000-0000-0000-0000-000000000001/databases/00000000-0000-0000-0000-000000000002/shards/0/"));
-    assert_eq!(header(&terrabase, "authorization"), ["Bearer ts_test_key"]);
-    assert!(header(&terrabase, "x-terrascale-tenant-id").is_empty());
-    assert!(header(&terrabase, "x-terrascale-project-id").is_empty());
-    assert!(header(&terrabase, "x-terrascale-preferred-region").is_empty());
-
-    // ...and the ts-auth route carries none of them.
     let _ = sdk
         .auth_idp(SLUG)
         .expect("ts-auth client")
         .users()
         .get("user_1")
         .await;
-    let ts_auth = mock.request(1);
+    let ts_auth = mock.request(0);
+    assert_eq!(header(&ts_auth, "authorization"), ["Bearer sk_test_key"]);
     assert!(header(&ts_auth, "x-terrascale-tenant-id").is_empty());
     assert!(header(&ts_auth, "x-terrascale-project-id").is_empty());
     assert!(header(&ts_auth, "x-terrascale-preferred-region").is_empty());
@@ -990,11 +955,7 @@ async fn validates_configuration_and_inputs_before_transport() {
     let mock = Mock::new();
 
     let plain = TerraScaleClient::with_transport(
-        ClientConfig::builder()
-            .api_base_url("https://api.test")
-            .api_key("ts_test_key")
-            .build()
-            .expect("config"),
+        ClientConfig::builder().build().expect("config"),
         Arc::clone(&mock) as Arc<dyn HttpTransport>,
     );
     let error = plain.auth_idp(SLUG).expect_err("missing auth_base_url");
@@ -1035,7 +996,6 @@ async fn validates_configuration_and_inputs_before_transport() {
 
     let no_key = TerraScaleClient::with_transport(
         ClientConfig::builder()
-            .api_base_url("https://api.test")
             .auth_base_url("https://auth.test")
             .build()
             .expect("config"),

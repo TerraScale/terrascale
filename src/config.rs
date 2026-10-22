@@ -1,37 +1,28 @@
-//! Explicit native scope guard, isolated credentials, and bounded read retries.
+//! Isolated ts-auth credentials and bounded read retries.
 
-use crate::discovery::{rtt_header, RegionRtt, ATLAS_BASE_URL};
+pub const ATLAS_BASE_URL: &str = "https://atlas.terrascale.tech";
 use crate::error::{Error, ErrorKind, Result};
-use crate::regions::{normalize_base_url, validate_native_origin};
-use crate::values::TenantId;
+use crate::regions::normalize_base_url;
 
 #[derive(Clone)]
 pub struct ClientConfig {
-    api_base_url: Option<String>,
     atlas_base_url: String,
-    api_key: Option<String>,
     auth_base_url: Option<String>,
     auth_reverse_proxy: bool,
     auth_api_key: Option<String>,
-    tenant_id: Option<TenantId>,
     max_retry_attempts: u8,
     retry_delay_ms: u32,
-    region_rtt: Vec<RegionRtt>,
 }
 
 impl std::fmt::Debug for ClientConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClientConfig")
-            .field("api_base_url", &self.api_base_url)
             .field("atlas_base_url", &self.atlas_base_url)
-            .field("api_key", &"[REDACTED]")
             .field("auth_base_url", &self.auth_base_url)
             .field("auth_reverse_proxy", &self.auth_reverse_proxy)
             .field("auth_api_key", &"[REDACTED]")
-            .field("tenant_id", &self.tenant_id)
             .field("max_retry_attempts", &self.max_retry_attempts)
             .field("retry_delay_ms", &self.retry_delay_ms)
-            .field("region_rtt", &self.region_rtt)
             .finish()
     }
 }
@@ -40,12 +31,6 @@ impl ClientConfig {
     #[must_use]
     pub fn builder() -> ClientConfigBuilder {
         ClientConfigBuilder::default()
-    }
-    /// Explicit provisioned native origin; absent requires scoped Atlas admission.
-    /// TerraScale-zone origins must use the canonical direct regional form.
-    #[must_use]
-    pub fn api_base_url(&self) -> Option<&str> {
-        self.api_base_url.as_deref()
     }
     /// Atlas origin. Native discovery admits only the canonical production origin.
     #[must_use]
@@ -60,11 +45,6 @@ impl ClientConfig {
     pub fn auth_reverse_proxy(&self) -> bool {
         self.auth_reverse_proxy
     }
-    /// Optional native tenant guard, compared to every request's typed scope.
-    #[must_use]
-    pub fn tenant_id(&self) -> Option<TenantId> {
-        self.tenant_id
-    }
     #[must_use]
     pub fn max_retry_attempts(&self) -> u8 {
         self.max_retry_attempts
@@ -73,13 +53,6 @@ impl ClientConfig {
     pub fn retry_delay_ms(&self) -> u32 {
         self.retry_delay_ms
     }
-    #[must_use]
-    pub fn region_rtt(&self) -> &[RegionRtt] {
-        &self.region_rtt
-    }
-    pub(crate) fn api_key(&self) -> Option<&str> {
-        self.api_key.as_deref()
-    }
     pub(crate) fn auth_api_key(&self) -> Option<&str> {
         self.auth_api_key.as_deref()
     }
@@ -87,58 +60,31 @@ impl ClientConfig {
 
 #[derive(Default)]
 pub struct ClientConfigBuilder {
-    api_base_url: Option<String>,
     atlas_base_url: Option<String>,
-    api_key: Option<String>,
     auth_base_url: Option<String>,
     auth_reverse_proxy: bool,
     auth_api_key: Option<String>,
-    tenant_id: Option<String>,
     max_retry_attempts: u8,
     retry_delay_ms: Option<u32>,
-    region_rtt: Vec<RegionRtt>,
 }
 
 impl std::fmt::Debug for ClientConfigBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClientConfigBuilder")
-            .field("api_base_url", &self.api_base_url)
             .field("atlas_base_url", &self.atlas_base_url)
-            .field("api_key", &"[REDACTED]")
             .field("auth_base_url", &self.auth_base_url)
             .field("auth_reverse_proxy", &self.auth_reverse_proxy)
             .field("auth_api_key", &"[REDACTED]")
-            .field("tenant_id", &self.tenant_id)
             .field("max_retry_attempts", &self.max_retry_attempts)
             .field("retry_delay_ms", &self.retry_delay_ms)
-            .field("region_rtt", &self.region_rtt)
             .finish()
     }
 }
 
 impl ClientConfigBuilder {
-    /// Supply up to 20 distinct measured RTTs for receiver ranking.
-    #[must_use]
-    pub fn region_rtt(mut self, hints: Vec<RegionRtt>) -> Self {
-        self.region_rtt = hints;
-        self
-    }
-    /// Set a caller-provisioned native origin. TerraScale-zone origins must be
-    /// canonical direct regional HTTPS; independent HTTPS/loopback/test origins
-    /// remain available for explicit provisioning. This opts out of Atlas admission.
-    #[must_use]
-    pub fn api_base_url(mut self, value: impl Into<String>) -> Self {
-        self.api_base_url = Some(value.into());
-        self
-    }
     #[must_use]
     pub fn atlas_base_url(mut self, value: impl Into<String>) -> Self {
         self.atlas_base_url = Some(value.into());
-        self
-    }
-    #[must_use]
-    pub fn api_key(mut self, value: impl Into<String>) -> Self {
-        self.api_key = Some(value.into());
         self
     }
     #[must_use]
@@ -156,12 +102,6 @@ impl ClientConfigBuilder {
         self.auth_api_key = Some(value.into());
         self
     }
-    /// Require all native requests to use this canonical UUID tenant.
-    #[must_use]
-    pub fn tenant_id(mut self, value: impl Into<String>) -> Self {
-        self.tenant_id = Some(value.into());
-        self
-    }
     /// Retry only safe read/query/poll/status traffic, never commits or auth mutations.
     #[must_use]
     pub fn max_retry_attempts(mut self, value: u8) -> Self {
@@ -175,14 +115,11 @@ impl ClientConfigBuilder {
     }
 
     pub fn build(self) -> Result<ClientConfig> {
-        rtt_header(&self.region_rtt)?;
-        let api_key = self.api_key.as_deref().map(normalize_api_key).transpose()?;
         let auth_api_key = self
             .auth_api_key
             .as_deref()
             .map(normalize_api_key)
             .transpose()?;
-        let tenant_id = self.tenant_id.as_deref().map(str::parse).transpose()?;
         if self.max_retry_attempts > 8 {
             return Err(Error::new(
                 ErrorKind::Validation,
@@ -198,14 +135,6 @@ impl ClientConfigBuilder {
                 "Retry delay must be 0..30000 ms.",
             ));
         }
-        let api_base_url = self
-            .api_base_url
-            .as_deref()
-            .map(normalize_base_url)
-            .transpose()?;
-        if let Some(origin) = &api_base_url {
-            validate_native_origin(origin)?;
-        }
         let auth_base_url = self
             .auth_base_url
             .as_deref()
@@ -218,16 +147,12 @@ impl ClientConfigBuilder {
             .transpose()?
             .unwrap_or_else(|| ATLAS_BASE_URL.to_owned());
         Ok(ClientConfig {
-            api_base_url,
             atlas_base_url,
-            api_key,
             auth_base_url,
             auth_reverse_proxy: self.auth_reverse_proxy,
             auth_api_key,
-            tenant_id,
             max_retry_attempts: self.max_retry_attempts,
             retry_delay_ms,
-            region_rtt: self.region_rtt,
         })
     }
 }

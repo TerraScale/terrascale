@@ -6,7 +6,7 @@ use serde_json::value::RawValue;
 
 use super::documents::{encode_object, Patch, PatchOp, Precondition};
 use super::errors::{Error, Result};
-use super::ids::{check_document_id, check_name, DocumentId, IdempotencyKey, Version};
+use super::ids::{check_document_id, check_name, DocumentId, Version};
 use super::query::Filter;
 use super::types::{opt_u64_string, u64_string, Durability};
 
@@ -98,14 +98,12 @@ impl CountBounds {
 /// database, committed with [`Database::commit`](super::Database::commit).
 ///
 /// Builder methods never fail; the first invalid op is reported, with its
-/// index, by `commit`. A `Tx` can be committed again with the same
-/// idempotency key to learn the outcome after an uncertain failure.
+/// index, by `commit`. Reconcile uncertain commits by reading their effects.
 #[derive(Debug, Clone, Default)]
 pub struct Tx {
     ops: Vec<TxOp>,
     error: Option<(usize, String)>,
     count_ops: usize,
-    key: Option<IdempotencyKey>,
 }
 
 impl Tx {
@@ -125,16 +123,6 @@ impl Tx {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.ops.is_empty()
-    }
-
-    /// Sets the transaction's `Idempotency-Key`.
-    pub fn idempotency_key(&mut self, key: IdempotencyKey) -> &mut Self {
-        self.key = Some(key);
-        self
-    }
-
-    pub(crate) fn key(&self) -> Option<&IdempotencyKey> {
-        self.key.as_ref()
     }
 
     fn fail(&mut self, msg: impl Into<String>) {
@@ -277,11 +265,7 @@ impl Tx {
 
     /// Checks that an acknowledgement has one compatible result per op, in
     /// order, naming the submitted document IDs.
-    pub(crate) fn check_results(
-        &self,
-        results: &[OpResult],
-        project: bool,
-    ) -> std::result::Result<(), String> {
+    pub(crate) fn check_results(&self, results: &[OpResult]) -> std::result::Result<(), String> {
         if results.len() != self.ops.len() {
             return Err(format!(
                 "{} results for {} ops",
@@ -293,10 +277,7 @@ impl Tx {
             let ok = match (op.op, res) {
                 ("create" | "put" | "patch" | "delete", OpResult::Write { id, .. }) => {
                     op.id.as_ref().is_none_or(|want| want == id)
-                        && (!project
-                            || op.op != "create"
-                            || op.id.is_some()
-                            || super::ids::valid_entity_id(id))
+                        && (op.op != "create" || op.id.is_some() || super::ids::valid_entity_id(id))
                 }
                 ("assert", OpResult::Asserted { count: None }) => true,
                 ("assert_count", OpResult::Asserted { count: Some(_) }) => true,
@@ -340,15 +321,57 @@ pub struct TxResult {
 }
 
 /// The outcome of one transaction op.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum OpResult {
     /// A write (`create`, `put`, `patch`, `delete`).
-    Write { id: DocumentId, version: Version },
+    Write {
+        id: DocumentId,
+        version: Version,
+        /// The stored document returned after a patch, retaining exact JSON numbers.
+        document: Option<Box<RawValue>>,
+    },
     /// An `assert` (`count` is `None`) or `assert_count` (`count` is set).
     Asserted { count: Option<u64> },
 }
 
+impl PartialEq for OpResult {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Write {
+                    id,
+                    version,
+                    document,
+                },
+                Self::Write {
+                    id: other_id,
+                    version: other_version,
+                    document: other_document,
+                },
+            ) => {
+                id == other_id
+                    && version == other_version
+                    && document.as_deref().map(RawValue::get)
+                        == other_document.as_deref().map(RawValue::get)
+            }
+            (Self::Asserted { count }, Self::Asserted { count: other }) => count == other,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for OpResult {}
+
 impl OpResult {
+    /// The exact stored document returned by a patch, absent for other operations.
+    #[must_use]
+    pub fn document(&self) -> Option<&RawValue> {
+        match self {
+            Self::Write { document, .. } => document.as_deref(),
+            Self::Asserted { .. } => None,
+        }
+    }
+
     /// The written document's version, for write ops.
     #[must_use]
     pub fn version(&self) -> Option<&Version> {
@@ -378,12 +401,17 @@ impl<'de> Deserialize<'de> for OpResult {
             asserted: bool,
             #[serde(default, with = "opt_u64_string")]
             count: Option<u64>,
+            document: Option<Box<RawValue>>,
         }
         let w = Wire::deserialize(d)?;
         match (w.id, w.version, w.asserted) {
             (Some(id), Some(version), false) => {
                 check_document_id(&id).map_err(D::Error::custom)?;
-                Ok(Self::Write { id, version })
+                Ok(Self::Write {
+                    id,
+                    version,
+                    document: w.document,
+                })
             }
             (None, None, true) => Ok(Self::Asserted { count: w.count }),
             _ => Err(D::Error::custom(

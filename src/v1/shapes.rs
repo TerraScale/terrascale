@@ -1020,7 +1020,6 @@ mod tests {
                 headers,
                 body: body.to_string().into_bytes(),
                 mutation: false,
-                project: true,
             };
             let update = sync
                 .apply(

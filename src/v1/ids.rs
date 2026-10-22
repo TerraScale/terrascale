@@ -1,11 +1,9 @@
-//! Names, document IDs, versions and idempotency keys (api-v1.md "Names and
-//! identifiers", "Versions, ETags and offsets" and "Idempotency").
+//! Entity IDs, raw document keys, selectors and version tokens.
 
 use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
 use super::errors::{Error, Result};
@@ -170,86 +168,5 @@ impl<'de> Deserialize<'de> for Version {
     fn deserialize<D: Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
         let s = String::deserialize(d)?;
         Self::new(s).map_err(serde::de::Error::custom)
-    }
-}
-
-/// An `Idempotency-Key`: 1–64 characters of `[A-Za-z0-9_.-]`.
-///
-/// An exact retry with the same key within 24 hours returns the original
-/// response (including generated IDs and offsets). Keep the key and reuse it
-/// when retrying the same mutation; the same key with a different body fails
-/// with [`Error::IdempotencyConflict`].
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct IdempotencyKey(String);
-
-impl IdempotencyKey {
-    /// Validates a caller-chosen key.
-    pub fn new(value: impl Into<String>) -> Result<Self> {
-        let value = value.into();
-        let valid = !value.is_empty()
-            && value.len() <= 64
-            && value
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'));
-        if valid {
-            Ok(Self(value))
-        } else {
-            Err(Error::InvalidInput(format!(
-                "Idempotency-Key {value:?} must be 1-64 characters of [A-Za-z0-9_.-]"
-            )))
-        }
-    }
-
-    /// A fresh random key (32 hex characters).
-    #[must_use]
-    pub fn random() -> Self {
-        Self(Uuid::new_v4().simple().to_string())
-    }
-
-    /// A deterministic key derived from `parts` (SHA-256, 64 hex characters).
-    /// Equal parts always give the same key, so a crashed caller that
-    /// recomputes the same mutation replays the original outcome.
-    #[must_use]
-    pub fn derive(parts: &[&str]) -> Self {
-        let mut hasher = Sha256::new();
-        for part in parts {
-            hasher.update((part.len() as u64).to_be_bytes());
-            hasher.update(part.as_bytes());
-        }
-        Self(hex(&hasher.finalize()))
-    }
-
-    /// The key text.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        let _ = write!(out, "{b:02x}");
-    }
-    out
-}
-
-impl fmt::Debug for IdempotencyKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.0, f)
-    }
-}
-
-impl fmt::Display for IdempotencyKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl FromStr for IdempotencyKey {
-    type Err = Error;
-    fn from_str(s: &str) -> Result<Self> {
-        Self::new(s)
     }
 }

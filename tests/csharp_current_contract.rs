@@ -290,7 +290,7 @@ async fn database_create_uses_management_post_and_preserves_placement() {
 }
 
 #[tokio::test]
-async fn invalid_keys_and_project_idempotency_keys_never_dispatch() {
+async fn invalid_document_keys_never_dispatch() {
     let fixture = Fixture::new(vec![]).await;
     let collection = fixture.collection();
     for key in [
@@ -311,16 +311,6 @@ async fn invalid_keys_and_project_idempotency_keys_never_dispatch() {
             Err(Error::InvalidTxOp { op: 0, .. })
         ));
     }
-    assert!(matches!(
-        collection
-            .put(
-                "valid",
-                &json!({}),
-                WriteOptions::new().idempotency_key(IdempotencyKey::random())
-            )
-            .await,
-        Err(Error::InvalidInput(_))
-    ));
     assert!(fixture.requests.lock().unwrap().is_empty());
 }
 
