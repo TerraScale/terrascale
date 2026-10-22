@@ -508,9 +508,15 @@ public sealed class PeerStreamDeadlineTests
         }, warnings, provider => source = new ResetSource(provider.GetRequiredService<FaultAwareReplicaSource>()));
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
         await Assert.That((await peer.NextAsync()).Frontier.Database).IsEqualTo(ChangeGroups.Wire(databases[0], await IncarnationAsync(api, databases[0])));
-        for (var index = 1; index < databases.Length; index++)
+        // Cold registrations finish independently; the budget needs one batch per database, in any database order.
+        var waiting = databases.Skip(1).ToHashSet();
+        while (waiting.Count != 0)
         {
-            await Assert.That((await peer.NextAsync()).Batch.Database).IsEqualTo(ChangeGroups.Wire(databases[index], await IncarnationAsync(api, databases[index])));
+            var batch = (await peer.NextAsync()).Batch;
+            await Assert.That(batch).IsNotNull();
+            var database = ChangeGroups.Tenant(batch.Database);
+            await Assert.That(waiting.Remove(database)).IsTrue();
+            await Assert.That(batch.Database).IsEqualTo(ChangeGroups.Wire(database, await IncarnationAsync(api, database)));
         }
 
         await Assert.That(peer.BatchesBeforeRelease).IsEqualTo(32);

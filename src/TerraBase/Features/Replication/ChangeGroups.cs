@@ -209,7 +209,7 @@ internal static class ChangeGroups
             list.Groups.Add(wire);
         }
 
-        return UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(list.ToByteArray()));
+        return UnsafeByteOperations.UnsafeWrap(ApplicationEnvelope.Encode(list));
     }
 
     /// <summary>
