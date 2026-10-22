@@ -14,7 +14,7 @@ Create one `TerraBaseDocumentsClient` with a caller-owned redirect-disabled `Htt
 
 ```csharp
 Task<TerraBaseManagedDatabase> CreateDatabaseAsync(string name,
-    string? homeRegion = null, IReadOnlyList<string>? replicaRegions = null,
+    string? homeRegion = null, IReadOnlyList<string>? replicaRegions = null, bool? allRegions = null,
     CancellationToken cancellationToken = default);
 Task<TerraBasePage<TerraBaseManagedDatabase>> ListDatabasesAsync(
     string? after = null, int? limit = null, CancellationToken cancellationToken = default);
@@ -23,6 +23,8 @@ Task<TerraBaseManagedDatabase> GetDatabaseAsync(string databaseName,
 Task DeleteDatabaseAsync(string databaseName, CancellationToken cancellationToken = default);
 Task<TerraBaseManagedDatabase> SetDatabaseRegionsAsync(string databaseName,
     IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken = default);
+Task<TerraBaseManagedDatabase> SetDatabaseAllRegionsAsync(string databaseName,
+    CancellationToken cancellationToken = default);
 Task<TerraBaseProjectUsage> GetUsageAsync(string? granularity = null,
     DateTimeOffset? from = null, DateTimeOffset? to = null,
     CancellationToken cancellationToken = default);
@@ -55,7 +57,7 @@ No registration change is required to use these instance methods. I5 owns root R
 
 ## Route, identity and scope
 
-Project lifecycle/usage, branch, SQL and index methods use `/v1/projects/{project}`. `{project}` is the canonical ts-auth project ULID. `{database}` is its **name**, not the database ULID. The source DTO `ManagedDatabaseBody` uses camelCase and includes `id`, `projectId`, `name`, nullable `branchedFrom`, RFC 3339 `createdAt`, answering `region`, `homeRegion` and `replicaRegions`. The SDK keeps its existing five-argument record constructor and adds required JSON placement members; old incomplete server payloads are now rejected. List pagination is `items`/nullable `next`, query `after` and `limit` 1–100 (default **20**, from ManagementRoute).
+Project lifecycle/usage, branch, SQL and index methods use `/v1/projects/{project}`. `{project}` is the canonical ts-auth project ULID. `{database}` is its **name**, not the database ULID. The source DTO `ManagedDatabaseBody` uses camelCase and includes `id`, `projectId`, `name`, nullable `branchedFrom`, RFC 3339 `createdAt`, answering `region`, `homeRegion`, `replicaRegions` and boolean `allRegions` (true: every serving region holds a copy and `replicaRegions` is empty; sending both on create is `placement_conflict`). `allRegions` comes from the unmerged ar1/all-regions producer and is not in the pinned source yet. The SDK keeps its existing five-argument record constructor and adds required JSON placement members; old incomplete server payloads are now rejected. List pagination is `items`/nullable `next`, query `after` and `limit` 1–100 (default **20**, from ManagementRoute).
 
 Lifecycle reads/usage/SQL/index listing require `databases:read`; create/delete/placement/branch/index changes require `databases:write`. Collection/document/feed reads require `documents:read`; corresponding data/declared-schema changes require `documents:write`. The existing inferred/unique schema `/schema/{collection}` uses `databases:read` or `databases:write`. Declared Draft 2020-12 schema uses `/collections/{collection}/schema`, documents scopes, and an unwrapped JSON Schema body, not uniqueness declarations.
 
