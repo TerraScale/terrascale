@@ -12,7 +12,7 @@ public sealed partial class BrowserSecurityTests
     public async Task Pages_assets_apis_and_cleared_error_responses_keep_browser_protections()
     {
         await using var server = await AuthTestServer.StartAsync(routes: app =>
-            app.MapGet("/__test/security-error", (Func<IResult>)(() => throw new InvalidOperationException("Synthetic error"))));
+            app.MapGet("/__test/security-error", (Func<IResult>)(() => throw new InvalidOperationException("Synthetic error"))).ExcludeFromDescription());
 
         foreach (var path in new[] { "/ui/terrascale/sign-in", "/admin/admin.css", "/openapi/v1.json", "/.env", "/.git/HEAD", "/debug", "/metrics", "/__test/security-error" })
         {
