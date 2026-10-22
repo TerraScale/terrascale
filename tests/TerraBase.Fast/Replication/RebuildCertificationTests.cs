@@ -563,6 +563,8 @@ public sealed class RebuildCertificationTests
     [Arguments(false, true, "collections")]
     [Arguments(false, false, "schema")]
     [Arguments(false, true, "schema")]
+    [Arguments(false, false, "changes")]
+    [Arguments(false, true, "changes")]
     public async Task Client_reads_refuse_faulted_and_swapped_uncertified_copies(bool cached, bool swapped, string route)
     {
         await using var pair = await Pair.StartAsync();
@@ -576,6 +578,7 @@ public sealed class RebuildCertificationTests
             "collection" => $"{collections}/items",
             "collections" => collections,
             "schema" => $"{collections}/items/schema",
+            "changes" => $"/v1/projects/{pair.Database.ProjectId}/databases/main/changes?cursor=now",
             _ => throw new ArgumentOutOfRangeException(nameof(route)),
         }, UriKind.Relative);
         if (cached)
@@ -609,9 +612,9 @@ public sealed class RebuildCertificationTests
                 await Assert.That(await pair.Gru.Service<IReplicaCopyFaults>().RefusedAsync(pair.Database, held, pair.Token)).IsTrue();
             }
 
-            using var response = await data.GetAsync(path, pair.Token);
+            using var response = await data.GetAsync(path, HttpCompletionOption.ResponseHeadersRead, pair.Token);
+            await Assert.That(response.StatusCode).IsEqualTo(System.Net.HttpStatusCode.ServiceUnavailable);
             var body = await response.Content.ReadAsStringAsync(pair.Token);
-            await Assert.That(response.StatusCode).IsEqualTo(System.Net.HttpStatusCode.ServiceUnavailable).Because(body);
             using var error = JsonDocument.Parse(body);
             await Assert.That(error.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("copy_faulted");
         }
