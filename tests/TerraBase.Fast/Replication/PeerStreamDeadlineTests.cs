@@ -170,6 +170,7 @@ public sealed class PeerStreamDeadlineTests
     public async Task An_unacknowledged_batch_expires_while_heartbeat_writing_is_blocked_despite_a_delayed_stable_reply()
     {
         var time = new ObservedTime();
+        var warnings = new PeerWarnings(time, streamFailuresOnly: true);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var peer = await FakePeer.StartAsync(silentStreams: 0, frontierRelease: release);
         var (source, bindSource) = CreateSource();
@@ -183,7 +184,7 @@ public sealed class PeerStreamDeadlineTests
             var head = source.Add(databases[0], Incompressible(node, 32));
             await Assert.That(await source.AckAsync(databases[0], await IncarnationAsync(api, databases[0]), replica, head, default, CancellationToken.None)).IsTrue();
             _ = source.Add(databases[1], Incompressible(node, 512 * 1024));
-        });
+        }, warnings: warnings);
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
         await Assert.That((await peer.NextAsync()).Frontier.Database).IsEqualTo(ChangeGroups.Wire(databases[0], await IncarnationAsync(api, databases[0])));
         await peer.Stalled.Task.WaitAsync(Deadline);
@@ -199,13 +200,17 @@ public sealed class PeerStreamDeadlineTests
         await Assert.That(peer.FirstEnded.Task.IsCompleted).IsFalse();
         await Assert.That(source.AckedBy(databases[1], replica)).IsEqualTo(0);
 
-        var timers = time.Timers;
         time.Advance(Idle);
         await peer.FirstEnded.Task.WaitAsync(Deadline);
         await Assert.That(time.GetUtcNow() - started).IsEqualTo(ReplicationProtocol.ProgressTimeout);
         await Assert.That(source.AckedBy(databases[1], replica)).IsEqualTo(0);
         await Assert.That(peer.Streams).IsEqualTo(1);
-        await time.UntilTimerAsync(Idle, timers, period: Timeout.InfiniteTimeSpan);
+        var failure = await warnings.Failure.Task.WaitAsync(Deadline);
+        await Assert.That(failure).IsTypeOf<TimeoutException>();
+        await Assert.That(failure!.Message).IsEqualTo("the peer did not acknowledge a batch in time");
+        var timers = await warnings.BackoffBoundary.Task.WaitAsync(Deadline);
+        await time.UntilTimerAsync(Idle, timers, period: Timeout.InfiniteTimeSpan,
+            createdAt: started + ReplicationProtocol.ProgressTimeout);
         time.Advance(Idle);
         await Assert.That((await peer.NextAsync()).Hello).IsNotNull();
         await Assert.That(peer.Streams).IsEqualTo(2);
