@@ -151,12 +151,12 @@ internal sealed partial class SqliteStorageTransaction
     /// there). A newer state stays: the peer lacks it because it has not received it yet. Returns how many went.
     /// </summary>
     internal ValueTask<int> ForgetAsync(IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
-        RunAsync(() => Forget(keys, horizon, cancellationToken, advanceFloor: true), cancellationToken, mutation: true);
+        RunAsync(() => Forget(keys, horizon, refill: false, cancellationToken), cancellationToken, mutation: true);
 
     internal ValueTask<int> ForgetRefillAsync(IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken) =>
-        RunAsync(() => Forget(keys, horizon, cancellationToken, advanceFloor: false), cancellationToken, mutation: true);
+        RunAsync(() => Forget(keys, horizon, refill: true, cancellationToken), cancellationToken, mutation: true);
 
-    private int Forget(IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken, bool advanceFloor)
+    private int Forget(IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, bool refill, CancellationToken cancellationToken)
     {
         var forgotten = 0;
         foreach (var (collection, id) in keys)
@@ -168,6 +168,8 @@ internal sealed partial class SqliteStorageTransaction
                 continue;
             }
 
+            var refillIndexCollection = refill && IsClient && collection == DocumentDelta.Indexes
+                ? ReadIndexes(cancellationToken).Find(index => index.Name == id)?.Collection : null;
             if (HasTable(collection))
             {
                 PutRow(collection, id, null);
@@ -191,7 +193,8 @@ internal sealed partial class SqliteStorageTransaction
             {
                 ReprojectUnique(id, cancellationToken);
             }
-            else if (IsClient && collection == DocumentDelta.Collections && HasTable(id))
+            // Refill covers each missing key separately; its frontier is not the collection's actual drop version.
+            else if (!refill && IsClient && collection == DocumentDelta.Collections && HasTable(id))
             {
                 DropCoveredCollection(id, CollectedClear(horizon), cancellationToken);
             }
@@ -200,14 +203,48 @@ internal sealed partial class SqliteStorageTransaction
                 ReconcileUnique(collection, affected, cancellationToken);
             }
 
+            if (refill && IsClient)
+            {
+                RemoveEmptyRefillCollection(collection is DocumentDelta.Collections or DocumentDelta.Unique ? id : collection, cancellationToken);
+                if (refillIndexCollection is not null)
+                {
+                    RemoveEmptyRefillCollection(refillIndexCollection, cancellationToken);
+                }
+            }
+
             forgotten++;
         }
 
-        if (advanceFloor && forgotten > 0)
+        if (!refill && forgotten > 0)
         {
             AdvanceCollectedBefore(horizon);
         }
 
         return forgotten;
+    }
+
+    private void RemoveEmptyRefillCollection(string collection, CancellationToken cancellationToken)
+    {
+        if (IsMetadata(collection) || !HasTable(collection) || ReadState(DocumentDelta.Collections, collection).MaxStamp.Value != 0)
+        {
+            return;
+        }
+
+        // Remaining keys can be valid baseline survivors, even when older than the absence frontier.
+        if (Command("SELECT 1 FROM _tb_state WHERE collection = $collection LIMIT 1;", collection).ExecuteScalar() is not null)
+        {
+            return;
+        }
+
+        if (ReadIndexes(cancellationToken).Any(index => index.Collection == collection)
+            || Materialize(ReadState(DocumentDelta.Unique, collection)) is not null)
+        {
+            return;
+        }
+
+        DropTable(collection);
+        Command(SqliteStatements.DropCollection, collection).ExecuteNonQuery();
+        DropUniqueCollection(collection, local: false);
+        ChangedReaderState = true;
     }
 }

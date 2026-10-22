@@ -9,7 +9,9 @@ frontier. Live baseline documents can predate that frontier.
 Each source page also covers the receiver keys between the preceding and current
 source cursor. The engine removes source-missing keys only when every entry is
 below that source frontier, retaining newer state and joining the source page
-with existing history. An empty final page covers the remainder. Each local page
+with existing history. Missing collection metadata does not clear other baseline
+keys. Empty tables are removed only when no member state or retained definition
+needs them. An empty final page covers the remainder. Each local page
 uses its own FULL writer with the expected persisted identity and Swapped phase,
 so retained state admission stays bounded. A prior refill proof is revoked
 durably before modifying its baseline. Original/additional side copies remain.

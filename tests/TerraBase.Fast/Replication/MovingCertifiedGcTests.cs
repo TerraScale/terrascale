@@ -17,23 +17,7 @@ public sealed class MovingCertifiedGcTests
     {
         var token = TestContext.Current!.Execution.CancellationToken;
         var probe = new ImportProbe();
-        await using var cluster = await PeerStreamTests.Cluster.StartAsync(cdc: false, clock: null,
-            configure: (region, services) =>
-            {
-                foreach (var recovery in services.Where(service => service.ServiceType == typeof(IHostedService)
-                    && service.ImplementationType == typeof(RebuildRecovery)).ToArray())
-                {
-                    services.Remove(recovery);
-                }
-
-                if (region == "sjc")
-                {
-                    var repair = services.Last(service => service.ServiceType == typeof(IRebuildRepair));
-                    services.AddSingleton<IRebuildRepair>(provider => new AfterImportRepair(
-                        (IRebuildRepair)(repair.ImplementationInstance ?? repair.ImplementationFactory?.Invoke(provider)
-                            ?? ActivatorUtilities.CreateInstance(provider, repair.ImplementationType!)), probe));
-                }
-            }, "gru", "sjc");
+        await using var cluster = await StartAsync(probe);
         var source = cluster["gru"];
         var receiver = cluster["sjc"];
         var collected = EntityIds.New().ToString();
@@ -75,6 +59,115 @@ public sealed class MovingCertifiedGcTests
         await Assert.That(await receiver.ReadAsync(collected)).IsNull();
         await Assert.That(await receiver.HasStateAsync("items", collected)).IsFalse();
     }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task A_trailing_collection_metadata_gap_preserves_source_present_documents_and_indexes_and_removes_empty_collections(
+        bool survivor, bool retainedIndex)
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var probe = new ImportProbe();
+        await using var cluster = await StartAsync(probe);
+        var source = cluster["gru"];
+        var receiver = cluster["sjc"];
+        const string Id = "00000000000000000000000000";
+        const string Index = "by_value_2";
+        await Assert.That(SqliteStorageTransaction.Bucket("items", Id))
+            .IsLessThan(SqliteStorageTransaction.Bucket(DocumentDelta.Collections, "items"));
+        await Assert.That(SqliteStorageTransaction.Bucket(DocumentDelta.Indexes, Index))
+            .IsLessThan(SqliteStorageTransaction.Bucket(DocumentDelta.Collections, "items"));
+        var metadata = Put(1000, $$"""{"created_at":1,"entity_id":"{{EntityIds.New()}}"}""");
+        await RepairAsync(source, new(DocumentDelta.Collections, "items", metadata),
+            new("items", Id, Put(survivor ? 2500UL : 1500UL, """{"survivor":true}""")));
+        var imports = 0;
+        var retries = 0;
+        probe.AfterImport = async (database, states, cancellationToken) =>
+        {
+            if (database != cluster.Database)
+            {
+                return;
+            }
+
+            if (states.Any(state => state.Collection == DocumentDelta.Collections && state.Id == "items")
+                && Interlocked.CompareExchange(ref imports, 1, 0) == 0)
+            {
+                await Assert.That(await receiver.HasStateAsync(DocumentDelta.Collections, "items")).IsTrue();
+                await Assert.That(await receiver.ReadAsync(Id)).IsEqualTo("""{"survivor":true}""");
+                await RepairAsync(source, new RepairState(DocumentDelta.Collections, "items", metadata.Delete(At(2000))));
+                var engine = source.Api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+                var store = (await engine.OpenDatabaseAsync(database, cancellationToken))!;
+                await using (var collect = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken))
+                {
+                    await Assert.That(await collect.CollectAsync(new Hlc(3000), cancellationToken)).IsEqualTo(1);
+                    _ = await collect.CommitAsync(cancellationToken);
+                }
+
+                if (retainedIndex)
+                {
+                    await RepairAsync(source, new RepairState(DocumentDelta.Indexes, Index,
+                        Put(4000, """{"collection":"items","fields":["value"]}""")));
+                }
+            }
+            else if (states.Any(state => state.Collection == "items" && state.Id == Id
+                || state.Collection == DocumentDelta.Indexes && state.Id == Index))
+            {
+                Interlocked.Increment(ref retries);
+                await Assert.That(await receiver.HasStateAsync(DocumentDelta.Collections, "items")).IsTrue();
+                await Assert.That(await receiver.ReadAsync(Id)).IsEqualTo("""{"survivor":true}""");
+            }
+        };
+        var incarnation = await receiver.IncarnationAsync();
+        await receiver.Api.Server.Services.GetRequiredService<IReplicaCopyFaults>()
+            .RecordAsync(cluster.Database, incarnation, "a fixture copy requiring certified refill", token);
+
+        var outcome = await receiver.Api.Server.Services.GetRequiredService<IReplicaRebuild>()
+            .RebuildAsync(cluster.Database, incarnation, token);
+
+        await Assert.That(imports).IsEqualTo(1);
+        await Assert.That(retries).IsEqualTo(survivor || retainedIndex ? 1 : 0)
+            .Because("a source-present document or index produces a second source page before the trailing metadata gap");
+        await Assert.That(outcome is RebuildOutcome.Completed).IsTrue().Because(outcome.ToString());
+        await Assert.That(await source.HasStateAsync(DocumentDelta.Collections, "items")).IsFalse();
+        var expected = survivor ? """{"survivor":true}""" : null;
+        await Assert.That(await source.ReadAsync(Id)).IsEqualTo(expected);
+        foreach (var restart in new[] { false, true })
+        {
+            if (restart)
+            {
+                await receiver.StopAsync();
+                await receiver.StartAsync();
+            }
+
+            await Assert.That(await receiver.HasStateAsync(DocumentDelta.Collections, "items")).IsFalse();
+            await Assert.That(await receiver.ReadAsync(Id)).IsEqualTo(expected);
+            await Assert.That(await receiver.HasStateAsync("items", Id)).IsEqualTo(survivor);
+            await using var read = await (await receiver.StoreAsync()).BeginTransactionAsync(write: false, token);
+            await Assert.That((await read.ListCollectionsAsync(null, 100, token)).Collections.Any(collection => collection.Name == "items"))
+                .IsEqualTo(survivor || retainedIndex);
+            await Assert.That((await read.ListIndexesAsync(token)).Any(index => index.Name == Index && index.Collection == "items"))
+                .IsEqualTo(retainedIndex);
+        }
+    }
+
+    private static Task<PeerStreamTests.Cluster> StartAsync(ImportProbe probe) =>
+        PeerStreamTests.Cluster.StartAsync(cdc: false, clock: null, configure: (region, services) =>
+        {
+            foreach (var recovery in services.Where(service => service.ServiceType == typeof(IHostedService)
+                && service.ImplementationType == typeof(RebuildRecovery)).ToArray())
+            {
+                services.Remove(recovery);
+            }
+
+            if (region == "sjc")
+            {
+                var repair = services.Last(service => service.ServiceType == typeof(IRebuildRepair));
+                services.AddSingleton<IRebuildRepair>(provider => new AfterImportRepair(
+                    (IRebuildRepair)(repair.ImplementationInstance ?? repair.ImplementationFactory?.Invoke(provider)
+                        ?? ActivatorUtilities.CreateInstance(provider, repair.ImplementationType!)), probe));
+            }
+        }, "gru", "sjc");
 
     private static async Task RepairAsync(PeerStreamTests.Machine machine, params RepairState[] states) =>
         _ = await machine.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(
