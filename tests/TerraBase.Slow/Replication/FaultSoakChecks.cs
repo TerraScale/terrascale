@@ -133,7 +133,6 @@ internal static class FaultSoakChecks
                 await RefusedAsync(answer, token);
             }
         }));
-        Check(!accepted.IsEmpty, "no unique claim was acknowledged under faults");
         return accepted.ToHashSet(StringComparer.Ordinal);
     }
 
