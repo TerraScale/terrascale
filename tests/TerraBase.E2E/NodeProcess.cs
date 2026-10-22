@@ -13,7 +13,7 @@ namespace TerraBase.E2E;
 /// One TerraBase node as its own operating-system process: the production entry point (<c>terrabase.dll</c> of this
 /// build), its own data directory and fixed loopback ports. It can be killed with SIGKILL and started again on the same
 /// data, which an in-process node cannot. This is a harness for the current architecture: it drives the node only over
-/// its listeners, as the platform operator on the internal listener (loopback off Fly, h2c, generated test credential) and as a
+/// its listeners, as the platform operator on the internal listener (loopback locally, h2c, generated test credential) and as a
 /// client on the public one. It is not the deleted CrashableTerraBase: it takes no peer, TLS or catalog-primary
 /// settings, because design C discovers peers itself.
 /// </summary>
@@ -98,8 +98,8 @@ internal sealed class NodeProcess : IAsyncDisposable
             start.ArgumentList.Add($"--{name}={value}");
         }
 
-        // Off Fly: no ambient Fly identity or TerraBase settings of the test process reach the node.
-        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("FLY_", StringComparison.Ordinal)
+        // Local node: no ambient ts-orch identity or TerraBase settings of the test process reach the node.
+        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TS_", StringComparison.Ordinal)
             || name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name == "PRIMARY_REGION").ToList())
         {
             _ = start.Environment.Remove(name);

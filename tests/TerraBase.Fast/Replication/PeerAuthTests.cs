@@ -234,7 +234,7 @@ public sealed class PeerAuthTests
     }
 
     [Test]
-    public async Task Server_entry_point_off_fly_refuses_internal_requests_without_the_credential_and_serves_them_with_it()
+    public async Task Local_production_entry_point_refuses_internal_requests_without_the_credential_and_serves_them_with_it()
     {
         var secret = PeerTls.NewSecret();
         var directory = Directory.CreateTempSubdirectory("terrabase-peer-process-").FullName;
@@ -284,7 +284,7 @@ public sealed class PeerAuthTests
     }
 
     // Starts this build's server DLL with the production entry point. Ports are ephemeral, the data directory is the given one, and every other
-    // setting is passed empty; inherited Fly, TerraBase and AWS variables are removed so only the given environment applies.
+    // setting is passed empty; inherited ts-orch, TerraBase and AWS variables are removed so only the given environment applies.
     private static Process StartBinary(string directory, IReadOnlyDictionary<string, string> environment)
     {
         var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet")
@@ -305,7 +305,7 @@ public sealed class PeerAuthTests
             start.ArgumentList.Add($"--{name}={value}");
         }
 
-        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("FLY_", StringComparison.Ordinal)
+        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TS_", StringComparison.Ordinal)
             || name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name.StartsWith("AWS_", StringComparison.Ordinal)
             || name is "BUCKET_NAME" or "PRIMARY_REGION").ToList())
         {
@@ -463,10 +463,10 @@ public sealed class PeerAuthTests
         };
     }
 
-    // One machine of the two-node cluster, listed in the shared fake DNS while it runs, as Fly's DNS lists machines.
+    // One machine of the two-node cluster, listed in the shared fake test directory while it runs.
     private sealed class Region(string name, FakeMemberStore members) : IAsyncDisposable
     {
-        private readonly string _machine = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
+        private readonly string _machine = EntityIds.New().ToString().ToLowerInvariant();
         private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-peer-auth-").FullName;
         private ManagementApi? _api;
 

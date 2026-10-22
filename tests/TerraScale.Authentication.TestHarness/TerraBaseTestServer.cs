@@ -64,7 +64,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         StartAsync(production: false, cancellationToken);
 
     /// <summary>
-    /// <see cref="StartAsync(CancellationToken)"/> in Production, as on a host off Fly, with a backup bucket nothing answers for
+    /// <see cref="StartAsync(CancellationToken)"/> in Production on a local host, with a backup bucket nothing answers for
     /// (backup ships in the background).
     /// </summary>
     public static Task<(TerraBaseTestServer? Server, string? Unavailable)> StartProductionAsync(CancellationToken cancellationToken = default) =>
@@ -98,7 +98,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     public TerraBaseDocumentsClient Documents(string apiKey) =>
         new(this.PublicHttp, new TerraBaseDocumentsClientOptions { BaseAddress = this.ClientAddress, ApiKey = apiKey });
 
-    /// <summary>A Documents API client on the internal listener with the peer credential: how ts-auth reaches TerraBase on Fly.</summary>
+    /// <summary>A Documents API client on the internal listener with the peer credential: how ts-auth reaches TerraBase.</summary>
     public TerraBaseDocumentsClient InternalDocuments() => new(this.Http, new TerraBaseDocumentsClientOptions { BaseAddress = this.InternalAddress });
 
     /// <summary>Issues an API key for <paramref name="organizationId"/> (<c>POST /admin/api-keys</c>, internal listener).</summary>
@@ -298,8 +298,8 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 RedirectStandardError = true,
                 UseShellExecute = false,
             };
-            // Development: no Tigris backup to attach in a test. The test process's own Fly, Tigris and TerraBase variables never reach it.
-            foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("FLY_", StringComparison.Ordinal) || name.StartsWith("AWS_", StringComparison.Ordinal)
+            // Development: no Tigris backup to attach in a test. The test process's own ts-orch, Tigris and TerraBase variables never reach it.
+            foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TS_", StringComparison.Ordinal) || name.StartsWith("AWS_", StringComparison.Ordinal)
                 || name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name is "BUCKET_NAME" or "PRIMARY_REGION").ToList())
             {
                 start.Environment.Remove(name);

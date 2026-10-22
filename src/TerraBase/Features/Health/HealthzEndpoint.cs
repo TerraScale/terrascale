@@ -14,7 +14,7 @@ namespace TerraBase.Features.Health;
 /// deploy gate compares it with a new image's before switching the region.</param>
 /// <param name="Revision">Source commit of the running build (<see cref="ServiceVersion.Revision"/>), or null when the build
 /// recorded none.</param>
-/// <param name="Machine">This node's machine (<c>FLY_MACHINE_ID</c>; <c>local</c> off Fly): which exact machine answered.</param>
+/// <param name="Machine">This node's machine (<c>TS_NODE</c>; <c>local</c> for a local process): which exact machine answered.</param>
 public sealed record StatusBody(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("version")] string Version,
