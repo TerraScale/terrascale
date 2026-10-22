@@ -14,6 +14,7 @@ import { runSql, checkSql } from "./sql.js";
 import { streamChanges } from "./changes.js";
 import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema } from "./catalog.js";
 import { V1Transport } from "./transport.js";
+import { V1SavedQueries } from "./saved-queries.js";
 /**
  * @import { V1Document, V1Durability, V1WriteResult } from "./decode.js"
  * @import { V1Filter, V1Path } from "./filter.js"
@@ -792,6 +793,8 @@ export class V1Database {
  * privately; it is never serialized, logged or forwarded to redirects.
  */
 export class TerraBaseV1Client {
+  /** @type {V1SavedQueries} */
+  #savedQueries;
   /** @type {V1Databases} */
   #databases;
   /** @type {V1Transport} */
@@ -801,6 +804,7 @@ export class TerraBaseV1Client {
   constructor(config) {
     this.#transport = new V1Transport(config);
     this.#databases = new V1Databases(this.#transport);
+    this.#savedQueries = new V1SavedQueries(this.#transport);
     Object.freeze(this);
   }
 
@@ -814,6 +818,8 @@ export class TerraBaseV1Client {
 
   /** @returns {V1Databases} Project-scoped database catalog. */
   get databases() { return this.#databases; }
+  /** @returns {V1SavedQueries} */
+  get savedQueries() { return this.#savedQueries; }
 }
 
 /**
