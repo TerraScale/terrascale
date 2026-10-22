@@ -1688,9 +1688,7 @@ public sealed class PeerStreamTests
             _ = await transaction.PutAsync("items", lost, Json("""{"n":1}"""), CancellationToken.None);
             _ = await transaction.PutAsync("items", pending, Json("""{"n":2}"""), CancellationToken.None);
         });
-        await Assert.That(await gru.Groups.AckedAsync(cluster.Database, sjc.Node, CancellationToken.None))
-            .IsEqualTo(new SourceCursor(renewed!.Value, 0)).Because("the fresh sender has no scoped peer ACK or refill requirement");
-        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, renewed.Value, 0, CancellationToken.None)).IsTrue();
+        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, renewed!.Value, 0, CancellationToken.None)).IsTrue();
         var engine = gru.Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
         var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
         var peers = await store.WithWriterAsync(session =>
@@ -1700,6 +1698,10 @@ public sealed class PeerStreamTests
             return (long)command.ExecuteScalar()!;
         }, "a test checking the rebuilt sender has no peer rows", CancellationToken.None);
         await Assert.That(peers).IsEqualTo(0);
+        await using (var read = (TerraBase.Engine.Sqlite.SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            await Assert.That(await read.GetAckedAsync(sjc.Node, renewed.Value, CancellationToken.None)).IsNull();
+        }
 
         var digested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gru.BeforeDigest = (database, token) =>
@@ -1718,6 +1720,8 @@ public sealed class PeerStreamTests
             await sjc.RepairWaits.Task.WaitAsync(Deadline);
             await Assert.That(await sjc.ReadAsync(lost)).IsNull();
             await Assert.That(await sjc.ReadAsync(pending)).IsNull().Because("no live batch crosses unfinished coverage");
+            await Assert.That(await gru.Groups.AckedAsync(cluster.Database, sjc.Node, CancellationToken.None))
+                .IsEqualTo(new SourceCursor(renewed.Value, 0)).Because("the sender initialized its missing scope without a persisted refill requirement");
             await Assert.That(await gru.AckedAsync(cluster.Database, sjc.Node)).IsEqualTo(0);
 
             sjc.HeldRepairs = null;
