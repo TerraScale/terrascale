@@ -25,34 +25,34 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
         return new(rows.Select(row => new McpDocument(row.Id, row.Document)).ToArray());
     }
 
-    [McpServerTool(Name = "get_document", Title = "Get document", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read one document by ID. Set includeVersion for a conditional-write version.")]
+    [McpServerTool(Name = "get_document", Title = "Get document", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Read one document by its ULID ID. Set includeVersion for a conditional-write version.")]
     public async Task<McpDocument> Document(string databaseId, string collection, string documentId = "", string? organizationId = null, string? projectId = null, string? id = null, bool includeVersion = false)
     {
         var row = await data.GetAsync(Scope(organizationId, projectId), databaseId, collection, McpScope.Alias(documentId, id, "documentId"), Cancellation);
         return new(row.Id, row.Document, includeVersion ? row.Version : null);
     }
 
-    [McpServerTool(Name = "create_document", Title = "Create document", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a document in a collection. Fails if the ID already exists. Requires write access.")]
+    [McpServerTool(Name = "create_document", Title = "Create document", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a document in a collection. Omit documentId to generate a ULID; a supplied ID must be a 26-character uppercase ULID. Fails if the ID already exists. Requires write access.")]
     public Task<McpDocumentWrite> CreateDocument(string databaseId, string collection, [Description("The document body as a JSON object. Required unless using the value alias.")] Dictionary<string, JsonElement>? document = null, string documentId = "", string? organizationId = null, string? projectId = null, JsonElement? value = null, string? id = null) =>
         WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "create", McpScope.Alias(documentId, id, "documentId", false), Body(document, value), "");
 
-    [McpServerTool(Name = "replace_document", Title = "Replace document", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Replace an existing document's whole body. Requires write access. An omitted version uses the current version as a precondition.")]
+    [McpServerTool(Name = "replace_document", Title = "Replace document", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Replace an existing document's whole body, addressed by its ULID ID. Requires write access. An omitted version uses the current version as a precondition.")]
     public Task<McpDocumentWrite> ReplaceDocument(string databaseId, string collection, string documentId = "", [Description("The new document body as a JSON object. Required unless using the value alias.")] Dictionary<string, JsonElement>? document = null, string? version = null, string? organizationId = null, string? projectId = null, string? id = null, JsonElement? value = null) =>
         WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "replace", McpScope.Alias(documentId, id, "documentId"), Body(document, value), version);
 
-    [McpServerTool(Name = "patch_document", Title = "Patch document", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Merge-patch an existing document (RFC 7396). Requires write access. An omitted version uses the current version as a precondition.")]
+    [McpServerTool(Name = "patch_document", Title = "Patch document", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Merge-patch an existing document (RFC 7396), addressed by its ULID ID. Requires write access. An omitted version uses the current version as a precondition.")]
     public Task<McpDocumentWrite> PatchDocument(string databaseId, string collection, string documentId = "", [Description("RFC 7396 JSON merge patch: null removes fields and nested objects merge. Required unless using the value alias.")] Dictionary<string, JsonElement>? patch = null, string? version = null, string? organizationId = null, string? projectId = null, string? id = null, JsonElement? value = null) =>
         WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "patch", McpScope.Alias(documentId, id, "documentId"), Body(patch, value), version);
 
-    [McpServerTool(Name = "delete_document", Title = "Delete document", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Delete a document. Requires write access. An omitted version uses the current version as a precondition.")]
+    [McpServerTool(Name = "delete_document", Title = "Delete document", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Delete a document by its ULID ID. Requires write access. An omitted version uses the current version as a precondition.")]
     public Task<McpDocumentWrite> DeleteDocument(string databaseId, string collection, string documentId = "", string? version = null, string? organizationId = null, string? projectId = null, string? id = null) =>
         WriteDocumentAsync(Scope(organizationId, projectId), databaseId, collection, "delete", McpScope.Alias(documentId, id, "documentId"), default, version);
 
-    [McpServerTool(Name = "get_document_history", Title = "Get document history", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a document's recorded versions, oldest first, including deletions. Requires a producer history contract.")]
+    [McpServerTool(Name = "get_document_history", Title = "Get document history", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a document's recorded versions (documentId is a ULID), oldest first, including deletions. Requires a producer history contract.")]
     public Task<McpDocumentHistory> History(string databaseId, string collection, string documentId, string? organizationId = null, string? projectId = null)
     {
         ValidateCollection(Scope(organizationId, projectId), databaseId, collection);
-        if (documentId.Length is 0 or > 256 || documentId.Any(char.IsControl)) throw new AccountAccessException("Choose a valid document ID.", 422);
+        DataService.ValidDocumentId(documentId);
         throw new AccountAccessException("The data plane does not expose document history.", 503);
     }
 

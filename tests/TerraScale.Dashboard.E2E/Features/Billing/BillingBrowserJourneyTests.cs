@@ -121,13 +121,13 @@ public sealed class BillingBrowserJourneyTests(DashboardE2EFixture fixture)
             using var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
             { ["_csrf"] = csrf, ["databaseId"] = sourceId, ["name"] = "customers" });
             await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
-            await ToolAsync("create_document", new { databaseId = sourceId, collection = "customers", documentId = "snapshot-customer", document = new { name = "Before branch" } });
+            await ToolAsync("create_document", new { databaseId = sourceId, collection = "customers", documentId = "01K78D0C000000000000000012", document = new { name = "Before branch" } });
             var branch = await ToolAsync("branch_database", new { databaseId = sourceId, name = name + "-copy" });
             branchId = branch.GetProperty("id").GetString()!;
-            await ToolAsync("replace_document", new { databaseId = sourceId, collection = "customers", documentId = "snapshot-customer", document = new { name = "After branch" } });
-            var branchDocument = await ToolAsync("get_document", new { databaseId = branchId, collection = "customers", documentId = "snapshot-customer" });
+            await ToolAsync("replace_document", new { databaseId = sourceId, collection = "customers", documentId = "01K78D0C000000000000000012", document = new { name = "After branch" } });
+            var branchDocument = await ToolAsync("get_document", new { databaseId = branchId, collection = "customers", documentId = "01K78D0C000000000000000012" });
             await Assert.That(branchDocument.GetProperty("value").GetProperty("name").GetString()).IsEqualTo("Before branch");
-            var sourceDocument = await ToolAsync("get_document", new { databaseId = sourceId, collection = "customers", documentId = "snapshot-customer" });
+            var sourceDocument = await ToolAsync("get_document", new { databaseId = sourceId, collection = "customers", documentId = "01K78D0C000000000000000012" });
             await Assert.That(sourceDocument.GetProperty("value").GetProperty("name").GetString()).IsEqualTo("After branch");
         }
         finally

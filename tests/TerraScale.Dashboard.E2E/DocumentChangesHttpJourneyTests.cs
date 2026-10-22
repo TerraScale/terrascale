@@ -67,7 +67,7 @@ public sealed class DocumentChangesHttpJourneyTests(DashboardRootFixture fixture
         using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
         { ["_csrf"] = csrf, ["databaseId"] = id, ["name"] = "items" }))
             await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        await WriteAsync("first");
+        await WriteAsync("01K78D0C000000000000000005");
         var page = await client.GetStringAsync("/databases/" + id + "/documents?collection=items");
         await Assert.That(page).Contains("id=\"document-changes\"");
         await Assert.That(page).Contains("id=\"document-changes-status\"");
@@ -78,18 +78,18 @@ public sealed class DocumentChangesHttpJourneyTests(DashboardRootFixture fixture
             await StreamHeadersAsync(response);
             var events = Frames(await response.Content.ReadAsStringAsync());
             await Assert.That(string.Join(',', events.Select(value => value.State))).IsEqualTo("cursor,change,cursor,reconnect");
-            await Assert.That(events.Single(value => value.State == "change").Data.GetProperty("change").GetProperty("id").GetString()).IsEqualTo("first");
+            await Assert.That(events.Single(value => value.State == "change").Data.GetProperty("change").GetProperty("id").GetString()).IsEqualTo("01K78D0C000000000000000005");
             checkpoint = events.Last().Id;
             await Assert.That(checkpoint.Length).IsGreaterThan(0);
         }
-        await WriteAsync("second");
+        await WriteAsync("01K78D0C000000000000000006");
         using (var request = new HttpRequestMessage(HttpMethod.Get, route + "&cursor=deliberately-invalid"))
         {
             request.Headers.Add("Last-Event-ID", checkpoint);
             using var response = await client.SendAsync(request);
             await StreamHeadersAsync(response);
             var events = Frames(await response.Content.ReadAsStringAsync());
-            await Assert.That(events.Single(value => value.State == "change").Data.GetProperty("change").GetProperty("id").GetString()).IsEqualTo("second");
+            await Assert.That(events.Single(value => value.State == "change").Data.GetProperty("change").GetProperty("id").GetString()).IsEqualTo("01K78D0C000000000000000006");
             await Assert.That(events.First().Id).IsEqualTo(checkpoint);
             await Assert.That(events.Last().Id == checkpoint).IsFalse();
             await Assert.That(upstreamResume).IsEqualTo(checkpoint);

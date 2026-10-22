@@ -98,7 +98,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
         Check((await listing).GetProperty("credentials").GetArrayLength() == 0,
             "Opening the console enrolls no private key: the ts-auth listing stays empty");
 
-        var reference = new Dictionary<string, object?> { ["databaseId"] = id, ["collection"] = "users", ["documentId"] = "scoped" };
+        var reference = new Dictionary<string, object?> { ["databaseId"] = id, ["collection"] = "users", ["documentId"] = "01K78D0C000000000000000016" };
         await journey.CallAsync(client, "create_document", new(reference) { ["document"] = new { scoped = true } });
         await journey.CallAsync(replica, "get_document", reference);
         var observed = await ObservationsAsync(controls);
@@ -175,7 +175,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
         using (var created = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
         { ["_csrf"] = csrf, ["databaseId"] = id, ["name"] = "users" }))
             Check(created.StatusCode == HttpStatusCode.Created, "Native collection creation passes through the official SDK");
-        var reference = new Dictionary<string, object?> { ["databaseId"] = id, ["collection"] = "users", ["documentId"] = "customer/space %?#" };
+        var reference = new Dictionary<string, object?> { ["databaseId"] = id, ["collection"] = "users", ["documentId"] = "01K78D0C000000000000000017" };
         await journey.CallAsync(client, "create_document", new(reference) { ["document"] = new { score = 1, profile = new { city = "GRU", remove = true } } });
         var original = await journey.CallAsync(replica, "get_document", new(reference) { ["includeVersion"] = true });
         var version = original.GetProperty("version").GetString()!;
@@ -190,14 +190,14 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
         Check(patched.GetProperty("value").GetProperty("profile").GetProperty("city").GetString() == "SFO" &&
             !patched.GetProperty("value").GetProperty("profile").TryGetProperty("remove", out _), "Legacy patch uses RFC7396 while preserving the current producer precondition");
         using (var native = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/documents", new()
-        { ["_csrf"] = csrf, ["databaseId"] = id, ["collection"] = "users", ["operation"] = "replace", ["id"] = "customer/space %?#", ["document"] = "{\"score\":4}" }))
+        { ["_csrf"] = csrf, ["databaseId"] = id, ["collection"] = "users", ["operation"] = "replace", ["id"] = "01K78D0C000000000000000017", ["document"] = "{\"score\":4}" }))
             Check(native.StatusCode == HttpStatusCode.OK, "A native legacy replacement reads and sends the current version");
         var observed = await ObservationsAsync(controls);
         CheckProtocol(observed);
         var requests = observed.GetProperty("requests").EnumerateArray().ToArray();
         var createdDocument = requests.Single(request => request.GetProperty("method").GetString() == "PUT" && request.GetProperty("ifNoneMatch").GetString() == "*");
         Check(createdDocument.GetProperty("path").GetString()!.EndsWith("/documents/by-key", StringComparison.Ordinal) &&
-            createdDocument.GetProperty("query").GetString() == "?id=customer%2Fspace%20%25%3F%23",
+            createdDocument.GetProperty("query").GetString() == "?id=01K78D0C000000000000000017",
             "The SDK query-encodes the raw document key exactly once without losing reserved characters");
         var patch = requests.Single(request => request.GetProperty("method").GetString() == "PATCH");
         Check(patch.GetProperty("ifMatch").GetString() == '"' + acceptedVersion + '"' && patch.GetProperty("contentType").GetString() == "application/merge-patch+json",
@@ -244,7 +244,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
         await ControlAsync(controls, new { command = "role", value = "" });
         await journey.ErrorAsync(replica, "get_database", new() { ["databaseId"] = id });
         await journey.ErrorAsync(client, "create_database", new() { ["name"] = "after-revocation", ["region"] = "GRU" });
-        await journey.ErrorAsync(replica, "create_document", new() { ["databaseId"] = id, ["collection"] = "users", ["documentId"] = "denied", ["document"] = new { denied = true } });
+        await journey.ErrorAsync(replica, "create_document", new() { ["databaseId"] = id, ["collection"] = "users", ["documentId"] = "01K78D0C000000000000000018", ["document"] = new { denied = true } });
         await journey.ErrorAsync(client, "create_api_key", new() { ["name"] = "Denied", ["scopes"] = new[] { "database:read" } });
         Check((await ObservationsAsync(controls)).GetProperty("documentsRequests").GetInt32() == before,
             "Previously issued PATs cannot reach customer data after the production workspace SDK rereads removed membership");
@@ -322,7 +322,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardRootFixture fixture)
         {
             try
             {
-                await Customer(rawHttp, issuedSecret).Database(projectId, databaseName).GetDocumentAsync("users", "raw-key-probe", deadline.Token);
+                await Customer(rawHttp, issuedSecret).Database(projectId, databaseName).GetDocumentAsync("users", "01K78D0C000000000000000019", deadline.Token);
                 throw new InvalidOperationException("A raw issued key must not be accepted as a data-plane bearer");
             }
             catch (TerraBaseAuthenticationException error)

@@ -33,7 +33,7 @@ public sealed class BackupJourneyTests(DashboardRootFixture fixture)
         using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
         { ["_csrf"] = csrf, ["databaseId"] = id, ["name"] = "users" }))
             Check(collection.StatusCode == HttpStatusCode.Created, "Native collection creation reaches the official Documents SDK");
-        await CallAsync(client, secret, "create_document", new { databaseId = id, collection = "users", documentId = "snapshot-row", document = new { score = 1, nested = new { keep = true } } });
+        await CallAsync(client, secret, "create_document", new { databaseId = id, collection = "users", documentId = "01K78D0C000000000000000010", document = new { score = 1, nested = new { keep = true } } });
         var initial = await ReadAsync(replica, "/api/v1/dashboard/backups?databaseId=" + id);
         Check(initial.GetProperty("backups").GetArrayLength() == 0 && initial.GetProperty("policy").GetProperty("retentionDays").GetInt32() == 7 &&
             !initial.GetProperty("policy").TryGetProperty("updatedAt", out _), "An empty real producer inventory reports its actual default policy without an invented update timestamp");
@@ -42,7 +42,7 @@ public sealed class BackupJourneyTests(DashboardRootFixture fixture)
         var first = await JsonAsync(created); var backupId = first.GetProperty("id").GetString()!;
         Check(TerraScaleIds.IsValid(backupId) && first.EnumerateObject().Select(field => field.Name).Order(StringComparer.Ordinal)
             .SequenceEqual(new[] { "createdAt", "id", "sizeBytes", "status" }) && first.GetProperty("status").GetString() == "ready", "Native backup has the exact original public shape, without raw provider scope metadata");
-        await CallAsync(replica, secret, "patch_document", new { databaseId = id, collection = "users", documentId = "snapshot-row", patch = new { score = 2 } });
+        await CallAsync(replica, secret, "patch_document", new { databaseId = id, collection = "users", documentId = "01K78D0C000000000000000010", patch = new { score = 2 } });
         var second = await CallAsync(replica, secret, "create_backup", new { databaseId = id });
         var listing = await CallAsync(client, secret, "list_backups", new { databaseId = id });
         Check(listing.GetProperty("backups").GetArrayLength() == 2 && listing.GetProperty("backups")[0].GetProperty("id").GetString() == second.GetProperty("id").GetString(),
@@ -99,7 +99,7 @@ public sealed class BackupJourneyTests(DashboardRootFixture fixture)
         { ["_csrf"] = csrf, ["databaseId"] = id, ["backupId"] = backupId, ["replace"] = "1", ["confirmName"] = "backup-source" }))
             Check(overwrite.StatusCode == HttpStatusCode.ServiceUnavailable, "Unsupported overwrite returns unavailable and never reports completion");
         await ErrorAsync(client, secret, "set_backup_policy", new { databaseId = id, fullBackupCron = "0 3 * * *", incrementalBackupCron = "0 * * * *", retentionDays = 7 });
-        await ErrorAsync(client, secret, "get_document_history", new { databaseId = id, collection = "users", documentId = "snapshot-row" });
+        await ErrorAsync(client, secret, "get_document_history", new { databaseId = id, collection = "users", documentId = "01K78D0C000000000000000010" });
         var after = await ReadAsync(producer, "/__test/observations");
         Check(after.GetProperty("backupRestores").GetInt32() == before.GetProperty("backupRestores").GetInt32() && after.GetProperty("policyWrites").GetInt32() == before.GetProperty("policyWrites").GetInt32(), "Unsupported actions issue no producer mutation");
         using (var collision = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/backups/restore", new()
@@ -120,7 +120,7 @@ public sealed class BackupJourneyTests(DashboardRootFixture fixture)
         Check(final.GetProperty("failures").GetArrayLength() == 0 && final.GetProperty("databases").GetArrayLength() == 0,
             "All native/MCP backup requests matched the frozen producer contract and native cleanup deleted each real database");
         Console.WriteLine("BACKUP PROTOCOL E2E: isolated producer snapshot restore verified with actual app HTTP/MCP + official SDK; live backup storage/scheduler/secret-delivery qualification remains open.");
-        async Task<int> ScoreAsync(string databaseId) => (await CallAsync(replica, secret, "get_document", new { databaseId, collection = "users", documentId = "snapshot-row" })).GetProperty("value").GetProperty("score").GetInt32();
+        async Task<int> ScoreAsync(string databaseId) => (await CallAsync(replica, secret, "get_document", new { databaseId, collection = "users", documentId = "01K78D0C000000000000000010" })).GetProperty("value").GetProperty("score").GetInt32();
     }
 
     [Test]

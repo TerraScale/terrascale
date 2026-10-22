@@ -189,7 +189,7 @@ public static class DataEndpoints
             }
             else if (section == "schema") schema = JsonSerializer.Serialize(await data.SchemaAsync(context, id, collection, http.RequestAborted), new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });
             else if (section == "indexes") indexes = await data.IndexesAsync(context, id, http.RequestAborted);
-            else if (section == "history") documentId = http.Request.Query["id"].ToString();
+            else if (section == "history") documentId = http.Request.Query["id"].ToString() is { Length: > 0 } historyId ? DataService.ValidDocumentId(historyId) : "";
         }
         catch (Exception error) when (error is HttpRequestException || DatabaseResults.KnownFailure(error))
         {

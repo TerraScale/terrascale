@@ -44,11 +44,11 @@ public sealed class UsageStorageFormatJourneyTests(DashboardRootFixture fixture)
             // Larger totals use two individually valid documents. The size
             // includes their actual compact JSON syntax, not just padding.
             var firstSize = Math.Min(bytes, 1 << 19);
-            await WriteAsync("boundary-a", firstSize, firstDocumentExists);
+            await WriteAsync("01K78D0C000000000000000007", firstSize, firstDocumentExists);
             firstDocumentExists = true;
             if (bytes > firstSize)
             {
-                await WriteAsync("boundary-b", bytes - firstSize, secondDocumentExists);
+                await WriteAsync("01K78D0C000000000000000008", bytes - firstSize, secondDocumentExists);
                 secondDocumentExists = true;
             }
             foreach (var client in new[] { first, replica })

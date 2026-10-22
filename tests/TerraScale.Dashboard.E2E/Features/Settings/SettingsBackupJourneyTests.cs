@@ -29,11 +29,11 @@ public sealed class SettingsBackupJourneyTests(DashboardRootFixture fixture)
         using (var collection = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/data/collections", new()
         { ["_csrf"] = csrf, ["databaseId"] = databaseId, ["name"] = "users" }))
             await Assert.That(collection.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        await CallAsync(client, secret, "create_document", new { databaseId, collection = "users", documentId = "snapshot", document = new { score = 1 } });
+        await CallAsync(client, secret, "create_document", new { databaseId, collection = "users", documentId = "01K78D0C000000000000000015", document = new { score = 1 } });
         await RedirectAsync("backup-now", new() { ["databaseId"] = databaseId });
         var snapshot = (await ReadAsync(replica, "/api/v1/dashboard/backups?databaseId=" + databaseId)).GetProperty("backups")[0];
         var backupId = snapshot.GetProperty("id").GetString()!;
-        await CallAsync(replica, secret, "patch_document", new { databaseId, collection = "users", documentId = "snapshot", patch = new { score = 2 } });
+        await CallAsync(replica, secret, "patch_document", new { databaseId, collection = "users", documentId = "01K78D0C000000000000000015", patch = new { score = 2 } });
         await RedirectAsync("backup-policy", new()
         { ["databaseId"] = databaseId, ["fullBackupCron"] = "0 3 * * *", ["incrementalBackupCron"] = "", ["retentionDays"] = "14", ["disabled"] = "on" });
         var policy = (await ReadAsync(replica, "/api/v1/dashboard/backups?databaseId=" + databaseId)).GetProperty("policy");
@@ -94,7 +94,7 @@ public sealed class SettingsBackupJourneyTests(DashboardRootFixture fixture)
         async Task ControlAsync(object body)
         { using var response = await producer.PostAsJsonAsync("/__test/control", body); await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NoContent); }
         async Task<int> ScoreAsync(string id) => (await CallAsync(replica, secret, "get_document", new
-        { databaseId = id, collection = "users", documentId = "snapshot" })).GetProperty("value").GetProperty("score").GetInt32();
+        { databaseId = id, collection = "users", documentId = "01K78D0C000000000000000015" })).GetProperty("value").GetProperty("score").GetInt32();
     }
 
     private static async Task<JsonElement> ReadAsync(HttpClient client, string path)
