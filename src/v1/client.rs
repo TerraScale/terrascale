@@ -12,7 +12,6 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::atlas::AtlasResolver;
-use super::control::ControlClient;
 use super::documents::Database;
 use super::errors::{self, Error, Result};
 use super::ids::IdempotencyKey;
@@ -99,7 +98,7 @@ impl fmt::Debug for ClientBuilder {
 impl ClientBuilder {
     /// `base_url` is the TerraBase origin (HTTPS; plain HTTP only for loopback
     /// hosts; a path prefix is kept). `token` is a `tbk1.<id>.<secret>` key: a
-    /// data key for documents, a control key for [`ControlClient`]. Calling
+    /// data key for the retired document protocol. Calling
     /// [`Self::project`] selects project paths and accepts a bearer access token.
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
@@ -314,11 +313,6 @@ impl ClientBuilder {
             }),
         })
     }
-
-    /// Builds a [`ControlClient`]; the token must be a control key.
-    pub fn build_control(self) -> Result<ControlClient> {
-        Ok(ControlClient::new(self.build()?))
-    }
 }
 
 pub(crate) fn valid_region(region: &str) -> bool {
@@ -444,12 +438,6 @@ impl Client {
     #[must_use]
     pub fn database(&self, name: impl Into<String>) -> Database {
         Database::new(self.clone(), name.into())
-    }
-
-    /// The control-plane API with this client's key (must be a control key).
-    #[must_use]
-    pub fn control(&self) -> ControlClient {
-        ControlClient::new(self.clone())
     }
 
     /// The configured base URL.

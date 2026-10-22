@@ -32,7 +32,6 @@ mod atlas;
 mod backups;
 mod changes;
 mod client;
-mod control;
 mod documents;
 mod errors;
 mod ids;
@@ -52,10 +51,6 @@ pub use backups::RestoredDatabase;
 pub use changes::{ChangeBytes, ChangesOptions};
 pub use client::{
     Client, ClientBuilder, RetryPolicy, DEFAULT_MAX_RESPONSE_BYTES, MAX_REQUEST_BYTES,
-};
-pub use control::{
-    CollectionInfo, ControlClient, CreateCollection, CreateKey, Element, Field, Grant, IndexKey,
-    IndexSpec, Key, KeyRate, KeyWithToken, ListOptions, Page, Region, Schema, UniqueConstraint,
 };
 pub use documents::{
     Collection, Database, Document, DocumentState, Event, Patch, PatchOp, Precondition,
