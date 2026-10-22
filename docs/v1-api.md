@@ -157,12 +157,4 @@ idempotent replay and uncertain commits, the retry policy, query paging,
 counts and projection, grants, and control-plane provisioning, rotation and
 revocation.
 
-Slow suite (`cargo test --test v1_live`): runs against a real server when
-`TB_V1_URL` and `TB_V1_CONTROL_KEY` (a token, or a file holding one) are set;
-`TB_V1_CA_FILE` optionally names a PEM root CA. Without them it is skipped.
-It provisions its own tenant, database, collection and key, then exercises
-documents, transactions, queries and revocation. Missing real-service inputs
-must be reported as skipped, not successful qualification. Fake producers
-belong only in test code/test binaries and cannot establish live compatibility.
-
 SDK contract tests use HTTP fakes only. TerraBase binary downloads and execution are prohibited outside its monorepo.
