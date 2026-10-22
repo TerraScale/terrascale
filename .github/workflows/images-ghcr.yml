@@ -25,6 +25,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -52,3 +53,24 @@ jobs:
       # Index digest plus each platform's child digest (ts-orch specs pin the linux/arm64 child).
       - run: |
           { echo '```'; docker buildx imagetools inspect "ghcr.io/terrascale/ts-dashboard@${{ steps.push.outputs.digest }}"; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+      # W22: release the linux/arm64 digest to every region's ts-orch; rolls back on failed readiness.
+      - name: Release to every region
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVICE: ts-dashboard
+          INDEX: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/terrascale/${SERVICE}"
+          arm64=$(docker buildx imagetools inspect "${image}@${INDEX}" --format '{{json .Manifest}}' |
+            jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest')
+          test -n "$arm64"
+          tag=$(gh release list --repo TerraScale/ts-orchestrator --limit 30 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("ci-"))] | sort_by(.createdAt) | last | .tagName // ""')
+          test -n "$tag"
+          gh release download "$tag" --repo TerraScale/ts-orchestrator --dir "${RUNNER_TEMP}/ts-orch" --pattern terrascale-orchestrator-linux-amd64
+          curl -fsSL https://raw.githubusercontent.com/TerraScale/ts-orchestrator/main/deploy/m1/regions.json -o "${RUNNER_TEMP}/regions.json"
+          chmod +x "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64"
+          "${RUNNER_TEMP}/ts-orch/terrascale-orchestrator-linux-amd64" release app --service "$SERVICE" \
+            --image "${image}@${arm64}" --regions "${RUNNER_TEMP}/regions.json" | tee -a "$GITHUB_STEP_SUMMARY"
