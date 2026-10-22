@@ -331,7 +331,7 @@ public sealed class ReplicaRebuildTests
 
         public async ValueTask<int?> RepairRebuildAsync(TenantContext database, Ulid newIncarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
             await pair.Sjc.IncarnationAsync() == newIncarnation
-                ? await pair.Sjc.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(database, states, cancellationToken)
+                ? await pair.Sjc.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(database, newIncarnation, states, cancellationToken)
                 : null;
 
         public ValueTask<bool> RecordRefillAsync(

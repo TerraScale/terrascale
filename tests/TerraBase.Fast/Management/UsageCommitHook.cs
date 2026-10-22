@@ -317,6 +317,8 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
         public Guid Scope => inner.Scope;
 
+        public ValueTask<Ulid> GetIncarnationAsync(CancellationToken cancellationToken) => inner.GetIncarnationAsync(cancellationToken);
+
         public async ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
         {
             hook.BeforeGet?.Invoke(collection);

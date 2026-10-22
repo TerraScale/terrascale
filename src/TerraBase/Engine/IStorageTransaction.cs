@@ -86,6 +86,9 @@ public interface IStorageTransaction : IAsyncDisposable
     /// </summary>
     Guid Scope { get; }
 
+    /// <summary>Reads this file's persisted incarnation in the transaction, under the writer for write transactions.</summary>
+    ValueTask<Ulid> GetIncarnationAsync(CancellationToken cancellationToken);
+
     /// <summary>Reads one live document, or <see langword="null"/> when it is absent or deleted.</summary>
     ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken);
 

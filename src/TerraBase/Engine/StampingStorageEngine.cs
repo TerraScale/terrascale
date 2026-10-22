@@ -163,6 +163,9 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
 
         public Guid Scope => inner.Scope;
 
+        public ValueTask<Ulid> GetIncarnationAsync(CancellationToken cancellationToken) =>
+            RunAsync(() => inner.GetIncarnationAsync(cancellationToken), cancellationToken);
+
 
 
         public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>

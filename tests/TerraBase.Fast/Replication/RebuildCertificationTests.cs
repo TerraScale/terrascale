@@ -327,7 +327,7 @@ public sealed class RebuildCertificationTests
         await Assert.That(await repair.RepairRebuildAsync(pair.Database, Ulid.NewUlid(), page, none)).IsNull().Because("an incarnation not in place");
         await Assert.That(await repair.RecordRefillAsync(pair.Database, Ulid.NewUlid(), pair.Gru.Name, source.Incarnation, source.Head, none)).IsFalse();
         await Assert.That(await repair.CompleteRebuildAsync(pair.Database, faulted, rebuilt, none)).IsFalse().Because("no refill is recorded");
-        _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () => await pair.Sjc.Service<IChangeGroupSink>().RepairAsync(pair.Database, page, none));
+        _ = await Assert.ThrowsAsync<ReplicaCopyFaultedException>(async () => await pair.Sjc.Service<IChangeGroupSink>().RepairAsync(pair.Database, rebuilt, page, none));
         await Assert.That(await pair.Sjc.ReadAsync(kept)).IsNull().Because("no refused write reached the rebuilt copy");
         await Assert.That(await repair.RepairRebuildAsync(pair.Database, rebuilt, page, none)).IsEqualTo(1);
         await Assert.That(await pair.Sjc.ReadAsync(kept)).IsEqualTo("""{"n":1}""");

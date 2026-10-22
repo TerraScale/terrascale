@@ -31,7 +31,8 @@ public sealed class BucketPageTests
         var collision = ids.GroupBy(id => SqliteStorageTransaction.Bucket("items", id)).First(group => group.Count() > 1).Take(2).ToArray();
         var seeded = collision.Concat(ids.Except(collision, StringComparer.Ordinal).Take(6))
             .Select((id, index) => new RepairState("items", id, index == 0 ? deleted : live)).ToArray();
-        await Assert.That(await api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(database, seeded, token)).IsEqualTo(seeded.Length);
+        var incarnation = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, token))!.Incarnation;
+        await Assert.That(await api.Server.Services.GetRequiredService<IChangeGroupSink>().RepairAsync(database, incarnation, seeded, token)).IsEqualTo(seeded.Length);
         int[] selected = sparse
             ? [SqliteStorageTransaction.Bucket("items", collision[0]), SqliteStorageTransaction.Bucket("items", seeded[^1].Id)]
             : [.. Enumerable.Range(0, 4096)];
@@ -39,7 +40,6 @@ public sealed class BucketPageTests
             .OrderBy(state => SqliteStorageTransaction.Bucket(state.Collection, state.Id)).ThenBy(state => state.Collection, StringComparer.Ordinal)
             .ThenBy(state => state.Id, StringComparer.Ordinal).ToArray();
         var states = api.Server.Services.GetRequiredService<IReplicaStates>();
-        var incarnation = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, token))!.Incarnation;
         int[] requested = sparse ? [.. selected.Reverse(), .. selected] : [.. selected.Reverse()];
         List<RepairState> actual = [];
         BucketCursor? cursor = null;
