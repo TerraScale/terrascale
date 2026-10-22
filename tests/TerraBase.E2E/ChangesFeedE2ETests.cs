@@ -14,7 +14,8 @@ public sealed class ChangesFeedE2ETests
 {
     private const int Writes = 10;
 
-    // sjc, the cursor's issuer, stops: fra's replay to it fails, and fra must serve the resume itself on its own prefix proof.
+    // sjc, the cursor's issuer, stops: fra must serve the resume itself on its own prefix proof, either because the membership
+    // no longer lists sjc (no ts-replay) or because the edge's replay to sjc failed and fell back (ts-replay-failed).
     // Local nodes only: the deploy run never stops a region; on ts-orch this is the orch-outage scenario below.
     [Test]
     [Category("local-only")]
@@ -30,8 +31,8 @@ public sealed class ChangesFeedE2ETests
         await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
         using var fra = await cluster.ViaAsync(Cluster.Fra, Cluster.Fra);
         await ResumeElsewhereAsync(region => cluster[region], fra, cluster.DatabasePath, cluster.Collection, cluster.Document, () => cluster.StopAsync(Cluster.Sjc));
-        Expected.Check(cluster.Replays.Any(replay => replay is { Edge: Cluster.Fra, Target: Cluster.Sjc, FellBack: true } && replay.PathAndQuery.Contains("cursor=", StringComparison.Ordinal)),
-            $"fra replayed the resume to sjc, its issuer, and served it after the replay failed; replays: {string.Join("; ", cluster.Replays)}");
+        Expected.Check(!cluster.Replays.Any(replay => replay is { Edge: Cluster.Fra, Target: Cluster.Sjc, FellBack: false } && replay.PathAndQuery.Contains("cursor=", StringComparison.Ordinal)),
+            $"fra served the resume itself, never answered by the stopped sjc; replays: {string.Join("; ", cluster.Replays)}");
     }
 
     // sjc, the cursor's issuer, stays up: the resume presented in fra is replayed to sjc (issuer routing), and only sjc's
