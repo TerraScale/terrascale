@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.AckAfterSegment;
@@ -32,6 +34,41 @@ public sealed class AckAfterSegmentTests
         await Assert.That(position).IsEqualTo(gate.Position);
         await Assert.That((long)segments).IsEqualTo(gate.Segments);
         await Assert.That(gate.Segments).IsLessThan(writes.Count).Because("group commit stores several writes per segment");
+    }
+
+    [Test]
+    public async Task A_busy_tap_retries_without_acknowledging_partial_or_duplicate_history(CancellationToken cancellationToken)
+    {
+        await using var prototype = await AckPrototype.StartAsync(new ObjectStoreFaults(seed: 23), cancellationToken);
+        await using var gate = await prototype.GateAsync(cancellationToken);
+        var tap = (TursoChangeTap)gate.Tap;
+        var trims = 0;
+        var retrying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        tap.BeforeTrim = async token =>
+        {
+            if (Interlocked.Increment(ref trims) == 1)
+            {
+                throw new StorageBusyException();
+            }
+
+            _ = retrying.TrySetResult();
+            await release.Task.WaitAsync(token);
+        };
+
+        var writing = WriteAsync(prototype, gate, writers: 1, each: 1, Deadline, cancellationToken);
+        await retrying.Task.WaitAsync(Deadline, cancellationToken);
+        await Assert.That(writing.IsCompleted).IsFalse().Because("the successful retry has not finished reading the segment");
+        _ = release.TrySetResult();
+        var writes = await writing;
+
+        await Assert.That(gate.Retries).IsGreaterThanOrEqualTo(1);
+        await Assert.That(writes.Values.All(ack => ack == Ack.Durable)).IsTrue();
+        var (restored, position, segments) = await prototype.RestoreAsync(cancellationToken);
+        await Assert.That(writes.Keys.Where(id => !restored.Contains(id)).ToList()).IsEmpty();
+        await Assert.That(restored.Count).IsEqualTo(writes.Count);
+        await Assert.That(position).IsEqualTo(gate.Position);
+        await Assert.That((long)segments).IsEqualTo(gate.Segments);
     }
 
     [Test]

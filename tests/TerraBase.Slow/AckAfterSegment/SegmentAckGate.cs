@@ -53,7 +53,7 @@ internal sealed class SegmentAckGate : IAsyncDisposable
     /// <summary>Waits released by stored segments (a write's wait counts once).</summary>
     public long Released => Interlocked.Read(ref _released);
 
-    /// <summary>Failed attempts to store a segment or the snapshot that the gate retried (after the client's own retries).</summary>
+    /// <summary>Failed reads or attempts to store a segment or snapshot that the gate retried (after the client's own retries).</summary>
     public long Retries => Interlocked.Read(ref _retries);
 
     /// <summary>Bytes of the generation's log stored as segments.</summary>
@@ -61,6 +61,8 @@ internal sealed class SegmentAckGate : IAsyncDisposable
 
     /// <summary>Size of the generation's snapshot.</summary>
     public long SnapshotBytes { get; private set; }
+
+    internal IWalTap Tap => _tap;
 
     /// <summary>From the generation's start to its snapshot being stored: nothing can be acknowledged meanwhile.</summary>
     public TimeSpan SnapshotStall { get; private set; }
@@ -159,7 +161,24 @@ internal sealed class SegmentAckGate : IAsyncDisposable
             }
 
             using var segment = new MemoryStream();
-            var read = await _tap.ReadAsync(segment, stop).ConfigureAwait(false);
+            WalRead read;
+            while (true)
+            {
+                try
+                {
+                    read = await _tap.ReadAsync(segment, stop).ConfigureAwait(false);
+                    break;
+                }
+                catch (StorageBusyException) when (!stop.IsCancellationRequested)
+                {
+                    // A failed tap read does not move its cursor; discard its partial bytes before reading them again.
+                    segment.SetLength(0);
+                    segment.Position = 0;
+                    _ = Interlocked.Increment(ref _retries);
+                    await Task.Delay(TimeSpan.FromMilliseconds(50), stop).ConfigureAwait(false);
+                }
+            }
+
             if (!read.Continuous)
             {
                 // A hole ends the generation: the prototype stops rather than start a new one.
