@@ -66,7 +66,11 @@ public sealed class StripeSetupCommand
         var prices = new List<Price>();
         await foreach (var price in client.V1.Prices.ListAutoPagingAsync(new()
         {
-            Active = true, Currency = "usd", Type = "recurring", Limit = 100, Expand = ["data.product"]
+            Active = true,
+            Currency = "usd",
+            Type = "recurring",
+            Limit = 100,
+            Expand = ["data.product"]
         }, cancellationToken: cancellationToken)) prices.Add(price);
         foreach (var price in prices.Where(price => price.Product is null))
             price.Product = products.FirstOrDefault(product => product.Id == price.ProductId);
@@ -78,7 +82,8 @@ public sealed class StripeSetupCommand
             {
                 product = await client.V1.Products.CreateAsync(new()
                 {
-                    Name = "TerraScale " + plan.Name, Metadata = new() { ["plan"] = plan.Key }
+                    Name = "TerraScale " + plan.Name,
+                    Metadata = new() { ["plan"] = plan.Key }
                 }, cancellationToken: cancellationToken);
                 changes.Add("product_" + plan.Key + "_created");
             }
@@ -97,10 +102,12 @@ public sealed class StripeSetupCommand
                 {
                     await client.V1.Prices.CreateAsync(new()
                     {
-                        Product = product.Id, Currency = "usd",
+                        Product = product.Id,
+                        Currency = "usd",
                         UnitAmount = interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents,
                         Recurring = new() { Interval = interval == "annual" ? "year" : "month", IntervalCount = 1 },
-                        LookupKey = "terrascale_" + name, TransferLookupKey = true
+                        LookupKey = "terrascale_" + name,
+                        TransferLookupKey = true
                     }, cancellationToken: cancellationToken);
                     changes.Add("price_" + name + "_created");
                 }
@@ -134,7 +141,8 @@ public sealed class StripeSetupCommand
         {
             await client.V1.BillingPortal.Configurations.CreateAsync(new()
             {
-                Features = features, DefaultReturnUrl = StripeBilling.Origin + "/billing"
+                Features = features,
+                DefaultReturnUrl = StripeBilling.Origin + "/billing"
             }, cancellationToken: cancellationToken);
             changes.Add("portal_created");
         }
