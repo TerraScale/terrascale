@@ -133,7 +133,7 @@ public sealed class BillingWebhookJourneyTests(DashboardE2EFixture fixture)
             {
                 await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.RequestEntityTooLarge);
                 if (excess > 64 * 1024)
-                    await Assert.That(rejected.Headers.ConnectionClose).IsEqualTo(true)
+                    await Assert.That(rejected.Headers.ConnectionClose).IsTrue()
                         .Because("An undrained HTTP/1.1 rejection must tell the pool to retire its connection.");
             }
 
