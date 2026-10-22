@@ -304,6 +304,14 @@ public sealed record TerraBaseOptions
             authAudiences = [PlatformAuthAudience];
         }
 
+        // Outside Development only the platform pair: another issuer would let its holder mint tokens TerraBase trusts, and
+        // a regional one would turn every platform token away with 401. Tests run their own ts-auth in Development.
+        if (production && (authIssuer != PlatformAuthIssuer || !authAudiences.Contains(PlatformAuthAudience)))
+        {
+            throw new TerraBaseConfigurationException(
+                $"outside Development, auth-issuer must be {PlatformAuthIssuer} and auth-audience must include {PlatformAuthAudience}: ts-auth issues every region's platform tokens with that pair");
+        }
+
         return new TerraBaseOptions
         {
             Port = ParsePort(values, "port") ?? DefaultPort,
