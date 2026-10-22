@@ -39,3 +39,9 @@ test.each([{ fields: {} }, { documents: "2" }, { uniqueConstraints: [{}] }])("in
   const { client } = await fixture((_r, response) => json(response, { ...inferred, ...patch }));
   await expect(client.database("app").schema.infer("users")).rejects.toThrow(TypeError);
 });
+test("unique declarations forward omitted flags for the producer's false default", async () => {
+  const { client, requests } = await fixture((_r, response) => json(response, { constraints: [] }));
+  const request = { fields: [{ name: "email" }], indexes: [{ name: "email_index", fields: ["email"] }] };
+  expect(await client.database("app").schema.declare("users", request)).toEqual({ constraints: [] });
+  expect(JSON.parse(requests[0]?.body ?? "")).toEqual(request);
+});

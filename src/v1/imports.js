@@ -52,7 +52,7 @@ export class V1Imports {
       body: bytes.slice(), contentType: "application/octet-stream", query: new URLSearchParams({ offset: String(offset) }), signal: options.signal,
     })).value);
   }
-  /** @param {{readonly options: V1ImportOptions | null}} request @param {V1RequestOptions} [options] @returns {Promise<V1ImportJob>} */
+  /** @param {{readonly options?: V1ImportOptions | null}} request @param {V1RequestOptions} [options] @returns {Promise<V1ImportJob>} */
   async update(request, options = {}) {
     members(request, ["options"]);
     mutationOptions(options);

@@ -448,12 +448,13 @@ export class V1Collection {
   /**
    * Reads one C# shape snapshot page or change-log chunk. Bootstrap defaults to offset -1.
    * Echo handle, nextOffset and cursor on the following read; discard state on must_refetch.
+   * ifNoneMatch sends a complete entity-tag list or *; 304 throws not_modified with cache headers.
    * @param {V1ShapeRequest} [request]
-   * @param {V1RequestOptions} [options]
+   * @param {V1RequestOptions & {readonly ifNoneMatch?: string}} [options]
    * @returns {Promise<V1ShapePage>}
    */
   shape(request = {}, options = {}) {
-    return readShapePage(this.#transport, this.#params, request, options.signal);
+    return readShapePage(this.#transport, this.#params, request, options.signal, options.ifNoneMatch);
   }
 
   /**

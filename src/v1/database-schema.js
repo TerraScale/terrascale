@@ -16,7 +16,7 @@ const shapes = record({ items: list(record({ id: text, collection: text, shape: 
 /** @typedef {ReturnType<typeof unique>} V1UniqueSchema */
 /** @typedef {ReturnType<typeof shapes>} V1QueryShapes */
 /** @typedef {"none" | "lowercase" | "trim_lowercase"} V1Normalization */
-/** @typedef {{ readonly fields?: readonly { readonly name: string; readonly unique: boolean; readonly normalization?: V1Normalization | null }[] | null; readonly indexes?: readonly { readonly name: string; readonly fields: readonly string[]; readonly unique: boolean; readonly normalization?: V1Normalization | null }[] | null }} V1UniqueSchemaRequest */
+/** @typedef {{ readonly fields?: readonly { readonly name: string; readonly unique?: boolean; readonly normalization?: V1Normalization | null }[] | null; readonly indexes?: readonly { readonly name: string; readonly fields: readonly string[]; readonly unique?: boolean; readonly normalization?: V1Normalization | null }[] | null }} V1UniqueSchemaRequest */
 
 /** Inferred collection fields, declared uniqueness, and observed query statistics. */
 export class V1DatabaseSchemaClient {

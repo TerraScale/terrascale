@@ -97,9 +97,10 @@ export function decodeFreeShapePage(value, headers) {
  * Follows exactly one authorized same-route 307; credentials never follow an arbitrary Location.
  * @param {V1Transport} transport @param {Readonly<Record<string,string>>} params
  * @param {V1ShapeRequest} request @param {AbortSignal | undefined} signal
+ * @param {string | undefined} [ifNoneMatch] A complete entity-tag list or *; 304 throws not_modified with response headers.
  * @returns {Promise<V1ShapePage>}
  */
-export async function readShapePage(transport, params, request, signal) {
+export async function readShapePage(transport, params, request, signal, ifNoneMatch) {
   const isResume = (request.offset ?? "-1") === "-1" && request.cursor !== undefined;
   if (isResume && (request.handle !== undefined || request.live !== undefined)) throw new TypeError("Shape resume requires offset=-1 without handle or live.");
   const query = encodeShapeRequest(isResume ? { ...request, cursor: undefined } : request);
@@ -108,6 +109,11 @@ export async function readShapePage(transport, params, request, signal) {
   if (query.get("offset") === "-1" && query.has("handle")) throw new TypeError("Shape bootstrap must omit handle.");
   /** @type {Record<string,string>} */
   const headers = {};
+  if (ifNoneMatch !== undefined) {
+    if (typeof ifNoneMatch !== "string" || !/^(?:\*|(?:W\/)?"[\x21\x23-\x7e\x80-\xff]*"(?:[ \t]*,[ \t]*(?:W\/)?"[\x21\x23-\x7e\x80-\xff]*")*)$/u.test(ifNoneMatch))
+      throw new TypeError("ifNoneMatch must be * or a list of quoted entity tags.");
+    headers["If-None-Match"] = ifNoneMatch;
+  }
   const source = new URL(await transport.url("readFreeShape", params, signal));
   if (isResume) {
     query.set("cursor", resumeToken(request.cursor));
@@ -133,9 +139,10 @@ export async function readShapePage(transport, params, request, signal) {
     if (target.searchParams.has("where") !== query.has("where")) malformed("shape redirect filter");
     // Keep the caller's validated filter: the server's canonical spelling must not broaden it.
     query.delete("cursor");
+    delete headers["TB-Shape-Resume"];
     query.set("handle", handle);
     query.set("offset", offset);
-    response = await shapeCall(transport, params, "readFreeShape", { query, signal });
+    response = await shapeCall(transport, params, "readFreeShape", { query, headers, signal });
     if (response.status !== 200) malformed("repeated shape redirect");
   } else if (query.get("offset") === "-1") malformed("shape bootstrap requires redirect");
   const page = decodeFreeShapePage(response.value, response.headers);

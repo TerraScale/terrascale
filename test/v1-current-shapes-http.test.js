@@ -40,3 +40,29 @@ test.each([{ offset: "3" }, { url: "http://unsafe.invalid" }, { key_id: "prefixe
   const { client } = await fixture((_r, response) => json(response, { handle, objects: [{ ...item, ...patch }] }));
   await expect(client.database("app").collection("users").shapeManifest({ handle, offset: "2" })).rejects.toThrow(TypeError);
 });
+test.each(['"cached"', 'W/"cached", "other"', "*"])("conditional shape read forwards %s and retains 304 cache metadata", async ifNoneMatch => {
+  const { client, requests } = await fixture((_r, response) => response.writeHead(304, {
+    etag: '"cached"', "tb-shape-handle": handle, "tb-shape-next-offset": "3", "tb-shape-up-to-date": "true", "tb-shape-cursor": "10",
+  }).end());
+  const error = await client.database("app").collection("users").shape({ handle, offset: "2" }, { ifNoneMatch }).catch(error => error);
+  expect(error).toMatchObject({ status: 304, code: "not_modified", etag: "cached" });
+  expect(error.headers.get("tb-shape-handle")).toBe(handle);
+  expect(error.headers.get("tb-shape-next-offset")).toBe("3");
+  expect(error.headers.get("tb-shape-up-to-date")).toBe("true");
+  expect(error.headers.get("tb-shape-cursor")).toBe("10");
+  expect(requests).toHaveLength(1);
+  expect(requests[0]?.headers["if-none-match"]).toBe(ifNoneMatch);
+});
+test("conditional shape bootstrap preserves the validator on its authorized continuation", async () => {
+  const { client, requests } = await fixture((request, response) => {
+    if (request.url.searchParams.get("offset") === "-1") { response.writeHead(307, { location: `${base}?handle=${handle}&offset=snap.2.0` }).end(); return; }
+    json(response, page);
+  });
+  expect((await client.database("app").collection("users").shape({}, { ifNoneMatch: '"cached"' })).coveredOffset).toBe("2");
+  expect(requests.map(request => request.headers["if-none-match"])).toEqual(['"cached"', '"cached"']);
+});
+test.each(["unquoted", '*, "tag"', '"tag"\r\nx-injected: value'])("invalid shape validator %j fails before dispatch", async ifNoneMatch => {
+  const { client, requests } = await fixture((_r, response) => json(response, page));
+  await expect(client.database("app").collection("users").shape({ handle, offset: "2" }, { ifNoneMatch })).rejects.toThrow(TypeError);
+  expect(requests).toHaveLength(0);
+});
