@@ -1688,7 +1688,7 @@ public sealed class PeerStreamTests
         });
         await Assert.That(await gru.Groups.AckedAsync(cluster.Database, sjc.Node, CancellationToken.None))
             .IsEqualTo(new SourceCursor(renewed!.Value, 0)).Because("the fresh sender has no scoped peer ACK or refill requirement");
-        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, renewed.Value, 0, CancellationToken.None)).IsEqualTo(true);
+        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, renewed.Value, 0, CancellationToken.None)).IsTrue();
         var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)await gru.StoreAsync();
         var peers = await store.WithWriterAsync(session =>
         {
