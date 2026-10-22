@@ -144,23 +144,31 @@ public sealed class CountBoundTests
     [Test]
     public async Task Query_count_is_exact_up_to_100000_documents_and_a_lower_bound_beyond()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var api = await ManagementApi.StartAsync();
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         await api.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise");
         var client = tenant.Data;
-        (await client.PutAsync(tenant.Database("db"), null)).EnsureSuccessStatusCode();
+        using var registered = await client.PutAsync(tenant.Database("db"), null, cancellationToken);
+        registered.EnsureSuccessStatusCode();
+        var databaseId = (await registered.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("id").GetString()!;
         (await client.PostAsJsonAsync(tenant.Database("db", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
-        var transactions = tenant.Database("db", "/transactions");
+        var database = new TenantContext(tenant.OrganizationId, PlanTier.Enterprise, tenant.ProjectId, databaseId);
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, cancellationToken))!;
         // Ids in index order, so the document written last is also the last one count examines.
         static string Id(int index)
         {
             return index.ToString("D26", System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        // Seed through the engine's batch path: this test exercises HTTP counts, not 100000 individual write-lane hops.
+        ReadOnlyMemory<byte> document = """{"n":1}"""u8.ToArray();
         for (var start = 0; start < 100_000; start += 1000)
         {
-            var ops = Enumerable.Range(start, 1000).Select(index => new { op = "put", collection = "items", id = Id(index), document = new { n = 1 } });
-            (await client.PostAsJsonAsync(transactions, new { ops })).EnsureSuccessStatusCode();
+            await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken);
+            var puts = Enumerable.Range(start, 1000).Select(index => ("items", Id(index), document)).ToArray();
+            await transaction.PutBatchAsync(puts, new (long Version, DocumentVersion? Previous)[puts.Length], cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
 
         async Task<(long Value, bool Exact)> CountAsync(object? filter)
