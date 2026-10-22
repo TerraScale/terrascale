@@ -140,3 +140,44 @@ visibility fra->sjc: no successful samples
 | r4-loopback-after-failed.json | `1375f1ed8119c3a5ea3380f83c6fb27ecf6528230d6e11940d0217cbcde48e24` |
 
 The focused output files completed at 13:51:11Z (A) and 13:51:14Z (B), from their filesystem modification timestamps. The later host `/proc/loadavg` snapshot at 13:51:38Z was `11.63 18.42 22.77`; it is not a synchronized focused-workload sample.
+
+## Additional repeated regressions during the GitHub pause
+
+On beta at source head `785fac382e3626f02905fc2f239139cbef60cd6b`, a fresh Release build and initial three-test run passed, followed by 20 separate process repetitions of the three new regressions. Each process kept the default test parallelism. All 60 repeated test executions passed, with no skipped tests. Runs were direct on the dev host because `ts-heavy-any` fetches GitHub, which was paused until 14:25Z.
+
+Filter: `/*/*/(RemoteAckTests|ShipperLeaseTests)/(An_ack_after_the_deadline_cannot_confirm_when_the_timeout_callback_is_delayed|An_observed_lease_loss_changes_epoch_without_a_membership_change|A_disappearing_predecessor_does_not_bypass_the_fence)`, with `--minimum-expected-tests 3`. Initial run used the Make target; repeats used `nice -n 19 dotnet run --project tests/TerraBase.Fast --configuration Release --no-build`.
+
+| Repeat | Succeeded | Failed | Skipped | Duration |
+| ---: | ---: | ---: | ---: | --- |
+| 1 | 3 | 0 | 0 | 7s 840ms |
+| 2 | 3 | 0 | 0 | 7s 823ms |
+| 3 | 3 | 0 | 0 | 7s 640ms |
+| 4 | 3 | 0 | 0 | 7s 741ms |
+| 5 | 3 | 0 | 0 | 7s 776ms |
+| 6 | 3 | 0 | 0 | 7s 630ms |
+| 7 | 3 | 0 | 0 | 12s 528ms |
+| 8 | 3 | 0 | 0 | 7s 632ms |
+| 9 | 3 | 0 | 0 | 7s 543ms |
+| 10 | 3 | 0 | 0 | 7s 920ms |
+| 11 | 3 | 0 | 0 | 7s 699ms |
+| 12 | 3 | 0 | 0 | 7s 824ms |
+| 13 | 3 | 0 | 0 | 12s 591ms |
+| 14 | 3 | 0 | 0 | 7s 613ms |
+| 15 | 3 | 0 | 0 | 7s 593ms |
+| 16 | 3 | 0 | 0 | 7s 620ms |
+| 17 | 3 | 0 | 0 | 7s 690ms |
+| 18 | 3 | 0 | 0 | 7s 926ms |
+| 19 | 3 | 0 | 0 | 7s 716ms |
+| 20 | 3 | 0 | 0 | 7s 635ms |
+
+`r4-regressions-build-green.log` SHA-256: `231d3aefca6d5b6d3d5929f91b0a71a018641178e33836fb09801bcd1bdf7bdd`.
+
+`r4-regressions-20.log` SHA-256: `ef0e3eaa43b7815b19051d2583fa01297a170ec0e71f5bf9fe8eeb2f97ea3359`.
+
+`r4-regressions-20-source.sha256` SHA-256: `c3046507357497d9933f80097c743849ea973f7c8cdf576801a52c6baf4f220f`.
+
+`r4-netem-ping.log` SHA-256: `59a457e0806acdcdfeeb1bff08d31d1abe1c0f9c0334a948d9b5ed6ce420ef85`.
+
+The tested Fast assembly SHA-256 is `56583452a398625603c5a15e02616d12feaaebc00e624dc1dac5ca6c965439e9`; the production waiter source retains the candidate SHA-256 listed in the report.
+
+Independent namespace setup check: `nice -n 19 bash /home/mariogk/.cache/r4-netem-check.sh ping -n -c 5 -i 0.2 127.0.0.1`, using the exact #383 script extracted with `git show`. Five packets transmitted/received, 0% loss; RTT min/avg/max/mdev `50.053/50.059/50.070/0.005 ms`. These are ICMP setup measurements, not R0 application latency.
