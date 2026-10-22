@@ -1,9 +1,5 @@
 import { resolveAccessToken, resolveTsAuthRuntimeConfig } from "./config.js";
 import { err, ok, sanitizeDiagnostic } from "./result.js";
-import {
-  regionalIssuerOrigin,
-  TsAuthEndpointDiscovery,
-} from "./ts-auth-discovery.js";
 import { parseDatabaseJson } from "./database-codec.js";
 import { validateTsAuthIds } from "./ts-auth-ids.js";
 /** @import { ResolvedTsAuthRuntimeConfig, TsAuthRuntimeConfig, FetchLike } from "./config.js" */
@@ -22,7 +18,6 @@ import { validateTsAuthIds } from "./ts-auth-ids.js";
  *   readonly formBody?: URLSearchParams | string | undefined;
  *   readonly userinfoAccessToken?: string | undefined;
  *   readonly resourceIntrospectionBasic?: string | undefined;
- *   readonly issuer?: string | undefined; // Behind the Atlas proxy a regional issuer is called on its own host.
  *   readonly signal?: AbortSignal | undefined;
  * }} TsAuthRequest
  */
@@ -40,25 +35,14 @@ export class TsAuthHttp {
   #fetch;
   /** @readonly @type {TsAuthRuntimeConfig["accessToken"]} */
   #accessToken;
-  /** @readonly @type {TsAuthEndpointDiscovery | undefined} */
-  #discovery;
-
-  /**
-   * @param {TsAuthRuntimeConfig} config
-   * @param {{ readonly authReverseProxy?: boolean }} [options]
-   */
-  constructor(config, options) {
+  /** @param {TsAuthRuntimeConfig} config */
+  constructor(config) {
     this.config = Object.freeze(resolveTsAuthRuntimeConfig(config));
     const fetchHandler = config.fetch ?? globalThis.fetch?.bind(globalThis);
     if (fetchHandler === undefined)
       throw new TypeError("TsAuthClient requires a fetch implementation.");
     this.#fetch = fetchHandler;
     this.#accessToken = config.accessToken;
-    this.#discovery =
-      options?.authReverseProxy !== true &&
-      this.config.apiBaseUrl === "https://auth.terrascale.tech"
-        ? new TsAuthEndpointDiscovery(fetchHandler)
-        : undefined;
   }
 
   /**
@@ -90,18 +74,6 @@ export class TsAuthHttp {
         options.body !== undefined
           ? JSON.stringify(options.body)
           : options.formBody?.toString();
-      const issuerOrigin =
-        this.#discovery === undefined || options.issuer === undefined
-          ? undefined
-          : regionalIssuerOrigin(options.issuer);
-      const endpoints =
-        issuerOrigin === undefined
-          ? await withCancellation(
-              this.#discovery?.endpoints(signal) ?? Promise.resolve(undefined),
-              signal,
-            )
-          : [issuerOrigin];
-      let endpointIndex = 0;
       let attempt = 0;
       let refreshed = false;
       /** @type {string | undefined} */
@@ -163,7 +135,7 @@ export class TsAuthHttp {
             );
           const request = new Request(
             buildUrl(
-              endpoints?.[endpointIndex] ?? this.config.apiBaseUrl,
+              this.config.apiBaseUrl,
               options.path,
               options.query,
             ),
@@ -189,16 +161,6 @@ export class TsAuthHttp {
             signal.throwIfAborted();
           }
           responseReceived = true;
-          if (
-            options.method === "GET" &&
-            endpoints !== undefined &&
-            endpointIndex < endpoints.length - 1 &&
-            [502, 503, 504].includes(response.status)
-          ) {
-            void response.body?.cancel().catch(() => undefined);
-            endpointIndex += 1;
-            continue;
-          }
           if (
             response.type === "opaqueredirect" ||
             (response.status >= 300 && response.status < 400)
@@ -293,13 +255,6 @@ export class TsAuthHttp {
             !signal?.aborted &&
             options.method === "GET"
           ) {
-            if (
-              endpoints !== undefined &&
-              endpointIndex < endpoints.length - 1
-            ) {
-              endpointIndex += 1;
-              continue;
-            }
             if (attempt < this.config.maxRetryAttempts) {
               await delayForRetry(
                 retryDelay(undefined, this.config.retryDelayMs, attempt),

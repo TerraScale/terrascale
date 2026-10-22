@@ -15,7 +15,6 @@ import { requireDeadLetterId } from "./ts-auth-ids.js";
  * @typedef {Omit<TsAuthRuntimeConfig, "apiBaseUrl"> & {
  *   readonly apiBaseUrl: string; // The ts-auth deployment's public origin; there is no default.
  *   readonly instanceSlug: string; // The instance the `sk_` key belongs to; it prefixes every route.
- *   readonly useReverseProxy?: boolean; // Route public auth calls through the reverse proxy instead of regional discovery.
  * }} TsAuthClientConfig
  */
 
@@ -2360,7 +2359,6 @@ export class TsAuthOidcClient {
         routeName: "tsauth.oidc.resourceIntrospect",
         formBody: form,
         resourceIntrospectionBasic: basic,
-        issuer: expectedIssuer,
       }),
       /** @returns {value is TsAuthOidcResourceIntrospection} */
       (value) => {
@@ -2520,9 +2518,7 @@ export class TsAuthClient {
       );
     }
     const slug = validateInstanceSlug(config?.instanceSlug);
-    this.#http = new TsAuthHttp(config, {
-      authReverseProxy: config.useReverseProxy === true,
-    });
+    this.#http = new TsAuthHttp(config);
     requireBareOrigin(this.#http.config.apiBaseUrl);
     this.users = new TsAuthUsersClient(this.#http, slug);
     this.sessions = new TsAuthSessionsClient(this.#http, slug);

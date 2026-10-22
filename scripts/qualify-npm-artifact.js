@@ -70,7 +70,7 @@ const client = createTerraBaseClient({ ...scope, endpoint: "https://gru.api.terr
 assert.equal(typeof client.read, "function");
 assert.equal(typeof client.prepareCommit, "function");
 for (const name of ["request", "documents", "executeSql", "sync", "http"]) assert.equal(name in client, false);
-assert.equal(typeof createTsAuthClient({ apiBaseUrl: "https://auth.terrascale.tech", instanceSlug: "qualification", useReverseProxy: true }), "object");
+assert.equal(typeof createTsAuthClient({ apiBaseUrl: "https://auth.terrascale.tech", instanceSlug: "qualification" }), "object");
 assert.throws(requireTerraScaleAdministration, TerraScaleCapabilityUnavailableError);
 assert.throws(requireTerraScaleBetterAuth, TerraScaleCapabilityUnavailableError);
 assert.ok(terraScaleReleaseBlockers.betterAuth.required.includes("bounded transactions"));
