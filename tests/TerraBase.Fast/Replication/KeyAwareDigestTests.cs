@@ -37,7 +37,7 @@ public sealed class KeyAwareDigestTests
         // Only the key differs: independently vary collection and id, including ambiguous concatenations.
         var sink = gru.Api.Server.Services.GetRequiredService<IChangeGroupSink>();
         var keys = new[] { (Collection: "a", Id: "bc"), (Collection: "a", Id: "c"), (Collection: "ab", Id: "bc"), (Collection: "ab", Id: "c") };
-        await Assert.That(await sink.RepairAsync(gru.Database, [.. keys.Select(key => new RepairState(key.Collection, key.Id, state))], CancellationToken.None))
+        await Assert.That(await sink.RepairAsync(gru.Database, (await gru.OpenAsync()).Incarnation, [.. keys.Select(key => new RepairState(key.Collection, key.Id, state))], CancellationToken.None))
             .IsEqualTo(keys.Length);
 
         var first = await gru.StoredAsync(keys[0].Collection, keys[0].Id);
@@ -170,7 +170,7 @@ public sealed class KeyAwareDigestTests
         public async Task SeedAsync(RepairState[] states)
         {
             var sink = Api.Server.Services.GetRequiredService<IChangeGroupSink>();
-            await Assert.That(await sink.RepairAsync(Database, states, CancellationToken.None)).IsEqualTo(states.Length);
+            await Assert.That(await sink.RepairAsync(Database, (await OpenAsync()).Incarnation, states, CancellationToken.None)).IsEqualTo(states.Length);
         }
 
         public async Task<string?> ReadAsync(string id)
@@ -258,7 +258,7 @@ public sealed class KeyAwareDigestTests
 
         private static int Bucket(string id) => SqliteStorageTransaction.Bucket(Items, id);
 
-        private async Task<IDatabaseStore> OpenAsync() =>
+        public async Task<IDatabaseStore> OpenAsync() =>
             await Api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(Database, CancellationToken.None) is { } store
                 ? store
                 : throw new InvalidOperationException("the database is not held");
