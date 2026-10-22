@@ -40,7 +40,7 @@ func TestErrorReadFailurePreservesPartialBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.Database("01ARZ3NDEKTSV4RRFFQ69G5FA8", "main").Collection("users").Get(t.Context(), "key")
+	_, err = c.Database("01ARZ3NDEKTSV4RRFFQ69G5FA8", "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2")
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || !errors.Is(err, io.ErrUnexpectedEOF) || apiErr.RequestID != "fixture-read" || string(apiErr.Body) != `{"error":` {
 		t.Fatalf("error=%+v", err)
@@ -52,7 +52,7 @@ func TestErrorReadLimitPreservesBoundedBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.Database("01ARZ3NDEKTSV4RRFFQ69G5FA8", "main").Collection("users").Get(t.Context(), "key")
+	_, err = c.Database("01ARZ3NDEKTSV4RRFFQ69G5FA8", "main").Collection("users").Get(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FD2")
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.RequestID != "fixture-read" || string(apiErr.Body) != "too " || apiErr.Unwrap() == nil {
 		t.Fatalf("error=%+v", err)

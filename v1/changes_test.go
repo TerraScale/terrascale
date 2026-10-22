@@ -41,7 +41,7 @@ func TestChangesReconnectAndCursor(t *testing.T) {
 			if r.Header.Get("Last-Event-ID") != "AQ" {
 				t.Error("missing resume header")
 			}
-			fmt.Fprint(w, "event: change\nid: next\ndata: {\"collection\":\"users\",\"id\":\"a\",\"op\":\"upsert\",\"version\":\"9007199254740993\",\"origin\":\"0000000000000001\",\"document\":{\"id\":\"application-id\",\"n\":9007199254740993}}\n\n")
+			fmt.Fprint(w, "event: change\nid: next\ndata: {\"collection\":\"users\",\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FD0\",\"op\":\"upsert\",\"version\":\"9007199254740993\",\"origin\":\"0000000000000001\",\"document\":{\"id\":\"application-id\",\"n\":9007199254740993}}\n\n")
 		}
 	})
 	got := 0
@@ -235,7 +235,7 @@ func TestItemsCancellationBetweenDocuments(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	db := changesDB(t, func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"items":[{"id":"a","version":"1","state":"value","document":{}},{"id":"b","version":"2","state":"value","document":{}}],"next_cursor":null}`)
+		fmt.Fprint(w, `{"items":[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD0","version":"1","state":"value","document":{}},{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD1","version":"2","state":"value","document":{}}],"next_cursor":null}`)
 	})
 	docs, errs := 0, 0
 	for _, err := range db.Collection("users").Items(ctx, v1.Query{}) {
@@ -417,7 +417,7 @@ func TestChangesGroupedCheckpoints(t *testing.T) {
 					return
 				}
 				if calls == 1 {
-					fmt.Fprint(w, checkpoint+change("a", ""))
+					fmt.Fprint(w, checkpoint+change("01ARZ3NDEKTSV4RRFFQ69G5FD0", ""))
 					if interrupted {
 						return
 					}
@@ -425,13 +425,13 @@ func TestChangesGroupedCheckpoints(t *testing.T) {
 					want := "after"
 					if interrupted {
 						want = "before"
-						fmt.Fprint(w, change("a", ""))
+						fmt.Fprint(w, change("01ARZ3NDEKTSV4RRFFQ69G5FD0", ""))
 					}
 					if got := r.Header.Get("Last-Event-ID"); got != want {
 						t.Errorf("resume cursor = %q, want %q", got, want)
 					}
 				}
-				fmt.Fprint(w, change("b", "after"))
+				fmt.Fprint(w, change("01ARZ3NDEKTSV4RRFFQ69G5FD1", "after"))
 			})
 			var events []v1.ChangeEvent
 			for event, err := range db.Changes(t.Context(), v1.ChangesOptions{}) {
@@ -439,7 +439,7 @@ func TestChangesGroupedCheckpoints(t *testing.T) {
 					t.Fatal(err)
 				}
 				events = append(events, event)
-				if calls == 2 && event.ID == "b" {
+				if calls == 2 && event.ID == "01ARZ3NDEKTSV4RRFFQ69G5FD1" {
 					break
 				}
 			}
@@ -450,7 +450,7 @@ func TestChangesGroupedCheckpoints(t *testing.T) {
 				if event.ID == "a" && event.Cursor != "" {
 					t.Errorf("uncheckpointed change exposes cursor %q", event.Cursor)
 				}
-				if event.ID == "b" && event.Cursor != "after" {
+				if event.ID == "01ARZ3NDEKTSV4RRFFQ69G5FD1" && event.Cursor != "after" {
 					t.Errorf("group end cursor = %q", event.Cursor)
 				}
 			}
@@ -463,7 +463,7 @@ func TestChangesUncheckpointedEOF(t *testing.T) {
 	db := changesDB(t, func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "event: change\ndata: {\"collection\":\"users\",\"id\":\"a\",\"op\":\"upsert\",\"version\":\"1\",\"origin\":\"0000000000000001\",\"document\":{}}\n\n")
+		fmt.Fprint(w, "event: change\ndata: {\"collection\":\"users\",\"id\":\"01ARZ3NDEKTSV4RRFFQ69G5FD0\",\"op\":\"upsert\",\"version\":\"1\",\"origin\":\"0000000000000001\",\"document\":{}}\n\n")
 	})
 	events, failures := 0, 0
 	for event, err := range db.Changes(t.Context(), v1.ChangesOptions{}) {

@@ -54,7 +54,7 @@ func TestPublicDatabaseContracts(t *testing.T) {
 					}
 					io.WriteString(w, `{"items":[{"id":"`+id+`","projectId":"`+project+`","name":"main"}],"next":"next"}`)
 				case "sql":
-					io.WriteString(w, `{"matched":1,"truncated":true,"rows":[{"id":"customer:42","value":{"id":"application-id","count":9007199254740993}}]}`)
+					io.WriteString(w, `{"matched":1,"truncated":true,"rows":[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FD2","value":{"id":"application-id","count":9007199254740993}}]}`)
 				default:
 					io.WriteString(w, `{"ok":false,"error":"unsupported SQL","collection":null,"hasLimit":false,"plan":[],"indexes":[],"suggestions":[]}`)
 				}
@@ -78,7 +78,7 @@ func TestPublicDatabaseContracts(t *testing.T) {
 				}
 			case "sql":
 				out, err := d.SQL(t.Context(), statement)
-				if err != nil || !out.Truncated || out.Rows[0].ID != "customer:42" || string(out.Rows[0].Value) != `{"id":"application-id","count":9007199254740993}` {
+				if err != nil || !out.Truncated || out.Rows[0].ID != "01ARZ3NDEKTSV4RRFFQ69G5FD2" || string(out.Rows[0].Value) != `{"id":"application-id","count":9007199254740993}` {
 					t.Fatalf("SQL: %+v %v", out, err)
 				}
 			default:
