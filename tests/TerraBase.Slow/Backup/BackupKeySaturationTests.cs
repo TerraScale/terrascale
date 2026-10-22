@@ -59,7 +59,7 @@ public sealed class BackupKeySaturationTests
 
             // Start from a real shipped snapshot and stopped database. The cold node receives only the catalog and
             // layout marker; its project file and plaintext key caches do not come from the live node.
-            foreach (var file in new[] { "_system.db", ".terrabase.lock" })
+            foreach (var file in new[] { "_system.db", "_intents.db", ".terrabase.lock" })
             {
                 File.Copy(Path.Combine(directory, file), Path.Combine(coldDirectory, file));
             }
