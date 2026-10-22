@@ -56,9 +56,11 @@ export const managementV1Routes = Object.freeze([
 /** @param {ManagementOperation} operation @param {import("./routes.js").V1Route["method"]} method @param {string} pathTemplate @param {number} [status] @returns {import("./routes.js").V1Route} */
 function route(operation, method, pathTemplate, status = 200) {
   const write = method !== "GET" && operation !== "planPointInTime";
+  const noBody = ["createBackup", "applyIndexRecommendation", "cancelImport", "resumeImport"].includes(operation);
   return Object.freeze({ operation, method, pathTemplate,
     permission: operation === "getShapeManifest" ? "documents:read" : pathTemplate.startsWith("/v1/platform/") ? "platform-admin" : !pathTemplate.startsWith("/v1/") ? "anonymous" : write ? "databases:write" : "databases:read",
-    requestMediaTypes: Object.freeze(operation === "uploadImportSource" ? ["application/octet-stream"] : method === "POST" || method === "PUT" || method === "PATCH" ? ["application/json"] : []),
+    additionalPermissions: Object.freeze(["createImport", "uploadImportSource", "updateImport", "startImport", "resumeImport"].includes(operation) ? ["documents:write"] : []),
+    requestMediaTypes: Object.freeze(noBody ? [] : operation === "uploadImportSource" ? ["application/octet-stream"] : method === "POST" || method === "PUT" || method === "PATCH" ? ["application/json"] : []),
     responseMediaType: status === 204 ? "" : "application/json", successStatuses: Object.freeze(operation === "readyz" || operation === "backupz" ? [200, 503] : operation === "applyIndexRecommendation" || operation === "createImport" ? [200, 201] : [status]),
     idempotencyKey: "none", replaySafe: !write, contract: "docs/terrabase/api.md", contractText: Object.freeze([]),
   });

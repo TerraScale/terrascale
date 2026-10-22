@@ -22,6 +22,7 @@ test("all seven import routes preserve binary chunks, offsets, preview confirmat
   ]);
   expect(requests[2]?.headers["content-type"]).toBe("application/octet-stream");
   expect(requests[2]?.headers["content-length"]).toBe("4");
+  expect(Array.from(requests[2]?.bytes ?? [])).toEqual([0, 127, 128, 255]);
   expect(requests[2]?.url.search).toBe("?offset=0");
   expect(requests[4]?.body).toBe('{"previewId":"preview-sha256"}');
 });

@@ -5,7 +5,7 @@ export const project = "01ARZ3NDEKTSV4RRFFQ69G5FA1";
 export const entity = "01ARZ3NDEKTSV4RRFFQ69G5FA2";
 export const token = "fixture.payload.signature";
 export const prefix = `/v1/projects/${project}`;
-/** @typedef {{ method: string | undefined; url: URL; headers: import("node:http").IncomingHttpHeaders; body: string }} WireRequest */
+/** @typedef {{ method: string | undefined; url: URL; headers: import("node:http").IncomingHttpHeaders; body: string; bytes: Uint8Array }} WireRequest */
 /** @type {import("node:http").Server[]} */
 const servers = [];
 afterEach(async () => {
@@ -20,9 +20,12 @@ export async function fixture(handle) {
   const requests = [];
   const server = createServer((request, response) => {
     void (async () => {
-      let body = "";
-      for await (const chunk of request) body += chunk.toString();
-      const record = { method: request.method, url: new URL(request.url ?? "/", "http://localhost"), headers: request.headers, body };
+      /** @type {Buffer[]} */
+      const chunks = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const bytes = Buffer.concat(chunks);
+      const body = bytes.toString("utf8");
+      const record = { method: request.method, url: new URL(request.url ?? "/", "http://localhost"), headers: request.headers, body, bytes };
       requests.push(record);
       handle(record, response);
     })().catch(error => response.destroy(error));

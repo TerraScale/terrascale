@@ -78,6 +78,7 @@
     "types",
     "!types/integration",
     "sdk-v1-route-manifest.json",
+    "sdk-public-v1-route-manifest.json",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
