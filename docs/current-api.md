@@ -1,0 +1,54 @@
+# Current TerraBase HTTP contract
+
+Source snapshot: TerraScale/terrascale `e7fa366ddb289f5612c93d316b316fb92c568151`.
+Public scope is `docs/terrabase/api.md` plus `ApiReferenceExtensions.ShouldInclude`:
+76 mapped routes, including public project management, probes and platform explore.
+Hidden identity/dashboard aliases, internal/admin routes and hidden PUT database
+are outside this contract. No mapped `downloadBackup` endpoint exists.
+
+## Client and IDs
+
+Use `Client::for_project(project_ulid, access_token)` with verified Atlas routing,
+or `.endpoint(origin)` for a static endpoint. `Client::builder(origin, token)`
+requires `.project(project_ulid)`. Public platform exploration uses
+`Client::for_platform(origin, access_token)` and accepts `ts-auth`/`ts-dashboard`
+selectors; it cannot issue unscoped document or transaction requests.
+
+Entity IDs are canonical uppercase ULIDs. Database and collection selectors are
+names. Raw document keys may contain 1–256 UTF-16 units without control characters;
+UUID-looking keys remain valid strings. Point routes use `/documents/by-key?id=`
+with query encoding applied once. `uuidv5_for` generates an optional stable raw
+key; it does not generate a canonical entity ULID.
+
+## Public operations
+
+Project clients expose database CRUD/placement/branch/copy, collection CRUD,
+documents, transactions, queries, SQL/check/explain, schemas/inference,
+constraints, indexes/recommendations/policy, saved queries, usage/analytics/
+replication, backup destination/policy/snapshots/PITR, import lifecycle and
+changes. Generic tooling methods accept serializable request bodies and decode
+caller-selected response types, preserving all producer fields with `serde_json::Value`.
+Recommendation selectors use `collection:field`, not entity IDs.
+
+Restore acknowledgements use `RestoredDatabase` without a serving `region`.
+Nullable `home_region`/`replica_regions` preserve unassigned placement;
+`replicas()` derives an empty slice for null replicas. `placement_version` is
+an exact i64. Serving `ProjectDatabaseInfo` responses require `region`.
+
+## Errors and retries
+
+`Error::Response` retains actual HTTP status, exact bounded response bytes and
+request ID. Inspect `status()`, `code()`, `op()`, `request_id()`, `raw_body()` and
+`is_uncertain()`. Both RFC 9457 and nested error envelopes are decoded.
+Preconditions remain supported because the current producer implements them.
+The SDK has no idempotency-key setters or automatic uncertain mutation replay.
+An explicit repeated PUT is a new commit and can overwrite intervening edits.
+Reads and explicitly read-only operations use bounded retries; only an actual
+`429 rate_limited` response permits a mutation retry after rejected admission.
+
+## Validation
+
+`tests/project_*.rs`, `tests/csharp_*_contract.rs`, shape/Atlas and transport tests
+use HTTP fakes and producer-derived DTO fixtures. Endpoint status checks follow
+handler returns, including HTTP 202 for updating an import. No producer binary
+or live credentials are needed. CI/reviews remain the merge gate.

@@ -1,70 +1,34 @@
 # TerraScale Rust SDK
 
-`terrascale::v1` implements the current C# TerraBase ULID project, raw-key document and HTTP SQL contracts with verified Atlas routing. See the [compatibility audit](docs/compatibility-20261013.md) for exact commits, deterministic test evidence and release gaps. Start with [docs/csharp-api.md](docs/csharp-api.md). The older name-based `/v1/databases` and `/v1/dashboard` client remains available for its original producer ([docs/v1-api.md](docs/v1-api.md)). The native UUID/shard API described below is deprecated and will be removed with those routes.
+`terrascale::v1` implements TerraBase's public project and platform HTTP APIs.
+Start with the [current API guide](docs/current-api.md). Entity IDs use canonical
+uppercase ULIDs; database/collection selectors use names; document keys are raw strings.
 
 ```rust,no_run
 use terrascale::v1::Client;
 # async fn example(project: &str, access_token: &str) -> terrascale::v1::Result<()> {
 let client = Client::for_project(project, access_token).build()?;
-let items = client.database("main").collection("items");
-let document = items.get::<serde_json::Value>("customer/a+b").await?;
+let document = client.database("orders").collection("items")
+    .get::<serde_json::Value>("customer/a+b").await?;
 # let _ = document;
 # Ok(())
 # }
 ```
 
-Project requests use an already exchanged ts-auth bearer token and resolve through Atlas `/v1/resolve` without sending that token to Atlas. The client verifies the ES256 session pin, sends its raw region id to TerraBase, and refreshes routing on expiry, `421`, or redirect. Reads can retry once after a routing correction; mutations are never replayed for routing failures. Direct endpoint/region overrides are restricted to reviewed isolated tests or
-producer qualification; they remain implementation inventory, not production
-onboarding. Normal first-party routing uses verified automatic discovery. C# TerraBase currently rejects `Idempotency-Key`, which project clients reject locally.
+Project requests use a ts-auth access token. Anonymous Atlas resolution verifies
+the signed project/database/region/API-origin session before sending that token
+to TerraBase. Static endpoint overrides retain TLS, bearer isolation and region
+pin validation. Mutations are not automatically replayed after uncertain outcomes;
+read their effects before deciding to retry. The SDK exposes no idempotency-key API.
 
-SDK validation uses HTTP fakes and contract fixtures only; SDKs never download or run a TerraBase binary.
+The separate `TerraScaleClient::auth_idp()` client retains ts-auth support and
+credential isolation. Optional PostgreSQL support remains available through the
+`postgres` Cargo feature and `examples/postgres_journey.rs`.
 
-The SDK speaks TerraBase's native JSON document protocol. Native paths carry UUID tenant, database, collection and document identities and a canonical full-range decimal shard. Numeric field IDs and tagged values preserve missing/null, signed 64-bit integers, bytes, maps and arrays. Point reads retain observed context, tombstones and all concurrent siblings. Native values have at most 16 levels, arrays cannot occur under an ancestor array, and the entire encoded document is capped at 1 MiB.
+Collection [shape reads](docs/shape-reads.md) support snapshot pages, sealed
+chunks and live polling. Database changes use a raw SSE byte stream; callers
+own parsing, deduplication, cursor persistence and reconnect decisions.
 
-```rust,no_run
-use terrascale::{ClientConfig, DatabaseScope, TerraScaleClient};
-# async fn example(native_key: &str) -> terrascale::Result<()> {
-let client = TerraScaleClient::new(ClientConfig::builder()
-    .api_key(native_key)
-    .build()?);
-let scope = DatabaseScope::new(
-    "00000000-0000-0000-0000-000000000001".parse()?,
-    "00000000-0000-0000-0000-000000000002".parse()?,
-    u64::MAX,
-);
-let point = client.documents().get(&scope,
-    "00000000-0000-0000-0000-000000000003".parse()?,
-    "00000000-0000-0000-0000-000000000004".parse()?,
-).await?;
-let _fields = point.live_fields()?;
-# Ok(())
-# }
-```
-
-`PreparedTransaction` freezes scope, transaction identity, authority, effect digest and exact request bytes. `Condition::Absent` requires no retained state; a deleted point must use its `state_version`. `Condition::Version` is a producer state token, and observed context alone is not compare-and-set. A caller must retain the prepared operation after `CommitOutcome::Uncertain`, resolve it with `transactions().status()`, or explicitly retry the same frozen operation. Pending, unknown and expired statuses do not prove an abort. Receipt and status validation binds the original identity, effect digest, authority and database/shard event.
-
-`subscriptions().snapshot()` pages a native predicate view and yields a poll cursor. `subscriptions().poll()` returns complete ordered groups; a null effect removes a document from the view. `SubscriptionView` binds tenant/database/shard, collection and predicate, requires the actual request cursor to match its snapshot/poll phase, and validates a complete page before publishing groups and the next cursor. Cursors stay opaque and are bound by the producer to scope and predicate.
-
-Default native routing sends an authenticated scoped GET only to `https://atlas.terrascale.tech/api/v1/discovery`, using one canonical native `tbk1` credential. Atlas verifies signed current serving publications; the SDK validates the closed response and chooses the first receiver-ranked direct endpoint supporting the operation and residency. Existing `RegionRtt` hints are measured ranking inputs, not region activation.
-Custom Atlas origins fail before native credentials are sent. Direct origin
-overrides are restricted to reviewed isolated tests and real producer qualification. There is no global API fallback.
-
-Discovery caches at most 128 scopes without evicting their authority/revision floors. Floors survive lease expiry within the client instance; deployment/cell moves and generation/revision regressions fail closed. A lease is at most ten seconds, clamped down by absolute expiry and transport time, and checked with wall and monotonic clocks. The client does not persist floors across process restart; the receiver owns durable floors. Clock failures/regressions fail closed. Runtime acceptance still requires independently measured healthy clock bounds and provenance. Safe native retries refresh expired routing; mutations are never automatically replayed.
-
-Point needs `client_v1 + read`, query additionally needs `query`, and snapshot/poll additionally need `subscriptions`. Transaction status needs `client_v1 + write`, including reconciliation after a capability downshift. Single unconditional commit needs `client_v1 + write`; conditional/multiple commits require additional capabilities which remain false in this v1 Atlas response. Direct admitted native fixture capabilities are unchanged. A caller-supplied single-writer identity is rejected until signed durable admission and commit fencing are qualified; leaderless writes do not establish security authority.
-
-Authentication remains a separate `auth_idp()` client. First-party issuer and
-service credential acquisition must be automatic under the
-[operating contract](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
-The current auth client still requires origin/credential inputs; automatic
-acquisition remains a runtime implementation gap. Customer issuer trust and
-consumer authorization remain necessary. TerraBase credentials and routing selectors never reach ts-auth. Authentication mutations are never automatically replayed. The canonical issuer is unchanged by regional endpoint selection.
-
-Current project SQL uses the implemented HTTP `sql`, `sql/check` and `sql/explain` routes through `Database::run_sql`, `check_sql` and `explain_sql`. The optional PostgreSQL consumer in `src/postgres.rs` belongs to the older producer; it does not qualify the current C# server. Its Cargo feature remains inventoried for removal. Actual admitted-listener and packaged qualification remain open; source presence does not prove that runtime works. Native unique/schema extensions, actual Atlas/native packaged caller and clock qualification, durable security authority and real packaged producer evidence remain release blockers. Local codec tests are not deployment or serving evidence.
-
-Run `cargo fmt --all --check`, `cargo clippy --locked --all-targets --all-features -- -D warnings`, and `cargo test --locked --all-features`. `scripts/check-native-contract.py` verifies the exact producer contract pin and `scripts/check-atlas-contract.py` separately verifies the frozen receiver contract and fixed-clock raw codec fixtures. SDK HTTP contracts use fakes and fixtures only.
-
-Project-scoped collection shapes are documented in [docs/shape-reads.md](docs/shape-reads.md):
-snapshot pages, sealed chunks, live polling, safe cursor resume, and TBS1
-conformance. Object-storage redirects and manifests remain deferred to FR-22.
-Shape qualification uses HTTP fakes and upstream vectors only.
+Validation uses HTTP fakes and contract fixtures only. SDK tests, CI and helpers
+never download or run a TerraBase binary. GitHub CI runs formatting, all-feature
+tests and Clippy; source coverage does not establish live deployment health.
