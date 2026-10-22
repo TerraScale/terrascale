@@ -278,7 +278,11 @@ Databases are placed in region ids such as `gru-1` (not `RegionCode`):
 ReplicaRegions: []string{"sfo-1"}})` places a new database (an empty home is
 the called region), `SetDatabaseRegions` replaces the replica list (the home
 never changes), and deleting a replicated database fails with
-`ErrDatabaseReplicated`. A region outside the placement answers 421
+`ErrDatabaseReplicated`. `tb.Placement{AllRegions: true}` and
+`SetDatabaseAllRegions` place a full copy in every serving region, including
+regions that join later (`ManagedDatabase.AllRegions`; `ReplicaRegions` is then
+empty). It cannot be combined with `ReplicaRegions`; `SetDatabaseRegions` turns
+it off, and `SetDatabaseRegions(..., nil)` is required before deleting. A region outside the placement answers 421
 `ErrWrongRegion`, on Management and Documents routes alike, and the
 `*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
 it elsewhere: send the request to a region in `Regions`. Customer

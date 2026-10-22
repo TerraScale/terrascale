@@ -14,6 +14,7 @@ type PlatformDatabase struct {
 	ID             string   `json:"id" ulid:"required"`
 	HomeRegion     string   `json:"homeRegion"`
 	ReplicaRegions []string `json:"replicaRegions"`
+	AllRegions     bool     `json:"allRegions"`
 }
 
 // PlatformDatabases lists platform databases. The client must carry a ts-auth

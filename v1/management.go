@@ -130,6 +130,9 @@ type ManagedDatabase struct {
 	HomeRegion *string `json:"homeRegion"`
 	// ReplicaRegions are the region ids that replicate the database.
 	ReplicaRegions []string `json:"replicaRegions"`
+	// AllRegions means every serving region holds a full copy, including
+	// regions that join later; ReplicaRegions is then empty.
+	AllRegions bool `json:"allRegions"`
 	// PlacementVersion and Replicas are included in catalog restore results.
 	PlacementVersion int64    `json:"placementVersion"`
 	Replicas         []string `json:"replicas"`
@@ -137,9 +140,12 @@ type ManagedDatabase struct {
 
 // Placement places a new database. Regions are region ids such as
 // gru-1, not RegionCode values. An empty HomeRegion is the called region.
+// AllRegions places a full copy in every serving region, including regions
+// that join later; it cannot be combined with ReplicaRegions.
 type Placement struct {
 	HomeRegion     string   `json:"homeRegion,omitempty"`
 	ReplicaRegions []string `json:"replicaRegions,omitempty"`
+	AllRegions     bool     `json:"allRegions,omitempty"`
 }
 
 // CollectionStats is a collection with its live documents (tombstones are
@@ -537,6 +543,17 @@ func (u *ManagementUser) SetDatabaseRegions(ctx context.Context, org, project, d
 	}{append([]string{}, replicaRegions...)} // [] rather than null
 	return send[ManagedDatabase](ctx, u, http.MethodPatch, databasePath(org, project, databaseID), body)
 }
+
+// SetDatabaseAllRegions places a full copy of a database in every serving
+// region, including regions that join later. SetDatabaseRegions turns it off.
+func (u *ManagementUser) SetDatabaseAllRegions(ctx context.Context, org, project, databaseID string) (*ManagedDatabase, error) {
+	return send[ManagedDatabase](ctx, u, http.MethodPatch, databasePath(org, project, databaseID), allRegionsBody)
+}
+
+// allRegionsBody is the PATCH body that turns allRegions on.
+var allRegionsBody = struct {
+	AllRegions bool `json:"allRegions"`
+}{true}
 
 // Databases lists a project's databases.
 func (u *ManagementUser) Databases(ctx context.Context, org, project string, opts PageOptions) (*Page[ManagedDatabase], error) {
