@@ -21,9 +21,9 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 ## Zero configuration (user decision 2026-10-09, do not revert)
 
 - Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles or kill switches in code, config or CI. Delete switches and their guarded paths.
-- Every region always serves. ts-orch discovers regional nodes through NetBird and manages workloads on OCI.
+- Every region always serves. Fly.io routes requests; there is no NetBird membership.
 - One fixed global API and auth origin, with no regional discovery or failover.
-- Production service credentials arrive from OCI Vault in gru via instance principal. Nobody copies secrets by hand. Customer credentials authorize access.
+- Production service credentials arrive from fly secrets, not OCI Vault. Nobody copies secrets by hand. Customer credentials authorize access.
 - Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
 - CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
 
