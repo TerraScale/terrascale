@@ -6,7 +6,6 @@ use crate::config::ClientConfig;
 use crate::discovery::{AtlasDiscovery, DiscoveryClock, NativeRequirement};
 use crate::documents::{DatabaseScope, DocumentsClient};
 use crate::error::{Error, ErrorKind, Result};
-use crate::subscriptions::SubscriptionsClient;
 use crate::transactions::TransactionsClient;
 use crate::transport::{
     HttpTransport, Method, Request, ReqwestTransport, Response, MAX_JSON_BYTES,
@@ -462,14 +461,6 @@ impl TerraScaleClient {
     )]
     pub fn transactions(&self) -> TransactionsClient {
         TransactionsClient::new(self.shared.clone())
-    }
-    #[must_use]
-    #[deprecated(
-        since = "0.2.0",
-        note = "the UUID/shard native routes are being removed; use terrascale::v1"
-    )]
-    pub fn subscriptions(&self) -> SubscriptionsClient {
-        SubscriptionsClient::new(self.shared.clone())
     }
     pub fn auth_idp(&self, slug: &str) -> Result<AuthIdpClient> {
         AuthIdpClient::new(self.shared.clone(), slug)
