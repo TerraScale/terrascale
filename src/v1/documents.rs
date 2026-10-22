@@ -209,7 +209,7 @@ impl From<Precondition> for WriteOptions {
 }
 
 /// The response to a document write.
-#[derive(Debug, Clone, Eq, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct WriteResult {
     #[serde(deserialize_with = "super::ids::document_id")]
     pub id: DocumentId,
@@ -241,6 +241,8 @@ impl PartialEq for WriteResult {
             && self.location == other.location
     }
 }
+
+impl Eq for WriteResult {}
 
 /// The event that produced a sibling.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

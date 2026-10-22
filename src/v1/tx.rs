@@ -321,7 +321,7 @@ pub struct TxResult {
 }
 
 /// The outcome of one transaction op.
-#[derive(Debug, Clone, Eq)]
+#[derive(Debug, Clone)]
 pub enum OpResult {
     /// A write (`create`, `put`, `patch`, `delete`).
     Write {
@@ -359,6 +359,8 @@ impl PartialEq for OpResult {
         }
     }
 }
+
+impl Eq for OpResult {}
 
 impl OpResult {
     /// The exact stored document returned by a patch, absent for other operations.
