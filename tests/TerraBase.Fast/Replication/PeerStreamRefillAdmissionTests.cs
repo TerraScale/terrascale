@@ -83,7 +83,7 @@ public sealed class PeerStreamRefillAdmissionTests
         IChangeGroupSink sink, ReplicaId chosenOrigin, TaskCompletionSource entered, TaskCompletionSource release) : IChangeGroupSink
     {
         public async ValueTask<Hlc?> ApplyAsync(
-            TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken)
+            TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken)
         {
             if (database == ChangeGroups.System && origin == chosenOrigin)
             {
@@ -91,13 +91,13 @@ public sealed class PeerStreamRefillAdmissionTests
                 await release.Task.WaitAsync(cancellationToken);
             }
 
-            return await sink.ApplyAsync(database, origin, groups, cancellationToken);
+            return await sink.ApplyAsync(database, origin, groups, expected, cancellationToken);
         }
 
-        public ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
-            sink.RepairAsync(database, states, cancellationToken);
+        public ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
+            sink.RepairAsync(database, incarnation, states, cancellationToken);
 
-        public ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken) =>
-            sink.RecordFrontierAsync(database, origin, frontier, cancellationToken);
+        public ValueTask<bool> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
+            sink.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
     }
 }
