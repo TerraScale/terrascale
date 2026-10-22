@@ -53,7 +53,7 @@ public interface IChangeGroupSource
 
     /// <summary>
     /// The database's groups with a change id above <paramref name="after"/> in <paramref name="incarnation"/>, in change id
-    /// order: at most <paramref name="maxGroups"/>, and no more than <paramref name="maxBytes"/> of encoded deltas unless the
+    /// order: at most <paramref name="maxGroups"/>, and no more than <paramref name="maxBytes"/> of encoded groups, keys and framing unless the
     /// first group alone is larger, with the incarnation the read's transaction found. Null when refused.
     /// </summary>
     ValueTask<SourceGroups?> ReadAsync(
@@ -145,6 +145,22 @@ internal static class ChangeGroups
 
     /// <summary>Encoded groups per batch, before the LZ4 envelope; a single larger group still travels alone.</summary>
     public const int MaxBatchBytes = 2 * 1024 * 1024;
+
+    // One group's complete GroupList contribution, including keys and protobuf framing, before compression.
+    internal static int EncodedSize(long changeId, IReadOnlyList<ChangeDelta> deltas)
+    {
+        var size = 1 + CodedOutputStream.ComputeUInt64Size(checked((ulong)changeId));
+        foreach (var delta in deltas)
+        {
+            var stateBytes = DocumentStateEncoding.Encode(delta.State).Length;
+            var deltaBytes = 1 + CodedOutputStream.ComputeStringSize(delta.Collection)
+                + 1 + CodedOutputStream.ComputeStringSize(delta.Id)
+                + 9 + 1 + CodedOutputStream.ComputeLengthSize(stateBytes) + stateBytes;
+            size = checked(size + 1 + CodedOutputStream.ComputeLengthSize(deltaBytes) + deltaBytes);
+        }
+
+        return checked(1 + CodedOutputStream.ComputeLengthSize(size) + size);
+    }
 
     /// <summary>The wire name of <paramref name="database"/>, of <paramref name="incarnation"/> when there is one.</summary>
     public static V1.Database Wire(TenantContext database, Ulid? incarnation) =>
