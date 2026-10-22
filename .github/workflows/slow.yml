@@ -1,20 +1,13 @@
-# Independent, non-blocking Slow results; main's daily run receives an issue report on failure.
-# Pull requests run Slow only when they change browser surfaces (their running-app evidence); every other
-# change is covered by the daily main run, or on demand: gh workflow run slow.yml --ref <branch>.
+# Independent, non-blocking Slow results; a failed main run receives an issue report.
+# Runs on main pushes, on demand, and on pull requests labelled full-ci (terrascale's rule): PR runs
+# held every org job slot. Running-app evidence for a PR: add the label or gh workflow run slow.yml --ref <branch>.
 name: Slow
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "src/**/*.cshtml"
-      - "src/TerraScale.Dashboard/web/**"
-      - "tests/TerraScale.Dashboard.E2E/BrowserAudit.cs"
-      - "tests/TerraScale.Dashboard.E2E/PagePaymentAudit/**"
-      - "tests/TerraScale.Dashboard.E2E/packages.lock.json"
-      - ".github/workflows/slow.yml"
-  schedule:
-    - cron: "23 5 * * *"
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -31,7 +24,7 @@ env:
 
 jobs:
   slow:
-    if: github.event.pull_request.draft != true
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -90,7 +83,7 @@ jobs:
 
   report:
     needs: slow
-    if: always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.slow.result == 'failure'
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.slow.result == 'failure'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
