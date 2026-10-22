@@ -65,6 +65,12 @@ internal static class FaultSoakChecks
     public static async Task<Dictionary<string, string>?> ListAsync(HttpClient client, string database, string collection, CancellationToken token)
     {
         using var answer = await client.GetAsync(new Uri($"{database}/collections/{collection}/documents?limit=1000", UriKind.Relative), token);
+        if (answer.StatusCode == HttpStatusCode.NotFound
+            && JsonNode.Parse(await answer.Content.ReadAsStringAsync(token))?["error"]?["code"]?.GetValue<string>() == "unknown_collection")
+        {
+            return null;
+        }
+
         if (answer.StatusCode == HttpStatusCode.ServiceUnavailable)
         {
             await RefusedAsync(answer, token);

@@ -3,6 +3,7 @@ namespace TerraBase.Slow.Replication;
 internal sealed partial class FaultSoakCluster
 {
     public int NetworkResets => _lossy.Sum(link => link.Resets);
+    public string ClockSkews => string.Join(",", Regions.Select(region => $"{region}={_nodes[region].Skew}ms"));
 
     public static Task<FaultSoakCluster> StartLocalAsync(int seed, CancellationToken cancellationToken) =>
         StartAsync(seed, ["gru"], cancellationToken);

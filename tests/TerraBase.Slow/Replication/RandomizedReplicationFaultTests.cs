@@ -38,12 +38,14 @@ public sealed class RandomizedReplicationFaultTests
         var regions = All.OrderBy(_ => random.Next()).ToArray();
         var victim = regions[random.Next(3)];
         await using var cluster = await FaultSoakCluster.StartAsync(seed, token);
+        history.Enqueue($"clock-skew {cluster.ClockSkews}");
         var expected = new ConcurrentDictionary<string, JsonNode>(StringComparer.Ordinal);
         var deleted = new ConcurrentBag<string>();
         var acknowledged = new ConcurrentBag<(string Id, string Op)>();
         var attempted = new ConcurrentDictionary<string, JsonNode>(StringComparer.Ordinal);
         var catalogs = new ConcurrentBag<string>();
         var feeds = new List<FaultSoakFeed>();
+        var failures = new List<Exception>();
         try
         {
             foreach (var region in regions)
@@ -105,6 +107,7 @@ public sealed class RandomizedReplicationFaultTests
             await CatalogsMatchAsync();
 
             // Discard unsynced WAL bytes after every process dies, before any peer can repair another disk.
+            history.Enqueue("SIGKILL all; drop-unsynced-WAL");
             await Task.WhenAll(regions.Select(cluster.KillAsync));
             foreach (var region in regions)
             {
@@ -116,6 +119,7 @@ public sealed class RandomizedReplicationFaultTests
                 await cluster.RestartAsync(region, token);
             }
 
+            history.Enqueue("restart all");
             await FaultSoakChecks.UntilAsync(CopiesMatchAsync, "all disks after full-cluster SIGKILL", token);
             await FaultSoakChecks.VerifyUniqueAsync(cluster, seed, winner, token);
             await CatalogsMatchAsync();
@@ -252,14 +256,26 @@ public sealed class RandomizedReplicationFaultTests
         }
         catch (Exception error)
         {
-            throw new InvalidOperationException(cluster.Diagnostics, error);
+            failures.Add(error);
         }
         finally
         {
             foreach (var feed in feeds)
             {
-                await feed.DisposeAsync();
+                try
+                {
+                    await feed.DisposeAsync();
+                }
+                catch (Exception error)
+                {
+                    failures.Add(error);
+                }
             }
+        }
+
+        if (failures.Count > 0)
+        {
+            throw new AggregateException(cluster.Diagnostics, failures);
         }
     }
 

@@ -40,22 +40,30 @@ def run(seed):
             code = process.wait()
             stream.write("\nR8 runner: seed exceeded 900 seconds; killed its process group\n")
     reports = list((output / str(seed)).glob("*.trx"))
-    rows = ET.parse(reports[0]).findall(".//{*}UnitTestResult") if len(reports) == 1 else []
+    try:
+        rows = ET.parse(reports[0]).findall(".//{*}UnitTestResult") if len(reports) == 1 else []
+    except (ET.ParseError, OSError):
+        rows = []
     passed = len(rows) == 1 and rows[0].get("outcome") == "Passed" and rows[0].get("testName") == f"Acknowledged_writes_converge_through_seeded_faults({seed})"
     status = "PASS" if code == 0 and passed else "FAIL"
+    history = log.read_text().splitlines()
+    faults = "all" if passed else ", ".join(["clock-skew"] + [label for marker, label in [
+        ("partition ", "partition/delay"), ("loss resets=", "TCP resets"),
+        ("SIGKILL ", "SIGKILL"), ("restart ", "restart"), ("slow-fsync ", "slow-fsync")]
+        if any(line.lstrip().startswith(marker) for line in history)])
     seconds = round(time.monotonic() - start, 2)
     print(f"R8 {status} seed={seed} seconds={seconds} log={log}", flush=True)
-    return seed, status, seconds, log.name
+    return seed, status, faults, seconds, log.name
 
 
 with (output / "results.md").open("w") as table:
     table.write(f"Host: `{socket.gethostname()}`; commit: `{sha}`; UTC: `{stamp}`.\n\n")
-    table.write("| Seed | Result | Seconds | Log |\n|---:|---|---:|---|\n")
+    table.write("| Seed | Result | Faults reached | Seconds | Log |\n|---:|---|---|---:|---|\n")
     failed = 0
     # Four independent test processes bound host resource use; each seed owns its nodes and ports.
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-        for seed, status, seconds, log in pool.map(run, range(first, first + count)):
-            table.write(f"| {seed} | {status} | {seconds} | [{log}]({log}) |\n")
+        for seed, status, faults, seconds, log in pool.map(run, range(first, first + count)):
+            table.write(f"| {seed} | {status} | {faults} | {seconds} | [{log}]({log}) |\n")
             table.flush()
             failed += status == "FAIL"
 print(f"R8 finished seeds={count} failed={failed} table={output / 'results.md'}", flush=True)
