@@ -287,7 +287,8 @@ internal sealed class RebuildLedger(SqliteStorageEngine engine, ILogger logger, 
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (store.CopyFault is not null || FailedClosed is not null)
+            // Keep an uncertified replacement protected across idle gaps until its rebuild is certified.
+            if (Refusal(store) is not null)
             {
                 return;
             }
