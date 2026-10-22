@@ -8,10 +8,10 @@ on:
 permissions:
   contents: read
 
-# Superseded PR runs are cancelled; main runs always finish.
+# A newer run for the same PR or branch, main included, cancels the older one; merge_group runs keep their own group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
