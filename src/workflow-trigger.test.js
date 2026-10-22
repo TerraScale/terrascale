@@ -61,6 +61,13 @@ test("CI never invokes or provisions TerraBase, downloads a producer, or lowers 
   assert.doesNotMatch(workflow, /secrets\.|NPM_TOKEN|REGISTRY_TOKEN|TERRASCALE_|FORGEJO/u);
 });
 
+test("npm exposes no TerraBase binary provisioning or integration command", async () => {
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(pkg.scripts["provision:terrabase"], undefined);
+  assert.equal(pkg.scripts["test:integration"], undefined);
+  assert.doesNotMatch(JSON.stringify(pkg.scripts), /provision-terrabase|run-terrabase-integration/u);
+});
+
 test("the deploy profiles run no TerraBase producer command", async () => {
   const deploy = JSON.parse(await readFile(new URL("../.terrascale/deploy.json", import.meta.url), "utf8"));
   const commands = [
