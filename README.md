@@ -46,7 +46,7 @@ issuer `https://auth.terrascale.tech/terrascale`, audience
 import tb "terrascale.tech/sdk/v1"
 import "terrascale.tech/sdk/tsauth"
 
-tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: apiKey, Project: projectID}) // tsk_…
+tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: apiKey, Project: projectID}) // <ULID>_<secret>
 c, err := tb.New(tb.Config{TokenSource: tokens}) // fixed global API origin
 db := c.Database(projectID, "main")
 _, err = db.Create(ctx)                     // POST; existing name returns name_taken
@@ -416,9 +416,9 @@ TERRASCALE_STATUS_REQUIRE_LATENCY=1 nice -n 19 go test . -run '^TestStatusLatenc
 ts-auth's platform contract (TS-598) issues every token TerraBase accepts.
 `tsauth` turns credentials into short-lived tokens:
 
-- `NewAPIKeySource` exchanges an API key (`tsk_<ULID>_<secret>`, an OAuth client
+- `NewAPIKeySource` exchanges an API key (`<ULID>_<secret>`, an OAuth client
   credential) at `{issuer}/oauth/token` for an organization or project token
-  (`Project`, optional `Scopes`).
+  (`Project`, optional `Scopes` from the four TerraBase scopes).
 - `NewExchangeSource` exchanges a signed-in user's token (RFC 8693) for an
   organization or project token, as ts-dashboard (confidential, `ClientSecret`)
   or ts-cli (public) does.
@@ -510,6 +510,6 @@ formatting, vet, build and race tests.
 
 PostgreSQL connections require plain ULIDs for both `PostgresConfig.Database`
 and `PostgresConfig.KeyID`; the key ID is also the PostgreSQL username.
-API key token sources use `tsk_<26-character ULID>_<52-character secret>`:
+API key token sources use `<26-character ULID>_<52-character secret>`:
 the ULID alone is the OAuth client ID. Credential prefixes identify secret
 formats and are never part of an entity ID.

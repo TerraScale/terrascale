@@ -20,13 +20,13 @@ type contractTokenSource func(context.Context) (string, error)
 func (f contractTokenSource) Token(ctx context.Context) (string, error) { return f(ctx) }
 
 func TestTokenSourceExchangeToPublicAPI(t *testing.T) {
-	const key = "tsk_01ARZ3NDEKTSV4RRFFQ69G5FA8_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk"
+	const key = "01ARZ3NDEKTSV4RRFFQ69G5FA8_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk"
 	const token = "fixture.project.signature"
 	var exchanges, requests atomic.Int64
 	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		exchanges.Add(1)
 		client, secret, ok := r.BasicAuth()
-		if r.Method != http.MethodPost || r.URL.Path != "/terrascale/oauth/token" || !ok || client != key[4:30] || secret != key {
+		if r.Method != http.MethodPost || r.URL.Path != "/terrascale/oauth/token" || !ok || client != key[:26] || secret != key {
 			t.Error("incorrect local token exchange boundary")
 		}
 		if err := r.ParseForm(); err != nil || r.Form.Get("project") != testProject || r.Form.Get("scope") != "documents:read" {
@@ -137,14 +137,14 @@ func TestUnsupportedScopeAndRevokedCredentialExchangeStopsBeforeResource(t *test
 				status = http.StatusUnauthorized
 			}
 			issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if err := r.ParseForm(); err != nil || r.Form.Get("scope") != "shapes:read" {
+				if err := r.ParseForm(); err != nil || r.Form.Get("scope") != tsauth.ScopeDocumentsWrite {
 					t.Error("permission was replaced")
 				}
 				w.WriteHeader(status)
 				fmt.Fprintf(w, `{"error":%q}`, code)
 			}))
 			t.Cleanup(issuer.Close)
-			source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Issuer: issuer.URL + "/terrascale", Key: "tsk_01ARZ3NDEKTSV4RRFFQ69G5FA8_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk", Project: testProject, Scopes: []string{"shapes:read"}})
+			source, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Issuer: issuer.URL + "/terrascale", Key: "01ARZ3NDEKTSV4RRFFQ69G5FA8_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk", Project: testProject, Scopes: []string{tsauth.ScopeDocumentsWrite}})
 			if err != nil {
 				t.Fatal(err)
 			}

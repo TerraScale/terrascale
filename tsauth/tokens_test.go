@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const testKey = "tsk_01ARZ3NDEKTSV4RRFFQ69G5FA8_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk"
+const testKey = "01ARZ3NDEKTSV4RRFFQ69G5FA8_0123456789abcdefghjkmnpqrstvwxyz0123456789abcdefghjk"
 
 // tokenServer is a token endpoint of the contract (section 6). handle
 // answers each request after checking it; hits counts requests.
@@ -51,7 +51,7 @@ func TestAPIKeySourceCachesUntilAMinuteBeforeExpiry(t *testing.T) {
 	var srv *tokenServer
 	srv = newTokenServer(t, func(w http.ResponseWriter, r *http.Request, form url.Values) {
 		id, secret, ok := r.BasicAuth()
-		if !ok || id != testKey[4:30] || secret != testKey || form.Get("grant_type") != "client_credentials" ||
+		if !ok || id != testKey[:26] || secret != testKey || form.Get("grant_type") != "client_credentials" ||
 			form.Get("project") != "01K6SY8PVAFJ6SW3RT5CY4TQKF" || form.Get("scope") != "documents:read documents:write" {
 			t.Errorf("client credentials request: %q %q %v", id, secret, form)
 		}
@@ -302,6 +302,10 @@ func TestConfigRejection(t *testing.T) {
 		"exchange project":  second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6", Project: "legacy", SubjectToken: subject})),
 		"UUID organization": second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", Organization: "0190a6e4-7c3b-7d2e-8f00-0123456789ab", SubjectToken: subject})),
 		"short key":         second(NewAPIKeySource(APIKeyConfig{Key: "tsk_123"})),
+		"tsk_ prefixed key": second(NewAPIKeySource(APIKeyConfig{Key: "tsk_" + testKey})),
+		"key scope":         second(NewAPIKeySource(APIKeyConfig{Key: testKey, Scopes: []string{"shapes:read"}})),
+		"key scope case":    second(NewAPIKeySource(APIKeyConfig{Key: testKey, Scopes: []string{"Documents:Read"}})),
+		"exchange scope":    second(NewExchangeSource(ExchangeConfig{ClientID: "ts-cli", Organization: "01ARZ3NDEKTSV4RRFFQ69G5FA6", SubjectToken: subject, Scopes: []string{"openid"}})),
 		"tb_ key":           second(NewAPIKeySource(APIKeyConfig{Key: "tb_" + strings.Repeat("a", 43)})),
 		"key with l":        second(NewAPIKeySource(APIKeyConfig{Key: strings.Replace(testKey, "0", "l", 1)})),
 		"http issuer":       second(NewAPIKeySource(APIKeyConfig{Key: testKey, Issuer: "http://auth.example/terrascale"})),

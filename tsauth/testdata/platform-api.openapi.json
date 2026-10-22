@@ -2801,8 +2801,8 @@
           },
           "key": {
             "type": "string",
-            "pattern": "^tsk_[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$",
-            "description": "The whole key string, shown once. The 26-character ULID between underscores is the entity and OAuth client id."
+            "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$",
+            "description": "The whole key string, shown once. Its leading 26-character ULID is the entity and OAuth client id."
           }
         }
       },
