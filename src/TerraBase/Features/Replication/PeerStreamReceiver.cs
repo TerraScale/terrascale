@@ -150,9 +150,12 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
         // database first, and a database it registers is refused until that registration commits.
         Task After(TenantContext database)
         {
-            return Task.WhenAll(
-                applying.TryGetValue(database, out var own) ? own.Done : Task.CompletedTask,
-                database != ChangeGroups.System && applying.TryGetValue(ChangeGroups.System, out var catalog) ? catalog.Done : Task.CompletedTask);
+            Task own = applying.TryGetValue(database, out var pending) ? pending.Done : Task.CompletedTask;
+            Task catalog = database != ChangeGroups.System && applying.TryGetValue(ChangeGroups.System, out var system)
+                ? system.Done : Task.CompletedTask;
+            return own.IsCompletedSuccessfully ? catalog
+                : catalog.IsCompletedSuccessfully ? own
+                : Task.WhenAll(own, catalog);
         }
         Task<bool>? reading = null;
         try
@@ -176,9 +179,16 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 _ = await Task.WhenAny([reading, .. refills.Values.Select(refilling => refilling.Done), .. answers.Select(answer => answer.Done)])
                     .ConfigureAwait(false);
                 // Before refills: a refill that waited for its database's batch is answered after it.
-                foreach (var answer in answers.Where(candidate => candidate.Done.IsCompleted).ToList())
+                for (var index = 0; index < answers.Count;)
                 {
-                    _ = answers.Remove(answer);
+                    var answer = answers[index];
+                    if (!answer.Done.IsCompleted)
+                    {
+                        index++;
+                        continue;
+                    }
+
+                    answers.RemoveAt(index);
                     if (applying.TryGetValue(answer.Database, out var newest) && newest.Done == answer.Done)
                     {
                         _ = applying.Remove(answer.Database);
