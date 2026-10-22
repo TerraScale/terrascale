@@ -54,10 +54,8 @@ pub use client::{
     Client, ClientBuilder, RetryPolicy, DEFAULT_MAX_RESPONSE_BYTES, MAX_REQUEST_BYTES,
 };
 pub use control::{
-    CollectionInfo, ControlClient, CreateCollection, CreateDatabase, CreateKey, CreateTenant,
-    DatabaseInfo, Element, Field, Grant, IndexKey, IndexSpec, Key, KeyRate, KeyWithToken,
-    ListOptions, Operation, OperationFailure, Page, Region, Retention, Schema, Tenant,
-    TenantLimits, UniqueConstraint, UpdateCollection, UpdateTenant,
+    CollectionInfo, ControlClient, CreateCollection, CreateKey, Element, Field, Grant, IndexKey,
+    IndexSpec, Key, KeyRate, KeyWithToken, ListOptions, Page, Region, Schema, UniqueConstraint,
 };
 pub use documents::{
     Collection, Database, Document, DocumentState, Event, Patch, PatchOp, Precondition,
