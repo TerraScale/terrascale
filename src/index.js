@@ -107,3 +107,16 @@ export { V1ProjectUsageClient, V1DatabaseUsageClient } from "./v1/usage.js";
 /** @typedef {import("./v1/usage.js").V1Replication} V1Replication */
 /** @typedef {import("./v1/usage.js").V1UsageRequest} V1UsageRequest */
 /** @typedef {import("./v1/usage.js").V1AnalyticsRequest} V1AnalyticsRequest */
+
+export { V1Backups, V1BackupDestinationClient } from "./v1/backups.js";
+/** @typedef {import("./v1/backups.js").V1Backup} V1Backup */
+/** @typedef {import("./v1/backups.js").V1BackupPage} V1BackupPage */
+/** @typedef {import("./v1/backups.js").V1BackupPolicy} V1BackupPolicy */
+/** @typedef {import("./v1/backups.js").V1RestoreWindow} V1RestoreWindow */
+/** @typedef {import("./v1/backups.js").V1PointInTimePlan} V1PointInTimePlan */
+/** @typedef {import("./v1/backups.js").V1RestoredDatabase} V1RestoredDatabase */
+/** @typedef {import("./v1/backups.js").V1BackupDestination} V1BackupDestination */
+/** @typedef {import("./v1/backups.js").V1BackupPolicyRequest} V1BackupPolicyRequest */
+/** @typedef {import("./v1/backups.js").V1PointInTimeRequest} V1PointInTimeRequest */
+/** @typedef {import("./v1/backups.js").V1PointInTimeRestoreRequest} V1PointInTimeRestoreRequest */
+/** @typedef {import("./v1/backups.js").V1BackupDestinationRequest} V1BackupDestinationRequest */

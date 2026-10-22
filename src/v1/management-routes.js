@@ -1,7 +1,18 @@
-/** @typedef {"getProjectUsage" | "getProjectAnalytics" | "getProjectReplication" | "getDatabaseUsage" | "getDatabaseAnalytics" | "getDatabaseReplication" | "createIndex" | "listIndexes" | "dropIndex" | "getAutoIndexPolicy" | "setAutoIndexPolicy" | "listIndexRecommendations" | "applyIndexRecommendation" | "getDatabaseSchema" | "inferCollectionSchema" | "declareCollectionSchema" | "listQueryShapes" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
+/** @typedef {"createBackup" | "listBackups" | "restoreBackup" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getProjectReplication" | "getDatabaseUsage" | "getDatabaseAnalytics" | "getDatabaseReplication" | "createIndex" | "listIndexes" | "dropIndex" | "getAutoIndexPolicy" | "setAutoIndexPolicy" | "listIndexRecommendations" | "applyIndexRecommendation" | "getDatabaseSchema" | "inferCollectionSchema" | "declareCollectionSchema" | "listQueryShapes" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
 const saved = "/v1/projects/{project}/saved-queries";
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
+  route("createBackup", "POST", "/v1/projects/{project}/databases/{database}/backups", 201),
+  route("listBackups", "GET", "/v1/projects/{project}/databases/{database}/backups", 200),
+  route("restoreBackup", "POST", "/v1/projects/{project}/databases/{database}/backups/{backup}/restore", 201),
+  route("getBackupPolicy", "GET", "/v1/projects/{project}/databases/{database}/backup-policy", 200),
+  route("setBackupPolicy", "PUT", "/v1/projects/{project}/databases/{database}/backup-policy", 200),
+  route("getRestoreWindow", "GET", "/v1/projects/{project}/databases/{database}/point-in-time", 200),
+  route("planPointInTime", "POST", "/v1/projects/{project}/databases/{database}/point-in-time/plan", 200),
+  route("restorePointInTime", "POST", "/v1/projects/{project}/databases/{database}/point-in-time/restore", 201),
+  route("getBackupDestination", "GET", "/v1/projects/{project}/backup-destination", 200),
+  route("setBackupDestination", "PUT", "/v1/projects/{project}/backup-destination", 200),
+  route("deleteBackupDestination", "DELETE", "/v1/projects/{project}/backup-destination", 204),
   route("getProjectUsage", "GET", "/v1/projects/{project}/usage"),
   route("getProjectAnalytics", "GET", "/v1/projects/{project}/analytics"),
   route("getProjectReplication", "GET", "/v1/projects/{project}/replication"),
@@ -28,7 +39,7 @@ export const managementV1Routes = Object.freeze([
 
 /** @param {ManagementOperation} operation @param {import("./routes.js").V1Route["method"]} method @param {string} pathTemplate @param {number} [status] @returns {import("./routes.js").V1Route} */
 function route(operation, method, pathTemplate, status = 200) {
-  const write = method !== "GET";
+  const write = method !== "GET" && operation !== "planPointInTime";
   return Object.freeze({ operation, method, pathTemplate,
     permission: write ? "databases:write" : "databases:read",
     requestMediaTypes: Object.freeze(method === "POST" || method === "PUT" ? ["application/json"] : []),

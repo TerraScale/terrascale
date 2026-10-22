@@ -14,6 +14,7 @@ import { runSql, checkSql } from "./sql.js";
 import { streamChanges } from "./changes.js";
 import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema } from "./catalog.js";
 import { V1Transport } from "./transport.js";
+import { V1Backups, V1BackupDestinationClient } from "./backups.js";
 import { V1ProjectUsageClient, V1DatabaseUsageClient } from "./usage.js";
 import { V1Indexes } from "./indexes.js";
 import { V1DatabaseSchemaClient } from "./database-schema.js";
@@ -739,6 +740,8 @@ export class V1Collections {
 
 /** A database handle by name. It performs no I/O until an operation runs. */
 export class V1Database {
+  /** @type {V1Backups} */
+  backups;
   /** @type {V1DatabaseUsageClient} */
   metrics;
   /** @type {V1Indexes} */
@@ -763,6 +766,7 @@ export class V1Database {
     this.schema = new V1DatabaseSchemaClient(transport, this.name);
     this.indexes = new V1Indexes(transport, this.name);
     this.metrics = new V1DatabaseUsageClient(transport, this.name);
+    this.backups = new V1Backups(transport, this.name);
     Object.freeze(this);
   }
 
@@ -805,6 +809,8 @@ export class V1Database {
  * privately; it is never serialized, logged or forwarded to redirects.
  */
 export class TerraBaseV1Client {
+  /** @type {V1BackupDestinationClient} */
+  #backupDestination;
   /** @type {V1ProjectUsageClient} */
   #metrics;
   /** @type {V1SavedQueries} */
@@ -820,6 +826,7 @@ export class TerraBaseV1Client {
     this.#databases = new V1Databases(this.#transport);
     this.#savedQueries = new V1SavedQueries(this.#transport);
     this.#metrics = new V1ProjectUsageClient(this.#transport);
+    this.#backupDestination = new V1BackupDestinationClient(this.#transport);
     Object.freeze(this);
   }
 
@@ -837,6 +844,8 @@ export class TerraBaseV1Client {
   get savedQueries() { return this.#savedQueries; }
   /** @returns {V1ProjectUsageClient} */
   get metrics() { return this.#metrics; }
+  /** @returns {V1BackupDestinationClient} */
+  get backupDestination() { return this.#backupDestination; }
 }
 
 /**
