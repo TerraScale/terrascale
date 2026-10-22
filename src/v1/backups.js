@@ -12,7 +12,7 @@ const policy = record({ fullBackupCron: nullable(text), retentionDays: numeric, 
 const window = record({ earliest: text, latest: text });
 const plan = record({ window, pointInTime: text, snapshotAt: text, latestSegmentAt: nullable(text), segmentCount: numeric, historyCheck: text });
 const restored = record({ id: requireId, projectId: requireId, name: text, branchedFrom: nullable(requireId), createdAt: text,
-  homeRegion: optional(nullable(text)), replicaRegions: optional(nullable(list(text))), placementVersion: optional(numeric) });
+  homeRegion: optional(nullable(text)), replicaRegions: optional(nullable(list(text))), placementVersion: optional(numeric), replicas: list(text) });
 const destination = record({ endpoint: text, region: text, bucket: text, mode: text, updatedAt: text });
 /** @typedef {ReturnType<typeof backup>} V1Backup */
 /** @typedef {ReturnType<typeof backupPage>} V1BackupPage */
@@ -23,7 +23,7 @@ const destination = record({ endpoint: text, region: text, bucket: text, mode: t
 /** @typedef {ReturnType<typeof destination>} V1BackupDestination */
 /** @typedef {{ readonly fullBackupCron?: string | null; readonly retentionDays?: number | null; readonly disabled?: boolean | null }} V1BackupPolicyRequest */
 /** @typedef {{ readonly pointInTime: string; readonly destination?: "platform" | "customer" | null }} V1PointInTimeRequest */
-/** @typedef {V1PointInTimeRequest & { readonly name: string }} V1PointInTimeRestoreRequest */
+/** @typedef {V1PointInTimeRequest & { readonly name?: string | null }} V1PointInTimeRestoreRequest */
 /** @typedef {{ readonly endpoint: string; readonly region: string; readonly bucket: string; readonly accessKeyId: string; readonly secretKey: string; readonly mode: "both" | "customer" }} V1BackupDestinationRequest */
 /** @param {unknown} value @returns {"platform" | "customer"} */
 function source(value) {
@@ -51,12 +51,13 @@ export class V1Backups {
   }
   /** @param {import("./catalog.js").V1DatabaseListRequest} [request] @param {V1RequestOptions} [options] @returns {Promise<V1BackupPage>} */
   async list(request = {}, options = {}) { return backupPage((await this.#transport.call("listBackups", this.#params, { query: pageQuery(request), signal: options.signal })).value); }
-  /** @param {string} id @param {{readonly name: string}} request @param {V1RequestOptions} [options] @returns {Promise<V1RestoredDatabase>} */
-  async restore(id, request, options = {}) {
+  /** @param {string} id @param {{readonly name?: string | null}} [request] @param {V1RequestOptions} [options] @returns {Promise<V1RestoredDatabase>} */
+  async restore(id, request = {}, options = {}) {
     members(request, ["name"]);
+    if (request.name !== undefined && request.name !== null) requireName("database", request.name);
     mutationOptions(options);
     return restored((await this.#transport.call("restoreBackup", { ...this.#params, backup: requireId(id) }, {
-      body: stringifyExactJson({ name: requireName("database", request.name) }, "restore"), signal: options.signal,
+      body: stringifyExactJson(request, "restore"), signal: options.signal,
     })).value);
   }
   /** @param {V1RequestOptions} [options] @returns {Promise<V1BackupPolicy>} */
@@ -84,7 +85,7 @@ export class V1Backups {
   async restorePointInTime(request, options = {}) {
     members(request, ["pointInTime", "destination", "name"]);
     pointInTime(request);
-    requireName("database", request.name);
+    if (request.name !== undefined && request.name !== null) requireName("database", request.name);
     mutationOptions(options);
     return restored((await this.#transport.call("restorePointInTime", this.#params, { body: stringifyExactJson(request, "point-in-time restore"), signal: options.signal })).value);
   }
