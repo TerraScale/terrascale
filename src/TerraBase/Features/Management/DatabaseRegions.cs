@@ -10,7 +10,8 @@ namespace TerraBase.Features.Management;
 /// <param name="Name">Database name, on create.</param>
 /// <param name="HomeRegion">The region it is created and managed in; the called region when absent. It cannot change.</param>
 /// <param name="ReplicaRegions">The other regions that hold a full copy; none when absent.</param>
-public sealed record DatabaseRegionsRequest(string? Name, string? HomeRegion, IReadOnlyList<string>? ReplicaRegions);
+/// <param name="AllRegions">Whether every serving region holds a full copy, including regions that join later; excludes <paramref name="ReplicaRegions"/>.</param>
+public sealed record DatabaseRegionsRequest(string? Name, string? HomeRegion, IReadOnlyList<string>? ReplicaRegions, bool? AllRegions = null);
 
 /// <summary>
 /// Per-database region placement (docs/cross-region.md): the checks of a requested placement, and the <c>421 wrong_region</c>
@@ -23,6 +24,9 @@ public static class DatabaseRegions
     /// <summary>A placement of one region where writes are confirmed in another (decision 0013).</summary>
     internal static readonly Validation TwoRegions =
         new("a database is placed in at least two regions: replicaRegions names one or more regions besides the home region", "placement_needs_two_regions");
+
+    /// <summary>A placement naming both every region and a list of them.</summary>
+    internal static readonly Validation AllOrListed = new("allRegions and replicaRegions cannot both be set", "placement_conflict");
 
     /// <summary>A new database with no replica region named, where writes are confirmed in another and no other region serves.</summary>
     internal static readonly Unavailable NoOtherRegion =

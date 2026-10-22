@@ -40,20 +40,11 @@ public static class PlatformDatabases
         [Dashboard] = (DashboardId, DashboardProjectId),
     };
 
-    /// <summary>The Fly regions every platform database is placed in, home first.</summary>
-    // shortcut: a new Fly region is added here (the user decides regions); the add-wins placement of the replication
-    // redesign (multi-region-replication.md, R11) lets each region add itself instead.
-    public static IReadOnlyList<string> Regions { get; } = ["gru", "sjc", "fra"];
-
     /// <summary>Whether <paramref name="organizationId"/> is the platform organization.</summary>
     public static bool IsPlatform(string? organizationId) => organizationId == OrganizationId;
 
-    /// <summary>
-    /// The placement every seeding node writes: the Fly regions, or this node's own region alone off Fly (development and
-    /// tests), so the databases are always served where they are seeded.
-    /// </summary>
-    public static DatabasePlacement Placement(string region) =>
-        Regions.Contains(region) ? new DatabasePlacement(Regions[0], [.. Regions.Skip(1)], 1) : new DatabasePlacement(region, [], 1);
+    /// <summary>The placement a seeding node writes: every region, including regions that join later, managed from <paramref name="region"/>.</summary>
+    public static DatabasePlacement Placement(string region) => new(region, [], 1, AllRegions: true);
 
     /// <summary>Registers the seed.</summary>
     public static IServiceCollection AddTerraBasePlatform(this IServiceCollection services)

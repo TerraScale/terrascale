@@ -17,7 +17,7 @@ public sealed class UpdateManagedDatabaseEndpoint(IManagementService management,
         Metadata(AnchoredRevocation.Instance);
         Name("updateDatabase");
         Summary("Sets a database's replica regions");
-        Description("Body {\"replicaRegions\":[…]}, the complete new list of regions besides the home region that hold a full copy and serve the database. homeRegion may be sent but cannot change; a name cannot change. Sent to the database's home region; any other answers 421 wrong_region with X-TerraBase-Database-Home. An added region takes the database once it registers the project under the same ids; a removed region stops serving it and drops its copy." + " " + ProjectApiRoute.IdentityDescription);
+        Description("Body {\"replicaRegions\":[…]}, the complete new list of regions besides the home region that hold a full copy and serve the database, or {\"allRegions\":true}: a full copy in every serving region, including regions that join later (400 placement_conflict with both). A replicaRegions list turns allRegions off. homeRegion may be sent but cannot change; a name cannot change. Sent to the database's home region; any other answers 421 wrong_region with X-TerraBase-Database-Home. An added region takes the database once it registers the project under the same ids; a removed region stops serving it and drops its copy." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");
         Produces<ManagedDatabaseBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -55,12 +55,13 @@ public sealed class UpdateManagedDatabaseEndpoint(IManagementService management,
 
         Valid<IReadOnlyList<string>> checkedRegions = request.Name is not null ? new Validation("a database cannot be renamed")
             : request.HomeRegion is { } requested && requested != home ? new Validation("homeRegion cannot change")
-            : request.ReplicaRegions is not { } replicas ? new Validation("replicaRegions is required")
+            : request.AllRegions == true ? request.ReplicaRegions is null ? Array.Empty<string>() : DatabaseRegions.AllOrListed
+            : request.ReplicaRegions is not { } replicas ? new Validation("replicaRegions or allRegions is required")
             : DatabaseRegions.Check(home, replicas, created: false);
         return checkedRegions switch
         {
             Validation error => ErrorResponse.From(error),
-            IReadOnlyList<string> accepted => await management.SetDatabaseRegionsAsync(user, organization, project, id, accepted, cancellationToken) switch
+            IReadOnlyList<string> accepted => await management.SetDatabaseRegionsAsync(user, organization, project, id, accepted, cancellationToken, request.AllRegions == true) switch
             {
                 ManagedDatabase value => TypedResults.Ok(ManagedDatabaseBody.From(value, options.Region)),
                 NotFound error => ManagementRoute.DatabaseNotFound(error),

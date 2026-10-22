@@ -34,7 +34,7 @@ public sealed class ListPlatformDatabasesEndpoint(IManagementService management,
             switch (await management.FindDatabaseRecordAsync(PlatformDatabases.OrganizationId, database.ProjectId, name, cancellationToken))
             {
                 case ManagedDatabase record:
-                    items.Add(new PlatformDatabaseBody(record.Name, record.Id, record.Home(options.Region), record.Replicas));
+                    items.Add(new PlatformDatabaseBody(record.Name, record.Id, record.Home(options.Region), record.Replicas, record.AllRegions));
                     break;
                 case Unavailable error:
                     return ErrorResponse.From(error);

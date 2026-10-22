@@ -48,7 +48,7 @@ internal static class ManagementErrors
     public static readonly Conflict WrongRegion = new("the database is managed in another region: send it to its home region", "wrong_region");
 
     /// <summary>The database still has replica regions.</summary>
-    public static readonly Conflict Replicated = new("remove the database's replica regions first", "database_replicated");
+    public static readonly Conflict Replicated = new("remove the database's replica regions and allRegions first", "database_replicated");
 
     /// <summary>The management catalog has a version this build does not know; it is left unchanged.</summary>
     public static readonly Unavailable CatalogUnsupported = new("the management catalog has an old or unsupported format; discard the affected data");

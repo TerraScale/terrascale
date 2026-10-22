@@ -1020,7 +1020,7 @@ internal sealed partial class EngineManagementService
     private bool SameDatabaseCreation(ManagedDatabase database, ManagementOpRequest op) =>
         op.Op == "create_database" && database.BranchedFrom is null && database.ProjectId == op.Project && database.Name == op.Name
         && database.PlacedIn(options.Region) && (op.HomeRegion is null || op.HomeRegion == database.Home(options.Region))
-        && (op.ReplicaRegions is null || database.Placement(options.Region).Regions.Order(StringComparer.Ordinal)
+        && !database.AllRegions && (op.ReplicaRegions is null || database.Placement(options.Region).Regions.Order(StringComparer.Ordinal)
             .SequenceEqual(new[] { options.Region }.Concat(op.ReplicaRegions).Order(StringComparer.Ordinal), StringComparer.Ordinal));
 
     // The user's record of a commit within the retention.

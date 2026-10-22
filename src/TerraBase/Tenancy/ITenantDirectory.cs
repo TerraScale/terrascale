@@ -164,10 +164,11 @@ public interface ITenantDirectory
 /// <param name="Home">The region the database is created and managed in.</param>
 /// <param name="Replicas">The other regions that hold a full copy.</param>
 /// <param name="Version">Raised by the home region on every change; the highest one wins elsewhere.</param>
-public sealed record DatabasePlacement(string Home, IReadOnlyList<string> Replicas, long Version)
+/// <param name="AllRegions">Every serving region holds a full copy, including regions that join later; <paramref name="Replicas"/> is then empty.</param>
+public sealed record DatabasePlacement(string Home, IReadOnlyList<string> Replicas, long Version, bool AllRegions = false)
 {
     /// <summary>Whether <paramref name="region"/> serves the database.</summary>
-    public bool Includes(string region) => Home == region || Replicas.Contains(region);
+    public bool Includes(string region) => AllRegions || Home == region || Replicas.Contains(region);
 
     /// <summary>The home region, then the replica regions.</summary>
     public IReadOnlyList<string> Regions => [Home, .. Replicas];

@@ -10,6 +10,7 @@ using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Platform;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
@@ -389,10 +390,12 @@ internal sealed partial class EngineManagementService(
     }
 
     public async ValueTask<CreateDatabaseResult> CreateDatabaseAsync(
-        string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken, IReadOnlyList<string>? replicaRegions = null) =>
+        string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken, IReadOnlyList<string>? replicaRegions = null,
+        bool allRegions = false) =>
         await AddDatabaseAsync(
             transaction => MemberProjectAsync(transaction, userId, organizationId, projectId, cancellationToken), name, sourceId: null, branchedFrom: null, cancellationToken,
-            placement: replicaRegions is null ? null : new DatabasePlacement(options.Region, replicaRegions, 1))
+            placement: allRegions ? new DatabasePlacement(options.Region, [], 1, AllRegions: true)
+                : replicaRegions is null ? null : new DatabasePlacement(options.Region, replicaRegions, 1))
             .ConfigureAwait(false) switch
         {
             AddedDatabase added => added.Database,
@@ -404,15 +407,16 @@ internal sealed partial class EngineManagementService(
         };
 
     public ValueTask<SetDatabaseRegionsResult> SetDatabaseRegionsAsync(
-        string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken) =>
+        string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> replicaRegions, CancellationToken cancellationToken,
+        bool allRegions = false) =>
         WriteAsync(
-            transaction => SetDatabaseRegionsAsync(transaction, userId, organizationId, projectId, databaseId, replicaRegions, cancellationToken), static error => error,
+            transaction => SetDatabaseRegionsAsync(transaction, userId, organizationId, projectId, databaseId, replicaRegions, cancellationToken, allRegions), static error => error,
             cancellationToken);
 
     // In the caller's transaction, so a commit can set regions with its other operations.
     private async ValueTask<SetDatabaseRegionsResult> SetDatabaseRegionsAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, string databaseId, IReadOnlyList<string> replicaRegions,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool allRegions = false)
     {
         var project = await MemberProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
         if (project is not TenantContext tenant)
@@ -441,6 +445,7 @@ internal sealed partial class EngineManagementService(
             HomeRegion = options.Region,
             ReplicaRegions = replicaRegions.Count == 0 ? null : [.. replicaRegions],
             PlacementVersion = database.PlacementVersion + 1,
+            AllRegions = allRegions,
         };
         await PutAsync(transaction, Databases(projectId), databaseId, placed, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false);
         await TouchOrganizationAsync(transaction, tenant.OrganizationId, cancellationToken).ConfigureAwait(false);
@@ -622,7 +627,7 @@ internal sealed partial class EngineManagementService(
 
     private static DeletionPlacement CheckDeletionPlacement(ManagedDatabase database, string region) =>
         database.Home(region) != region ? ManagementErrors.WrongRegion
-        : database.Replicas.Count > 0 ? ManagementErrors.Replicated
+        : database.Replicas.Count > 0 || database.AllRegions ? ManagementErrors.Replicated
         : new Done();
 
     // A database the user may delete in this region, with the tenant its storage is addressed by, in the caller's transaction.
@@ -782,8 +787,10 @@ internal sealed partial class EngineManagementService(
             placement = new DatabasePlacement(options.Region, replicas, 1);
         }
 
+        // A platform database is at home in every region (no recorded home), so every region seeds the same record.
         var database = new ManagedDatabase(
-            id ?? NewId(), tenant.ProjectId!, name, branchedFrom, createdAt ?? time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version);
+            id ?? NewId(), tenant.ProjectId!, name, branchedFrom, createdAt ?? time.GetUtcNow(), PlatformDatabases.IsPlatform(tenant.OrganizationId) ? null : placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version,
+            placement.AllRegions);
         var storage = tenant with { DatabaseId = database.Id };
         var preparation = await PrepareDatabaseAsync(storage, sourceId is null ? null : tenant with { DatabaseId = sourceId }, cancellationToken).ConfigureAwait(false);
         if (preparation is not bool created || !created)

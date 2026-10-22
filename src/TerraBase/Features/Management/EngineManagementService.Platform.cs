@@ -83,7 +83,8 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
                 Conflict error when error == ManagementErrors.NameTaken =>
                     await FindDatabaseRecordAsync(PlatformDatabases.OrganizationId, database.ProjectId, name, cancellationToken).ConfigureAwait(false) switch
                     {
-                        ManagedDatabase existing when existing.Id == database.Id => new Done(),
+                        ManagedDatabase { AllRegions: true } existing when existing.Id == database.Id => new Done(),
+                        ManagedDatabase existing when existing.Id == database.Id => await PlaceInAllRegionsAsync(existing, cancellationToken).ConfigureAwait(false),
                         ManagedDatabase => new Conflict("a platform database name holds another database", "platform_database_taken"),
                         NotFound => new Unavailable("a platform database was deleted while it was seeded"),
                         Unavailable unreadable => unreadable,
@@ -100,4 +101,15 @@ internal sealed partial class EngineManagementService : IPlatformCatalog
 
         return new Done();
     }
+
+    // A platform database seeded with a fixed region list takes the every-region placement.
+    private ValueTask<EnsurePlatformResult> PlaceInAllRegionsAsync(ManagedDatabase database, CancellationToken cancellationToken) =>
+        WriteAsync<EnsurePlatformResult>(async transaction =>
+        {
+            await PutAsync(transaction, Databases(database.ProjectId), database.Id,
+                database with { HomeRegion = null, ReplicaRegions = null, AllRegions = true, PlacementVersion = database.PlacementVersion + 1 },
+                TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false);
+            await TouchOrganizationAsync(transaction, PlatformDatabases.OrganizationId, cancellationToken).ConfigureAwait(false);
+            return new Done();
+        }, static error => error, cancellationToken);
 }
