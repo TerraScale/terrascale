@@ -27,7 +27,7 @@ public static class AuthEndpoints
     {
         app.MapGet("/login", StartAsync);
         app.MapGet("/login/callback", CompleteAsync);
-        app.MapPost("/api/v1/auth/logout", LogoutAsync);
+        app.MapPost("/api/v1/auth/logout", (Delegate)LogoutAsync);
     }
 
     // A signed-in visitor continues; everyone else goes to ts-auth's hosted sign-in.
