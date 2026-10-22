@@ -6,6 +6,11 @@ Public scope is `docs/terrabase/api.md` plus `ApiReferenceExtensions.ShouldInclu
 Hidden identity/dashboard aliases, internal/admin routes and hidden PUT database
 are outside this contract. No mapped `downloadBackup` endpoint exists.
 
+Historical README and older guides are retained verbatim under the shared-doc
+policy. Their native, unscoped and dashboard examples describe retired APIs;
+those exports, HTTP clients and executable qualification helpers are deleted.
+Use this guide for the current SDK. Tests use HTTP fakes only, never producer binaries.
+
 ## Client and IDs
 
 Use `Client::for_project(project_ulid, access_token)` with verified Atlas routing,
