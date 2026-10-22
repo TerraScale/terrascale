@@ -15,6 +15,12 @@ use tokio::sync::Notify;
 
 const PROJECT: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const VERSION: &str = "tbv1-00000000000000000000000000000000";
+const KEY: &str = "01ARZ3NDEKTSV4RRFFQ69G5FB0";
+const OTHER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FB1";
+
+fn key() -> DocumentId {
+    KEY.parse().unwrap()
+}
 
 enum Reply {
     Json(u16, String),
@@ -155,52 +161,48 @@ fn project_ids_are_canonical_ulids_before_any_request() {
 }
 
 #[tokio::test]
-async fn raw_keys_are_query_encoded_once_and_remain_distinct() {
-    let keys = [
-        "a/b", "a%2Fb", ".", "%2E", "..", "%2E%2E", "%", "?", "#", "+", " ", "é", "e\u{301}",
-    ];
-    let fixture = Fixture::new(keys.iter().map(|id| Reply::Json(200, point(id))).collect()).await;
+async fn document_ids_are_canonical_ulids_on_the_wire() {
+    let id: DocumentId = PROJECT.parse().unwrap();
+    let fixture = Fixture::new(vec![
+        Reply::Json(200, point(PROJECT)),
+        Reply::Json(200, point(&PROJECT.to_lowercase())),
+        Reply::Json(200, point("customer:key")),
+        Reply::Json(201, ack("01arz3ndektsv4rrffq69g5fav")),
+    ])
+    .await;
     let collection = fixture.collection();
-    for id in keys {
-        let document = collection.get::<Box<RawValue>>(id).await.unwrap();
-        assert_eq!(document.id, id);
-        assert!(document
-            .value()
-            .unwrap()
-            .get()
-            .contains("123456789012345678901234567890.123456789"));
+    let document = collection.get::<Box<RawValue>>(id).await.unwrap();
+    assert_eq!(document.id, id);
+    for _ in 0..2 {
+        assert!(collection.get::<Value>(id).await.is_err());
     }
+    assert!(collection
+        .create(&json!({}), WriteOptions::new())
+        .await
+        .is_err());
     let requests = fixture.requests.lock().unwrap();
-    for (request, id) in requests.iter().zip(keys) {
-        assert_eq!(request.method, "GET");
-        let url = url::Url::parse(&format!("{}{}", fixture.url, request.uri)).unwrap();
-        assert_eq!(
-            url.path(),
-            format!("/v1/projects/{PROJECT}/databases/main/collections/items/documents/by-key")
-        );
-        assert_eq!(
-            url.query_pairs().collect::<Vec<_>>(),
-            vec![("id".into(), id.into())]
-        );
-        assert_eq!(
-            request.headers["authorization"],
-            "Bearer fixture-project-token"
-        );
-    }
-    assert_ne!(requests[0].uri, requests[1].uri);
-    assert_ne!(requests[11].uri, requests[12].uri);
+    assert_eq!(
+        requests[0].uri,
+        format!(
+            "/v1/projects/{PROJECT}/databases/main/collections/items/documents/by-key?id={PROJECT}"
+        )
+    );
+    assert_eq!(
+        requests[0].headers["authorization"],
+        "Bearer fixture-project-token"
+    );
 }
 
 #[tokio::test]
 async fn current_crud_headers_generated_ulids_and_collection_identity() {
-    let key = "account/a+b";
+    let key = ulid_for("items", "account/a+b");
     let collection_body =
         json!({"id":PROJECT,"name":"items","created_at":"18446744073709551615"}).to_string();
     let fixture = Fixture::new(vec![
-        Reply::Json(201, ack(key)),
+        Reply::Json(201, ack(&key.to_string())),
         Reply::Json(304, String::new()),
-        Reply::Json(200, ack(key)),
-        Reply::Json(200, ack(key)),
+        Reply::Json(200, ack(&key.to_string())),
+        Reply::Json(200, ack(&key.to_string())),
         Reply::Json(201, ack(PROJECT)),
         Reply::Json(201, collection_body.clone()),
         Reply::Json(200, collection_body),
@@ -239,7 +241,8 @@ async fn current_crud_headers_generated_ulids_and_collection_identity() {
             .create(&json!({}), WriteOptions::new())
             .await
             .unwrap()
-            .id,
+            .id
+            .to_string(),
         PROJECT
     );
     let info = collection
@@ -290,33 +293,8 @@ async fn database_create_uses_management_post_and_preserves_placement() {
 }
 
 #[tokio::test]
-async fn invalid_document_keys_never_dispatch() {
-    let fixture = Fixture::new(vec![]).await;
-    let collection = fixture.collection();
-    for key in [
-        String::new(),
-        "a".repeat(257),
-        "😀".repeat(129),
-        "a\n".into(),
-        "a\u{85}".into(),
-    ] {
-        assert!(matches!(
-            collection.get::<Value>(&key).await,
-            Err(Error::InvalidInput(_))
-        ));
-        let mut tx = Tx::new();
-        tx.put("items", key, &json!({}), None);
-        assert!(matches!(
-            collection.database().commit(&tx).await,
-            Err(Error::InvalidTxOp { op: 0, .. })
-        ));
-    }
-    assert!(fixture.requests.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
 async fn explicit_retry_keeps_client_generated_key_and_exact_bytes() {
-    let key = uuidv5_for("items", "stable");
+    let key = ulid_for("items", "stable");
     let fixture = Fixture::new(vec![
         Reply::Disconnect,
         Reply::Json(200, ack(&key.to_string())),
@@ -339,7 +317,7 @@ async fn explicit_retry_keeps_client_generated_key_and_exact_bytes() {
         .put(key, &raw, WriteOptions::new())
         .await
         .unwrap();
-    assert_eq!(result.id, key.to_string());
+    assert_eq!(result.id, key);
     let requests = fixture.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].uri, requests[1].uri);
@@ -353,21 +331,21 @@ async fn malformed_empty_wrong_status_and_identity_keep_diagnostics() {
         (304, String::new(), false),
         (200, "".to_owned(), false),
         (200, "{".into(), false),
-        (201, point("key"), false),
-        (200, point("other"), false),
+        (201, point(KEY), false),
+        (200, point(OTHER), false),
         (204, String::new(), true),
-        (202, ack("key"), true),
-        (200, ack("other"), true),
+        (202, ack(KEY), true),
+        (200, ack(OTHER), true),
     ] {
         let fixture = Fixture::new(vec![Reply::Json(status, body.clone())]).await;
         let collection = fixture.collection();
         let error = if mutation {
             collection
-                .put("key", &json!({}), WriteOptions::new())
+                .put(key(), &json!({}), WriteOptions::new())
                 .await
                 .unwrap_err()
         } else {
-            collection.get::<Value>("key").await.unwrap_err()
+            collection.get::<Value>(key()).await.unwrap_err()
         };
         assert_eq!(error.status(), Some(status));
         assert_eq!(error.raw_body(), Some(body.as_bytes()));
@@ -392,7 +370,9 @@ async fn pagination_keeps_empty_intermediate_pages_and_stops_without_extra_reque
         .pages::<Box<RawValue>>(Query::new().count(true));
     assert!(pages.next_page().await.unwrap().unwrap().items.is_empty());
     assert_eq!(
-        pages.next_page().await.unwrap().unwrap().items[0].id,
+        pages.next_page().await.unwrap().unwrap().items[0]
+            .id
+            .to_string(),
         PROJECT
     );
     assert!(pages.next_page().await.unwrap().is_none());
@@ -429,18 +409,18 @@ async fn pagination_refuses_missing_empty_and_cyclic_cursors() {
 }
 
 #[tokio::test]
-async fn transaction_raw_keys_and_generated_ulids_match_the_acknowledgement() {
-    let body = json!({"offset":"1","durability":"local_durable","results":[{"id":"a/b","version":VERSION},{"id":PROJECT,"version":VERSION}]}).to_string();
+async fn transaction_keys_and_generated_ulids_match_the_acknowledgement() {
+    let body = json!({"offset":"1","durability":"local_durable","results":[{"id":KEY,"version":VERSION},{"id":PROJECT,"version":VERSION}]}).to_string();
     let fixture = Fixture::new(vec![Reply::Json(200, body)]).await;
     let mut tx = Tx::new();
-    tx.put("items", "a/b", &json!({}), None)
+    tx.put("items", key(), &json!({}), None)
         .create("items", None, &json!({}));
     let result = fixture.client().database("main").commit(&tx).await.unwrap();
-    assert_eq!(result.results[0].id(), Some("a/b"));
-    assert_eq!(result.results[1].id(), Some(PROJECT));
+    assert_eq!(result.results[0].id(), Some(key()));
+    assert_eq!(result.results[1].id(), PROJECT.parse().ok());
     let requests = fixture.requests.lock().unwrap();
     let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
-    assert_eq!(body["ops"][0]["id"], "a/b");
+    assert_eq!(body["ops"][0]["id"], KEY);
     assert!(body["ops"][1].get("id").is_none());
 }
 
@@ -448,7 +428,7 @@ async fn transaction_raw_keys_and_generated_ulids_match_the_acknowledgement() {
 async fn cancellation_during_streamed_body_closes_the_connection() {
     let fixture = Fixture::new(vec![Reply::PartialBody]).await;
     let collection = fixture.collection();
-    let request = tokio::spawn(async move { collection.get::<Value>("key").await });
+    let request = tokio::spawn(async move { collection.get::<Value>(key()).await });
     tokio::time::timeout(Duration::from_secs(3), fixture.arrived.notified())
         .await
         .unwrap();
@@ -471,7 +451,7 @@ async fn oversized_project_errors_preserve_a_bounded_body_and_request_id() {
     let error = client
         .database("main")
         .collection("items")
-        .put("key", &json!({}), WriteOptions::new())
+        .put(key(), &json!({}), WriteOptions::new())
         .await
         .unwrap_err();
     assert_eq!(error.status(), Some(503));
@@ -483,7 +463,7 @@ async fn oversized_project_errors_preserve_a_bounded_body_and_request_id() {
 
 #[tokio::test]
 async fn pinned_region_mismatch_keeps_acknowledgement_for_reconciliation() {
-    let body = ack("key");
+    let body = ack(KEY);
     let fixture = Fixture::new(vec![Reply::Json(200, body.clone())]).await;
     let client = Client::builder(&fixture.url, "fixture")
         .project(PROJECT)
@@ -493,7 +473,7 @@ async fn pinned_region_mismatch_keeps_acknowledgement_for_reconciliation() {
     let error = client
         .database("main")
         .collection("items")
-        .put("key", &json!({}), WriteOptions::new())
+        .put(key(), &json!({}), WriteOptions::new())
         .await
         .unwrap_err();
     assert_eq!(error.status(), Some(200));
@@ -536,7 +516,7 @@ async fn truncated_denial_keeps_status_and_never_retries() {
     let error = client
         .database("main")
         .collection("items")
-        .get::<Value>("key")
+        .get::<Value>(key())
         .await
         .unwrap_err();
     task.abort();

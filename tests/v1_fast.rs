@@ -5,8 +5,8 @@ use terrascale::v1::*;
 #[test]
 fn ids_names_and_builder_validation() {
     assert_eq!(
-        uuidv5_for("users", "ana@example.com").to_string(),
-        "b85e5c40-9a0a-517f-ba69-779a0cd2b159"
+        ulid_for("users", "ana@example.com").to_string(),
+        "2XXRVAPY9W9Y52V50008HFMDXY"
     );
     assert!(is_valid_name("users") && is_valid_name("a-b_9"));
     assert!(!is_valid_name("Users") && !is_valid_name("9a") && !is_valid_name(""));
@@ -59,14 +59,14 @@ fn numbers_and_filters_encode_exactly() {
     let f = Filter::and([
         Filter::eq("/email", "Ana@Example.com"),
         Filter::gte("/n", n.clone()),
-        Filter::in_("$id", [uuidv5_for("users", "a")]),
+        Filter::in_("$id", [ulid_for("users", "a")]),
         Filter::not(Filter::exists("/deleted_at")),
     ]);
     assert_eq!(
         serde_json::to_string(&f).unwrap(),
         format!(
             r#"{{"and":[{{"eq":["/email","Ana@Example.com"]}},{{"gte":["/n",{n}]}},{{"in":["$id",["{}"]]}},{{"not":{{"exists":"/deleted_at"}}}}]}}"#,
-            uuidv5_for("users", "a")
+            ulid_for("users", "a")
         )
     );
     assert!(Filter::and([]).validate().is_err());

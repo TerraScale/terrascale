@@ -1078,12 +1078,12 @@ mod tests {
             client
                 .database("orders")
                 .collection("items")
-                .get::<serde_json::Value>("customer:key")
+                .get::<serde_json::Value>(ulid::Ulid::nil())
                 .await,
             Err(Error::InvalidInput(_))
         ));
         let mut tx = super::super::Tx::new();
-        tx.put("items", "customer:key", &serde_json::json!({}), None);
+        tx.put("items", ulid::Ulid::nil(), &serde_json::json!({}), None);
         assert!(matches!(
             client.database("orders").commit(&tx).await,
             Err(Error::InvalidInput(_))

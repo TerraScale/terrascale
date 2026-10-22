@@ -4,21 +4,19 @@ use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use uuid::Uuid;
+use sha2::{Digest, Sha256};
+use ulid::Ulid;
 
 use super::errors::{Error, Result};
 
-/// A raw UTF-8 document key. Generated project document IDs are uppercase ULIDs.
-pub type DocumentId = String;
+/// A document ID: a ULID, sent and received in canonical uppercase form.
+pub type DocumentId = Ulid;
 
-pub(crate) fn check_document_id(id: &str) -> Result<()> {
-    if !id.is_empty() && id.encode_utf16().count() <= 256 && !id.chars().any(char::is_control) {
-        Ok(())
-    } else {
-        Err(Error::InvalidInput(
-            "id must be 1 to 256 characters without control characters".into(),
-        ))
-    }
+/// Parses a canonical uppercase ULID; `Ulid::from_string` alone also accepts lowercase.
+pub(crate) fn parse_document_id(id: &str) -> Option<DocumentId> {
+    valid_entity_id(id)
+        .then(|| Ulid::from_string(id).ok())
+        .flatten()
 }
 
 pub(crate) fn valid_entity_id(id: &str) -> bool {
@@ -31,10 +29,10 @@ pub(crate) fn valid_entity_id(id: &str) -> bool {
 
 pub(crate) fn document_id<'de, D: Deserializer<'de>>(
     d: D,
-) -> std::result::Result<String, D::Error> {
+) -> std::result::Result<DocumentId, D::Error> {
     let id = String::deserialize(d)?;
-    check_document_id(&id).map_err(serde::de::Error::custom)?;
-    Ok(id)
+    parse_document_id(&id)
+        .ok_or_else(|| serde::de::Error::custom("document ID must be a canonical uppercase ULID"))
 }
 
 pub(crate) fn entity_id<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
@@ -60,15 +58,18 @@ pub(crate) fn cursor<'de, D: Deserializer<'de>>(
     Ok(cursor)
 }
 
-/// The deterministic document ID for a natural `key` in `collection`:
-/// `uuidv5(uuidv5(NAMESPACE_URL, "terrabase:collection:" + collection), key)`.
+/// The deterministic document ID for a natural `key` in `collection`: the
+/// first 16 bytes of `SHA-256(collection + "\0" + key)` as a ULID.
 #[must_use]
-pub fn uuidv5_for(collection: &str, key: &str) -> Uuid {
-    let namespace = Uuid::new_v5(
-        &Uuid::NAMESPACE_URL,
-        format!("terrabase:collection:{collection}").as_bytes(),
-    );
-    Uuid::new_v5(&namespace, key.as_bytes())
+pub fn ulid_for(collection: &str, key: &str) -> DocumentId {
+    let digest = Sha256::new()
+        .chain_update(collection)
+        .chain_update([0])
+        .chain_update(key)
+        .finalize();
+    let mut bytes = [0; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    Ulid::from_bytes(bytes)
 }
 
 /// Reports whether `name` is a valid database or collection name

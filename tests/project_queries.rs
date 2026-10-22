@@ -7,7 +7,7 @@ use terrascale::v1::{Filter, Query, SortKey};
 
 #[tokio::test]
 async fn queries_use_supported_pointer_paths_and_preserve_rows_and_counts() {
-    let page = json!({"items":[{"id":"customer/key","version":"tbv1-00000000000000000000000000000000","state":"value","document":{"email":"Ana@Example.com"}}],"next_cursor":null,"count":{"value":"1","exact":true}});
+    let page = json!({"items":[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FB0","version":"tbv1-00000000000000000000000000000000","state":"value","document":{"email":"Ana@Example.com"}}],"next_cursor":null,"count":{"value":"1","exact":true}});
     let fixture = Fixture::new(vec![reply(200, &page.to_string())]).await;
     let query = Query::new()
         .filter(Filter::eq("/email", "Ana@Example.com"))
@@ -22,7 +22,7 @@ async fn queries_use_supported_pointer_paths_and_preserve_rows_and_counts() {
         .query::<Value>(&query)
         .await
         .unwrap();
-    assert_eq!(result.items[0].id, "customer/key");
+    assert_eq!(result.items[0].id.to_string(), "01ARZ3NDEKTSV4RRFFQ69G5FB0");
     assert_eq!(result.items[0].value().unwrap()["email"], "Ana@Example.com");
     assert_eq!(result.count.unwrap().value, 1);
     assert!(result.next_cursor.is_none());
