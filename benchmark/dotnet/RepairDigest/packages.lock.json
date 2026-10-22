@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net11.0": {
+      "Microsoft.NET.ILLink.Tasks": {
+        "type": "Direct",
+        "requested": "[11.0.0-rc.1.26425.128, )",
+        "resolved": "11.0.0-rc.1.26425.128",
+        "contentHash": "oMgihfjNcxZpR9B/O5Ke8Qmr8CJcpdzG4PnVYtA6Ja4g41NELxLRuiqqh5ys7w+ourEBNng2IIZnrlMJXfncmQ=="
+      },
+      "turso.data": {
+        "type": "Project",
+        "dependencies": {
+          "Turso.Raw": "[0.8.2, )"
+        }
+      },
+      "turso.data.sqlite": {
+        "type": "Project",
+        "dependencies": {
+          "Turso.Data": "[0.8.2, )"
+        }
+      },
+      "turso.raw": {
+        "type": "Project",
+        "dependencies": {
+          "Turso.Data.Native": "[0.8.2, )"
+        }
+      },
+      "Turso.Data.Native": {
+        "type": "CentralTransitive",
+        "requested": "[0.8.2, )",
+        "resolved": "0.8.2",
+        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
+      }
+    },
+    "net11.0/linux-arm64": {
+      "Turso.Data.Native": {
+        "type": "CentralTransitive",
+        "requested": "[0.8.2, )",
+        "resolved": "0.8.2",
+        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
+      }
+    },
+    "net11.0/linux-x64": {
+      "Turso.Data.Native": {
+        "type": "CentralTransitive",
+        "requested": "[0.8.2, )",
+        "resolved": "0.8.2",
+        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
+      }
+    }
+  }
+}diff --git a/docs/terrabase/replication/2026-10-22-merkle-digests.md b/docs/terrabase/replication/2026-10-22-merkle-digests.md

@@ -29,10 +29,34 @@ public static class StoredStates
         bool system = false, ReplicaId? origin = null)
     {
         ArgumentNullException.ThrowIfNull(connection);
+        if (transaction is null)
+        {
+            await using var owned = (SqliteTransaction)await connection.BeginTransactionAsync();
+            await WriteAsync(connection, collection, id, body, version, owned, system, origin);
+            await owned.CommitAsync();
+            return;
+        }
+
         var replica = origin ?? Replica;
         using var json = JsonDocument.Parse(system ? SystemBody(body) : body, DocumentState.JsonOptions);
         var state = DocumentState.Bottom.Put(new EntryVersion(new Hlc((ulong)version), replica), json.RootElement);
         var digest = DocumentStateEncoding.Digest(collection, id, state);
+        var h1 = unchecked((long)(ulong)(digest >> 64));
+        var h2 = unchecked((long)(ulong)digest);
+        await using (var prior = connection.CreateCommand())
+        {
+            prior.Transaction = transaction;
+            prior.CommandText = "SELECT h1, h2 FROM _tb_state WHERE collection = $collection AND id = $id;";
+            prior.Parameters.AddWithValue("$collection", collection);
+            prior.Parameters.AddWithValue("$id", id);
+            await using var reader = await prior.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                h1 ^= reader.GetInt64(0);
+                h2 ^= reader.GetInt64(1);
+            }
+        }
+
         await using var insert = connection.CreateCommand();
         insert.Transaction = transaction;
         insert.CommandText = (system
@@ -57,6 +81,16 @@ public static class StoredStates
         insert.Parameters.AddWithValue("$h1", unchecked((long)(ulong)(digest >> 64)));
         insert.Parameters.AddWithValue("$h2", unchecked((long)(ulong)digest));
         await insert.ExecuteNonQueryAsync();
+        await using var fold = connection.CreateCommand();
+        fold.Transaction = transaction;
+        fold.CommandText = """
+            INSERT INTO _tb_merkle (bucket, h1, h2) VALUES ($bucket, 0, 0) ON CONFLICT (bucket) DO NOTHING;
+            UPDATE _tb_merkle SET h1 = (h1 | $h1) & ~(h1 & $h1), h2 = (h2 | $h2) & ~(h2 & $h2) WHERE bucket = $bucket;
+            """;
+        fold.Parameters.AddWithValue("$bucket", SqliteStorageTransaction.Bucket(collection, id));
+        fold.Parameters.AddWithValue("$h1", h1);
+        fold.Parameters.AddWithValue("$h2", h2);
+        await fold.ExecuteNonQueryAsync();
     }
 
     /// <summary>

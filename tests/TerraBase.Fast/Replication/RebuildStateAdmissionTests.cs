@@ -524,7 +524,17 @@ public sealed class StateAdmissionTests
         await using var fixture = await Fixture.StartAsync();
         var pin = fixture.Store.Incarnation;
         await Assert.That((await fixture.DigestAsync(pinned ? pin : null)).Held).IsTrue();
-        await fixture.SqlAsync($"UPDATE _tb_state SET {column} = $value WHERE collection = 'items' AND id = $id;",
+        if (column == "bucket")
+        {
+            // A malformed stored bucket cannot be inserted through an INTEGER PRIMARY KEY's normal type check.
+            await fixture.SqlAsync("""
+                ALTER TABLE _tb_merkle RENAME TO damaged_merkle;
+                CREATE TABLE _tb_merkle (bucket, h1, h2);
+                INSERT INTO _tb_merkle SELECT bucket, h1, h2 FROM damaged_merkle;
+                DROP TABLE damaged_merkle;
+                """, 0L);
+        }
+        await fixture.SqlAsync($"UPDATE _tb_merkle SET {column} = $value WHERE bucket = (SELECT bucket FROM _tb_state WHERE collection = 'items' AND id = $id);",
             damage == "outside" ? (object)4096L : HashValue(damage));
         var committed = fixture.Store.CommitSequence;
         var immediate = false;
@@ -596,7 +606,7 @@ public sealed class StateAdmissionTests
         var changed = await system.WithWriterAsync(session =>
         {
             using var command = session.Connection.CreateCommand();
-            command.CommandText = "UPDATE _tb_state SET h2 = $value WHERE collection = 'digestitems' AND id = $id;";
+            command.CommandText = "UPDATE _tb_merkle SET h2 = $value WHERE bucket = (SELECT bucket FROM _tb_state WHERE collection = 'digestitems' AND id = $id);";
             command.Parameters.AddWithValue("$value", HashValue("large-text"));
             command.Parameters.AddWithValue("$id", id);
             return command.ExecuteNonQuery();

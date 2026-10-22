@@ -18,7 +18,6 @@ internal sealed partial class SqliteStorageTransaction
     internal ValueTask<byte[]> ReadDigestsAsync(CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
-            // shortcut: reads every state row per round; keep _tb_merkle folded per commit once databases hold millions of documents.
             var digests = new byte[Buckets * 16];
             // CASE keeps unchecked TEXT/BLOB values out of the driver's managed projection.
             using var reader = Command("""
@@ -27,7 +26,7 @@ internal sealed partial class SqliteStorageTransaction
                     CASE WHEN typeof(bucket) = 'integer' THEN bucket ELSE 0 END,
                     CASE WHEN typeof(h1) = 'integer' THEN h1 ELSE 0 END,
                     CASE WHEN typeof(h2) = 'integer' THEN h2 ELSE 0 END
-                FROM _tb_state;
+                FROM _tb_merkle;
                 """).ExecuteReader();
             while (reader.Read())
             {
