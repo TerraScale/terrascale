@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using TerraBase.Engine;
 using TerraBase.Features.Backup;
@@ -68,14 +67,14 @@ internal sealed class SegmentAckGate : IAsyncDisposable
 
     /// <summary>Starts a generation of <paramref name="database"/>: a snapshot, stored before the gate returns.</summary>
     public static async Task<SegmentAckGate> StartAsync(
-        IWalBackup backup, TenantContext database, IObjectStore store, string prefix, string scratch, CancellationToken cancellationToken)
+        IWalBackup backup, TenantContext database, IObjectStore store, string prefix, string scratch, TimeProvider time, CancellationToken cancellationToken)
     {
         var tap = await backup.OpenTapAsync(database, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"no database {database.DatabaseId}");
         var gate = new SegmentAckGate(tap, store, prefix);
         try
         {
-            var clock = Stopwatch.StartNew();
+            var started = time.GetTimestamp();
             var path = Path.Combine(scratch, $"snapshot-{Guid.NewGuid():N}.db");
             // Changes committed before the pin are in the copy itself: the generation's log starts after it, at 0.
             _ = await tap.SnapshotAsync(Stream.Null, path, cancellationToken).ConfigureAwait(false);
@@ -86,7 +85,7 @@ internal sealed class SegmentAckGate : IAsyncDisposable
             }
 
             File.Delete(path);
-            gate.SnapshotStall = clock.Elapsed;
+            gate.SnapshotStall = time.GetElapsedTime(started);
             gate._flusher = Task.Run(gate.FlushAsync, CancellationToken.None);
             return gate;
         }

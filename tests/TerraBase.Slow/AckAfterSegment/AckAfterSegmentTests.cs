@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Time.Testing;
+using TerraBase.Testing;
 
 namespace TerraBase.Slow.AckAfterSegment;
 
@@ -61,8 +63,10 @@ public sealed class AckAfterSegmentTests
         await using var prototype = await AckPrototype.StartAsync(faults, cancellationToken);
         _ = await prototype.WriteAsync(cancellationToken);
 
-        var starting = prototype.GateAsync(cancellationToken);
-        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+        var time = new FakeTimeProvider();
+        var starting = prototype.GateAsync(cancellationToken, time);
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(faults.Refused > 0));
+        time.Advance(TimeSpan.FromSeconds(1));
         await Assert.That(starting.IsCompleted).IsFalse().Because("the snapshot cannot be stored during the outage");
 
         faults.Outage = false;

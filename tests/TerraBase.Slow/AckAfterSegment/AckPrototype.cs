@@ -77,9 +77,9 @@ internal sealed class AckPrototype : IAsyncDisposable
     }
 
     /// <summary>Starts the database's generation: its snapshot is stored before this returns.</summary>
-    public Task<SegmentAckGate> GateAsync(CancellationToken cancellationToken) =>
+    public Task<SegmentAckGate> GateAsync(CancellationToken cancellationToken, TimeProvider? time = null) =>
         SegmentAckGate.StartAsync(Backup, new TenantContext(Database.Organization, PlanTier.Enterprise, Database.Project, Database.Id),
-            Store, Prefix, _scratch, cancellationToken);
+            Store, Prefix, _scratch, time ?? TimeProvider.System, cancellationToken);
 
     /// <summary>Writes a new document; returns when the server acknowledged it, as today, after its local commit.</summary>
     public async Task<string> WriteAsync(CancellationToken cancellationToken)
