@@ -4,17 +4,10 @@ name: CI
 # building one Dockerfile stage on a GitHub-hosted runner (format, Release build with analyzers as errors, the area's checks and Fast
 # suite, plus the local three-node replication matrix and the local-only e2e category for TerraBase): test-libs, test-auth, test-terrabase. On pull requests an area runs only when its files or the shared files
 # changed (`changes`); libs changes run every area. Pushes to main run every area. `make docker-test` runs all three.
-# Next to it, without waiting for it:
-# - preview (pull requests): TerraBase in gru/sjc, ts-auth in gru at https://ts-pr-<n>.fly.dev (scripts/fly/preview.sh);
-#   previews.yml deletes it when the PR closes or after 24 hours.
-# - deploy (main): the Dockerfile's chiseled images to Fly, TerraBase then ts-auth, each gru -> sjc -> fra with a live
-#   check after each region (scripts/fly/deploy.sh), only for the newest main; both app images build in parallel.
-#   Deploy requires the Fast `test` gate in the same workflow run and checks current main before rollout.
 # After it:
 # - slow (main, workflow_dispatch, or a pull request labelled `full-ci`): the slow suites; never blocks. A failure
 #   writes the job summary; on main it also opens (or comments on) one `slow-failure` issue per failed test.
-# - e2e (main, after deploy): tests/TerraBase.E2E except its local-only category against the Fly app, gru, sjc and fra pinned with fly-prefer-region;
-#   failures fail CI and retain evidence after the completed rollout.
+# Images for ts-orch are published by images-ghcr.yml; ts-orch deploys them. CI does not deploy.
 
 on:
   pull_request:
@@ -26,10 +19,10 @@ on:
     types: [checks_requested]
   workflow_dispatch:
 
-# Cancel superseded PR tests; main runs finish their rollout and live E2E.
+# A new push cancels the older run of the same PR or branch, main included; each merge-group run has its own group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 permissions:
   contents: read
@@ -39,7 +32,7 @@ env:
   TS_DOTNET_REV: 78e311fe1dcb6dd603190800ed540d08e06de5fd
 
 jobs:
-  # Runs on every event: a skipped job would skip everything downstream of "test" (deploy, slow).
+  # Runs on every event: a skipped job would skip everything downstream of "test" (slow).
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -83,7 +76,7 @@ jobs:
               # The credential entry point and the scripts it runs (make handoff-test).
               - scripts/handoff/**
               - scripts/e2e/**
-              - benchmark/scripts/repl-fly-tenant.sh
+              - benchmark/scripts/repl-*-tenant.sh
             auth:
               - *shared
               - auth.slnf
@@ -216,21 +209,16 @@ jobs:
       - name: Every area that ran passed
         run: '! grep -qE "failure|cancelled" <<< "${{ join(needs.*.result, '' '') }}"'
       - *checkout
-      - name: Fly deploy, volume reset, storage train, e2e summary and e2e credential self-checks
+      # Production runs on OCI through ts-orch; only Tigris (its endpoint and `fly storage`) stays. The brackets keep
+      # these lines from matching themselves.
+      - name: Workflows name no retired hosting provider
+        run: '! grep -rniI "fl[y]" terrascale/.github/workflows | grep -viE "fl[y]\.storage\.tigris\.dev|fl[y] storage"'
+      - name: Slow report, cache policy, storage train and e2e summary self-checks
         run: |
           python3 terrascale/scripts/ci/slow-report-test.py
-          python3 terrascale/scripts/ci/e2e-status-test.py
-          python3 terrascale/scripts/ci/latest-main-test.py
           python3 terrascale/scripts/ci/cache-policy-test.py
-          python3 terrascale/scripts/ci/deploy-status-test.py
-          bash terrascale/scripts/fly/deploy-test.sh
-          bash terrascale/scripts/fly/preview-test.sh
-          python3 terrascale/scripts/ci/preview-lifecycle-test.py
-          bash terrascale/scripts/fly/volume-reset-test.sh
-          bash terrascale/scripts/fly/preview-test.sh
           bash terrascale/scripts/terrabase/storage-format-check-test.sh
           bash terrascale/scripts/terrabase/e2e-summary-test.sh
-          bash terrascale/scripts/e2e/ci-oidc-credential-test.sh
       # Reads the labels live: after labelling, re-run this job (docs/terrabase/ci.md, storage train).
       - name: Storage train
         if: github.event_name == 'pull_request'
@@ -330,255 +318,3 @@ jobs:
             fi
           done
           exit "$code"
-
-  # Build each app once with its own scoped token; every region reuses that SHA-tagged image.
-  images:
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - app: ts-terrabase
-            target: terrabase
-            area: terrabase
-            token: FLY_TOKEN_TS_TERRABASE
-          - app: ts-auth
-            target: ts-auth
-            area: auth
-            token: FLY_TOKEN_TS_AUTH
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - *checkout
-      - name: Skip a superseded main before building
-        id: current
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: terrascale/scripts/fly/current-main.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
-      - *checkout-ts-dotnet
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-        if: steps.current.outputs.current == 'true'
-        with:
-          driver: docker-container
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        if: steps.current.outputs.current == 'true'
-        with:
-          registry: registry.fly.io
-          username: x
-          password: ${{ secrets[matrix.token] }}
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        if: steps.current.outputs.current == 'true'
-        with:
-          context: terrascale
-          file: terrascale/Dockerfile
-          build-contexts: ts-dotnet=ts-dotnet
-          target: ${{ matrix.target }}
-          tags: registry.fly.io/${{ matrix.app }}:${{ github.sha }}
-          cache-from: ${{ format('type=gha,scope={0}', matrix.area) }}
-          build-args: *build-args
-          push: true
-
-  preview:
-    needs: test
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    concurrency:
-      group: preview-${{ github.event.pull_request.number }}
-    permissions:
-      contents: read
-      pull-requests: write
-    env:
-      FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_PREVIEWS }}
-      APP: ts-pr-${{ github.event.pull_request.number }}
-    steps:
-      - *checkout
-      - *checkout-ts-dotnet
-      - &setup-flyctl
-        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
-      - name: Read current PR lifecycle
-        id: pull-request
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          state=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .state)
-          case "$state" in open|closed) ;; *) exit 1 ;; esac
-          printf 'state=%s\n' "$state" >> "$GITHUB_OUTPUT"
-      - name: Create the preview app
-        if: steps.pull-request.outputs.state == 'open'
-        run: terrascale/scripts/fly/preview.sh app ${{ github.event.pull_request.number }}
-      - *setup-builder
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: registry.fly.io
-          username: x
-          password: ${{ secrets.FLY_TOKEN_PREVIEWS }}
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        if: steps.pull-request.outputs.state == 'open'
-        with:
-          context: terrascale
-          file: terrascale/Dockerfile
-          build-contexts: ts-dotnet=ts-dotnet
-          target: terrabase
-          tags: registry.fly.io/${{ env.APP }}:terrabase-${{ github.sha }}
-          cache-from: type=gha,scope=terrabase
-          build-args: *build-args
-          push: true
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        if: steps.pull-request.outputs.state == 'open'
-        with:
-          context: terrascale
-          file: terrascale/Dockerfile
-          build-contexts: ts-dotnet=ts-dotnet
-          target: ts-auth
-          tags: registry.fly.io/${{ env.APP }}:ts-auth-${{ github.sha }}
-          cache-from: type=gha,scope=auth
-          build-args: *build-args
-          push: true
-      - name: Start or update the preview machine
-        if: steps.pull-request.outputs.state == 'open'
-        run: >-
-          terrascale/scripts/fly/preview.sh machine ${{ github.event.pull_request.number }}
-          "registry.fly.io/$APP:terrabase-${{ github.sha }}" "registry.fly.io/$APP:ts-auth-${{ github.sha }}"
-      - name: Comment the preview URL
-        if: steps.pull-request.outputs.state == 'open'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh pr comment ${{ github.event.pull_request.number }} -R "$GITHUB_REPOSITORY" --edit-last --create-if-none
-          --body "Preview: https://$APP.fly.dev (TerraBase + ts-auth at ${{ github.sha }}; stops when idle, deleted on close or after 24 h)"
-      # GitHub's hourly schedule (previews.yml) is best effort: every preview update also reaps closed and old previews.
-      - name: Reap closed and old previews
-        if: ${{ !cancelled() }}
-        working-directory: terrascale
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: scripts/fly/preview.sh reap
-
-  # The shared deploy group prevents overlapping rollouts; ts-auth rolls out after TerraBase.
-  deploy:
-    needs: [images, test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    concurrency:
-      group: deploy
-      cancel-in-progress: false
-    permissions:
-      contents: read
-    outputs:
-      deployed: ${{ steps.deploy-auth.outcome == 'success' }}
-    steps:
-      - *checkout
-      - name: Skip a superseded main before building
-        id: current
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: terrascale/scripts/fly/current-main.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
-      - *setup-flyctl
-      # TerraBase's storage-format inspection pulls the published image with its scoped token.
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        if: steps.current.outputs.current == 'true'
-        with:
-          registry: registry.fly.io
-          username: x
-          password: ${{ secrets.FLY_TOKEN_TS_TERRABASE }}
-      # Recheck freshness after this run's Fast gate and image builds finish.
-      - name: Require current main before rollout
-        id: qualified
-        if: steps.current.outputs.current == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          terrascale/scripts/fly/current-main.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
-      - name: Deploy TerraBase (gru, sjc, fra)
-        if: steps.qualified.outputs.current == 'true'
-        working-directory: terrascale
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_TS_TERRABASE }}
-        run: scripts/fly/deploy.sh ts-terrabase src/TerraBase/fly.toml registry.fly.io/ts-terrabase:${{ github.sha }}
-      - name: Deploy ts-auth (gru, sjc, fra)
-        id: deploy-auth
-        if: steps.qualified.outputs.current == 'true'
-        working-directory: terrascale
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_TS_AUTH }}
-        run: scripts/fly/deploy.sh ts-auth src/TerraScale.Authentication/fly.toml registry.fly.io/ts-auth:${{ github.sha }}
-
-  deploy-status:
-    needs: [test, deploy, e2e]
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - *checkout
-      - name: Require deployment and live E2E for current green main
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NEEDS_JSON: ${{ toJSON(needs) }}
-        run: python3 terrascale/scripts/ci/deploy-status.py
-
-  e2e:
-    needs: deploy
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.deploy.outputs.deployed == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # id-token: the GitHub OIDC token each Fly step exchanges at ts-auth for a 15-minute token of the bound e2e project
-    # (scripts/e2e/ci-oidc-credential.sh, docs/auth/github-actions-oidc.md); no e2e credential is stored in GitHub.
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      TERRABASE_E2E_FLY_URL: https://ts-terrabase.fly.dev
-    steps:
-      - *checkout
-      - *checkout-ts-dotnet
-      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
-        with:
-          global-json-file: terrascale/global.json
-          cache: true
-          cache-dependency-path: |
-            terrascale/**/packages.lock.json
-            terrascale/src/vendor/Turso.Data.Sqlite/locks/*.packages.lock.json
-            ts-dotnet/**/packages.lock.json
-      - name: Six-direction replication matrix against Fly (gru, sjc, fra)
-        shell: bash
-        working-directory: terrascale
-        # Build first, then mint: the 15-minute token's clock starts after the build; -o keeps make from building again.
-        run: |
-          make terrabase-build
-          source scripts/e2e/ci-oidc-credential.sh
-          make -o terrabase-build terrabase-e2e E2E_LABEL=fly-replication-matrix E2E_RESULTS="$PWD/replication-matrix-results.jsonl" \
-            TEST_ARGS='-- --treenode-filter "/*/*/*/*[Category=replication-matrix-live]" --minimum-expected-tests 13 --output detailed --no-ansi' \
-            2>&1 | tee replication-matrix.log
-          jq -se 'length == 13 and all(.[]; .category == "pass" and .nodes == "Fly machines")' replication-matrix-results.jsonl
-      - name: Replication e2e against Fly
-        if: ${{ !cancelled() }}
-        shell: bash
-        working-directory: terrascale
-        # The local-only category (whole-database backups, every node stopped, a cursor's issuer stopped) runs in the
-        # required test-terrabase stage on local nodes; the deploy run never stops a production machine. It writes only the
-        # bound e2e project: its fixed ci-e2e (created once, later runs reuse it) and the databases each test creates and deletes.
-        # 138 = the 165 test cases in tests/TerraBase.E2E (one per [Arguments] row) minus the 27 local-only ones; skipped cases
-        # (fly-outage, hosts, local processes) count. A narrower filter or lost tests fail the run.
-        run: |
-          make terrabase-build
-          source scripts/e2e/ci-oidc-credential.sh
-          make -o terrabase-build terrabase-e2e E2E_LABEL=fly TEST_ARGS='-- --treenode-filter "/*/*/*/*[Category!=local-only]" --minimum-expected-tests 138 --output detailed --no-ansi' 2>&1 | tee replication-e2e.log
-      - name: Preserve replication proof and per-direction lag
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: replication-e2e-${{ github.sha }}
-          path: |
-            terrascale/replication-matrix.log
-            terrascale/replication-matrix-results.jsonl
-            terrascale/replication-e2e.log
-            terrascale/tests/TerraBase.E2E/bin/e2e-results.jsonl

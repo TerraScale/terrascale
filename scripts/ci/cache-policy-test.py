@@ -10,14 +10,10 @@ workflow = (root / ".github/workflows/ci.yml").read_text()
 dockerfile = (root / "Dockerfile").read_text()
 writers = re.findall(r"^\s+cache-to: (.+)$", workflow, re.M)
 assert writers == ["${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', github.job) || '' }}"], writers
-# setup-dotnet automatically saves after a successful job, so its native NuGet consumer must be main-only.
-assert workflow.count("cache: true") == 1
-native = workflow.split("\n  e2e:\n", 1)[1]
-assert "if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.deploy.outputs.deployed == 'true'" in native
-for path in ("terrascale/**/packages.lock.json", "terrascale/src/vendor/Turso.Data.Sqlite/locks/*.packages.lock.json", "ts-dotnet/**/packages.lock.json"):
-    assert path in native, path
+# setup-dotnet saves its NuGet cache after any successful job, pull requests included: no job may enable it.
+assert "cache: true" not in workflow
 assert not re.search(r"uses: actions/cache(?:/save)?@", workflow), "Explicit cache writers need a main-only gate"
-assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow.split("\npermissions:", 1)[0]
+assert "cancel-in-progress: ${{ github.event_name != 'merge_group' }}" in workflow.split("\npermissions:", 1)[0]
 assert "no-cache-filters: test-${{ github.job }}" in workflow
 assert "no-cache-filters: slow-${{ matrix.area }}-run" in workflow
 
@@ -50,4 +46,4 @@ def filtered(change=None):
 baseline = filtered()
 for path in fixtures:
     assert (filtered(path) != baseline) == (path in expected), path
-print(f"cache-policy-test: ok (main-only writers, uninterrupted main, {len(fixtures)} restore invalidation controls)")
+print(f"cache-policy-test: ok (main-only writers, superseded runs cancelled, {len(fixtures)} restore invalidation controls)")
