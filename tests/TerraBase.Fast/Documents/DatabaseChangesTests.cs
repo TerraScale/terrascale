@@ -317,9 +317,11 @@ public sealed class DatabaseChangesTests
     }
 
     [Test]
-    public async Task A_database_holds_at_most_32_streams_per_machine_and_a_closed_one_frees_its_place()
+    public async Task A_database_bounds_streams_per_machine_and_a_closed_one_frees_its_place()
     {
         await using var api = await DocumentApi.StartAsync();
+        // Test the stream bound without exhausting Hobby's 100-request burst first.
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "pro");
         var changes = $"{api.DatabasePath()}/changes?cursor=now";
         var streams = new List<Sse>();
         try
@@ -340,6 +342,50 @@ public sealed class DatabaseChangesTests
                 using var response = await api.Client.GetAsync(new Uri(changes, UriKind.Relative), HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 return response.StatusCode == HttpStatusCode.OK;
             });
+        }
+        finally
+        {
+            streams.ForEach(stream => stream.Dispose());
+        }
+    }
+
+    [Test]
+    public async Task A_hundred_readers_share_a_write_and_one_leaving_does_not_cancel_the_rest()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var api = await DocumentApi.StartAsync(cancellationToken: token);
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "pro", token);
+        var streams = new List<Sse>();
+        try
+        {
+            string? cursor = null;
+            var scope = ChangeCursor.Scope(await api.TenantOfAsync(cancellationToken: token), null);
+            for (var i = 0; i < 100; i++)
+            {
+                // Readers resume the same position with independently issued cursors.
+                var resume = cursor is null ? "now" : ChangeCursor.Encode(ChangeCursor.Decode(cursor)! with
+                {
+                    Issued = FeedCursor.At(DateTimeOffset.UtcNow - TimeSpan.FromSeconds(i)),
+                }, scope);
+                var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(resume)}");
+                streams.Add(stream);
+                cursor = (await stream.NextAsync()).Id;
+            }
+
+            var before = await api.Server.MetricAsync("terrabase_storage_reads_total", "path=\"feed\"", token);
+            streams[0].Dispose();
+            streams.RemoveAt(0);
+            var id = DocumentApi.NewId();
+            (await api.PutAsync(id, new { shared = true })).Status.ShouldBe(HttpStatusCode.Created);
+            var changes = await Task.WhenAll(streams.Select(stream => stream.NextAsync()));
+            foreach (var change in changes)
+            {
+                await Assert.That(change.Event).IsEqualTo("change");
+                await Assert.That(change.Data.GetProperty("id").GetString()).IsEqualTo(id);
+            }
+
+            var reads = await api.Server.MetricAsync("terrabase_storage_reads_total", "path=\"feed\"", token) - before;
+            await Assert.That(reads).IsLessThan(20);
         }
         finally
         {
