@@ -15,6 +15,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/TerraScale.Authentication/TerraScale.Authentication.csproj" />
+    <!-- Stopped-copy fault injection only; application access continues through ts-dotnet. -->
+    <ProjectReference Include="../../src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
     <!-- TerraBaseSdkContractTests: the routes the pinned ts-dotnet clients call. -->
     <None Include="$(TsDotnetRoot)/contracts/terrabase/routes.json" Link="contracts/terrabase/routes.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
