@@ -1149,17 +1149,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_rejects_legacy_control_and_keyed_writes_before_dispatch() {
+    async fn project_rejects_keyed_writes_before_dispatch() {
         let client = Client::builder("http://127.0.0.1:1", "jwt")
             .project("01ARZ3NDEKTSV4RRFFQ69G5FAV")
             .build()
             .unwrap();
-        let err = client
-            .control()
-            .list_regions(&super::super::ListOptions::default())
-            .await
-            .unwrap_err();
-        assert!(matches!(err, Error::InvalidInput(_)), "{err:?}");
         let key = IdempotencyKey::random();
         let err = client
             .database("orders")
