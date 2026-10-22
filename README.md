@@ -17,7 +17,7 @@ Project requests use an already exchanged ts-auth bearer token and resolve throu
 producer qualification; they remain implementation inventory, not production
 onboarding. Normal first-party routing uses verified automatic discovery. C# TerraBase currently rejects `Idempotency-Key`, which project clients reject locally.
 
-`scripts/terrabase/run.py` still targets the older SHA-256-pinned C# producer `263598b47ffc79398db394550e3c074acf4fc57d`, with UUID project IDs and legacy bootstrap credentials. It cannot qualify this current client. Updating that release pin and provisioning a current project-token test fixture is a release dependency; this draft does not claim live qualification.
+SDK validation uses HTTP fakes and contract fixtures only; SDKs never download or run a TerraBase binary.
 
 The SDK speaks TerraBase's native JSON document protocol. Native paths carry UUID tenant, database, collection and document identities and a canonical full-range decimal shard. Numeric field IDs and tagged values preserve missing/null, signed 64-bit integers, bytes, maps and arrays. Point reads retain observed context, tombstones and all concurrent siblings. Native values have at most 16 levels, arrays cannot occur under an ancestor array, and the entire encoded document is capped at 1 MiB.
 

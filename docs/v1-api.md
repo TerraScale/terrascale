@@ -165,12 +165,4 @@ documents, transactions, queries and revocation. Missing real-service inputs
 must be reported as skipped, not successful qualification. Fake producers
 belong only in test code/test binaries and cannot establish live compatibility.
 
-For current C# producer qualification, use the immutable SHA-256-pinned real
-release runner:
-
-```sh
-nice -n 19 python3 scripts/terrabase/run.py
-```
-
-See [csharp-api.md](csharp-api.md) for the producer revision and its remaining
-JWT-only contract gap. This runner does not qualify the retired producer.
+SDK contract tests use HTTP fakes only. TerraBase binary downloads and execution are prohibited outside its monorepo.

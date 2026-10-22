@@ -1,4 +1,4 @@
-//! Required real C# binary lane: `python3 scripts/terrabase/run.py`.
+//! Obsolete external-producer tests pending removal; SDK contracts use HTTP fakes.
 //! Ignored by ordinary cargo test; explicitly invoking either test without
 //! the runner's required configuration fails instead of silently skipping.
 
@@ -22,7 +22,7 @@ impl Live {
         std::env::var(name)
             .ok()
             .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| panic!("{name} is required; run python3 scripts/terrabase/run.py"))
+            .unwrap_or_else(|| panic!("{name} is required by the obsolete external-producer test"))
     }
 
     fn new() -> Self {
@@ -70,7 +70,7 @@ fn id(name: &str) -> Uuid {
 }
 
 #[tokio::test]
-#[ignore = "requires verified C# release; scripts/terrabase/run.py provisions it"]
+#[ignore = "obsolete external-producer test; replaced by HTTP contract fakes"]
 async fn csharp_live_contract() {
     tokio::time::timeout(Duration::from_secs(180), exercise())
         .await
