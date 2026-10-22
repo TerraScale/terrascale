@@ -11,7 +11,7 @@ const prefix = `/v1/projects/${project}/databases`;
 const params = { database: "app", collection: "users" };
 const dialect = "https://json-schema.org/draft/2020-12/schema";
 const database = { id, projectId: project, name: "app", branchedFrom: null,
-  createdAt: "2026-10-13T12:00:00+00:00", region: "region-123", homeRegion: "region-123", replicaRegions: ["other-region"] };
+  createdAt: "2026-10-13T12:00:00+00:00", region: "region-123", homeRegion: "region-123", replicaRegions: ["other-region"], allRegions: false };
 /** @typedef {{ method: string | undefined; url: URL; headers: import("node:http").IncomingHttpHeaders; body: string }} WireRequest */
 /** @type {import("node:http").Server[]} */
 const servers = [];
@@ -89,6 +89,19 @@ describe("public database catalog HTTP contracts", () => {
     ]);
   });
 
+  test("sends allRegions as an exclusive placement mode and rejects combinations before HTTP", async () => {
+    const { databases, requests } = await fixture((request, response) => json(response, { ...database, allRegions: true, replicaRegions: [] },
+      request.method === "POST" ? 201 : 200));
+    expect(await databases.create({ name: "app", allRegions: true })).toMatchObject({ allRegions: true, replicaRegions: [] });
+    expect(await databases.update("app", { allRegions: true })).toMatchObject({ allRegions: true });
+    expect(requests.map(request => request.body)).toEqual(['{"name":"app","allRegions":true}', '{"allRegions":true}']);
+    for (const request of [{ name: "app", allRegions: true, replicaRegions: ["other-region"] }, { name: "app", allRegions: "yes" }])
+      await expect(databases.create(/** @type {any} */ (request))).rejects.toThrow(TypeError);
+    for (const request of [{ allRegions: true, replicaRegions: [] }, { allRegions: false, replicaRegions: [] }, { allRegions: false }])
+      await expect(databases.update("app", /** @type {any} */ (request))).rejects.toThrow(TypeError);
+    expect(requests).toHaveLength(2);
+  });
+
   test("keeps the list cursor opaque and returns a separate terminal page", async () => {
     const { databases, requests } = await fixture((request, response) => json(response,
       request.url.searchParams.has("after") ? { items: [], next: null } : { items: [database], next: "next+cursor" }));
@@ -129,7 +142,7 @@ describe("public database catalog HTTP contracts", () => {
   });
 
   test.each([{ id: "invalid" }, { projectId: null }, { name: "App" }, { branchedFrom: undefined },
-    { branchedFrom: "invalid" }, { createdAt: "not-a-date" }, { replicaRegions: null }, { homeRegion: null }])(
+    { branchedFrom: "invalid" }, { createdAt: "not-a-date" }, { replicaRegions: null }, { homeRegion: null }, { allRegions: "yes" }])(
     "rejects malformed database response %j", async fields => {
       const { databases } = await fixture((_request, response) => json(response, { ...database, ...fields }));
       await expect(databases.get("app")).rejects.toThrow(TypeError);

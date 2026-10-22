@@ -17,10 +17,11 @@ import { isJsonObject, stringifyExactJson } from "./json.js";
  * @property {string} createdAt ISO date-time returned by the producer.
  * @property {string} region Serving region.
  * @property {string} homeRegion Management region.
- * @property {readonly string[]} replicaRegions Other serving regions.
+ * @property {readonly string[]} replicaRegions Other serving regions; empty when allRegions is true.
+ * @property {boolean} allRegions True when a full copy is served in every serving region, including later ones.
  */
-/** @typedef {{ readonly name: string; readonly homeRegion?: string | null | undefined; readonly replicaRegions?: readonly string[] | null | undefined }} V1DatabaseCreateRequest */
-/** @typedef {{ readonly replicaRegions: readonly string[]; readonly homeRegion?: string | null | undefined }} V1DatabaseUpdateRequest */
+/** @typedef {{ readonly name: string; readonly homeRegion?: string | null | undefined; readonly replicaRegions?: readonly string[] | null | undefined; readonly allRegions?: boolean | undefined }} V1DatabaseCreateRequest */
+/** @typedef {{ readonly replicaRegions?: readonly string[] | undefined; readonly allRegions?: true | undefined; readonly homeRegion?: string | null | undefined }} V1DatabaseUpdateRequest */
 /** @typedef {{ readonly name: string }} V1DatabaseBranchRequest */
 /** @typedef {{ readonly after?: string | undefined; readonly limit?: number | undefined }} V1DatabaseListRequest */
 /** @typedef {{ readonly items: readonly V1ManagedDatabase[]; readonly next: string | null }} V1DatabasePage */
@@ -63,12 +64,14 @@ function database(value) {
   const raw = object(value, "managed database");
   const createdAt = string(raw.createdAt, "database createdAt");
   if (!/^\d{4}-\d{2}-\d{2}T/u.test(createdAt) || !Number.isFinite(Date.parse(createdAt))) malformed("database createdAt");
+  if (typeof raw.allRegions !== "boolean") malformed("database allRegions");
   return Object.freeze({
     id: requireId(raw.id, "Database ID"), projectId: requireId(raw.projectId, "Project ID"),
     name: requireName("database", raw.name),
     branchedFrom: raw.branchedFrom === null ? null : requireId(raw.branchedFrom, "Source database ID"),
     createdAt, region: region(raw.region), homeRegion: region(raw.homeRegion),
     replicaRegions: Object.freeze(array(raw.replicaRegions, "database replicaRegions").map(region)),
+    allRegions: raw.allRegions,
   });
 }
 
@@ -81,15 +84,19 @@ export class V1Databases {
 
   /** @param {V1DatabaseCreateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>} */
   async create(request, options = {}) {
-    members(request, ["name", "homeRegion", "replicaRegions"]);
+    members(request, ["name", "homeRegion", "replicaRegions", "allRegions"]);
     mutationOptions(options);
     const name = requireName("database", request.name);
     if (request.homeRegion !== undefined && request.homeRegion !== null) region(request.homeRegion);
     if (request.replicaRegions !== undefined && request.replicaRegions !== null) replicas(request.replicaRegions, request.homeRegion);
+    if (request.allRegions !== undefined && typeof request.allRegions !== "boolean") throw new TypeError("allRegions must be a boolean.");
+    if (request.allRegions === true && request.replicaRegions !== undefined && request.replicaRegions !== null)
+      throw new TypeError("allRegions cannot be combined with replicaRegions.");
     const response = await this.#transport.call("createDatabase", { database: name }, {
       body: stringifyExactJson({ name,
         ...(request.homeRegion === undefined ? {} : { homeRegion: request.homeRegion }),
         ...(request.replicaRegions === undefined ? {} : { replicaRegions: request.replicaRegions }),
+        ...(request.allRegions === undefined ? {} : { allRegions: request.allRegions }),
       }, "database create"), signal: options.signal,
     });
     return database(response.value);
@@ -121,12 +128,18 @@ export class V1Databases {
 
   /** @param {string} name @param {V1DatabaseUpdateRequest} request @param {V1RequestOptions} [options] @returns {Promise<V1ManagedDatabase>} */
   async update(name, request, options = {}) {
-    members(request, ["homeRegion", "replicaRegions"]);
+    members(request, ["homeRegion", "replicaRegions", "allRegions"]);
     mutationOptions(options);
     if (request.homeRegion !== undefined && request.homeRegion !== null) region(request.homeRegion);
-    replicas(request.replicaRegions, request.homeRegion);
+    if (request.allRegions === true) {
+      if (request.replicaRegions !== undefined) throw new TypeError("allRegions cannot be combined with replicaRegions.");
+    } else {
+      if (request.allRegions !== undefined) throw new TypeError("allRegions must be true; send replicaRegions to turn it off.");
+      replicas(request.replicaRegions, request.homeRegion);
+    }
     const response = await this.#transport.call("updateDatabase", { database: requireName("database", name) }, {
-      body: stringifyExactJson({ replicaRegions: request.replicaRegions,
+      body: stringifyExactJson({
+        ...(request.allRegions === true ? { allRegions: true } : { replicaRegions: request.replicaRegions }),
         ...(request.homeRegion === undefined ? {} : { homeRegion: request.homeRegion }),
       }, "database update"), signal: options.signal,
     });
