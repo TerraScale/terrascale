@@ -1,5 +1,6 @@
 using System.Buffers.Text;
 using TerraBase.Engine.Lattices;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -25,7 +26,8 @@ internal sealed partial class SqliteStorageTransaction
     ];
 
     /// <summary>This machine's stable stamp of the database at <paramref name="now"/> (its clock).</summary>
-    internal ValueTask<Hlc> GetStableAsync(Hlc now, CancellationToken cancellationToken) => RunAsync(() => Stable(now), cancellationToken);
+    internal ValueTask<Hlc> GetStableAsync(Hlc now, CancellationToken cancellationToken, DatabasePlacement? placement = null) =>
+        RunAsync(() => Bounds(now, placement).Stable, cancellationToken);
 
     /// <summary>Records <paramref name="peer"/>'s reported stable stamp (uncaptured bookkeeping), and that it was heard from.</summary>
     internal async ValueTask RecordStableAsync(ReplicaId peer, Hlc stable, DateTimeOffset now, CancellationToken cancellationToken)
@@ -51,23 +53,21 @@ internal sealed partial class SqliteStorageTransaction
     }
 
     /// <summary>This machine's GC horizon at <paramref name="now"/>.</summary>
-    internal ValueTask<Hlc> GetHorizonAsync(Hlc now, CancellationToken cancellationToken) => RunAsync(() => Horizon(now), cancellationToken);
+    internal ValueTask<Hlc> GetHorizonAsync(Hlc now, CancellationToken cancellationToken, DatabasePlacement? placement = null) =>
+        RunAsync(() => Bounds(now, placement).Horizon, cancellationToken);
 
     // Worker-only.
-    private Hlc Stable(Hlc now) => Bounds(now).Stable;
-
-    // Worker-only.
-    private Hlc Horizon(Hlc now) => Bounds(now).Horizon;
-
-    private (Hlc Stable, Hlc Horizon) Bounds(Hlc now)
+    private (Hlc Stable, Hlc Horizon) Bounds(Hlc now, DatabasePlacement? placement)
     {
         var stable = now.Value;
         var reported = ulong.MaxValue;
+        HashSet<ReplicaId> progressed = [];
         using (var reader = Command("SELECT node, applied, stable, seen FROM _tb_peers;").ExecuteReader())
         {
             while (reader.Read())
             {
                 var node = new ReplicaId(unchecked((ulong)reader.GetInt64(0)));
+                _ = progressed.Add(node);
                 if (!Member.Gone(node, reader.GetInt64(3), now.Milliseconds))
                 {
                     stable = Math.Min(stable, (ulong)reader.GetInt64(1));
@@ -76,7 +76,7 @@ internal sealed partial class SqliteStorageTransaction
             }
         }
 
-        if (Member.Presence.HoldsUnheard())
+        if (Member.Presence.HoldsMissingProgress(placement, progressed))
         {
             (stable, reported) = (0, 0);
         }

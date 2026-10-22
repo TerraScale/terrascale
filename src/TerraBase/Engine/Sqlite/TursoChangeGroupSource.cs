@@ -195,11 +195,11 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         }
     }
 
-    public async ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken) =>
-        await ReadAsync(database, (transaction, now) => transaction.GetStableAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
+    public ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken) =>
+        ReadAsync(database, horizon: false, cancellationToken);
 
-    public async ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken) =>
-        await ReadAsync(database, (transaction, now) => transaction.GetHorizonAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
+    public ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken) =>
+        ReadAsync(database, horizon: true, cancellationToken);
 
     public async ValueTask<int?> ForgetAsync(
         TenantContext database, Ulid incarnation, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken)
@@ -224,8 +224,16 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     }
 
     // A stamp read on a read transaction, at this machine's clock; 0 when this machine does not hold the database.
-    private async ValueTask<Hlc> ReadAsync(TenantContext database, Func<SqliteStorageTransaction, Hlc, ValueTask<Hlc>> read, CancellationToken cancellationToken)
+    private async ValueTask<Hlc> ReadAsync(TenantContext database, bool horizon, CancellationToken cancellationToken)
     {
+        var durability = _durability?.Invoke();
+        var placement = database != ChangeGroups.System && durability is { Confirms: true }
+            ? await durability.PlacementAsync(database, cancellationToken).ConfigureAwait(false) : null;
+        if (database != ChangeGroups.System && durability is { Confirms: true } && placement is null)
+        {
+            return default;
+        }
+
         if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return default;
@@ -234,7 +242,10 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            return await read(transaction, _engine.Member.Clock.Tick()).ConfigureAwait(false);
+            var now = _engine.Member.Clock.Tick();
+            return horizon
+                ? await transaction.GetHorizonAsync(now, cancellationToken, placement).ConfigureAwait(false)
+                : await transaction.GetStableAsync(now, cancellationToken, placement).ConfigureAwait(false);
         }
     }
 
@@ -471,9 +482,12 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     internal async Task TrimAsync(SqliteDatabaseStore store, CancellationToken cancellationToken)
     {
         long? floor;
+        var durability = _durability?.Invoke();
+        var placement = store.Tenant is { } placed && durability is { Confirms: true }
+            ? await durability.PlacementAsync(placed, cancellationToken).ConfigureAwait(false) : null;
         // Read before the writer is taken: joined commits of a held origin pass the frontier before the cut, so a replica that
         // only joins remote writes is not held for 24 h waiting for an ack it never gets.
-        var held = store.RequiresRemoteProof && store.Tenant is { } tenant && _durability?.Invoke() is { } durability
+        var held = store.RequiresRemoteProof && store.Tenant is { } tenant && durability is not null
             ? await durability.HeldOriginsAsync(tenant, cancellationToken).ConfigureAwait(false)
             : FrozenSet<ReplicaId>.Empty;
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
@@ -497,7 +511,8 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
                 Remember(incarnation, from, to);
             }
 
-            var horizon = await transaction.GetHorizonAsync(_engine.Member.Clock.Tick(), cancellationToken).ConfigureAwait(false);
+            var horizon = store.IsSystem || durability is not { Confirms: true } || placement is not null
+                ? await transaction.GetHorizonAsync(_engine.Member.Clock.Tick(), cancellationToken, placement).ConfigureAwait(false) : default;
             _ = await transaction.CollectAsync(horizon, cancellationToken).ConfigureAwait(false);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             _backlog[incarnation] = left;

@@ -112,7 +112,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
             throw new RpcException(new Status(StatusCode.InvalidArgument, "a push stream comes from another machine"));
         }
 
-        _self.Presence.Heard(hello.Machine, origin);
+        _self.Presence.Heard(hello.Machine, origin, _self.Clock.Tick().Milliseconds);
         var region = TerraBaseOptions.IsRegion(hello.Region) ? hello.Region : "unknown";
         var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationTokenSource? precedingStop = null;

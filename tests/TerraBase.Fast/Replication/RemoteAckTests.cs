@@ -1964,6 +1964,9 @@ public sealed class RemoteAckTests
 
         public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => inner.OtherRegionsAsync(cancellationToken);
 
+        public ValueTask<DatabasePlacement?> PlacementAsync(TenantContext database, CancellationToken cancellationToken) =>
+            inner.PlacementAsync(database, cancellationToken);
+
         public ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) => inner.AdmitAsync(database, cancellationToken);
 
         public ValueTask<IReadOnlySet<ReplicaId>> HeldOriginsAsync(TenantContext database, CancellationToken cancellationToken) =>
@@ -1981,6 +1984,9 @@ public sealed class RemoteAckTests
         public bool Confirms => inner.Confirms;
 
         public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => inner.OtherRegionsAsync(cancellationToken);
+
+        public ValueTask<DatabasePlacement?> PlacementAsync(TenantContext database, CancellationToken cancellationToken) =>
+            inner.PlacementAsync(database, cancellationToken);
 
         public ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) => inner.AdmitAsync(database, cancellationToken);
 
@@ -2024,6 +2030,9 @@ public sealed class RemoteAckTests
         public bool Confirms => inner.Confirms;
 
         public ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken) => inner.OtherRegionsAsync(cancellationToken);
+
+        public ValueTask<DatabasePlacement?> PlacementAsync(TenantContext database, CancellationToken cancellationToken) =>
+            inner.PlacementAsync(database, cancellationToken);
 
         public ValueTask<RemoteAdmission> AdmitAsync(TenantContext database, CancellationToken cancellationToken) => inner.AdmitAsync(database, cancellationToken);
 

@@ -130,7 +130,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             .Select(entry => entry.Key).ToFrozenSet();
     }
 
-    private async ValueTask<DatabasePlacement?> PlacementAsync(TenantContext database, CancellationToken cancellationToken) =>
+    public async ValueTask<DatabasePlacement?> PlacementAsync(TenantContext database, CancellationToken cancellationToken) =>
         await _tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord record ? record.Placement : null;
 
     // Whether a connected link reaches a machine of another region the placement includes: one that can confirm a write.
@@ -192,7 +192,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                     .Where(member => member.Name != self && member.PeerAddress.Length > 0)
                     .ToDictionary(member => member.Name, StringComparer.Ordinal);
                 _self.Presence.Listed(view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere)
-                    .Where(member => member.Name != self).Select(member => member.Name), _self.Clock.Tick().Milliseconds);
+                    .Where(member => member.Name != self).Select(member => (member.Name, member.Region)), _self.Clock.Tick().Milliseconds);
                 foreach (var (name, (stop, run)) in running.Where(entry => !peers.TryGetValue(entry.Key, out var member) || Linked(entry.Key)?.Peer != member).ToList())
                 {
                     await stop.CancelAsync().ConfigureAwait(false);
@@ -291,7 +291,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         silent.CancelAfter(ReplicationProtocol.ProgressTimeout);
 
         var peer = new ReplicaId(call.ResponseStream.Current.Welcome.Node);
-        _self.Presence.Heard(link.Peer.Name, peer);
+        _self.Presence.Heard(link.Peer.Name, peer, _self.Clock.Tick().Milliseconds);
         lock (link.Gate)
         {
             (link.Connected, link.Origin) = (true, peer);

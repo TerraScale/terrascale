@@ -20,6 +20,10 @@ public interface IRemoteDurability
     /// <summary>The serving regions other than this machine's, ordered: a new database's default replica regions.</summary>
     ValueTask<IReadOnlyList<string>> OtherRegionsAsync(CancellationToken cancellationToken);
 
+    /// <summary>The current database placement, or null when it cannot be established.</summary>
+    ValueTask<DatabasePlacement?> PlacementAsync(TenantContext database, CancellationToken cancellationToken) =>
+        ValueTask.FromResult<DatabasePlacement?>(null);
+
     /// <summary>
     /// Admits one write attempt of <paramref name="database"/> before it executes (decision 0013a section 2): refused with
     /// <c>remote_region_unavailable</c> while no machine of another placed region has a connected stream, and with
