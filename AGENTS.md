@@ -53,7 +53,7 @@ This repository (`TerraScale/terrascale`) holds four areas; these rules apply to
 - Greenfield: no shims, compatibility layers, or migration paths for old formats, unless a human asks.
 - All public HTTP APIs are versioned under `/v1`. Breaking changes are explicit compatibility decisions, never incidental refactors. Every generated ID is a ULID.
 - Every service keeps all application data in TerraBase databases and collections: one collection per entity type, one document per record. No SQLite, local files, in-memory-only stores, Cloudflare KV/D1 or other databases for application data.
-- Exceptions: ts-status (Cloudflare Worker + D1) and ts-cos (local SQLite). TerraBase's own external persistence (snapshots, logs, backups) goes to Tigris, the only object store.
+- Exceptions: ts-status (Cloudflare Worker + D1) and ts-cos (local SQLite). TerraBase's own external persistence (snapshots, logs, backups) goes to Tigris, the only object store. Tigris retains its Fly organization connection, `fly storage create`, storage login through flyctl, `fly.storage.tigris.dev`, and `TIGRIS_*` configuration (user Q-TIGRIS, 2026-10-22).
 
 ### Service ownership
 

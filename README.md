@@ -25,7 +25,8 @@ The orchestrator owns artifact admission and rollout authority, private NetBird 
 OCI Vault credential delivery using instance principals. See its
 [region contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/automatic-regions.md) and
 [secret delivery contract](https://github.com/TerraScale/ts-orchestrator/blob/main/docs/secrets.md)
-for implementation limits and operational ownership.
+for implementation limits and operational ownership. Tigris backup storage retains its Fly organization
+connection and `fly.storage.tigris.dev` endpoint; compute ownership does not change that integration.
 
 ## Make targets
 
