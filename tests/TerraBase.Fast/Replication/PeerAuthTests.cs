@@ -178,7 +178,7 @@ public sealed class PeerAuthTests
                 var status = await StatusOf(async () =>
                 {
                     using var call = client.Push(cancellationToken: Token);
-                    await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = sjc.Node.Value, Region = "sjc" } });
+                    await WritePushFrameAsync(call, new PushFrame { Hello = new Hello { Node = sjc.Node.Value, Region = "sjc" } });
                     _ = await call.ResponseStream.MoveNext(Token);
                 });
                 await Assert.That(status).IsEqualTo(StatusCode.Unauthenticated);
@@ -402,18 +402,24 @@ public sealed class PeerAuthTests
     private static async Task PushHelloAndBatchAsync(ReplicationRpc.ReplicationClient client, WireDatabase invalid)
     {
         using var call = client.Push(cancellationToken: Token);
+        await WritePushFrameAsync(call, new PushFrame { Hello = new Hello { Node = ReplicaId.Of(1, 7, 0).Value, Region = "sjc" } });
+        _ = await call.ResponseStream.MoveNext(Token);
+        await WritePushFrameAsync(call, new PushFrame { Batch = new Batch { Database = invalid, LastChangeId = 1, Groups = ByteString.Empty } });
+        _ = await call.ResponseStream.MoveNext(Token);
+    }
+
+    private static async Task WritePushFrameAsync(AsyncDuplexStreamingCall<PushFrame, AckFrame> call, PushFrame frame)
+    {
         try
         {
-            await call.RequestStream.WriteAsync(new PushFrame { Hello = new Hello { Node = ReplicaId.Of(1, 7, 0).Value, Region = "sjc" } });
+            await call.RequestStream.WriteAsync(frame);
         }
-        catch (RpcException error) when (error.StatusCode == StatusCode.Cancelled)
+        catch (RpcException error) when (error.StatusCode == StatusCode.Cancelled && !Token.IsCancellationRequested)
         {
-            // Early header rejection can cancel upload; read its authoritative response below.
+            // An early server refusal can cancel the writer before its response status is observed.
+            _ = await call.ResponseStream.MoveNext(Token);
+            throw;
         }
-
-        _ = await call.ResponseStream.MoveNext(Token);
-        await call.RequestStream.WriteAsync(new PushFrame { Batch = new Batch { Database = invalid, LastChangeId = 1, Groups = ByteString.Empty } });
-        _ = await call.ResponseStream.MoveNext(Token);
     }
 
     private static async Task ReadBucketFirstPageAsync(ReplicationRpc.ReplicationClient client, WireDatabase invalid)
