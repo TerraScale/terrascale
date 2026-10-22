@@ -1,5 +1,6 @@
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { secureHtml } from './security-headers.mjs'
 
 const buildDir = path.resolve('build')
 const stylesheetTagPattern = /<link\b[^>]*rel=["']stylesheet["'][^>]*>/gi
@@ -64,5 +65,5 @@ for (const htmlFile of htmlFiles) {
     html = html.replace(tag, styleTag)
   }
 
-  await writeFile(htmlFile, html)
+  await writeFile(htmlFile, secureHtml(html))
 }

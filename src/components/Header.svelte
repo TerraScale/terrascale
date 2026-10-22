@@ -135,6 +135,8 @@
       <LanguageSelector variant="inline" />
     </div>
   {/if}
+    </div>
+  </div>
 </header>
 
 <style>

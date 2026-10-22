@@ -37,6 +37,7 @@
           </li>
         {/each}
       </ul>
+    </div>
   </div>
 </section>
 
@@ -47,7 +48,7 @@
   }
 
   .cta__accent {
-    color: var(--ts-primary);
+    color: var(--ts-link);
   }
 
   .cta__inner {
