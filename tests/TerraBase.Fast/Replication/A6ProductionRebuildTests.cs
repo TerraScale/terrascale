@@ -32,6 +32,49 @@ public sealed class A6ProductionRebuildTests
     private static readonly string[] SentinelRegions = ["gru"];
 
     [Test]
+    public async Task A_replayed_operation_journal_preserves_the_already_committed_fault()
+    {
+        using var directory = new TempDirectory();
+        var identity = Path.Combine(directory.Root, ReplicaIdentityFile.FileName);
+        var journal = Path.Combine(directory.Root, SqliteStorageEngine.IntentName + ".db");
+        TenantContext database;
+        Ulid incarnation;
+        byte[] running;
+        await using (var first = await StartAsync(directory.Root))
+        {
+            (database, incarnation) = await CreateDatabaseAsync(first);
+            await DurableWriteAsync(first, database);
+            running = await File.ReadAllBytesAsync(identity);
+        }
+        var priorJournal = await File.ReadAllBytesAsync(journal);
+        await File.WriteAllBytesAsync(identity, running);
+        RebuildRecord? fault;
+        await using (var second = await StartAsync(directory.Root))
+        {
+            fault = await second.Server.Services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None);
+            await Assert.That(fault?.Phase).IsEqualTo(RebuildPhase.Pending);
+            await Assert.That(fault?.OldIncarnation).IsEqualTo(incarnation);
+            running = await File.ReadAllBytesAsync(identity);
+        }
+
+        // Model a crash after SYSTEM committed the fault but before the journal's DELETE became durable.
+        await File.WriteAllBytesAsync(journal, priorJournal);
+        await File.WriteAllBytesAsync(identity, running);
+        await using var third = await StartAsync(directory.Root);
+        var services = third.Server.Services;
+        await Assert.That(await services.GetRequiredService<IRebuildLedger>().GetAsync(database, CancellationToken.None)).IsEqualTo(fault);
+        var engine = services.GetRequiredService<SqliteStorageEngine>();
+        var remaining = await engine.IntentStore!.WithWriterAsync(session =>
+        {
+            using var command = session.Connection.CreateCommand();
+            command.CommandText = "SELECT count(*) FROM _tb_write_intent;";
+            return (long)command.ExecuteScalar()!;
+        }, "checking journal replay", CancellationToken.None);
+        await Assert.That(remaining).IsEqualTo(0);
+        await Assert.That(await services.GetRequiredService<IReplicaCopyFaults>().RefusedAsync(database, incarnation, CancellationToken.None)).IsTrue();
+    }
+
+    [Test]
     public async Task A_copy_intent_does_not_wait_for_the_catalog_writer()
     {
         await using var api = await StartAsync(directory: null);

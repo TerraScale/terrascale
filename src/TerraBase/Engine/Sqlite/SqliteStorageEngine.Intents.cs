@@ -17,6 +17,12 @@ internal sealed partial class SqliteStorageEngine
             return;
         }
 
+        var system = LocateSystem();
+        if (!File.Exists(system) && (Directory.Exists(system)
+            || Sidecars.Any(suffix => File.Exists(system + suffix) || Directory.Exists(system + suffix))))
+        {
+            throw new IOException("a database create target already contains files");
+        }
         var path = Path.Combine(_dataDirectory, IntentName + FileExtension);
         RejectDatabaseLinks(path);
         CheckIntentJournal();
