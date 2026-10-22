@@ -84,7 +84,11 @@ public static class DashboardApplication
             var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
             context.Items["nonce"] = nonce;
             context.Response.Headers.XContentTypeOptions = "nosniff";
+            context.Response.Headers.XFrameOptions = "DENY";
             context.Response.Headers["Referrer-Policy"] = "same-origin";
+            context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()";
+            if (context.Request.IsHttps)
+                context.Response.Headers.StrictTransportSecurity = "max-age=31536000";
             var path = context.Request.Path.Value ?? "";
             var editorStyles = path.StartsWith("/api/v1/dashboard/data/", StringComparison.Ordinal) ||
                 path.StartsWith("/api/v1/dashboard/indexes", StringComparison.Ordinal) ||
