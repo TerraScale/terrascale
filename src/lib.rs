@@ -16,7 +16,6 @@ pub mod generated_contract;
 pub mod postgres;
 pub mod regions;
 pub mod serde_base64;
-pub mod subscriptions;
 pub mod transactions;
 pub mod transport;
 pub mod v1;
@@ -38,7 +37,6 @@ pub use documents::{
 };
 pub use error::{Error, ErrorKind, Result};
 pub use regions::{normalize_base_url, regional_host, RegionCode};
-pub use subscriptions::*;
 pub use transactions::*;
 pub use transport::{HttpTransport, Method, Request, ReqwestTransport, Response};
 pub use values::{
