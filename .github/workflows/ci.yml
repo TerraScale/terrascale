@@ -4,14 +4,18 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
+    # Markdown and docs never change what CI checks.
+    paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch:
 
-# A newer run for the same PR or branch, main included, cancels the older one; merge_group runs keep their own group.
+# A newer PR push cancels the older run. Main runs finish (so main's caches get saved); a newer main push replaces only
+# a pending one. merge_group runs keep their own group.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.run_id || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -19,6 +23,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Draft PRs run nothing; marking the PR ready runs it.
+    if: ${{ !github.event.pull_request.draft }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
