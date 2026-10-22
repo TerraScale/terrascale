@@ -325,6 +325,60 @@ public sealed class CatalogLatticeTests
         }
     }
 
+    [Test]
+    [Arguments("deleted", HttpStatusCode.Created)]
+    [Arguments("absent", HttpStatusCode.Conflict)]
+    [Arguments("live", HttpStatusCode.Conflict)]
+    public async Task A_late_database_name_claim_is_reusable_only_when_its_database_is_tombstoned(string state, HttpStatusCode expected)
+    {
+        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(TimeProvider.System.GetUtcNow()));
+        var database = await api.CreateManagedDatabaseAsync();
+        var target = state == "absent" ? EntityIds.New().ToString() : database.Id;
+        var collection = $"projects/{database.Project}/databases";
+        var names = $"projects/{database.Project}/database_names";
+        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        if (state == "deleted")
+        {
+            await using var write = await system.BeginTransactionAsync(write: true, CancellationToken.None);
+            await Assert.That(await write.DeleteAsync(collection, target, CancellationToken.None)).IsTrue();
+            _ = await write.CommitAsync(CancellationToken.None);
+        }
+
+        // A name claim can arrive after the database's deletion through a different replication origin.
+        await using (var write = await system.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            _ = await write.PutAsync(names, database.Name, Json($"\"{target}\""), CancellationToken.None);
+            _ = await write.CommitAsync(CancellationToken.None);
+        }
+
+        await using (var read = await system.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+            var version = await read.GetVersionAsync(collection, target, CancellationToken.None);
+            if (state == "absent")
+            {
+                await Assert.That(version).IsNull();
+            }
+            else
+            {
+                await Assert.That(version!.Value.Deleted).IsEqualTo(state == "deleted");
+                await Assert.That((await read.GetVersionAsync(names, database.Name, CancellationToken.None))!.Value.Version).IsGreaterThan(version.Value.Version);
+            }
+        }
+
+        using var created = await api.Client.PostAsJsonAsync(ManagementApi.Uri(
+            $"/v1/management/organizations/{database.Organization}/projects/{database.Project}/databases"), new { name = database.Name });
+        await Assert.That(created.StatusCode).IsEqualTo(expected).Because(await created.Content.ReadAsStringAsync());
+        if (expected == HttpStatusCode.Created)
+        {
+            await Assert.That((await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()).IsNotEqualTo(database.Id);
+        }
+        else
+        {
+            await using var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
+            await Assert.That(Encoding.UTF8.GetString((await read.GetAsync(names, database.Name, CancellationToken.None))!.Json.Span)).IsEqualTo($"\"{target}\"");
+        }
+    }
+
     private static async Task<bool> Until(Func<Task<bool>> condition)
     {
         var deadline = DateTime.UtcNow + Deadline;

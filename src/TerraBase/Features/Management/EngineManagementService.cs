@@ -999,7 +999,9 @@ internal sealed partial class EngineManagementService(
             };
         }
 
-        return await GetAsync(transaction, DatabaseNames(tenant.ProjectId!), name, Id, cancellationToken).ConfigureAwait(false) is null
+        var named = await GetAsync(transaction, DatabaseNames(tenant.ProjectId!), name, Id, cancellationToken).ConfigureAwait(false);
+        return named is null
+            || await transaction.GetVersionAsync(Databases(tenant.ProjectId!), named, cancellationToken).ConfigureAwait(false) is { Deleted: true }
             ? tenant
             : ManagementErrors.NameTaken;
     }
