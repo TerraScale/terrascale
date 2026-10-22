@@ -8,7 +8,6 @@ pub mod auth_idp;
 mod auth_routing;
 pub mod client;
 pub mod config;
-pub mod discovery;
 pub mod documents;
 pub mod error;
 pub mod generated_contract;
@@ -25,18 +24,13 @@ pub use auth_idp::{
     verify_auth_idp_webhook, verify_auth_idp_webhook_with_tolerance, AuthIdpClient,
 };
 pub use client::TerraScaleClient;
-pub use config::{ClientConfig, ClientConfigBuilder};
-pub use discovery::{
-    AtlasDiscovery, DiscoveryAuthority, DiscoveryClock, DiscoveryMetadata, DiscoveryTime,
-    NativeCapabilities, NativeEndpoint, NativeRequirement, RegionRtt, ResolvedNativeOrigin,
-    ATLAS_BASE_URL,
-};
+pub use config::{ClientConfig, ClientConfigBuilder, ATLAS_BASE_URL};
 pub use documents::{
     DatabaseScope, Event, Observed, Point, PointState, Predicate, ProtocolVersion, Query,
     QueryPage, QueryRow, Sibling, SiblingValue,
 };
 pub use error::{Error, ErrorKind, Result};
-pub use regions::{normalize_base_url, regional_host, RegionCode};
+pub use regions::{normalize_base_url, RegionCode};
 pub use transactions::*;
 pub use transport::{HttpTransport, Method, Request, ReqwestTransport, Response};
 pub use values::{

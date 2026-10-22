@@ -122,8 +122,6 @@ fn retrying(mock: Arc<Mock>, attempts: u8) -> TerraScaleClient {
 /// The common builder; callers add per-test knobs before `build()`.
 fn config() -> ClientConfigBuilder {
     ClientConfig::builder()
-        .api_base_url("https://api.test")
-        .api_key("ts_test_key")
         .auth_base_url("https://auth.test")
         .auth_api_key("sk_test_key")
 }
@@ -1040,10 +1038,7 @@ async fn c27_slug_rules_reject_bad_slugs_and_accept_long_ones() {
 
 #[tokio::test]
 async fn c28_api_keys_with_control_or_whitespace_bytes_are_rejected_at_build() {
-    for setter in [
-        |builder: ClientConfigBuilder| builder.api_key("ts_bad\r\nkey"),
-        |builder: ClientConfigBuilder| builder.auth_api_key("sk_bad\nkey"),
-    ] {
+    for setter in [|builder: ClientConfigBuilder| builder.auth_api_key("sk_bad\nkey")] {
         let error = setter(config())
             .build()
             .expect_err("control characters rejected");

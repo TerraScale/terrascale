@@ -1,9 +1,8 @@
-//! Native document client and a credential-isolated authentication pipeline.
+//! Credential-isolated ts-auth client transport.
 
 use crate::auth_idp::AuthIdpClient;
 use crate::auth_routing::AuthRouter;
 use crate::config::ClientConfig;
-use crate::discovery::{AtlasDiscovery, DiscoveryClock};
 use crate::error::{Error, ErrorKind, Result};
 use crate::transport::{
     HttpTransport, Method, Request, ReqwestTransport, Response, MAX_JSON_BYTES,
@@ -17,39 +16,22 @@ pub(crate) const SKIP_AUTH_MARKER: &str = "x-terrascale-sdk-skip-auth";
 pub(crate) const SKIP_SESSION_MARKER: &str = "x-terrascale-sdk-skip-session";
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(30);
 
-/// One budget created by the public native caller, shared by all of its awaits.
-pub(crate) fn native_deadline() -> tokio::time::Instant {
-    tokio::time::Instant::now() + Duration::from_secs(30)
-}
-pub(crate) fn check_native_deadline(deadline: tokio::time::Instant) -> Result<()> {
-    if tokio::time::Instant::now() >= deadline {
-        return Err(Error::transport("Native operation deadline exceeded."));
-    }
-    Ok(())
-}
-
 #[derive(Debug)]
 pub(crate) struct Shared {
     transport: Arc<dyn HttpTransport>,
     config: ClientConfig,
     auth_router: Option<AuthRouter>,
-    native_router: AtlasDiscovery,
 }
 pub(crate) type SharedClient = Arc<Shared>;
 
 impl Shared {
-    fn new(
-        config: ClientConfig,
-        transport: Arc<dyn HttpTransport>,
-        native_router: AtlasDiscovery,
-    ) -> Self {
+    fn new(config: ClientConfig, transport: Arc<dyn HttpTransport>) -> Self {
         let auth_router = AuthRouter::for_config(
             config.auth_base_url(),
             config.auth_reverse_proxy(),
             config.atlas_base_url(),
         );
         Self {
-            native_router,
             transport,
             config,
             auth_router,
@@ -61,21 +43,10 @@ impl Shared {
 
     async fn dispatch(&self, mut request: Request) -> Result<Response> {
         let auth = request.route_name.starts_with("auth_idp.");
-        let skip_auth = request
-            .headers
-            .iter()
-            .any(|(name, _)| name.eq_ignore_ascii_case(SKIP_AUTH_MARKER));
         request.headers.retain(|(name, _)| {
             !name.eq_ignore_ascii_case(SKIP_AUTH_MARKER)
                 && !name.eq_ignore_ascii_case(SKIP_SESSION_MARKER)
         });
-        if !auth && !skip_auth {
-            if let Some(key) = self.config.api_key() {
-                request
-                    .headers
-                    .push(("authorization".into(), format!("Bearer {key}")));
-            }
-        }
         if !request
             .headers
             .iter()
@@ -296,7 +267,7 @@ fn is_retryable(error: &Error) -> bool {
         || matches!(error.status, Some(408 | 429 | 500..=504 | 520..=524))
 }
 
-/// Native scoped documents, atomic transactions, subscriptions, and ts-auth.
+/// The ts-auth client. TerraBase public APIs use [`crate::v1::Client`].
 #[derive(Debug, Clone)]
 pub struct TerraScaleClient {
     shared: SharedClient,
@@ -308,31 +279,13 @@ impl TerraScaleClient {
         Self::with_transport(config, Arc::new(ReqwestTransport::new()))
     }
     pub fn with_transport(config: ClientConfig, transport: Arc<dyn HttpTransport>) -> Self {
-        let router = AtlasDiscovery::new(config.clone(), transport.clone());
         Self {
-            shared: Arc::new(Shared::new(config, transport, router)),
-        }
-    }
-    /// Use a caller-owned transport and discovery clock. The clock must advance
-    /// consistently in both wall and monotonic time; injection alone does not
-    /// establish healthy-clock provenance for a deployed client.
-    pub fn with_transport_and_clock(
-        config: ClientConfig,
-        transport: Arc<dyn HttpTransport>,
-        clock: Arc<dyn DiscoveryClock>,
-    ) -> Self {
-        let router = AtlasDiscovery::with_clock(config.clone(), transport.clone(), clock);
-        Self {
-            shared: Arc::new(Shared::new(config, transport, router)),
+            shared: Arc::new(Shared::new(config, transport)),
         }
     }
     #[must_use]
     pub fn config(&self) -> &ClientConfig {
         &self.shared.config
-    }
-    #[must_use]
-    pub fn discovery(&self) -> AtlasDiscovery {
-        self.shared.native_router.clone()
     }
     pub fn auth_idp(&self, slug: &str) -> Result<AuthIdpClient> {
         AuthIdpClient::new(self.shared.clone(), slug)
