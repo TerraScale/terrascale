@@ -22,7 +22,21 @@ winner. Restarts preserve account credentials, role revocations and existing ide
 incomplete existing topology fail closed and are never overwritten. Restore inconsistent records from an approved
 recovery copy; startup is not a privilege-restoration operation.
 
-Both databases have gru as home and sjc/fra replicas. ts-auth serves in all three regions; discovery and JWKS read the
-local replica with private DNS fallback. Security decisions and conditional writes still use gru's TerraBase authority,
+The intended topology gives both databases gru as home and sjc/fra replicas.
+Regional serving and discovery/JWKS access to local replicas require deployment verification. Security decisions and conditional writes still use gru's TerraBase authority,
 with no failover, to preserve the existing uniqueness, revocation and single-use behavior. An unavailable gru authority
 makes sign-in fail closed across all regions. This change does not implement lattice-native distributed authentication.
+
+## Production proof after deployment
+
+Verify the serving node and region using the deployed OCI ingress and private
+identity contract; do not infer region from a hostname alone. Complete an
+email-code sign-in in each serving region, then read `/v1/terrascale/organizations`
+and its projects as the owner. Obtain each required code from the mailbox owner
+for the exact URL and verification step; never log codes, cookies or tokens.
+
+Read the identity records written through gru directly from sjc and fra's private
+TerraBase listeners with the SDK and the orchestrator's approved private access.
+Auth responses alone do not prove replication because security reads use gru.
+The concrete ingress and private listener access paths must be verified during
+migration; these requirements are not evidence of a completed production run.

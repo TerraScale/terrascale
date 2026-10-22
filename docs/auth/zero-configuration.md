@@ -3,10 +3,12 @@
 This is the required production contract adopted on 2026-10-09. It is not a
 claim that the current runtime or deployed fleet already implements it.
 
-- Every feature is always available; no feature or region activation switches.
+- Every feature is always available; no feature flags, region activation steps, deploy toggles or kill switches.
 - Nodes join the private NetBird network, discover serving regions and infer their own region automatically.
 - OCI Vault owns production secrets; instance principals and scoped IAM grants govern host reads.
-- CI uses GitHub-hosted runners. Production exposes no tuning knobs or authentication bypasses.
+- CI uses GitHub-hosted runners. Each production value has one correct setting in code; no tuning knobs.
+- Fakes, demo stores and authentication bypasses belong only in test code and test binaries.
+- CI rejects new switch-style configuration; unavoidable third-party names need a narrow allowance with a reason.
 
 See [OCI hosting](../oci.md) for current deployment status and implementation limits.
 

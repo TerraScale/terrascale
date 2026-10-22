@@ -1,6 +1,10 @@
 # ts-auth local host
 
 A local process addresses its TerraBase internal listener with `TS_AUTH_TERRABASE_URL`.
+`TERRABASE_PEER_SECRET` is required with that URL; a missing or malformed value
+stops startup. The named TerraBase handles every storage read and write without
+other-region fallback.
+
 Production hosting and migration status are in [OCI hosting](../oci.md).
 
 | Variable | Example | Meaning |
