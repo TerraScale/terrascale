@@ -3,8 +3,6 @@
 //! retry/cancellation (D), pagination (E), webhook verification (F), and
 //! configuration (G). Matrix ids appear in the test names.
 
-#![allow(deprecated)] // Exercises the native API kept until v1 replaces it.
-
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -124,8 +122,6 @@ fn retrying(mock: Arc<Mock>, attempts: u8) -> TerraScaleClient {
 /// The common builder; callers add per-test knobs before `build()`.
 fn config() -> ClientConfigBuilder {
     ClientConfig::builder()
-        .api_base_url("https://api.test")
-        .api_key("ts_test_key")
         .auth_base_url("https://auth.test")
         .auth_api_key("sk_test_key")
 }
@@ -516,54 +512,6 @@ async fn http_error_malformed_replies_retain_response_context() {
     assert_eq!(error.message, "expected HTTP 204, got 200");
     assert_eq!(error.status, Some(200));
     assert_eq!(error.request_id.as_deref(), Some("delete-request"));
-}
-
-#[tokio::test]
-async fn http_error_native_decode_and_status_failures_retain_response_context() {
-    for status in [200, 201] {
-        let mock = Mock::new();
-        mock.push(raw(
-            status,
-            &[("X-Request-ID", "native-request")],
-            br#""native-payload-canary""#,
-        ));
-        let sdk = client(Arc::clone(&mock));
-        let scope = terrascale::DatabaseScope::new(
-            "00000000-0000-0000-0000-000000000001"
-                .parse()
-                .expect("tenant"),
-            "00000000-0000-0000-0000-000000000002"
-                .parse()
-                .expect("database"),
-            0,
-        );
-        let error = err_of(
-            sdk.documents()
-                .get(
-                    &scope,
-                    "00000000-0000-0000-0000-000000000003"
-                        .parse()
-                        .expect("collection"),
-                    "00000000-0000-0000-0000-000000000004"
-                        .parse()
-                        .expect("document"),
-                )
-                .await,
-        );
-        assert_eq!(error.kind, ErrorKind::InvalidResponse);
-        assert_eq!(
-            error.code,
-            if status == 200 {
-                "native_point.invalid_response"
-            } else {
-                "invalid_response"
-            }
-        );
-        assert_eq!(error.status, Some(status));
-        assert_eq!(error.request_id.as_deref(), Some("native-request"));
-        assert!(!format!("{error:?}").contains("native-payload-canary"));
-        assert_eq!(mock.count(), 1);
-    }
 }
 
 #[tokio::test]
@@ -1090,10 +1038,7 @@ async fn c27_slug_rules_reject_bad_slugs_and_accept_long_ones() {
 
 #[tokio::test]
 async fn c28_api_keys_with_control_or_whitespace_bytes_are_rejected_at_build() {
-    for setter in [
-        |builder: ClientConfigBuilder| builder.api_key("ts_bad\r\nkey"),
-        |builder: ClientConfigBuilder| builder.auth_api_key("sk_bad\nkey"),
-    ] {
+    for setter in [|builder: ClientConfigBuilder| builder.auth_api_key("sk_bad\nkey")] {
         let error = setter(config())
             .build()
             .expect_err("control characters rejected");

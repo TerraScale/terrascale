@@ -12,10 +12,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::atlas::AtlasResolver;
-use super::control::ControlClient;
 use super::documents::Database;
 use super::errors::{self, Error, Result};
-use super::ids::IdempotencyKey;
 
 /// The server's request body limit (4 MiB).
 pub const MAX_REQUEST_BYTES: usize = 4 << 20;
@@ -29,9 +27,8 @@ pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 64 << 20;
 /// * Transport errors and the transient 503s (`capacity`,
 ///   `storage_unavailable`, `dependencies_unavailable`, `commit_uncertain`)
 ///   are retried only when the request is replay-safe: reads, queries and
-///   mutations carrying an `Idempotency-Key`.
-/// * `500 internal_error` is retried only for requests with an
-///   `Idempotency-Key`.
+///   other explicitly read-only requests.
+/// * `500 internal_error` is returned without retry.
 /// * `stored_corruption` and every other error are never retried.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetryPolicy {
@@ -78,6 +75,7 @@ pub struct ClientBuilder {
     max_response_bytes: usize,
     user_agent: Option<String>,
     project: Option<String>,
+    access_token: bool,
     atlas: Option<String>,
     region_pin: Option<String>,
 }
@@ -96,10 +94,9 @@ impl fmt::Debug for ClientBuilder {
 }
 
 impl ClientBuilder {
-    /// `base_url` is the TerraBase origin (HTTPS; plain HTTP only for loopback
-    /// hosts; a path prefix is kept). `token` is a `tbk1.<id>.<secret>` key: a
-    /// data key for documents, a control key for [`ControlClient`]. Calling
-    /// [`Self::project`] selects project paths and accepts a bearer access token.
+    /// `base_url` is the TerraBase origin (HTTPS; HTTP only for loopback).
+    /// `token` is a ts-auth bearer access token. Select [`Self::project`]
+    /// before building, or use [`Client::for_platform`] for platform access.
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
@@ -111,14 +108,13 @@ impl ClientBuilder {
             max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
             user_agent: None,
             project: None,
+            access_token: false,
             atlas: None,
             region_pin: None,
         }
     }
 
-    /// Selects the C# TerraBase project-scoped contract. `token` is an
-    /// already exchanged ts-auth access token; legacy producer credentials
-    /// are accepted for explicitly configured producer qualification.
+    /// Selects the project-scoped contract with a ts-auth access token.
     #[must_use]
     pub fn project(mut self, project: impl ToString) -> Self {
         self.project = Some(project.to_string());
@@ -192,6 +188,11 @@ impl ClientBuilder {
 
     /// Validates the configuration and builds the client.
     pub fn build(self) -> Result<Client> {
+        if self.project.is_none() && !self.access_token {
+            return Err(Error::InvalidInput(
+                "select a project or use Client::for_platform".into(),
+            ));
+        }
         if self
             .project
             .as_deref()
@@ -227,15 +228,9 @@ impl ClientBuilder {
                 "Atlas override requires Atlas routing".into(),
             ));
         }
-        if self.project.is_some() {
-            if self.token.is_empty() || !self.token.bytes().all(|b| b.is_ascii_graphic()) {
-                return Err(Error::InvalidInput(
-                    "bearer token must be nonempty without whitespace or control characters".into(),
-                ));
-            }
-        } else if !valid_token(&self.token) {
+        if self.token.is_empty() || !self.token.bytes().all(|b| b.is_ascii_graphic()) {
             return Err(Error::InvalidInput(
-                "token must be a tbk1.<22-char id>.<43-char secret> key".into(),
+                "bearer token must be nonempty without whitespace or control characters".into(),
             ));
         }
         let mut auth = HeaderValue::from_str(&format!("Bearer {}", self.token))
@@ -244,7 +239,6 @@ impl ClientBuilder {
         // Never send a bearer key over plain HTTP through a proxy taken from
         // the environment (HTTP_PROXY/ALL_PROXY): loopback HTTP and loopback
         // hosts always connect directly.
-        let direct = self.project.is_some() || base.scheme() == "http" || is_loopback(&base);
         let mut http = reqwest::Client::builder()
             .use_rustls_tls()
             .min_tls_version(reqwest::tls::Version::TLS_1_3)
@@ -253,9 +247,7 @@ impl ClientBuilder {
                 self.user_agent
                     .unwrap_or_else(|| format!("terrascale-rust/{} v1", env!("CARGO_PKG_VERSION"))),
             );
-        if direct {
-            http = http.no_proxy();
-        }
+        http = http.no_proxy();
         if let Some(t) = self.timeout {
             http = http.timeout(t);
         }
@@ -308,11 +300,6 @@ impl ClientBuilder {
             }),
         })
     }
-
-    /// Builds a [`ControlClient`]; the token must be a control key.
-    pub fn build_control(self) -> Result<ControlClient> {
-        Ok(ControlClient::new(self.build()?))
-    }
 }
 
 pub(crate) fn valid_region(region: &str) -> bool {
@@ -323,19 +310,6 @@ pub(crate) fn valid_region(region: &str) -> bool {
         && region
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-}
-
-pub(crate) fn valid_token(token: &str) -> bool {
-    let mut parts = token.split('.');
-    let b64 = |s: &str, n: usize| {
-        s.len() == n
-            && s.bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    };
-    matches!(
-        (parts.next(), parts.next(), parts.next(), parts.next()),
-        (Some("tbk1"), Some(id), Some(secret), None) if b64(id, 22) && b64(secret, 43)
-    )
 }
 
 fn is_loopback(url: &Url) -> bool {
@@ -420,6 +394,13 @@ impl Client {
     pub fn for_project(project: impl ToString, token: impl Into<String>) -> ClientBuilder {
         ClientBuilder::new("", token).project(project)
     }
+    /// Builds a platform-admin client with a user access token and explicit endpoint.
+    pub fn for_platform(endpoint: impl Into<String>, token: impl Into<String>) -> ClientBuilder {
+        ClientBuilder {
+            access_token: true,
+            ..ClientBuilder::new(endpoint, token)
+        }
+    }
     /// Starts a [`ClientBuilder`].
     pub fn builder(base_url: impl Into<String>, token: impl Into<String>) -> ClientBuilder {
         ClientBuilder::new(base_url, token)
@@ -430,12 +411,6 @@ impl Client {
     #[must_use]
     pub fn database(&self, name: impl Into<String>) -> Database {
         Database::new(self.clone(), name.into())
-    }
-
-    /// The control-plane API with this client's key (must be a control key).
-    #[must_use]
-    pub fn control(&self) -> ControlClient {
-        ControlClient::new(self.clone())
     }
 
     /// The configured base URL.
@@ -453,9 +428,10 @@ pub(crate) struct Req<'a> {
     pub body: Option<Vec<u8>>,
     pub content_type: Option<&'static str>,
     pub headers: Vec<(&'static str, String)>,
-    pub idempotency_key: Option<&'a IdempotencyKey>,
     /// Reads and read-only POSTs that may be resent after a transport error.
     pub replay_safe: bool,
+    /// Only public health probes omit the configured bearer credential.
+    anonymous_probe: bool,
 }
 
 impl<'a> Req<'a> {
@@ -468,8 +444,8 @@ impl<'a> Req<'a> {
             body: None,
             content_type: None,
             headers: Vec::new(),
-            idempotency_key: None,
             replay_safe,
+            anonymous_probe: false,
         }
     }
 
@@ -489,7 +465,6 @@ pub(crate) struct Resp {
     pub body: Vec<u8>,
     /// The request was a mutation, so a 2xx means it was applied.
     pub mutation: bool,
-    pub project: bool,
 }
 
 impl Resp {
@@ -509,22 +484,13 @@ impl Resp {
             let retry_after = self
                 .header("Retry-After")
                 .and_then(|value| parse_retry_after(value, std::time::SystemTime::now()));
-            Err(if self.project {
-                errors::from_project_response(
-                    self.status.as_u16(),
-                    self.header("ETag"),
-                    retry_after,
-                    self.header("X-Request-ID"),
-                    &self.body,
-                )
-            } else {
-                errors::from_response(
-                    self.status.as_u16(),
-                    self.header("ETag"),
-                    retry_after,
-                    &self.body,
-                )
-            })
+            Err(errors::from_project_response(
+                self.status.as_u16(),
+                self.header("ETag"),
+                retry_after,
+                self.header("X-Request-ID"),
+                &self.body,
+            ))
         } else {
             Err(self.invalid(format!("unexpected HTTP status {}", self.status.as_u16())))
         }
@@ -539,15 +505,11 @@ impl Resp {
         } else {
             Error::Decode(message)
         };
-        if self.project {
-            Error::Response {
-                status: self.status.as_u16(),
-                error: Box::new(error),
-                body: self.body.clone(),
-                request_id: self.header("X-Request-ID").map(str::to_owned),
-            }
-        } else {
-            error
+        Error::Response {
+            status: self.status.as_u16(),
+            error: Box::new(error),
+            body: self.body.clone(),
+            request_id: self.header("X-Request-ID").map(str::to_owned),
         }
     }
 
@@ -629,10 +591,6 @@ impl Client {
         true
     }
 
-    pub(crate) fn is_project(&self) -> bool {
-        self.inner.project.is_some()
-    }
-
     pub(crate) async fn send_project(&self, req: Req<'_>) -> Result<Resp> {
         if self.inner.project.is_none() {
             return Err(Error::InvalidInput(
@@ -653,7 +611,9 @@ impl Client {
         let mut url = base.clone();
         let mut scoped = segments.to_vec();
         if let Some(project) = &self.inner.project {
-            scoped.splice(1..1, ["projects", project.as_str()]);
+            if segments.first() == Some(&"v1") && segments.get(1) != Some(&"platform") {
+                scoped.splice(1..1, ["projects", project.as_str()]);
+            }
         }
         url.path_segments_mut()
             .map_err(|()| Error::InvalidInput("base URL cannot carry a path".into()))?
@@ -666,17 +626,133 @@ impl Client {
         Ok(url)
     }
 
-    /// Sends `req` under the retry policy. Returns 2xx and 304 responses.
-    pub(crate) async fn send(&self, mut req: Req<'_>) -> Result<Resp> {
-        if self.inner.project.is_some() {
-            if req.segments.get(..2) != Some(&["v1", "databases"][..]) {
-                return Err(Error::InvalidInput(
-                    "the legacy dashboard control plane is unavailable for a project client".into(),
+    pub(crate) async fn changes_response(
+        &self,
+        database: &str,
+        query: &[(&str, String)],
+        last_event_id: Option<&str>,
+    ) -> Result<reqwest::Response> {
+        let (origin, region) = self.shape_endpoint(database, false).await?;
+        let url = self.url(&origin, &["v1", "databases", database, "changes"], query)?;
+        let mut request = self
+            .inner
+            .http
+            .get(url)
+            .header(AUTHORIZATION, self.inner.auth.clone())
+            .header("Accept", "text/event-stream")
+            // The producer ends streams after 30 minutes; dropping the future/stream cancels it.
+            .timeout(Duration::from_secs(31 * 60));
+        if let Some(region) = &region {
+            request = request.header("X-TerraScale-Region-Pin", region);
+        }
+        if let Some(cursor) = last_event_id {
+            let cursor = HeaderValue::from_str(cursor)
+                .map_err(|_| Error::InvalidInput("Last-Event-ID must be a valid header".into()))?;
+            request = request.header("Last-Event-ID", cursor);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|error| Error::Transport(describe(&error)))?;
+        let status = response.status();
+        let headers = response.headers().clone();
+        let valid_region = region.as_deref().is_none_or(|expected| {
+            let mut values = headers.get_all("X-TerraBase-Region").iter();
+            values.next().and_then(|value| value.to_str().ok()) == Some(expected)
+                && values.next().is_none()
+        });
+        let event_stream = headers
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .split(';')
+                    .next()
+                    .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("text/event-stream"))
+            });
+        if status == StatusCode::OK && valid_region && event_stream {
+            return Ok(response);
+        }
+        let limit = self.inner.max_response.min(64 << 10);
+        let mut body = Vec::new();
+        let mut chunks = response.bytes_stream();
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk.map_err(|error| {
+                self.response_error(
+                    Error::Transport(describe(&error)),
+                    status,
+                    &headers,
+                    body.clone(),
+                )
+            })?;
+            let room = limit.saturating_sub(body.len());
+            body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+            if chunk.len() > room {
+                return Err(self.response_error(
+                    Error::ResponseTooLarge {
+                        limit,
+                        status: status.as_u16(),
+                        may_have_applied: false,
+                    },
+                    status,
+                    &headers,
+                    body,
                 ));
             }
-            if req.idempotency_key.is_some() {
-                return Err(Error::InvalidInput("C# TerraBase does not support Idempotency-Key; an uncertain mutation must be reconciled by reading its state".into()));
-            }
+        }
+        let response = Resp {
+            status,
+            headers,
+            body,
+            mutation: false,
+        };
+        response.check_status(&[StatusCode::OK])?;
+        Err(response
+            .invalid("changes requires HTTP 200, text/event-stream and the pinned region".into()))
+    }
+
+    pub(crate) async fn probe(&self, segments: Vec<&str>) -> Result<Resp> {
+        let mut req = Req::new(Method::GET, segments);
+        req.anonymous_probe = true;
+        let origin = if let Some(atlas) = &self.inner.atlas {
+            atlas
+                .resolve(
+                    self.inner.project.as_deref().expect("Atlas project"),
+                    None,
+                    false,
+                )
+                .await?
+                .api
+        } else {
+            self.inner.base.clone()
+        };
+        let url = self.url(&origin, &req.segments, &[])?;
+        match self.attempt(&req, &url, None, None, true).await {
+            Attempt::Done(response) => Ok(response),
+            Attempt::Failed(error, _) => Err(error),
+        }
+    }
+
+    /// Sends `req` under the retry policy. Returns 2xx and 304 responses.
+    pub(crate) async fn send(&self, mut req: Req<'_>) -> Result<Resp> {
+        if req.segments.first() != Some(&"v1")
+            || !matches!(
+                req.segments.get(1).copied(),
+                Some(
+                    "platform"
+                        | "databases"
+                        | "saved-queries"
+                        | "backup-destination"
+                        | "usage"
+                        | "analytics"
+                        | "replication"
+                )
+            )
+            || (self.inner.project.is_none() && req.segments.get(1) != Some(&"platform"))
+        {
+            return Err(Error::InvalidInput(
+                "request requires a canonical project or platform route".into(),
+            ));
         }
         if req
             .body
@@ -688,7 +764,9 @@ impl Client {
             )));
         }
         let project = self.inner.project.as_deref();
-        let database = req.segments.get(2).copied();
+        let database = (req.segments.get(1) == Some(&"databases"))
+            .then(|| req.segments.get(2).copied())
+            .flatten();
         let mut origin = self.inner.base.clone();
         let mut region = self.inner.region_pin.clone();
         if let Some(atlas) = &self.inner.atlas {
@@ -701,8 +779,7 @@ impl Client {
         let mut url = self.url(&origin, &req.segments, &req.query)?;
         // Serialized once; each attempt shares it without copying.
         let body = req.body.take().map(bytes::Bytes::from);
-        let keyed = req.idempotency_key.is_some();
-        let replay_safe = req.replay_safe || keyed;
+        let replay_safe = req.replay_safe;
         let policy = &self.inner.retry;
         let mut attempt: u32 = 0;
         let mut refreshed = false;
@@ -757,7 +834,6 @@ impl Client {
                                         | "not_primary",
                                     ),
                                 ) => replay_safe,
-                                (Some(500), Some("internal_error")) => keyed,
                                 _ => false,
                             });
                     if !retry {
@@ -786,16 +862,15 @@ impl Client {
             .inner
             .http
             .request(req.method.clone(), url.clone())
-            .header(AUTHORIZATION, self.inner.auth.clone())
             .header("Accept", "application/json");
+        if !req.anonymous_probe {
+            rb = rb.header(AUTHORIZATION, self.inner.auth.clone());
+        }
         if let Some(region) = region {
             rb = rb.header("X-TerraScale-Region-Pin", region);
         }
         for (name, value) in &req.headers {
             rb = rb.header(*name, value);
-        }
-        if let Some(key) = req.idempotency_key {
-            rb = rb.header("Idempotency-Key", key.as_str());
         }
         if let Some(body) = body {
             rb = rb
@@ -850,7 +925,6 @@ impl Client {
                 headers,
                 body,
                 mutation: !req.replay_safe,
-                project: self.is_project(),
             };
             return Attempt::Failed(
                 response.invalid("TerraBase response region does not match the session pin".into()),
@@ -863,7 +937,6 @@ impl Client {
                 headers,
                 body,
                 mutation: !req.replay_safe,
-                project: self.is_project(),
             });
         }
         let retry_after = headers
@@ -871,17 +944,13 @@ impl Client {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()));
         let etag = headers.get(ETAG).and_then(|v| v.to_str().ok());
-        let err = if self.is_project() {
-            errors::from_project_response(
-                status.as_u16(),
-                etag,
-                retry_after,
-                headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
-                &body,
-            )
-        } else {
-            errors::from_response(status.as_u16(), etag, retry_after, &body)
-        };
+        let err = errors::from_project_response(
+            status.as_u16(),
+            etag,
+            retry_after,
+            headers.get("X-Request-ID").and_then(|v| v.to_str().ok()),
+            &body,
+        );
         Attempt::Failed(err, retry_after)
     }
 
@@ -892,18 +961,14 @@ impl Client {
         headers: &HeaderMap,
         body: Vec<u8>,
     ) -> Error {
-        if self.is_project() {
-            Error::Response {
-                status: status.as_u16(),
-                error: Box::new(error),
-                body,
-                request_id: headers
-                    .get("X-Request-ID")
-                    .and_then(|v| v.to_str().ok())
-                    .map(str::to_owned),
-            }
-        } else {
-            error
+        Error::Response {
+            status: status.as_u16(),
+            error: Box::new(error),
+            body,
+            request_id: headers
+                .get("X-Request-ID")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned),
         }
     }
 }
@@ -964,7 +1029,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn project_routes_and_credentials_are_separate_from_legacy_v1() {
+    fn project_routes_require_scope_and_valid_bearer_credentials() {
         let project = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
         let client = Client::builder("https://example.com/prefix", "already-exchanged.jwt")
             .project(project)
@@ -1005,37 +1070,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_rejects_legacy_control_and_keyed_writes_before_dispatch() {
-        let client = Client::builder("http://127.0.0.1:1", "jwt")
-            .project("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    async fn platform_clients_cannot_dispatch_unscoped_document_calls() {
+        let client = Client::for_platform("http://127.0.0.1:1", "fixture-token")
             .build()
             .unwrap();
-        let err = client
-            .control()
-            .list_regions(&super::super::ListOptions::default())
-            .await
-            .unwrap_err();
-        assert!(matches!(err, Error::InvalidInput(_)), "{err:?}");
-        let key = IdempotencyKey::random();
-        let err = client
-            .database("orders")
-            .collection("items")
-            .put(
-                uuid::Uuid::new_v4(),
-                &serde_json::json!({"a":1}),
-                super::super::WriteOptions::new().idempotency_key(key.clone()),
-            )
-            .await
-            .unwrap_err();
-        assert!(matches!(err, Error::InvalidInput(_)), "{err:?}");
+        assert!(matches!(
+            client
+                .database("orders")
+                .collection("items")
+                .get::<serde_json::Value>("customer:key")
+                .await,
+            Err(Error::InvalidInput(_))
+        ));
         let mut tx = super::super::Tx::new();
-        tx.put(
-            "items",
-            uuid::Uuid::new_v4(),
-            &serde_json::json!({"a":1}),
-            None,
-        )
-        .idempotency_key(key);
+        tx.put("items", "customer:key", &serde_json::json!({}), None);
         assert!(matches!(
             client.database("orders").commit(&tx).await,
             Err(Error::InvalidInput(_))

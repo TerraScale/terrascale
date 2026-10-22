@@ -7,7 +7,7 @@ use serde_json::value::RawValue;
 
 use super::client::{Client, Req, Resp};
 use super::errors::{Error, Result};
-use super::ids::{check_document_id, check_name, DocumentId, IdempotencyKey, Version};
+use super::ids::{check_document_id, check_name, DocumentId, Version};
 use super::shapes::Shape;
 use super::tx::{Tx, TxResult};
 use super::types::{u64_string, Durability, Number};
@@ -103,9 +103,8 @@ impl Database {
 
     /// Atomically commits `tx` (`POST /v1/databases/{db}/transactions`).
     ///
-    /// Failures name the failing op through [`Error::op`]. With
-    /// [`Tx::idempotency_key`] set, an uncertain commit is retried and an
-    /// exact replay returns the original result.
+    /// Failures name the failing op through [`Error::op`]. An uncertain
+    /// mutation must be reconciled by reading state before an explicit retry.
     pub async fn commit(&self, tx: &Tx) -> Result<TxResult> {
         check_name("database", &self.name)?;
         let body = tx.encode()?;
@@ -114,10 +113,9 @@ impl Database {
             vec!["v1", "databases", &self.name, "transactions"],
         );
         req.body = Some(body);
-        req.idempotency_key = tx.key();
-        let resp = self.client.send(req).await?;
+        let resp = self.client.send_project(req).await?;
         let out: TxResult = resp.decode_status(&[StatusCode::OK])?;
-        tx.check_results(&out.results, self.client.is_project())
+        tx.check_results(&out.results)
             .map_err(|message| resp.invalid(message))?;
         Ok(out)
     }
@@ -178,13 +176,10 @@ pub enum Precondition {
 pub struct WriteOptions {
     /// Optional precondition.
     pub precondition: Option<Precondition>,
-    /// Optional `Idempotency-Key`; makes the write replay-safe, so transient
-    /// failures and `commit_uncertain` are retried.
-    pub idempotency_key: Option<IdempotencyKey>,
 }
 
 impl WriteOptions {
-    /// No precondition and no idempotency key.
+    /// No precondition.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -203,26 +198,18 @@ impl WriteOptions {
         self.precondition = Some(Precondition::IfNoneMatchAny);
         self
     }
-
-    /// Sets the `Idempotency-Key`.
-    #[must_use]
-    pub fn idempotency_key(mut self, key: IdempotencyKey) -> Self {
-        self.idempotency_key = Some(key);
-        self
-    }
 }
 
 impl From<Precondition> for WriteOptions {
     fn from(p: Precondition) -> Self {
         Self {
             precondition: Some(p),
-            idempotency_key: None,
         }
     }
 }
 
 /// The response to a document write.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Eq, Deserialize)]
 pub struct WriteResult {
     #[serde(deserialize_with = "super::ids::document_id")]
     pub id: DocumentId,
@@ -232,12 +219,27 @@ pub struct WriteResult {
     #[serde(with = "u64_string")]
     pub offset: u64,
     pub durability: Durability,
+    /// The stored document returned after a PATCH, retaining exact JSON numbers.
+    pub document: Option<Box<RawValue>>,
     /// True when a PUT or POST answered `201` (the document did not exist).
     #[serde(skip)]
     pub created: bool,
     /// The `Location` header of a POST create.
     #[serde(skip)]
     pub location: Option<String>,
+}
+
+impl PartialEq for WriteResult {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.version == other.version
+            && self.offset == other.offset
+            && self.durability == other.durability
+            && self.document.as_deref().map(RawValue::get)
+                == other.document.as_deref().map(RawValue::get)
+            && self.created == other.created
+            && self.location == other.location
+    }
 }
 
 /// The event that produced a sibling.
@@ -439,6 +441,10 @@ pub enum PatchOp {
     Inc { path: String, by: Number },
     /// Appends to the array, creating it when missing.
     Append { path: String, value: Box<RawValue> },
+    /// Adds a scalar to a top-level set; the producer accepts at most 1 KiB.
+    Add { path: String, value: Box<RawValue> },
+    /// Removes a scalar from a top-level set; the producer accepts at most 1 KiB.
+    Remove { path: String, value: Box<RawValue> },
 }
 
 impl PatchOp {
@@ -468,6 +474,22 @@ impl PatchOp {
     /// `append` with any serializable value.
     pub fn append<T: Serialize + ?Sized>(path: impl Into<String>, value: &T) -> Result<Self> {
         Ok(Self::Append {
+            path: path.into(),
+            value: to_raw(value)?,
+        })
+    }
+
+    /// `add` a scalar to a top-level set.
+    pub fn add<T: Serialize + ?Sized>(path: impl Into<String>, value: &T) -> Result<Self> {
+        Ok(Self::Add {
+            path: path.into(),
+            value: to_raw(value)?,
+        })
+    }
+
+    /// `remove` a scalar from a top-level set.
+    pub fn remove<T: Serialize + ?Sized>(path: impl Into<String>, value: &T) -> Result<Self> {
+        Ok(Self::Remove {
             path: path.into(),
             value: to_raw(value)?,
         })
@@ -634,7 +656,6 @@ impl Collection {
         let mut req = self.point_request(Method::PUT, &id);
         req.body = Some(body.get().as_bytes().to_vec());
         req.headers = precondition_headers(opts.precondition.as_ref());
-        req.idempotency_key = opts.idempotency_key.as_ref();
         write_result(
             self.client().send(req).await?,
             Some(&id),
@@ -656,7 +677,6 @@ impl Collection {
         let body = encode_object(doc)?;
         let mut req = Req::new(Method::POST, self.segments(&["documents"]));
         req.body = Some(body.get().as_bytes().to_vec());
-        req.idempotency_key = opts.idempotency_key.as_ref();
         write_result(self.client().send(req).await?, None, &[StatusCode::CREATED])
     }
 
@@ -680,7 +700,6 @@ impl Collection {
         req.body = Some(patch.body()?);
         req.content_type = Some(patch.content_type());
         req.headers = precondition_headers(opts.precondition.as_ref());
-        req.idempotency_key = opts.idempotency_key.as_ref();
         write_result(self.client().send(req).await?, Some(&id), &[StatusCode::OK])
     }
 
@@ -696,7 +715,6 @@ impl Collection {
         check_document_id(&id)?;
         let mut req = self.point_request(Method::DELETE, &id);
         req.headers = precondition_headers(opts.precondition.as_ref());
-        req.idempotency_key = opts.idempotency_key.as_ref();
         write_result(self.client().send(req).await?, Some(&id), &[StatusCode::OK])
     }
 
@@ -705,13 +723,9 @@ impl Collection {
     }
 
     fn point_request<'a>(&'a self, method: Method, id: &'a str) -> Req<'a> {
-        if self.client().is_project() {
-            let mut req = Req::new(method, self.segments(&["documents", "by-key"]));
-            req.query.push(("id", id.to_owned()));
-            req
-        } else {
-            Req::new(method, self.segments(&["documents", id]))
-        }
+        let mut req = Req::new(method, self.segments(&["documents", "by-key"]));
+        req.query.push(("id", id.to_owned()));
+        req
     }
 }
 
@@ -721,8 +735,7 @@ fn write_result(
     allowed: &[StatusCode],
 ) -> Result<WriteResult> {
     let mut out: WriteResult = resp.decode_status(allowed)?;
-    if resp.project
-        && expected_id.is_none()
+    if expected_id.is_none()
         && (resp.status != StatusCode::CREATED || !super::ids::valid_entity_id(&out.id))
     {
         return Err(resp.invalid(

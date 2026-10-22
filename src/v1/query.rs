@@ -17,18 +17,8 @@ use super::types::{u64_string, Number};
 pub enum Path {
     /// An RFC 6901 JSON Pointer, 1–16 segments.
     Pointer(String),
-    /// `{"lower": pointer}`: compare after Unicode default case folding.
-    Lower(String),
     /// The pseudo-path `"$id"` (the document ID).
     Id,
-}
-
-impl Path {
-    /// `{"lower": pointer}`.
-    #[must_use]
-    pub fn lower(pointer: impl Into<String>) -> Self {
-        Self::Lower(pointer.into())
-    }
 }
 
 impl From<&str> for Path {
@@ -52,11 +42,6 @@ impl Serialize for Path {
         match self {
             Self::Pointer(p) => s.serialize_str(p),
             Self::Id => s.serialize_str("$id"),
-            Self::Lower(p) => {
-                let mut m = s.serialize_map(Some(1))?;
-                m.serialize_entry("lower", p)?;
-                m.end()
-            }
         }
     }
 }
@@ -351,16 +336,6 @@ impl SortKey {
     }
 }
 
-/// Query explanation mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Explain {
-    /// The plan without executing the query.
-    Plan,
-    /// Execute and add measured counters.
-    Analyze,
-}
-
 /// A query-v1 request. Every member is optional.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Query {
@@ -381,9 +356,6 @@ pub struct Query {
     /// Requests the total match count (first page only).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub count: bool,
-    /// Requests the plan (first page only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub explain: Option<Explain>,
 }
 
 impl Query {
@@ -428,13 +400,6 @@ impl Query {
         self.count = count;
         self
     }
-    /// Requests explanation.
-    #[must_use]
-    pub fn explain(mut self, mode: Explain) -> Self {
-        self.explain = Some(mode);
-        self
-    }
-
     fn validate(&self) -> Result<()> {
         if let Some(f) = &self.filter {
             f.validate()?;
@@ -472,9 +437,6 @@ pub struct QueryPage<T = Box<RawValue>> {
     /// Set when the query requested a count.
     #[serde(default)]
     pub count: Option<Count>,
-    /// The raw explain object, when requested.
-    #[serde(default)]
-    pub explain: Option<Box<RawValue>>,
 }
 
 impl Collection {
@@ -534,7 +496,7 @@ pub struct Pages<T> {
 }
 
 impl<T: DeserializeOwned> Pages<T> {
-    /// The next page, or `Ok(None)` after the last one. Count and explain are
+    /// The next page, or `Ok(None)` after the last one. Count is
     /// requested with the first page only. After an error the iterator can be
     /// polled again to retry the same page.
     pub async fn next_page(&mut self) -> Result<Option<QueryPage<T>>> {
@@ -551,7 +513,6 @@ impl<T: DeserializeOwned> Pages<T> {
                 }
                 self.query.cursor = Some(c.clone());
                 self.query.count = false;
-                self.query.explain = None;
             }
             None => self.done = true,
         }
