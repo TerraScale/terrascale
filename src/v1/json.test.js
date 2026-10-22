@@ -8,12 +8,14 @@ describe("exact decimal normalization", () => {
     const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
       import assert from "node:assert/strict";
       import { ExactDecimal, parseExactJson } from ${JSON.stringify(new URL("./json.js", import.meta.url).href)};
-      const text = "1." + "0".repeat(131072) + "1";
-      const value = parseExactJson(text);
-      assert(value instanceof ExactDecimal);
-      assert.equal(value.toString(), text);
-      assert(value.equals(text + "0"));
-      assert.equal(value.isInteger(), false);
+      for (const zeros of [32768, 131072]) {
+        const text = "1." + "0".repeat(zeros) + "1";
+        const value = parseExactJson(text);
+        assert(value instanceof ExactDecimal);
+        assert.equal(value.toString(), text);
+        assert(value.equals(text + "0"));
+        assert.equal(value.isInteger(), false);
+      }
     `], { encoding: "utf8", timeout: 3000 });
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
