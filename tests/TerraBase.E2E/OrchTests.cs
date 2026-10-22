@@ -1,8 +1,12 @@
+using System.Net;
+
 namespace TerraBase.E2E;
 
 /// <summary>
-/// Negative controls of a ts-orch run's target (<see cref="Orch.Nodes"/>): a missing or malformed node list is refused
-/// before any request.
+/// Negative controls of a ts-orch run's target (<see cref="Orch.Nodes"/>) and identity check
+/// (<see cref="Cluster.IdentifyAsync"/>): a missing or malformed node list is refused before any request, a node that does
+/// not answer as its region (or, pinned, on the revision under test) stops the run, and a pinned run refuses scenarios
+/// still listed as expected failures.
 /// </summary>
 public sealed class OrchTests
 {
@@ -28,5 +32,42 @@ public sealed class OrchTests
     {
         var nodes = Orch.Nodes(_ => "gru=http://10.0.0.1:18080, sjc=http://10.0.0.2:18080/,fra=http://10.0.0.3:18080", Regions);
         await Assert.That(nodes[Cluster.Sjc]).IsEqualTo(new Uri("http://10.0.0.2:18080/"));
+    }
+
+    [Test]
+    [Scenario(Nodes.Harness)]
+    public async Task A_pinned_run_refuses_a_scenario_still_listed_as_an_expected_failure()
+    {
+        await Assert.That(Gaps.PinnedRefusal("E11")).Contains("its Gaps row must be removed first");
+        await Assert.That(Gaps.PinnedRefusal("not-a-gap")).IsNull();
+    }
+
+    // /healthz of gru's node: the run starts (and ends) only when it answers as a named node in gru running the revision.
+    [Test]
+    [Scenario(Nodes.Harness)]
+    [Arguments(HttpStatusCode.OK, """{"region":"gru","machine":"ts-gru-1","revision":"rev1"}""", null)]
+    [Arguments(HttpStatusCode.OK, """{"region":"sjc","machine":"ts-gru-1","revision":"rev1"}""", "region sjc")]
+    [Arguments(HttpStatusCode.OK, """{"region":"gru","machine":"ts-gru-1","revision":"rev2"}""", "revision rev2")]
+    [Arguments(HttpStatusCode.OK, """{"region":"gru","machine":"ts-gru-1","revision":null}""", "revision (none)")]
+    [Arguments(HttpStatusCode.OK, """{"status":"ok","version":"0.1.0","region":"gru"}""", "node (none)")]
+    [Arguments(HttpStatusCode.ServiceUnavailable, """{"error":{"code":"unavailable"}}""", "503")]
+    public async Task Each_node_must_answer_as_itself_running_the_revision_under_test(HttpStatusCode status, string body, string? refusal)
+    {
+        using var client = new HttpClient(new Stand(_ => new HttpResponseMessage(status) { Content = new StringContent(body) })) { BaseAddress = new Uri("http://node.test") };
+        var nodes = new Dictionary<string, HttpClient>(StringComparer.Ordinal) { [Cluster.Gru] = client };
+        if (refusal is null)
+        {
+            await Assert.That((await Cluster.IdentifyAsync(nodes, "rev1"))[Cluster.Gru]).IsEqualTo("ts-gru-1");
+            return;
+        }
+
+        var error = await Assert.ThrowsAsync<Exception>(() => Cluster.IdentifyAsync(nodes, "rev1"));
+        await Assert.That(error!.Message).Contains(refusal);
+    }
+
+    private sealed class Stand(Func<HttpRequestMessage, HttpResponseMessage> answer) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(answer(request));
     }
 }

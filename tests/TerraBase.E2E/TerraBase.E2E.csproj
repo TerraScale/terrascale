@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- The end-to-end replication suite: leaderless writes between gru, sjc and fra over the public HTTP API.
-       Local by default (in-process nodes); set TERRABASE_E2E_FLY_URL to run the same scenarios against Fly.
+       Local by default (in-process nodes); set TERRABASE_E2E_ORCH_NODES to run the same scenarios against ts-orch.
        Test references and conventions come from Directory.Build.targets. -->
   <PropertyGroup>
     <RootNamespace>TerraBase.E2E</RootNamespace>

@@ -12,7 +12,7 @@ public sealed class F4RestartDiagnosticTests
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task All_three_nodes_restart_together_and_accept_a_write()
     {
-        if (Cluster.FlyRequested)
+        if (Cluster.Live)
         {
             throw new InvalidOperationException("F4 diagnostic runs only in-process");
         }

@@ -20,7 +20,7 @@ public sealed class ShapeConvergenceE2ETests
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task Shape_clients_in_every_region_converge_after_a_partition_heals()
     {
-        SkipOnFly();
+        SkipLive();
         await using var cluster = await Cluster.StartAsync(All);
         var readers = Readers(cluster);
         var documents = await WriteAsync(cluster, [.. All], 10);
@@ -81,7 +81,7 @@ public sealed class ShapeConvergenceE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop | Faults.FileTampering)]
     public async Task Shape_clients_converge_after_anti_entropy_repairs_a_lost_document()
     {
-        SkipOnFly();
+        SkipLive();
         await using var cluster = await Cluster.StartAsync(All);
         var readers = Readers(cluster);
         var documents = await WriteAsync(cluster, [.. All], 10);
@@ -104,7 +104,7 @@ public sealed class ShapeConvergenceE2ETests
     [Arguments(Cluster.Fra, -2000)]
     public async Task Shape_clients_converge_under_clock_skew(string skewed, int skewMilliseconds)
     {
-        SkipOnFly();
+        SkipLive();
         var skew = TimeSpan.FromMilliseconds(skewMilliseconds);
         await using var cluster = await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [skewed] = skew });
         await SkewedAsync(cluster, skewed, skewMilliseconds);
@@ -125,8 +125,8 @@ public sealed class ShapeConvergenceE2ETests
         _ = await ConvergedAsync(cluster, readers, documents, $"clock skew {skewed} {skewMilliseconds:+0;-0} ms");
     }
 
-    private static void SkipOnFly() =>
-        Skip.When(Cluster.FlyRequested, "partitions, edits a stopped node's files or skews its clock: local nodes only");
+    private static void SkipLive() =>
+        Skip.When(Cluster.Live, "partitions, edits a stopped node's files or skews its clock: local nodes only");
 
     private static Dictionary<string, ShapeReader> Readers(Cluster cluster) =>
         cluster.Regions.ToDictionary(region => region, region => new ShapeReader(cluster[region], $"{cluster.DatabasePath}/collections/{cluster.Collection}"), StringComparer.Ordinal);

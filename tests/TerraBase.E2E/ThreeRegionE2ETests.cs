@@ -8,7 +8,7 @@ namespace TerraBase.E2E;
 /// <summary>
 /// Replication across gru, sjc and fra without faults: every pair in both directions, three-way conflicts, delete
 /// versus edits, bulk loads, bursts, large documents, counters and sets. What each scenario waits on is in
-/// <see cref="Gaps"/>. Local by default; set <c>TERRABASE_E2E_FLY_URL</c> to run them against Fly.
+/// <see cref="Gaps"/>. Local by default; set <c>TERRABASE_E2E_ORCH_NODES</c> to run them against ts-orch.
 /// </summary>
 public sealed class ThreeRegionE2ETests
 {

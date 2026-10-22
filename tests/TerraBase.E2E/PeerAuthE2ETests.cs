@@ -21,7 +21,7 @@ public sealed class PeerAuthE2ETests
     [Scenario(Nodes.Processes)]
     public async Task Peer_grpc_calls_without_the_credential_or_with_another_are_unauthenticated(CancellationToken cancellationToken)
     {
-        Skip.When(Cluster.FlyRequested, "runs local node processes");
+        Skip.When(Cluster.Live, "runs local node processes");
         await using var regions = await RegionProcesses.StartAsync(Cluster.Gru, Cluster.Sjc);
         foreach (var region in regions.Regions)
         {
@@ -52,7 +52,7 @@ public sealed class PeerAuthE2ETests
     [Scenario(Nodes.Processes)]
     public async Task Refused_forged_writes_change_nothing_and_replication_still_works(CancellationToken cancellationToken)
     {
-        Skip.When(Cluster.FlyRequested, "runs local node processes");
+        Skip.When(Cluster.Live, "runs local node processes");
         await using var regions = await RegionProcesses.StartAsync(Cluster.Gru, Cluster.Sjc);
         var canary = regions.Document(EntityIds.New().ToString());
         var canaryBody = new JsonObject { ["step"] = "before" };

@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,20 +15,25 @@ namespace TerraBase.E2E;
 
 /// <summary>
 /// One database served by two or three regions (gru, sjc, fra), with a client pinned to each. Without
-/// <c>TERRABASE_E2E_FLY_URL</c> the regions are in-process nodes, each with a Fly identity
-/// (region and machine ID) and one shared directory standing in for Fly's <c>vms.ts-terrabase.internal</c> record, which
-/// lists every machine. With it they are the Fly app's machines, reached through the public proxy and pinned by
-/// <see cref="RegionPin"/>. Each test owns one collection of the database. The fault calls (<see cref="Partition"/>,
-/// <see cref="StopAsync"/>, a clock skew) act on the local nodes only.
+/// <c>TERRABASE_E2E_ORCH_NODES</c> the regions are in-process nodes, each with a region and node name and one shared
+/// directory standing in for the peers ts-orch lists. With it they are the disposable ts-orch service's nodes, each
+/// reached directly over NetBird (<see cref="Orch"/>) and pinned by <see cref="RegionPin"/>. Each test owns one collection
+/// of the database. The fault calls (<see cref="Partition"/>, <see cref="StopAsync"/>, a clock skew) act on the local
+/// nodes; on ts-orch only stopping and starting a region exists.
 /// </summary>
 public sealed class Cluster : IAsyncDisposable
 {
     public const string Gru = "gru";
     public const string Sjc = "sjc";
     public const string Fra = "fra";
-    public const string FlyUrlVariable = "TERRABASE_E2E_FLY_URL";
+
+    /// <summary>The commit every ts-orch node must run; set, each node's identity is checked before the first write and after the last.</summary>
+    public const string RevisionVariable = "TERRABASE_E2E_ORCH_REVISION";
 
     // A ts-auth project token's scopes: an API key cannot hold databases:*, and E12 and E13 create databases.
+    // The e2e project's shared database on ts-orch, the one CI's e2e project has always used.
+    private const string SharedDatabase = "ci-e2e";
+
     private const string Scopes = "databases:read databases:write documents:read documents:write";
 
     private readonly Dictionary<string, HttpClient> _clients;
@@ -38,14 +42,16 @@ public sealed class Cluster : IAsyncDisposable
     private readonly Func<Task> _release;
     private readonly Func<string, string, Task<HttpClient>> _via;
     private readonly Func<string, HttpClient> _sql;
+    private readonly Dictionary<string, HttpClient>? _nodes;
 
     private Cluster(
         string projectPath, string databasePath, string collection, Dictionary<string, HttpClient> clients, Local? local, Dictionary<string, string>? identities,
-        Func<Task> release, Func<string, string, Task<HttpClient>> via, Func<string, HttpClient> sql)
+        Func<Task> release, Func<string, string, Task<HttpClient>> via, Func<string, HttpClient> sql, Dictionary<string, HttpClient>? nodes = null, string? organization = null)
     {
         _via = via;
         _sql = sql;
-        OrganizationId = local?.OrganizationId;
+        _nodes = nodes;
+        OrganizationId = local?.OrganizationId ?? organization;
         ProjectPath = projectPath;
         DatabasePath = databasePath;
         Collection = collection;
@@ -57,7 +63,8 @@ public sealed class Cluster : IAsyncDisposable
 
     /// <summary>
     /// The region's identity for a run's record, labelled with how it was reached: <c>local:gru</c> (a node of this
-    /// process) or <c>fly-unpinned:gru</c> (Fly, pinned by region only).
+    /// process), <c>orch:gru/&lt;node&gt;</c> (the ts-orch node) or <c>orch-pinned:gru/&lt;node&gt;@&lt;revision&gt;</c>
+    /// (its identity checked before the first write and after the last).
     /// </summary>
     public string Identity(string region) => _identities?.GetValueOrDefault(region) ?? $"local:{region}";
 
@@ -75,10 +82,22 @@ public sealed class Cluster : IAsyncDisposable
     /// <summary>The regions this cluster serves the database from, home region first.</summary>
     public IReadOnlyList<string> Regions => [.. _clients.Keys];
 
-    /// <summary>Whether <c>TERRABASE_E2E_FLY_URL</c> is set, so the regions are Fly's.</summary>
-    public static bool FlyRequested => Environment.GetEnvironmentVariable(FlyUrlVariable) is { Length: > 0 };
+    /// <summary>Whether <c>TERRABASE_E2E_ORCH_NODES</c> is set, so the regions are the ts-orch service's nodes.</summary>
+    public static bool Live => Environment.GetEnvironmentVariable(Orch.NodesVariable) is { Length: > 0 };
 
-    /// <summary>The client of <paramref name="region"/>: pinned on Fly, the node itself locally.</summary>
+    /// <summary>
+    /// Whether a test may stop ts-orch regions: only in a pinned outage run (<c>TERRABASE_E2E_ORCH_OUTAGE=1</c> with
+    /// <c>TERRABASE_E2E_ORCH_REVISION</c>), and only of the disposable service <see cref="Orch.Service"/>.
+    /// </summary>
+    public static bool LiveOutage => Environment.GetEnvironmentVariable("TERRABASE_E2E_ORCH_OUTAGE") == "1" && LivePinned;
+
+    /// <summary>Why an outage test skips outside an outage run.</summary>
+    public const string OutageRun = "ts-orch outage test: TERRABASE_E2E_ORCH_NODES, TERRABASE_E2E_ORCH_REVISION and TERRABASE_E2E_ORCH_OUTAGE=1";
+
+    /// <summary>Whether this is a revision-pinned ts-orch run (<c>TERRABASE_E2E_ORCH_REVISION</c>): acceptance evidence.</summary>
+    public static bool LivePinned => Live && Environment.GetEnvironmentVariable(RevisionVariable) is { Length: > 0 };
+
+    /// <summary>The client of <paramref name="region"/>: pinned on ts-orch, the node itself locally.</summary>
     public HttpClient this[string region] => _clients.TryGetValue(region, out var client)
         ? client
         : throw new ArgumentOutOfRangeException(nameof(region), region, "not a region of this cluster");
@@ -86,17 +105,15 @@ public sealed class Cluster : IAsyncDisposable
     /// <summary>
     /// A client entering at <paramref name="edge"/> whose answers must come from <paramref name="served"/>: a changes-feed
     /// resume, which TerraBase replays to its cursor's issuing machine, or serves itself when that machine is down
-    /// (docs/terrabase/multi-region-replication.md, issuer routing). On Fly the request is forced onto the edge's machine (the
-    /// one that answers the edge's <c>/healthz</c> as itself), so Fly cannot fall back to another region and
-    /// pass a direct answer off as a replay; the answer must name <paramref name="served"/> (and that machine). The
+    /// (docs/terrabase/multi-region-replication.md, issuer routing). The answer must name <paramref name="served"/>. The
     /// caller disposes it.
     /// </summary>
     public Task<HttpClient> ViaAsync(string edge, string served) => _via(edge, served);
 
     /// <summary>
     /// A client of <paramref name="region"/> for <c>/sql</c>, which takes a ts-auth project token, never an API key: locally the
-    /// nodes' project token; on Fly the existing <c>TERRABASE_E2E_FLY_PROJECT_TOKEN</c>, required (nothing is minted). Pinned
-    /// like <see cref="this[string]"/>; the caller disposes it.
+    /// nodes' project token; on ts-orch the run's project token (<see cref="Orch.TokenAsync"/>). Pinned like
+    /// <see cref="this[string]"/>; the caller disposes it.
     /// </summary>
     public HttpClient Sql(string region) => _sql(region);
 
@@ -108,29 +125,34 @@ public sealed class Cluster : IAsyncDisposable
 
     /// <summary>
     /// Starts <paramref name="regions"/> (gru and sjc when none are named; gru is always the home region) where the
-    /// environment selects: Fly when <c>TERRABASE_E2E_FLY_URL</c> is set, otherwise local nodes.
+    /// environment selects: ts-orch when <c>TERRABASE_E2E_ORCH_NODES</c> is set, otherwise local nodes.
     /// </summary>
     public static Task<Cluster> StartAsync(params string[] regions) => StartAsync(regions, skews: null);
 
     // Backup qualification owns a whole database: snapshots never include other parallel tests' collections.
     internal static Task<Cluster> StartBackupAsync()
     {
-        return FlyRequested
-            ? throw new NotSupportedException("backup qualification needs local nodes: the disposable Fly app's pinned run is retired")
-            : StartLocalAsync([Gru, Sjc, Fra], new Dictionary<string, TimeSpan>(), new FakeS3());
+        if (!Live)
+        {
+            return StartLocalAsync([Gru, Sjc, Fra], new Dictionary<string, TimeSpan>(), new FakeS3());
+        }
+
+        return LivePinned
+            ? StartOrchAsync([Gru, Sjc, Fra], backup: true)
+            : throw new InvalidOperationException($"backup qualification on ts-orch requires a pinned run ({RevisionVariable})");
     }
 
     internal Task ShipBackupAsync(CancellationToken token) => _local is null ? Task.CompletedTask : _local.ShipBackupAsync(token);
 
     /// <summary>
-    /// gru, sjc and fra whose shapes mirror to an object store (FR-22): local nodes share one fake bucket; Fly's machines
-    /// already mirror to the app's Tigris bucket, so on Fly this is an ordinary collection-owning cluster.
+    /// gru, sjc and fra whose shapes mirror to an object store (FR-22): local nodes share one fake bucket; ts-orch nodes
+    /// already mirror to the service's bucket, so there this is an ordinary collection-owning cluster.
     /// </summary>
     internal static Task<Cluster> StartMirroredAsync() =>
-        FlyRequested ? StartFlyAsync([Gru, Sjc, Fra]) : StartLocalAsync([Gru, Sjc, Fra], new Dictionary<string, TimeSpan>(), new FakeS3());
+        Live ? StartOrchAsync([Gru, Sjc, Fra]) : StartLocalAsync([Gru, Sjc, Fra], new Dictionary<string, TimeSpan>(), new FakeS3());
 
     /// <summary>
-    /// A client of the object store behind presigned shape URLs, carrying no TerraBase credential: on Fly the public internet,
+    /// A client of the object store behind presigned shape URLs, carrying no TerraBase credential: on ts-orch the public internet,
     /// locally the region's route to its fake bucket. The caller disposes it.
     /// </summary>
     internal HttpClient ObjectClient(string region) => _local is null
@@ -146,14 +168,14 @@ public sealed class Cluster : IAsyncDisposable
             throw new ArgumentOutOfRangeException(nameof(regions), string.Join(',', regions), "the regions are gru, sjc and fra");
         }
 
-        return FlyRequested
-            ? skews is { Count: > 0 } ? throw new NotSupportedException("a clock skew needs local nodes") : StartFlyAsync(chosen)
+        return Live
+            ? skews is { Count: > 0 } ? throw new NotSupportedException("a clock skew needs local nodes") : StartOrchAsync(chosen)
             : StartLocalAsync(chosen, skews ?? new Dictionary<string, TimeSpan>());
     }
 
     /// <summary>
     /// Local nodes only: requests between <paramref name="a"/> and <paramref name="b"/> find no answer until
-    /// <see cref="Heal"/>; each side keeps accepting writes. Fly has no partition switch, so the caller skips there.
+    /// <see cref="Heal"/>; each side keeps accepting writes. ts-orch has no partition switch, so the caller skips there.
     /// </summary>
     public void Partition(string a, string b) => RequireLocal().Partition(a, b);
 
@@ -168,21 +190,38 @@ public sealed class Cluster : IAsyncDisposable
     public Task StallStorageAsync(string region, TimeSpan stall) => RequireLocal().StallStorageAsync(region, stall);
 
     /// <summary>
-    /// Local nodes only: takes <paramref name="region"/> down; the node stops and keeps its data directory. Requests to the
-    /// region fail until <see cref="StartAgainAsync"/>. The token is checked before the stop; a stop is not canceled once begun.
+    /// Takes <paramref name="region"/> down: the local node stops and keeps its data directory, or ts-orch removes the region
+    /// from the disposable service (an outage run only). Requests to the region fail until <see cref="StartAgainAsync"/>. The
+    /// token cancels the ts-orch call; a local stop is not canceled once begun.
     /// </summary>
-    public Task StopAsync(string region, CancellationToken token = default)
+    public async Task StopAsync(string region, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
-        return RequireLocal().StopAsync(region);
+        if (_local is null)
+        {
+            await Orch.StopAsync(region, OutageNode(region), token);
+            return;
+        }
+
+        await _local.StopAsync(region);
     }
 
-    /// <summary>Local nodes only: brings <paramref name="region"/> back on the same data after <see cref="StopAsync"/>.</summary>
-    public Task StartAgainAsync(string region, CancellationToken token = default)
+    /// <summary>Brings <paramref name="region"/> back on the same data (the same host directory on ts-orch) after <see cref="StopAsync"/>.</summary>
+    public async Task StartAgainAsync(string region, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
-        return RequireLocal().StartAgainAsync(region);
+        if (_local is null)
+        {
+            await Orch.StartAsync(region, OutageNode(region), token);
+            return;
+        }
+
+        await _local.StartAgainAsync(region);
     }
+
+    private HttpClient OutageNode(string region) => LiveOutage
+        ? _nodes![region]
+        : throw new InvalidOperationException($"stopping a ts-orch region needs an outage run (TERRABASE_E2E_ORCH_OUTAGE=1 and {RevisionVariable})");
 
     /// <summary>Local nodes only: cuts <paramref name="region"/> off from <paramref name="from"/> (every other region when empty).</summary>
     public void Isolate(string region, params string[] from)
@@ -252,40 +291,82 @@ public sealed class Cluster : IAsyncDisposable
         }
     }
 
-    // A Fly run (the production e2e project's suite) owns a collection of the bound e2e database; it stops no machine.
-    private static async Task<Cluster> StartFlyAsync(string[] regions)
+    // Ordinary ts-orch scenarios own a collection of the shared e2e database; backup qualification owns and deletes an isolated database.
+    private static async Task<Cluster> StartOrchAsync(string[] regions, bool backup = false)
     {
-        var url = new Uri(Required(FlyUrlVariable), UriKind.Absolute);
-        // The documents client's bearer: in CI the bound e2e project's 15-minute ts-auth project token
-        // (scripts/e2e/ci-oidc-credential.sh), the same project as /sql's TERRABASE_E2E_FLY_PROJECT_TOKEN.
-        var key = Required("TERRABASE_E2E_FLY_API_KEY");
-        var projectPath = $"/v1/projects/{Required("TERRABASE_E2E_FLY_PROJECT")}";
-        var path = $"{projectPath}/databases/{Required("TERRABASE_E2E_FLY_DATABASE")}";
-        var clients = regions.ToDictionary(region => region, region => FlyClient(url, key, region, null), StringComparer.Ordinal);
-
-        // ViaAsync's machines: each region's machine identified once and reused, so a cursor issued through
-        // ViaAsync(issuer, issuer) and its resume's expected issuer are the same exact machine.
-        var identified = new Dictionary<string, string>(StringComparer.Ordinal);
-        async Task<string> ViaMachineAsync(string region)
-        {
-            if (!identified.TryGetValue(region, out var machine))
-            {
-                identified[region] = machine = await EdgeMachineAsync(clients[region], region, TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            }
-
-            return machine;
-        }
-
+        // Every request goes straight to the region's node; each node must answer as itself, in its region (and, pinned, on
+        // exactly that commit) before the first write and after the last. The target is checked before any request.
+        var revision = Environment.GetEnvironmentVariable(RevisionVariable) is { Length: > 0 } expected ? expected : null;
+        var nodes = Orch.Nodes(Environment.GetEnvironmentVariable, regions).ToDictionary(node => node.Key, node => Orch.Node(node.Value), StringComparer.Ordinal);
         var collection = NewCollection();
+        string? owned = null;
+        string? path = null;
+        Dictionary<string, HttpClient> clients = [];
         try
         {
+            var (project, organization) = await Orch.ClaimsAsync();
+            var projectPath = $"/v1/projects/{project}";
+            var names = await IdentifyAsync(nodes, revision);
+            var regionOf = names.ToDictionary(name => name.Value, name => name.Key, StringComparer.Ordinal);
+            // Each region's node, behind the local stand-in for Fly's proxy: TerraBase still answers an issuer replay with fly-replay.
+            HttpClient Client(string edge, string? served = null)
+            {
+                return new(new RegionPin(edge, served)
+                {
+                    InnerHandler = new LocalFlyProxy(edge, target => nodes.TryGetValue(target, out var node)
+                        ? node
+                        : throw new HttpRequestException($"{target} is not a region of this run", null, HttpStatusCode.ServiceUnavailable), regionOf.GetValueOrDefault),
+                })
+                { BaseAddress = new Uri("http://orch.invalid/"), Timeout = Timeout.InfiniteTimeSpan };
+            }
+            clients = regions.ToDictionary(region => region, region => Client(region), StringComparer.Ordinal);
+            if (backup)
+            {
+                owned = $"{projectPath}/databases/e2e-backup-{EntityIds.New().ToString().ToLowerInvariant()}";
+                path = await CreateDatabaseAsync(clients, owned, regions);
+            }
+            else
+            {
+                path = await SharedDatabaseAsync(clients[Gru], projectPath);
+            }
+
             await CreateCollectionAsync(clients, path, collection);
+            return new Cluster(projectPath, path, collection, clients, null, regions.ToDictionary(
+                region => region, region => revision is null ? $"orch:{region}/{names[region]}" : $"orch-pinned:{region}/{names[region]}@{revision}", StringComparer.Ordinal), async () =>
+            {
+                try
+                {
+                    try
+                    {
+                        // Every node recorded as region/node@revision held for the whole run: none was redeployed or renamed during it.
+                        if (revision is not null && !(await IdentifyAsync(nodes, revision)).OrderBy(name => name.Key).SequenceEqual(names.OrderBy(name => name.Key)))
+                        {
+                            throw new InvalidOperationException($"the ts-orch nodes changed during the run: {string.Join(", ", names)} before");
+                        }
+                    }
+                    finally
+                    {
+                        await (owned is not null ? DeleteDatabaseAsync(region => clients[region], Gru, owned) : DeleteCollectionAsync(clients[Gru], path, collection));
+                    }
+                }
+                finally
+                {
+                    Dispose(clients, nodes);
+                }
+            }, (edge, served) => Task.FromResult(Client(edge, served)), region => Client(region), nodes, organization);
         }
         catch (Exception error)
         {
             try
             {
-                await DeleteCollectionAsync(clients[Gru], path, collection);
+                if (owned is not null)
+                {
+                    await DeleteDatabaseAsync(region => clients[region], Gru, owned);
+                }
+                else if (path is not null)
+                {
+                    await DeleteCollectionAsync(clients[Gru], path, collection);
+                }
             }
             catch (Exception cleanup)
             {
@@ -293,30 +374,47 @@ public sealed class Cluster : IAsyncDisposable
             }
             finally
             {
-                foreach (var client in clients.Values)
-                {
-                    client.Dispose();
-                }
+                Dispose(clients, nodes);
             }
 
             throw;
         }
 
-        return new Cluster(projectPath, path, collection, clients, null, regions.ToDictionary(region => region, region => $"fly-unpinned:{region}", StringComparer.Ordinal), async () =>
+        static void Dispose(params Dictionary<string, HttpClient>[] all)
         {
-            try
+            foreach (var client in all.SelectMany(clients => clients.Values))
             {
-                await DeleteCollectionAsync(clients[Gru], path, collection);
+                client.Dispose();
             }
-            finally
-            {
-                foreach (var client in clients.Values)
-                {
-                    client.Dispose();
-                }
-            }
-        }, async (edge, served) => FlyClient(url, key, edge, await ViaMachineAsync(edge), served, await ViaMachineAsync(served)),
-            region => FlyClient(url, Required("TERRABASE_E2E_FLY_PROJECT_TOKEN"), region, null));
+        }
+    }
+
+    // The e2e project's one shared database, placed in every region (home gru), created on first use; each test owns a collection in it.
+    private static async Task<string> SharedDatabaseAsync(HttpClient gru, string projectPath)
+    {
+        var path = $"{projectPath}/databases/{SharedDatabase}";
+        using var created = await Docs.AdmittedAsync(() => gru.PostAsJsonAsync(new Uri($"{projectPath}/databases", UriKind.Relative),
+            new { name = SharedDatabase, homeRegion = Gru, replicaRegions = new[] { Sjc, Fra } }));
+        if (!await TakenAsync(created))
+        {
+            await Docs.EnsureSuccessAsync(created);
+        }
+
+        using var read = await Docs.AdmittedAsync(() => gru.GetAsync(new Uri(path, UriKind.Relative)));
+        await Docs.EnsureSuccessAsync(read);
+        var record = await read.Content.ReadFromJsonAsync<JsonElement>();
+        var replicas = record.GetProperty("replicaRegions").EnumerateArray().Select(region => region.GetString()).Order(StringComparer.Ordinal);
+        return record.GetProperty("homeRegion").GetString() == Gru && replicas.SequenceEqual([Fra, Sjc])
+            ? path
+            : throw new InvalidOperationException($"{path} must be homed in gru with replicas fra and sjc; it is {record}");
+    }
+
+    private static async Task<string> CreateDatabaseAsync(Dictionary<string, HttpClient> clients, string path, string[] regions)
+    {
+        var database = new { name = path.Split('/')[^1], homeRegion = Gru, replicaRegions = regions.Where(region => region != Gru).ToArray() };
+        using var created = await Docs.AdmittedAsync(() => clients[Gru].PostAsJsonAsync(new Uri(path[..path.LastIndexOf('/')], UriKind.Relative), database));
+        await Docs.EnsureSuccessAsync(created);
+        return path;
     }
 
     // Creates the collection in gru and waits until every other region serves it, so every test starts from a replicated database.
@@ -426,39 +524,28 @@ public sealed class Cluster : IAsyncDisposable
 
     private static string NewCollection() => $"e2e-{Guid.NewGuid():N}";
 
-    // An unpinned run's edge machine for ViaAsync: the one that answers /healthz through the region's pinned client (RegionPin
-    // refuses another region) naming the region and itself in both the body and X-TerraBase-Machine. Any other answer stops the
-    // test; nothing is retried.
-    internal static async Task<string> EdgeMachineAsync(HttpClient client, string region, CancellationToken cancellationToken = default)
+    // Each region's node answers /healthz as itself (its region, a node name and, pinned, the commit under test), or the run
+    // stops before any write: an answer from another region or build proves nothing about this one. Answers each node's name.
+    internal static async Task<Dictionary<string, string>> IdentifyAsync(Dictionary<string, HttpClient> nodes, string? revision)
     {
-        using var health = await client.GetAsync(new Uri("/healthz", UriKind.Relative), cancellationToken);
-        await Docs.EnsureSuccessAsync(health);
-        using var body = JsonDocument.Parse(await health.Content.ReadAsStringAsync(cancellationToken));
-        var (served, machine) = (Text(body, "region"), Text(body, "machine"));
-        var header = health.Headers.TryGetValues("X-TerraBase-Machine", out var values) ? string.Join(',', values) : null;
-        return served == region && machine is { Length: > 0 } && machine == header
-            ? machine
-            : throw new InvalidOperationException(
-                $"{region}'s /healthz must name {region} and the answering machine; it answered region {served ?? "(none)"}, machine {machine ?? "(none)"}, X-TerraBase-Machine {header ?? "(none)"}");
+        var names = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (region, node) in nodes)
+        {
+            using var health = await node.GetAsync(new Uri("/healthz", UriKind.Relative));
+            await Docs.EnsureSuccessAsync(health);
+            using var body = JsonDocument.Parse(await health.Content.ReadAsStringAsync());
+            var (served, name, built) = (Text(body, "region"), Text(body, "machine"), Text(body, "revision"));
+            names[region] = served == region && name is { Length: > 0 } && (revision is null || built == revision)
+                ? name
+                : throw new InvalidOperationException(
+                    $"{region}'s node must answer as {region}{(revision is null ? "" : $" running {revision}")}; /healthz answered region {served ?? "(none)"}, node {name ?? "(none)"}, revision {built ?? "(none)"}");
+        }
+
+        return names;
     }
 
     private static string? Text(JsonDocument body, string name) =>
         body.RootElement.TryGetProperty(name, out var value) ? value.GetString() : null;
-
-    private static HttpClient FlyClient(Uri url, string key, string region, string? machine, string? served = null, string? servedMachine = null)
-    {
-        DelegatingHandler pin = machine is null
-            ? new RegionPin(region)
-            : new MachinePin(region, machine, served is null ? null : (served, servedMachine));
-        // Never follow a redirect: the shape bootstrap's 307 is an answer to check, and a followed one drops the bearer.
-        pin.InnerHandler = new SocketsHttpHandler { AllowAutoRedirect = false };
-        var client = new HttpClient(pin) { BaseAddress = url, Timeout = Timeout.InfiniteTimeSpan };
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key);
-        return client;
-    }
-
-    private static string Required(string name) =>
-        Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : throw new InvalidOperationException($"{name} must be set to run the suite against Fly");
 
     /// <summary>
     /// The local nodes: one per region, sharing one machine directory. Each node keeps its data directory

@@ -7,11 +7,12 @@ namespace TerraBase.E2E;
 
 /// <summary>
 /// Replication across gru, sjc and fra under faults: partitions, a region down and back, a restart in the middle of
-/// replication, a replication backlog and clock skew. Partitions and skew need the local nodes, so on Fly those tests are
-/// skipped with the reason. Stopping a machine on Fly touches the shared app, so there those tests skip; they ran only from the
+/// replication, a replication backlog and clock skew. Partitions and skew need the local nodes, so on ts-orch those tests are
+/// skipped with the reason. Stopping a region on ts-orch touches the shared service, so there those tests run only from the
 /// separate disposable runs described in docs/terrabase/replication/31-live-outage-proof.md, alone on the app. What each scenario
 /// waits on is in <see cref="Gaps"/>.
 /// </summary>
+[Category("orch-outage")]
 public sealed class ThreeRegionFaultE2ETests
 {
     private static readonly string[] All = [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
@@ -20,7 +21,7 @@ public sealed class ThreeRegionFaultE2ETests
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task Regions_with_another_placed_peer_accept_writes_and_converge_after_a_direct_partition_heals()
     {
-        Skip.When(Cluster.FlyRequested, "Fly has no way to cut 6PN between two machines; the partition runs on the local nodes only");
+        Skip.When(Cluster.Live, "ts-orch has no partition switch; the partition runs on the local nodes only");
         await Gaps.RunAsync("partition-heal", async () =>
         {
             const int each = 200;
@@ -189,7 +190,7 @@ public sealed class ThreeRegionFaultE2ETests
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task Replication_backlog_of_3000_writes_drains_after_the_region_returns()
     {
-        Skip.When(Cluster.FlyRequested, "the backlog builds behind a partition, which runs on the local nodes only");
+        Skip.When(Cluster.Live, "the backlog builds behind a partition, which runs on the local nodes only");
         await Gaps.RunAsync("backlog", async () =>
         {
             const int count = 3000;
@@ -216,7 +217,7 @@ public sealed class ThreeRegionFaultE2ETests
     [Arguments(Cluster.Fra, -2000)]
     public async Task Causally_later_write_wins_everywhere_despite_clock_skew(string skewed, int skewMilliseconds)
     {
-        Skip.When(Cluster.FlyRequested, "clock skew is set on the local nodes only");
+        Skip.When(Cluster.Live, "clock skew is set on the local nodes only");
         await Gaps.RunAsync("skew-causal", async () =>
         {
             await using var cluster = await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [skewed] = TimeSpan.FromMilliseconds(skewMilliseconds) });
@@ -239,7 +240,7 @@ public sealed class ThreeRegionFaultE2ETests
     [Scenario(Nodes.InProcess, Faults.ClockSkew | Faults.SimulatedPartition)]
     public async Task Concurrent_writes_with_a_clock_2_s_ahead_converge_and_the_writer_ahead_wins()
     {
-        Skip.When(Cluster.FlyRequested, "clock skew and partitions are set on the local nodes only");
+        Skip.When(Cluster.Live, "clock skew and partitions are set on the local nodes only");
         await Gaps.RunAsync("skew-concurrent", async () =>
         {
             await using var cluster = await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [Cluster.Sjc] = TimeSpan.FromSeconds(2) });
@@ -275,5 +276,5 @@ public sealed class ThreeRegionFaultE2ETests
     }
 
     private static void SkipLiveUnlessOutageRun() =>
-        Skip.When(Cluster.FlyRequested, "stops a region: local nodes only; the deploy run never stops a Fly machine");
+        Skip.When(Cluster.Live && !Cluster.LiveOutage, "stops a ts-orch region: run it alone in an outage run (TERRABASE_E2E_ORCH_OUTAGE=1)");
 }

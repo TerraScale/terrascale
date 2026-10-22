@@ -4,7 +4,7 @@ namespace TerraBase.E2E;
 
 /// <summary>
 /// Cancellation during a real local outage must recover the region before returning the original error. It stops a local
-/// node, so it runs in the required local stage (the local-only category), never on Fly.
+/// node, so it runs in the required local stage (the local-only category), never on ts-orch.
 /// </summary>
 [Category("local-only")]
 public sealed class RejoinRecoveryTests
@@ -13,7 +13,7 @@ public sealed class RejoinRecoveryTests
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task Canceling_a_rejoin_while_the_region_is_down_restarts_it_before_returning()
     {
-        Skip.When(Cluster.FlyRequested, "recovery verification owns local nodes; it never stops shared Fly machines");
+        Skip.When(Cluster.Live, "recovery verification owns local nodes; it never stops shared ts-orch regions");
         await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
         using var cancellation = new CancellationTokenSource();
         var rejoin = ReplicationMatrixTests.RejoinAsync(cluster, Cluster.Sjc, cancellation.Token);

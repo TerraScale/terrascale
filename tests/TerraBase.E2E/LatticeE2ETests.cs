@@ -50,16 +50,17 @@ public sealed class LatticeE2ETests
     }
 
     // gru, the cursor's issuer, stops: sjc's replay to it fails and sjc must serve the resume itself, from its own copy of
-    // gru's writes (the cross-region proof). Local nodes only: the deploy run never stops a machine.
+    // gru's writes (the cross-region proof). Local nodes only: the deploy run never stops a region; the ts-orch run with a
+    // stopped issuer is ChangesFeedE2ETests' orch-outage scenario.
     [Test]
     [Category("local-only")]
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task E10_feed_cursor_from_gru_resumes_in_sjc_with_no_missing_event_in_per_origin_order()
     {
-        // Before the cluster starts: an unfiltered Fly run must fail here, never stop a machine or skip as if it passed.
-        if (Cluster.FlyRequested)
+        // Before the cluster starts: an unfiltered ts-orch run must fail here, never stop a region or skip as if it passed.
+        if (Cluster.Live)
         {
-            throw new InvalidOperationException("stops the cursor's issuer: local nodes only");
+            throw new InvalidOperationException("stops the cursor's issuer: local nodes only; on ts-orch this is ChangesFeedE2ETests' orch-outage scenario");
         }
 
         await Gaps.RunAsync("E10", async () =>
@@ -80,7 +81,7 @@ public sealed class LatticeE2ETests
     }
 
     // gru, the cursor's issuer, stays up: the resume presented in sjc is replayed to gru (issuer routing), and only gru's
-    // answer counts. On Fly too, where no machine stops in the deploy run.
+    // answer counts. On ts-orch too, where no region stops in the deploy run.
     [Test]
     [Scenario(Nodes.InProcess)]
     public async Task E10_feed_cursor_from_gru_presented_in_sjc_is_replayed_to_gru_with_no_missing_event_in_per_origin_order()
@@ -154,7 +155,7 @@ public sealed class LatticeE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task E14_delete_then_gc_then_recreate_leaves_no_ghost_fields_expected_to_fail()
     {
-        Skip.When(Cluster.FlyRequested, "reads local nodes' database files to see that GC collected the tombstones");
+        Skip.When(Cluster.Live, "reads local nodes' database files to see that GC collected the tombstones");
         await Gaps.RunAsync("E14", async () =>
         {
             const int count = 20;

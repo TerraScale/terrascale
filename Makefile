@@ -44,7 +44,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test handoff-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
-	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-replication-matrix terrabase-e2e-local terrabase-e2e terrabase-check terrabase-run terrabase-publish \
+	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-replication-matrix terrabase-e2e-local terrabase-e2e terrabase-e2e-orch-outage terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local benchmark-repl-fly
 
 # Global: the whole solution.
@@ -182,22 +182,21 @@ terrabase-replication-matrix: terrabase-build
 
 # The local-only category: scenarios that only local nodes may run (every node stopped at once, whole databases created
 # and restored, a cursor's issuer stopped under the local stand-in for Fly's proxy, a canceled outage's recovery) and the
-# proxy/pin and live outage proof harness checks.
+# proxy/pin harness checks.
 # CI's required TerraBase test stage runs it; the deploy E2E job excludes the category with a visible filter. Exactly
 # $(E2E_LOCAL_TESTS) tests, each an actual pass or a harness check: a skip, a failure or a missing test fails the target.
-E2E_LOCAL_TESTS := 56
+E2E_LOCAL_TESTS := 43
 terrabase-e2e-local: terrabase-build
 	rm -f "$(E2E_RESULTS)"
-	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL -u TERRABASE_E2E_FLY_URL TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/*/*[Category=local-only]' --minimum-expected-tests $(E2E_LOCAL_TESTS) --output detailed --no-ansi $(TEST_ARGS) || status=$$?; \
+	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL -u TERRABASE_E2E_ORCH_NODES TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/*/*[Category=local-only]' --minimum-expected-tests $(E2E_LOCAL_TESTS) --output detailed --no-ansi $(TEST_ARGS) || status=$$?; \
 	jq -r 'select(.category == "fail" or .category == "skip") | "E2E \(.category): \(.test)\n\(.detail)"' "$(E2E_RESULTS)" || status=1; exit $$status
 	jq -se 'length == $(E2E_LOCAL_TESTS) and all(.[]; .category == "pass" or .category == "harness")' "$(E2E_RESULTS)"
 
 # End-to-end replication (tests/TerraBase.E2E): leaderless writes between gru, sjc and fra, every pair and three-way, with
 # partitions, restarts, a region down, backlog and clock skew. Local by default (in-process nodes); tests/TerraBase.E2E/Gaps.cs
-# records which scenarios wait on which replication slice. With TERRABASE_E2E_FLY_URL, TERRABASE_E2E_FLY_API_KEY,
-# TERRABASE_E2E_FLY_PROJECT_TOKEN, TERRABASE_E2E_FLY_PROJECT and TERRABASE_E2E_FLY_DATABASE set, the same scenarios run against
-# Fly; CI exports them from the GitHub OIDC exchange (scripts/e2e/ci-oidc-credential.sh): no stored e2e credential.
-# Not part of check: CI's e2e job runs it after the deploys.
+# records which scenarios wait on which replication slice. With TERRABASE_E2E_ORCH_NODES (each region's client listener over
+# NetBird) and TERRABASE_E2E_ORCH_KEY (the e2e project's ts-auth API key) set, the same scenarios run against the disposable
+# ts-orch service terrabase-e2e from a host on the mesh (docs/terrabase/e2e-ts-orch.md). Not part of check.
 # Each test's outcome goes to $(E2E_RESULTS); the summary after the run keeps actual passes, expected failures (with their
 # slice), unwired hooks, skips (with their reason) and failures apart, and names the commit and the working tree's patch.
 E2E_RESULTS ?= $(CURDIR)/tests/TerraBase.E2E/bin/e2e-results.jsonl
@@ -205,6 +204,18 @@ terrabase-e2e: terrabase-build
 	rm -f "$(E2E_RESULTS)"
 	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build $(TEST_ARGS) || status=$$?; \
 	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-local}" || status=1; exit $$status
+
+# Stops each region of the ts-orch service terrabase-e2e in one isolated test: run alone, never with terrabase-e2e or other
+# orch-outage tests. It fails unless the run records exactly one test, the all-regions outage proof (OrchOutageE2ETests), as
+# an actual pass on ts-orch nodes: a skip, a second test or a missing result is never live evidence.
+terrabase-e2e-orch-outage: terrabase-build
+	rm -f "$(E2E_RESULTS)"
+	status=0; env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_ORCH_OUTAGE=1 TERRABASE_E2E_RESULTS="$(E2E_RESULTS)" dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --treenode-filter '/*/*/*/*[Category=replication-matrix-orch-outage]' --minimum-expected-tests 1 $(TEST_ARGS) || status=$$?; \
+	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-orch-outage}" || status=1; \
+	jq -se --arg test Each_region_stopped_then_started_catches_up_on_writes_tombstones_and_conflicts_from_both_survivors \
+		'length == 1 and (.[0] | .category == "pass" and .nodes == "ts-orch nodes" and .faults == "NodeStop" and (.test | sub("\\(.*$$"; "")) == $$test)' \
+		"$(E2E_RESULTS)" > /dev/null \
+		|| { echo "terrabase-e2e-orch-outage: the run is not exactly one actual pass of the all-regions outage proof on ts-orch nodes" >&2; status=1; }; exit $$status
 
 terrabase-check: terrabase-build terrabase-analyzer-check
 	scripts/terrabase/e2e-summary.sh check tests/TerraBase.E2E/COVERAGE.md tests/TerraBase.E2E/RUNS.md

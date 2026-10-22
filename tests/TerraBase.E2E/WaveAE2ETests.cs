@@ -6,7 +6,7 @@ using TerraBase.Primitives;
 namespace TerraBase.E2E;
 
 /// <summary>
-/// V5: Wave A's write contract between real regions, on local nodes and on Fly. A 2xx write is remote durable (A3):
+/// V5: Wave A's write contract between real regions, on local nodes and on ts-orch. A 2xx write is remote durable (A3):
 /// another region serves it at once, and a write with no reachable peer answers a defined 503. A replicated collection drop
 /// never deletes a write the receiver made after it (A7). Partitions need local nodes; RemoteAckE2ETests covers a SIGKILL
 /// of the origin right after the 201 with separate processes.
@@ -49,7 +49,7 @@ public sealed class WaveAE2ETests
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task A_write_with_no_reachable_peer_answers_a_defined_503()
     {
-        SkipOnFly();
+        SkipLive();
         await using var cluster = await Cluster.StartAsync(All);
         cluster.Isolate(Cluster.Gru);
         try
@@ -78,7 +78,7 @@ public sealed class WaveAE2ETests
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task A_write_made_after_a_replicated_drop_survives_it_in_every_region()
     {
-        SkipOnFly();
+        SkipLive();
         await using var cluster = await Cluster.StartAsync(All);
         var covered = EntityIds.New().ToString();
         await Converge.SeedAllAsync(cluster, cluster.Document(covered), new JsonObject { ["before"] = "drop" });
@@ -128,6 +128,6 @@ public sealed class WaveAE2ETests
         }
     }
 
-    private static void SkipOnFly() =>
-        Skip.When(Cluster.FlyRequested, "partitions regions: Fly has no partition switch, so local nodes only");
+    private static void SkipLive() =>
+        Skip.When(Cluster.Live, "partitions regions: ts-orch has no partition switch, so local nodes only");
 }
