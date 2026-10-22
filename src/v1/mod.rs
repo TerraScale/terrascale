@@ -36,6 +36,7 @@ mod errors;
 mod ids;
 mod management;
 mod query;
+mod reporting;
 mod shape_crypto;
 mod shapes;
 mod sql;
