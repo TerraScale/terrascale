@@ -18,7 +18,7 @@
 
 </script>
 
-<header class="ts-header" class:scrolled>
+<header class="ts-header">
   <div class="ts-header__inner">
     <RouteLink href="/" class="ts-header__brand" aria-label={$dict.chrome.brandHome}>
       <img src="/icon-blue.svg" alt="" width="28" height="28" decoding="async" fetchpriority="high" />
@@ -64,7 +64,7 @@
       </ExternalLink>
 
       <ExternalLink href={getStartedLink.href} class="ts-cta">
-        {launchPhase === 'public-alpha' ? $dict.chrome.getStarted : $dict.chrome.prelaunch}
+        {$dict.chrome.getStarted}
         <Icon name={getStartedLink.icon} className="ts-cta__icon" />
       </ExternalLink>
 
@@ -74,7 +74,7 @@
     </div>
 
     <ExternalLink href={getStartedLink.href} class="ts-cta ts-header__mobile-cta">
-      {launchPhase === 'public-alpha' ? $dict.chrome.getStarted : $dict.chrome.prelaunch}
+      {$dict.chrome.getStarted}
       <Icon name={getStartedLink.icon} className="ts-cta__icon" />
     </ExternalLink>
 
@@ -121,7 +121,7 @@
           {$dict.chrome.login}
         </ExternalLink>
         <ExternalLink href={getStartedLink.href} class="ts-cta ts-cta--mobile">
-          {launchPhase === 'public-alpha' ? $dict.chrome.getStarted : $dict.chrome.prelaunch}
+          {$dict.chrome.getStarted}
           <Icon name={getStartedLink.icon} className="ts-cta__icon" />
         </ExternalLink>
         <div class="ts-header__mobile-lang">

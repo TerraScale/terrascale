@@ -20,7 +20,7 @@
 
       <div class="cta__actions">
         <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta__primary">
-          {launchPhase === 'public-alpha' ? $dict.cta.ctaPrimary : $dict.cta.ctaPrelaunch}
+          {$dict.cta.ctaPrimary}
           <Icon name="arrowRight" className="cta__icon" />
         </ExternalLink>
         <RouteLink href="/contact" class="ts-btn ts-btn-secondary ts-btn-lg">
