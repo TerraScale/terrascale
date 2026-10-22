@@ -61,7 +61,7 @@ public static class ImportRoute
         return await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) switch
         {
             TenantDatabaseRecord record when record.Placement.Home != options.Region =>
-                new ImportElsewhere(DatabaseRegions.WrongRegion(record.Placement.Home, record.Placement.Regions)),
+                new ImportElsewhere(DatabaseRegions.HomeRegion(record.Placement.Home, record.Placement.Regions)),
             // Usage metering attributes the request (and an upload's bytes) to the destination, as for document routes.
             TenantDatabaseRecord record => Attribute(context, new ImportDestination(database, name.Value, record.Placement.Replicas.Count > 0)),
             NotFound => UnknownDatabase,

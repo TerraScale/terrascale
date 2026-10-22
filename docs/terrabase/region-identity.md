@@ -20,9 +20,9 @@ Clients may send `X-TerraScale-Region-Pin: <region-id>` with the raw region ID.
 The pin is optional; when present, it must contain exactly one nonempty value
 matching the configured node region. An empty, duplicate, or mismatched pin
 returns `421 Misdirected Request` with the correct `X-TerraBase-Region` header.
-TerraBase does not proxy or forward the rejected request; behind Fly Proxy a
+TerraBase does not proxy or forward the rejected request; behind the edge a
 mismatched pin naming a single well-formed region also answers
-`fly-replay: region=<pin>`, so Fly replays it there ([fly.md](fly.md#fly-replay)).
+`ts-replay: region=<pin>`, so the edge replays it there ([fly.md](fly.md#ts-replay)).
 
 ### Regional hosts
 
@@ -33,8 +33,8 @@ the nearest region, as before. The host is matched case-insensitively and its po
 | The request | Answer |
 | --- | --- |
 | lands in the host's region | served (a replayed one too) |
-| lands elsewhere, and the region has a started machine (Fly's machine list) | `421`, `fly-replay: region=<region>;fallback=prefer_self`: Fly replays it there |
-| Fly replayed it and it still landed elsewhere (`Fly-Replay-Src`), or Fly's replay found no machine there and came back (`fly-replay-failed`), or the region has no started machine | `503 region_unavailable`, naming the region and listing the regional hosts; no replay, so no loop |
+| lands elsewhere, and the region has a started machine (Fly's machine list) | `421`, `ts-replay: region=<region>;fallback=self`: the edge replays it there |
+| the edge replayed it and it still landed elsewhere (`ts-replay-src`), or the edge's replay reached no machine there and came back (`ts-replay-failed`), or the region has no started machine | `503 region_unavailable`, naming the region and listing the regional hosts; no replay, so no loop |
 | the label is not a region (`gru_1.api…`, `a.b.api…`) | `421 misdirected_request`, listing the regional hosts; the label is not echoed |
 | carries `X-TerraScale-Region-Pin` naming another region than the host | `421`, no replay: the two pins contradict each other |
 

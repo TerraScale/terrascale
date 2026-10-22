@@ -52,7 +52,7 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
         if (home != options.Region)
         {
             return TerraBaseOptions.IsRegion(home)
-                ? DatabaseRegions.WrongRegion(home, [home, .. replicas])
+                ? DatabaseRegions.HomeRegion(home, [home, .. replicas])
                 : ErrorResponse.From(new Validation("homeRegion must name a region"));
         }
 

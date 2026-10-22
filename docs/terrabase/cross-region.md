@@ -120,7 +120,7 @@ How the regions learn it:
   database. Each machine records it in its own catalog from the heads, with the same id and name.
   - A region in the placement also creates the file and pulls the database's origins.
   - Any other region keeps only the record, so its API can answer `421 wrong_region` with the regions that serve the
-    database, and `fly-replay: region=<home>` behind Fly Proxy ([fly.md](fly.md#fly-replay)).
+    database, and `ts-replay: region=<home>,<replicas>` behind the edge ([fly.md](fly.md#ts-replay)).
   - Data goes only where the placement says: a member serves a database's groups only to regions its placement names
     (`PullRequest.region`).
 - **Removal.** A region removed from the placement stops serving the database at once. It keeps its copy, unserved and

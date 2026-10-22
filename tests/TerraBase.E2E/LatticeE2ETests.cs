@@ -49,9 +49,10 @@ public sealed class LatticeE2ETests
         });
     }
 
-    // gru, the cursor's issuer, stops: sjc's replay to it fails and sjc must serve the resume itself, from its own copy of
-    // gru's writes (the cross-region proof). Local nodes only: the deploy run never stops a region; the ts-orch run with a
-    // stopped issuer is ChangesFeedE2ETests' orch-outage scenario.
+    // gru, the cursor's issuer, stops: sjc must serve the resume itself, from its own copy of gru's writes (the cross-region
+    // proof), whether its membership no longer lists gru (no ts-replay) or the edge's replay to gru failed and fell back.
+    // Local nodes only: the deploy run never stops a region; the ts-orch run with a stopped issuer is ChangesFeedE2ETests'
+    // orch-outage scenario.
     [Test]
     [Category("local-only")]
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
@@ -75,8 +76,8 @@ public sealed class LatticeE2ETests
             await cluster.StopAsync(Cluster.Gru);
             using var sjc = await cluster.ViaAsync(Cluster.Sjc, Cluster.Sjc);
             await ResumedInOrderAsync(sjc, cluster, cursor, position);
-            Expected.Check(cluster.Replays.Any(replay => replay is { Edge: Cluster.Sjc, Target: Cluster.Gru, FellBack: true } && replay.PathAndQuery.Contains("cursor=", StringComparison.Ordinal)),
-                $"sjc replayed the resume to gru, its issuer, and served it after the replay failed; replays: {string.Join("; ", cluster.Replays)}");
+            Expected.Check(!cluster.Replays.Any(replay => replay is { Edge: Cluster.Sjc, Target: Cluster.Gru, FellBack: false } && replay.PathAndQuery.Contains("cursor=", StringComparison.Ordinal)),
+                $"sjc served the resume itself, never answered by the stopped gru; replays: {string.Join("; ", cluster.Replays)}");
         });
     }
 

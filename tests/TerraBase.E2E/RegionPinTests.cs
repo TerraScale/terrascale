@@ -64,18 +64,18 @@ public sealed class RegionPinTests
         }
     }
 
-    // The local proxy follows fly-replay: instance=<machine> to that machine's node with Fly-Replay-Src, and, when that node
-    // is down and the replay says fallback=force_self or prefer_self, back to the first node with fly-replay-failed (Fly's
-    // fallback). Either way it reports the replay.
+    // The local edge follows ts-replay: region=<r> to that region's node with ts-replay-src, and, when that node is down
+    // and the replay says fallback=self, back to the first node with ts-replay-failed; without it the 421 stands. It
+    // reports each replay it followed.
     [Test]
     [Scenario(Nodes.Harness)]
-    [Arguments(true, "force_self", "gru", "Fly-Replay-Src")]
-    [Arguments(false, "force_self", "sjc", "fly-replay-failed")]
-    [Arguments(false, "prefer_self", "sjc", "fly-replay-failed")]
-    public async Task The_local_proxy_replays_to_an_instance_or_falls_back_to_itself(bool issuerUp, string fallback, string answeredBy, string marker)
+    [Arguments(true, ";fallback=self", "gru", "ts-replay-src")]
+    [Arguments(false, ";fallback=self", "sjc", "ts-replay-failed")]
+    [Arguments(false, "", "sjc", "")]
+    public async Task The_local_edge_replays_to_a_region_or_falls_back_to_itself(bool issuerUp, string fallback, string answeredBy, string marker)
     {
         var seen = new List<(string Node, bool Marked)>();
-        var replays = new List<LocalFlyProxy.Replay>();
+        var replays = new List<LocalEdge.Replay>();
         using var gru = NodeClient(Cluster.Gru, seen, marker, fallback);
         using var sjc = NodeClient(Cluster.Sjc, seen, marker, fallback);
         HttpClient Node(string region)
@@ -83,28 +83,29 @@ public sealed class RegionPinTests
             return region == Cluster.Sjc ? sjc
                 : issuerUp ? gru : throw new HttpRequestException("gru is down", null, HttpStatusCode.ServiceUnavailable);
         }
-        using var client = new HttpClient(new LocalFlyProxy(Cluster.Sjc, Node, machine => machine == "m-gru" ? Cluster.Gru : null, replays.Add))
+        using var client = new HttpClient(new LocalEdge(Cluster.Sjc, Node, replays.Add))
         {
-            BaseAddress = new Uri("http://fly.test"),
+            BaseAddress = new Uri("http://edge.test"),
         };
 
         using var response = await client.GetAsync(new Uri("/changes", UriKind.Relative));
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(response.StatusCode).IsEqualTo(marker.Length > 0 ? HttpStatusCode.OK : HttpStatusCode.MisdirectedRequest);
         await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo(answeredBy);
-        await Assert.That(seen[^1]).IsEqualTo((answeredBy, true));
-        await Assert.That(replays).IsEquivalentTo([new LocalFlyProxy.Replay(Cluster.Sjc, Cluster.Gru, "/changes", FellBack: !issuerUp)]);
+        await Assert.That(seen[^1]).IsEqualTo((answeredBy, marker.Length > 0));
+        LocalEdge.Replay[] expected = marker.Length > 0 ? [new(Cluster.Sjc, Cluster.Gru, "/changes", FellBack: !issuerUp)] : [];
+        await Assert.That(replays).IsEquivalentTo(expected);
     }
 
     // A node standing in for sjc (which answers a resume of gru's cursor with an issuer replay) or gru, recording each request.
     private static HttpClient NodeClient(string region, List<(string Node, bool Marked)> seen, string marker, string fallback) => new(new Stand(request =>
     {
-        seen.Add((region, request.Headers.Contains(marker)));
+        seen.Add((region, marker.Length > 0 && request.Headers.Contains(marker)));
         var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(region) };
-        if (region == Cluster.Sjc && !request.Headers.Contains("Fly-Replay-Src") && !request.Headers.Contains("fly-replay-failed"))
+        if (region == Cluster.Sjc && !request.Headers.Contains("ts-replay-src") && !request.Headers.Contains("ts-replay-failed"))
         {
             response.StatusCode = HttpStatusCode.MisdirectedRequest;
-            response.Headers.Add("fly-replay", $"instance=m-gru;timeout=2s;fallback={fallback}");
+            response.Headers.Add("ts-replay", $"region={Cluster.Gru};instance=m-gru{fallback}");
         }
 
         return response;

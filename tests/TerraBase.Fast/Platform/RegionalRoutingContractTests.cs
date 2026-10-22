@@ -8,18 +8,18 @@ using TerraBase.Testing;
 namespace TerraBase.Fast.Platform;
 
 /// <summary>
-/// The regional routing contract behind <c>api.terrascale.tech</c> (Fly anycast; docs/terrabase/fly.md#fly-replay,
-/// region-identity.md, cross-region.md): which region answers, when TerraBase asks Fly Proxy to replay a request, and that
-/// a replayed request never loops. Fly Proxy itself is not in the test: the headers it reads and sets are sent by hand.
+/// The regional routing contract behind <c>api.terrascale.tech</c> (docs/terrabase/fly.md#ts-replay,
+/// region-identity.md, cross-region.md): which region answers, when TerraBase asks the edge to replay a request, and that
+/// a replayed request never loops. The edge itself is not in the test: the headers it reads and sets are sent by hand.
 /// </summary>
 public sealed class RegionalRoutingContractTests
 {
     private const string RegionHeader = "X-TerraBase-Region";
     private const string HostPinHeader = "X-TerraScale-Region-Pin";
-    private const string Replay = "fly-replay";
-    // Fly Proxy adds it to a replayed request; its exact value does not matter to TerraBase.
-    private const string ReplaySource = "Fly-Replay-Src";
-    private const string ReplayedFromSjc = "instance=d894655b3ed118;region=sjc;t=1760227200000000";
+    private const string Replay = "ts-replay";
+    // The edge adds it to a replayed request; TerraBase only checks that it is there.
+    private const string ReplaySource = "ts-replay-src";
+    private const string ReplayedFromSjc = "region=sjc";
     private static readonly string[] InSjc = ["sjc"];
 
     [Test]
@@ -60,7 +60,7 @@ public sealed class RegionalRoutingContractTests
         await Assert.That(first.Headers.GetValues(Replay)).IsEquivalentTo(["region=sjc"]);
         await Assert.That(first.Headers.GetValues(RegionHeader)).IsEquivalentTo(["gru"]);
 
-        // Fly replayed it here although the pin names sjc (sjc down or refusing): 421 without fly-replay, so no loop.
+        // The edge replayed it here although the pin names sjc (sjc down or refusing): 421 without ts-replay, so no loop.
         using var replayed = await SendPinnedAsync(api.Client, "sjc", replayed: true);
         await Assert.That(replayed.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
         await Assert.That(replayed.Headers.Contains(Replay)).IsFalse();
@@ -149,7 +149,7 @@ public sealed class RegionalRoutingContractTests
                     await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
                 }
 
-                // A database outside sjc's placement: 421 wrong_region naming its home, and fly-replay there.
+                // A database outside sjc's placement: 421 wrong_region naming its home, and ts-replay to every region serving it.
                 using var put = new HttpRequestMessage(HttpMethod.Put, ManagementApi.Uri(ManagementApi.DocumentPath(soloRef, "items", "b")))
                 {
                     Content = JsonContent.Create(new { from = "sjc" }),
@@ -222,7 +222,7 @@ public sealed class RegionalRoutingContractTests
     }
 
     // Regional hosts: <region>.api.terrascale.tech pins a region and fails closed (region-identity.md). Several machines
-    // run here, behind a fake Fly Proxy that follows fly-replay as Fly documents it (docs.fly.io/networking/dynamic-request-routing).
+    // run here, behind a fake edge that follows ts-replay as the ts-orch edge does.
     [Test]
     public async Task A_regional_host_is_answered_in_its_own_region_whichever_region_it_lands_in()
     {
@@ -231,23 +231,23 @@ public sealed class RegionalRoutingContractTests
         {
             foreach (var target in cell.Regions)
             {
-                using var response = await cell.ThroughFlyAsync(landing, $"{target}.api.terrascale.tech");
+                using var response = await cell.ThroughEdgeAsync(landing, $"{target}.api.terrascale.tech");
                 await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK).Because($"{target}'s host landing in {landing}");
                 await Assert.That(response.Headers.GetValues(RegionHeader)).IsEquivalentTo([target]);
             }
 
             // Case-insensitive, port ignored; the plain API host stays where it landed (the nearest region).
-            using var shouted = await cell.ThroughFlyAsync(landing, "FRA.Api.TerraScale.Tech:443");
+            using var shouted = await cell.ThroughEdgeAsync(landing, "FRA.Api.TerraScale.Tech:443");
             await Assert.That(shouted.Headers.GetValues(RegionHeader)).IsEquivalentTo(["fra"]);
-            using var nearest = await cell.ThroughFlyAsync(landing, "api.terrascale.tech");
+            using var nearest = await cell.ThroughEdgeAsync(landing, "api.terrascale.tech");
             await Assert.That(nearest.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(nearest.Headers.GetValues(RegionHeader)).IsEquivalentTo([landing]);
         }
     }
 
     // fra has no started machine: its host is refused with 503 region_unavailable, never answered by gru or sjc, whether
-    // the machine list already lacks fra or still lists a machine that is gone (Fly's replay then finds no candidate and,
-    // with fallback=prefer_self, brings the request back with fly-replay-failed).
+    // the machine list already lacks fra or still lists a machine that is gone (the edge's replay then reaches no machine and,
+    // with fallback=self, brings the request back with ts-replay-failed).
     [Test]
     public async Task A_regional_host_of_a_region_without_a_machine_is_refused_and_never_answered_elsewhere()
     {
@@ -262,22 +262,22 @@ public sealed class RegionalRoutingContractTests
         using (var replayed = await cell.SendAsync("gru", "fra.api.terrascale.tech"))
         {
             await Assert.That(replayed.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
-            await Assert.That(replayed.Headers.GetValues("fly-replay")).IsEquivalentTo(["region=fra;fallback=prefer_self"]);
+            await Assert.That(replayed.Headers.GetValues("ts-replay")).IsEquivalentTo(["region=fra;fallback=self"]);
         }
 
         foreach (var landing in cell.Regions)
         {
-            using var response = await cell.ThroughFlyAsync(landing, "fra.api.terrascale.tech");
+            using var response = await cell.ThroughEdgeAsync(landing, "fra.api.terrascale.tech");
             await AssertRefusedAsync(response, HttpStatusCode.ServiceUnavailable, "region_unavailable", landing);
         }
     }
 
-    // A request Fly already replayed that still landed outside its host's region is refused, not answered: no loop, no fallback.
+    // A request the edge already replayed that still landed outside its host's region is refused, not answered: no loop, no fallback.
     [Test]
     public async Task A_replayed_request_that_landed_in_another_region_is_refused_without_a_replay()
     {
         await using var cell = await Cell.StartAsync(["gru", "sjc"]);
-        using var response = await cell.SendAsync("gru", "sjc.api.terrascale.tech", extra: ("Fly-Replay-Src", "instance=0123;region=sjc;t=1"));
+        using var response = await cell.SendAsync("gru", "sjc.api.terrascale.tech", extra: ("ts-replay-src", "region=sjc"));
         await AssertRefusedAsync(response, HttpStatusCode.ServiceUnavailable, "region_unavailable", "gru");
     }
 
@@ -303,7 +303,7 @@ public sealed class RegionalRoutingContractTests
         await using var cell = await Cell.StartAsync(["gru", "sjc"]);
         using var response = await cell.SendAsync("gru", $"{host}.api.terrascale.tech", pin);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
-        await Assert.That(response.Headers.Contains("fly-replay")).IsFalse();
+        await Assert.That(response.Headers.Contains("ts-replay")).IsFalse();
         await Assert.That(response.Headers.GetValues(RegionHeader)).IsEquivalentTo(["gru"]);
 
         using var agreeing = await cell.SendAsync("gru", "gru.api.terrascale.tech", "gru");
@@ -313,7 +313,7 @@ public sealed class RegionalRoutingContractTests
     private static async Task<string> AssertRefusedAsync(HttpResponseMessage response, HttpStatusCode status, string code, string answering)
     {
         await Assert.That(response.StatusCode).IsEqualTo(status);
-        await Assert.That(response.Headers.Contains("fly-replay")).IsFalse();
+        await Assert.That(response.Headers.Contains("ts-replay")).IsFalse();
         await Assert.That(response.Headers.GetValues(RegionHeader)).IsEquivalentTo([answering]);
         await Assert.That(response.Headers.CacheControl!.ToString()).IsEqualTo("no-store");
         var text = await response.Content.ReadAsStringAsync();
@@ -382,27 +382,31 @@ public sealed class RegionalRoutingContractTests
             return await client.SendAsync(request);
         }
 
-        // Fly Proxy as documented: fly-replay region=R sends the request again to a machine of R, with Fly-Replay-Src; with
-        // no machine in R and fallback=prefer_self it comes back to the first machine with fly-replay-failed
-        // (reason=no_candidate); with no fallback the client gets a proxy error (502 here). A fallback is not replayed again.
-        public async Task<HttpResponseMessage> ThroughFlyAsync(string landing, string host)
+        // The edge: ts-replay region=R sends the request again to a machine of R, with ts-replay-src; with no machine in R
+        // and fallback=self it comes back to the first machine with ts-replay-failed; with no fallback the client gets the
+        // original 421. A fallback is not replayed again.
+        public async Task<HttpResponseMessage> ThroughEdgeAsync(string landing, string host)
         {
             var response = await SendAsync(landing, host);
-            if (!response.Headers.TryGetValues("fly-replay", out var replay))
+            if (!response.Headers.TryGetValues("ts-replay", out var replay))
             {
                 return response;
             }
 
             var fields = replay.Single().Split(';').Select(field => field.Split('=', 2)).ToDictionary(field => field[0], field => field[1], StringComparer.Ordinal);
-            response.Dispose();
-            if (_machines.ContainsKey(fields["region"]))
+            if (fields["region"].Split(',').FirstOrDefault(_machines.ContainsKey) is { } target)
             {
-                return await SendAsync(fields["region"], host, extra: ("Fly-Replay-Src", $"instance={landing}-machine;region={landing};t=1"));
+                response.Dispose();
+                return await SendAsync(target, host, extra: ("ts-replay-src", $"region={landing}"));
             }
 
-            return fields.GetValueOrDefault("fallback") == "prefer_self"
-                ? await SendAsync(landing, host, extra: ("fly-replay-failed", $"region={fields["region"]};replay_source={landing}-machine;reason=no_candidate"))
-                : new HttpResponseMessage(HttpStatusCode.BadGateway);
+            if (fields.GetValueOrDefault("fallback") != "self")
+            {
+                return response;
+            }
+
+            response.Dispose();
+            return await SendAsync(landing, host, extra: ("ts-replay-failed", "1"));
         }
 
         public async ValueTask DisposeAsync()

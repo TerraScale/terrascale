@@ -118,7 +118,7 @@ public sealed class RegionTests
         var databases = $"{Organizations}/{organization}/projects/{project}/databases";
         var before = Directory.EnumerateFiles(api.Server.DataDirectory, "*.db", SearchOption.AllDirectories).ToList();
         string[] pins = second is null ? [first] : [first, second];
-        // Behind Fly Proxy, only a single well-formed region is replayed there.
+        // Behind the edge, only a single well-formed region is replayed there.
         var replay = first == "iad-1" ? "region=iad-1" : null;
 
         using var mutation = new HttpRequestMessage(HttpMethod.Post, new Uri(databases, UriKind.Relative))
@@ -199,7 +199,7 @@ public sealed class RegionTests
     private static async Task AssertMisdirectedAsync(HttpResponseMessage response, string pin, string? replay)
     {
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
-        await Assert.That(response.Headers.TryGetValues("fly-replay", out var replayed) ? replayed.Single() : null).IsEqualTo(replay);
+        await Assert.That(response.Headers.TryGetValues("ts-replay", out var replayed) ? replayed.Single() : null).IsEqualTo(replay);
         await Assert.That(response.Headers.GetValues(RegionHeader)).IsEquivalentTo(["gru-1"]);
         await Assert.That(response.Headers.CacheControl!.ToString()).IsEqualTo("no-store");
         await Assert.That(response.Headers.Contains(PinHeader)).IsFalse();
