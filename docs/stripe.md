@@ -29,6 +29,19 @@ GitHub Actions secrets. The complete inventory lives in the terrascale repositor
 `ops/secrets/`. This command consumes secrets; it does not provision them.
 See [`csharp-migration.md`](csharp-migration.md) for the open runtime gates.
 
+## Test account setup
+
+`setup-stripe` creates what the audit expects in a Stripe test account: one
+`TerraScale <Plan>` product (metadata `plan`) per paid plan, its monthly and
+annual USD prices from `PlanCatalog` (lookup keys `terrascale_<plan>_<interval>`),
+and the default billing portal (payment method update, invoice history and
+cancel at period end on; subscription update off). It archives duplicate
+matching prices. A second run changes nothing. It refuses live keys.
+
+```sh
+nice -n 19 dotnet run --project src/TerraScale.Dashboard -- setup-stripe
+```
+
 The command takes no options and reads DashboardIdentity from Fly environment variables. It
 does not accept keys, webhook secrets, origins, API versions or mode settings on
 the command line or from manual audit-specific environment variables. It infers
