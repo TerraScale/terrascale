@@ -36,212 +36,7 @@
       "description": "Public API reference pages and OpenAPI specification."
     }
   ],
-  "paths": {
-    "/docs": {
-      "get": {
-        "tags": [
-          "Reference"
-        ],
-        "operationId": "getApiReference",
-        "summary": "Open the Scalar API reference",
-        "description": "Public reference page served on this API origin. Its version-pinned Scalar script loads from an HTTPS CDN; API requests go directly to this origin. A bearer key is not required to load the page. Query strings are rejected and a GET body is ignored.",
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "Open the Scalar API reference",
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "invalid_request response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "error": {
-                    "code": "invalid_request"
-                  }
-                }
-              }
-            }
-          },
-          "405": {
-            "description": "method_not_allowed response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "error": {
-                    "code": "method_not_allowed"
-                  }
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "The bounded client handler pool has no available slot.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "error": {
-                    "code": "capacity"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/docs/protocols": {
-      "get": {
-        "tags": [
-          "Reference"
-        ],
-        "operationId": "getProtocolGuide",
-        "summary": "Read protocol and operator guidance",
-        "description": "Public same-origin reference asset. A bearer key is not required or used. Query strings are rejected and a GET body is ignored.",
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "Read protocol and operator guidance",
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "invalid_request response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "error": {
-                    "code": "invalid_request"
-                  }
-                }
-              }
-            }
-          },
-          "405": {
-            "description": "method_not_allowed response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "error": {
-                    "code": "method_not_allowed"
-                  }
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "The bounded client handler pool has no available slot.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "error": {
-                    "code": "capacity"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/openapi.json": {
-      "get": {
-        "tags": [
-          "Reference"
-        ],
-        "operationId": "getOpenApi",
-        "summary": "Get the v1 client OpenAPI document",
-        "description": "Public same-origin reference asset. A bearer key is not required or used. Query strings are rejected and a GET body is ignored.",
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "Get the v1 client OpenAPI document",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "invalid_request response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "error": {
-                    "code": "invalid_request"
-                  }
-                }
-              }
-            }
-          },
-          "405": {
-            "description": "method_not_allowed response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "error": {
-                    "code": "method_not_allowed"
-                  }
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "The bounded client handler pool has no available slot.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                },
-                "example": {
-                  "error": {
-                    "code": "capacity"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
+  "paths": {},
   "components": {
     "securitySchemes": {
       "scopedApiKey": {
@@ -252,11 +47,6 @@
       }
     },
     "schemas": {
-      "DecimalU64": {
-        "type": "string",
-        "description": "Unsigned decimal integer represented as a string so JavaScript does not round 64-bit values.",
-        "pattern": "^(0|[1-9][0-9]*)$"
-      },
       "PositiveDecimalU64": {
         "type": "string",
         "description": "Positive unsigned decimal integer represented as a string.",
@@ -517,40 +307,6 @@
           }
         ]
       },
-      "CommitRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "version": {
-            "const": 1
-          },
-          "transaction_id": {
-            "$ref": "#/components/schemas/TransactionId"
-          },
-          "writes": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Write"
-            },
-            "minItems": 1,
-            "maxItems": 1024
-          },
-          "authority": {
-            "$ref": "#/components/schemas/MutationAuthority"
-          },
-          "effect_digest": {
-            "$ref": "#/components/schemas/Hex32"
-          }
-        },
-        "required": [
-          "version",
-          "transaction_id",
-          "writes",
-          "authority",
-          "effect_digest"
-        ],
-        "description": "One atomic same-shard transaction, maximum 4 MiB raw JSON. SHA256 effect_digest uses TB-DOC-EFFECT-v1 normalized binary scope/authority/write grammar, excluding transaction_id. Exact retries preserve original committed and rejected outcomes until expiry; changed effects conflict before conditions are reevaluated."
-      },
       "QueryBooleanValue": {
         "type": "object",
         "additionalProperties": false,
@@ -693,34 +449,6 @@
           }
         ]
       },
-      "QueryRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "version": {
-            "const": 1
-          },
-          "predicate": {
-            "$ref": "#/components/schemas/QueryPredicate"
-          },
-          "limit": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 128
-          },
-          "cursor": {
-            "type": "string",
-            "maxLength": 1024,
-            "pattern": "^[A-Za-z0-9_-]+$"
-          }
-        },
-        "required": [
-          "version",
-          "predicate",
-          "limit"
-        ],
-        "description": "The body is limited to 4 MiB. Cursor tokens are opaque and valid for 60 seconds."
-      },
       "QueryRow": {
         "type": "object",
         "additionalProperties": false,
@@ -763,34 +491,6 @@
         ],
         "description": "Rows are ordered by canonical document ID. Each point contains complete causal state, including all visible conflict siblings."
       },
-      "Event": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "database": {
-            "$ref": "#/components/schemas/CanonicalUuid"
-          },
-          "shard": {
-            "$ref": "#/components/schemas/DecimalU64"
-          },
-          "replica": {
-            "$ref": "#/components/schemas/CanonicalUuid"
-          },
-          "incarnation": {
-            "$ref": "#/components/schemas/Hex16"
-          },
-          "sequence": {
-            "$ref": "#/components/schemas/PositiveDecimalU64"
-          }
-        },
-        "required": [
-          "database",
-          "shard",
-          "replica",
-          "incarnation",
-          "sequence"
-        ]
-      },
       "SubscriptionPollRequest": {
         "type": "object",
         "additionalProperties": false,
@@ -827,66 +527,6 @@
           }
         ]
       },
-      "SubscriptionSnapshotPage": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "version": {
-            "const": 1
-          },
-          "phase": {
-            "const": "snapshot"
-          },
-          "rows": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/QueryRow"
-            },
-            "maxItems": 128
-          },
-          "next_snapshot_cursor": {
-            "type": "string",
-            "maxLength": 1024,
-            "pattern": "^[A-Za-z0-9_-]+$"
-          }
-        },
-        "required": [
-          "version",
-          "phase",
-          "rows",
-          "next_snapshot_cursor"
-        ]
-      },
-      "SubscriptionSnapshotComplete": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "version": {
-            "const": 1
-          },
-          "phase": {
-            "const": "snapshot"
-          },
-          "rows": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/QueryRow"
-            },
-            "maxItems": 128
-          },
-          "poll_cursor": {
-            "type": "string",
-            "maxLength": 1024,
-            "pattern": "^[A-Za-z0-9_-]+$"
-          }
-        },
-        "required": [
-          "version",
-          "phase",
-          "rows",
-          "poll_cursor"
-        ]
-      },
       "SubscriptionGroup": {
         "type": "object",
         "additionalProperties": false,
@@ -905,36 +545,6 @@
         "required": [
           "sequence",
           "effects"
-        ]
-      },
-      "SubscriptionPollResponse": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "version": {
-            "const": 1
-          },
-          "phase": {
-            "const": "poll"
-          },
-          "groups": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SubscriptionGroup"
-            },
-            "maxItems": 8
-          },
-          "poll_cursor": {
-            "type": "string",
-            "maxLength": 1024,
-            "pattern": "^[A-Za-z0-9_-]+$"
-          }
-        },
-        "required": [
-          "version",
-          "phase",
-          "groups",
-          "poll_cursor"
         ]
       },
       "SubscriptionResponse": {
