@@ -323,10 +323,17 @@ public sealed class CorruptChangeLogTests
                 await Assert.That(await restarted.ReadAsync(node.Database, id)).IsNull().Because($"{id} was in the torn transaction");
             }
 
-            var deltas = (await restarted.Api.Server.Services.GetRequiredService<TursoChangeGroupSource>()
-                .ReadAsync(node.Database, await restarted.IncarnationAsync(node.Database), 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)
-                ?? throw new InvalidOperationException("the raw decoder refused its own incarnation"))
-                .Groups.SelectMany(group => group.Deltas).ToList();
+            // The copied directory has a new owner. Decode the recovered rows using their original replica;
+            // the new owner's source must never present donor writes as its own.
+            var donor = node.Api.Server.Services.GetRequiredService<SqliteStorageEngine>().ReplicaId;
+            await Assert.That(restarted.Api.Server.Services.GetRequiredService<SqliteStorageEngine>().ReplicaId.Member).IsNotEqualTo(donor.Member);
+            List<ChangeDelta> deltas;
+            await using (var recovered = (SqliteStorageTransaction)await (await restarted.StoreAsync(node.Database))
+                .BeginTransactionAsync(false, CancellationToken.None))
+            {
+                var decoded = await recovered.ReadChangeGroupsAsync(0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, donor, CancellationToken.None);
+                deltas = decoded.Groups.SelectMany(group => group.Deltas).ToList();
+            }
             await Assert.That(deltas.Where(delta => delta.Collection == Items).Select(delta => delta.Id)).IsEquivalentTo(["kept"]);
             await Assert.That(Encoded(deltas.Single(delta => delta.Id == "kept"))).IsEqualTo(Encoded(kept));
 

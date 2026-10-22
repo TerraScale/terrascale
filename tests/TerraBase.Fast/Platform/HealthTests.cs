@@ -308,6 +308,9 @@ public sealed class HealthTests
             using var client = tls.CreateClient(server.ClientAddress!);
             await AssertProbeAsync(client, "/readyz", HttpStatusCode.OK, "ready");
 
+            var identityPath = Path.Combine(dataDirectory, TerraBase.Engine.Sqlite.ReplicaIdentityFile.FileName);
+            var identity = await File.ReadAllBytesAsync(identityPath);
+
             // A lost volume: nothing can be created in the data directory any more.
             Directory.Delete(dataDirectory, recursive: true);
 
@@ -320,6 +323,7 @@ public sealed class HealthTests
             await AssertProbeAsync(client, "/healthz", HttpStatusCode.OK, "ok");
 
             Directory.CreateDirectory(dataDirectory);
+            await File.WriteAllBytesAsync(identityPath, identity);
             await AssertProbeAsync(client, "/readyz", HttpStatusCode.ServiceUnavailable, "unavailable");
             await Assert.That(probes.Calls).IsEqualTo(2);
             clock.Advance(TimeSpan.FromSeconds(1));
