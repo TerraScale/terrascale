@@ -11,6 +11,7 @@ public static class DemoTestHost
     public static WebApplication CreateTestHost(this DemoEnvironment environment, string root, int port, string origin, Action<WebApplicationBuilder>? configureScenario = null)
     {
         var app = environment.CreateHost(Path.Combine(root, "src", "TerraScale.Dashboard"), port, origin, configureScenario);
+        app.MapGet("/__test/unexpected-error", (Func<IResult>)(() => throw new InvalidOperationException("Synthetic exception detail")));
         app.MapGet("/__test/session", async (HttpContext context, DashboardSessions sessions) =>
             await sessions.ReadAsync(context) is { } session ? Results.Json(new { session.UserId }) : (IResult)Results.Unauthorized());
         app.MapGet("/__test/signals", async (HttpContext context) =>
