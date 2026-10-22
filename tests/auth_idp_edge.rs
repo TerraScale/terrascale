@@ -1038,14 +1038,13 @@ async fn c27_slug_rules_reject_bad_slugs_and_accept_long_ones() {
 
 #[tokio::test]
 async fn c28_api_keys_with_control_or_whitespace_bytes_are_rejected_at_build() {
-    for setter in [|builder: ClientConfigBuilder| builder.auth_api_key("sk_bad\nkey")] {
-        let error = setter(config())
-            .build()
-            .expect_err("control characters rejected");
-        assert_eq!(error.kind, ErrorKind::Validation);
-        assert_eq!(error.code, "invalid_api_key");
-        assert_eq!(error.message, "API keys cannot contain control characters.");
-    }
+    let error = config()
+        .auth_api_key("sk_bad\nkey")
+        .build()
+        .expect_err("control characters rejected");
+    assert_eq!(error.kind, ErrorKind::Validation);
+    assert_eq!(error.code, "invalid_api_key");
+    assert_eq!(error.message, "API keys cannot contain control characters.");
 
     let error = config()
         .auth_api_key("sk key with spaces")
