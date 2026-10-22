@@ -29,6 +29,7 @@
 //! ```
 
 mod atlas;
+mod backups;
 mod client;
 mod control;
 mod documents;
@@ -44,6 +45,7 @@ mod tooling;
 mod tx;
 mod types;
 
+pub use backups::RestoredDatabase;
 pub use client::{
     Client, ClientBuilder, RetryPolicy, DEFAULT_MAX_RESPONSE_BYTES, MAX_REQUEST_BYTES,
 };
