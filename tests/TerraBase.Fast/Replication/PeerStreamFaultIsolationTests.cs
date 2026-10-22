@@ -160,7 +160,7 @@ public sealed class PeerStreamFaultIsolationTests
 
         await Assert.That(recording).IsNotNull();
         await recording!.WaitAsync(deadline.Token);
-        await Assert.That((await forensic.GetAsync("items", "landed", deadline.Token) is { Deleted: false })).IsTrue()
+        await Assert.That(await forensic.GetAsync("items", "landed", deadline.Token) is { Deleted: false }).IsTrue()
             .Because("durable apply completed, but its subsequent stable read refused certification");
     }
 
@@ -217,7 +217,7 @@ public sealed class PeerStreamFaultIsolationTests
             await Assert.That(recording).IsNotNull();
             await recording!.WaitAsync(deadline.Token);
             await Assert.That(await faults.RefusedAsync(ChangeGroups.System, Ulid.Empty, deadline.Token)).IsTrue();
-            await Assert.That((await forensic.GetAsync("items", "landed-native", deadline.Token) is { Deleted: false })).IsTrue()
+            await Assert.That(await forensic.GetAsync("items", "landed-native", deadline.Token) is { Deleted: false }).IsTrue()
                 .Because("apply committed before stable failed, but neither a positive nor a refused ACK may follow the node fault");
         }
         finally
@@ -244,7 +244,7 @@ public sealed class PeerStreamFaultIsolationTests
         };
         await call.RequestStream.WriteAsync(frame, deadline.Token);
         _ = await Assert.ThrowsAsync<RpcException>(() => call.ResponseStream.MoveNext(deadline.Token));
-        await Assert.That((await forensic.GetAsync("items", "refused", deadline.Token) is { Deleted: false })).IsFalse();
+        await Assert.That(await forensic.GetAsync("items", "refused", deadline.Token) is { Deleted: false }).IsFalse();
     }
 
     [Test]
