@@ -1,7 +1,8 @@
-/** @typedef {"healthz" | "readyz" | "backupz" | "replicationHealth" | "listPlatformDatabases" | "listPlatformCollections" | "listPlatformDocuments" | "getPlatformDocument" | "createImport" | "getImport" | "uploadImportSource" | "updateImport" | "startImport" | "cancelImport" | "resumeImport" | "createBackup" | "listBackups" | "restoreBackup" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getProjectReplication" | "getDatabaseUsage" | "getDatabaseAnalytics" | "getDatabaseReplication" | "createIndex" | "listIndexes" | "dropIndex" | "getAutoIndexPolicy" | "setAutoIndexPolicy" | "listIndexRecommendations" | "applyIndexRecommendation" | "getDatabaseSchema" | "inferCollectionSchema" | "declareCollectionSchema" | "listQueryShapes" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
+/** @typedef {"getShapeManifest" | "healthz" | "readyz" | "backupz" | "replicationHealth" | "listPlatformDatabases" | "listPlatformCollections" | "listPlatformDocuments" | "getPlatformDocument" | "createImport" | "getImport" | "uploadImportSource" | "updateImport" | "startImport" | "cancelImport" | "resumeImport" | "createBackup" | "listBackups" | "restoreBackup" | "getBackupPolicy" | "setBackupPolicy" | "getRestoreWindow" | "planPointInTime" | "restorePointInTime" | "getBackupDestination" | "setBackupDestination" | "deleteBackupDestination" | "getProjectUsage" | "getProjectAnalytics" | "getProjectReplication" | "getDatabaseUsage" | "getDatabaseAnalytics" | "getDatabaseReplication" | "createIndex" | "listIndexes" | "dropIndex" | "getAutoIndexPolicy" | "setAutoIndexPolicy" | "listIndexRecommendations" | "applyIndexRecommendation" | "getDatabaseSchema" | "inferCollectionSchema" | "declareCollectionSchema" | "listQueryShapes" | "createSavedQuery" | "listSavedQueries" | "getSavedQuery" | "updateSavedQuery" | "deleteSavedQuery"} ManagementOperation */
 const saved = "/v1/projects/{project}/saved-queries";
 /** @type {readonly import("./routes.js").V1Route[]} */
 export const managementV1Routes = Object.freeze([
+  route("getShapeManifest", "GET", "/v1/projects/{project}/databases/{database}/collections/{collection}/shape/manifest"),
   route("healthz", "GET", "/healthz"),
   route("readyz", "GET", "/readyz"),
   route("backupz", "GET", "/backupz"),
@@ -56,7 +57,7 @@ export const managementV1Routes = Object.freeze([
 function route(operation, method, pathTemplate, status = 200) {
   const write = method !== "GET" && operation !== "planPointInTime";
   return Object.freeze({ operation, method, pathTemplate,
-    permission: pathTemplate.startsWith("/v1/platform/") ? "platform-admin" : !pathTemplate.startsWith("/v1/") ? "anonymous" : write ? "databases:write" : "databases:read",
+    permission: operation === "getShapeManifest" ? "documents:read" : pathTemplate.startsWith("/v1/platform/") ? "platform-admin" : !pathTemplate.startsWith("/v1/") ? "anonymous" : write ? "databases:write" : "databases:read",
     requestMediaTypes: Object.freeze(operation === "uploadImportSource" ? ["application/octet-stream"] : method === "POST" || method === "PUT" || method === "PATCH" ? ["application/json"] : []),
     responseMediaType: status === 204 ? "" : "application/json", successStatuses: Object.freeze(operation === "readyz" || operation === "backupz" ? [200, 503] : operation === "applyIndexRecommendation" || operation === "createImport" ? [200, 201] : [status]),
     idempotencyKey: "none", replaySafe: !write, contract: "docs/terrabase/api.md", contractText: Object.freeze([]),

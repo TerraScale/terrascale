@@ -131,3 +131,7 @@ export { createTerraBaseSystemClient, V1Health, V1Platform } from "./v1/system.j
 /** @typedef {import("./v1/system.js").V1ProbeStatus} V1ProbeStatus */
 /** @typedef {import("./v1/system.js").V1ReplicationHealth} V1ReplicationHealth */
 /** @typedef {import("./v1/system.js").V1PlatformDatabases} V1PlatformDatabases */
+/** @typedef {import("./v1/shape-manifest.js").V1ShapeManifest} V1ShapeManifest */
+/** @typedef {import("./v1/shape-manifest.js").V1ShapeManifestRequest} V1ShapeManifestRequest */
+/** @typedef {import("./v1/shape-reader.js").V1ShapeKeyRequest} V1ShapeKeyRequest */
+/** @typedef {import("./v1/shape-reader.js").V1ShapeKey} V1ShapeKey */

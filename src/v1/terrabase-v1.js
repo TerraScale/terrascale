@@ -7,9 +7,9 @@ import { requireId } from "../ids.js";
 import { isJsonPointer, requireFilter, requirePath } from "./filter.js";
 import { requireDocumentId, requireName, requireVersion } from "./ids.js";
 import { assertJsonObject, assertJsonValue, ExactDecimal, stringifyExactJson } from "./json.js";
-import { readShape } from "./shapes.js";
+import { readShapeManifest } from "./shape-manifest.js";
 import { V1ShapeSubscription } from "./shape-subscription.js";
-import { decryptSealedShapePage } from "./shape-reader.js";
+import { decryptSealedShapePage, readShapePage, readShapeKey } from "./shape-reader.js";
 import { runSql, checkSql } from "./sql.js";
 import { streamChanges } from "./changes.js";
 import { V1Databases, getCollectionSchema, putCollectionSchema, deleteCollectionSchema } from "./catalog.js";
@@ -453,7 +453,7 @@ export class V1Collection {
    * @returns {Promise<V1ShapePage>}
    */
   shape(request = {}, options = {}) {
-    return readShape(this.#transport, this.#params, request, options.signal);
+    return readShapePage(this.#transport, this.#params, request, options.signal);
   }
 
   /**
@@ -465,6 +465,12 @@ export class V1Collection {
   subscribeShape(request = {}, options = {}) {
     return new V1ShapeSubscription(this.#transport, this.#params, request, options);
   }
+
+  /** @param {import("./shape-manifest.js").V1ShapeManifestRequest} request @param {V1RequestOptions} [options] */
+  shapeManifest(request, options = {}) { return readShapeManifest(this.#transport, this.#params, request, options.signal); }
+  /** @param {import("./shape-reader.js").V1ShapeKeyRequest} request @param {V1RequestOptions} [options] */
+  shapeKey(request, options = {}) { return readShapeKey(this.#transport, this.#params, request, options.signal); }
+
 
   /**
    * Verify a complete TBS1 object using its authenticated epoch key. Applies no state.
