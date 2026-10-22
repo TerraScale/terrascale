@@ -3,7 +3,8 @@ mod http;
 use http::{reply, Fixture, PROJECT};
 use serde_json::{json, Value};
 const BACKUP: &str = r#"{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAX","databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FAW","status":"ready","trigger":"manual","sizeBytes":40960,"createdAt":"2026-10-22T12:00:00Z"}"#;
-const RESTORED: &str = r#"{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAY","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FAV","name":"restored","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FAW","createdAt":"2026-10-22T12:00:00Z","homeRegion":"gru","replicaRegions":[],"placementVersion":0}"#;
+const RESTORED: &str = r#"{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAY","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FAV","name":"restored","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FAW","createdAt":"2026-10-22T12:00:00Z","homeRegion":"gru","replicaRegions":["sjc","fra"],"placementVersion":9007199254740993,"replicas":["sjc","fra"]}"#;
+const UNASSIGNED: &str = r#"{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAY","projectId":"01ARZ3NDEKTSV4RRFFQ69G5FAV","name":"restored","branchedFrom":"01ARZ3NDEKTSV4RRFFQ69G5FAW","createdAt":"2026-10-22T12:00:00Z","homeRegion":null,"replicaRegions":null,"placementVersion":9007199254740993,"replicas":[]}"#;
 const DESTINATION: &str = r#"{"endpoint":"https://s3.example.com","region":"us-east-1","bucket":"customer-backups","mode":"both","updatedAt":"2026-10-22T12:00:00Z"}"#;
 const POLICY: &str =
     r#"{"fullBackupCron":"0 0 * * *","retentionDays":7,"disabled":false,"updatedAt":null}"#;
@@ -27,7 +28,7 @@ async fn backup_contracts_preserve_fields_and_restore_without_a_serving_region()
         reply(200, POLICY),
         reply(200, WINDOW),
         reply(200, &plan.to_string()),
-        reply(201, RESTORED),
+        reply(201, UNASSIGNED),
     ])
     .await;
     let client = fixture.client();
@@ -65,8 +66,13 @@ async fn backup_contracts_preserve_fields_and_restore_without_a_serving_region()
     );
     assert_eq!(restored.created_at, "2026-10-22T12:00:00Z");
     assert_eq!(restored.home_region.as_deref(), Some("gru"));
-    assert_eq!(restored.replica_regions, Some(vec![]));
-    assert_eq!(restored.placement_version, 0);
+    assert_eq!(
+        restored.replica_regions,
+        Some(vec!["sjc".into(), "fra".into()])
+    );
+    assert_eq!(restored.replicas(), &["sjc", "fra"]);
+    assert_eq!(restored.placement_version, 9_007_199_254_740_993);
+    assert!(value(RESTORED).get("region").is_none());
     let policy = json!({"fullBackupCron":"0 0 * * *","retentionDays":7,"disabled":false});
     assert_eq!(
         db.get_backup_policy::<Value>().await.unwrap(),
@@ -89,10 +95,13 @@ async fn backup_contracts_preserve_fields_and_restore_without_a_serving_region()
     );
     let restore =
         json!({"pointInTime":"2026-10-22T12:00:13Z","name":"restored","destination":"customer"});
-    assert_eq!(
-        db.restore_point_in_time(&restore).await.unwrap().id,
-        restored.id
-    );
+    let unassigned = db.restore_point_in_time(&restore).await.unwrap();
+    assert_eq!(unassigned.id, restored.id);
+    assert_eq!(unassigned.home_region, None);
+    assert_eq!(unassigned.replica_regions, None);
+    assert!(unassigned.replicas().is_empty());
+    assert_eq!(unassigned.placement_version, 9_007_199_254_740_993);
+    assert!(value(UNASSIGNED).get("region").is_none());
     let requests = fixture.requests.lock().unwrap();
     for (i, method, suffix) in [
         (0, "GET", "backup-destination"),

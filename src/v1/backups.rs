@@ -23,6 +23,12 @@ pub struct RestoredDatabase {
     pub replica_regions: Option<Vec<String>>,
     pub placement_version: i64,
 }
+impl RestoredDatabase {
+    /// Assigned replicas, empty until placement is assigned.
+    pub fn replicas(&self) -> &[String] {
+        self.replica_regions.as_deref().unwrap_or_default()
+    }
+}
 impl Client {
     /// `GET P/backup-destination`; responses never contain credentials.
     pub async fn get_backup_destination<T: DeserializeOwned>(&self) -> Result<T> {
