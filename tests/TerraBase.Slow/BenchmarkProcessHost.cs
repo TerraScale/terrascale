@@ -4,7 +4,6 @@ using System.Diagnostics.Metrics;
 using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
-using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
@@ -23,37 +22,6 @@ namespace TerraBase.Slow;
 public sealed class BenchmarkProcessHost
 {
     private static readonly string[] Regions = ["gru", "sjc", "fra"];
-
-    [Test]
-    public async Task Readiness_waits_for_the_existing_marker_collection(CancellationToken cancellationToken)
-    {
-        var missing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var api = await ManagementApi.StartAsync(services: services =>
-            services.AddSingleton<IStartupFilter>(new MissingReadiness(missing)), cancellationToken: cancellationToken);
-        var database = await api.CreateManagedDatabaseAsync();
-        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var ready = WaitForWritesAsync(data, new Uri($"{database.Data}/collections", UriKind.Relative), "bench-wait", deadline.Token);
-        try
-        {
-            await missing.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
-            await Assert.That(ready.IsCompleted).IsFalse();
-            await ManagementApi.CreateCollectionAsync(data, database, "bench-wait", cancellationToken);
-            await ready;
-        }
-        finally
-        {
-            await deadline.CancelAsync();
-            try
-            {
-                await ready;
-            }
-            catch (OperationCanceledException) when (deadline.IsCancellationRequested)
-            {
-                // Join the readiness task even if the assertion or collection creation fails.
-            }
-        }
-    }
 
     [Test]
     [Timeout(6 * 3600 * 1000)]
@@ -193,7 +161,7 @@ public sealed class BenchmarkProcessHost
         }
     }
 
-    private static async Task WaitForWritesAsync(HttpClient client, Uri collections, string? requiredCollection, CancellationToken cancellationToken)
+    internal static async Task WaitForWritesAsync(HttpClient client, Uri collections, string? requiredCollection, CancellationToken cancellationToken)
     {
         var collection = requiredCollection ?? "bench-ready";
         var document = new Uri($"{collections.OriginalString}/{collection}/documents/by-key?id={EntityIds.New()}", UriKind.Relative);
@@ -351,23 +319,6 @@ public sealed class BenchmarkProcessHost
 
             return Task.FromResult<ImmutableArray<ClusterMember>>([.. members.OrderBy(member => member.Name, StringComparer.Ordinal)]);
         }
-    }
-
-    private sealed class MissingReadiness(TaskCompletionSource missing) : IStartupFilter
-    {
-        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
-        {
-            app.Use(async (context, proceed) =>
-            {
-                await proceed(context);
-                if (context.Request.Path.Value?.Contains("/collections/bench-wait/", StringComparison.Ordinal) == true
-                    && context.Response.StatusCode == 404)
-                {
-                    missing.TrySetResult();
-                }
-            });
-            next(app);
-        };
     }
 
     private sealed class TimedDurability(IRemoteDurability inner, IMeterFactory meters, BenchmarkLocalAck local) : IRemoteDurability
