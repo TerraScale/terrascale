@@ -205,12 +205,11 @@ public sealed class BoundedShutdownTests
     public async Task A_healthy_reader_can_retire_its_intent_after_the_shutdown_grace_expires()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
-        using var directory = new TempDirectory();
         await using var api = await DocumentApi.StartAsync(settings =>
         {
-            settings["data-directory"] = directory.Root;
             settings["shutdown-grace-seconds"] = "1";
         });
+        var directory = api.Server.DataDirectory;
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
@@ -225,7 +224,7 @@ public sealed class BoundedShutdownTests
             await engine.DisposeAsync();
             await Assert.That(engine.Io.Closed).IsTrue();
             await Assert.That(engine.CleanupCompletion.IsCompleted).IsFalse();
-            await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(directory.Root)).IsTrue();
+            await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(directory)).IsTrue();
         }
         finally
         {
@@ -236,7 +235,7 @@ public sealed class BoundedShutdownTests
         await engine.CleanupCompletion.WaitAsync(token);
         await Assert.That(engine.Ledger.FailedClosed).IsNull();
         await Assert.That(engine.Pool.OpenCount).IsEqualTo(0);
-        await using var restarted = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = directory.Root);
+        await using var restarted = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = directory);
         var reopened = restarted.Services.GetRequiredService<SqliteStorageEngine>();
         await Assert.That(reopened.ReplicaId).IsEqualTo(replica).Because("healthy reader cleanup must record a clean stop");
         var saved = (await reopened.OpenDatabaseAsync(tenant, token))!;
