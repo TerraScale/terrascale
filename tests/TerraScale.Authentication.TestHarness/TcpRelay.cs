@@ -53,7 +53,7 @@ public sealed class TcpRelay : IAsyncDisposable
     /// <summary>Starts a relay to <paramref name="target"/>, a loopback origin, on <paramref name="at"/> (a free 127.0.0.1 port by default).</summary>
     public static TcpRelay Start(Uri target, IPEndPoint? at = null) => new(target, at ?? new IPEndPoint(IPAddress.Loopback, 0));
 
-    /// <summary>A random loopback address other than 127.0.0.1, so a test can own a fixed port (Fly's 8081) on it.</summary>
+    /// <summary>A random loopback address other than 127.0.0.1, so a test can own a fixed port (the internal listener's 8081) on it.</summary>
     public static IPAddress RandomLoopback() =>
         new([127, (byte)Random.Shared.Next(1, 255), (byte)Random.Shared.Next(0, 256), (byte)Random.Shared.Next(1, 255)]);
 

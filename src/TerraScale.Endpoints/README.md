@@ -69,7 +69,7 @@ OpenAPI is served at `/openapi/v1.json`; Scalar is served at
 
 ## Production operating contract
 
-TerraScale production features and all regions are always on. Nodes join Fly's private network, discover every region through `.internal` DNS and infer their region from `FLY_REGION`. Production runtime secrets are Fly secrets on each Fly app; CI secrets are GitHub Actions secrets. The secret manifest location is `ops/secrets/` in this repository. Production values are fixed; fakes, demo stores and skip-auth belong only in test code and binaries. See [repository policy](../../AGENTS.md).
+TerraScale production features and all regions are always on. On OCI, ts-orch obtains runtime secrets from OCI Vault using the instance principal and mounts `<NAME>_FILE` paths for the consuming services; unreadable files stop startup. CI secrets are GitHub Actions secrets. The secret manifest location is `ops/secrets/` in this repository. Production values are fixed; fakes, demo stores and skip-auth belong only in test code and binaries.
 
 TS-795 documents this contract and inventories existing integration inputs; it does not change the library API. Applications currently must register and map endpoints and OpenAPI as shown above. Data-annotation validation still requires `AddValidation()` and `[ValidatableType]`; these are API integration prerequisites, not optional production validation. Endpoint authorization declarations must preserve each route's security policy.
 

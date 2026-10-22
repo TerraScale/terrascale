@@ -6,7 +6,7 @@ using TerraBase.Features.Replication;
 namespace TerraBase.Testing;
 
 /// <summary>
-/// Clients of a test server's internal listener: HTTP/2 without TLS, as members reach each other over Fly's private network.
+/// Clients of a test server's internal listener: HTTP/2 without TLS, as members reach each other over NetBird.
 /// Every request carries a peer credential, as production members do. It owns nothing but its own lifetime: use it only before it is disposed.
 /// </summary>
 public sealed class PeerTls : IDisposable

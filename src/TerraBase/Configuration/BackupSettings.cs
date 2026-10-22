@@ -5,8 +5,9 @@ namespace TerraBase.Configuration;
 
 /// <summary>
 /// Where continuous backup ships to (TS-633, <c>docs/backup.md</c>): the app's Tigris bucket and the master key that wraps
-/// each project's data key. On Fly the bucket comes from the variables <c>fly storage create</c> sets and the key from the
-/// fly secret <c>TERRABASE_MASTER_KEY</c>. Set the required settings together; none turns backup off.
+/// each project's data key. The Tigris bucket comes from the variables <c>fly storage create</c> sets; ts-orch resolves the
+/// master key from OCI Vault using its instance principal and delivers it through <c>TERRABASE_MASTER_KEY_FILE</c>.
+/// Set the required settings together; none turns backup off.
 /// </summary>
 public sealed class BackupSettings
 {

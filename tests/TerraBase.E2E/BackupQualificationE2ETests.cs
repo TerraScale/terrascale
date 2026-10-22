@@ -5,8 +5,7 @@ namespace TerraBase.E2E;
 
 public sealed class BackupQualificationE2ETests
 {
-    // Creates and restores whole databases: the required local stage runs it, and on ts-orch only a pinned run
-    // disposable app does (Cluster.StartBackupAsync refuses any other target); the deploy run excludes the local-only category.
+    // Creates and restores whole databases owned by isolated local clusters in the required local stage.
     [Test]
     [Category("local-only")]
     [Scenario(Nodes.InProcess)]

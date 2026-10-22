@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -17,9 +18,8 @@ using TerraScale.DotNet.TerraBase;
 namespace TerraScale.Authentication.Fast.Store;
 
 /// <summary>
-/// ts-auth reads discovery and the JWKS from its own region's TerraBase (another region's when it does not answer) and
-/// sends everything else, every write and every authorization read, to the designated region's, which it never replaces:
-/// without it those operations fail closed. Regions are relays to the suite's TerraBase; the relays show where ts-auth
+/// Exercises isolated local and authority stores through fixture-provided transports, plus the app's named endpoint.
+/// Every write and authorization read must fail closed without the authority. Regions are relays to the suite's TerraBase; they show where ts-auth
 /// connected, and two databases (<c>auth</c>, the designated copy; <c>auth-local</c>, this region's) show what each copy
 /// holds.
 /// </summary>
@@ -191,35 +191,43 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task The_authority_client_the_app_builds_never_falls_back_to_another_region()
+    public async Task The_app_clients_never_send_to_alternate_storage_when_the_named_endpoint_fails()
     {
-        // On Fly, by name: gru's TerraBase refuses, and the names of every other region resolve to one that answers.
+        // The named endpoint refuses; any alternate name would reach a healthy, isolated storage relay.
         var (tenant, designated) = await fixture.CreateDatabaseAsync();
         var refusing = TcpRelay.RandomLoopback();
-        await using var elsewhere = TcpRelay.Start(fixture.Server.InternalAddress, new IPEndPoint(TcpRelay.RandomLoopback(), 8081));
-        Task<IPAddress[]> Resolve(string host, CancellationToken cancellationToken) =>
-            Task.FromResult<IPAddress[]>([host == $"{App.AuthorityRegion}.ts-terrabase.internal" ? refusing : elsewhere.EndPoint.Address]);
+        await using var elsewhere = TcpRelay.Start(fixture.Server.InternalAddress);
+        var origin = new Uri($"http://127.0.0.2:{elsewhere.Port}/");
+        var resolved = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        Task<IPAddress[]> Resolve(string host, CancellationToken cancellationToken)
+        {
+            resolved.Enqueue(host);
+            return Task.FromResult<IPAddress[]>([host == origin.Host ? refusing : elsewhere.EndPoint.Address]);
+        }
+
         await using var auth = await AuthTestServer.StartAsync(
-            settings: values => values.Remove("environment"),
-            services: services => services.AddSingleton(new TerraBaseTransport.HostResolver(Resolve)),
-            configure: builder =>
+            settings: values =>
             {
-                builder.Configuration["FLY_APP_NAME"] = "ts-auth";
-                builder.Configuration["FLY_REGION"] = "sjc";
-            });
-        var gru = new Uri($"http://{App.AuthorityRegion}.ts-terrabase.internal:8081/");
-        TerraBaseDatabase Through(HttpClient client) => new TerraBaseDocumentsClient(client, new TerraBaseDocumentsClientOptions { BaseAddress = gru }).Database(tenant.Project.Id, "auth");
+                values.Remove("environment");
+                values["terrabase-url"] = origin.GetLeftPart(UriPartial.Authority);
+            },
+            services: services => services.AddSingleton(new TerraBaseTransport.HostResolver(Resolve)));
+        TerraBaseDatabase Through(HttpClient client, Uri address) => new TerraBaseDocumentsClient(client, new TerraBaseDocumentsClientOptions { BaseAddress = address }).Database(tenant.Project.Id, "auth");
 
-        // The app's local client moves to another region, so one answers here...
-        await Through(auth.App.Services.GetRequiredService<HttpClient>()).PutDocumentAsync(AuthStore.UserCollection, AuthStore.NewId(), Record, TerraBasePrecondition.Absent);
-        var moved = elsewhere.Accepted;
-        // ...and its authority client never does: the write fails closed.
+        // Positive control: alternate storage answers when explicitly addressed.
+        await Through(auth.App.Services.GetRequiredService<HttpClient>(), elsewhere.Address).PutDocumentAsync(AuthStore.UserCollection, AuthStore.NewId(), Record, TerraBasePrecondition.Absent);
+        var accepted = elsewhere.Accepted;
+        resolved.Clear();
         var failure = await Assert.ThrowsAsync<ApiException>(() =>
-            Through(auth.App.Services.GetRequiredKeyedService<HttpClient>(App.StorageAuthority)).PutDocumentAsync(AuthStore.UserCollection, AuthStore.NewId(), Record, TerraBasePrecondition.Absent));
+            Through(auth.App.Services.GetRequiredKeyedService<HttpClient>(App.StorageAuthority), origin).PutDocumentAsync(AuthStore.UserCollection, AuthStore.NewId(), Record, TerraBasePrecondition.Absent));
+        var localFailure = await Assert.ThrowsAsync<ApiException>(() =>
+            Through(auth.App.Services.GetRequiredService<HttpClient>(), origin).PutDocumentAsync(AuthStore.UserCollection, AuthStore.NewId(), Record, TerraBasePrecondition.Absent));
 
-        await Assert.That(moved).IsGreaterThan(0);
+        await Assert.That(accepted).IsGreaterThan(0);
         await Assert.That(failure!.Status).IsEqualTo(StatusCodes.Status503ServiceUnavailable);
-        await Assert.That(elsewhere.Accepted).IsEqualTo(moved);
+        await Assert.That(localFailure!.Status).IsEqualTo(StatusCodes.Status503ServiceUnavailable);
+        await Assert.That(resolved.Distinct()).IsEquivalentTo([origin.Host]);
+        await Assert.That(elsewhere.Accepted).IsEqualTo(accepted);
         await Assert.That((await designated.ListDocumentsAsync(AuthStore.UserCollection)).Items.Count).IsEqualTo(1);
     }
 
@@ -243,15 +251,19 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Discovery_reads_use_another_region_when_their_own_has_no_started_machine()
+    public async Task A_fixture_transport_can_use_an_alternate_when_its_primary_does_not_resolve()
     {
-        // Fly lists started machines only, so a region without one does not resolve; neither does this name off Fly.
+        // Generic transport behavior remains available to fixtures; the app registers no alternates.
         var (tenant, _) = await fixture.CreateDatabaseAsync();
         var local = await fixture.CreateCopyAsync(tenant, Local);
         var project = await ProjectAsync(local);
         await using var gru = TcpRelay.Start(fixture.Server.InternalAddress);
         await using var other = TcpRelay.Start(fixture.Server.InternalAddress);
-        await using var auth = await StartAsync(tenant, new Uri($"http://sjc.ts-auth-test-{Guid.NewGuid():N}.internal:8081/"), other, gru.Address);
+        var origin = new Uri("http://127.0.0.2:8081/");
+        Task<IPAddress[]> Resolve(string host, CancellationToken cancellationToken) => host == origin.Host
+            ? Task.FromException<IPAddress[]>(new SocketException((int)SocketError.HostNotFound))
+            : Dns.GetHostAddressesAsync(host, cancellationToken);
+        await using var auth = await StartAsync(tenant, origin, other, gru.Address, Resolve);
 
         await Assert.That(await DiscoveryAsync(auth, project)).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(other.Accepted).IsGreaterThan(0);
@@ -347,9 +359,10 @@ public sealed class RegionalStorageTests(TerraBaseFixture fixture)
         return response.StatusCode;
     }
 
-    private static Task<AuthTestServer> StartAsync(TerraBaseTestTenant tenant, Uri ownRegion, TcpRelay other, Uri designatedRegion) =>
+    private static Task<AuthTestServer> StartAsync(TerraBaseTestTenant tenant, Uri ownRegion, TcpRelay other, Uri designatedRegion,
+        TerraBaseTransport.HostResolver? resolve = null) =>
         AuthTestServer.StartAsync(
-            services: services => TerraBaseFixture.UseRegionalStorage(services, tenant, ownRegion, other, designatedRegion, localDatabase: Local),
+            services: services => TerraBaseFixture.UseRegionalStorage(services, tenant, ownRegion, other, designatedRegion, localDatabase: Local, resolve: resolve),
             // The operator's signing-key provisioning runs first, so /readyz shows whether the designated region takes writes.
             beforeStart: services => SigningKeyProvisioning.ProvisionAsync(services, CancellationToken.None),
             routes: app =>

@@ -9,7 +9,7 @@ namespace TerraBase.E2E;
 
 /// <summary>
 /// The design-C replacements for the deleted suite's repair, unique, catalog, observability, flow-control and DDL
-/// scenarios (COVERAGE.md rows 9, 14, 20 to 23 and 29). Each is a strict expected failure until the slice <see cref="Gaps"/>
+/// scenarios. Each is a strict expected failure until the slice <see cref="Gaps"/>
 /// names. The ones that edit a node's files or partition regions run on the local nodes only.
 /// </summary>
 public sealed class RepairAndContractE2ETests
@@ -25,10 +25,9 @@ public sealed class RepairAndContractE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop | Faults.FileTampering)]
     public async Task Anti_entropy_repairs_a_document_a_region_lost_after_its_stream_acknowledged_it()
     {
-        Skip.When(Cluster.Live, "edits a local node's database file");
         await Gaps.RunAsync("anti-entropy-repair", async () =>
         {
-            await using var cluster = await Cluster.StartAsync(All);
+            await using var cluster = await Cluster.StartLocalAsync(All);
             var documents = await WriteAsync(cluster, 50);
             _ = await Converge.ListedAsync(cluster, Digest(documents), "seed");
             var (victim, body) = documents[17];
@@ -40,7 +39,7 @@ public sealed class RepairAndContractE2ETests
                 read => Docs.Canonical(read) == Docs.Canonical(body), "the lost document on sjc", RepairWindow);
             Converge.Report("anti-entropy repair of one lost document", started);
             _ = await Converge.ListedAsync(cluster, Digest(documents), "every region after the repair");
-        });
+        }, local: true);
     }
 
     // sjc comes back on a copy of its data from before 100 later writes, as after a volume restored from an older snapshot.
@@ -49,10 +48,9 @@ public sealed class RepairAndContractE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop | Faults.FileTampering)]
     public async Task A_region_restored_to_an_older_copy_of_its_data_catches_up_without_undoing_later_writes()
     {
-        Skip.When(Cluster.Live, "restores a local node's data directory");
         await Gaps.RunAsync("restore-older-state", async () =>
         {
-            await using var cluster = await Cluster.StartAsync(All);
+            await using var cluster = await Cluster.StartLocalAsync(All);
             var before = await WriteAsync(cluster, 100);
             _ = await Converge.ListedAsync(cluster, Digest(before), "before the snapshot");
             var snapshot = Directory.CreateTempSubdirectory("terrabase-e2e-snapshot-").FullName;
@@ -77,7 +75,7 @@ public sealed class RepairAndContractE2ETests
             {
                 Directory.Delete(snapshot, recursive: true);
             }
-        });
+        }, local: true);
     }
 
     // Two origins take the same unique email while their direct stream is partitioned; fra confirms both writes. After
@@ -88,10 +86,9 @@ public sealed class RepairAndContractE2ETests
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task Unique_writes_made_on_both_sides_of_a_partition_converge_to_the_smaller_id()
     {
-        Skip.When(Cluster.Live, "ts-orch has no partition switch");
         await Gaps.RunAsync("unique-under-partition", async () =>
         {
-            await using var cluster = await Cluster.StartAsync(All);
+            await using var cluster = await Cluster.StartLocalAsync(All);
             using var declared = await cluster[Cluster.Gru].PutAsJsonAsync(
                 new Uri($"{cluster.DatabasePath}/schema/{cluster.Collection}", UriKind.Relative), new { fields = new[] { new { name = "email", unique = true } } });
             await Docs.EnsureSuccessAsync(declared);
@@ -118,7 +115,7 @@ public sealed class RepairAndContractE2ETests
                     state => state.Kept?["from"]?.GetValue<string>() == "sjc" && state.Lost && state.Listed == 1,
                     $"the unique key on {region}: the smaller id keeps it, the larger answers 409 unique_violation and is not listed");
             }
-        });
+        }, local: true);
     }
 
     // Whether the document answers 409 unique_violation: it lost a replicated uniqueness conflict.
@@ -132,13 +129,11 @@ public sealed class RepairAndContractE2ETests
     // database or its documents back anywhere.
     [Test]
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
-    [Category("orch-outage")]
     public async Task A_database_deleted_while_a_region_is_down_does_not_come_back()
     {
-        SkipLiveUnlessOutageRun();
         await Gaps.RunAsync("deleted-database-stays-deleted", async () =>
         {
-            await using var cluster = await Cluster.StartAsync(All);
+            await using var cluster = await Cluster.StartLocalAsync(All);
             var name = $"e2e{Guid.NewGuid():N}"[..20];
             var path = new Uri($"{cluster.ProjectPath}/databases/{name}", UriKind.Relative);
             using (var created = await cluster[Cluster.Gru].PostAsJsonAsync(new Uri($"{cluster.ProjectPath}/databases", UriKind.Relative), new { name }))
@@ -164,13 +159,13 @@ public sealed class RepairAndContractE2ETests
             {
                 await Assert.That(await Docs.StatusAsync(cluster[region], path)).IsEqualTo(HttpStatusCode.NotFound).Because($"{region} five seconds after fra returned");
             }
-        });
+        }, local: true);
     }
 
     // Replication is observable: /health/replication in every region names the two others as peers with a lag of at most
     // 5 s once a write converged.
     [Test]
-    [Scenario(Nodes.InProcess)]
+    [Scenario(Nodes.Cluster)]
     public async Task Every_region_reports_its_peers_and_replication_lag_on_health_and_metrics()
     {
         await using var cluster = await Cluster.StartAsync(All);
@@ -197,8 +192,7 @@ public sealed class RepairAndContractE2ETests
     [Category("local-only")]
     public async Task Every_region_publishes_the_replication_lag_series(string series)
     {
-        Skip.When(Cluster.Live, "reads a local node's metrics listener");
-        await using var cluster = await Cluster.StartAsync(All);
+        await using var cluster = await Cluster.StartLocalAsync(All);
         await Converge.SeedAllAsync(cluster, cluster.Document(EntityIds.New().ToString()), new JsonObject { ["value"] = "observable" });
         foreach (var region in cluster.Regions)
         {
@@ -212,14 +206,14 @@ public sealed class RepairAndContractE2ETests
     // in another database reaches sjc within 5 s (the deleted suite's "a database written without pause does not hold
     // back the others").
     [Test]
-    [Scenario(Nodes.InProcess)]
+    [Scenario(Nodes.Cluster)]
     public async Task A_hot_database_does_not_hold_back_replication_of_another()
     {
         await Gaps.RunAsync("flow-control", async () =>
         {
             await using var cluster = await Cluster.StartAsync(All);
             var hot = $"hot{Guid.NewGuid():N}"[..20];
-            // The hot database is this test's own: deleted at its home when the test ends, so a ts-orch run leaves none behind.
+            // The hot database is this test's own: deleted at its home when the test ends.
             await cluster.OwningDatabasesAsync(async created =>
             {
                 created.Add((Cluster.Gru, hot));
@@ -252,7 +246,7 @@ public sealed class RepairAndContractE2ETests
     // Collection DDL replicates: an index created in gru is listed in sjc, a schema attached in gru makes sjc refuse an
     // invalid document, and a collection dropped in gru is gone from sjc.
     [Test]
-    [Scenario(Nodes.InProcess)]
+    [Scenario(Nodes.Cluster)]
     public async Task Indexes_schemas_and_collection_drops_made_in_one_region_take_effect_in_another()
     {
         await Gaps.RunAsync("ddl-replication", async () =>
@@ -332,7 +326,4 @@ public sealed class RepairAndContractE2ETests
             File.Copy(file, target, overwrite: true);
         }
     }
-
-    private static void SkipLiveUnlessOutageRun() =>
-        Skip.When(Cluster.Live && !Cluster.LiveOutage, "stops a ts-orch region: run it alone in an outage run (TERRABASE_E2E_ORCH_OUTAGE=1)");
 }

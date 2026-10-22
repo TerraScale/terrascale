@@ -14,7 +14,6 @@ The checked state at **2026-10-13 02:17 UTC** was:
 | `mongoimport` | Missing from PATH, separately rechecked during the review corrections |
 | Container/tool availability | Docker absent; Podman 5.8.8 available; no pull, install or container started |
 | Core | No `terrabase` in PATH; core checkout has Debug apphost/test output, with no verified build revision/auth fixture readiness |
-| Owned disposable core endpoint | None attested; an unrelated cached TerraBase process and Fly tunnels exist and were not probed |
 | Contention | 16 CPUs; load averages 14.15/17.01/14.92; multiple active csc/VBCSCompiler/MSBuild processes; busiest compiler processes about 445% and 436% CPU |
 
 Python 3.15.0, curl 8.22.0, .NET SDK 11.0.100-rc.1.26425.128, systemd 260.5 and `timeout` are available.
@@ -55,7 +54,7 @@ ULID, verified synthetic catalog, short-lived local JWT, and its teardown handle
 write its authentication header to a **mode-0600** curl config in the run folder, without printing it.
 This pinned procedure uses the Program's plain HTTP Client listener at `http://127.0.0.1:<port>` only;
 no reverse proxy, Internal listener or public endpoint is acceptable. No source credentials are needed. No production/auth-provider credentials,
-skip-auth path, live customer data, Fly proxy/SSH, TLS bypass, or guessed listener is acceptable.
+skip-auth path, live customer data, remote infrastructure proxy/SSH, TLS bypass, or guessed listener is acceptable.
 
 ## 2. Start one isolated source and generate three documents
 

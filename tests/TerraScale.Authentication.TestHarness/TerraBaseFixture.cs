@@ -37,7 +37,7 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 
     /// <summary>
     /// Points a ts-auth server's storage at <paramref name="databaseName"/> of the tenant's project in this fixture: by
-    /// default through TerraBase's internal listener with the peer credential, as ts-auth reaches it on Fly; with
+    /// default through TerraBase's internal listener with the peer credential, as ts-auth reaches it over NetBird; with
     /// <paramref name="apiKey"/>, through the public listener with that key. A test may register its own HttpClient,
     /// wrapping <see cref="NewHandler"/>.
     /// </summary>
@@ -50,16 +50,16 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     }
 
     /// <summary>
-    /// Points storage at the tenant's databases as ts-auth reaches them on Fly (internal listeners, with the peer credential
+    /// Points storage at the tenant's databases as ts-auth reaches them over NetBird (internal listeners, with the peer credential
     /// passed explicitly to the transports), through ts-auth's own transports: discovery and JWKS reads at
     /// <paramref name="ownRegion"/> (database <paramref name="localDatabase"/>), at <paramref name="otherRegion"/> when it does
     /// not answer; everything else at <paramref name="designatedRegion"/> (database <paramref name="designatedDatabase"/>), with
     /// no fallback. Two database names stand for two regions' copies that have not replicated.
     /// </summary>
     public static void UseRegionalStorage(IServiceCollection services, TerraBaseTestTenant tenant, Uri ownRegion, TcpRelay otherRegion, Uri designatedRegion,
-        string localDatabase = "auth", string designatedDatabase = "auth")
+        string localDatabase = "auth", string designatedDatabase = "auth", TerraBaseTransport.HostResolver? resolve = null)
     {
-        services.AddSingleton(new HttpClient(TerraBaseTransport.CreateHandler([new DnsEndPoint("127.0.0.1", otherRegion.Port)], NullLogger.Instance,
+        services.AddSingleton(new HttpClient(TerraBaseTransport.CreateHandler([new DnsEndPoint("127.0.0.1", otherRegion.Port)], NullLogger.Instance, resolve,
             peerSecret: TerraBaseTestServer.PeerSecret)));
         services.AddSingleton(provider => new TerraBaseDocumentsClient(provider.GetRequiredService<HttpClient>(),
             new TerraBaseDocumentsClientOptions { BaseAddress = ownRegion }).Database(tenant.Project.Id, localDatabase));

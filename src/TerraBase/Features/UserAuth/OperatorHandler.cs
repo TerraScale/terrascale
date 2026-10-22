@@ -11,9 +11,9 @@ using ZLogger;
 namespace TerraBase.Features.UserAuth;
 
 /// <summary>
-/// Authenticates a request on the internal listener as the platform operator. The internal listener is bound to Fly's
-/// private network. Listener middleware first verifies and records its shared peer credential. With <see cref="UserHeader"/> the operator acts as that user on the
-/// Management API, and every use is logged. Without it, on a project's data route, the operator holds every scope of the
+/// Authenticates a request on the internal listener as the platform operator. The internal listener is bound to the
+/// node's NetBird address or local loopback and uses h2c. Listener middleware first verifies and records its shared peer
+/// credential. With <see cref="UserHeader"/> the operator acts as that user on the Management API, and every use is logged. Without it, on a project's data route, the operator holds every scope of the
 /// project's organization, as an API key of that organization would (ts-auth's own storage).
 /// </summary>
 internal sealed class OperatorHandler(

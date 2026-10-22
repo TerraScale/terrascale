@@ -28,7 +28,7 @@ public static class TerraBaseTransport
     // Regional fallback connections are replaced after this long, so ts-auth returns to its own region when it answers again.
     private static readonly TimeSpan ConnectionLifetime = TimeSpan.FromSeconds(30);
 
-    /// <summary>The addresses of a host; Fly's DNS unless the host registers another (tests, to name loopback machines).</summary>
+    /// <summary>The addresses of a host; system DNS unless the host registers another resolver (tests name loopback machines).</summary>
     public delegate Task<IPAddress[]> HostResolver(string host, CancellationToken cancellationToken);
 
     /// <summary>
@@ -42,7 +42,7 @@ public static class TerraBaseTransport
         ArgumentNullException.ThrowIfNull(logger);
         peerSecret = string.IsNullOrEmpty(peerSecret) ? null : Validated(peerSecret);
         var handler = TerraBaseHttp.CreateHandler();
-        // Only a client with regional fallbacks needs periodic failback; the authority always stays in gru.
+        // Only a client with alternate endpoints needs periodic failback; the authority always stays at its named endpoint.
         if (otherRegions.Count > 0)
         {
             handler.PooledConnectionLifetime = ConnectionLifetime;
@@ -109,7 +109,7 @@ public static class TerraBaseTransport
         }
     }
 
-    // Fly lists started machines only: a region without one does not resolve.
+    // An unavailable DNS name supplies no connection candidates.
     private static async Task<IPEndPoint[]> EndPointsAsync(HostResolver resolve, DnsEndPoint host, CancellationToken cancellationToken)
     {
         try

@@ -18,7 +18,6 @@ public sealed class RemoteAckE2ETests
     [Arguments(Cluster.Sjc, Cluster.Gru)]
     public async Task A_201_survives_the_origins_immediate_SIGKILL_and_the_remote_regions_restart(string origin, string remote)
     {
-        Skip.When(Cluster.Live, "kills disposable local region processes");
         await using var regions = await RegionProcesses.StartAsync(origin, remote);
         await ConnectedAsync(regions, origin, remote);
         var database = await DatabaseAsync(regions, origin);
@@ -62,7 +61,6 @@ public sealed class RemoteAckE2ETests
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task A_killed_origins_durable_change_log_ships_to_a_region_that_missed_its_confirmed_writes()
     {
-        Skip.When(Cluster.Live, "kills disposable local region processes");
         await using var regions = await RegionProcesses.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
         await regions.KillAsync(Cluster.Fra);
         await ConnectedAsync(regions, Cluster.Gru, Cluster.Sjc);

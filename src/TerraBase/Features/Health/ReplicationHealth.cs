@@ -33,7 +33,7 @@ public interface IReplicationHealth
     ValueTask<ReplicationHealthBody> ReadAsync(CancellationToken cancellationToken);
 }
 
-/// <summary>Regions from the membership this node sees (Fly's internal DNS), lag from its outbound replication status.</summary>
+/// <summary>Regions from the membership this node sees, lag from its outbound replication status.</summary>
 internal sealed class ReplicationHealth(IMembership membership, IReplicationStatus status, TerraBaseOptions options) : IReplicationHealth
 {
     /// <summary>Backlog age beyond which a region is degraded; the Grafana send-lag alert (ops/grafana) uses the same bound.</summary>

@@ -8,6 +8,7 @@ namespace TerraBase.E2E;
 /// not answer as its region (or, pinned, on the revision under test) stops the run, and a pinned run refuses scenarios
 /// still listed as expected failures.
 /// </summary>
+[Category("local-only")]
 public sealed class OrchTests
 {
     private static readonly string[] Regions = [Cluster.Gru, Cluster.Sjc, Cluster.Fra];

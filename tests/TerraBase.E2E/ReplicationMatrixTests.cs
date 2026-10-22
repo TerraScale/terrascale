@@ -15,7 +15,7 @@ public sealed class ReplicationMatrixTests
 
     [Test]
     [Category("replication-matrix-live")]
-    [Scenario(Nodes.InProcess)]
+    [Scenario(Nodes.Cluster)]
     [Arguments(Cluster.Gru, Cluster.Sjc)]
     [Arguments(Cluster.Sjc, Cluster.Gru)]
     [Arguments(Cluster.Sjc, Cluster.Fra)]
@@ -44,15 +44,13 @@ public sealed class ReplicationMatrixTests
     [Arguments(Cluster.Fra)]
     public async Task Each_region_rejoins_with_writes_and_tombstones_from_both_survivors(string offline, CancellationToken cancellationToken)
     {
-        Skip.When(Cluster.Live,
-            "each parallel outage owns local nodes; the ts-orch outage proof runs separately with make terrabase-e2e-orch-outage");
-        await RejoinOwnedAsync(offline, cancellationToken);
+        await RejoinOwnedAsync(offline, cancellationToken, local: true);
     }
 
     // Preserve the outage and recovery errors if releasing the cluster also fails.
-    internal static async Task RejoinOwnedAsync(string offline, CancellationToken token)
+    internal static async Task RejoinOwnedAsync(string offline, CancellationToken token, bool local = false)
     {
-        var cluster = await Cluster.StartAsync(All);
+        var cluster = local ? await Cluster.StartLocalAsync(All) : await Cluster.StartAsync(All);
         try
         {
             await RejoinAsync(cluster, offline, token);
@@ -99,17 +97,14 @@ public sealed class ReplicationMatrixTests
         {
             await cluster.StopAsync(offline, token);
             // Seed convergence through the stopped region does not prove the survivors can confirm each other's writes.
-            (string Id, string Canonical)[] probes = [];
-            if (Cluster.Live)
-            {
-                probes = await ProbeSurvivorsAsync(cluster, survivors, token);
-            }
-            else
+            if (!cluster.IsLive)
             {
                 await Task.WhenAll(survivors.Select(from => Converge.UntilAsync(() => cluster.ReplicationAsync(from, token),
                     status => status.GetProperty("peers").EnumerateArray().Any(peer => peer.GetProperty("region").GetString() == survivors.Single(to => to != from)),
                     $"{from} streams to the other survivor while {offline} is down", token)));
             }
+
+            var probes = await ProbeSurvivorsAsync(cluster, survivors, token);
 
             const int count = 40;
             var faker = new Faker();
@@ -167,12 +162,10 @@ public sealed class ReplicationMatrixTests
         }
     }
 
-    // Starts offline again and waits until it serves: the cluster's cleanup checks every machine's identity and deletes the
-    // collection through gru. Bounded by its own clock, never the test's token. A start that fails (the region was never
-    // stopped, or already started) is forgiven only when the region then serves.
+    // Starts offline again and waits until it serves. Bounded by its own clock, never the test's token.
+    // A start that fails (the region was never stopped, or already started) is forgiven only when the region then serves.
     private static async Task RecoverAsync(Cluster cluster, string offline, bool started)
     {
-        // A ts-orch start waits up to four minutes for the node to serve, then the region has a convergence deadline.
         using var recovery = new CancellationTokenSource(TimeSpan.FromMinutes(5));
         Exception? start = null;
         if (!started)
@@ -198,7 +191,7 @@ public sealed class ReplicationMatrixTests
         }
     }
 
-    // The harness reads no ts-orch node's internal listener. With the third region down, a survivor's write is acknowledged remote_durable
+    // With the third region down, a survivor's write is acknowledged remote_durable
     // only once the other survivor holds a durable copy, which must then serve it. Visibility alone does not prove that
     // durability, so both are checked. Answers the probes for the collection digest.
     private static async Task<(string Id, string Canonical)[]> ProbeSurvivorsAsync(Cluster cluster, string[] survivors, CancellationToken token) =>
@@ -213,8 +206,7 @@ public sealed class ReplicationMatrixTests
             return (id, Docs.Canonical(body));
         }));
 
-    // While a restarted node boots, it refuses the connection (answered as 503), answers 503 itself, or answers without its
-    // identity headers (the pin refuses that): the read is not there yet. Reads only; a write is never sent again this way.
+    // While a restarted node boots, a read may not be available yet. Reads only; a write is never sent again this way.
     private static async Task<T?> BootingAsync<T>(Func<Task<T>> read)
     {
         try
@@ -234,7 +226,7 @@ public sealed class ReplicationMatrixTests
             async () => new Tombstones(await Task.WhenAll(cluster.Regions.Select(async region => (region, await Docs.TombstoneAsync(cluster[region], cluster.Document(id), token))))),
             tombstones => tombstones.Tags.All(tag => tag.Tag is { Length: > 0 }) && tombstones.Tags.Select(tag => tag.Tag).Distinct(StringComparer.Ordinal).Count() == 1,
             $"every region's tombstone ETag for {id}", token);
-        if (Cluster.Live)
+        if (cluster.IsLive)
         {
             return;
         }

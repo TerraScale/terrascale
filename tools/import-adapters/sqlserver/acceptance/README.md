@@ -156,7 +156,7 @@ keys and the supported COPY artifact remain exactly as declared in the manifest.
 
 Supply the existing local test context; keep its curl config private. Verify the
 ready build's OpenAPI includes `createImport`, `uploadImportSource`, `startImport`
-and `getImport` before creating anything. Do not route this to Fly or a live app:
+and `getImport` before creating anything. Do not route this to remote infrastructure or a live app:
 
 ```bash
 set -euo pipefail

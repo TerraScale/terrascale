@@ -8,10 +8,9 @@ namespace TerraBase.Features.Replication;
 
 /// <summary>
 /// Whether a client write is confirmed beyond this machine's region, and by which regions (decision 0013). A machine of a
-/// cell (one with a member directory: Fly's internal DNS, or a multi-machine test's) places every database in at least two
-/// regions, and answers a write only once a machine of another placed region has its change group durably. A cell of
-/// one (no member directory: development off Fly, single-machine tests) has no second region and answers after its local
-/// durable commit.
+/// cell with a member directory requires a durable acknowledgement from another placed region before confirming a write,
+/// even when the directory currently lists only this node; without an eligible remote region, writes fail closed.
+/// A node without a member directory (local development or single-machine tests) answers after its local durable commit.
 /// </summary>
 public interface IRemoteDurability
 {

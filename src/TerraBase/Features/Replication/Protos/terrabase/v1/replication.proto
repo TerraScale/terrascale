@@ -6,7 +6,7 @@ option csharp_namespace = "TerraBase.Features.Replication.V1";
 
 // Internal: peer streams of client databases (docs/terrabase/multi-region-replication.md sections 8 and 9). Each machine
 // pushes only the change groups of its own local writes, directly to every other machine whose region holds the database,
-// so nothing is forwarded and nothing echoes. Every peer RPC requires X-TerraBase-Peer-Credential from Fly's
+// so nothing is forwarded and nothing echoes. Every peer RPC requires X-TerraBase-Peer-Credential from
 // TERRABASE_PEER_SECRET.
 service Replication {
   // One stream per (sender, receiver) machine pair, for every database they share. The sender opens it with a Hello,

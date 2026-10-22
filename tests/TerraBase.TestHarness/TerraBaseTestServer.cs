@@ -535,7 +535,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
         private async Task CleanupCoreAsync(string directory)
         {
-            // A stopping machine leaves Fly's DNS.
+            // A stopping machine leaves the test member directory.
             topology.Stopping();
             using var cleanupLifetime = linkedCancellation;
             var errors = new List<Exception>();

@@ -6,17 +6,17 @@ using TerraBase.Primitives;
 namespace TerraBase.E2E;
 
 /// <summary>
-/// V5: Wave A's write contract between real regions, on local nodes and on ts-orch. A 2xx write is remote durable (A3):
-/// another region serves it at once, and a write with no reachable peer answers a defined 503. A replicated collection drop
-/// never deletes a write the receiver made after it (A7). Partitions need local nodes; RemoteAckE2ETests covers a SIGKILL
-/// of the origin right after the 201 with separate processes.
+/// V5: Wave A's write contract between real regions on local nodes. A 2xx write is
+/// remote durable (A3): another region serves it at once, a write with no reachable peer answers a defined 503, and a write
+/// survives its origin process's SIGKILL right after the 201. A replicated collection drop never deletes a write the
+/// receiver made after it (A7). Faults kill local processes or partition local nodes.
 /// </summary>
 public sealed class WaveAE2ETests
 {
     private static readonly string[] All = [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
 
     [Test]
-    [Scenario(Nodes.InProcess)]
+    [Scenario(Nodes.Cluster)]
     [Arguments(Cluster.Gru)]
     [Arguments(Cluster.Sjc)]
     [Arguments(Cluster.Fra)]
@@ -49,9 +49,8 @@ public sealed class WaveAE2ETests
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task A_write_with_no_reachable_peer_answers_a_defined_503()
     {
-        SkipLive();
-        await using var cluster = await Cluster.StartAsync(All);
-        cluster.Isolate(Cluster.Gru);
+        await using var cluster = await Cluster.StartLocalAsync(All);
+        await cluster.IsolateAsync(Cluster.Gru);
         try
         {
             var id = EntityIds.New().ToString();
@@ -68,8 +67,44 @@ public sealed class WaveAE2ETests
         }
         finally
         {
-            cluster.Heal();
+            await cluster.HealAllAsync();
         }
+    }
+
+    [Test]
+    [Category("local-only")]
+    [Scenario(Nodes.Processes, Faults.ProcessKill)]
+    public async Task A_201_survives_the_origin_process_SIGKILL_right_after_it()
+    {
+        await using var regions = await RegionProcesses.StartAsync(All);
+        var id = EntityIds.New().ToString();
+        var uri = regions.Document(id);
+        using var response = await regions[Cluster.Gru].PutAsJsonAsync(uri, new { survives = true });
+
+        // Kill before parsing the response or reading any region.
+        var killed = Stopwatch.GetTimestamp();
+        await regions.KillAsync(Cluster.Gru);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await Docs.BodyAsync(response))?["durability"]?.GetValue<string>()).IsEqualTo("remote_durable");
+        foreach (var region in new[] { Cluster.Sjc, Cluster.Fra })
+        {
+            _ = await Converge.UntilAsync(() => Docs.ReadAsync(regions[region], uri), read => read?["survives"]?.GetValue<bool>() == true, $"the write on {region} after gru's SIGKILL");
+        }
+
+        Converge.Report("V5 origin SIGKILL after 201: write served by sjc and fra", killed);
+        await regions.StartAgainAsync(Cluster.Gru);
+        _ = await Converge.UntilAsync(async () =>
+        {
+            try
+            {
+                return await Docs.ReadAsync(regions[Cluster.Gru], uri);
+            }
+            catch (HttpRequestException)
+            {
+                return null;
+            }
+        }, read => read?["survives"]?.GetValue<bool>() == true, "gru serves the write after its restart", TimeSpan.FromMinutes(4));
+        Converge.Report("V5 origin SIGKILL after 201: gru back and serving", killed);
     }
 
     // A7: gru drops the collection while its direct link to sjc is cut; sjc then writes a new document (fra confirms both).
@@ -78,8 +113,7 @@ public sealed class WaveAE2ETests
     [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task A_write_made_after_a_replicated_drop_survives_it_in_every_region()
     {
-        SkipLive();
-        await using var cluster = await Cluster.StartAsync(All);
+        await using var cluster = await Cluster.StartLocalAsync(All);
         var covered = EntityIds.New().ToString();
         await Converge.SeedAllAsync(cluster, cluster.Document(covered), new JsonObject { ["before"] = "drop" });
         foreach (var region in new[] { Cluster.Gru, Cluster.Sjc })
@@ -90,7 +124,7 @@ public sealed class WaveAE2ETests
                     && peer["status"]?.GetValue<string>() == "ok") == true, $"{region} streams to fra before the cut");
         }
 
-        cluster.Isolate(Cluster.Gru, Cluster.Sjc);
+        await cluster.IsolateAsync(Cluster.Gru, Cluster.Sjc);
         try
         {
             using (var dropped = await cluster[Cluster.Gru].DeleteAsync(new Uri($"{cluster.DatabasePath}/collections/{cluster.Collection}", UriKind.Relative)))
@@ -101,7 +135,7 @@ public sealed class WaveAE2ETests
             var later = EntityIds.New().ToString();
             var body = new JsonObject { ["after"] = "drop" };
             await Docs.PutAsync(cluster[Cluster.Sjc], cluster.Document(later), body);
-            cluster.Heal();
+            await cluster.HealAllAsync();
             var healed = Stopwatch.GetTimestamp();
             var expected = Docs.Digest([(later, Docs.Canonical(body))]);
             var listings = await Converge.UntilAsync(
@@ -111,7 +145,7 @@ public sealed class WaveAE2ETests
         }
         finally
         {
-            cluster.Heal();
+            await cluster.HealAllAsync();
         }
     }
 
@@ -127,7 +161,4 @@ public sealed class WaveAE2ETests
             return new Listing(0, Docs.Digest([]));
         }
     }
-
-    private static void SkipLive() =>
-        Skip.When(Cluster.Live, "partitions regions: ts-orch has no partition switch, so local nodes only");
 }

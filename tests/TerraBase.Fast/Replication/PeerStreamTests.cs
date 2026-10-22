@@ -320,7 +320,7 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.UntilAsync(first, """{"n":1}""")).IsTrue();
         await Assert.That(await gru.UntilStreamsAsync(["sjc"])).IsTrue();
 
-        // sjc leaves the list (as Fly's DNS drops a stopped machine): within a heartbeat gru closes its open stream to it.
+        // sjc leaves the peer directory: within a heartbeat gru closes its open stream to it.
         var member = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "sjc");
         cluster.Members.Leave(member.Name);
         await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();

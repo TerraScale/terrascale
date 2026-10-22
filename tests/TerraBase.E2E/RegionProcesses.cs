@@ -22,10 +22,10 @@ namespace TerraBase.E2E;
 /// <summary>
 /// Regions as separate operating-system processes, so a node can be killed with SIGKILL and started again on its data
 /// while the others keep replicating. Each process runs <see cref="RegionProcessHost"/> (this test binary, one node of the
-/// real <c>Program</c>), which finds its peers in a shared directory standing in for Fly's <c>vms.&lt;app&gt;.internal</c>:
-/// every node lists itself there with its internal listener, and a kill removes the entry, as Fly's DNS drops a stopped
-/// machine. The harness drives each node over its internal listener as the platform operator (h2c on loopback, every
-/// scope on a project's data routes), so no per-process TLS or token is needed. Local only.
+/// real <c>Program</c>), which finds its peers in a shared fake test directory standing in for the ts-orch peers file:
+/// every node lists itself there with its internal listener, and a kill removes the entry. The harness drives each node
+/// over its internal listener as the platform operator (h2c on loopback, every scope on a project's data routes), so no
+/// per-process TLS or token is needed. Local only.
 /// </summary>
 internal sealed class RegionProcesses : IAsyncDisposable
 {
@@ -76,7 +76,7 @@ internal sealed class RegionProcesses : IAsyncDisposable
             Directory.CreateDirectory(Path.Combine(cluster._root, "members"));
             foreach (var region in regions)
             {
-                var node = new Region(region, Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14], Path.Combine(cluster._root, region));
+                var node = new Region(region, EntityIds.New().ToString().ToLowerInvariant(), Path.Combine(cluster._root, region));
                 Directory.CreateDirectory(node.DataDirectory);
                 cluster._regions[region] = node;
                 await cluster.LaunchAsync(node);
@@ -241,7 +241,7 @@ internal sealed class RegionProcesses : IAsyncDisposable
         start.ArgumentList.Add("--results-directory");
         start.ArgumentList.Add(Path.Combine(_root, $"{node.Name}.results"));
         // The child is a node, not a test run of this suite: none of the suite's own settings reach it.
-        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name.StartsWith("FLY_", StringComparison.Ordinal)).ToList())
+        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name.StartsWith("TS_", StringComparison.Ordinal)).ToList())
         {
             _ = start.Environment.Remove(name);
         }

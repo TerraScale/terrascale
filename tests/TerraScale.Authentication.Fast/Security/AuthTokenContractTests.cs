@@ -12,7 +12,7 @@ using TerraScale.Authentication.Tests;
 namespace TerraScale.Authentication.Fast.Security;
 
 /// <summary>
-/// The token contract TerraBase relies on in every region: ts-auth replicas (one per Fly region, all on one TerraBase
+/// The token contract TerraBase relies on in every region: ts-auth replicas (across regions, all on one TerraBase
 /// auth database) bootstrap the platform issuer's key at startup and share it, so a token
 /// any replica issues carries the one global issuer and validates against every replica's JWKS. Synthetic master key
 /// and service client; an isolated database per test.

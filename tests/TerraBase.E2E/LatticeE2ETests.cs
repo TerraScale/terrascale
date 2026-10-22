@@ -16,7 +16,7 @@ public sealed class LatticeE2ETests
     private static readonly TimeSpan GcWindow = TimeSpan.FromSeconds(150);
 
     [Test]
-    [Scenario(Nodes.InProcess)]
+    [Scenario(Nodes.Cluster)]
     public async Task E8_concurrent_inc_in_both_regions_sums_and_set_0_resets()
     {
         await Gaps.RunAsync("E8", async () =>
@@ -33,7 +33,7 @@ public sealed class LatticeE2ETests
     }
 
     [Test]
-    [Scenario(Nodes.InProcess)]
+    [Scenario(Nodes.Cluster)]
     public async Task E9_concurrent_add_and_remove_of_one_element_add_wins()
     {
         await Gaps.RunAsync("E9", async () =>
@@ -58,15 +58,9 @@ public sealed class LatticeE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task E10_feed_cursor_from_gru_resumes_in_sjc_with_no_missing_event_in_per_origin_order()
     {
-        // Before the cluster starts: an unfiltered ts-orch run must fail here, never stop a region or skip as if it passed.
-        if (Cluster.Live)
-        {
-            throw new InvalidOperationException("stops the cursor's issuer: local nodes only; on ts-orch this is ChangesFeedE2ETests' orch-outage scenario");
-        }
-
         await Gaps.RunAsync("E10", async () =>
         {
-            await using var cluster = await Cluster.StartAsync();
+            await using var cluster = await Cluster.StartLocalAsync();
             var (cursor, position) = await CursorThenWritesAsync(cluster, cluster[Cluster.Gru]);
             foreach (var id in position.Keys)
             {
@@ -75,26 +69,24 @@ public sealed class LatticeE2ETests
 
             await cluster.StopAsync(Cluster.Gru);
             using var sjc = await cluster.ViaAsync(Cluster.Sjc, Cluster.Sjc);
-            await ResumedInOrderAsync(sjc, cluster, cursor, position);
+            await ResumedInOrderAsync(sjc, Cluster.Sjc, cluster, cursor, position);
             Expected.Check(!cluster.Replays.Any(replay => replay is { Edge: Cluster.Sjc, Target: Cluster.Gru, FellBack: false } && replay.PathAndQuery.Contains("cursor=", StringComparison.Ordinal)),
                 $"sjc served the resume itself, never answered by the stopped gru; replays: {string.Join("; ", cluster.Replays)}");
-        });
+        }, local: true);
     }
 
-    // gru, the cursor's issuer, stays up: the resume presented in sjc is replayed to gru (issuer routing), and only gru's
-    // answer counts. On ts-orch too, where no region stops in the deploy run.
+    // The issuer stays up: the edge replays the resume from sjc to gru, and only gru's answer counts.
     [Test]
-    [Scenario(Nodes.InProcess)]
+    [Scenario(Nodes.Cluster)]
     public async Task E10_feed_cursor_from_gru_presented_in_sjc_is_replayed_to_gru_with_no_missing_event_in_per_origin_order()
     {
         await Gaps.RunAsync("E10", async () =>
         {
             await using var cluster = await Cluster.StartAsync();
-            // The cursor comes from the exact gru machine the resume must be answered by.
             using var gru = await cluster.ViaAsync(Cluster.Gru, Cluster.Gru);
             var (cursor, position) = await CursorThenWritesAsync(cluster, gru);
             using var sjc = await cluster.ViaAsync(Cluster.Sjc, Cluster.Gru);
-            await ResumedInOrderAsync(sjc, cluster, cursor, position);
+            await ResumedInOrderAsync(sjc, Cluster.Gru, cluster, cursor, position);
         });
     }
 
@@ -104,8 +96,10 @@ public sealed class LatticeE2ETests
     {
         var first = EntityIds.New().ToString();
         await Docs.PutAsync(cluster[Cluster.Gru], cluster.Document(first), new JsonObject { ["step"] = 0 });
-        var head = await ChangesAsync(issuer, cluster, cursor: null, events => events.Any(change => Id(change) == first));
+        var head = await ChangesAsync(issuer, Cluster.Gru, cluster, cursor: null, events => events.Any(change => Id(change) == first));
         var cursor = head.First(change => Id(change.Event) == first).Cursor;
+        _ = await Converge.UntilAsync(() => Docs.ReadAsync(cluster[Cluster.Sjc], cluster.Document(first)),
+            body => body?["step"]?.GetValue<int>() == 0, "the cursor's prefix on sjc before resuming");
         var writes = Enumerable.Range(1, 10).Select(step => (Id: EntityIds.New().ToString(), Region: step % 2 == 0 ? Cluster.Gru : Cluster.Sjc, Step: step)).ToArray();
         foreach (var write in writes)
         {
@@ -115,9 +109,9 @@ public sealed class LatticeE2ETests
         return (cursor, writes.Select((write, index) => (write.Id, index)).ToDictionary(pair => pair.Id, pair => pair.index));
     }
 
-    private static async Task ResumedInOrderAsync(HttpClient resume, Cluster cluster, string cursor, Dictionary<string, int> position)
+    private static async Task ResumedInOrderAsync(HttpClient resume, string expectedRegion, Cluster cluster, string cursor, Dictionary<string, int> position)
     {
-        var resumed = await ChangesAsync(resume, cluster, cursor, events => position.Keys.All(id => events.Any(change => Id(change) == id)));
+        var resumed = await ChangesAsync(resume, expectedRegion, cluster, cursor, events => position.Keys.All(id => events.Any(change => Id(change) == id)));
         var ours = resumed.Select(change => change.Event).Where(change => position.ContainsKey(Id(change))).ToArray();
         Expected.Check(position.Keys.All(id => ours.Any(change => Id(change) == id)), "every write after the cursor is in the resumed feed");
         foreach (var origin in ours.GroupBy(change => change["origin"]?.ToJsonString()))
@@ -128,7 +122,7 @@ public sealed class LatticeE2ETests
     }
 
     [Test]
-    [Scenario(Nodes.InProcess)]
+    [Scenario(Nodes.Cluster)]
     public async Task E11_sql_update_in_gru_and_patch_in_sjc_both_survive_and_increments_add_expected_to_fail()
     {
         await Gaps.RunAsync("E11", async () =>
@@ -156,11 +150,10 @@ public sealed class LatticeE2ETests
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task E14_delete_then_gc_then_recreate_leaves_no_ghost_fields()
     {
-        Skip.When(Cluster.Live, "reads local nodes' database files to see that GC collected the tombstones");
         await Gaps.RunAsync("E14", async () =>
         {
             const int count = 20;
-            await using var cluster = await Cluster.StartAsync();
+            await using var cluster = await Cluster.StartLocalAsync();
             var ids = Enumerable.Range(0, count).Select(_ => EntityIds.New().ToString()).ToArray();
             var uris = ids.Select(cluster.Document).ToArray();
             await Task.WhenAll(uris.Select(uri => Converge.SeedAsync(cluster, uri, new JsonObject { ["a"] = "a", ["b"] = "b" })));
@@ -186,13 +179,13 @@ public sealed class LatticeE2ETests
                 var recreated = await SettledAsync(cluster, uri, "recreate");
                 Expected.Check(Docs.Canonical(recreated.Gru) == """{"d":"d"}""", $"the recreated document has only its new field; {recreated}");
             }
-        });
+        }, local: true);
     }
 
     // The storage half of E15: two refreshes of one token in gru and sjc within 1 s each add a use, and both regions'
     // feeds then show the token with two uses, which ts-auth's watcher revokes the family on. R12 adds the ts-auth half.
     [Test]
-    [Scenario(Nodes.InProcess)]
+    [Scenario(Nodes.Cluster)]
     public async Task E15_refresh_token_used_in_gru_and_sjc_shows_both_uses_on_both_feeds()
     {
         await Gaps.RunAsync("E15", async () =>
@@ -206,7 +199,7 @@ public sealed class LatticeE2ETests
                 Docs.OpsAsync(cluster[Cluster.Sjc], uri, Op("add", "uses", EntityIds.New().ToString())));
             foreach (var region in new[] { Cluster.Gru, Cluster.Sjc })
             {
-                _ = await ChangesAsync(cluster[region], cluster, cursor: null, events => events.Any(change => Id(change) == token && change["document"]?["uses"]?.AsArray().Count == 2));
+                _ = await ChangesAsync(cluster[region], region, cluster, cursor: null, events => events.Any(change => Id(change) == token && change["document"]?["uses"]?.AsArray().Count == 2));
             }
         });
     }
@@ -272,7 +265,7 @@ public sealed class LatticeE2ETests
 
     // The change events of this test's collection on one region's feed, from cursor (the start of retention when
     // null), until enough accepts them; each with the cursor after it (the SSE id).
-    private static async Task<List<(string Cursor, JsonNode Event)>> ChangesAsync(HttpClient client, Cluster cluster, string? cursor, Func<IEnumerable<JsonNode>, bool> enough)
+    private static async Task<List<(string Cursor, JsonNode Event)>> ChangesAsync(HttpClient client, string expectedRegion, Cluster cluster, string? cursor, Func<IEnumerable<JsonNode>, bool> enough)
     {
         using var deadline = new CancellationTokenSource(Converge.Deadline);
         var query = $"collections={cluster.Collection}" + (cursor is null ? "" : $"&cursor={Uri.EscapeDataString(cursor)}");
@@ -280,6 +273,8 @@ public sealed class LatticeE2ETests
         request.Headers.Accept.ParseAdd("text/event-stream");
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
         await Docs.EnsureSuccessAsync(response);
+        var answered = response.Headers.TryGetValues("X-TerraBase-Region", out var values) ? string.Join(',', values) : "(missing)";
+        Expected.Check(answered == expectedRegion, $"the changes feed answers from {expectedRegion}; got {answered}");
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(deadline.Token));
         var events = new List<(string Cursor, JsonNode Event)>();
         string? id = null, name = null, data = null;

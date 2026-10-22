@@ -6,18 +6,13 @@ namespace TerraBase.E2E;
 
 public sealed class F4RestartDiagnosticTests
 {
-    // Stops every region's node at once: in-process only, so the deploy run excludes the local-only category.
+    // Stops every region's local node at once.
     [Test]
     [Category("local-only")]
     [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task All_three_nodes_restart_together_and_accept_a_write()
     {
-        if (Cluster.Live)
-        {
-            throw new InvalidOperationException("F4 diagnostic runs only in-process");
-        }
-
-        await using var cluster = await Cluster.StartAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
+        await using var cluster = await Cluster.StartLocalAsync(Cluster.Gru, Cluster.Sjc, Cluster.Fra);
         var uri = cluster.Document(EntityIds.New().ToString());
         await Converge.SeedAsync(cluster, uri, new JsonObject { ["n"] = 1 });
         await Task.WhenAll(cluster.Regions.Select(region => cluster.StopAsync(region)));

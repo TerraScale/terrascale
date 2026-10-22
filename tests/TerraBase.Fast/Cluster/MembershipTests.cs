@@ -8,7 +8,7 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Cluster;
 
-// TS-647 step 3: a database's primary on the ring of the machines Fly's DNS lists ships it while it holds its member lease,
+// TS-647 step 3: a database's primary on the peer directory's ring ships it while it holds its member lease,
 // and a handover never lets two members ship the same database at once.
 public sealed class MembershipTests
 {

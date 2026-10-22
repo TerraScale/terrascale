@@ -14,7 +14,7 @@ public sealed class OrchOutageE2ETests
 {
     // One test for all three outages, in sequence: no two outages share the service's regions at the same time.
     [Test]
-    [Scenario(Nodes.InProcess, Faults.NodeStop)]
+    [Scenario(Nodes.Cluster, Faults.NodeStop)]
     public async Task Each_region_stopped_then_started_catches_up_on_writes_tombstones_and_conflicts_from_both_survivors(CancellationToken cancellationToken)
     {
         Skip.Unless(Cluster.LiveOutage, Cluster.OutageRun);

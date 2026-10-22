@@ -44,11 +44,13 @@ internal static class Outcomes
             ["test"] = context.Metadata.DisplayName,
             ["category"] = category,
             ["detail"] = detail,
-            ["nodes"] = scenario is null ? "undeclared" : Cluster.Live && scenario.Nodes != Nodes.Harness ? "ts-orch nodes" : scenario.Nodes switch
+            ["nodes"] = scenario is null ? "undeclared" : scenario.Nodes switch
             {
                 Nodes.Harness => "no node (harness)",
+                Nodes.Cluster => Cluster.Live ? "ts-orch nodes" : "in-process nodes",
                 Nodes.InProcess => "in-process nodes",
-                _ => "separate OS processes",
+                Nodes.Processes => "separate OS processes",
+                _ => "undeclared",
             },
             ["faults"] = scenario is null ? "undeclared" : scenario.Faults == Faults.None ? "none" : scenario.Faults.ToString(),
         });

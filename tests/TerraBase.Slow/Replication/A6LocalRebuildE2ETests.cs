@@ -150,7 +150,7 @@ public sealed class A6LocalRebuildE2ETests
             return await condition(linked.Token);
         }, TimeSpan.FromMinutes(3)).WaitAsync(token);
 
-    // Private to this single test file: no Cluster, Fly branch, environment writes or shared mutable state.
+    // Private to this single test file: no Cluster, deployment branch, environment writes or shared mutable state.
     // Pin host UTC before native CDC timestamps; advance fake timers and elapsed time separately.
     private sealed class RetainedCdcTime : TimeProvider
     {

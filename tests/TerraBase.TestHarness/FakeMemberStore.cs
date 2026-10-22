@@ -4,9 +4,9 @@ using TerraBase.Engine.Cluster;
 namespace TerraBase.Testing;
 
 /// <summary>
-/// Fly's internal DNS for the machines of a test, in memory: it lists every started machine of every region. A server that
+/// The member directory for the machines of a test, in memory: it lists every started machine of every region. A server that
 /// registers it as its <see cref="IMemberDirectory"/> is listed once it listens and dropped once it stops (the harness does
-/// both, as Fly does). <see cref="Partition"/> makes a member's own lookups fail, as a machine cut off from the DNS.
+/// both). <see cref="Partition"/> makes a member's own lookups fail, as a machine unable to read its peer inventory.
 /// </summary>
 internal sealed class FakeMemberStore : IMemberDirectory
 {

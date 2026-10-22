@@ -9,7 +9,7 @@ namespace TerraBase.E2E;
 /// response says <c>up_to_date</c>. A <c>409 must_refetch</c> discards the view and restarts at <c>-1</c> (it never
 /// resumes: FR-23); <c>429</c> and <c>503</c> keep the view and retry; <c>404 unknown_collection</c> is an empty view.
 /// </summary>
-internal sealed class ShapeReader(HttpClient client, string collectionPath)
+internal sealed class ShapeReader(Func<HttpClient> client, string collectionPath)
 {
     private readonly SortedDictionary<string, string> _view = [with(StringComparer.Ordinal)];
     private string? _handle;
@@ -100,7 +100,7 @@ internal sealed class ShapeReader(HttpClient client, string collectionPath)
     // from the redirect target); a client that does not follow returns the 307. Either way the target is sent again.
     private async Task<HttpResponseMessage> GetAsync(Uri uri, CancellationToken token)
     {
-        var response = await client.GetAsync(uri, token);
+        var response = await client().GetAsync(uri, token);
         var target = response.StatusCode switch
         {
             HttpStatusCode.TemporaryRedirect => response.Headers.Location,
@@ -114,6 +114,6 @@ internal sealed class ShapeReader(HttpClient client, string collectionPath)
         }
 
         response.Dispose();
-        return await client.GetAsync(new Uri(target.IsAbsoluteUri ? target.PathAndQuery : target.OriginalString, UriKind.Relative), token);
+        return await client().GetAsync(new Uri(target.IsAbsoluteUri ? target.PathAndQuery : target.OriginalString, UriKind.Relative), token);
     }
 }

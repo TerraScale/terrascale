@@ -1,7 +1,7 @@
 namespace TerraBase.Testing;
 
 /// <summary>
-/// Clients of a test server's public listener: plain HTTP, as Fly Proxy forwards it once TLS ends at Fly's edge. It owns
+/// Clients of a test server's public listener: plain HTTP after TLS terminates at the public ingress. It owns
 /// nothing but its own lifetime: use it only before it is disposed.
 /// </summary>
 public sealed class ClientTls : IDisposable

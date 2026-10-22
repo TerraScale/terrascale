@@ -82,8 +82,7 @@ public sealed class ConfigurationTests
         })
         {
             var refused = await Assert.That(() => TerraBaseOptions.FromValues(Auth(issuer, audience), production: true)).Throws<TerraBaseConfigurationException>();
-            await Assert.That(refused!.Message).Contains("auth-issuer must be https://auth.terrascale.tech/terrascale");
-            await Assert.That(refused.Message).DoesNotContain("Fly");
+            await Assert.That(refused!.Message).IsEqualTo("outside Development, auth-issuer must be https://auth.terrascale.tech/terrascale and auth-audience must include https://api.terrascale.tech: ts-auth issues every region's platform tokens with that pair");
         }
 
         // Development (tests, local runs) trusts the ts-auth it names.

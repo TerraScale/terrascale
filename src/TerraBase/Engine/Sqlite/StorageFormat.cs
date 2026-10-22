@@ -3,7 +3,7 @@ namespace TerraBase.Engine.Sqlite;
 /// <summary>
 /// The on-disk storage format: <see cref="Version"/>, then the first 12 hex digits of the schema digest. A data directory
 /// records the format of the build that created it, and a build of another format refuses the directory (no migration).
-/// The deploy gate (<c>scripts/fly/deploy.sh</c>) compares it per region before switching a region's image.
+/// The deploy gate compares it per region before switching a region's image.
 /// </summary>
 public static class StorageFormat
 {

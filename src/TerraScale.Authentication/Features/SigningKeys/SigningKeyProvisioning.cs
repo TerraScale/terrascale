@@ -7,7 +7,7 @@ namespace TerraScale.Authentication.Features.SigningKeys;
 
 /// <summary>
 /// The idempotent operator command <c>ts-auth provision-signing-key</c>, also used to diagnose startup provisioning.
-/// It runs as a separate process on a machine (<c>fly ssh console -C</c>, so only someone with Fly SSH access to the app),
+/// It runs as a separate, authorized operator process in the ts-orch workload,
 /// with the same secrets as the server and without starting it: it creates ts-auth's collections (idempotent), then the
 /// first key if there is none (<see cref="KeyRing.ProvisionAsync"/>), and logs the outcome as an audit line. Existing
 /// keys are never replaced; unusable ones fail. Steps: docs/auth/signing-keys.md.

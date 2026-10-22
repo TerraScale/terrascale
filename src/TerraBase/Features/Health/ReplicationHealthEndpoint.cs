@@ -15,7 +15,7 @@ public sealed class ReplicationHealthEndpoint(IReplicationHealth health) : Endpo
         Get("/health/replication");
         Name("replicationHealth");
         Summary("Replication health of this node");
-        Description("Region codes and lag seconds only. status is degraded when a region this node sees has no replication stream, lags more than 30 seconds or diverged. Cacheable for 5 seconds. Pick the answering region with Fly's fly-prefer-region request header.");
+        Description("Region codes and lag seconds only. status is degraded when a region this node sees has no replication stream, lags more than 30 seconds or diverged. Cacheable for 5 seconds.");
         Tags("Health");
         AllowAnonymous();
         Metadata(ListenerMetadata.Probe);

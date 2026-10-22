@@ -3,22 +3,31 @@ using System.Net;
 namespace TerraBase.E2E;
 
 /// <summary>
-/// The Fly path's region check, against a stand-in for the proxy at the handler level. It runs without Fly, so the
-/// refusal of a wrong-region answer runs on every local run and in the required local stage (the local-only category).
+/// The edge's answering-region check against an in-process handler: a wrong or missing region is refused, and a cursor
+/// replay accepts only the expected issuer region.
 /// </summary>
 [Category("local-only")]
 public sealed class RegionPinTests
 {
     [Test]
     [Scenario(Nodes.Harness)]
-    public async Task Pinned_request_carries_the_preferred_region_and_is_accepted_when_that_region_serves_it()
+    public async Task A_request_is_preserved_and_accepted_when_its_region_serves_it()
     {
-        using var client = Client(pinned: Cluster.Gru, served: Cluster.Gru);
+        var headers = new List<string>();
+        using var client = new HttpClient(new RegionPin(Cluster.Gru)
+        {
+            InnerHandler = new Stand(request =>
+            {
+                headers.AddRange(request.Headers.Select(header => header.Key));
+                return Answer(request, Cluster.Gru);
+            }),
+        }) { BaseAddress = new Uri("http://edge.test") };
 
-        using var response = await client.GetAsync(new Uri("/", UriKind.Relative));
+        using var response = await client.GetAsync(new Uri("/probe?value=region", UriKind.Relative));
 
-        // The stand-in echoes the pin it received, so the body proves the header went out.
-        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo(Cluster.Gru);
+        await Assert.That(headers).IsEmpty();
+        await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("/probe?value=region");
+        await Assert.That(response.Headers.GetValues("X-TerraBase-Region").Single()).IsEqualTo(Cluster.Gru);
     }
 
     [Test]
@@ -39,7 +48,7 @@ public sealed class RegionPinTests
         await Assert.That(async () => await client.GetAsync(new Uri("/", UriKind.Relative))).Throws<RegionMismatchException>();
     }
 
-    // A changes-feed resume enters at sjc and TerraBase replays it to gru, its cursor's issuer: only gru's answer counts,
+    // A changes-feed resume enters at sjc and the edge replays it to gru, its cursor's issuer region: only gru's answer counts,
     // and sjc answering it itself is refused like any other region.
     [Test]
     [Scenario(Nodes.Harness)]
@@ -50,13 +59,13 @@ public sealed class RegionPinTests
     {
         using var client = new HttpClient(new RegionPin(Cluster.Sjc, Cluster.Gru) { InnerHandler = new Stand(request => Answer(request, served)) })
         {
-            BaseAddress = new Uri("http://fly.test"),
+            BaseAddress = new Uri("http://edge.test"),
         };
 
         if (accepted)
         {
             using var response = await client.GetAsync(new Uri("/", UriKind.Relative));
-            await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo(Cluster.Sjc);
+            await Assert.That(await response.Content.ReadAsStringAsync()).IsEqualTo("/");
         }
         else
         {
@@ -115,11 +124,11 @@ public sealed class RegionPinTests
     };
 
     private static HttpClient Client(string pinned, string? served) =>
-        new(new RegionPin(pinned) { InnerHandler = new Stand(request => Answer(request, served)) }) { BaseAddress = new Uri("http://fly.test") };
+        new(new RegionPin(pinned) { InnerHandler = new Stand(request => Answer(request, served)) }) { BaseAddress = new Uri("http://edge.test") };
 
     private static HttpResponseMessage Answer(HttpRequestMessage request, string? served)
     {
-        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(request.Headers.GetValues("fly-prefer-region").Single()) };
+        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(request.RequestUri!.PathAndQuery) };
         if (served is not null)
         {
             response.Headers.Add("X-TerraBase-Region", served);

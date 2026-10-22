@@ -9,8 +9,7 @@ namespace TerraBase.Features.Backup;
 /// <summary>
 /// <c>GET /backupz</c>: 200 once backup is configured, has found this node's files, and every file the node ships has
 /// reached the bucket with less than a minute of lag; 503 otherwise. A member that ships no file passes once its files
-/// are found. The deploy's live check waits for it (scripts/fly/deploy.sh). It is not a Fly
-/// health check, so a bucket outage never takes a node out of service.
+/// are found. This backup probe is separate from serving health, so a bucket outage does not change serving health.
 /// </summary>
 public sealed class BackupHealthEndpoint(IContinuousBackup backup, TerraBaseOptions options) : EndpointWithoutRequest<IResult>
 {

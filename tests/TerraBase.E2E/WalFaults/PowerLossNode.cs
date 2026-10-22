@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
 
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.E2E.WalFaults;
@@ -16,7 +17,7 @@ namespace TerraBase.E2E.WalFaults;
 internal sealed class PowerLossNode : IAsyncDisposable
 {
     private readonly string _root = Directory.CreateTempSubdirectory("terrabase-power-").FullName;
-    private readonly string _machine = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
+    private readonly string _machine = EntityIds.New().ToString().ToLowerInvariant();
     private Process? _process;
 
     // The child's last lines of error output, for a startup failure's message.
@@ -75,7 +76,7 @@ internal sealed class PowerLossNode : IAsyncDisposable
         start.ArgumentList.Add($"/*/*/{_host}/*");
         start.ArgumentList.Add("--results-directory");
         start.ArgumentList.Add(Path.Combine(_root, "results"));
-        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name.StartsWith("FLY_", StringComparison.Ordinal)).ToList())
+        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name.StartsWith("TS_", StringComparison.Ordinal)).ToList())
         {
             _ = start.Environment.Remove(name);
         }
