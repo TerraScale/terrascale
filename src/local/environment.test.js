@@ -10,15 +10,15 @@ const developmentEnvironment = /** @type {const} */ ({
 describe("hosted SQLite development environments", () => {
   test("refuses a hosting platform indicator without the explicit opt-in", () => {
     expect(() =>
-      assertLocalSqliteEnvironment({ ...developmentEnvironment, FLY_APP_NAME: "ts-dashboard-dev" }),
-    ).toThrow(/FLY_APP_NAME/);
+      assertLocalSqliteEnvironment({ ...developmentEnvironment, RENDER: "ts-dashboard-dev" }),
+    ).toThrow(/RENDER/);
   });
 
   test("allows a hosting platform indicator with the explicit opt-in", () => {
     expect(() =>
       assertLocalSqliteEnvironment({
         ...developmentEnvironment,
-        FLY_APP_NAME: "ts-dashboard-dev",
+        RENDER: "ts-dashboard-dev",
         [localSqliteHostedOptIn]: "1",
       }),
     ).not.toThrow();
@@ -33,7 +33,7 @@ describe("hosted SQLite development environments", () => {
       expect(() =>
         assertLocalSqliteEnvironment({
           ...developmentEnvironment,
-          FLY_APP_NAME: "ts-dashboard-dev",
+          RENDER: "ts-dashboard-dev",
           [localSqliteHostedOptIn]: "1",
           [name]: value,
         }),
@@ -49,7 +49,7 @@ describe("hosted SQLite development environments", () => {
     test(`still refuses ${name}=${value} with the explicit opt-in`, () => {
       expect(() =>
         assertLocalSqliteEnvironment({
-          FLY_APP_NAME: "ts-dashboard-dev",
+          RENDER: "ts-dashboard-dev",
           [localSqliteHostedOptIn]: "1",
           [name]: value,
         }),

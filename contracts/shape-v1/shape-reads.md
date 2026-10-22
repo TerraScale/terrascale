@@ -1,5 +1,7 @@
 # Shape reads, protocol v1
 
+> OCI adaptation of the upstream proposed contract pinned in `pin.json`; hosting wording is updated, wire semantics are unchanged. Production runs in OCI gru under ts-orch, with GHCR images and OCI Vault secrets delivered via instance principal. This is not deployment qualification.
+
 - Status: **proposed contract, not implemented.** Shape endpoints are not on `main`. Each rule names the lane that builds it
   (FR-xx, B1, A3, A4; see [free-reads.md](free-reads.md)).
 - Conformance: [shape-vectors.json](shape-vectors.json) (section 16). Where this text and a vector disagree, both are
@@ -211,7 +213,7 @@ Inputs, all UTF-8, in this order:
 
 Any input change rotates both values: database copy, restore or re-create; collection drop or re-create; a machine
 change or unclean start (new `replica_epoch`); a filter-encoding change. **Handles are per machine, not per region.**
-Fly can send two requests from one client to different machines in the same region. A handle unknown to the
+Regional routing can send two requests from one client to different machines in the same region. A handle unknown to the
 receiving machine answers `409 must_refetch`; the client may make one resume attempt (section 7, rule 6).
 
 ## 6. Body
