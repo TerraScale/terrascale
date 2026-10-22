@@ -701,6 +701,42 @@ public sealed class DataDirectoryTests
         return File.WriteAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName), [.. record, .. SHA256.HashData(record).AsSpan(0, 4)]);
     }
 
+    [Test]
+    public async Task An_established_directory_without_its_operation_journal_refuses_startup()
+    {
+        var directory = Directory.CreateTempSubdirectory("terrabase-missing-intents-").FullName;
+        try
+        {
+            await using (var server = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = directory))
+            {
+                _ = await server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+            }
+            var journal = Path.Combine(directory, SqliteStorageEngine.IntentName + ".db");
+            await Assert.That(File.Exists(journal)).IsTrue();
+            foreach (var suffix in new[] { string.Empty, "-wal", "-shm", "-journal" })
+            {
+                File.Delete(journal + suffix);
+            }
+            var identity = await File.ReadAllBytesAsync(Path.Combine(directory, ReplicaIdentityFile.FileName));
+            Exception? failure = null;
+            try
+            {
+                await using var unexpected = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = directory);
+            }
+            catch (TerraBaseConfigurationException error)
+            {
+                failure = error;
+            }
+            await Assert.That(failure?.Message).IsEqualTo("the data directory is missing its storage operation intent journal");
+            await Assert.That(File.Exists(journal)).IsFalse();
+            await Assert.That(await File.ReadAllBytesAsync(Path.Combine(directory, ReplicaIdentityFile.FileName))).IsEquivalentTo(identity);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     // Runs the real binary on the directory: it must print the message and exit with code 2.
     private static async Task AssertStartupRefusedAsync(string dataDirectory, string message)
     {
