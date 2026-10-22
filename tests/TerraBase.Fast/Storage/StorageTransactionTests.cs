@@ -234,8 +234,13 @@ public sealed class StorageTransactionTests
             .Select(descriptor => descriptor.LinkTarget)
             .Where(target => target is not null && target.StartsWith(server.DataDirectory + "/", StringComparison.Ordinal) && target.EndsWith(".db", StringComparison.Ordinal))
             .Distinct(StringComparer.Ordinal)
-            .Count();
-        await Assert.That(openFiles).IsEqualTo(engine.Pool.MaxIdle);
+            .ToArray();
+        var journal = engine.IntentStore!.FilePath;
+        var system = engine.SystemStore!.FilePath;
+        await Assert.That(openFiles).Contains(journal);
+        await Assert.That(openFiles).Contains(system);
+        await Assert.That(openFiles.Except([journal, system])).IsEquivalentTo(stores.Where(store => store.IdleCount > 0).Select(store => store.FilePath))
+            .Because("only pooled tenant files and the two fixed node-local stores may remain open");
 
         // A database whose connection was closed opens a new one when it is used again.
         await using var again = await stores[0].BeginTransactionAsync(write: false, CancellationToken.None);

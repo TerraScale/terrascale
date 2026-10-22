@@ -718,16 +718,7 @@ public sealed class DataDirectoryTests
                 File.Delete(journal + suffix);
             }
             var identity = await File.ReadAllBytesAsync(Path.Combine(directory, ReplicaIdentityFile.FileName));
-            Exception? failure = null;
-            try
-            {
-                await using var unexpected = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = directory);
-            }
-            catch (TerraBaseConfigurationException error)
-            {
-                failure = error;
-            }
-            await Assert.That(failure?.Message).IsEqualTo("the data directory is missing its storage operation intent journal");
+            await AssertStartupRefusedAsync(directory, "the data directory is missing its storage operation intent journal");
             await Assert.That(File.Exists(journal)).IsFalse();
             await Assert.That(await File.ReadAllBytesAsync(Path.Combine(directory, ReplicaIdentityFile.FileName))).IsEquivalentTo(identity);
         }
