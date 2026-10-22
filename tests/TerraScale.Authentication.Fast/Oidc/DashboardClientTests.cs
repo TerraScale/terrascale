@@ -20,7 +20,7 @@ public sealed class DashboardClientTests(TerraBaseFixture fixture)
         await using var first = started[0];
         await using var second = started[1];
 
-        var stored = (await database.ListDocumentsAsync(AuthStore.OidcApplicationCollection)).Items.Single().Document;
+        var stored = (await database.ListDocumentsAsync(AuthStore.OidcApplicationCollection)).Items.Single(item => item.Document.GetProperty("clientId").GetString() == OidcIssuer.DashboardClientId).Document;
         await Assert.That(stored.GetProperty("clientId").GetString()).IsEqualTo(OidcIssuer.DashboardClientId);
         await Assert.That(stored.GetProperty("redirectUris").EnumerateArray().Select(uri => uri.GetString()!).ToArray()).IsEquivalentTo([OidcHarness.RedirectUri, OidcHarness.LoopbackRedirectUri]);
         await Assert.That(stored.GetProperty("clientSecret").GetString()).IsNotEmpty();
@@ -31,7 +31,7 @@ public sealed class DashboardClientTests(TerraBaseFixture fixture)
             Shared(values);
             values["dashboard-redirect-uris"] = "https://dash.example.test/new/callback";
         });
-        var updated = (await database.ListDocumentsAsync(AuthStore.OidcApplicationCollection)).Items.Single().Document;
+        var updated = (await database.ListDocumentsAsync(AuthStore.OidcApplicationCollection)).Items.Single(item => item.Document.GetProperty("clientId").GetString() == OidcIssuer.DashboardClientId).Document;
         await Assert.That(updated.GetProperty("redirectUris").EnumerateArray().Select(uri => uri.GetString()!).ToArray()).IsEquivalentTo(["https://dash.example.test/new/callback"]);
         await Assert.That(updated.GetRawText()).DoesNotContain(OidcHarness.ClientSecret);
 

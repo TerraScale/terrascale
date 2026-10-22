@@ -101,6 +101,7 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
     // TS-598: the platform issuer as an audience would let organization and project tokens open the management API.
     [Arguments("access-token-audiences", "https://AUTH.test.invalid:443/terrascale")]
     [Arguments("service-clients", "01M4EQ2FRJ8S8B29E8TQVWNW4J:service-test-secret-0123456789abcdefghij")]
+    [Arguments("service-clients", "00000000000000000000000006:service-test-secret-0123456789abcdefghij")]
     [Arguments("service-clients", "abcdef01-2345-6789-abcd-ef0123456789:service-test-secret-0123456789abcdefghij")]
     [Arguments("service-clients", "Orchestrator:service-test-secret-0123456789abcdefghij")]
     [Arguments("service-clients", "01M4EQ2FRJ8S8B29E8TQVWNW4K:short")]
