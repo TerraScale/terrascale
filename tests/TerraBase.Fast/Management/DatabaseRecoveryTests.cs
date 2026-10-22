@@ -345,7 +345,9 @@ public sealed class DatabaseRecoveryTests
         TenantContext? captured = null;
         var injected = new InvalidOperationException("interrupted after registration commit");
         string target;
-        await using (var api = await state.StartAsync(services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, storage) =>
+        await using (var api = await state.StartAsync(services => services
+            .AddSingleton<TimeProvider>(new FakeTimeProvider(TimeProvider.System.GetUtcNow()))
+            .AddSingleton<DatabaseLifecycleCheckpoint>((step, storage) =>
         {
             if (armed && step == "create.committed")
             {
