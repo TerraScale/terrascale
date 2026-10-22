@@ -5,9 +5,9 @@ using ZLogger;
 namespace TerraBase.Engine.Cluster;
 
 /// <summary>
-/// Membership read from an <see cref="IMemberDirectory"/> (Fly's internal DNS on Fly). Every <see cref="Heartbeat"/> this
-/// member lists the started machines again; its view is the members of its own region. A member holds its lease while its
-/// last successful read began less than <see cref="Fence"/> ago by its own clock and listed it: a machine Fly stopped leaves
+/// Membership read from an <see cref="IMemberDirectory"/> supplied by a test topology. Every <see cref="Heartbeat"/> this
+/// member lists the started nodes again; its view is the members of its own region. A member holds its lease while its
+/// last successful read began less than <see cref="Fence"/> ago by its own clock and listed it: a stopped node leaves
 /// the directory, and stops acting on its lease within a heartbeat of the others seeing it gone. Refreshes happen from a
 /// background loop and from callers that need a current view, at most once per heartbeat.
 /// </summary>

@@ -47,8 +47,12 @@ public sealed class RegionTests
     [Arguments("grú")]
     [Arguments("gru 1")]
     [Arguments("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl")]
-    public async Task Invalid_fly_regions_stop_the_real_process_without_echoing_values(string region) =>
+    public async Task Invalid_orch_regions_stop_the_real_process_without_echoing_values(string region) =>
         await AssertStartupRefusedAsync(region);
+
+    [Test]
+    public async Task An_injected_orch_identity_requires_a_peer_credential_before_opening_storage() =>
+        await AssertStartupRefusedAsync("gru", "TERRABASE_PEER_SECRET");
 
     [Test]
     public async Task Every_client_response_keeps_its_region_including_cleared_errors()
@@ -212,7 +216,7 @@ public sealed class RegionTests
         }
     }
 
-    private static async Task AssertStartupRefusedAsync(string region)
+    private static async Task AssertStartupRefusedAsync(string region, string expectedSetting = "TS_REGION")
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-region-").FullName;
         try
@@ -228,9 +232,10 @@ public sealed class RegionTests
             start.Environment["ASPNETCORE_ENVIRONMENT"] = "Production";
             // Identity validation must precede host construction, even with a malformed framework setting.
             start.Environment["DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE"] = "invalid-test-value";
-            start.Environment["FLY_REGION"] = region;
-            start.Environment["FLY_MACHINE_ID"] = "d894655b3ed118";
-            start.Environment["FLY_APP_NAME"] = "ts-terrabase";
+            start.Environment["TS_REGION"] = region;
+            start.Environment["TS_NODE_ID"] = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+            _ = start.Environment.Remove("TERRABASE_PEER_SECRET");
+            _ = start.Environment.Remove("TERRABASE_PEER_SECRET_FILE");
             start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, typeof(Program).Assembly.GetName().Name + ".dll"));
             foreach (var name in TerraBaseOptions.SettingNames)
             {
@@ -253,7 +258,7 @@ public sealed class RegionTests
 
                 await Assert.That(process.ExitCode).IsEqualTo(2);
                 await Assert.That(await output).IsEmpty();
-                await Assert.That(await error).Contains("FLY_REGION");
+                await Assert.That(await error).Contains(expectedSetting);
                 await Assert.That(await error).DoesNotContain(region);
 
                 await Assert.That(Directory.EnumerateFileSystemEntries(directory)).IsEmpty();

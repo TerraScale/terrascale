@@ -21,7 +21,7 @@ using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
-// The deploy gate (scripts/fly/deploy.sh) reads the storage format a new image writes without starting a server.
+// The deploy gate reads the storage format a new image writes without starting a server.
 if (args is ["--storage-format"])
 {
     Console.WriteLine(StorageFormat.Id);
