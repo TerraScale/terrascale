@@ -458,7 +458,7 @@ public sealed class TerraBaseChangesContractTests
             response.Headers.Add("X-TerraBase-Region", "gru");
             response.Headers.Add("ts-replay", "region=sjc"); // Pending producer PR #353's mismatched-pin response.
             response.Headers.Location = new Uri("https://gru.api.terrascale.test/");
-            response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(1));
+            response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(1));
             return Task.FromResult(response);
         });
         using var http = new HttpClient(handler);
