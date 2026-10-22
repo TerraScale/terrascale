@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
@@ -293,22 +294,27 @@ public sealed class HealthTests
     {
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var health = new ThrowingStorageHealth(new IOException("storage down"));
+        var logs = new ThrowingWarningLogs();
         await using var server = await AuthTestServer.StartAsync(services: services =>
         {
             services.AddSingleton<TimeProvider>(clock);
-            services.AddSingleton<ILoggerProvider>(new ThrowingWarningLogs());
+            services.PostConfigure<LoggerFilterOptions>(options => options.Rules.Add(new LoggerFilterRule(typeof(ThrowingWarningLogs).FullName, null, LogLevel.Debug, null)));
+            services.AddSingleton<ILoggerProvider>(logs);
             services.AddSingleton<IStorageHealth>(health);
         });
 
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await Assert.That(await logs.NextPassAsync(deadline.Token)).IsEqualTo(LogLevel.Warning);
         using var first = await server.Client.GetAsync("/readyz");
-        // Two more passes after the first failed log write (a warning, then a debug line).
+        // Two more settled passes prove the failed warning did not stop the loop.
         foreach (var pass in new[] { 2, 3 })
         {
-            await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls == pass - 1), TimeSpan.FromSeconds(15))).IsTrue();
+            // The readiness log follows the settled check; a call count can still observe work in flight.
             clock.Advance(TimeSpan.FromSeconds(5));
+            await Assert.That(await logs.NextPassAsync(deadline.Token)).IsEqualTo(LogLevel.Debug);
+            await Assert.That(health.Calls).IsEqualTo(pass);
         }
 
-        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls == 3), TimeSpan.FromSeconds(15))).IsTrue();
         using var second = await server.Client.GetAsync("/readyz");
 
         // Not ready, and still answering: the failed log write did not fault the background loop.
@@ -318,13 +324,17 @@ public sealed class HealthTests
 
     private sealed class ThrowingWarningLogs : ILoggerProvider
     {
-        public ILogger CreateLogger(string categoryName) => new Logger();
+        private readonly Channel<LogLevel> passes = Channel.CreateUnbounded<LogLevel>();
+
+        public ValueTask<LogLevel> NextPassAsync(CancellationToken cancellationToken) => this.passes.Reader.ReadAsync(cancellationToken);
+
+        public ILogger CreateLogger(string categoryName) => new Logger(this.passes.Writer, categoryName);
 
         public void Dispose()
         {
         }
 
-        private sealed class Logger : ILogger
+        private sealed class Logger(ChannelWriter<LogLevel> passes, string category) : ILogger
         {
             public IDisposable? BeginScope<TState>(TState state)
                 where TState : notnull => null;
@@ -333,6 +343,11 @@ public sealed class HealthTests
 
             public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
             {
+                if (category == typeof(ReadinessProbe).FullName && logLevel is LogLevel.Warning or LogLevel.Debug)
+                {
+                    passes.TryWrite(logLevel);
+                }
+
                 if (logLevel == LogLevel.Warning)
                 {
                     throw new InvalidOperationException("log provider failure");
