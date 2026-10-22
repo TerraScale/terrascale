@@ -14,7 +14,7 @@ namespace TerraBase.Features.Replication;
 /// </summary>
 internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirectory tenants, DatabaseLifecycleCheckpoint checkpoint) : IChangeGroupSink
 {
-    public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken)
+    public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(groups);
         if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
@@ -34,6 +34,7 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             }
 
             await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.RequireAppliedAsync(origin, expected, cancellationToken).ConfigureAwait(false);
             for (; next < end; next++)
             {
                 foreach (var delta in groups[next].Deltas)
@@ -45,22 +46,30 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
 
             await transaction.RecordAppliedAsync(origin, applied, cancellationToken).ConfigureAwait(false);
             _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            expected = new Hlc(Math.Max(expected.Value, applied.Value));
             checkpoint("replication.apply.committed", database);
         }
 
         return applied;
     }
 
-    public async ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken)
+    public async ValueTask<bool> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken)
     {
         if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
-            return;
+            return false;
         }
 
-        await using var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+        if (incarnation is { } pinned && await transaction.GetIncarnationAsync(cancellationToken).ConfigureAwait(false) != pinned)
+        {
+            return false;
+        }
+
+        await transaction.RequireAppliedAsync(origin, expected, cancellationToken).ConfigureAwait(false);
         await transaction.RecordAppliedAsync(origin, frontier, cancellationToken).ConfigureAwait(false);
         _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     public async ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)

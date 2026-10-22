@@ -196,6 +196,9 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
                 ? WriteCollectionAsync(() => inner.JoinAsync(collection, id, delta, at, cancellationToken), cancellationToken)
                 : WriteAsync(collection, id, () => inner.JoinAsync(collection, id, delta, at, cancellationToken), cancellationToken);
 
+        public ValueTask RequireAppliedAsync(Lattices.ReplicaId origin, Lattices.Hlc expected, CancellationToken cancellationToken) =>
+            inner.RequireAppliedAsync(origin, expected, cancellationToken);
+
         public async ValueTask RecordAppliedAsync(Lattices.ReplicaId origin, Lattices.Hlc applied, CancellationToken cancellationToken) =>
             _ = await RunAsync(async () =>
             {

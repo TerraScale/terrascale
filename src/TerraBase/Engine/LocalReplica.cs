@@ -18,5 +18,10 @@ internal sealed record LocalReplica(ReplicaId Id, MemberClock Clock)
     public long GoneBefore(long nowMilliseconds) =>
         nowMilliseconds - StartedMilliseconds >= Day ? nowMilliseconds - Day : long.MinValue;
 
+    public PeerPresence Presence { get; } = new();
+
+    public bool Gone(ReplicaId node, long seenMilliseconds, long nowMilliseconds) =>
+        seenMilliseconds < GoneBefore(nowMilliseconds) && Presence.Absent(node, nowMilliseconds - Day);
+
     private const long Day = 86_400_000;
 }

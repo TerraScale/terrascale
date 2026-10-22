@@ -191,6 +191,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 var peers = view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere)
                     .Where(member => member.Name != self && member.PeerAddress.Length > 0)
                     .ToDictionary(member => member.Name, StringComparer.Ordinal);
+                _self.Presence.Listed(view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere)
+                    .Where(member => member.Name != self).Select(member => member.Name), _self.Clock.Tick().Milliseconds);
                 foreach (var (name, (stop, run)) in running.Where(entry => !peers.TryGetValue(entry.Key, out var member) || Linked(entry.Key)?.Peer != member).ToList())
                 {
                     await stop.CancelAsync().ConfigureAwait(false);
@@ -289,6 +291,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         silent.CancelAfter(ReplicationProtocol.ProgressTimeout);
 
         var peer = new ReplicaId(call.ResponseStream.Current.Welcome.Node);
+        _self.Presence.Heard(link.Peer.Name, peer);
         lock (link.Gate)
         {
             (link.Connected, link.Origin) = (true, peer);
@@ -372,6 +375,26 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 var response = await reading.ConfigureAwait(false);
                 if (response.Stable is { } report)
                 {
+                    var database = ChangeGroups.Tenant(report.Database);
+                    var incarnation = ChangeGroups.RequiredIncarnation(report.Database);
+                    lock (link.Gate)
+                    {
+                        if (link.Cursors.GetValueOrDefault(database) is { } cursor && cursor.Incarnation == incarnation)
+                        {
+                            cursor.RequiresRefill |= report.RefillRequired;
+                            if (!report.RefillRequired)
+                            {
+                                cursor.Stable = new Hlc(Math.Max(cursor.Stable.Value, report.Stable));
+                            }
+                        }
+                    }
+
+                    if (report.RefillRequired)
+                    {
+                        reading = responses.Reader.ReadAsync(activity.Token).AsTask();
+                        continue;
+                    }
+
                     // A report for a frontier of a replaced copy says nothing of the copy in place: the source refuses it.
                     await ledger.AddAsync(
                         ChangeGroups.Tenant(report.Database), ChangeGroups.RequiredIncarnation(report.Database),
@@ -659,7 +682,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 SourceCursor? position;
                 if (cursor is { Incarnation: { } pinned, Acked: { } resume })
                 {
-                    position = new SourceCursor(pinned, resume) { RequiresRefill = cursor.RequiresRefill };
+                    position = new SourceCursor(pinned, resume) { RequiresRefill = cursor.RequiresRefill, Stable = cursor.Stable };
                 }
                 else
                 {
@@ -697,7 +720,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 }
                 lock (link.Gate)
                 {
-                    (cursor.Incarnation, cursor.Acked, cursor.RequiresRefill) = (incarnation, acked, position.Value.RequiresRefill);
+                    (cursor.Incarnation, cursor.Acked, cursor.RequiresRefill, cursor.Stable) = (incarnation, acked, position.Value.RequiresRefill, position.Value.Stable);
                 }
 
                 if (cursor.InFlight is not null || _time.GetTimestamp() < cursor.RetryAt)
@@ -770,7 +793,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 }
                 await stream.WriteAsync(new PushFrame
                 {
-                    Refill = new Refill { Database = ChangeGroups.Wire(database, incarnation), ChangeId = checked((ulong)refillResume), Horizon = horizon.Value },
+                    Refill = new Refill { Database = ChangeGroups.Wire(database, incarnation), ChangeId = checked((ulong)refillResume), Horizon = horizon.Value, Coverage = frontier.Value },
                 }, cancellationToken).ConfigureAwait(false);
 
                 sent = true;
@@ -781,7 +804,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             {
                 if (_time.GetElapsedTime(cursor.FrontierAt) >= FrontierEvery || cursor.FrontierAt == 0)
                 {
-                    await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database, incarnation), Hlc = frontier.Value } }, cancellationToken)
+                    await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database, incarnation), Hlc = frontier.Value, Expect = cursor.Stable.Value } }, cancellationToken)
                         .ConfigureAwait(false);
                     cursor.FrontierAt = _time.GetTimestamp();
                 }
@@ -811,7 +834,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
             }
             await stream.WriteAsync(new PushFrame
             {
-                Batch = new Batch { Database = ChangeGroups.Wire(database, incarnation), LastChangeId = checked((ulong)last), Groups = ChangeGroups.Encode(groups) },
+                Batch = new Batch { Database = ChangeGroups.Wire(database, incarnation), LastChangeId = checked((ulong)last), Groups = ChangeGroups.Encode(groups), Expect = cursor.Stable.Value },
             }, cancellationToken).ConfigureAwait(false);
 
             sent = true;
@@ -878,6 +901,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 return;
             }
 
+            cursor.Stable = new Hlc(Math.Max(cursor.Stable.Value, ack.Stable));
             // The stream goes on from the peer's ack in memory; the ledger persists it behind the stream.
             (cursor.Acked, cursor.Live, cursor.RequiresRefill) = (inFlight, live ? (incarnation, from) : null, false);
         }
@@ -989,7 +1013,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
                 return;
             }
 
-            (cursor.Incarnation, cursor.Acked, cursor.Head, cursor.RequiresRefill, cursor.Live) = (null, null, 0, false, null);
+            (cursor.Incarnation, cursor.Acked, cursor.Head, cursor.RequiresRefill, cursor.Live, cursor.Stable) = (null, null, 0, false, null, default);
             (cursor.FrontierAt, cursor.BehindSince, cursor.Convergence) = (0, null, null);
         }
     }
@@ -1184,6 +1208,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus, IRemo
         public Ulid? Incarnation { get; set; }
 
         public bool RequiresRefill { get; set; }
+
+        public Hlc Stable { get; set; }
 
         public long? Acked { get; set; }
 

@@ -4,11 +4,10 @@ using TerraBase.Engine.Lattices;
 namespace TerraBase.Engine.Sqlite;
 
 /// <summary>
-/// Garbage collection (docs/terrabase/multi-region-replication.md section 11). A machine's <em>stable</em> stamp of a
-/// database is the smallest <c>applied</c> stamp over the origins it heard from in the last 24 h (a row never advanced
-/// counts as 0; see <see cref="LocalReplica.GoneBefore"/>), and its own clock; its <em>horizon</em> is the smallest stable
-/// over itself and the peers heard from in the last 24 h (as they report it), less 60 s. Below the horizon every replica holds every event of every
-/// origin, so a deleted document's state whose entries all lie below it can go.
+/// Garbage collection (docs/terrabase/multi-region-replication.md section 11). Stable is the smallest applied stamp
+/// over retained origins and this machine's clock; horizon is the smallest retained stable stamp, less 60 s.
+/// Eviction requires both silence and absence from the machine directory for 24 h, with startup protection.
+/// Listed machines with unknown identities contribute zero, so a partition cannot release their GC hold.
 /// </summary>
 internal sealed partial class SqliteStorageTransaction
 {
@@ -55,25 +54,35 @@ internal sealed partial class SqliteStorageTransaction
     internal ValueTask<Hlc> GetHorizonAsync(Hlc now, CancellationToken cancellationToken) => RunAsync(() => Horizon(now), cancellationToken);
 
     // Worker-only.
-    private Hlc Stable(Hlc now)
-    {
-        var command = Command("SELECT min(applied) FROM _tb_peers WHERE seen >= $seen;");
-        command.Parameters.AddWithValue("$seen", Member.GoneBefore(now.Milliseconds));
-        return command.ExecuteScalar() is long applied ? new Hlc(Math.Min(now.Value, (ulong)applied)) : now;
-    }
+    private Hlc Stable(Hlc now) => Bounds(now).Stable;
 
     // Worker-only.
-    private Hlc Horizon(Hlc now)
+    private Hlc Horizon(Hlc now) => Bounds(now).Horizon;
+
+    private (Hlc Stable, Hlc Horizon) Bounds(Hlc now)
     {
-        var stable = Stable(now).Value;
-        var command = Command("SELECT min(stable) FROM _tb_peers WHERE seen >= $seen;");
-        command.Parameters.AddWithValue("$seen", Member.GoneBefore(now.Milliseconds));
-        if (command.ExecuteScalar() is long reported)
+        var stable = now.Value;
+        var reported = ulong.MaxValue;
+        using (var reader = Command("SELECT node, applied, stable, seen FROM _tb_peers;").ExecuteReader())
         {
-            stable = Math.Min(stable, (ulong)reported);
+            while (reader.Read())
+            {
+                var node = new ReplicaId(unchecked((ulong)reader.GetInt64(0)));
+                if (!Member.Gone(node, reader.GetInt64(3), now.Milliseconds))
+                {
+                    stable = Math.Min(stable, (ulong)reader.GetInt64(1));
+                    reported = Math.Min(reported, (ulong)reader.GetInt64(2));
+                }
+            }
         }
 
-        return new Hlc(Math.Max(CollectedBefore().Value, stable > HorizonMargin ? stable - HorizonMargin : 0));
+        if (Member.Presence.HoldsUnheard())
+        {
+            (stable, reported) = (0, 0);
+        }
+
+        var horizon = Math.Min(stable, reported);
+        return (new Hlc(stable), new Hlc(Math.Max(CollectedBefore().Value, horizon > HorizonMargin ? horizon - HorizonMargin : 0)));
     }
 
     /// <summary>The durable collected-state frontier, read in this transaction's snapshot.</summary>

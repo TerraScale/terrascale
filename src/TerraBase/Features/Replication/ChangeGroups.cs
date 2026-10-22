@@ -31,6 +31,9 @@ public readonly record struct SourceCursor(Ulid Incarnation, long Acked)
 {
     /// <summary>A copied or restored peer row must refill this incarnation before resuming its change log.</summary>
     public bool RequiresRefill { get; init; }
+
+    /// <summary>The peer's reported stable lower bound, belonging to this source incarnation only.</summary>
+    public Hlc Stable { get; init; }
 }
 
 /// <summary>Groups read from one incarnation of this machine's copy of a database.</summary>
@@ -108,9 +111,10 @@ public interface IChangeGroupSink
     /// <summary>
     /// Joins <paramref name="groups"/> of <paramref name="origin"/> into the database, in order, and commits them durably before
     /// returning the highest stamp joined. Idempotent and commutative: a duplicate, replayed or reordered group changes
-    /// nothing a join already holds. Null, with nothing applied, when this machine does not hold the database.
+    /// nothing a join already holds. Each writer refuses coverage below <paramref name="expected"/> before joining.
+    /// Null, with nothing applied, when this machine does not hold the database.
     /// </summary>
-    ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken);
+    ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken);
 
     /// <summary>
     /// Joins whole states anti-entropy read from a peer, as repairs (origin 0: never shipped again, and no origin's applied
@@ -121,9 +125,10 @@ public interface IChangeGroupSink
 
     /// <summary>
     /// Records that this machine holds every event of <paramref name="origin"/> stamped below <paramref name="frontier"/>
-    /// (its applied stamp rises there, section 11), when it holds the database.
+    /// (its applied stamp rises there, section 11), durably, after checking <paramref name="expected"/> under its writer.
+    /// False when the database is not held, or <paramref name="incarnation"/> names a replaced receiver copy.
     /// </summary>
-    ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken);
+    ValueTask<bool> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken);
 }
 
 /// <summary>The wire form of change groups and its bounds; decoding is a trust boundary.</summary>

@@ -40,7 +40,7 @@ public sealed class CatalogLatticeTests
         var peer = ReplicaId.Of(1, 9, 0);
         var frontier = FeedCursor.At(DateTimeOffset.UtcNow - TimeSpan.FromMinutes(2));
 
-        await sink.RecordFrontierAsync(ChangeGroups.System, peer, frontier, CancellationToken.None);
+        await sink.RecordFrontierAsync(ChangeGroups.System, peer, frontier, default, null, CancellationToken.None);
         var incarnation = (await states.DigestAsync(ChangeGroups.System, null, CancellationToken.None))!.Incarnation;
         await Assert.That(await source.RecordStableAsync(ChangeGroups.System, Ulid.NewUlid(), peer, frontier, CancellationToken.None)).IsFalse()
             .Because("a stable report for another copy of the catalog is refused");

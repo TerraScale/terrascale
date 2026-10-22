@@ -116,7 +116,7 @@ public sealed class DatabaseChangesReplayTests
             using var json = JsonDocument.Parse("""{"value":1}""");
             var state = DocumentState.Bottom.Put(new EntryVersion(stamp, origin), json.RootElement);
             _ = await server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(tenant.Database(DocumentApi.Database), origin,
-                [new OriginGroup(sequence, [new ChangeDelta(DocumentApi.Collection, id, stamp, state.DeltaAt(stamp))])], token);
+                [new OriginGroup(sequence, [new ChangeDelta(DocumentApi.Collection, id, stamp, state.DeltaAt(stamp))])], default, token);
         }
     }
 

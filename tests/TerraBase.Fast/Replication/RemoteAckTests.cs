@@ -1790,7 +1790,7 @@ public sealed class RemoteAckTests
 
     private sealed class HeldSink(IChangeGroupSink inner, AckGate gate) : IChangeGroupSink
     {
-        public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken)
+        public async ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken)
         {
             if (database != ChangeGroups.System && gate.Refuse)
             {
@@ -1798,7 +1798,7 @@ public sealed class RemoteAckTests
                 return null;
             }
 
-            var applied = await inner.ApplyAsync(database, origin, groups, cancellationToken);
+            var applied = await inner.ApplyAsync(database, origin, groups, expected, cancellationToken);
             if (applied is not null)
             {
                 await gate.BeforeAckAsync(groups, cancellationToken);
@@ -1810,8 +1810,8 @@ public sealed class RemoteAckTests
         public ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken) =>
             inner.RepairAsync(database, incarnation, states, cancellationToken);
 
-        public ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken) =>
-            inner.RecordFrontierAsync(database, origin, frontier, cancellationToken);
+        public ValueTask<bool> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
+            inner.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
     }
 
     private sealed class RefillGate

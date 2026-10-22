@@ -20,7 +20,7 @@ public sealed class CatalogBootstrapTests
         var original = await GroupsAsync(first, token);
         await using var middle = await ManagementApi.StartAsync(userId: first.User);
         _ = await middle.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(ChangeGroups.System,
-            first.Server.Services.GetRequiredService<LocalReplica>().Id, original, token);
+            first.Server.Services.GetRequiredService<LocalReplica>().Id, original, default, token);
         var project = await middle.CreateProjectAsync(organization, "Dependent origin");
         var dependent = await GroupsAsync(middle, token);
         var creation = dependent.Single(group => group.Deltas.Any(delta => delta.Collection == "project_organizations" && delta.Id == project));
@@ -34,7 +34,7 @@ public sealed class CatalogBootstrapTests
         await using var later = await ManagementApi.StartAsync(time: new FakeTimeProvider(TimeProvider.System.GetUtcNow() + TimeSpan.FromMinutes(10)), userId: first.User);
         _ = await later.CreateOrganizationAsync("Later origin");
         _ = await middle.Server.Services.GetRequiredService<IChangeGroupSink>().ApplyAsync(ChangeGroups.System,
-            later.Server.Services.GetRequiredService<LocalReplica>().Id, await GroupsAsync(later, token), token);
+            later.Server.Services.GetRequiredService<LocalReplica>().Id, await GroupsAsync(later, token), default, token);
         var replayed = (await GroupsAsync(middle, token)).Single(group => group.ChangeId == creation.ChangeId);
         await Assert.That(ChangeGroups.Encode([replayed])).IsEqualTo(ChangeGroups.Encode([creation]));
 
@@ -42,15 +42,15 @@ public sealed class CatalogBootstrapTests
         var sink = last.Server.Services.GetRequiredService<IChangeGroupSink>();
         if (!delayFirstOrigin)
         {
-            _ = await sink.ApplyAsync(ChangeGroups.System, first.Server.Services.GetRequiredService<LocalReplica>().Id, original, token);
+            _ = await sink.ApplyAsync(ChangeGroups.System, first.Server.Services.GetRequiredService<LocalReplica>().Id, original, default, token);
         }
 
-        _ = await sink.ApplyAsync(ChangeGroups.System, middle.Server.Services.GetRequiredService<LocalReplica>().Id, dependent, token);
+        _ = await sink.ApplyAsync(ChangeGroups.System, middle.Server.Services.GetRequiredService<LocalReplica>().Id, dependent, default, token);
         using var accepted = await last.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/organizations"), new { name = "Receiver origin" }, token);
         await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.Created);
         if (delayFirstOrigin)
         {
-            _ = await sink.ApplyAsync(ChangeGroups.System, first.Server.Services.GetRequiredService<LocalReplica>().Id, original, token);
+            _ = await sink.ApplyAsync(ChangeGroups.System, first.Server.Services.GetRequiredService<LocalReplica>().Id, original, default, token);
         }
 
         using var originalOrganization = await last.Client.GetAsync(ManagementApi.Uri("/v1/management/organizations/" + organization), token);

@@ -16,6 +16,7 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
     private readonly Dictionary<TenantContext, List<OriginGroup>> _groups = [];
     private readonly Dictionary<(TenantContext Database, ReplicaId Peer), long> _ackedBy = [];
     private readonly HashSet<(TenantContext Database, ReplicaId Peer)> _refills = [];
+    private readonly Dictionary<(TenantContext Database, ReplicaId Peer, Ulid Incarnation), Hlc> _stableBy = [];
     private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private TaskCompletionSource _acked = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private Action? _beforeRead;
@@ -124,10 +125,22 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
         }
     }
 
-    public async ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) =>
-        await incarnation(database, cancellationToken) is { } current
-            ? new SourceCursor(current, AckedBy(database, peer)) { RequiresRefill = RequiresRefill(database, peer) }
-            : null;
+    public async ValueTask<SourceCursor?> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken)
+    {
+        if (await incarnation(database, cancellationToken) is not { } current)
+        {
+            return null;
+        }
+
+        lock (_gate)
+        {
+            return new SourceCursor(current, _ackedBy.GetValueOrDefault((database, peer)))
+            {
+                RequiresRefill = _refills.Contains((database, peer)),
+                Stable = _stableBy.GetValueOrDefault((database, peer, current)),
+            };
+        }
+    }
 
     public async ValueTask<bool> AckAsync(TenantContext database, Ulid expected, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken)
     {
@@ -140,6 +153,7 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
         lock (_gate)
         {
             _ackedBy[(database, peer)] = Math.Max(_ackedBy.GetValueOrDefault((database, peer)), changeId);
+            _stableBy[(database, peer, expected)] = new Hlc(Math.Max(_stableBy.GetValueOrDefault((database, peer, expected)).Value, stable.Value));
             _ = _refills.Remove((database, peer));
             (acked, _acked) = (_acked, new(TaskCreationOptions.RunContinuationsAsynchronously));
         }
@@ -196,8 +210,20 @@ internal sealed class FakeChangeGroupSource(Func<TenantContext, CancellationToke
         }
     }
 
-    public async ValueTask<bool> RecordStableAsync(TenantContext database, Ulid expected, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) =>
-        await incarnation(database, cancellationToken) == expected;
+    public async ValueTask<bool> RecordStableAsync(TenantContext database, Ulid expected, ReplicaId peer, Hlc stable, CancellationToken cancellationToken)
+    {
+        if (await incarnation(database, cancellationToken) != expected)
+        {
+            return false;
+        }
+
+        lock (_gate)
+        {
+            _stableBy[(database, peer, expected)] = new Hlc(Math.Max(_stableBy.GetValueOrDefault((database, peer, expected)).Value, stable.Value));
+        }
+
+        return true;
+    }
 
     public async ValueTask<long?> HeadAsync(TenantContext database, Ulid expected, CancellationToken cancellationToken)
     {

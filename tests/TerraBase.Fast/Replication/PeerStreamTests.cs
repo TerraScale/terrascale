@@ -668,7 +668,7 @@ public sealed class PeerStreamTests
         // The stream acks gru's own last group, never past it: a commit of sjc's frontier can land after that group (as
         // here, recorded as sjc's stream does), and only retention, which this test drives itself, raises the ack over it.
         await gru.Api.Server.Services.GetRequiredService<IChangeGroupSink>().RecordFrontierAsync(
-            cluster.Database, sjcNode, sjc.Api.Server.Services.GetRequiredService<LocalReplica>().Clock.Tick(), CancellationToken.None);
+            cluster.Database, sjcNode, sjc.Api.Server.Services.GetRequiredService<LocalReplica>().Clock.Tick(), default, null, CancellationToken.None);
         var streamAck = (await gru.GroupsAsync(cluster.Database, 0))[^1].ChangeId;
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, streamAck)).IsTrue();
         await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", joined, Json("""{"n":3}"""), CancellationToken.None));
@@ -1515,6 +1515,120 @@ public sealed class PeerStreamTests
         {
             sjc.HeldRepairs = null;
             blocked.SetResult();
+        }
+    }
+
+    [Test]
+    public async Task Coverage_is_checked_again_inside_every_receiver_writer()
+    {
+        TerraBase.Engine.Sqlite.SqliteDatabaseStore? store = null;
+        var reset = false;
+        TenantContext? clusterDatabase = null;
+        await using var cluster = await Cluster.StartAsync(cdc: false, clock: null, configure: (region, services) =>
+        {
+            if (region == "sjc")
+            {
+                services.AddSingleton<DatabaseLifecycleCheckpoint>((step, database) =>
+                {
+                    if (step == "replication.apply.committed" && store is not null && database == clusterDatabase && !reset)
+                    {
+                        reset = true;
+                        using var command = store.CurrentWriter()!.Connection.CreateCommand();
+                        command.CommandText = "UPDATE _tb_peers SET applied = 0 WHERE node = $origin;";
+                        command.Parameters.AddWithValue("$origin", unchecked((long)ReplicaId.Of(1, 7, 0).Value));
+                        _ = command.ExecuteNonQuery();
+                    }
+                });
+            }
+        }, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var stamp = Stamp();
+        var seeded = EntityIds.New().ToString();
+        await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, seeded, """{"n":0}"""));
+        await Assert.That(await sjc.UntilAsync(seeded, """{"n":0}""")).IsTrue();
+        clusterDatabase = cluster.Database;
+        using var push = await RawPush.StartAsync(sjc, gru.Name);
+        await push.FrontierAsync(cluster.Database, stamp);
+        _ = await push.FrameAsync();
+        store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)await sjc.StoreAsync();
+        var origin = ReplicaId.Of(1, 7, 0);
+        var final = EntityIds.New().ToString();
+        await push.GroupsAsync(cluster.Database,
+        [
+            new OriginGroup(1, [.. Enumerable.Range(0, ChangeGroups.MaxDeltas).Select(_ => Put(origin, stamp + 1, EntityIds.New().ToString(), """{"n":1}"""))]),
+            new OriginGroup(2, [Put(origin, stamp + 2, final, """{"n":2}""")]),
+        ], stamp);
+        await Assert.That((await push.AckAsync()) is { Refused: true, RefillRequired: true }).IsTrue();
+        await Assert.That(reset).IsTrue();
+        await Assert.That(await sjc.ReadAsync(final)).IsNull();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Receiver_rollback_requires_a_refill_before_a_batch_or_idle_frontier_advances(bool idle)
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (lost, pending, live) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        var stamp = Stamp();
+        await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, lost, """{"n":1}"""));
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+        using (var deadline = new CancellationTokenSource(Deadline))
+        {
+            await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, 1, deadline.Token);
+        }
+
+        var origin = gru.Node;
+        if (idle)
+        {
+            await gru.StopAsync();
+        }
+
+        await sjc.LoseAsync("items", lost, origin);
+        var held = sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            if (idle)
+            {
+                await gru.StartAsync();
+            }
+            else
+            {
+                await gru.CommitAsync(Put(gru, stamp + 1, pending, """{"n":2}"""));
+            }
+
+            await sjc.RepairWaits.Task.WaitAsync(Deadline);
+            await Assert.That(await sjc.ReadAsync(lost)).IsNull();
+            await Assert.That(await sjc.ReadAsync(pending)).IsNull().Because("no later group crosses the receiver's missing coverage");
+            await Assert.That(gru.Source.AckedBy(cluster.Database, sjc.Node)).IsEqualTo(1);
+            sjc.HeldRepairs = null;
+            held.SetResult();
+            await Assert.That(await sjc.UntilAsync(lost, """{"n":1}""")).IsTrue();
+            if (!idle)
+            {
+                await Assert.That(await sjc.UntilAsync(pending, """{"n":2}""")).IsTrue();
+                using var deadline = new CancellationTokenSource(Deadline);
+                await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, 2, deadline.Token);
+            }
+
+            var blocked = sjc.HeldRepairs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                await gru.CommitAsync(Put(gru, stamp + 2, live, """{"n":3}"""));
+                await Assert.That(await sjc.UntilAsync(live, """{"n":3}""")).IsTrue()
+                    .Because("the successful refill durably published coverage, so ordinary batches can resume");
+            }
+            finally
+            {
+                sjc.HeldRepairs = null;
+                blocked.SetResult();
+            }
+        }
+        finally
+        {
+            sjc.HeldRepairs = null;
+            _ = held.TrySetResult();
         }
     }
 
@@ -2785,8 +2899,8 @@ public sealed class PeerStreamTests
 
         public AntiEntropy AntiEntropy => Api.Server.Services.GetRequiredService<AntiEntropy>();
 
-        // Deletes the document's rows from the file directly, as a lost apply would leave it: no change group says so.
-        public async Task LoseAsync(string collection, string id)
+        // Deletes rows without a change group; an origin also rolls its persisted applied frontier back.
+        public async Task LoseAsync(string collection, string id, ReplicaId? origin = null)
         {
             var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
             var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
@@ -2795,9 +2909,10 @@ public sealed class PeerStreamTests
                 using var transaction = session.Connection.BeginTransaction();
                 using var command = session.Connection.CreateCommand();
                 command.Transaction = transaction;
-                command.CommandText = $"DELETE FROM \"{collection}\" WHERE id = $id; DELETE FROM _tb_state WHERE collection = $collection AND id = $id;";
+                command.CommandText = $"DELETE FROM \"{collection}\" WHERE id = $id; DELETE FROM _tb_state WHERE collection = $collection AND id = $id; UPDATE _tb_peers SET applied = 0 WHERE node = $origin;";
                 command.Parameters.AddWithValue("$id", id);
                 command.Parameters.AddWithValue("$collection", collection);
+                command.Parameters.AddWithValue("$origin", unchecked((long)(origin?.Value ?? 0)));
                 var changed = command.ExecuteNonQuery();
                 MerkleFixture.Rebuild(session, transaction);
                 transaction.Commit();
@@ -3001,11 +3116,11 @@ public sealed class PeerStreamTests
     /// <summary>A machine's sink whose repairs wait while the test holds them.</summary>
     private sealed class HeldSink(IChangeGroupSink sink, Machine machine) : IChangeGroupSink
     {
-        public ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken) =>
-            sink.RecordFrontierAsync(database, origin, frontier, cancellationToken);
+        public ValueTask<bool> RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, Hlc expected, Ulid? incarnation, CancellationToken cancellationToken) =>
+            sink.RecordFrontierAsync(database, origin, frontier, expected, incarnation, cancellationToken);
 
-        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken) =>
-            sink.ApplyAsync(database, origin, groups, cancellationToken);
+        public ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, Hlc expected, CancellationToken cancellationToken) =>
+            sink.ApplyAsync(database, origin, groups, expected, cancellationToken);
 
         public async ValueTask<int?> RepairAsync(TenantContext database, Ulid incarnation, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
         {
@@ -3204,10 +3319,10 @@ public sealed class PeerStreamTests
         }
 
         // The groups as one batch at the last one's change id.
-        public async Task GroupsAsync(TenantContext database, IReadOnlyList<OriginGroup> groups) =>
+        public async Task GroupsAsync(TenantContext database, IReadOnlyList<OriginGroup> groups, ulong expected = 0) =>
             await _call.RequestStream.WriteAsync(new PushFrame
             {
-                Batch = new Batch { Database = await WireAsync(database), LastChangeId = (ulong)groups[^1].ChangeId, Groups = ChangeGroups.Encode(groups) },
+                Batch = new Batch { Database = await WireAsync(database), LastChangeId = (ulong)groups[^1].ChangeId, Groups = ChangeGroups.Encode(groups), Expect = expected },
             });
 
         // Whether the next answer is the heartbeat's: an empty frame.

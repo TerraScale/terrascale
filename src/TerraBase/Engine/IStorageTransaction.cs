@@ -177,6 +177,9 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <summary>Records in <c>_tb_peers</c> that every change of <paramref name="origin"/> up to <paramref name="applied"/> it streamed was joined here.</summary>
     ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken);
 
+    /// <summary>Refuses missing origin coverage under the writer before applying a new batch or frontier.</summary>
+    ValueTask RequireAppliedAsync(ReplicaId origin, Hlc expected, CancellationToken cancellationToken);
+
     /// <summary>
     /// A client database's changes feed after <paramref name="cursor"/> (docs/terrabase/multi-region-replication.md section
     /// 14): per origin, the events with a stamp above the cursor's. Without a cursor, every origin from the start of

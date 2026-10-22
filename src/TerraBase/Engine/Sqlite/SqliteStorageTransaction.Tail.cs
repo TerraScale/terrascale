@@ -218,10 +218,11 @@ internal sealed partial class SqliteStorageTransaction
     internal ValueTask<SourceCursor?> GetAckedAsync(ReplicaId peer, Ulid incarnation, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
-            var command = Command("SELECT acked, incarnation FROM _tb_peers WHERE node = $node;");
+            var command = Command("SELECT acked, incarnation, stable FROM _tb_peers WHERE node = $node;");
             command.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
             long acked;
             string scope;
+            Hlc stable;
             using (var reader = command.ExecuteReader())
             {
                 if (!reader.Read())
@@ -231,6 +232,7 @@ internal sealed partial class SqliteStorageTransaction
 
                 acked = reader.GetInt64(0);
                 scope = reader.GetString(1);
+                stable = new Hlc((ulong)reader.GetInt64(2));
             }
 
             if (scope.Length == 0)
@@ -246,7 +248,7 @@ internal sealed partial class SqliteStorageTransaction
 
             var newest = Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null ? 0
                 : Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long id ? id : 0;
-            return acked <= newest ? new SourceCursor(incarnation, acked) : (SourceCursor?)null;
+            return acked <= newest ? new SourceCursor(incarnation, acked) { Stable = stable } : (SourceCursor?)null;
         }, cancellationToken);
 
     /// <summary>
@@ -392,7 +394,7 @@ internal sealed partial class SqliteStorageTransaction
             // 0 resets a row GetAckedAsync found stale; an acknowledgement only raises an ack of the same incarnation.
             var update = Command("""
                 UPDATE _tb_peers SET acked = CASE WHEN $acked = 0 OR incarnation <> $incarnation THEN $acked ELSE max(acked, $acked) END,
-                    stable = max(stable, $stable), seen = $seen, incarnation = $incarnation
+                    stable = CASE WHEN incarnation <> $incarnation THEN $stable ELSE max(stable, $stable) END, seen = $seen, incarnation = $incarnation
                 WHERE node = $node;
                 """);
             update.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
