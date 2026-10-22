@@ -30,7 +30,7 @@ The snippet assumes a collection handle, ID, observed version and deadline signa
 
 | Response | Recovery |
 | --- | --- |
-| `400` / `413` / `415` | Correct the filter, payload, size or media type |
+| `400` / `413` / `415` | Correct the filter, payload, size or media type. A document id that is not a canonical ULID answers `400 invalid_document_id`. |
 | `401` / `403` | Obtain valid authorized access; do not auto-retry |
 | `404` | Check the selected resource; absence differs from denied access |
 | `409` / `412` | Resolve the deterministic conflict or stale version |

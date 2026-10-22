@@ -13,7 +13,8 @@ export default async function seed(): Promise<void> {
     accessToken: process.env.TERRASCALE_API_KEY,
     projectId: process.env.TERRASCALE_PROJECT_ID,
   });
-  const result = await client.documents.put(databaseId, "posts", "starter-welcome", {
+  // A fixed ULID keeps re-running the seed on the same document.
+  const result = await client.documents.put(databaseId, "posts", "01JB7Q3V0Z8K4M2N6P9R5T1W7A", {
     title: "Hello from TerraScale",
     authorId: "starter",
     publishedAt: new Date().toISOString(),

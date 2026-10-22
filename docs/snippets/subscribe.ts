@@ -12,6 +12,12 @@ type Sandbox = {
 
 export const title = "Live subscription";
 
+const [first, second, third] = [
+  "01JB7Q3V0Z8K4M2N6P9R5T1W6A",
+  "01JB7Q3V0Z8K4M2N6P9R5T1W6B",
+  "01JB7Q3V0Z8K4M2N6P9R5T1W6C",
+];
+
 export async function run(sandbox: Sandbox): Promise<void> {
   const live = await sandbox.sync.subscribe({
     databaseId: sandbox.databaseId,
@@ -24,11 +30,11 @@ export async function run(sandbox: Sandbox): Promise<void> {
     for (const item of live.view.getVisibleItems()) if (!seen.includes(item.identity)) seen.push(item.identity);
   });
 
-  assert.equal((await sandbox.client.documents.put(sandbox.databaseId, "events", "e-1", { kind: "click" })).ok, true);
-  assert.equal((await sandbox.client.documents.put(sandbox.databaseId, "events", "e-2", { kind: "purchase" })).ok, true);
+  assert.equal((await sandbox.client.documents.put(sandbox.databaseId, "events", first, { kind: "click" })).ok, true);
+  assert.equal((await sandbox.client.documents.put(sandbox.databaseId, "events", second, { kind: "purchase" })).ok, true);
   unsub();
   live.close();
 
-  await sandbox.client.documents.put(sandbox.databaseId, "events", "e-3", { kind: "click" });
-  assert.deepEqual(seen, ["e-1", "e-2"]);
+  await sandbox.client.documents.put(sandbox.databaseId, "events", third, { kind: "click" });
+  assert.deepEqual(seen, [first, second]);
 }

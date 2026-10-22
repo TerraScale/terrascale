@@ -72,7 +72,7 @@ sqlite3 -readonly local.db "VACUUM INTO 'export.db'"
 
 `VACUUM INTO` reads one consistent snapshot, even while the database is in use. Always pass `-readonly`. Without it, `sqlite3` checkpoints the WAL into the source file when it closes and deletes the `-wal` file, which changes your source or export pair. With it, the `.db` and `-wal` files stay byte-for-byte unchanged; only a `-shm` index file can appear beside them. Do not use `.backup`: its copy keeps the WAL-mode flag and is rejected. Never copy a live database file directly. A copy taken while another process writes can be torn or stale, and no check of the file alone can detect every such copy.
 
-SQLite documents that a vacuum can renumber the `rowid` of tables without an `INTEGER PRIMARY KEY`. Such tables take their document IDs from the rowids in `export.db`.
+SQLite documents that a vacuum can renumber the `rowid` of tables without an `INTEGER PRIMARY KEY`. Such tables derive their document IDs from the rowids in `export.db`.
 
 Check the journal mode before you upload:
 
@@ -105,7 +105,7 @@ FROM customers
 GROUP BY 1;
 ```
 
-**Tables without a primary key.** A rowid table without a declared primary key uses its `rowid` as the document ID (`idPolicy` `rowid`). A `WITHOUT ROWID` table always has a primary key.
+**Tables without a primary key.** A rowid table without a declared primary key uses its `rowid` as the source key for its deterministic document ULID (`idPolicy` `rowid`). A `WITHOUT ROWID` table always has a primary key.
 
 ```sql
 SELECT m.name AS table_name

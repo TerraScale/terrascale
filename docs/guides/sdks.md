@@ -46,7 +46,7 @@ For the current JavaScript artifact, collection routes are rooted at:
 /v1/projects/{project}/databases/{database}/collections/{collection}
 ```
 
-`POST /documents` creates a server-generated document ID. `GET`, `PUT`, `PATCH` and `DELETE /documents/by-key?id={id}` address a document. `POST /query` returns one cursor page. Use the SDK's named operations to encode identifiers and validate responses.
+`POST /documents` creates a server-generated document ID. `GET`, `PUT`, `PATCH` and `DELETE /documents/by-key?id={id}` address a document. Document ids are canonical ULIDs: 26 uppercase Crockford base32 characters. Any other id answers `400 invalid_document_id`. Omit the id on create and TerraBase generates one. `POST /query` returns one cursor page. Use the SDK's named operations to encode identifiers and validate responses.
 
 Configure exactly one HTTPS endpoint or resolver. A configured endpoint proves only that lane. Neither an API origin nor a published SDK establishes region failover, production readiness or automatic discovery.
 

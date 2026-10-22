@@ -49,7 +49,7 @@ The downloaded example executes this journey. Each write carries a version preco
 
 <<< @/../examples/terrabase-js/quickstart.mjs#journey{js}
 
-`patch` with `merge` follows JSON Merge Patch: a `null` member removes that field. Use `put` to replace the complete document and `ifNoneMatchAny: true` for create-only writes with a caller-chosen ID. Returned versions are opaque; copy them unchanged.
+`patch` with `merge` follows JSON Merge Patch: a `null` member removes that field. Use `put` to replace the complete document and `ifNoneMatchAny: true` for create-only writes with a caller-chosen ULID. Returned versions are opaque; copy them unchanged.
 
 Run:
 
