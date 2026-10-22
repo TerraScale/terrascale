@@ -73,7 +73,11 @@ func TestPublicDatabasePlacementAndBranch(t *testing.T) {
 			case "clear replicas":
 				method, path, body = http.MethodPatch, parityDatabase, `{"replicaRegions":[]}`
 			}
-			c := parityClient(t, method, path, "", body, parityDatabaseBody, http.StatusCreated)
+			status := http.StatusCreated
+			if name == "clear replicas" {
+				status = http.StatusOK
+			}
+			c := parityClient(t, method, path, "", body, parityDatabaseBody, status)
 			d := c.Database(parityProject, "main")
 			var out *tb.ManagedDatabase
 			var err error
