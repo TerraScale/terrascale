@@ -113,8 +113,24 @@ internal sealed class RebuildCertification(
             (int Bucket, string Collection, string Id)? previous = null;
             using (var call = client.ReadBucket(request, deadline: TimeProvider.System.GetUtcNow().UtcDateTime + RefillTimeout, cancellationToken: cancellationToken))
             {
-                while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
+                while (true)
                 {
+                    bool next;
+                    try
+                    {
+                        next = await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (RpcException error) when (!cancellationToken.IsCancellationRequested && error.StatusCode == StatusCode.DeadlineExceeded)
+                    {
+                        // Keep applied coverage; the fresh pinned digest below determines which buckets still need copying.
+                        break;
+                    }
+
+                    if (!next)
+                    {
+                        break;
+                    }
+
                     if (call.ResponseStream.Current.Incarnation.Length != 16 || new Ulid(call.ResponseStream.Current.Incarnation.Span) != source)
                     {
                         return false;
